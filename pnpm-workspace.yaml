@@ -1,8 +1,6 @@
 packages:
-  - apps/*
   - docs
   - packages/*
-  - tools/*
 
 catalogMode: prefer
 
@@ -44,6 +42,7 @@ catalog:
   tinyexec: ^1.1.2
   "@typescript-eslint/parser": ^8.59.2
   zod: ^4.4.3
+  "@oxc-parser/binding-wasm32-wasi": 0.128.0
 overrides:
   vite: "catalog:"
   vitest: "catalog:"

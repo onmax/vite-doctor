@@ -18,6 +18,7 @@
     "docus": "catalog:",
     "nuxt": "catalog:",
     "nuxt-doctor": "workspace:*",
-    "tailwindcss": "catalog:"
+    "tailwindcss": "catalog:",
+    "zod": "catalog:"
   }
 }

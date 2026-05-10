@@ -1,0 +1,24 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "nuxt-doctor",
+  "main": ".output/server/index.mjs",
+  "compatibility_date": "2026-05-10",
+  "compatibility_flags": ["nodejs_compat", "no_nodejs_compat_v2"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".output/public",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nuxt-doctor-docs-db",
+      "database_id": "82ba8707-b9d7-4119-a60c-d9a77409f842",
+    },
+  ],
+  "routes": [
+    {
+      "pattern": "nuxt-doctor.onmax.me",
+      "custom_domain": true,
+    },
+  ],
+}

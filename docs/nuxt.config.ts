@@ -20,7 +20,14 @@ export default defineNuxtConfig({
 
   devtools: { enabled: true },
 
+  nitro: {
+    sourceMap: false,
+    cloudflare: {
+      nodeCompat: true,
+    },
+  },
+
   future: { compatibilityVersion: 4 },
 
   compatibilityDate: "2026-05-10",
-});
+} as any);

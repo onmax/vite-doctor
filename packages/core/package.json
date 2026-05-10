@@ -26,6 +26,14 @@
       "types": "./dist/index.d.mts",
       "default": "./dist/index.mjs"
     },
+    "./config": {
+      "types": "./dist/config.d.mts",
+      "default": "./dist/config.mjs"
+    },
+    "./reports": {
+      "types": "./dist/reports.d.mts",
+      "default": "./dist/reports.mjs"
+    },
     "./testkit": {
       "types": "./dist/testkit.d.mts",
       "default": "./dist/testkit.mjs"
@@ -33,8 +41,8 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vp pack src/index.ts src/testkit.ts",
-    "dev": "vp pack src/index.ts src/testkit.ts --watch",
+    "build": "vp pack src/index.ts src/config.ts src/reports.ts src/testkit.ts",
+    "dev": "vp pack src/index.ts src/config.ts src/reports.ts src/testkit.ts --watch",
     "test": "vp test --passWithNoTests",
     "check": "vp check"
   },
