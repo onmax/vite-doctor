@@ -1,0 +1,272 @@
+import { createRule, type RuleContext } from "@vue-doctor/core";
+import { relative } from "pathe";
+
+export { createRule };
+
+export type AnyNode = any;
+
+export const NUXT_AUTO_IMPORTS = new Set([
+  "useFetch",
+  "useAsyncData",
+  "useRoute",
+  "useRouter",
+  "useRuntimeConfig",
+  "useNuxtApp",
+  "navigateTo",
+  "definePageMeta",
+  "defineNuxtRouteMiddleware",
+  "useState",
+]);
+export const BROWSER_SIDE_EFFECTS = new Set([
+  "localStorage.setItem",
+  "sessionStorage.setItem",
+  "document.write",
+  "document.title",
+]);
+export const BROWSER_GLOBALS = new Set([
+  "window",
+  "document",
+  "localStorage",
+  "sessionStorage",
+  "navigator",
+  "location",
+  "ResizeObserver",
+  "IntersectionObserver",
+]);
+export const NUXT_APP_DIRS = new Set([
+  "assets",
+  "components",
+  "composables",
+  "layouts",
+  "middleware",
+  "pages",
+  "plugins",
+  "utils",
+]);
+
+export function report(
+  ctx: RuleContext,
+  node: AnyNode,
+  ruleId: string,
+  severity: any,
+  category: string,
+  message: string,
+  suggestion?: string,
+) {
+  ctx.helpers.report(ctx, node, {
+    ruleId,
+    severity,
+    category,
+    message,
+    suggestion,
+  });
+}
+
+export function hasPriorAwaitInSameExecutionScope(node: AnyNode): boolean {
+  const scope = nearestFunctionOrProgram(node);
+  if (!scope) return false;
+  let seenTarget = false;
+  let seenAwait = false;
+  walkScriptLocal(scope.body ?? scope, (current) => {
+    if (current === node) {
+      seenTarget = true;
+      return;
+    }
+    if (!seenTarget && current.type === "AwaitExpression") seenAwait = true;
+  });
+  return seenAwait;
+}
+
+export function nearestFunctionOrProgram(node: AnyNode): AnyNode {
+  let current = node;
+  while (current) {
+    if (
+      ["Program", "FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+        current.type,
+      )
+    )
+      return current;
+    current = current.__doctorParent;
+  }
+  return null;
+}
+
+export function walkScriptLocal(node: AnyNode, visit: (node: AnyNode) => void) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const child of node) walkScriptLocal(child, visit);
+    return;
+  }
+  if (typeof node.type === "string") visit(node);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "__doctorParent") continue;
+    if (Array.isArray(value)) {
+      for (const child of value) walkScriptLocal(child, visit);
+    } else if (value && typeof value === "object") {
+      walkScriptLocal(value, visit);
+    }
+  }
+}
+
+export function includeTrailingNewline(text: string, end: number) {
+  return text[end] === "\r" && text[end + 1] === "\n"
+    ? end + 2
+    : text[end] === "\n"
+      ? end + 1
+      : end;
+}
+
+export function isClientOnlyPath(path: string) {
+  return /\.client\.[cm]?[jt]sx?$/.test(path) || path.includes(".client.vue");
+}
+
+export function isNuxtRuntimeFile(ctx: any) {
+  if (ctx.file.sourceKind === "module") return false;
+  const roots = ctx.project.nuxt?.appRoots;
+  if (!roots?.length) return true;
+  const relativeRoots = roots
+    .map((root: string) => toPosixPath(relative(ctx.project.root, root)))
+    .filter((root: string) => root && root !== ".");
+  if (!relativeRoots.length) return true;
+  const relativePath = toPosixPath(ctx.file.relativePath);
+  return relativeRoots.some(
+    (root: string) => relativePath === root || relativePath.startsWith(`${root}/`),
+  );
+}
+
+export function toPosixPath(path: string) {
+  return path.replace(/\\/g, "/");
+}
+
+export function isObjectPropertyKey(node: AnyNode) {
+  const parent = node.parent ?? node.__doctorParent;
+  return (
+    (parent?.type === "Property" &&
+      ((parent.key === node && !parent.computed) || parent.shorthand)) ||
+    (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) ||
+    (parent?.type === "StaticMemberExpression" && parent.property === node)
+  );
+}
+
+export function isKnownGuardedBrowserGlobal(text: string, offset: number) {
+  const before = text.slice(Math.max(0, offset - 80), offset);
+  return /import\.meta\.client|process\.client|typeof\s+(window|document|localStorage|sessionStorage|navigator)\s*!==?\s*["']undefined["']/.test(
+    before,
+  );
+}
+
+export function replacementForBrowserGlobal(name: string) {
+  if (name === "localStorage" || name === "sessionStorage")
+    return "Use useCookie() for SSR-visible preference state, or read browser storage inside onMounted().";
+  if (name === "window" || name === "document")
+    return "Use <ClientOnly>, onMounted(), or a .client plugin for browser-only DOM work.";
+  return "Guard this with import.meta.client or move it to client-only code.";
+}
+
+export function templateExpressions(node: AnyNode, source: string): string[] {
+  const values: string[] = [];
+  for (const attr of node.startTag?.attributes ?? []) {
+    const expression = attr.value?.expression;
+    if (expression?.start != null && expression?.end != null)
+      values.push(String(expression.raw ?? source.slice(expression.start, expression.end)));
+  }
+  if (node.type === "VExpressionContainer" && node.expression)
+    values.push(
+      String(
+        node.expression.raw ??
+          (node.expression.start != null && node.expression.end != null
+            ? source.slice(node.expression.start, node.expression.end)
+            : ""),
+      ),
+    );
+  const nodeSource = sourceForNode(node, source);
+  if (nodeSource) values.push(nodeSource);
+  return values;
+}
+
+export function sourceForNode(node: AnyNode, source: string) {
+  const start = node.start ?? node.range?.[0];
+  const end = node.end ?? node.range?.[1];
+  return typeof start === "number" && typeof end === "number" ? source.slice(start, end) : "";
+}
+
+export function getElementName(node: AnyNode) {
+  return node.rawName ?? node.name;
+}
+
+export function getDirectiveExpression(
+  node: AnyNode,
+  name: string,
+  argument: string,
+  source: string,
+) {
+  const attr = (node.startTag?.attributes ?? []).find(
+    (item: AnyNode) =>
+      item.directive && item.key?.name?.name === name && item.key?.argument?.name === argument,
+  );
+  const expression = attr?.value?.expression;
+  if (!expression) return null;
+  const start = expression.start ?? expression.range?.[0];
+  const end = expression.end ?? expression.range?.[1];
+  return expression.raw ?? (start != null && end != null ? source.slice(start, end) : null);
+}
+
+export function getStaticAttr(node: AnyNode, name: string) {
+  const attr = (node.startTag?.attributes ?? []).find(
+    (item: AnyNode) => !item.directive && item.key?.name === name,
+  );
+  return attr?.value?.value ?? null;
+}
+
+export function simpleTagRenameFix(text: string, node: AnyNode, replacement: string) {
+  const start = node.start;
+  const end = node.end;
+  if (typeof start !== "number" || typeof end !== "number") return null;
+  const snippet = text.slice(start, end);
+  const replaced = snippet
+    .replaceAll("RouterView", replacement)
+    .replaceAll("router-view", replacement);
+  return {
+    kind: "safe" as const,
+    edits: [{ range: { start, end }, text: replaced }],
+  };
+}
+
+export function isNewDate(node: AnyNode) {
+  return node.type === "NewExpression" && node.callee?.name === "Date";
+}
+
+export function isStableKeyNode(node: AnyNode) {
+  return node.type === "Literal" || node.type === "TemplateLiteral";
+}
+
+export function isInsideExportedFunction(text: string, offset: number) {
+  const before = text.slice(Math.max(0, offset - 260), offset);
+  return /export\s+(async\s+)?function\s+use[A-Z]\w+|export\s+const\s+use[A-Z]\w+\s*=/.test(before);
+}
+
+export function isExplicitlyScannedByNuxt(ctx: RuleContext, kind: "imports" | "shared") {
+  const manifest = ctx.project.nuxt?.manifest;
+  if (!manifest?.hasManifest) return false;
+  const roots = kind === "imports" ? manifest.importsDirs : manifest.sharedScanRoots;
+  const relativePath = toPosixPath(relative(ctx.project.root, ctx.file.path));
+  return roots
+    .map((root) => toPosixPath(relative(ctx.project.root, root)))
+    .filter(Boolean)
+    .filter((root) =>
+      kind === "imports"
+        ? root !== "app/composables" && root !== "composables"
+        : root !== "shared/utils" && root !== "shared/types",
+    )
+    .some((root) => relativePath === root || relativePath.startsWith(`${root}/`));
+}
+
+export function isExplicitPlugin(ctx: RuleContext) {
+  const manifest = ctx.project.nuxt?.manifest;
+  if (!manifest?.hasManifest) return false;
+  return manifest.pluginFiles.some((file) => resolveSameFile(file, ctx.file.path));
+}
+
+export function resolveSameFile(a: string, b: string) {
+  return toPosixPath(a) === toPosixPath(b);
+}

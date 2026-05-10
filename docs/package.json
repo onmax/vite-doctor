@@ -1,6 +1,11 @@
 {
   "name": "docs",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onmax/nuxt-doctor.git",
+    "directory": "docs"
+  },
   "type": "module",
   "scripts": {
     "dev": "node ../tools/generate-rule-docs.mjs && nuxi dev",

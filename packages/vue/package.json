@@ -8,11 +8,11 @@
     "static-analysis",
     "vue"
   ],
-  "homepage": "https://github.com/vue-doctor/vue-doctor#readme",
+  "homepage": "https://github.com/onmax/nuxt-doctor#readme",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vue-doctor/vue-doctor.git",
+    "url": "git+https://github.com/onmax/nuxt-doctor.git",
     "directory": "packages/vue"
   },
   "bin": {

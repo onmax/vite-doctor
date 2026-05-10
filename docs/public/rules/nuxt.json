@@ -2,7 +2,7 @@
   "rules": [
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-explicit-auto-import.ts",
       "id": "nuxt/imports/no-explicit-auto-import",
       "title": "Avoid explicit imports of Nuxt auto-imports",
       "description": "",
@@ -15,7 +15,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-conflicting-use-fetch-import.ts",
       "id": "nuxt/imports/no-conflicting-usefetch-import",
       "title": "Do not shadow Nuxt useFetch",
       "description": "",
@@ -28,7 +28,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-auto-import-collision.ts",
       "id": "nuxt/imports/no-auto-import-collision",
       "title": "Avoid auto-import name collisions",
       "description": "",
@@ -41,7 +41,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-raw-fetch-in-setup.ts",
       "id": "nuxt/fetch/no-raw-fetch-in-setup",
       "title": "Use Nuxt data fetching primitives for SSR render data",
       "description": "",
@@ -54,7 +54,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-await-inside-custom-wrapper.ts",
       "id": "nuxt/fetch/no-await-inside-custom-wrapper",
       "title": "Do not await inside custom useFetch/useAsyncData wrappers",
       "description": "",
@@ -67,7 +67,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-nuxt-use-route.ts",
       "id": "nuxt/routing/prefer-nuxt-useroute",
       "title": "Use Nuxt's useRoute in Nuxt app code",
       "description": "",
@@ -80,7 +80,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-use-route-in-middleware.ts",
       "id": "nuxt/routing/no-useroute-in-middleware",
       "title": "Use middleware to/from arguments instead of useRoute",
       "description": "",
@@ -93,7 +93,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/return-navigate-to-in-middleware.ts",
       "id": "nuxt/routing/return-navigateto-in-middleware",
       "title": "Return navigateTo in route middleware",
       "description": "",
@@ -106,7 +106,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-router-navigation-in-setup.ts",
       "id": "nuxt/routing/no-router-navigation-in-setup",
       "title": "Do not navigate with router.push/replace during setup",
       "description": "",
@@ -119,7 +119,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-use-nuxt-app-in-nitro.ts",
       "id": "nuxt/context/no-usenuxtapp-in-nitro",
       "title": "Do not use useNuxtApp in Nitro routes",
       "description": "",
@@ -132,7 +132,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-navigate-to-in-nitro.ts",
       "id": "nuxt/context/no-navigateto-in-nitro",
       "title": "Do not use navigateTo in Nitro routes",
       "description": "",
@@ -145,7 +145,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-secret-in-public-config.ts",
       "id": "nuxt/runtime/no-secret-in-public-config",
       "title": "Do not expose secrets in runtimeConfig.public",
       "description": "",
@@ -158,7 +158,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-browser-side-effects-in-setup.ts",
       "id": "nuxt/hydration/no-browser-side-effects-in-setup",
       "title": "Avoid browser side effects in universal setup",
       "description": "",
@@ -171,7 +171,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-browser-global-in-universal-code.ts",
       "id": "nuxt/hydration/no-browser-global-in-universal-code",
       "title": "Avoid browser globals in universal code",
       "description": "",
@@ -184,7 +184,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-client-conditional-in-template.ts",
       "id": "nuxt/hydration/no-client-conditional-in-template",
       "title": "Avoid client-only conditionals in SSR templates",
       "description": "",
@@ -197,7 +197,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-use-cookie-for-initial-client-state.ts",
       "id": "nuxt/hydration/prefer-usecookie-for-initial-client-state",
       "title": "Use useCookie for SSR-visible browser preference state",
       "description": "",
@@ -210,7 +210,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-time-dependent-render-without-nuxt-time-or-client-only.ts",
       "id": "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
       "title": "Use NuxtTime or ClientOnly for time-dependent rendering",
       "description": "",
@@ -223,7 +223,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-route-middleware-api-security.ts",
       "id": "nuxt/middleware/no-route-middleware-api-security",
       "title": "Route middleware does not secure API routes",
       "description": "",
@@ -236,7 +236,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-nuxt-page-over-router-view.ts",
       "id": "nuxt/routing/prefer-nuxtpage-over-routerview",
       "title": "Use NuxtPage instead of RouterView",
       "description": "",
@@ -249,7 +249,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-route-object-page-key.ts",
       "id": "nuxt/routing/no-route-object-page-key",
       "title": "Do not use route objects as NuxtPage page keys",
       "description": "",
@@ -262,7 +262,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-hash-sensitive-route-fullpath-in-ssr-markup.ts",
       "id": "nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup",
       "title": "Avoid route.fullPath in SSR markup",
       "description": "",
@@ -275,7 +275,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-legacy-process-client-server.ts",
       "id": "nuxt/context/no-legacy-process-client-server",
       "title": "Use import.meta client/server flags",
       "description": "",
@@ -288,7 +288,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-app-directory-placement.ts",
       "id": "nuxt/project/prefer-app-directory-placement",
       "title": "Place app directories under app/",
       "description": "",
@@ -301,7 +301,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-nested-autoimport-assumption.ts",
       "id": "nuxt/composables/no-nested-autoimport-assumption",
       "title": "Nested composables are not auto-imported by default",
       "description": "",
@@ -314,7 +314,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-vue-or-nitro-context-in-shared.ts",
       "id": "nuxt/shared/no-vue-or-nitro-context-in-shared",
       "title": "Keep shared code runtime-neutral",
       "description": "",
@@ -327,7 +327,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-nested-shared-autoimport-assumption.ts",
       "id": "nuxt/shared/no-nested-shared-autoimport-assumption",
       "title": "Only shared utils and types are auto-imported",
       "description": "",
@@ -340,7 +340,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-subdir-plugin-auto-registration-assumption.ts",
       "id": "nuxt/plugins/no-subdir-auto-registration-assumption",
       "title": "Nested plugins are not auto-registered by default",
       "description": "",
@@ -353,7 +353,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-non-serializable-use-state.ts",
       "id": "nuxt/state/no-nonserializable-usestate",
       "title": "useState values must be serializable",
       "description": "",
@@ -366,7 +366,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/require-stable-async-data-key.ts",
       "id": "nuxt/fetch/require-stable-asyncdata-key",
       "title": "Use stable keys for async data payload entries",
       "description": "",
@@ -379,7 +379,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-explicit-use-state-key-in-exported-composables.ts",
       "id": "nuxt/state/prefer-explicit-usestate-key-in-exported-composables",
       "title": "Use explicit useState keys in exported composables",
       "description": "",
@@ -392,7 +392,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-composable-after-await.ts",
       "id": "nuxt/context/no-composable-after-await",
       "title": "Call Nuxt composables before await",
       "description": "",
@@ -405,7 +405,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-event-fetch.ts",
       "id": "nuxt/server/prefer-event-fetch",
       "title": "Use event.$fetch in Nitro handlers",
       "description": "",
@@ -418,7 +418,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/forward-auth-headers-ssr.ts",
       "id": "nuxt/fetch/forward-auth-headers-ssr",
       "title": "Forward auth headers for SSR server fetches",
       "description": "",
@@ -431,7 +431,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-plain-env-in-app-code.ts",
       "id": "nuxt/runtime/no-plain-env-in-app-code",
       "title": "Use runtimeConfig instead of process.env in app code",
       "description": "",
@@ -444,7 +444,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/require-event-runtime-config-in-server.ts",
       "id": "nuxt/runtime/require-event-runtime-config-in-server",
       "title": "Pass event to useRuntimeConfig in server handlers",
       "description": "",
@@ -457,7 +457,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-client-composables-in-server.ts",
       "id": "nuxt/server/no-client-composables",
       "title": "Do not use app composables in Nitro server files",
       "description": "",
@@ -470,7 +470,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-browser-api-in-server.ts",
       "id": "nuxt/server/no-browser-api",
       "title": "Do not use browser APIs in Nitro server files",
       "description": "",
@@ -483,7 +483,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-create-use-fetch.ts",
       "id": "nuxt/fetch/prefer-create-use-fetch",
       "title": "Prefer Nuxt data factories for custom data composables",
       "description": "",
@@ -496,7 +496,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/create-use-fetch-must-be-exported-in-scanned-dir.ts",
       "id": "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir",
       "title": "Export data factories from scanned composable directories",
       "description": "",
@@ -509,7 +509,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/keyed-composable-registration-required.ts",
       "id": "nuxt/fetch/keyed-composable-registration-required",
       "title": "Register custom keyed data composables",
       "description": "",
@@ -522,7 +522,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-seo-composables.ts",
       "id": "nuxt/seo/prefer-seo-composables",
       "title": "Use Nuxt SEO composables for metadata",
       "description": "",
@@ -535,7 +535,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/no-unsafe-use-head-script.ts",
       "id": "nuxt/security/no-unsafe-usehead-script",
       "title": "Avoid unsafe scripts in useHead",
       "description": "",
@@ -548,7 +548,7 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
-      "source": "packages/nuxt/src/rules/nuxt.ts",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-use-head-safe-for-untrusted-values.ts",
       "id": "nuxt/security/prefer-useheadsafe-for-untrusted-values",
       "title": "Use useHeadSafe for untrusted head values",
       "description": "",

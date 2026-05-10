@@ -1,22 +1,22 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "pathe";
 import { parseSync, visitorKeys } from "oxc-parser";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const vueSources = [join(root, "packages/core/src/rules/vue.ts")];
+const vueSources = ruleSourcesFromIndex(join(root, "packages/core/src/rules/vue/index.ts"));
 const nuxtRulesDir = join(root, "packages/nuxt/src/rules");
 const nuxtSources = [
-  join(nuxtRulesDir, "nuxt.ts"),
+  ...ruleSourcesFromIndex(join(nuxtRulesDir, "nuxt/index.ts")),
   ...readdirSync(nuxtRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "nuxt.ts")
     .sort()
     .map((file) => join(nuxtRulesDir, file)),
 ];
 
-const vueRules = collectRules(vueSources);
-const nuxtRules = collectRules(nuxtSources);
+const vueRules = collectRules(vueSources, "vue-doctor/vue");
+const nuxtRules = collectRules(nuxtSources, "nuxt-doctor/nuxt");
 const publicRulesDir = join(root, "docs/public/rules");
 
 mkdirSync(publicRulesDir, { recursive: true });
@@ -24,39 +24,39 @@ writeJson(join(publicRulesDir, "vue.json"), { rules: vueRules });
 writeJson(join(publicRulesDir, "nuxt.json"), { rules: nuxtRules });
 writeJson(join(publicRulesDir, "all.json"), { rules: [...vueRules, ...nuxtRules] });
 
-writeFileSync(
-  join(root, "docs/content/1.vue/3.rules.md"),
-  renderPage({
+writeRuleDocs({
+  dir: join(root, "docs/content/1.vue/3.rules"),
+  index: {
     title: "Rules",
     description: "Vue 3.5 diagnostics in the core rule pack.",
     intro: [
       "Vue rules cover reactivity, computed values, watchers, lifecycle cleanup, template correctness, SSR safety, and template security.",
-      "This page is generated from rule metadata in `packages/core/src/rules/vue.ts`.",
+      "These pages are generated from rule metadata in `packages/core/src/rules/vue.ts`.",
     ],
     command: "vp exec vue-doctor rules --format json",
-    rules: vueRules,
-  }),
-);
+  },
+  rules: vueRules,
+});
 
-writeFileSync(
-  join(root, "docs/content/2.nuxt/4.rules.md"),
-  renderPage({
+writeRuleDocs({
+  dir: join(root, "docs/content/2.nuxt/4.rules"),
+  index: {
     title: "Rules",
     description: "Nuxt 4 diagnostics in the Nuxt and ecosystem rule packs.",
     intro: [
       "Nuxt rules cover auto-imports, fetching, routing, Nuxt context, Nitro/server boundaries, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.",
-      "This page is generated from rule metadata in `packages/nuxt/src/rules`.",
+      "These pages are generated from rule metadata in `packages/nuxt/src/rules`.",
     ],
     command: "vp exec nuxt-doctor rules --format json",
-    rules: nuxtRules,
-  }),
-);
+  },
+  rules: nuxtRules,
+});
 
-function collectRules(files) {
+function collectRules(files, defaultPack) {
   return files.flatMap((file) => {
     const text = readFileSync(file, "utf8");
     const ast = parseSync(file, text, { sourceType: "module", lang: "ts" }).program;
-    const pack = readPackName(ast) ?? fallbackPackName(file);
+    const pack = readPackName(ast) ?? defaultPack ?? fallbackPackName(file);
     return findMetaObjects(ast)
       .map((meta) => ({
         pack,
@@ -75,12 +75,34 @@ function collectRules(files) {
   });
 }
 
-function renderPage({ title, description, intro, command, rules }) {
+function ruleSourcesFromIndex(indexFile) {
+  const dir = dirname(indexFile);
+  return readFileSync(indexFile, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.match(/^export \{ \w+ \} from "\.\/(.+)\.js";$/)?.[1])
+    .filter(Boolean)
+    .map((file) => join(dir, `${file}.ts`));
+}
+
+function writeRuleDocs({ dir, index, rules }) {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+
+  writeFileSync(join(dir, "index.md"), renderRulesIndex({ ...index, rules }));
+
+  for (const rule of rules) {
+    const file = join(dir, `${rulePath(rule)}.md`);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, renderRulePage(rule));
+  }
+}
+
+function renderRulesIndex({ title, description, intro, command, rules }) {
   const grouped = groupBy(rules, (rule) => rule.pack);
   const lines = [
     "---",
-    `title: ${title}`,
-    `description: ${description}`,
+    `title: ${yamlString(title)}`,
+    `description: ${yamlString(description)}`,
     "---",
     "",
     ...intro.flatMap((line) => [line, ""]),
@@ -119,16 +141,7 @@ function renderPage({ title, description, intro, command, rules }) {
   for (const [pack, packRules] of grouped) {
     lines.push(`### ${pack}`, "");
     for (const rule of packRules) {
-      const details = [
-        `severity: ${cell(rule.severity)}`,
-        `category: ${cell(rule.category)}`,
-        `fix: ${cell(rule.fixable)}`,
-        `source: ${cell(rule.source)}`,
-      ];
-      if (rule.recommendedReplacement) details.push(`prefer: ${cell(rule.recommendedReplacement)}`);
-      if (rule.docsUrl) details.push(`docs: ${cell(rule.docsUrl)}`);
-      lines.push(`- \`${rule.id}\` — ${rule.title}`);
-      lines.push(`  ${details.join("; ")}`);
+      lines.push(`- [\`${rule.id}\`](./${rulePath(rule)}) — ${rule.title}`);
     }
     lines.push("");
   }
@@ -150,6 +163,41 @@ function renderPage({ title, description, intro, command, rules }) {
     "",
   );
   return `${lines.join("\n")}`;
+}
+
+function renderRulePage(rule) {
+  const lines = [
+    "---",
+    `title: ${yamlString(rule.title || rule.id)}`,
+    `description: ${yamlString(rule.description || rule.id)}`,
+    "---",
+    "",
+    `# ${rule.title || rule.id}`,
+    "",
+    `\`${rule.id}\``,
+    "",
+  ];
+
+  if (rule.description) lines.push(rule.description, "");
+  if (rule.why) lines.push("## Why", "", rule.why, "");
+  if (rule.recommendedReplacement) {
+    lines.push("## Prefer", "", rule.recommendedReplacement, "");
+  }
+
+  lines.push(
+    "## Metadata",
+    "",
+    `- Pack: \`${rule.pack}\``,
+    `- Severity: \`${rule.severity}\``,
+    `- Category: \`${rule.category}\``,
+    `- Fix: ${rule.fixable ? `\`${rule.fixable}\`` : "none"}`,
+    `- Source: \`${rule.source}\``,
+  );
+
+  if (rule.docsUrl) lines.push(`- Docs: ${rule.docsUrl}`);
+
+  lines.push("");
+  return lines.join("\n");
 }
 
 function findMetaObjects(ast) {
@@ -214,6 +262,26 @@ function fallbackPackName(file) {
   return basename === "vue" ? "vue-doctor/vue" : `nuxt-doctor/${basename}`;
 }
 
+function rulePath(rule) {
+  const parts = rule.id.split("/");
+  const pathParts =
+    parts.length > 2
+      ? parts.slice(1)
+      : [rule.category || rule.pack.split("/").at(-1), parts.at(-1)];
+  return pathParts.map(slugSegment).join("/");
+}
+
+function slugSegment(value) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function yamlString(value) {
+  return JSON.stringify(String(value ?? ""));
+}
+
 function groupBy(items, keyFor) {
   const groups = new Map();
   for (const item of items) {
@@ -256,8 +324,8 @@ function visibleLength(value) {
 }
 
 for (const file of [
-  join(root, "docs/content/1.vue/3.rules.md"),
-  join(root, "docs/content/2.nuxt/4.rules.md"),
+  join(root, "docs/content/1.vue/3.rules/index.md"),
+  join(root, "docs/content/2.nuxt/4.rules/index.md"),
 ]) {
   if (!existsSync(dirname(file))) throw new Error(`Missing docs directory for ${file}`);
 }

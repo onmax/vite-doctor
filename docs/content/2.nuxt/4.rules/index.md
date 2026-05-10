@@ -1,11 +1,11 @@
 ---
-title: Rules
-description: Nuxt 4 diagnostics in the Nuxt and ecosystem rule packs.
+title: "Rules"
+description: "Nuxt 4 diagnostics in the Nuxt and ecosystem rule packs."
 ---
 
 Nuxt rules cover auto-imports, fetching, routing, Nuxt context, Nitro/server boundaries, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.
 
-This page is generated from rule metadata in `packages/nuxt/src/rules`.
+These pages are generated from rule metadata in `packages/nuxt/src/rules`.
 
 The same metadata is exported as JSON under `/rules/` in the docs site.
 
@@ -80,154 +80,92 @@ The same metadata is exported as JSON under `/rules/` in the docs site.
 
 ### nuxt-doctor/nuxt
 
-- `nuxt/imports/no-explicit-auto-import` — Avoid explicit imports of Nuxt auto-imports
-  severity: info; category: imports; fix: safe; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/imports/no-conflicting-usefetch-import` — Do not shadow Nuxt useFetch
-  severity: error; category: imports; fix: safe; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/imports/no-auto-import-collision` — Avoid auto-import name collisions
-  severity: warn; category: imports; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/fetch/no-raw-fetch-in-setup` — Use Nuxt data fetching primitives for SSR render data
-  severity: warn; category: fetching; fix: no; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/fetch/no-await-inside-custom-wrapper` — Do not await inside custom useFetch/useAsyncData wrappers
-  severity: error; category: fetching; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/routing/prefer-nuxt-useroute` — Use Nuxt's useRoute in Nuxt app code
-  severity: error; category: routing; fix: safe; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/routing/no-useroute-in-middleware` — Use middleware to/from arguments instead of useRoute
-  severity: error; category: routing; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/routing/return-navigateto-in-middleware` — Return navigateTo in route middleware
-  severity: error; category: routing; fix: safe; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/routing/no-router-navigation-in-setup` — Do not navigate with router.push/replace during setup
-  severity: warn; category: routing; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/context/no-usenuxtapp-in-nitro` — Do not use useNuxtApp in Nitro routes
-  severity: error; category: server; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/context/no-navigateto-in-nitro` — Do not use navigateTo in Nitro routes
-  severity: error; category: server; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/runtime/no-secret-in-public-config` — Do not expose secrets in runtimeConfig.public
-  severity: error; category: runtime-config; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/hydration/no-browser-side-effects-in-setup` — Avoid browser side effects in universal setup
-  severity: error; category: hydration; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/hydration/no-browser-global-in-universal-code` — Avoid browser globals in universal code
-  severity: error; category: hydration; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/hydration/no-client-conditional-in-template` — Avoid client-only conditionals in SSR templates
-  severity: warn; category: hydration; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/hydration/prefer-usecookie-for-initial-client-state` — Use useCookie for SSR-visible browser preference state
-  severity: warn; category: hydration; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly` — Use NuxtTime or ClientOnly for time-dependent rendering
-  severity: warn; category: hydration; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/middleware/no-route-middleware-api-security` — Route middleware does not secure API routes
-  severity: blocker; category: middleware; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/routing/prefer-nuxtpage-over-routerview` — Use NuxtPage instead of RouterView
-  severity: error; category: routing; fix: safe; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/routing/no-route-object-page-key` — Do not use route objects as NuxtPage page keys
-  severity: warn; category: routing; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup` — Avoid route.fullPath in SSR markup
-  severity: warn; category: routing; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/context/no-legacy-process-client-server` — Use import.meta client/server flags
-  severity: warn; category: context; fix: safe; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/project/prefer-app-directory-placement` — Place app directories under app/
-  severity: info; category: architecture; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/composables/no-nested-autoimport-assumption` — Nested composables are not auto-imported by default
-  severity: warn; category: imports; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/shared/no-vue-or-nitro-context-in-shared` — Keep shared code runtime-neutral
-  severity: error; category: architecture; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/shared/no-nested-shared-autoimport-assumption` — Only shared utils and types are auto-imported
-  severity: warn; category: imports; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/plugins/no-subdir-auto-registration-assumption` — Nested plugins are not auto-registered by default
-  severity: warn; category: plugins; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/state/no-nonserializable-usestate` — useState values must be serializable
-  severity: error; category: hydration; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/fetch/require-stable-asyncdata-key` — Use stable keys for async data payload entries
-  severity: warn; category: fetching; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/state/prefer-explicit-usestate-key-in-exported-composables` — Use explicit useState keys in exported composables
-  severity: warn; category: hydration; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/context/no-composable-after-await` — Call Nuxt composables before await
-  severity: error; category: context; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/server/prefer-event-fetch` — Use event.$fetch in Nitro handlers
-  severity: warn; category: server; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/fetch/forward-auth-headers-ssr` — Forward auth headers for SSR server fetches
-  severity: warn; category: fetching; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/runtime/no-plain-env-in-app-code` — Use runtimeConfig instead of process.env in app code
-  severity: error; category: runtime-config; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/runtime/require-event-runtime-config-in-server` — Pass event to useRuntimeConfig in server handlers
-  severity: warn; category: runtime-config; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/server/no-client-composables` — Do not use app composables in Nitro server files
-  severity: error; category: server; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/server/no-browser-api` — Do not use browser APIs in Nitro server files
-  severity: error; category: server; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/fetch/prefer-create-use-fetch` — Prefer Nuxt data factories for custom data composables
-  severity: info; category: fetching; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir` — Export data factories from scanned composable directories
-  severity: error; category: fetching; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/fetch/keyed-composable-registration-required` — Register custom keyed data composables
-  severity: warn; category: fetching; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/seo/prefer-seo-composables` — Use Nuxt SEO composables for metadata
-  severity: warn; category: seo; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/security/no-unsafe-usehead-script` — Avoid unsafe scripts in useHead
-  severity: error; category: security; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
-- `nuxt/security/prefer-useheadsafe-for-untrusted-values` — Use useHeadSafe for untrusted head values
-  severity: warn; category: security; fix: suggestion; source: packages/nuxt/src/rules/nuxt.ts
+- [`nuxt/imports/no-explicit-auto-import`](./imports/no-explicit-auto-import) — Avoid explicit imports of Nuxt auto-imports
+- [`nuxt/imports/no-conflicting-usefetch-import`](./imports/no-conflicting-usefetch-import) — Do not shadow Nuxt useFetch
+- [`nuxt/imports/no-auto-import-collision`](./imports/no-auto-import-collision) — Avoid auto-import name collisions
+- [`nuxt/fetch/no-raw-fetch-in-setup`](./fetch/no-raw-fetch-in-setup) — Use Nuxt data fetching primitives for SSR render data
+- [`nuxt/fetch/no-await-inside-custom-wrapper`](./fetch/no-await-inside-custom-wrapper) — Do not await inside custom useFetch/useAsyncData wrappers
+- [`nuxt/routing/prefer-nuxt-useroute`](./routing/prefer-nuxt-useroute) — Use Nuxt's useRoute in Nuxt app code
+- [`nuxt/routing/no-useroute-in-middleware`](./routing/no-useroute-in-middleware) — Use middleware to/from arguments instead of useRoute
+- [`nuxt/routing/return-navigateto-in-middleware`](./routing/return-navigateto-in-middleware) — Return navigateTo in route middleware
+- [`nuxt/routing/no-router-navigation-in-setup`](./routing/no-router-navigation-in-setup) — Do not navigate with router.push/replace during setup
+- [`nuxt/context/no-usenuxtapp-in-nitro`](./context/no-usenuxtapp-in-nitro) — Do not use useNuxtApp in Nitro routes
+- [`nuxt/context/no-navigateto-in-nitro`](./context/no-navigateto-in-nitro) — Do not use navigateTo in Nitro routes
+- [`nuxt/runtime/no-secret-in-public-config`](./runtime/no-secret-in-public-config) — Do not expose secrets in runtimeConfig.public
+- [`nuxt/hydration/no-browser-side-effects-in-setup`](./hydration/no-browser-side-effects-in-setup) — Avoid browser side effects in universal setup
+- [`nuxt/hydration/no-browser-global-in-universal-code`](./hydration/no-browser-global-in-universal-code) — Avoid browser globals in universal code
+- [`nuxt/hydration/no-client-conditional-in-template`](./hydration/no-client-conditional-in-template) — Avoid client-only conditionals in SSR templates
+- [`nuxt/hydration/prefer-usecookie-for-initial-client-state`](./hydration/prefer-usecookie-for-initial-client-state) — Use useCookie for SSR-visible browser preference state
+- [`nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly`](./hydration/no-time-dependent-render-without-nuxttime-or-clientonly) — Use NuxtTime or ClientOnly for time-dependent rendering
+- [`nuxt/middleware/no-route-middleware-api-security`](./middleware/no-route-middleware-api-security) — Route middleware does not secure API routes
+- [`nuxt/routing/prefer-nuxtpage-over-routerview`](./routing/prefer-nuxtpage-over-routerview) — Use NuxtPage instead of RouterView
+- [`nuxt/routing/no-route-object-page-key`](./routing/no-route-object-page-key) — Do not use route objects as NuxtPage page keys
+- [`nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup`](./routing/no-hash-sensitive-route-fullpath-in-ssr-markup) — Avoid route.fullPath in SSR markup
+- [`nuxt/context/no-legacy-process-client-server`](./context/no-legacy-process-client-server) — Use import.meta client/server flags
+- [`nuxt/project/prefer-app-directory-placement`](./project/prefer-app-directory-placement) — Place app directories under app/
+- [`nuxt/composables/no-nested-autoimport-assumption`](./composables/no-nested-autoimport-assumption) — Nested composables are not auto-imported by default
+- [`nuxt/shared/no-vue-or-nitro-context-in-shared`](./shared/no-vue-or-nitro-context-in-shared) — Keep shared code runtime-neutral
+- [`nuxt/shared/no-nested-shared-autoimport-assumption`](./shared/no-nested-shared-autoimport-assumption) — Only shared utils and types are auto-imported
+- [`nuxt/plugins/no-subdir-auto-registration-assumption`](./plugins/no-subdir-auto-registration-assumption) — Nested plugins are not auto-registered by default
+- [`nuxt/state/no-nonserializable-usestate`](./state/no-nonserializable-usestate) — useState values must be serializable
+- [`nuxt/fetch/require-stable-asyncdata-key`](./fetch/require-stable-asyncdata-key) — Use stable keys for async data payload entries
+- [`nuxt/state/prefer-explicit-usestate-key-in-exported-composables`](./state/prefer-explicit-usestate-key-in-exported-composables) — Use explicit useState keys in exported composables
+- [`nuxt/context/no-composable-after-await`](./context/no-composable-after-await) — Call Nuxt composables before await
+- [`nuxt/server/prefer-event-fetch`](./server/prefer-event-fetch) — Use event.$fetch in Nitro handlers
+- [`nuxt/fetch/forward-auth-headers-ssr`](./fetch/forward-auth-headers-ssr) — Forward auth headers for SSR server fetches
+- [`nuxt/runtime/no-plain-env-in-app-code`](./runtime/no-plain-env-in-app-code) — Use runtimeConfig instead of process.env in app code
+- [`nuxt/runtime/require-event-runtime-config-in-server`](./runtime/require-event-runtime-config-in-server) — Pass event to useRuntimeConfig in server handlers
+- [`nuxt/server/no-client-composables`](./server/no-client-composables) — Do not use app composables in Nitro server files
+- [`nuxt/server/no-browser-api`](./server/no-browser-api) — Do not use browser APIs in Nitro server files
+- [`nuxt/fetch/prefer-create-use-fetch`](./fetch/prefer-create-use-fetch) — Prefer Nuxt data factories for custom data composables
+- [`nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir`](./fetch/create-usefetch-must-be-exported-in-scanned-dir) — Export data factories from scanned composable directories
+- [`nuxt/fetch/keyed-composable-registration-required`](./fetch/keyed-composable-registration-required) — Register custom keyed data composables
+- [`nuxt/seo/prefer-seo-composables`](./seo/prefer-seo-composables) — Use Nuxt SEO composables for metadata
+- [`nuxt/security/no-unsafe-usehead-script`](./security/no-unsafe-usehead-script) — Avoid unsafe scripts in useHead
+- [`nuxt/security/prefer-useheadsafe-for-untrusted-values`](./security/prefer-useheadsafe-for-untrusted-values) — Use useHeadSafe for untrusted head values
 
 ### nuxt-doctor/docus
 
-- `nuxt-content/links/no-broken-internal-to-link` — Do not link to missing content routes
-  severity: warn; category: content; fix: suggestion; source: packages/nuxt/src/rules/docus.ts
-- `docus/layers/no-empty-app-vue-shadow` — Do not shadow Docus app.vue with an empty app shell
-  severity: error; category: layers; fix: suggestion; source: packages/nuxt/src/rules/docus.ts
-- `docus/appconfig/no-unknown-key` — Use app.config keys read by Docus
-  severity: warn; category: app-config; fix: suggestion; source: packages/nuxt/src/rules/docus.ts
+- [`nuxt-content/links/no-broken-internal-to-link`](./links/no-broken-internal-to-link) — Do not link to missing content routes
+- [`docus/layers/no-empty-app-vue-shadow`](./layers/no-empty-app-vue-shadow) — Do not shadow Docus app.vue with an empty app shell
+- [`docus/appconfig/no-unknown-key`](./appconfig/no-unknown-key) — Use app.config keys read by Docus
 
 ### nuxt-doctor/nuxt-better-auth
 
-- `nuxt-better-auth/require-standard-auth-handler-mount` — Mount Better Auth at the standard catch-all route
-  severity: warn; category: auth; fix: suggestion; source: packages/nuxt/src/rules/nuxt-better-auth.ts
+- [`nuxt-better-auth/require-standard-auth-handler-mount`](./auth/require-standard-auth-handler-mount) — Mount Better Auth at the standard catch-all route
 
 ### nuxt-doctor/nuxt-content
 
-- `nuxt-content/no-querycontent-legacy-api` — Use queryCollection instead of queryContent
-  severity: warn; category: content; fix: suggestion; source: packages/nuxt/src/rules/nuxt-content.ts
+- [`nuxt-content/no-querycontent-legacy-api`](./content/no-querycontent-legacy-api) — Use queryCollection instead of queryContent
 
 ### nuxt-doctor/nuxt-image
 
-- `nuxt-image/prefer-nuxtimg` — Use NuxtImg for app images
-  severity: info; category: images; fix: suggestion; source: packages/nuxt/src/rules/nuxt-image.ts
-- `nuxt-image/require-alt` — Provide alt text for Nuxt images
-  severity: error; category: images; fix: suggestion; source: packages/nuxt/src/rules/nuxt-image.ts
-- `nuxt-image/prefer-responsive-dimensions` — Provide image dimensions or sizes
-  severity: warn; category: images; fix: suggestion; source: packages/nuxt/src/rules/nuxt-image.ts
-- `nuxt-image/prefer-nuxtpicture-for-formats` — Use NuxtPicture for format negotiation
-  severity: info; category: images; fix: suggestion; source: packages/nuxt/src/rules/nuxt-image.ts
+- [`nuxt-image/prefer-nuxtimg`](./images/prefer-nuxtimg) — Use NuxtImg for app images
+- [`nuxt-image/require-alt`](./images/require-alt) — Provide alt text for Nuxt images
+- [`nuxt-image/prefer-responsive-dimensions`](./images/prefer-responsive-dimensions) — Provide image dimensions or sizes
+- [`nuxt-image/prefer-nuxtpicture-for-formats`](./images/prefer-nuxtpicture-for-formats) — Use NuxtPicture for format negotiation
 
 ### nuxt-doctor/nuxt-scripts
 
-- `nuxt-scripts/no-raw-third-party-script-tag` — Use Nuxt Scripts for third-party scripts
-  severity: warn; category: scripts; fix: suggestion; source: packages/nuxt/src/rules/nuxt-scripts.ts
-- `nuxt-scripts/no-third-party-usehead-script` — Use Nuxt Scripts instead of useHead for third-party scripts
-  severity: warn; category: scripts; fix: suggestion; source: packages/nuxt/src/rules/nuxt-scripts.ts
-- `nuxt-scripts/no-third-party-config-script` — Use Nuxt Scripts instead of raw app.head scripts
-  severity: warn; category: scripts; fix: suggestion; source: packages/nuxt/src/rules/nuxt-scripts.ts
+- [`nuxt-scripts/no-raw-third-party-script-tag`](./scripts/no-raw-third-party-script-tag) — Use Nuxt Scripts for third-party scripts
+- [`nuxt-scripts/no-third-party-usehead-script`](./scripts/no-third-party-usehead-script) — Use Nuxt Scripts instead of useHead for third-party scripts
+- [`nuxt-scripts/no-third-party-config-script`](./scripts/no-third-party-config-script) — Use Nuxt Scripts instead of raw app.head scripts
 
 ### nuxt-doctor/nuxt-ui
 
-- `nuxt-ui/require-uapp-root` — Use UApp when Nuxt UI app services are used
-  severity: warn; category: ui; fix: suggestion; source: packages/nuxt/src/rules/nuxt-ui.ts
+- [`nuxt-ui/require-uapp-root`](./ui/require-uapp-root) — Use UApp when Nuxt UI app services are used
 
 ### nuxt-doctor/nuxthub
 
-- `nuxthub/no-personalized-cached-handler` — Do not cache personalized handlers without varying
-  severity: error; category: cache; fix: suggestion; source: packages/nuxt/src/rules/nuxthub.ts
-- `nuxthub/prefer-cached-event-handler` — Cache expensive public server handlers
-  severity: info; category: cache; fix: suggestion; source: packages/nuxt/src/rules/nuxthub.ts
+- [`nuxthub/no-personalized-cached-handler`](./cache/no-personalized-cached-handler) — Do not cache personalized handlers without varying
+- [`nuxthub/prefer-cached-event-handler`](./cache/prefer-cached-event-handler) — Cache expensive public server handlers
 
 ### nuxt-doctor/vueuse
 
-- `vueuse/prefer-usewindow-size` — Use useWindowSize for reactive viewport size
-  severity: info; category: hydration; fix: suggestion; source: packages/nuxt/src/rules/vueuse.ts
-- `vueuse/prefer-usebreakpoints` — Use useBreakpoints for responsive state
-  severity: info; category: hydration; fix: suggestion; source: packages/nuxt/src/rules/vueuse.ts
-- `vueuse/prefer-useclipboard` — Use useClipboard for clipboard access
-  severity: info; category: browser-api; fix: suggestion; source: packages/nuxt/src/rules/vueuse.ts
-- `vueuse/no-nuxt-auto-import-collision` — Avoid VueUse names that collide with Nuxt auto-imports
-  severity: warn; category: imports; fix: suggestion; source: packages/nuxt/src/rules/vueuse.ts
+- [`vueuse/prefer-usewindow-size`](./hydration/prefer-usewindow-size) — Use useWindowSize for reactive viewport size
+- [`vueuse/prefer-usebreakpoints`](./hydration/prefer-usebreakpoints) — Use useBreakpoints for responsive state
+- [`vueuse/prefer-useclipboard`](./browser-api/prefer-useclipboard) — Use useClipboard for clipboard access
+- [`vueuse/no-nuxt-auto-import-collision`](./imports/no-nuxt-auto-import-collision) — Avoid VueUse names that collide with Nuxt auto-imports
 
 ## JSON export
 

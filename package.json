@@ -2,6 +2,10 @@
   "name": "doctor",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onmax/nuxt-doctor.git"
+  },
   "type": "module",
   "scripts": {
     "ready": "vp fmt && vp lint && vp run -r test && vp run -r build",

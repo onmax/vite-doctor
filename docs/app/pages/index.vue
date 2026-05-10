@@ -414,7 +414,7 @@ const borderTone = computed(
               </NuxtLink>
 
               <a
-                href="https://github.com/vue-doctor/vue-doctor"
+                href="https://github.com/onmax/nuxt-doctor"
                 target="_blank"
                 rel="noopener"
                 class="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-neutral-100 transition-colors hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"

@@ -1,11 +1,11 @@
 ---
-title: Rules
-description: Vue 3.5 diagnostics in the core rule pack.
+title: "Rules"
+description: "Vue 3.5 diagnostics in the core rule pack."
 ---
 
 Vue rules cover reactivity, computed values, watchers, lifecycle cleanup, template correctness, SSR safety, and template security.
 
-This page is generated from rule metadata in `packages/core/src/rules/vue.ts`.
+These pages are generated from rule metadata in `packages/core/src/rules/vue.ts`.
 
 The same metadata is exported as JSON under `/rules/` in the docs site.
 
@@ -39,48 +39,27 @@ The same metadata is exported as JSON under `/rules/` in the docs site.
 
 ### vue-doctor/vue
 
-- `vue/reactivity/no-prop-mutation` — Do not mutate props
-  severity: error; category: reactivity; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/reactivity/defineprops-watch-getter` — Watch destructured props with a getter
-  severity: error; category: reactivity; fix: safe; source: packages/core/src/rules/vue.ts
-- `vue/reactivity/no-ref-as-operand` — Use .value when refs are operands
-  severity: error; category: reactivity; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/computed/no-side-effects` — Computed getters should be pure
-  severity: error; category: computed; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/computed/no-async` — Do not use async computed getters
-  severity: error; category: computed; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/watch/no-after-await` — Register watchers and lifecycle hooks before await
-  severity: error; category: watchers; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/watch/no-onwatchercleanup-after-await` — Call onWatcherCleanup synchronously
-  severity: error; category: watchers; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/template/require-v-for-key` — Require stable keys on v-for
-  severity: error; category: template; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/template/no-v-if-with-v-for` — Do not combine v-if and v-for on the same element
-  severity: error; category: template; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/template/prefer-use-template-ref` — Prefer useTemplateRef for template refs
-  severity: info; category: template; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/ssr/no-browser-api-in-setup` — Do not read browser APIs in SSR setup paths
-  severity: error; category: ssr; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/security/restrict-v-html` — Restrict v-html to trusted HTML
-  severity: error; category: security; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/reactivity/no-setup-props-destructure` — Do not destructure setup props
-  severity: error; category: reactivity; fix: suggestion; source: packages/core/src/rules/vue.ts; prefer: Use props.foo, toRefs(props), or &lt;script setup&gt; reactive props destructuring.
-- `vue/watch/no-async-watcheffect-after-await-read` — Do not read watchEffect dependencies after await
-  severity: warn; category: watchers; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/watch/require-side-effect-cleanup` — Clean up watcher side effects
-  severity: warn; category: watchers; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/watch/require-post-flush-for-dom-read` — Use post-flush watchers for DOM reads
-  severity: warn; category: watchers; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/lifecycle/no-mutation-in-onupdated` — Do not mutate state in onUpdated
-  severity: error; category: lifecycle; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/lifecycle/require-cleanup` — Clean up lifecycle resources
-  severity: warn; category: lifecycle; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/ssr/use-id-for-stable-ids` — Use useId for SSR-stable ids
-  severity: warn; category: ssr; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/ssr/no-random-or-local-time-render` — Avoid random or local-time SSR render values
-  severity: warn; category: ssr; fix: suggestion; source: packages/core/src/rules/vue.ts
-- `vue/ssr/data-allow-mismatch-surgical` — Use data-allow-mismatch only surgically
-  severity: warn; category: ssr; fix: suggestion; source: packages/core/src/rules/vue.ts
+- [`vue/reactivity/no-prop-mutation`](./reactivity/no-prop-mutation) — Do not mutate props
+- [`vue/reactivity/defineprops-watch-getter`](./reactivity/defineprops-watch-getter) — Watch destructured props with a getter
+- [`vue/reactivity/no-ref-as-operand`](./reactivity/no-ref-as-operand) — Use .value when refs are operands
+- [`vue/computed/no-side-effects`](./computed/no-side-effects) — Computed getters should be pure
+- [`vue/computed/no-async`](./computed/no-async) — Do not use async computed getters
+- [`vue/watch/no-after-await`](./watch/no-after-await) — Register watchers and lifecycle hooks before await
+- [`vue/watch/no-onwatchercleanup-after-await`](./watch/no-onwatchercleanup-after-await) — Call onWatcherCleanup synchronously
+- [`vue/template/require-v-for-key`](./template/require-v-for-key) — Require stable keys on v-for
+- [`vue/template/no-v-if-with-v-for`](./template/no-v-if-with-v-for) — Do not combine v-if and v-for on the same element
+- [`vue/template/prefer-use-template-ref`](./template/prefer-use-template-ref) — Prefer useTemplateRef for template refs
+- [`vue/ssr/no-browser-api-in-setup`](./ssr/no-browser-api-in-setup) — Do not read browser APIs in SSR setup paths
+- [`vue/security/restrict-v-html`](./security/restrict-v-html) — Restrict v-html to trusted HTML
+- [`vue/reactivity/no-setup-props-destructure`](./reactivity/no-setup-props-destructure) — Do not destructure setup props
+- [`vue/watch/no-async-watcheffect-after-await-read`](./watch/no-async-watcheffect-after-await-read) — Do not read watchEffect dependencies after await
+- [`vue/watch/require-side-effect-cleanup`](./watch/require-side-effect-cleanup) — Clean up watcher side effects
+- [`vue/watch/require-post-flush-for-dom-read`](./watch/require-post-flush-for-dom-read) — Use post-flush watchers for DOM reads
+- [`vue/lifecycle/no-mutation-in-onupdated`](./lifecycle/no-mutation-in-onupdated) — Do not mutate state in onUpdated
+- [`vue/lifecycle/require-cleanup`](./lifecycle/require-cleanup) — Clean up lifecycle resources
+- [`vue/ssr/use-id-for-stable-ids`](./ssr/use-id-for-stable-ids) — Use useId for SSR-stable ids
+- [`vue/ssr/no-random-or-local-time-render`](./ssr/no-random-or-local-time-render) — Avoid random or local-time SSR render values
+- [`vue/ssr/data-allow-mismatch-surgical`](./ssr/data-allow-mismatch-surgical) — Use data-allow-mismatch only surgically
 
 ## JSON export
 

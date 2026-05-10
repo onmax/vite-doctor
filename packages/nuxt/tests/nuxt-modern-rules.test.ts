@@ -550,7 +550,7 @@ test("Docus app config rule reports unknown top-level keys", async () => {
   docus: { locale: 'en' },
   header: { title: 'Vue Doctor' },
   navigation: { sub: 'header' },
-  github: { url: 'https://github.com/vue-doctor/vue-doctor', branch: 'main', rootDir: 'docs' },
+  github: { url: 'https://github.com/onmax/nuxt-doctor', branch: 'main', rootDir: 'docs' },
   assistant: { explainWithAi: false },
   toc: { title: 'On This Page' },
   ui: { colors: { primary: 'emerald' } },

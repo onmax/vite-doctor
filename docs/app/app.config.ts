@@ -7,7 +7,7 @@ export default defineAppConfig({
   },
   navigation: { sub: "header" },
   github: {
-    url: "https://github.com/vue-doctor/vue-doctor",
+    url: "https://github.com/onmax/nuxt-doctor",
     branch: "main",
     rootDir: "docs",
   },

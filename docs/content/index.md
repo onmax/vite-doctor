@@ -25,7 +25,7 @@ Framework-aware diagnostics for Vue 3.5 and Nuxt 4. Catch reactivity mistakes, S
 
 #links
 :u-button{to="/nuxt/getting-started" size="xl" trailing-icon="i-lucide-arrow-right" label="Get started"}
-:u-button{to="https://github.com/vue-doctor/vue-doctor" size="xl" color="neutral" variant="outline" icon="i-simple-icons-github" label="GitHub" target="\_blank"}
+:u-button{to="https://github.com/onmax/nuxt-doctor" size="xl" color="neutral" variant="outline" icon="i-simple-icons-github" label="GitHub" target="\_blank"}
 
 #body
 :::code-group{class="hero-code"}
