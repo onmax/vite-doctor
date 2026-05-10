@@ -1,0 +1,23 @@
+{
+  "name": "docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node ../tools/generate-rule-docs.mjs && nuxi dev",
+    "build": "node ../tools/generate-rule-docs.mjs && nuxi build",
+    "generate": "node ../tools/generate-rule-docs.mjs && nuxi generate",
+    "preview": "nuxi preview",
+    "test": "vp test --passWithNoTests",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@nuxt/content": "catalog:",
+    "@nuxt/fonts": "catalog:",
+    "@nuxt/ui": "catalog:",
+    "@vueuse/core": "catalog:",
+    "docus": "catalog:",
+    "nuxt": "catalog:",
+    "nuxt-doctor": "workspace:*",
+    "tailwindcss": "catalog:"
+  }
+}

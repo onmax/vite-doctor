@@ -1,0 +1,42 @@
+{
+  "name": "doctor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ready": "vp fmt && vp lint && vp run -r test && vp run -r build",
+    "dev": "vp run website#dev",
+    "docs:rules": "node tools/generate-rule-docs.mjs",
+    "docs:dev": "pnpm docs:rules && vp run docs#dev",
+    "build": "vp run -r build",
+    "test": "vp run -r test",
+    "check": "vp check",
+    "doctor": "vp exec nuxt-doctor .",
+    "prepare": "vp config"
+  },
+  "dependencies": {
+    "@typescript-eslint/parser": "catalog:",
+    "@vue/compiler-sfc": "catalog:",
+    "c12": "catalog:",
+    "commander": "catalog:",
+    "defu": "catalog:",
+    "eslint": "catalog:",
+    "eslint-plugin-vue": "catalog:",
+    "magic-string": "catalog:",
+    "mlly": "catalog:",
+    "oxc-parser": "catalog:",
+    "pathe": "catalog:",
+    "picocolors": "catalog:",
+    "tinyexec": "catalog:",
+    "vue-eslint-parser": "catalog:"
+  },
+  "devDependencies": {
+    "nuxt-doctor": "workspace:*",
+    "vite-plus": "catalog:",
+    "vue-doctor": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "packageManager": "pnpm@11.0.9"
+}

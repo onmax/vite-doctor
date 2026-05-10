@@ -1,0 +1,47 @@
+:root {
+  --ui-radius: 0.625rem;
+}
+
+/* Hero ---------------------------------------------------------------- */
+
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  border: 1px solid var(--ui-border);
+  background: color-mix(in oklab, var(--ui-bg-elevated) 70%, transparent);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ui-text-muted);
+  letter-spacing: 0.01em;
+  margin-inline: auto;
+}
+.hero-eyebrow .iconify {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--ui-primary);
+}
+.hero-logo {
+  width: 1rem;
+  height: 1rem;
+  display: inline-block;
+}
+.hero-eyebrow .dot {
+  width: 0.25rem;
+  height: 0.25rem;
+  border-radius: 9999px;
+  background: var(--ui-primary);
+}
+
+.hero-code {
+  max-width: 36rem;
+  margin-inline: auto;
+}
+.hero-code pre {
+  font-size: 0.95rem;
+}
+.hero-code [role="tablist"] {
+  justify-content: center;
+}

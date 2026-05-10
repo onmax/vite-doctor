@@ -1,0 +1,63 @@
+packages:
+  - apps/*
+  - docs
+  - packages/*
+  - tools/*
+
+catalogMode: prefer
+
+catalog:
+  "@nuxt/test-utils": ^4.0.3
+  "@nuxt/content": ^3.12.0
+  "@nuxt/fonts": ^0.14.0
+  "@nuxt/kit": ^4.4.2
+  "@nuxt/scripts": ^1.0.6
+  "@nuxt/ui": ^4.6.1
+  "@nuxtjs/mcp-toolkit": ^0.7.0
+  "@testing-library/vue": ^8.1.0
+  "@types/node": ^24
+  "@vue/test-utils": ^2.4.10
+  "@vueuse/core": ^14.2.1
+  agents: ^0.12.3
+  better-auth: ^1.6.10
+  docus: 5.8.1
+  happy-dom: ^20.9.0
+  nuxt: ^4.4.2
+  nuxt-better-auth: ^0.6.0
+  tailwindcss: ^4.2.2
+  typescript: ^5
+  vite: npm:@voidzero-dev/vite-plus-core@latest
+  vitest: npm:@voidzero-dev/vite-plus-test@latest
+  vite-plus: latest
+  "@vue/compiler-sfc": ^3.5.34
+  vue-eslint-parser: ^10.4.0
+  oxc-parser: ^0.129.0
+  commander: ^14.0.3
+  picocolors: ^1.1.1
+  pathe: ^2.0.3
+  c12: 4.0.0-beta.5
+  magic-string: ^0.30.21
+  mlly: ^1.8.2
+  defu: ^6.1.7
+  eslint: ^10.3.0
+  eslint-plugin-vue: ^10.9.1
+  tinyexec: ^1.1.2
+  "@typescript-eslint/parser": ^8.59.2
+  zod: ^4.4.3
+overrides:
+  vite: "catalog:"
+  vitest: "catalog:"
+peerDependencyRules:
+  allowAny:
+    - vite
+    - vitest
+  allowedVersions:
+    vite: "*"
+    vitest: "*"
+allowBuilds:
+  "@parcel/watcher": set this to true or false
+  better-sqlite3: set this to true or false
+  core-js-pure: true
+  esbuild: set this to true or false
+  sharp: set this to true or false
+  vue-demi: set this to true or false
