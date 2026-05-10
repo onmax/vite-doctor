@@ -1,6 +1,11 @@
 ---
 title: "Do not use app composables in Nitro server files"
-description: "nuxt/server/no-client-composables"
+description: "nuxt/server/no-client-composables in nuxt-doctor/nuxt."
+ruleId: "nuxt/server/no-client-composables"
+pack: "nuxt-doctor/nuxt"
+severity: "error"
+category: "server"
+fix: "suggestion"
 ---
 
 # Do not use app composables in Nitro server files

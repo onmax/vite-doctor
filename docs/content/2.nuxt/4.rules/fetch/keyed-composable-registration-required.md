@@ -1,6 +1,11 @@
 ---
 title: "Register custom keyed data composables"
-description: "nuxt/fetch/keyed-composable-registration-required"
+description: "nuxt/fetch/keyed-composable-registration-required in nuxt-doctor/nuxt."
+ruleId: "nuxt/fetch/keyed-composable-registration-required"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "fetching"
+fix: "suggestion"
 ---
 
 # Register custom keyed data composables

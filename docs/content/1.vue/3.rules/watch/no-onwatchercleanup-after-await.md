@@ -1,6 +1,11 @@
 ---
 title: "Call onWatcherCleanup synchronously"
-description: "vue/watch/no-onwatchercleanup-after-await"
+description: "vue/watch/no-onwatchercleanup-after-await in vue-doctor/vue."
+ruleId: "vue/watch/no-onwatchercleanup-after-await"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "watchers"
+fix: "suggestion"
 ---
 
 # Call onWatcherCleanup synchronously

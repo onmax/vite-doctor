@@ -1,6 +1,11 @@
 ---
 title: "Avoid VueUse names that collide with Nuxt auto-imports"
-description: "vueuse/no-nuxt-auto-import-collision"
+description: "vueuse/no-nuxt-auto-import-collision in nuxt-doctor/vueuse."
+ruleId: "vueuse/no-nuxt-auto-import-collision"
+pack: "nuxt-doctor/vueuse"
+severity: "warn"
+category: "imports"
+fix: "suggestion"
 ---
 
 # Avoid VueUse names that collide with Nuxt auto-imports

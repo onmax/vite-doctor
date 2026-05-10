@@ -1,6 +1,11 @@
 ---
 title: "Do not navigate with router.push/replace during setup"
-description: "nuxt/routing/no-router-navigation-in-setup"
+description: "nuxt/routing/no-router-navigation-in-setup in nuxt-doctor/nuxt."
+ruleId: "nuxt/routing/no-router-navigation-in-setup"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "routing"
+fix: "suggestion"
 ---
 
 # Do not navigate with router.push/replace during setup

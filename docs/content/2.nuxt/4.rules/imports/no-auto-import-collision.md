@@ -1,6 +1,11 @@
 ---
 title: "Avoid auto-import name collisions"
-description: "nuxt/imports/no-auto-import-collision"
+description: "nuxt/imports/no-auto-import-collision in nuxt-doctor/nuxt."
+ruleId: "nuxt/imports/no-auto-import-collision"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "imports"
+fix: "suggestion"
 ---
 
 # Avoid auto-import name collisions

@@ -1,6 +1,11 @@
 ---
 title: "Use data-allow-mismatch only surgically"
-description: "vue/ssr/data-allow-mismatch-surgical"
+description: "vue/ssr/data-allow-mismatch-surgical in vue-doctor/vue."
+ruleId: "vue/ssr/data-allow-mismatch-surgical"
+pack: "vue-doctor/vue"
+severity: "warn"
+category: "ssr"
+fix: "suggestion"
 ---
 
 # Use data-allow-mismatch only surgically

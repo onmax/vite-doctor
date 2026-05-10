@@ -31,7 +31,7 @@ Framework-aware diagnostics for Vue 3.5 and Nuxt 4. Catch reactivity mistakes, S
 :::code-group{class="hero-code"}
 
 ```bash [Nuxt]
-pnpm dlx nuxt-doctor .
+pnpm dlx nuxt module add nuxt-doctor
 ```
 
 ```bash [Vue]
@@ -81,7 +81,7 @@ Vue Doctor
 Core analyzer for Vue 3.5 SFCs, reactivity, templates, SSR, and security checks. Runs on any Vue project.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-simple-icons-nuxtdotjs
 to: /nuxt
@@ -125,7 +125,7 @@ variant: subtle
 Scan only files that changed against the base branch. Useful in CI and pre-commit.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-wand-2
 variant: subtle
@@ -138,7 +138,7 @@ variant: subtle
 Apply safe fixes only. Use `--unsafe-fix` to include fixes that need a quick review.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-filter
 variant: subtle
@@ -151,7 +151,7 @@ variant: subtle
 Run a single rule or rule prefix when triaging or building a CI policy.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-alert-triangle
 variant: subtle
@@ -164,7 +164,7 @@ variant: subtle
 Report only errors and blockers. Pair with `--max-warnings 0` to fail CI on warnings.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-braces
 variant: subtle
@@ -177,7 +177,7 @@ variant: subtle
 Emit machine-readable output for agents, dashboards, or custom tooling.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-shield-check
 variant: subtle
@@ -216,7 +216,7 @@ CLI-first scans
 Run `vue-doctor` or `nuxt-doctor` locally, in CI, or against changed files.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-package
 to: /nuxt/module
@@ -229,7 +229,7 @@ Nuxt manifest
 Generate `.nuxt/doctor.manifest.json` for sharper auto-import, layer, route, and server-handler diagnostics.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-shield-alert
 to: /nuxt/rules

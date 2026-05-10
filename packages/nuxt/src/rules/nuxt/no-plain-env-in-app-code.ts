@@ -1,4 +1,4 @@
-import { AnyNode, createRule, isNuxtRuntimeFile, report } from "./shared.js";
+import { AnyNode, createRule, isRuntimeAppFile, report } from "./shared.js";
 
 export const noPlainEnvInAppCode = createRule({
   meta: {
@@ -10,7 +10,7 @@ export const noPlainEnvInAppCode = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    if (!isNuxtRuntimeFile(ctx) || ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    if (!isRuntimeAppFile(ctx)) return;
     return {
       ScriptNode(node: AnyNode) {
         if (ctx.helpers.getNodeName(node) !== "process.env") return;

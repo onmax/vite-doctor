@@ -1,6 +1,11 @@
 ---
 title: "Use .value when refs are operands"
-description: "vue/reactivity/no-ref-as-operand"
+description: "vue/reactivity/no-ref-as-operand in vue-doctor/vue."
+ruleId: "vue/reactivity/no-ref-as-operand"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "reactivity"
+fix: "suggestion"
 ---
 
 # Use .value when refs are operands

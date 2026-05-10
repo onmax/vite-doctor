@@ -1,6 +1,11 @@
 ---
 title: "Do not read watchEffect dependencies after await"
-description: "vue/watch/no-async-watcheffect-after-await-read"
+description: "vue/watch/no-async-watcheffect-after-await-read in vue-doctor/vue."
+ruleId: "vue/watch/no-async-watcheffect-after-await-read"
+pack: "vue-doctor/vue"
+severity: "warn"
+category: "watchers"
+fix: "suggestion"
 ---
 
 # Do not read watchEffect dependencies after await

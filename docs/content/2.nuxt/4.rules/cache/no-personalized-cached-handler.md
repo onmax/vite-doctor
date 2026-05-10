@@ -1,6 +1,11 @@
 ---
 title: "Do not cache personalized handlers without varying"
-description: "nuxthub/no-personalized-cached-handler"
+description: "nuxthub/no-personalized-cached-handler in nuxt-doctor/nuxthub."
+ruleId: "nuxthub/no-personalized-cached-handler"
+pack: "nuxt-doctor/nuxthub"
+severity: "error"
+category: "cache"
+fix: "suggestion"
 ---
 
 # Do not cache personalized handlers without varying

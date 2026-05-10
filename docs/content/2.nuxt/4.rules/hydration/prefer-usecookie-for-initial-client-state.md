@@ -1,6 +1,11 @@
 ---
 title: "Use useCookie for SSR-visible browser preference state"
-description: "nuxt/hydration/prefer-usecookie-for-initial-client-state"
+description: "nuxt/hydration/prefer-usecookie-for-initial-client-state in nuxt-doctor/nuxt."
+ruleId: "nuxt/hydration/prefer-usecookie-for-initial-client-state"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "hydration"
+fix: "suggestion"
 ---
 
 # Use useCookie for SSR-visible browser preference state

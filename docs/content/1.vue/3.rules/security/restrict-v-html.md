@@ -1,6 +1,11 @@
 ---
 title: "Restrict v-html to trusted HTML"
-description: "vue/security/restrict-v-html"
+description: "vue/security/restrict-v-html in vue-doctor/vue."
+ruleId: "vue/security/restrict-v-html"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "security"
+fix: "suggestion"
 ---
 
 # Restrict v-html to trusted HTML

@@ -1,6 +1,11 @@
 ---
 title: "Use NuxtPicture for format negotiation"
-description: "nuxt-image/prefer-nuxtpicture-for-formats"
+description: "nuxt-image/prefer-nuxtpicture-for-formats in nuxt-doctor/nuxt-image."
+ruleId: "nuxt-image/prefer-nuxtpicture-for-formats"
+pack: "nuxt-doctor/nuxt-image"
+severity: "info"
+category: "images"
+fix: "suggestion"
 ---
 
 # Use NuxtPicture for format negotiation

@@ -1,6 +1,11 @@
 ---
 title: "Computed getters should be pure"
-description: "vue/computed/no-side-effects"
+description: "vue/computed/no-side-effects in vue-doctor/vue."
+ruleId: "vue/computed/no-side-effects"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "computed"
+fix: "suggestion"
 ---
 
 # Computed getters should be pure

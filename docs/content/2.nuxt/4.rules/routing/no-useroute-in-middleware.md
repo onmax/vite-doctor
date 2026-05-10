@@ -1,6 +1,11 @@
 ---
 title: "Use middleware to/from arguments instead of useRoute"
-description: "nuxt/routing/no-useroute-in-middleware"
+description: "nuxt/routing/no-useroute-in-middleware in nuxt-doctor/nuxt."
+ruleId: "nuxt/routing/no-useroute-in-middleware"
+pack: "nuxt-doctor/nuxt"
+severity: "error"
+category: "routing"
+fix: "suggestion"
 ---
 
 # Use middleware to/from arguments instead of useRoute

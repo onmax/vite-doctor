@@ -1,6 +1,11 @@
 ---
 title: "Return navigateTo in route middleware"
-description: "nuxt/routing/return-navigateto-in-middleware"
+description: "nuxt/routing/return-navigateto-in-middleware in nuxt-doctor/nuxt."
+ruleId: "nuxt/routing/return-navigateto-in-middleware"
+pack: "nuxt-doctor/nuxt"
+severity: "error"
+category: "routing"
+fix: "safe"
 ---
 
 # Return navigateTo in route middleware

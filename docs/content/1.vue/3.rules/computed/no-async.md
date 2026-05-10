@@ -1,6 +1,11 @@
 ---
 title: "Do not use async computed getters"
-description: "vue/computed/no-async"
+description: "vue/computed/no-async in vue-doctor/vue."
+ruleId: "vue/computed/no-async"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "computed"
+fix: "suggestion"
 ---
 
 # Do not use async computed getters

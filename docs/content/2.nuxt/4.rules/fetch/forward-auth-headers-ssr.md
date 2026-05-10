@@ -1,6 +1,11 @@
 ---
 title: "Forward auth headers for SSR server fetches"
-description: "nuxt/fetch/forward-auth-headers-ssr"
+description: "nuxt/fetch/forward-auth-headers-ssr in nuxt-doctor/nuxt."
+ruleId: "nuxt/fetch/forward-auth-headers-ssr"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "fetching"
+fix: "suggestion"
 ---
 
 # Forward auth headers for SSR server fetches

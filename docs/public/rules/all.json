@@ -503,7 +503,7 @@
       "why": "",
       "recommendedReplacement": "",
       "category": "middleware",
-      "severity": "blocker",
+      "severity": "warn",
       "fixable": "suggestion",
       "docsUrl": ""
     },
@@ -998,6 +998,32 @@
       "recommendedReplacement": "",
       "category": "ui",
       "severity": "warn",
+      "fixable": "suggestion",
+      "docsUrl": ""
+    },
+    {
+      "pack": "nuxt-doctor/nuxt-ui",
+      "source": "packages/nuxt/src/rules/nuxt-ui.ts",
+      "id": "nuxt-ui/prefer-u-button",
+      "title": "Use UButton for interactive buttons",
+      "description": "",
+      "why": "",
+      "recommendedReplacement": "",
+      "category": "ui",
+      "severity": "info",
+      "fixable": "suggestion",
+      "docsUrl": ""
+    },
+    {
+      "pack": "nuxt-doctor/nuxt-ui",
+      "source": "packages/nuxt/src/rules/nuxt-ui.ts",
+      "id": "nuxt-ui/prefer-u-form-controls",
+      "title": "Use Nuxt UI form controls",
+      "description": "",
+      "why": "",
+      "recommendedReplacement": "",
+      "category": "ui",
+      "severity": "info",
       "fixable": "suggestion",
       "docsUrl": ""
     },

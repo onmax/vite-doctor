@@ -1,6 +1,11 @@
 ---
 title: "Avoid explicit imports of Nuxt auto-imports"
-description: "nuxt/imports/no-explicit-auto-import"
+description: "nuxt/imports/no-explicit-auto-import in nuxt-doctor/nuxt."
+ruleId: "nuxt/imports/no-explicit-auto-import"
+pack: "nuxt-doctor/nuxt"
+severity: "info"
+category: "imports"
+fix: "safe"
 ---
 
 # Avoid explicit imports of Nuxt auto-imports

@@ -1,6 +1,11 @@
 ---
 title: "Use stable keys for async data payload entries"
-description: "nuxt/fetch/require-stable-asyncdata-key"
+description: "nuxt/fetch/require-stable-asyncdata-key in nuxt-doctor/nuxt."
+ruleId: "nuxt/fetch/require-stable-asyncdata-key"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "fetching"
+fix: "suggestion"
 ---
 
 # Use stable keys for async data payload entries

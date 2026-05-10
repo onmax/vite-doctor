@@ -1,6 +1,11 @@
 ---
 title: "Do not destructure setup props"
 description: "Classic setup(props) props lose reactivity when destructured directly."
+ruleId: "vue/reactivity/no-setup-props-destructure"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "reactivity"
+fix: "suggestion"
 ---
 
 # Do not destructure setup props

@@ -98,7 +98,6 @@ function writeRuleDocs({ dir, index, rules }) {
 }
 
 function renderRulesIndex({ title, description, intro, command, rules }) {
-  const grouped = groupBy(rules, (rule) => rule.pack);
   const lines = [
     "---",
     `title: ${yamlString(title)}`,
@@ -108,45 +107,26 @@ function renderRulesIndex({ title, description, intro, command, rules }) {
     ...intro.flatMap((line) => [line, ""]),
     "The same metadata is exported as JSON under `/rules/` in the docs site.",
     "",
-    "## Rule metadata",
+    "## Rules",
     "",
   ];
 
   lines.push(
     ...renderMarkdownTable(
-      [
-        "Rule",
-        "Title",
-        "Severity",
-        "Category",
-        "Fix",
-        "Description",
-        "Why",
-        "Prefer / replacement",
-      ],
+      ["Rule", "Title", "Pack", "Severity", "Category", "Fix"],
       rules.map((rule) => [
-        `\`${rule.id}\``,
+        `[\`${rule.id}\`](./${rulePath(rule)})`,
         cell(rule.title),
+        `\`${rule.pack}\``,
         `\`${rule.severity}\``,
         `\`${rule.category}\``,
         cell(rule.fixable),
-        cell(rule.description),
-        cell(rule.why),
-        cell(rule.recommendedReplacement),
       ]),
     ),
   );
 
-  lines.push("", "## Rule packs", "");
-  for (const [pack, packRules] of grouped) {
-    lines.push(`### ${pack}`, "");
-    for (const rule of packRules) {
-      lines.push(`- [\`${rule.id}\`](./${rulePath(rule)}) — ${rule.title}`);
-    }
-    lines.push("");
-  }
-
   lines.push(
+    "",
     "## JSON export",
     "",
     "The docs build also writes static JSON files:",
@@ -166,13 +146,20 @@ function renderRulesIndex({ title, description, intro, command, rules }) {
 }
 
 function renderRulePage(rule) {
+  const title = rule.title || rule.id;
+  const description = rule.description || `${rule.id} in ${rule.pack}.`;
   const lines = [
     "---",
-    `title: ${yamlString(rule.title || rule.id)}`,
-    `description: ${yamlString(rule.description || rule.id)}`,
+    `title: ${yamlString(title)}`,
+    `description: ${yamlString(description)}`,
+    `ruleId: ${yamlString(rule.id)}`,
+    `pack: ${yamlString(rule.pack)}`,
+    `severity: ${yamlString(rule.severity)}`,
+    `category: ${yamlString(rule.category)}`,
+    `fix: ${yamlString(rule.fixable || "no")}`,
     "---",
     "",
-    `# ${rule.title || rule.id}`,
+    `# ${title}`,
     "",
     `\`${rule.id}\``,
     "",
@@ -280,15 +267,6 @@ function slugSegment(value) {
 
 function yamlString(value) {
   return JSON.stringify(String(value ?? ""));
-}
-
-function groupBy(items, keyFor) {
-  const groups = new Map();
-  for (const item of items) {
-    const key = keyFor(item);
-    groups.set(key, [...(groups.get(key) ?? []), item]);
-  }
-  return groups;
 }
 
 function cell(value) {

@@ -1,6 +1,11 @@
 ---
 title: "Only shared utils and types are auto-imported"
-description: "nuxt/shared/no-nested-shared-autoimport-assumption"
+description: "nuxt/shared/no-nested-shared-autoimport-assumption in nuxt-doctor/nuxt."
+ruleId: "nuxt/shared/no-nested-shared-autoimport-assumption"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "imports"
+fix: "suggestion"
 ---
 
 # Only shared utils and types are auto-imported

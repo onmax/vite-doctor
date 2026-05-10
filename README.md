@@ -23,18 +23,18 @@ Nuxt Doctor extends Vue Doctor with Nuxt project detection, Nuxt manifest suppor
 
 ## Usage
 
-Run Doctor without installing it:
+Run Doctor from a project root:
 
 ```bash
 pnpm dlx vue-doctor
-pnpm dlx nuxt-doctor .
+pnpm dlx nuxt module add nuxt-doctor
 ```
 
 Install Nuxt Doctor in a Nuxt project when you want the module and `nuxt doctor` command:
 
 ```bash
-pnpm add -D nuxt-doctor
-pnpm exec nuxt-doctor .
+pnpm dlx nuxt module add nuxt-doctor
+pnpm exec nuxt doctor
 ```
 
 ## Development

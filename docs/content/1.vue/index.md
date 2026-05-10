@@ -36,7 +36,7 @@ Install and run
 Add the CLI and scan a Vue project.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-list-checks
 to: /vue/rules

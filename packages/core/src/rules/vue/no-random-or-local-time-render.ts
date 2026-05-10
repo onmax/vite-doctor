@@ -10,6 +10,7 @@ export const noRandomOrLocalTimeRender = createRule({
     requires: { script: true, vue: true },
   },
   create(ctx) {
+    if (ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
     return {
       ScriptNode(node: AnyNode) {
         const name = ctx.helpers.getCalleeName(node);

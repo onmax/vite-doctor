@@ -1,6 +1,11 @@
 ---
 title: "Use queryCollection instead of queryContent"
-description: "nuxt-content/no-querycontent-legacy-api"
+description: "nuxt-content/no-querycontent-legacy-api in nuxt-doctor/nuxt-content."
+ruleId: "nuxt-content/no-querycontent-legacy-api"
+pack: "nuxt-doctor/nuxt-content"
+severity: "warn"
+category: "content"
+fix: "suggestion"
 ---
 
 # Use queryCollection instead of queryContent

@@ -1,6 +1,11 @@
 ---
 title: "Use post-flush watchers for DOM reads"
-description: "vue/watch/require-post-flush-for-dom-read"
+description: "vue/watch/require-post-flush-for-dom-read in vue-doctor/vue."
+ruleId: "vue/watch/require-post-flush-for-dom-read"
+pack: "vue-doctor/vue"
+severity: "warn"
+category: "watchers"
+fix: "suggestion"
 ---
 
 # Use post-flush watchers for DOM reads

@@ -1,6 +1,11 @@
 ---
 title: "Avoid unsafe scripts in useHead"
-description: "nuxt/security/no-unsafe-usehead-script"
+description: "nuxt/security/no-unsafe-usehead-script in nuxt-doctor/nuxt."
+ruleId: "nuxt/security/no-unsafe-usehead-script"
+pack: "nuxt-doctor/nuxt"
+severity: "error"
+category: "security"
+fix: "suggestion"
 ---
 
 # Avoid unsafe scripts in useHead

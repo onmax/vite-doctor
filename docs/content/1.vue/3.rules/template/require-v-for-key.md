@@ -1,6 +1,11 @@
 ---
 title: "Require stable keys on v-for"
-description: "vue/template/require-v-for-key"
+description: "vue/template/require-v-for-key in vue-doctor/vue."
+ruleId: "vue/template/require-v-for-key"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "template"
+fix: "suggestion"
 ---
 
 # Require stable keys on v-for

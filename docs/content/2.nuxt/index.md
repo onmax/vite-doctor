@@ -34,10 +34,10 @@ to: /nuxt/getting-started
 #title
 Install and run
 #description
-Scan a Nuxt app with the standalone CLI.
+Add Nuxt Doctor with the Nuxt CLI, then run `nuxt doctor`.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-package
 to: /nuxt/module
@@ -50,7 +50,7 @@ Add the module
 Generate `.nuxt/doctor.manifest.json` for faster and more accurate Nuxt diagnostics.
 ::::
 
-## ::::u-page-card
+::::u-page-card
 
 icon: i-lucide-bot
 to: /nuxt/ai
@@ -67,10 +67,10 @@ Expose read-only MCP reports and combine them with agent-ready runtime logs.
 
 ## Commands
 
-Run a Nuxt scan:
+Add Nuxt Doctor to a Nuxt app:
 
 ```bash
-pnpm dlx nuxt-doctor .
+pnpm dlx nuxt module add nuxt-doctor
 ```
 
 List the Nuxt and Vue rule packs:

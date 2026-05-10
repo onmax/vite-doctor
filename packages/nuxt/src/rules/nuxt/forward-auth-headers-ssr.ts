@@ -18,6 +18,7 @@ export const forwardAuthHeadersSsr = createRule({
         const url =
           first?.value ?? (first?.start != null ? ctx.file.text.slice(first.start, first.end) : "");
         if (!String(url).startsWith("/api/")) return;
+        if (!isAuthSensitiveInternalApi(String(url))) return;
         const snippet = ctx.file.text.slice(node.start, node.end);
         if (/useRequestFetch|useFetch|headers\s*:|cookie/i.test(snippet)) return;
         report(
@@ -33,3 +34,9 @@ export const forwardAuthHeadersSsr = createRule({
     };
   },
 });
+
+function isAuthSensitiveInternalApi(url: string): boolean {
+  return /\/api\/(?:auth|admin|account|user|users|me|profile|session|feedback|agent|private|billing|settings)(?:\/|$)/i.test(
+    url,
+  );
+}

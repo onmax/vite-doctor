@@ -3,6 +3,7 @@ import {
   NUXT_AUTO_IMPORTS,
   createRule,
   hasPriorAwaitInSameExecutionScope,
+  isClientOnlyPath,
   isNuxtRuntimeFile,
   report,
 } from "./shared.js";
@@ -17,12 +18,13 @@ export const noComposableAfterAwait = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    if (!isNuxtRuntimeFile(ctx)) return;
+    if (!isNuxtRuntimeFile(ctx) || isClientOnlyPath(ctx.file.relativePath)) return;
     const composables = new Set([...NUXT_AUTO_IMPORTS, "useSeoMeta", "useHead", "useHeadSafe"]);
     return {
       ScriptNode(node: AnyNode) {
         const name = ctx.helpers.getCalleeName(node);
         if (!name || !composables.has(name) || !hasPriorAwaitInSameExecutionScope(node)) return;
+        if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
         report(
           ctx,
           node,

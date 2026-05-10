@@ -1,6 +1,11 @@
 ---
 title: "Do not use useNuxtApp in Nitro routes"
-description: "nuxt/context/no-usenuxtapp-in-nitro"
+description: "nuxt/context/no-usenuxtapp-in-nitro in nuxt-doctor/nuxt."
+ruleId: "nuxt/context/no-usenuxtapp-in-nitro"
+pack: "nuxt-doctor/nuxt"
+severity: "error"
+category: "server"
+fix: "suggestion"
 ---
 
 # Do not use useNuxtApp in Nitro routes

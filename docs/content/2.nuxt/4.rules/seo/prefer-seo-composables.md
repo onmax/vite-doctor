@@ -1,6 +1,11 @@
 ---
 title: "Use Nuxt SEO composables for metadata"
-description: "nuxt/seo/prefer-seo-composables"
+description: "nuxt/seo/prefer-seo-composables in nuxt-doctor/nuxt."
+ruleId: "nuxt/seo/prefer-seo-composables"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "seo"
+fix: "suggestion"
 ---
 
 # Use Nuxt SEO composables for metadata

@@ -1,6 +1,11 @@
 ---
 title: "Use UApp when Nuxt UI app services are used"
-description: "nuxt-ui/require-uapp-root"
+description: "nuxt-ui/require-uapp-root in nuxt-doctor/nuxt-ui."
+ruleId: "nuxt-ui/require-uapp-root"
+pack: "nuxt-doctor/nuxt-ui"
+severity: "warn"
+category: "ui"
+fix: "suggestion"
 ---
 
 # Use UApp when Nuxt UI app services are used

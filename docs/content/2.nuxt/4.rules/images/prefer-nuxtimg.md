@@ -1,6 +1,11 @@
 ---
 title: "Use NuxtImg for app images"
-description: "nuxt-image/prefer-nuxtimg"
+description: "nuxt-image/prefer-nuxtimg in nuxt-doctor/nuxt-image."
+ruleId: "nuxt-image/prefer-nuxtimg"
+pack: "nuxt-doctor/nuxt-image"
+severity: "info"
+category: "images"
+fix: "suggestion"
 ---
 
 # Use NuxtImg for app images

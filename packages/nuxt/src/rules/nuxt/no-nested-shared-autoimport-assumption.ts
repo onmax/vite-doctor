@@ -1,4 +1,4 @@
-import { AnyNode, createRule, isExplicitlyScannedByNuxt } from "./shared.js";
+import { AnyNode, createRule, isExplicitlyScannedByNuxt, isGeneratedFile } from "./shared.js";
 
 export const noNestedSharedAutoimportAssumption = createRule({
   meta: {
@@ -10,6 +10,7 @@ export const noNestedSharedAutoimportAssumption = createRule({
     requires: { nuxt: true },
   },
   create(ctx) {
+    if (isGeneratedFile(ctx)) return;
     if (!/^shared\/(utils|types)\/[^/]+\/.+\.[cm]?[jt]s$/.test(ctx.file.relativePath)) return;
     if (isExplicitlyScannedByNuxt(ctx, "shared")) return;
     let reported = false;

@@ -1,6 +1,11 @@
 ---
 title: "Avoid random or local-time SSR render values"
-description: "vue/ssr/no-random-or-local-time-render"
+description: "vue/ssr/no-random-or-local-time-render in vue-doctor/vue."
+ruleId: "vue/ssr/no-random-or-local-time-render"
+pack: "vue-doctor/vue"
+severity: "warn"
+category: "ssr"
+fix: "suggestion"
 ---
 
 # Avoid random or local-time SSR render values

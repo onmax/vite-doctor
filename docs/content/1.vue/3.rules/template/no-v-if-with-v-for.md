@@ -1,6 +1,11 @@
 ---
 title: "Do not combine v-if and v-for on the same element"
-description: "vue/template/no-v-if-with-v-for"
+description: "vue/template/no-v-if-with-v-for in vue-doctor/vue."
+ruleId: "vue/template/no-v-if-with-v-for"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "template"
+fix: "suggestion"
 ---
 
 # Do not combine v-if and v-for on the same element

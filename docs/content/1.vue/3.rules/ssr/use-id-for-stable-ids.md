@@ -1,6 +1,11 @@
 ---
 title: "Use useId for SSR-stable ids"
-description: "vue/ssr/use-id-for-stable-ids"
+description: "vue/ssr/use-id-for-stable-ids in vue-doctor/vue."
+ruleId: "vue/ssr/use-id-for-stable-ids"
+pack: "vue-doctor/vue"
+severity: "warn"
+category: "ssr"
+fix: "suggestion"
 ---
 
 # Use useId for SSR-stable ids

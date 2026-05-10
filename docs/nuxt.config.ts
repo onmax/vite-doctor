@@ -1,4 +1,6 @@
 import { defineNuxtConfig } from "nuxt/config";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 export default defineNuxtConfig({
   extends: ["docus"],
@@ -6,6 +8,13 @@ export default defineNuxtConfig({
   modules: [["nuxt-doctor/module", { mcp: false }]],
 
   css: ["~/assets/css/main.css"],
+
+  content: {
+    database: {
+      type: "sqlite",
+      filename: join(tmpdir(), `nuxt-doctor-content-${process.pid}.sqlite`),
+    },
+  },
 
   app: {
     head: {

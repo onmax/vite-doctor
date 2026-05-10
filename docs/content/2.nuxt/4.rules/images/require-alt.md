@@ -1,6 +1,11 @@
 ---
 title: "Provide alt text for Nuxt images"
-description: "nuxt-image/require-alt"
+description: "nuxt-image/require-alt in nuxt-doctor/nuxt-image."
+ruleId: "nuxt-image/require-alt"
+pack: "nuxt-doctor/nuxt-image"
+severity: "error"
+category: "images"
+fix: "suggestion"
 ---
 
 # Provide alt text for Nuxt images

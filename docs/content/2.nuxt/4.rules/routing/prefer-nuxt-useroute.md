@@ -1,6 +1,11 @@
 ---
 title: "Use Nuxt's useRoute in Nuxt app code"
-description: "nuxt/routing/prefer-nuxt-useroute"
+description: "nuxt/routing/prefer-nuxt-useroute in nuxt-doctor/nuxt."
+ruleId: "nuxt/routing/prefer-nuxt-useroute"
+pack: "nuxt-doctor/nuxt"
+severity: "error"
+category: "routing"
+fix: "safe"
 ---
 
 # Use Nuxt's useRoute in Nuxt app code

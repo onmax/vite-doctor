@@ -1,6 +1,11 @@
 ---
 title: "Avoid browser side effects in universal setup"
-description: "nuxt/hydration/no-browser-side-effects-in-setup"
+description: "nuxt/hydration/no-browser-side-effects-in-setup in nuxt-doctor/nuxt."
+ruleId: "nuxt/hydration/no-browser-side-effects-in-setup"
+pack: "nuxt-doctor/nuxt"
+severity: "error"
+category: "hydration"
+fix: "suggestion"
 ---
 
 # Avoid browser side effects in universal setup

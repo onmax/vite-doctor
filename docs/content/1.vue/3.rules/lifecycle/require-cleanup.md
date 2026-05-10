@@ -1,6 +1,11 @@
 ---
 title: "Clean up lifecycle resources"
-description: "vue/lifecycle/require-cleanup"
+description: "vue/lifecycle/require-cleanup in vue-doctor/vue."
+ruleId: "vue/lifecycle/require-cleanup"
+pack: "vue-doctor/vue"
+severity: "warn"
+category: "lifecycle"
+fix: "suggestion"
 ---
 
 # Clean up lifecycle resources

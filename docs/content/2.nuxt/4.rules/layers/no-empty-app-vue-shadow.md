@@ -1,6 +1,11 @@
 ---
 title: "Do not shadow Docus app.vue with an empty app shell"
-description: "docus/layers/no-empty-app-vue-shadow"
+description: "docus/layers/no-empty-app-vue-shadow in nuxt-doctor/docus."
+ruleId: "docus/layers/no-empty-app-vue-shadow"
+pack: "nuxt-doctor/docus"
+severity: "error"
+category: "layers"
+fix: "suggestion"
 ---
 
 # Do not shadow Docus app.vue with an empty app shell

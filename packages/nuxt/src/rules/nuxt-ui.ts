@@ -4,6 +4,8 @@ import { createRule, type DoctorRule, type RulePack } from "@vue-doctor/core";
 
 type AnyNode = any;
 
+const TEXT_INPUT_TYPES = new Set(["text", "email", "password", "search", "url", "tel", "number"]);
+
 export const requireUAppRoot = createRule({
   meta: {
     id: "nuxt-ui/require-uapp-root",
@@ -34,7 +36,61 @@ export const requireUAppRoot = createRule({
   },
 });
 
-export const rules: DoctorRule[] = [requireUAppRoot];
+export const preferUButton = createRule({
+  meta: {
+    id: "nuxt-ui/prefer-u-button",
+    title: "Use UButton for interactive buttons",
+    category: "ui",
+    severity: "info",
+    fixable: "suggestion",
+    requires: { template: true, nuxt: true },
+  },
+  create(ctx) {
+    return {
+      TemplateNode(node: AnyNode) {
+        if (node.type !== "VElement" || node.rawName !== "button" || hasDoctorIgnore(ctx, node))
+          return;
+        ctx.helpers.report(ctx, node, {
+          ruleId: "nuxt-ui/prefer-u-button",
+          severity: "info",
+          category: "ui",
+          message: "Native <button> reimplements behavior that Nuxt UI already provides.",
+          suggestion:
+            "Use <UButton> and map styling to Nuxt UI props such as icon, size, color, and variant.",
+        });
+      },
+    };
+  },
+});
+
+export const preferUFormControls = createRule({
+  meta: {
+    id: "nuxt-ui/prefer-u-form-controls",
+    title: "Use Nuxt UI form controls",
+    category: "ui",
+    severity: "info",
+    fixable: "suggestion",
+    requires: { template: true, nuxt: true },
+  },
+  create(ctx) {
+    return {
+      TemplateNode(node: AnyNode) {
+        if (node.type !== "VElement" || hasDoctorIgnore(ctx, node)) return;
+        const replacement = formControlReplacement(ctx, node);
+        if (!replacement) return;
+        ctx.helpers.report(ctx, node, {
+          ruleId: "nuxt-ui/prefer-u-form-controls",
+          severity: "info",
+          category: "ui",
+          message: `Native <${node.rawName}> reimplements behavior that Nuxt UI already provides.`,
+          suggestion: replacement,
+        });
+      },
+    };
+  },
+});
+
+export const rules: DoctorRule[] = [requireUAppRoot, preferUButton, preferUFormControls];
 
 export const nuxtUiRulePack: RulePack = {
   name: "nuxt-doctor/nuxt-ui",
@@ -53,4 +109,26 @@ function projectHasUAppRoot(root: string): boolean {
       return existsSync(absolute) && /<\s*UApp\b/.test(readFileSync(absolute, "utf8"));
     },
   );
+}
+
+function hasDoctorIgnore(ctx: Parameters<DoctorRule["create"]>[0], node: AnyNode): boolean {
+  return (
+    ctx.helpers.hasVueAttribute(node, "data-doctor-ignore") ||
+    ctx.helpers.hasVueDirective(node, "bind", "data-doctor-ignore")
+  );
+}
+
+function formControlReplacement(
+  ctx: Parameters<DoctorRule["create"]>[0],
+  node: AnyNode,
+): string | null {
+  if (node.rawName === "textarea") return "Use <UTextarea> for multiline text input.";
+  if (node.rawName === "select")
+    return "Use <USelect> for simple option lists, or <USelectMenu> for richer option data.";
+  if (node.rawName !== "input") return null;
+
+  if (ctx.helpers.hasVueDirective(node, "bind", "type")) return null;
+  const inputType = ctx.helpers.getStaticVueAttributeValue(node, "type")?.toLowerCase() ?? "text";
+  if (!TEXT_INPUT_TYPES.has(inputType)) return null;
+  return "Use <UInput> for text-like inputs. Use specialized Nuxt UI controls for checkbox, radio, switch, file, range, or other non-text inputs.";
 }

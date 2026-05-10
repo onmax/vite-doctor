@@ -1,6 +1,11 @@
 ---
 title: "Do not mutate props"
-description: "vue/reactivity/no-prop-mutation"
+description: "vue/reactivity/no-prop-mutation in vue-doctor/vue."
+ruleId: "vue/reactivity/no-prop-mutation"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "reactivity"
+fix: "suggestion"
 ---
 
 # Do not mutate props

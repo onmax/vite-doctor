@@ -1,6 +1,11 @@
 ---
 title: "Call Nuxt composables before await"
-description: "nuxt/context/no-composable-after-await"
+description: "nuxt/context/no-composable-after-await in nuxt-doctor/nuxt."
+ruleId: "nuxt/context/no-composable-after-await"
+pack: "nuxt-doctor/nuxt"
+severity: "error"
+category: "context"
+fix: "suggestion"
 ---
 
 # Call Nuxt composables before await

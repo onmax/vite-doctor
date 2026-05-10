@@ -8,6 +8,7 @@ import { expect, test } from "vite-plus/test";
 import { createRule, defineDoctorPlugin, runDoctor } from "../../core/src/index.ts";
 import nuxtContentRulePack from "../src/rules/nuxt-content.ts";
 import docusRulePack from "../src/rules/docus.ts";
+import { preferUButton, preferUFormControls } from "../src/rules/nuxt-ui.ts";
 import {
   noBrowserGlobalInUniversalCode,
   noBrowserSideEffectsInSetup,
@@ -19,6 +20,7 @@ import {
   noRouteObjectPageKey,
   noSubdirPluginAutoRegistrationAssumption,
   noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+  noRouteMiddlewareApiSecurity,
   noVueOrNitroContextInShared,
   noComposableAfterAwait,
   preferEventFetch,
@@ -232,6 +234,82 @@ for (const item of cases) {
   });
 }
 
+test("Nuxt UI button rule reports native buttons", async () => {
+  const result = await runRuleFixture({
+    rule: preferUButton,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<template><button type="button" @click="copy()">Copy</button></template>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.ruleId).toBe("nuxt-ui/prefer-u-button");
+  expect(result.diagnostics[0]?.suggestion).toContain("<UButton>");
+});
+
+test("Nuxt UI button rule ignores UButton and explicit doctor ignores", async () => {
+  const result = await runRuleFixture({
+    rule: preferUButton,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<template>
+<UButton @click="copy()">Copy</UButton>
+<button data-doctor-ignore type="button">Native</button>
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("Nuxt UI form controls rule reports clear native form control replacements", async () => {
+  const result = await runRuleFixture({
+    rule: preferUFormControls,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<template>
+<input type="email" v-model="email">
+<textarea v-model="body" />
+<select v-model="value"><option value="a">A</option></select>
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "nuxt-ui/prefer-u-form-controls",
+    "nuxt-ui/prefer-u-form-controls",
+    "nuxt-ui/prefer-u-form-controls",
+  ]);
+  expect(result.diagnostics.map((item) => item.suggestion)).toEqual([
+    expect.stringContaining("<UInput>"),
+    expect.stringContaining("<UTextarea>"),
+    expect.stringContaining("<USelect>"),
+  ]);
+});
+
+test("Nuxt UI form controls rule ignores ambiguous native inputs and layout elements", async () => {
+  const result = await runRuleFixture({
+    rule: preferUFormControls,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<template>
+<div>
+  <form>
+    <label>Email</label>
+    <input type="checkbox">
+    <input type="file">
+    <input type="hidden">
+    <input :type="dynamicType">
+  </form>
+</div>
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test("browser globals inside client-only callbacks are not reported", async () => {
   const files = {
     "app/app.vue": `<script setup lang="ts">
@@ -431,6 +509,106 @@ export function sendWhenHidden() {
   expect(browser.diagnostics).toHaveLength(0);
   expect(time.diagnostics).toHaveLength(1);
   expect(time.diagnostics[0]?.file).toContain("app/pages/index.vue");
+});
+
+test("Nuxt runtime rules skip content, config, generated, client-only, and external package noise", async () => {
+  const markdownMiddleware = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "content/blog/release.md":
+        "```ts [middleware/auth.ts]\nexport default defineNuxtRouteMiddleware(() => navigateTo('/login'))\n```",
+      "server/api/private.get.ts": `export default defineEventHandler(() => ({ ok: true }))`,
+    },
+  });
+  const env = await runRuleFixture({
+    rule: noPlainEnvInAppCode,
+    framework: "nuxt",
+    files: {
+      "content.config.ts": `export default { source: process.env.CONTENT_SOURCE }`,
+      "config/env.ts": `export const isPr = Boolean(process.env.PULL_REQUEST)`,
+      "cli/src/cli.ts": `if (process.env.DEBUG) process.exit(0)`,
+      "app/pages/index.vue": `<script setup lang="ts">const key = process.env.API_KEY</script>`,
+    },
+  });
+  const generatedShared = await runRuleFixture({
+    rule: noNestedSharedAutoimportAssumption,
+    framework: "nuxt",
+    files: {
+      "shared/types/lexicons/app/bsky/actor.ts": `// @generated\nexport interface Actor { did: string }`,
+      "shared/utils/nested/math.ts": `export const one = 1`,
+    },
+  });
+  const clientAwait = await runRuleFixture({
+    rule: noComposableAfterAwait,
+    framework: "nuxt",
+    files: {
+      "app/components/CommandPalette.client.vue": `<script setup lang="ts">
+async function handleSelect(to: string) {
+  await close()
+  await navigateTo(to)
+}
+</script>`,
+      "app/pages/index.vue": `<script setup lang="ts">await foo(); useRuntimeConfig()</script>`,
+    },
+  });
+
+  expect(markdownMiddleware.diagnostics).toHaveLength(0);
+  expect(env.diagnostics.map((item) => item.file)).toHaveLength(1);
+  expect(env.diagnostics[0]?.file).toContain("app/pages/index.vue");
+  expect(generatedShared.diagnostics.map((item) => item.file)).toHaveLength(1);
+  expect(generatedShared.diagnostics[0]?.file).toContain("shared/utils/nested/math.ts");
+  expect(clientAwait.diagnostics.map((item) => item.file)).toHaveLength(1);
+  expect(clientAwait.diagnostics[0]?.file).toContain("app/pages/index.vue");
+});
+
+test("route middleware security rule reports only auth-like middleware without server guards", async () => {
+  const redirects = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/docs-version.global.ts": `export default defineNuxtRouteMiddleware((to) => {
+  if (!to.path.startsWith('/docs/')) return
+  return navigateTo('/docs/4.x')
+})`,
+      "app/middleware/guest.ts": `export default defineNuxtRouteMiddleware(() => {
+  const { loggedIn } = useUserSession()
+  if (loggedIn.value) return navigateTo('/admin')
+})`,
+      "server/api/feedback.get.ts": `export default defineEventHandler(() => [])`,
+    },
+  });
+  const guarded = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => {
+  const { loggedIn } = useUserSession()
+  if (!loggedIn.value) return navigateTo('/admin/login')
+})`,
+      "server/api/admin.get.ts": `export default defineEventHandler(async (event) => {
+  const { user } = await requireUserSession(event)
+  if (!user?.login || !(await isAuthorizedAdmin(user.login))) throw createError({ statusCode: 403 })
+  return {}
+})`,
+    },
+  });
+  const unguarded = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => {
+  const { loggedIn } = useUserSession()
+  if (!loggedIn.value) return navigateTo('/admin/login')
+})`,
+      "server/api/admin.get.ts": `export default defineEventHandler(() => ({}))`,
+    },
+  });
+
+  expect(redirects.diagnostics).toHaveLength(0);
+  expect(guarded.diagnostics).toHaveLength(0);
+  expect(unguarded.diagnostics).toHaveLength(1);
+  expect(unguarded.diagnostics[0]?.severity).toBe("warn");
 });
 
 test("module packs activate from dependencies", async () => {

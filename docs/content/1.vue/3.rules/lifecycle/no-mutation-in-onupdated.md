@@ -1,6 +1,11 @@
 ---
 title: "Do not mutate state in onUpdated"
-description: "vue/lifecycle/no-mutation-in-onupdated"
+description: "vue/lifecycle/no-mutation-in-onupdated in vue-doctor/vue."
+ruleId: "vue/lifecycle/no-mutation-in-onupdated"
+pack: "vue-doctor/vue"
+severity: "error"
+category: "lifecycle"
+fix: "suggestion"
 ---
 
 # Do not mutate state in onUpdated

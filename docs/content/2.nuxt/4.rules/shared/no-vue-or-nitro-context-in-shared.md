@@ -1,6 +1,11 @@
 ---
 title: "Keep shared code runtime-neutral"
-description: "nuxt/shared/no-vue-or-nitro-context-in-shared"
+description: "nuxt/shared/no-vue-or-nitro-context-in-shared in nuxt-doctor/nuxt."
+ruleId: "nuxt/shared/no-vue-or-nitro-context-in-shared"
+pack: "nuxt-doctor/nuxt"
+severity: "error"
+category: "architecture"
+fix: "suggestion"
 ---
 
 # Keep shared code runtime-neutral

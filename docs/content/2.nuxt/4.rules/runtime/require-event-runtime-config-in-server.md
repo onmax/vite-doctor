@@ -1,6 +1,11 @@
 ---
 title: "Pass event to useRuntimeConfig in server handlers"
-description: "nuxt/runtime/require-event-runtime-config-in-server"
+description: "nuxt/runtime/require-event-runtime-config-in-server in nuxt-doctor/nuxt."
+ruleId: "nuxt/runtime/require-event-runtime-config-in-server"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "runtime-config"
+fix: "suggestion"
 ---
 
 # Pass event to useRuntimeConfig in server handlers

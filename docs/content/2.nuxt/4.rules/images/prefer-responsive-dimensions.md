@@ -1,6 +1,11 @@
 ---
 title: "Provide image dimensions or sizes"
-description: "nuxt-image/prefer-responsive-dimensions"
+description: "nuxt-image/prefer-responsive-dimensions in nuxt-doctor/nuxt-image."
+ruleId: "nuxt-image/prefer-responsive-dimensions"
+pack: "nuxt-doctor/nuxt-image"
+severity: "warn"
+category: "images"
+fix: "suggestion"
 ---
 
 # Provide image dimensions or sizes

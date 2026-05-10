@@ -1,6 +1,11 @@
 ---
 title: "Nested plugins are not auto-registered by default"
-description: "nuxt/plugins/no-subdir-auto-registration-assumption"
+description: "nuxt/plugins/no-subdir-auto-registration-assumption in nuxt-doctor/nuxt."
+ruleId: "nuxt/plugins/no-subdir-auto-registration-assumption"
+pack: "nuxt-doctor/nuxt"
+severity: "warn"
+category: "plugins"
+fix: "suggestion"
 ---
 
 # Nested plugins are not auto-registered by default
