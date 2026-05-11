@@ -39,7 +39,6 @@ interface Demo {
   duration: string;
   total: number;
   docs: string;
-  origin: string;
   scanned: number;
 }
 
@@ -65,7 +64,6 @@ const demos: Record<Framework, Demo> = {
     duration: "1.4s",
     total: 14,
     docs: "/vue",
-    origin: "vue.doctor",
     scanned: 26,
   },
   nuxt: {
@@ -89,7 +87,6 @@ const demos: Record<Framework, Demo> = {
     duration: "1.9s",
     total: 16,
     docs: "/nuxt",
-    origin: "nuxt.doctor",
     scanned: 38,
   },
 };
@@ -236,7 +233,6 @@ function severityColor(id: string) {
 }
 
 const agentResources = computed(() => {
-  const o = demo.value.origin;
   const pkg = demo.value.pkg;
   const mcpJson =
     framework.value === "nuxt"
@@ -250,7 +246,7 @@ const agentResources = computed(() => {
       : "";
   return {
     mcpJson,
-    rawUrl: `https://${o}/raw/${framework.value}.md`,
+    rawUrl: `${requestUrl.origin}/raw/${framework.value}.md`,
     rulesCmd: `pnpm dlx ${pkg} rules --format json`,
   };
 });
