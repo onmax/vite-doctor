@@ -10,6 +10,8 @@ export const noRandomOrLocalTimeRender = createRule({
     requires: { script: true, vue: true },
   },
   create(ctx) {
+    if (ctx.project.framework === "nuxt") return;
+    if (!ctx.project.ssr) return;
     if (ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
     return {
       ScriptNode(node: AnyNode) {

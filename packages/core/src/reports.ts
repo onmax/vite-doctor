@@ -9,6 +9,16 @@ export function createTextReport(result: DoctorRunResult): string {
   );
   lines.push(`Workspace: ${result.root}`);
   lines.push(`Health score: ${result.score}/100`);
+  if (result.project.nuxt?.manifest) {
+    const evidence = result.project.nuxt.manifest.evidence;
+    lines.push(
+      `Evidence used: manifest ${result.project.nuxt.manifest.hasManifest ? "present" : "missing"}, route graph ${evidence?.routeGraph ? "present" : "missing"}, build manifest ${evidence?.buildManifest ? "present" : "missing"}, ${evidence?.prerenderRoutes ?? 0} prerender routes, ${evidence?.serverRoutes ?? 0} server routes`,
+    );
+  }
+  const confidence = confidenceMix(result);
+  lines.push(
+    `Confidence mix: ${confidence.proven} proven, ${confidence.probable} probable, ${confidence.sourceOnly} source-only`,
+  );
   lines.push("");
   for (const severity of ["blocker", "error", "warn", "info"] as const) {
     const items = result.diagnostics.filter((d) => d.severity === severity);
@@ -35,13 +45,38 @@ export function createTextReport(result: DoctorRunResult): string {
     lines.push("Timings");
     for (const [name, ms] of Object.entries(result.timings)) lines.push(`  ${name}: ${ms}ms`);
   }
+  if (result.graph) {
+    lines.push("");
+    lines.push("Graph");
+    lines.push(
+      `  ${result.graph.files} files, ${result.graph.importEdges} imports, ${result.graph.exportEdges} exports, ${result.graph.virtualRoots} roots, ${result.graph.cycles} cycles`,
+    );
+  }
   return lines.join("\n");
+}
+
+function confidenceMix(result: DoctorRunResult) {
+  const mix = { proven: 0, probable: 0, sourceOnly: 0 };
+  const hasBuildEvidence = Boolean(result.project.nuxt?.manifest?.evidence?.buildManifest);
+  for (const diagnostic of result.diagnostics) {
+    if (
+      diagnostic.severity === "info" ||
+      (!hasBuildEvidence &&
+        diagnostic.severity === "warn" &&
+        /(?:browser-global|time-dependent|random-or-local-time)/.test(diagnostic.ruleId))
+    )
+      mix.sourceOnly++;
+    else if (diagnostic.severity === "blocker" || diagnostic.severity === "error") mix.proven++;
+    else mix.probable++;
+  }
+  return mix;
 }
 
 export function createJsonReport(result: DoctorRunResult): string {
   return `${JSON.stringify(
     {
       version: result.version,
+      reportVersion: result.reportVersion ?? 2,
       framework: result.framework,
       root: result.root,
       score: result.score,
@@ -50,6 +85,8 @@ export function createJsonReport(result: DoctorRunResult): string {
       diagnostics: result.diagnostics,
       suppressedDiagnostics: result.suppressedDiagnostics,
       timings: result.timings,
+      phases: result.phases,
+      graph: result.graph,
     },
     null,
     2,
@@ -73,7 +110,11 @@ export function createSarifReport(result: DoctorRunResult): string {
                 id: diagnostic.ruleId,
                 name: diagnostic.ruleId,
                 shortDescription: { text: diagnostic.ruleId },
-                properties: { category: diagnostic.category },
+                properties: {
+                  category: diagnostic.category,
+                  confidence: diagnostic.confidence,
+                  analysisPhase: diagnostic.analysisPhase,
+                },
               })),
             },
           },
@@ -81,7 +122,15 @@ export function createSarifReport(result: DoctorRunResult): string {
             ruleId: diagnostic.ruleId,
             level: sarifLevel(diagnostic.severity),
             message: { text: diagnostic.message },
-            partialFingerprints: { "vue-doctor/v1": diagnostic.fingerprint },
+            partialFingerprints: {
+              "vue-doctor/v1": diagnostic.fingerprint,
+              "vue-doctor/v2": diagnostic.fingerprint,
+            },
+            properties: {
+              confidence: diagnostic.confidence,
+              evidenceKinds: diagnostic.evidence?.map((item) => item.kind),
+              analysisPhase: diagnostic.analysisPhase,
+            },
             locations: [
               {
                 physicalLocation: {
@@ -95,6 +144,15 @@ export function createSarifReport(result: DoctorRunResult): string {
                 },
               },
             ],
+            relatedLocations: diagnostic.related?.map((item) => ({
+              physicalLocation: {
+                artifactLocation: { uri: relative(result.root, item.file) },
+                region: item.range
+                  ? { startLine: item.range.line, startColumn: item.range.column }
+                  : undefined,
+              },
+              message: { text: item.message },
+            })),
           })),
         },
       ],

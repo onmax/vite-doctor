@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { dirname, join, resolve } from "pathe";
 import { expect, test } from "vite-plus/test";
-import { createRule, defineDoctorPlugin, runDoctor } from "../../core/src/index.ts";
+import { createRule, defineDoctorPlugin, runDoctor, vueRulePack } from "../../core/src/index.ts";
 import nuxtContentRulePack from "../src/rules/nuxt-content.ts";
 import docusRulePack from "../src/rules/docus.ts";
 import { preferUButton, preferUFormControls } from "../src/rules/nuxt-ui.ts";
@@ -39,17 +39,27 @@ import {
   preferExplicitUseStateKeyInExportedComposables,
   preferNuxtPageOverRouterView,
   preferUseCookieForInitialClientState,
+  noNonSerializableUseState,
   requireStableAsyncDataKey,
 } from "../src/rules/nuxt.ts";
+import {
+  preferAssertMethod,
+  preferGetRequestIp,
+  preferValidatedBody,
+  preferValidatedQuery,
+  preferValidatedRouterParams,
+} from "../src/rules/nitro/index.ts";
 import { runRuleFixture } from "../../core/src/testkit.ts";
 import {
   collectNuxtDoctorRulePacks,
   resolveNuxtDoctorMcpOptions,
   writeManifest,
 } from "../src/module.ts";
+import { mcpToolContracts } from "../src/runtime/mcp/contract.ts";
 import { runNuxtDoctorMcpReport } from "../src/runtime/mcp/doctor.ts";
-import { createRulesReport, explainRule } from "../../core/src/index.ts";
-import { nuxtDoctorPlugins, nuxtRulePacks } from "../src/rules/index.ts";
+import { createRulesReport, createTextReport, explainRule } from "../../core/src/index.ts";
+import { nitroRulePack, nuxtDoctorPlugins, nuxtRulePacks } from "../src/rules/index.ts";
+import { createNuxtRuntimeEvidence } from "../src/rules/nuxt/evidence.ts";
 
 const cases = [
   {
@@ -74,7 +84,7 @@ const cases = [
     rule: noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
     id: "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
     file: "app/pages/index.vue",
-    source: `<script setup lang="ts">const now = Date.now()</script>`,
+    source: `<template>{{ now }}</template><script setup lang="ts">const now = Date.now()</script>`,
   },
   {
     rule: preferNuxtPageOverRouterView,
@@ -133,8 +143,8 @@ const cases = [
   {
     rule: requireStableAsyncDataKey,
     id: "nuxt/fetch/require-stable-asyncdata-key",
-    file: "app/pages/index.vue",
-    source: `<script setup lang="ts">await useAsyncData(() => $fetch('/api/user'))</script>`,
+    file: "app/composables/useUser.ts",
+    source: `export function useUser() { return useAsyncData(() => $fetch('/api/user')) }`,
   },
   {
     rule: preferExplicitUseStateKeyInExportedComposables,
@@ -146,7 +156,7 @@ const cases = [
     rule: noComposableAfterAwait,
     id: "nuxt/context/no-composable-after-await",
     file: "app/pages/index.vue",
-    source: `<script setup lang="ts">await foo(); useRuntimeConfig()</script>`,
+    source: `<script setup lang="ts">async function load() { await foo(); useRuntimeConfig() }</script>`,
   },
   {
     rule: preferEventFetch,
@@ -233,6 +243,538 @@ for (const item of cases) {
     expect(result.diagnostics[0]?.ruleId).toBe(item.id);
   });
 }
+
+test("app directory placement is only reported for Nuxt 4 projects", async () => {
+  const result = await runRuleFixture({
+    rule: preferAppDirectoryPlacement,
+    framework: "nuxt",
+    dependencies: { nuxt: "3.16.2" },
+    files: { "pages/index.vue": `<template><div /></template>` },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("Nitro pack is exported and consumed by Nuxt rule packs", () => {
+  const packs = nuxtRulePacks();
+  expect(nitroRulePack.rules.map((rule) => rule.meta.id)).toEqual(
+    expect.arrayContaining([
+      "nuxt/server/prefer-event-fetch",
+      "nuxt/runtime/require-event-runtime-config-in-server",
+      "nitro/request/prefer-validated-body",
+      "nitro/request/prefer-validated-query",
+      "nitro/request/prefer-validated-router-params",
+      "nitro/request/prefer-assert-method",
+      "nitro/request/prefer-get-request-ip",
+    ]),
+  );
+  expect(packs.map((pack) => pack.name)).toContain("nuxt-doctor/nitro");
+  expect(
+    packs.find((pack) => pack.name === "nuxt-doctor/nuxt")?.rules.map((rule) => rule.meta.id),
+  ).not.toContain("nuxt/server/prefer-event-fetch");
+});
+
+test("Nitro request rules prefer validated H3 utilities", async () => {
+  const body = await runRuleFixture({
+    rule: preferValidatedBody,
+    framework: "nuxt",
+    files: {
+      "server/api/user.post.ts": `export default defineEventHandler(async (event) => {
+  const body = await readBody(event)
+  return userBodySchema.parse(body)
+})`,
+    },
+  });
+  const query = await runRuleFixture({
+    rule: preferValidatedQuery,
+    framework: "nuxt",
+    files: {
+      "server/api/search.get.ts": `export default defineEventHandler((event) => {
+  const query = getQuery(event)
+  return searchSchema.safeParse(query)
+})`,
+    },
+  });
+  const params = await runRuleFixture({
+    rule: preferValidatedRouterParams,
+    framework: "nuxt",
+    files: {
+      "server/api/users/[id].get.ts": `export default defineEventHandler((event) => {
+  const params = getRouterParams(event)
+  return validateParams(params)
+})`,
+    },
+  });
+
+  expect(body.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-validated-body");
+  expect(query.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-validated-query");
+  expect(params.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-validated-router-params");
+});
+
+test("Nitro validation rules ignore validated utilities and unrelated validation", async () => {
+  const alreadyValidated = await runRuleFixture({
+    rule: preferValidatedBody,
+    framework: "nuxt",
+    files: {
+      "server/api/user.post.ts": `export default defineEventHandler((event) => {
+  return readValidatedBody(event, userBodySchema.parse)
+})`,
+    },
+  });
+  const rawOnly = await runRuleFixture({
+    rule: preferValidatedQuery,
+    framework: "nuxt",
+    files: {
+      "server/api/search.get.ts": `export default defineEventHandler((event) => {
+  const query = getQuery(event)
+  return query.q
+})`,
+    },
+  });
+  const unrelated = await runRuleFixture({
+    rule: preferValidatedRouterParams,
+    framework: "nuxt",
+    files: {
+      "server/api/users/[id].get.ts": `export default defineEventHandler(async (event) => {
+  const params = getRouterParams(event)
+  const body = await readBody(event)
+  return paramsSchema.parse(body)
+})`,
+    },
+  });
+
+  expect(alreadyValidated.diagnostics).toHaveLength(0);
+  expect(rawOnly.diagnostics).toHaveLength(0);
+  expect(unrelated.diagnostics).toHaveLength(0);
+});
+
+test("Nitro request rules prefer assertMethod for single-method checks", async () => {
+  const result = await runRuleFixture({
+    rule: preferAssertMethod,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  if (getMethod(event) !== 'POST') throw createError({ statusCode: 405 })
+  return {}
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-assert-method");
+});
+
+test("Nitro request IP rule reports only request-sensitive raw header reads", async () => {
+  const sensitive = await runRuleFixture({
+    rule: preferGetRequestIp,
+    framework: "nuxt",
+    files: {
+      "server/api/rate-limit.ts": `export default defineEventHandler((event) => {
+  const ip = getHeader(event, 'x-forwarded-for')
+  return rateLimit(ip)
+})`,
+    },
+  });
+  const passive = await runRuleFixture({
+    rule: preferGetRequestIp,
+    framework: "nuxt",
+    files: {
+      "server/api/debug.ts": `export default defineEventHandler((event) => {
+  const forwarded = getHeader(event, 'x-forwarded-for')
+  return { forwarded }
+})`,
+    },
+  });
+
+  expect(sensitive.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-get-request-ip");
+  expect(passive.diagnostics).toHaveLength(0);
+});
+
+test("non-SEO head metadata is ignored by SEO composable preference", async () => {
+  const result = await runRuleFixture({
+    rule: preferSeoComposables,
+    framework: "nuxt",
+    files: {
+      "app/app.vue": `<script setup lang="ts">
+useHead({
+  meta: [
+    { charset: 'utf-8' },
+    { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+    { name: 'theme-color', content: 'white' }
+  ],
+  link: [{ rel: 'icon', href: '/favicon.ico' }],
+  htmlAttrs: { lang: 'en' }
+})
+useSeoMeta({ title: 'Home', description: 'Dashboard' })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("static head attributes are ignored by useHeadSafe preference", async () => {
+  const result = await runRuleFixture({
+    rule: preferUseHeadSafeForUntrustedValues,
+    framework: "nuxt",
+    files: {
+      "app/error.vue": `<script setup lang="ts">
+useHead({ htmlAttrs: { lang: 'en' } })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("client-only string props are ignored by template conditional rule", async () => {
+  const result = await runRuleFixture({
+    rule: noClientConditionalInTemplate,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<template>
+<section>
+  <CodeBlock :code="\`if (import.meta.client) console.log('client')\`" />
+  <div v-if="show">Visible</div>
+</section>
+</template>
+<script setup lang="ts">
+const show = true
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("top-level script setup composables after awaited data are compiler-preserved", async () => {
+  const result = await runRuleFixture({
+    rule: noComposableAfterAwait,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<script setup lang="ts">
+const { data } = await useAsyncData('home', () => $fetch('/api/public'))
+useSeoMeta({ title: data.value?.title })
+useHead({ meta: [{ name: 'description', content: 'Home' }] })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("composables after await in custom async functions still report", async () => {
+  const result = await runRuleFixture({
+    rule: noComposableAfterAwait,
+    framework: "nuxt",
+    files: {
+      "app/composables/useThing.ts": `export async function useThing() {
+  await load()
+  return useRuntimeConfig()
+}`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nuxt/context/no-composable-after-await");
+});
+
+test("navigateTo after await in client-callable handlers is ignored", async () => {
+  const result = await runRuleFixture({
+    rule: noComposableAfterAwait,
+    framework: "nuxt",
+    files: {
+      "app/components/SearchBox.vue": `<template><button @click="submit">Search</button></template>
+<script setup lang="ts">
+async function submit() {
+  await saveSearch()
+  navigateTo('/search')
+}
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("navigateTo after await in object onClick handlers is ignored", async () => {
+  const result = await runRuleFixture({
+    rule: noComposableAfterAwait,
+    framework: "nuxt",
+    files: {
+      "app/components/Menu.vue": `<script setup lang="ts">
+async function logout() {
+  await clear()
+  navigateTo('/login')
+}
+const items = [{ label: 'Logout', onClick: logout }]
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("time utilities that do not reach SSR output are ignored", async () => {
+  const result = await runRuleFixture({
+    rule: noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    framework: "nuxt",
+    files: {
+      "app/components/Chart.vue": `<template><ChartCanvas :points="points" /></template>
+<script setup lang="ts">
+const points = computed(() => [{ x: Date.UTC(2024, 1, 1), y: new Date(build.time).getTime() }])
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("direct SSR time output still reports", async () => {
+  const result = await runRuleFixture({
+    rule: noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<template>{{ now }}</template><script setup lang="ts">const now = Date.now()</script>`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe(
+    "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
+  );
+});
+
+test("browser globals after server return guard are ignored", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/composables/useToc.ts": `export function useToc() {
+  if (import.meta.server) return
+  return document.querySelectorAll('h2')
+}`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("VueUse wrappers may receive browser global targets", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+useEventListener(window, 'resize', () => {})
+useIntersectionObserver(document.body, () => {})
+const locked = useScrollLock(document)
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("browser globals in template-bound command functions are client-callable", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/components/DownloadButton.vue": `<template><button @click="download">Download</button></template>
+<script setup lang="ts">
+function download() {
+  document.createElement('a').click()
+}
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("client-callable function chains suppress browser globals", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/composables/useKeyboardList.ts": `<script setup lang="ts">
+function isSearchFocused() {
+  return document.activeElement?.tagName === 'INPUT'
+}
+function focusFirst() {
+  document.querySelector('button')?.focus()
+}
+function onKeydown(event: KeyboardEvent) {
+  if (isSearchFocused()) return
+  if (event.key === 'Enter') focusFirst()
+}
+useEventListener('keydown', onKeydown)
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("returned command functions suppress browser globals", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/composables/useDownload.ts": `export function useDownload() {
+  function download() {
+    const a = document.createElement('a')
+    a.click()
+  }
+  return { download }
+}`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("unknown browser globals downgrade to warnings without build evidence", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/utils/browser.ts": `export function getWidth() { return window.innerWidth }`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.severity).toBe("warn");
+});
+
+test("server fetch public internal routes do not require event context", async () => {
+  const result = await runRuleFixture({
+    rule: preferEventFetch,
+    framework: "nuxt",
+    files: {
+      "server/api/search.ts": `export default defineEventHandler(() => $fetch('/api/registry/search'))`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("server fetch request-sensitive internal routes require event context", async () => {
+  const result = await runRuleFixture({
+    rule: preferEventFetch,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler(() => $fetch('/api/user'))`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nuxt/server/prefer-event-fetch");
+});
+
+test("server browser API rule ignores browser-global property names", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInServer,
+    framework: "nuxt",
+    files: {
+      "server/api/team.ts": `export default defineEventHandler(() => ({
+  location: member.location,
+  navigator: profile.navigator
+}))`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("deterministic async data keys are accepted", async () => {
+  const result = await runRuleFixture({
+    rule: requireStableAsyncDataKey,
+    framework: "nuxt",
+    files: {
+      "app/pages/pkg.vue": `<script setup lang="ts">
+const route = useRoute()
+await useAsyncData(kebabCase(route.path), () => $fetch('/api/pkg'))
+await useAsyncData(\`pkg:\${route.params.name}\`, () => $fetch('/api/pkg'))
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("obviously unstable async data keys still report", async () => {
+  const result = await runRuleFixture({
+    rule: requireStableAsyncDataKey,
+    framework: "nuxt",
+    files: {
+      "app/pages/pkg.vue": `<script setup lang="ts">await useAsyncData(Date.now(), () => $fetch('/api/pkg'))</script>`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nuxt/fetch/require-stable-asyncdata-key");
+});
+
+test("page-local missing async data key is suppressed while reusable composable still reports", async () => {
+  const page = await runRuleFixture({
+    rule: requireStableAsyncDataKey,
+    framework: "nuxt",
+    files: {
+      "app/pages/package.vue": `<script setup lang="ts">await useAsyncData(() => $fetch('/api/package'))</script>`,
+    },
+  });
+  const composable = await runRuleFixture({
+    rule: requireStableAsyncDataKey,
+    framework: "nuxt",
+    files: {
+      "app/composables/usePackage.ts": `export function usePackage() { return useAsyncData(() => $fetch('/api/package')) }`,
+    },
+  });
+
+  expect(page.diagnostics).toHaveLength(0);
+  expect(composable.diagnostics[0]?.ruleId).toBe("nuxt/fetch/require-stable-asyncdata-key");
+});
+
+test("client-only useState non-serializable values are ignored while SSR state reports", async () => {
+  const client = await runRuleFixture({
+    rule: noNonSerializableUseState,
+    framework: "nuxt",
+    files: {
+      "app/plugins/visited.client.ts": `export default defineNuxtPlugin(() => useState('visited', () => new Set()))`,
+    },
+  });
+  const universal = await runRuleFixture({
+    rule: noNonSerializableUseState,
+    framework: "nuxt",
+    files: {
+      "app/composables/useVisited.ts": `export function useVisited() { return useState('visited', () => new Set()) }`,
+    },
+  });
+
+  expect(client.diagnostics).toHaveLength(0);
+  expect(universal.diagnostics[0]?.ruleId).toBe("nuxt/state/no-nonserializable-usestate");
+});
+
+test("Vue lifecycle evidence skips Nuxt content, server, generated, and client-only files", async () => {
+  await withFixture(
+    {
+      "content/demo.md": `setInterval(() => {}, 1000)`,
+      "server/api/events.ts": `export default defineEventHandler(() => setInterval(() => {}, 1000))`,
+      "shared/types/lexicons/generated.ts": `// @generated\nnew IntersectionObserver(() => {})`,
+      "app/plugins/view.client.ts": `setInterval(() => {}, 1000)`,
+      "app/components/Leaky.vue": `<script setup>setInterval(() => {}, 1000)</script>`,
+    },
+    {},
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        plugins: [defineDoctorPlugin({ name: "vue", rulePacks: [vueRulePack] })],
+      });
+
+      expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+        "vue/lifecycle/require-cleanup",
+      ]);
+      expect(result.diagnostics[0]?.file).toContain("app/components/Leaky.vue");
+    },
+  );
+});
 
 test("Nuxt UI button rule reports native buttons", async () => {
   const result = await runRuleFixture({
@@ -386,7 +928,7 @@ onPrehydrate(() => {
   expect(storage.diagnostics).toHaveLength(0);
 });
 
-test("top-level browser and time-dependent setup values are still reported", async () => {
+test("top-level browser globals report while unrendered time setup values are ignored", async () => {
   const browser = await runRuleFixture({
     rule: noBrowserGlobalInUniversalCode,
     framework: "nuxt",
@@ -421,7 +963,7 @@ const date = new Date()
     "nuxt/hydration/no-browser-global-in-universal-code",
   );
   expect(storage.diagnostics).toHaveLength(1);
-  expect(time.diagnostics).toHaveLength(3);
+  expect(time.diagnostics).toHaveLength(0);
 });
 
 test("type-only, server, and client callback contexts do not create hydration noise", async () => {
@@ -507,8 +1049,7 @@ export function sendWhenHidden() {
   });
 
   expect(browser.diagnostics).toHaveLength(0);
-  expect(time.diagnostics).toHaveLength(1);
-  expect(time.diagnostics[0]?.file).toContain("app/pages/index.vue");
+  expect(time.diagnostics).toHaveLength(0);
 });
 
 test("Nuxt runtime rules skip content, config, generated, client-only, and external package noise", async () => {
@@ -558,8 +1099,7 @@ async function handleSelect(to: string) {
   expect(env.diagnostics[0]?.file).toContain("app/pages/index.vue");
   expect(generatedShared.diagnostics.map((item) => item.file)).toHaveLength(1);
   expect(generatedShared.diagnostics[0]?.file).toContain("shared/utils/nested/math.ts");
-  expect(clientAwait.diagnostics.map((item) => item.file)).toHaveLength(1);
-  expect(clientAwait.diagnostics[0]?.file).toContain("app/pages/index.vue");
+  expect(clientAwait.diagnostics).toHaveLength(0);
 });
 
 test("route middleware security rule reports only auth-like middleware without server guards", async () => {
@@ -847,6 +1387,34 @@ test("manifest import dirs suppress configured nested composable warning", async
   );
 });
 
+test("manifest import globs suppress configured nested composable warning", async () => {
+  await withFixture(
+    {
+      "app/composables/npm/usePackage.ts": `export function usePackage() { return true }`,
+    },
+    {},
+    async (root) => {
+      await writeFileManifest(root, [], {
+        importsDirs: ["~/composables", "~/composables/*/*.ts"],
+      });
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        plugins: [
+          defineDoctorPlugin({
+            name: "fixture",
+            rulePacks: [
+              { name: "fixture", version: "0.0.0", rules: [noNestedAutoimportAssumption] },
+            ],
+          }),
+        ],
+      });
+
+      expect(result.diagnostics).toHaveLength(0);
+    },
+  );
+});
+
 test("manifest plugin files suppress configured nested plugin warning", async () => {
   await withFixture(
     {
@@ -896,6 +1464,44 @@ test("Nuxt module writes manifest and accepts context hook contributions", async
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     expect(manifest.modules.some((module: any) => module.name === "fixture-module")).toBe(true);
   });
+});
+
+test("Nuxt module writes evidence fields and text report shows evidence summary", async () => {
+  await withFixture(
+    {
+      "app/pages/index.vue": `<template><div /></template>`,
+      "server/api/user.ts": `export default defineEventHandler(() => ({ ok: true }))`,
+    },
+    {},
+    async (root) => {
+      await writeFileManifest(root, [], {
+        pages: [{ path: "/", file: join(root, "app/pages/index.vue"), name: "index" }],
+        prerenderRoutes: ["/"],
+        buildManifest: {
+          hasBuildManifest: true,
+          chunks: [{ file: "entry.mjs", src: "app/pages/index.vue", isEntry: true }],
+        },
+        serverHandlers: [{ route: "/api/user", file: "server/api/user.ts", method: "GET" }],
+      });
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        plugins: [defineDoctorPlugin({ name: "fixture", rulePacks: [] })],
+      });
+      const report = createTextReport(result);
+
+      expect(result.project.nuxt?.manifest?.evidence).toEqual({
+        routeGraph: true,
+        buildManifest: true,
+        prerenderRoutes: 1,
+        serverRoutes: 1,
+      });
+      expect(report).toContain(
+        "Evidence used: manifest present, route graph present, build manifest present, 1 prerender routes, 1 server routes",
+      );
+      expect(report).toContain("Confidence mix: 0 proven, 0 probable, 0 source-only");
+    },
+  );
 });
 
 test("Nuxt module writes manifest source hook contributions", async () => {
@@ -992,17 +1598,71 @@ test("Nuxt Doctor MCP options default on and can be disabled or customized", () 
   });
 });
 
-test("Nuxt Doctor MCP tools expose stable read-only names", () => {
-  const reportTool = readFileSync(resolve("src/runtime/mcp/tools/doctor-report.ts"), "utf8");
-  const rulesTool = readFileSync(resolve("src/runtime/mcp/tools/doctor-rules.ts"), "utf8");
-  const explainTool = readFileSync(resolve("src/runtime/mcp/tools/doctor-explain-rule.ts"), "utf8");
+test("Nuxt Doctor MCP tools share stable read-only contracts", () => {
+  expect(mcpToolContracts.report.name).toBe("doctor_report");
+  expect(mcpToolContracts.rules.name).toBe("doctor_rules");
+  expect(mcpToolContracts.explainRule.name).toBe("doctor_explain_rule");
+  expect(mcpToolContracts.report.annotations.readOnlyHint).toBe(true);
+  expect(mcpToolContracts.rules.annotations.readOnlyHint).toBe(true);
+  expect(mcpToolContracts.explainRule.annotations.readOnlyHint).toBe(true);
+  expect(mcpToolContracts.report.inputSchema.rules).toBeTruthy();
+  expect(mcpToolContracts.explainRule.inputSchema.ruleId).toBeTruthy();
+});
 
-  expect(reportTool).toContain('name: "doctor_report"');
-  expect(rulesTool).toContain('name: "doctor_rules"');
-  expect(explainTool).toContain('name: "doctor_explain_rule"');
-  expect(reportTool).toContain("readOnlyHint: true");
-  expect(rulesTool).toContain("readOnlyHint: true");
-  expect(explainTool).toContain("readOnlyHint: true");
+test("Nuxt runtime evidence classifies setup, client, server, lifecycle, command, and unknown execution", async () => {
+  const evidenceRule = createRule({
+    meta: {
+      id: "test/nuxt-runtime-evidence",
+      title: "Nuxt runtime evidence",
+      category: "architecture",
+      severity: "info",
+      requires: { script: true, nuxt: true },
+    },
+    create(ctx) {
+      const evidence = createNuxtRuntimeEvidence(ctx);
+      return {
+        ScriptNode(node: any) {
+          if (!ctx.helpers.isCall(node, "mark")) return;
+          ctx.report({
+            ruleId: "test/nuxt-runtime-evidence",
+            severity: "info",
+            category: "architecture",
+            file: ctx.file.path,
+            range: ctx.range(node),
+            message: evidence.executionFor(node),
+          });
+        },
+      };
+    },
+  });
+
+  const result = await runRuleFixture({
+    rule: evidenceRule,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<script setup lang="ts">
+mark('setup')
+function handleClick() { mark('event') }
+onMounted(() => mark('lifecycle'))
+const commands = { open() { mark('command') } }
+function helper() { mark('unknown') }
+</script>
+<template><button @click="handleClick">Open</button></template>`,
+      "server/api/user.ts": `export default defineEventHandler(() => mark('server'))`,
+      "app/plugins/client.client.ts": `mark('client')`,
+      "app/utils/evidence.ts": `function helper() { mark('unknown') }`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.message).sort()).toEqual([
+    "client-only",
+    "client-only",
+    "event-handler",
+    "returned-command",
+    "server-only",
+    "setup-time",
+    "unknown",
+  ]);
 });
 
 test("Nuxt Doctor MCP report scans the current project root", async () => {
@@ -1028,6 +1688,7 @@ test("Nuxt Doctor MCP rule payloads use JSON report helpers", () => {
   const rules = JSON.parse(createRulesReport(nuxtRulePacks(), "json"));
   expect(rules.rules.map((rule: any) => rule.pack)).toEqual(
     expect.arrayContaining([
+      "nuxt-doctor/nitro",
       "nuxt-doctor/nuxt",
       "nuxt-doctor/nuxt-content",
       "nuxt-doctor/nuxt-ui",

@@ -1,4 +1,11 @@
-import { AnyNode, createRule, isStableKeyNode, report } from "./shared.js";
+import {
+  AnyNode,
+  createRule,
+  isObviouslyUnstableKeyNode,
+  isStableKeyNode,
+  report,
+} from "./shared.js";
+import { createNuxtRuntimeEvidence } from "./evidence.js";
 
 export const requireStableAsyncDataKey = createRule({
   meta: {
@@ -10,6 +17,7 @@ export const requireStableAsyncDataKey = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
+    const evidence = createNuxtRuntimeEvidence(ctx);
     return {
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useAsyncData") && !ctx.helpers.isCall(node, "useFetch"))
@@ -17,6 +25,7 @@ export const requireStableAsyncDataKey = createRule({
         const first = node.arguments?.[0];
         if (!first) return;
         if (first.type === "ArrowFunctionExpression" || first.type === "FunctionExpression") {
+          if (!evidence.isReusableDataComposable(node)) return;
           report(
             ctx,
             node,
@@ -28,7 +37,7 @@ export const requireStableAsyncDataKey = createRule({
           );
           return;
         }
-        if (!isStableKeyNode(first)) {
+        if (!isStableKeyNode(first) && isObviouslyUnstableKeyNode(first, ctx.file.text)) {
           report(
             ctx,
             first,

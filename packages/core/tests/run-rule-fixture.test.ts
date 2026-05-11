@@ -8,11 +8,16 @@ import {
   noRefAsOperand,
   noVIfWithVFor,
   noBrowserApiInSetup,
+  preferComposableRefReturn,
+  preferDefineModel,
+  preferPropsDestructureDefaults,
+  preferTypeProps,
 } from "../src/rules/vue.ts";
 import { createRule } from "../src/index.ts";
 import {
   runNuxtAppRuleFixture,
   runNuxtManifestRuleFixture,
+  runProjectFixture,
   runRuleFixture,
   runVueSfcRuleFixture,
 } from "../src/testkit.ts";
@@ -160,19 +165,246 @@ function exportImage() {
   expect(result.diagnostics).toHaveLength(0);
 });
 
+test("vue browser API rule terminates on recursive client-only call chains", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInSetup,
+    framework: "vue",
+    dependencies: { "@vue/server-renderer": "^3.5.0" },
+    files: {
+      "app.vue": `<script setup lang="ts">
+function draw() {
+  window.dispatchEvent(new Event('draw'))
+  update()
+}
+
+function update() {
+  draw()
+}
+</script>
+<template><button @click="update">Draw</button></template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/ssr/no-browser-api-in-setup",
+  ]);
+});
+
+test("vue browser API rule accepts boolean client guard identifiers", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInSetup,
+    framework: "vue",
+    dependencies: { "@vue/server-renderer": "^3.5.0" },
+    files: {
+      "src/configurable.ts": `import { isClient } from '@vueuse/shared'
+export const defaultWindow = isClient ? window : undefined`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test("vue browser API rule still reports top-level setup reads", async () => {
-  const result = await runVueSfcRuleFixture(
-    noBrowserApiInSetup,
-    `<script setup lang="ts">
+  const result = await runRuleFixture({
+    rule: noBrowserApiInSetup,
+    framework: "vue",
+    dependencies: { "@vue/server-renderer": "^3.5.0" },
+    files: {
+      "app.vue": `<script setup lang="ts">
 const width = window.innerWidth
 const root = document.documentElement
 </script>`,
-  );
+    },
+  });
 
   expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
     "vue/ssr/no-browser-api-in-setup",
     "vue/ssr/no-browser-api-in-setup",
   ]);
+});
+
+test("vue SSR rules are skipped for plain SPA projects", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInSetup,
+    framework: "vue",
+    files: {
+      "src/storage.ts": `export const token = window.localStorage.getItem('token')`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("Vue version gates modern macro rules", async () => {
+  const source = `<script setup lang="ts">
+const props = defineProps<{ value?: string }>()
+const emit = defineEmits(['update:modelValue'])
+const withDefaultsProps = withDefaults(defineProps<{ label?: string }>(), { label: 'Name' })
+</script>`;
+
+  const vue33 = await runProjectFixture({
+    framework: "vue",
+    dependencies: { vue: "^3.3.0" },
+    rules: [preferDefineModel, preferPropsDestructureDefaults],
+    files: { "app.vue": source },
+  });
+  const vue34 = await runProjectFixture({
+    framework: "vue",
+    dependencies: { vue: "^3.4.0" },
+    rules: [preferDefineModel, preferPropsDestructureDefaults],
+    files: {
+      "app.vue": `<script setup lang="ts">
+defineProps(['modelValue'])
+defineEmits(['update:modelValue'])
+const props = withDefaults(defineProps<{ label?: string }>(), { label: 'Name' })
+</script>`,
+    },
+  });
+  const vue35 = await runProjectFixture({
+    framework: "vue",
+    dependencies: { vue: "^3.5.0" },
+    rules: [preferDefineModel, preferPropsDestructureDefaults],
+    files: {
+      "app.vue": `<script setup lang="ts">
+defineProps(['modelValue'])
+defineEmits(['update:modelValue'])
+const props = withDefaults(defineProps<{ label?: string }>(), { label: 'Name' })
+</script>`,
+    },
+  });
+
+  expect(vue33.diagnostics).toHaveLength(0);
+  expect(vue34.diagnostics.map((item) => item.ruleId)).toEqual(["vue/style/prefer-define-model"]);
+  expect(vue35.diagnostics.map((item) => item.ruleId).sort()).toEqual([
+    "vue/style/prefer-define-model",
+    "vue/style/prefer-props-destructure-defaults",
+  ]);
+});
+
+test("prefer defineModel reports default and named v-model declarations", async () => {
+  const result = await runRuleFixture({
+    rule: preferDefineModel,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+defineProps({
+  modelValue: String,
+  title: String
+})
+defineEmits(['update:modelValue', 'update:title'])
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.suggestion)).toEqual([
+    "Use defineModel().",
+    "Use defineModel('title').",
+  ]);
+});
+
+test("prefer defineModel ignores existing defineModel usage", async () => {
+  const result = await runRuleFixture({
+    rule: preferDefineModel,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+const model = defineModel<string>()
+defineProps(['modelValue'])
+defineEmits(['update:modelValue'])
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("prefer props destructure defaults can be configured off", async () => {
+  const result = await runProjectFixture({
+    framework: "vue",
+    rules: [preferPropsDestructureDefaults],
+    config: {
+      rules: {
+        "vue/style/prefer-props-destructure-defaults": ["warn", { allowWithDefaults: true }],
+      },
+    },
+    files: {
+      "app.vue": `<script setup lang="ts">
+const props = withDefaults(defineProps<{ label?: string }>(), { label: 'Name' })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("prefer type props reports runtime props in TypeScript script setup", async () => {
+  const result = await runRuleFixture({
+    rule: preferTypeProps,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+defineProps({ label: String })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("vue/style/prefer-type-props");
+});
+
+test("prefer type props allows runtime validators when configured", async () => {
+  const result = await runProjectFixture({
+    framework: "vue",
+    rules: [preferTypeProps],
+    config: {
+      rules: {
+        "vue/style/prefer-type-props": ["warn", { allowRuntimeValidators: true }],
+      },
+    },
+    files: {
+      "app.vue": `<script setup lang="ts">
+defineProps({ label: String })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("prefer composable ref return reports reactive-derived object returns", async () => {
+  const result = await runRuleFixture({
+    rule: preferComposableRefReturn,
+    framework: "vue",
+    files: {
+      "src/useCounter.ts": `import { reactive } from 'vue'
+export function useCounter() {
+  const state = reactive({ count: 0 })
+  return { count: state.count }
+}`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("vue/reactivity/prefer-composable-ref-return");
+});
+
+test("prefer composable ref return accepts refs and toRefs", async () => {
+  const result = await runRuleFixture({
+    rule: preferComposableRefReturn,
+    framework: "vue",
+    files: {
+      "src/useRefs.ts": `import { computed, reactive, ref, toRefs } from 'vue'
+export function useCount() {
+  const count = ref(0)
+  const doubled = computed(() => count.value * 2)
+  return { count, doubled }
+}
+export function useState() {
+  const state = reactive({ count: 0 })
+  return toRefs(state)
+}`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
 });
 
 test("vue browser API rule ignores types and object event callbacks", async () => {

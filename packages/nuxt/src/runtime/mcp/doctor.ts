@@ -7,7 +7,18 @@ export async function runNuxtDoctorMcpReport(
   context: NuxtDoctorMcpContext,
   options: Pick<
     DoctorRunOptions,
-    "rules" | "severity" | "changed" | "since" | "baseline" | "newOnly" | "types" | "profile"
+    | "rules"
+    | "severity"
+    | "changed"
+    | "since"
+    | "baseline"
+    | "newOnly"
+    | "types"
+    | "analyses"
+    | "coverage"
+    | "runtimeEvidence"
+    | "confidenceMin"
+    | "profile"
   > = {},
 ) {
   const extraRulePacks = await context.getRulePacks();

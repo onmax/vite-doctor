@@ -38,11 +38,15 @@
       "types": "./dist/testkit.d.mts",
       "default": "./dist/testkit.mjs"
     },
+    "./internal/nuxt-inventory": {
+      "types": "./dist/internal/nuxt-inventory.d.mts",
+      "default": "./dist/internal/nuxt-inventory.mjs"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vp pack src/index.ts src/config.ts src/reports.ts src/testkit.ts",
-    "dev": "vp pack src/index.ts src/config.ts src/reports.ts src/testkit.ts --watch",
+    "build": "vp pack src/index.ts src/config.ts src/reports.ts src/testkit.ts src/internal/nuxt-inventory.ts src/internal/source-inventory.ts src/internal/rule-runner.ts src/internal/diagnostic-policy.ts",
+    "dev": "vp pack src/index.ts src/config.ts src/reports.ts src/testkit.ts src/internal/nuxt-inventory.ts src/internal/source-inventory.ts src/internal/rule-runner.ts src/internal/diagnostic-policy.ts --watch",
     "test": "vp test --passWithNoTests",
     "check": "vp check"
   },

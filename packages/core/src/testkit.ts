@@ -5,6 +5,7 @@ import { dirname, join } from "pathe";
 import {
   defineDoctorPlugin,
   runDoctor,
+  type DoctorConfig,
   type DoctorRule,
   type DoctorRunOptions,
   type DoctorRunResult,
@@ -22,6 +23,7 @@ export interface ProjectFixtureOptions {
   framework?: "vue" | "nuxt";
   dependencies?: Record<string, string>;
   rules?: DoctorRule[];
+  config?: DoctorConfig;
   run?: Omit<DoctorRunOptions, "root" | "framework" | "plugins">;
 }
 
@@ -73,8 +75,14 @@ export async function runProjectFixture(options: ProjectFixtureOptions): Promise
       mkdirSync(dirname(join(root, file)), { recursive: true });
       writeFileSync(join(root, file), text);
     }
+    if (options.config)
+      writeFileSync(
+        join(root, "doctor.config.ts"),
+        `export default ${JSON.stringify(options.config, null, 2)}\n`,
+      );
     return await runDoctor({
       ...options.run,
+      config: Boolean(options.config) || options.run?.config,
       root,
       framework: options.framework ?? "vue",
       plugins: [

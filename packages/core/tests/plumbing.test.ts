@@ -10,6 +10,7 @@ import {
   createRulesReport,
   createSarifReport,
   createRule,
+  createNuxtProjectInventory,
   defineDoctorPlugin,
   explainRule,
   runDoctor,
@@ -64,12 +65,107 @@ const secondRule = createRule({
   },
 });
 
+const duplicateRule = createRule({
+  meta: {
+    id: "test/duplicate-rule",
+    title: "Duplicate rule",
+    category: "architecture",
+    severity: "warn",
+    requires: { script: true },
+  },
+  create(ctx) {
+    return {
+      ScriptNode(node: any) {
+        if (node.type !== "Program") return;
+        for (let index = 0; index < 2; index++) {
+          ctx.report({
+            ruleId: "test/duplicate-rule",
+            severity: "warn",
+            category: "architecture",
+            file: ctx.file.path,
+            range: ctx.range(node),
+            message: "Duplicate report.",
+            fingerprint: "same-fingerprint",
+          });
+        }
+      },
+    };
+  },
+});
+
+const optionRule = createRule({
+  meta: {
+    id: "test/options-rule",
+    title: "Options rule",
+    category: "architecture",
+    severity: "warn",
+    requires: { script: true },
+  },
+  create(ctx) {
+    return {
+      ScriptNode(node: any) {
+        if (node.type !== "Program") return;
+        ctx.report({
+          ruleId: "test/options-rule",
+          severity: ctx.severity,
+          category: "architecture",
+          file: ctx.file.path,
+          message: `option:${(ctx.options as any)?.mode ?? "missing"}`,
+        });
+      },
+    };
+  },
+});
+
+test("Nuxt project inventory normalizes manifest scan roots", () => {
+  const root = resolve("/fixture/project");
+  const inventory = createNuxtProjectInventory(
+    root,
+    {
+      nuxtVersion: "4.0.0",
+      vueVersion: "3.5.0",
+      rootDir: root,
+      srcDir: root,
+      appDir: "app",
+      buildDir: ".nuxt",
+      autoImports: [],
+      components: [],
+      layers: [],
+      aliases: { "@": "app" },
+      routeRules: {},
+      serverHandlers: [{ file: "server/api/user.ts" }],
+      modules: [],
+      importsDirs: ["app/composables/custom"],
+      pluginFiles: ["app/plugins/analytics.ts"],
+      appScanRoots: ["app"],
+      sharedScanRoots: ["shared/utils"],
+      keyedComposables: ["useUser"],
+      pages: [{ path: "/", file: "app/pages/index.vue" }],
+      prerenderRoutes: ["/"],
+      buildManifest: { hasBuildManifest: true, chunks: [] },
+    },
+    resolve(root, ".nuxt/doctor.manifest.json"),
+  );
+
+  expect(inventory.hasManifest).toBe(true);
+  expect(inventory.importsDirs).toEqual([resolve(root, "app/composables/custom")]);
+  expect(inventory.pluginFiles).toEqual([resolve(root, "app/plugins/analytics.ts")]);
+  expect(inventory.evidence).toEqual({
+    routeGraph: true,
+    buildManifest: true,
+    prerenderRoutes: 1,
+    serverRoutes: 1,
+  });
+});
+
 test("native glob selection excludes generated folders", async () => {
   await withFixture(
     {
       "src/app.ts": "const ok = true",
       "dist/app.ts": "const ignored = true",
       "node_modules/pkg/index.ts": "const ignored = true",
+      "public/browser.js": "window.alert('ignored')",
+      "src/vendor.min.js": "window.alert('ignored')",
     },
     async (root) => {
       const result = await runDoctor({
@@ -97,6 +193,134 @@ test("native rule glob matching filters enabled rules", async () => {
   });
 });
 
+test("diagnostics with identical fingerprints are reported once", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      plugins: [pluginWith(duplicateRule)],
+    });
+
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.summary.warn).toBe(1);
+  });
+});
+
+test("rule config disables exact rule ids", async () => {
+  await withFixture(
+    {
+      "src/app.ts": "const ok = true",
+      "doctor.config.ts": `export default { rules: { "test/report-program": "off" } }\n`,
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        config: true,
+        framework: "vue",
+        plugins: [pluginWith(reportProgramRule)],
+      });
+
+      expect(result.diagnostics).toHaveLength(0);
+    },
+  );
+});
+
+test("rule config applies severity strings and tuple options", async () => {
+  await withFixture(
+    {
+      "src/app.ts": "const ok = true",
+      "doctor.config.ts": `export default { rules: { "test/options-rule": ["error", { mode: "strict" }] } }\n`,
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        config: true,
+        framework: "vue",
+        plugins: [pluginWith(optionRule)],
+      });
+
+      expect(result.diagnostics[0]?.severity).toBe("error");
+      expect(result.diagnostics[0]?.message).toBe("option:strict");
+      expect(result.summary.error).toBe(1);
+    },
+  );
+});
+
+test("malformed rule config fails predictably", async () => {
+  await withFixture(
+    {
+      "src/app.ts": "const ok = true",
+      "doctor.config.ts": `export default { rules: { "test/report-program": ["fatal", {}] } }\n`,
+    },
+    async (root) => {
+      await expect(
+        runDoctor({
+          root,
+          config: true,
+          framework: "vue",
+          plugins: [pluginWith(reportProgramRule)],
+        }),
+      ).rejects.toThrow(/Invalid severity/);
+    },
+  );
+});
+
+test("preset selection runs configured pack rules and config overrides presets", async () => {
+  await withFixture(
+    {
+      "src/app.ts": "const ok = true",
+      "doctor.config.ts": `export default { rules: { "test/report-program": "error" } }\n`,
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        config: true,
+        preset: "strict",
+        framework: "vue",
+        plugins: [
+          defineDoctorPlugin({
+            name: "test",
+            rulePacks: [
+              {
+                name: "test",
+                version: "0.0.0",
+                rules: [reportProgramRule, secondRule],
+                presets: { strict: ["test/report-program"] },
+              },
+            ],
+          }),
+        ],
+      });
+
+      expect(result.diagnostics.map((item) => item.ruleId)).toEqual(["test/report-program"]);
+      expect(result.diagnostics[0]?.severity).toBe("error");
+    },
+  );
+});
+
+test("severity filters use final configured severity", async () => {
+  await withFixture(
+    {
+      "src/app.ts": "const ok = true",
+      "doctor.config.ts": `export default { rules: { "test/report-program": "error" } }\n`,
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        config: true,
+        severity: "error",
+        framework: "vue",
+        plugins: [pluginWith(reportProgramRule, secondRule)],
+      });
+      const sarif = JSON.parse(createSarifReport(result));
+
+      expect(result.diagnostics.map((item) => item.ruleId)).toEqual(["test/report-program"]);
+      expect(result.summary.error).toBe(1);
+      expect(sarif.runs[0].results[0].level).toBe("error");
+    },
+  );
+});
+
 test("json reporter produces stable machine output", async () => {
   await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
     const result = await runDoctor({
@@ -109,6 +333,26 @@ test("json reporter produces stable machine output", async () => {
     expect(json.diagnostics[0].ruleId).toBe("test/report-program");
     expect(json.summary.warn).toBe(1);
   });
+});
+
+test("health score is not exhausted by warnings alone", async () => {
+  await withFixture(
+    Object.fromEntries(
+      Array.from({ length: 20 }, (_, index) => [`src/app${index}.ts`, "const ok = true"]),
+    ),
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        plugins: [pluginWith(reportProgramRule)],
+      });
+
+      expect(result.summary.warn).toBe(20);
+      expect(result.summary.blocker).toBe(0);
+      expect(result.summary.error).toBe(0);
+      expect(result.score).toBeGreaterThan(0);
+    },
+  );
 });
 
 test("sarif reporter includes partial fingerprints", async () => {

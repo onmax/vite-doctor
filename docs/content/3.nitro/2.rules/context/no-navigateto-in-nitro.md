@@ -1,8 +1,8 @@
 ---
 title: "Do not use navigateTo in Nitro routes"
-description: "nuxt/context/no-navigateto-in-nitro in nuxt-doctor/nuxt."
+description: "nuxt/context/no-navigateto-in-nitro in nuxt-doctor/nitro."
 ruleId: "nuxt/context/no-navigateto-in-nitro"
-pack: "nuxt-doctor/nuxt"
+pack: "nuxt-doctor/nitro"
 severity: "error"
 category: "server"
 fix: "suggestion"
@@ -14,7 +14,7 @@ fix: "suggestion"
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
+- Pack: `nuxt-doctor/nitro`
 - Severity: `error`
 - Category: `server`
 - Fix: `suggestion`

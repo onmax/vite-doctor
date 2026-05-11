@@ -17,6 +17,11 @@ export interface NuxtDoctorMcpOptions {
   instructions?: string;
 }
 
+type EvidenceBuildManifest = {
+  hasBuildManifest: boolean;
+  chunks: Array<{ file?: string; src?: string; isEntry?: boolean; isDynamicEntry?: boolean }>;
+};
+
 const defaultMcpOptions = {
   route: "/mcp",
   name: "Nuxt Doctor",
@@ -31,17 +36,56 @@ export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions 
   nuxt.options.doctor.mcp ??= options.mcp ?? true;
 
   const resolver = createResolver(import.meta.url);
+  const evidence = {
+    pages: [] as Array<{ path?: string; file?: string; name?: string }>,
+    prerenderRoutes: new Set<string>(),
+    buildManifest: undefined as EvidenceBuildManifest | undefined,
+    componentDirs: [] as unknown[],
+    importDirs: [] as unknown[],
+  };
+
+  nuxt.hook?.("pages:resolved", (pages: any[]) => {
+    evidence.pages = flattenPages(pages).map((page: any) => ({
+      path: page.path,
+      file: page.file,
+      name: page.name,
+    }));
+  });
+
+  nuxt.hook?.("prerender:routes", (ctx: any) => {
+    for (const route of toArray(ctx?.routes)) evidence.prerenderRoutes.add(String(route));
+  });
+
+  nuxt.hook?.("build:manifest", (manifest: Record<string, any>) => {
+    evidence.buildManifest = {
+      hasBuildManifest: true,
+      chunks: Object.values(manifest ?? {}).map((chunk: any) => ({
+        file: chunk.file,
+        src: chunk.src,
+        isEntry: chunk.isEntry,
+        isDynamicEntry: chunk.isDynamicEntry,
+      })),
+    };
+  });
+
+  nuxt.hook?.("imports:dirs", (dirs: unknown[]) => {
+    evidence.importDirs.push(...toArray(dirs));
+  });
+
+  nuxt.hook?.("components:dirs", (dirs: unknown[]) => {
+    evidence.componentDirs.push(...toArray(dirs));
+  });
 
   nuxt.hook?.("builder:generateApp", async () => {
-    await writeManifest(nuxt);
+    await writeManifest(nuxt, evidence);
   });
 
   nuxt.hook?.("prepare:types", async () => {
-    await writeManifest(nuxt);
+    await writeManifest(nuxt, evidence);
   });
 
   nuxt.hook?.("close", async () => {
-    await writeManifest(nuxt);
+    await writeManifest(nuxt, evidence);
   });
 
   nuxt.options.cli ??= {};
@@ -113,7 +157,17 @@ async function setupMcpIntegration(nuxt: any, toolsDir: string): Promise<void> {
 
 function writeMcpToolProxies(targetDir: string, toolsDir: string): void {
   mkdirSync(targetDir, { recursive: true });
-  for (const name of ["doctor-report", "doctor-rules", "doctor-explain-rule"]) {
+  for (const name of [
+    "doctor-report",
+    "doctor-rules",
+    "doctor-explain-rule",
+    "doctor-dead-code",
+    "doctor-duplicates",
+    "doctor-health",
+    "doctor-graph",
+    "doctor-refs",
+    "doctor-explain-diagnostic",
+  ]) {
     writeFileSync(
       join(targetDir, `${name}.mjs`),
       `export { default } from ${JSON.stringify(`${toolsDir}/${name}.mjs`)}\n`,
@@ -121,7 +175,16 @@ function writeMcpToolProxies(targetDir: string, toolsDir: string): void {
   }
 }
 
-export async function writeManifest(nuxt: any): Promise<NuxtDoctorManifest> {
+export async function writeManifest(
+  nuxt: any,
+  evidence?: {
+    pages?: Array<{ path?: string; file?: string; name?: string }>;
+    prerenderRoutes?: Set<string>;
+    buildManifest?: EvidenceBuildManifest;
+    componentDirs?: unknown[];
+    importDirs?: unknown[];
+  },
+): Promise<NuxtDoctorManifest> {
   const rootDir = resolve(nuxt.options.rootDir ?? process.cwd());
   const buildDir = resolve(rootDir, nuxt.options.buildDir ?? ".nuxt");
   const appDir = resolve(rootDir, nuxt.options.appDir ?? "app");
@@ -133,7 +196,7 @@ export async function writeManifest(nuxt: any): Promise<NuxtDoctorManifest> {
     version: entry?.meta?.version,
     doctorPlugin: entry?.doctor?.plugin,
   }));
-  const manifest: NuxtDoctorManifest = {
+  const manifest = {
     nuxtVersion: nuxt._version ?? nuxt.version ?? "4",
     vueVersion: nuxt.options.vue?.version ?? "3.5",
     rootDir,
@@ -159,19 +222,42 @@ export async function writeManifest(nuxt: any): Promise<NuxtDoctorManifest> {
       method: handler.method,
       middleware: handler.middleware,
     })),
+    pages: evidence?.pages ?? [],
+    prerenderRoutes: [
+      ...new Set([
+        ...toArray(nuxt.options.nitro?.prerender?.routes).map(String),
+        ...[...(evidence?.prerenderRoutes ?? [])].map(String),
+      ]),
+    ].sort(),
+    buildManifest: evidence?.buildManifest ?? { hasBuildManifest: false, chunks: [] },
     modules,
     moduleSources: moduleSources.map(normalizeModuleSource),
     runtimeConfig: redactRuntimeConfig(nuxt.options.runtimeConfig),
     keyedComposables: toArray(nuxt.options.optimization?.keyedComposables).map(String),
-    importsDirs: normalizeDirs(rootDir, toArray(nuxt.options.imports?.dirs)),
+    importsDirs: normalizeDirs(rootDir, [
+      ...toArray(nuxt.options.imports?.dirs),
+      ...toArray(evidence?.importDirs),
+    ]),
     pluginFiles: normalizePluginFiles(rootDir, toArray(nuxt.options.plugins)),
     appScanRoots: [appDir],
     sharedScanRoots: [resolve(rootDir, "shared/utils"), resolve(rootDir, "shared/types")],
-  };
+  } as NuxtDoctorManifest;
   await nuxt.callHook?.("doctor:context", { nuxt, manifest });
-  mkdirSync(buildDir, { recursive: true });
-  writeFileSync(join(buildDir, "doctor.manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  const manifestPath = join(buildDir, "doctor.manifest.json");
+  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  if (lastManifestWrite.path !== manifestPath || lastManifestWrite.content !== serialized) {
+    mkdirSync(buildDir, { recursive: true });
+    writeFileSync(manifestPath, serialized);
+    lastManifestWrite.path = manifestPath;
+    lastManifestWrite.content = serialized;
+  }
   return manifest;
+}
+
+const lastManifestWrite: { path: string; content: string } = { path: "", content: "" };
+
+function flattenPages(pages: any[]): any[] {
+  return toArray(pages).flatMap((page: any) => [page, ...flattenPages(page.children)]);
 }
 
 function toArray<T = unknown>(value: T[] | Record<string, T> | undefined | null): T[] {

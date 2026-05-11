@@ -1,4 +1,4 @@
-import { AnyNode, createRule, report } from "./shared.js";
+import { AnyNode, createRule, report, sourceForNode } from "./shared.js";
 
 export const preferEventFetch = createRule({
   meta: {
@@ -14,6 +14,7 @@ export const preferEventFetch = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "$fetch")) return;
+        if (!shouldRequireEventFetch(ctx.file.text, node)) return;
         report(
           ctx,
           node,
@@ -27,3 +28,27 @@ export const preferEventFetch = createRule({
     };
   },
 });
+
+function shouldRequireEventFetch(source: string, node: AnyNode) {
+  const first = node.arguments?.[0];
+  const path =
+    first?.type === "Literal" && typeof first.value === "string"
+      ? first.value
+      : sourceForNode(first, source);
+  if (!path.startsWith("/api/")) return false;
+  if (isRequestSensitivePath(path)) return true;
+  return hasRequestScopedContextNearby(source, node.start ?? 0);
+}
+
+function isRequestSensitivePath(path: string) {
+  return /\/(?:api\/)?(?:user|users|me|session|auth|account|admin|team|teams|org|organization|settings|billing|profile|private)(?:\/|$)/i.test(
+    path,
+  );
+}
+
+function hasRequestScopedContextNearby(source: string, offset: number) {
+  const around = source.slice(Math.max(0, offset - 700), offset + 700);
+  return /\b(?:getCookie|getHeader|getRequestHeader|getUserSession|requireUserSession|useSession|requireAuth|event\.context|event\.node\.req|readValidatedBody)\b/.test(
+    around,
+  );
+}

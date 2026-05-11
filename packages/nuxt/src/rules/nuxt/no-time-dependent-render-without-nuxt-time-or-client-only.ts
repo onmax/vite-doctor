@@ -2,6 +2,7 @@ import {
   AnyNode,
   createRule,
   isClientOnlyPath,
+  isLikelyRenderedTimeExpression,
   isNewDate,
   isNuxtRuntimeFile,
   report,
@@ -29,7 +30,7 @@ export const noTimeDependentRenderWithoutNuxtTimeOrClientOnly = createRule({
         const name = ctx.helpers.getCalleeName(node);
         if (name !== "Date.now" && name !== "Math.random" && !isNewDate(node)) return;
         if (ctx.helpers.isTypeOnlyContext(node)) return;
-        if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
+        if (!isLikelyRenderedTimeExpression(ctx, node)) return;
         report(
           ctx,
           node,

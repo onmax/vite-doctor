@@ -1,4 +1,5 @@
 import { AnyNode, createRule, report } from "./shared.js";
+import { createNuxtRuntimeEvidence } from "./evidence.js";
 
 export const noNonSerializableUseState = createRule({
   meta: {
@@ -10,9 +11,11 @@ export const noNonSerializableUseState = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
+    const evidence = createNuxtRuntimeEvidence(ctx);
     return {
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useState")) return;
+        if (!evidence.isPayloadSerialized(node)) return;
         const init = node.arguments?.[1];
         const text = init ? ctx.file.text.slice(init.start, init.end) : "";
         if (/new\s+(WebSocket|Map|Set|Date|RegExp)|=>\s*\([^)]*\)\s*=>|function\s*\(/.test(text)) {

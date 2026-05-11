@@ -1,11 +1,13 @@
-import type { DoctorFramework, DoctorPlugin } from "./primitives.js";
+import type { DoctorFramework, DoctorPlugin, DoctorSeverity } from "./primitives.js";
+
+export type DoctorRuleConfig = "off" | DoctorSeverity | [DoctorSeverity, unknown];
 
 export interface DoctorConfig {
   extends?: string[];
   plugins?: DoctorPlugin[];
   include?: string[];
   exclude?: string[];
-  rules?: Record<string, "off" | "info" | "warn" | "error" | "blocker" | [string, unknown]>;
+  rules?: Record<string, DoctorRuleConfig>;
   suppressions?: Array<{ ruleId?: string; fingerprint?: string; file?: string; reason: string }>;
   typeAware?: boolean;
   cache?: { dir?: string; strategy?: "content-hash" };
@@ -31,6 +33,13 @@ export interface DoctorRunOptions {
   severity?: "error" | "warn" | "info";
   rules?: string;
   types?: boolean;
+  threads?: number;
+  coverage?: string;
+  runtimeEvidence?: string;
+  analyses?: string;
+  emitGraph?: boolean;
+  confidenceMin?: string;
+  structuralReview?: boolean;
   profile?: boolean;
   cache?: boolean;
   fix?: boolean;

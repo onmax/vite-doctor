@@ -5,8 +5,10 @@ import {
   hasPriorAwaitInSameExecutionScope,
   isClientOnlyPath,
   isNuxtRuntimeFile,
+  isTopLevelVueScriptSetupCall,
   report,
 } from "./shared.js";
+import { createNuxtRuntimeEvidence } from "./evidence.js";
 
 export const noComposableAfterAwait = createRule({
   meta: {
@@ -18,12 +20,15 @@ export const noComposableAfterAwait = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
+    const evidence = createNuxtRuntimeEvidence(ctx);
     if (!isNuxtRuntimeFile(ctx) || isClientOnlyPath(ctx.file.relativePath)) return;
     const composables = new Set([...NUXT_AUTO_IMPORTS, "useSeoMeta", "useHead", "useHeadSafe"]);
     return {
       ScriptNode(node: AnyNode) {
         const name = ctx.helpers.getCalleeName(node);
         if (!name || !composables.has(name) || !hasPriorAwaitInSameExecutionScope(node)) return;
+        if (isTopLevelVueScriptSetupCall(ctx, node)) return;
+        if (evidence.isClientCallable(node)) return;
         if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
         report(
           ctx,

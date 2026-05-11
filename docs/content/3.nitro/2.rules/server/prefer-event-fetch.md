@@ -1,8 +1,8 @@
 ---
 title: "Use event.$fetch in Nitro handlers"
-description: "nuxt/server/prefer-event-fetch in nuxt-doctor/nuxt."
+description: "nuxt/server/prefer-event-fetch in nuxt-doctor/nitro."
 ruleId: "nuxt/server/prefer-event-fetch"
-pack: "nuxt-doctor/nuxt"
+pack: "nuxt-doctor/nitro"
 severity: "warn"
 category: "server"
 fix: "suggestion"
@@ -14,7 +14,7 @@ fix: "suggestion"
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
+- Pack: `nuxt-doctor/nitro`
 - Severity: `warn`
 - Category: `server`
 - Fix: `suggestion`

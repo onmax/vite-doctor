@@ -11,6 +11,7 @@ export const noBrowserApiInSetup = createRule({
   },
   create(ctx) {
     if (ctx.project.framework === "nuxt") return;
+    if (!ctx.project.ssr) return;
     return {
       ScriptNode(node: AnyNode) {
         if (

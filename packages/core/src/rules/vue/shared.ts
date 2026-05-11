@@ -151,7 +151,7 @@ export function createEslintVueRule(options: {
                   },
                 },
                 plugins: { vue: vuePlugin as any },
-                rules: { [options.eslintId]: "error" },
+                rules: { [options.eslintId]: eslintRuleConfig(ctx.options) },
               },
             ],
             { filename: ctx.file.relativePath },
@@ -187,6 +187,11 @@ export function createEslintVueRule(options: {
       };
     },
   });
+}
+
+function eslintRuleConfig(options: unknown): "error" | ["error", ...unknown[]] {
+  if (Array.isArray(options)) return ["error", ...options];
+  return options ? ["error", options] : "error";
 }
 
 export function rangeFromLintMessage(source: string, message: AnyNode) {

@@ -4,6 +4,7 @@ import {
   type DoctorPlugin,
   type RulePack,
 } from "@vue-doctor/core";
+import nitroRulePack from "./nitro/index.js";
 import nuxtRulePack from "./nuxt.js";
 import nuxtContentRulePack from "./nuxt-content.js";
 import nuxtUiRulePack from "./nuxt-ui.js";
@@ -15,6 +16,7 @@ import nuxtHubRulePack from "./nuxthub.js";
 import docusRulePack from "./docus.js";
 
 export {
+  nitroRulePack,
   nuxtRulePack,
   nuxtContentRulePack,
   nuxtUiRulePack,
@@ -28,6 +30,7 @@ export {
 
 export function nuxtRulePacks(extraRulePacks: RulePack[] = []): RulePack[] {
   return [
+    appSourceRulePack(nitroRulePack),
     appSourceRulePack(nuxtRulePack),
     appSourceRulePack(nuxtContentRulePack),
     appSourceRulePack(nuxtUiRulePack),

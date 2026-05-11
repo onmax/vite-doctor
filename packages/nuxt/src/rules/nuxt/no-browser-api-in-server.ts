@@ -1,4 +1,4 @@
-import { AnyNode, BROWSER_GLOBALS, createRule, report } from "./shared.js";
+import { AnyNode, BROWSER_GLOBALS, createRule, isObjectPropertyKey, report } from "./shared.js";
 
 export const noBrowserApiInServer = createRule({
   meta: {
@@ -16,6 +16,7 @@ export const noBrowserApiInServer = createRule({
         if (node.type !== "Identifier" || !BROWSER_GLOBALS.has(node.name)) return;
         if (
           ctx.helpers.isTypeOnlyContext(node) ||
+          isObjectPropertyKey(node) ||
           ctx.helpers.hasLocalBindingBefore(node, ctx.file.text)
         )
           return;

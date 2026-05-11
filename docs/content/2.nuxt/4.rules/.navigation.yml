@@ -1,0 +1,27 @@
+title: Rules
+navigation:
+  - index.md
+  - appconfig
+  - auth
+  - browser-api
+  - cache
+  - composables
+  - content
+  - context
+  - fetch
+  - hydration
+  - images
+  - imports
+  - layers
+  - links
+  - middleware
+  - plugins
+  - project
+  - routing
+  - runtime
+  - scripts
+  - security
+  - seo
+  - shared
+  - state
+  - ui

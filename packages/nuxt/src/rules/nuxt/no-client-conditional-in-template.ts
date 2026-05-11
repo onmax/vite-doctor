@@ -1,11 +1,4 @@
-import {
-  AnyNode,
-  createRule,
-  isClientOnlyPath,
-  isNuxtRuntimeFile,
-  report,
-  templateExpressions,
-} from "./shared.js";
+import { AnyNode, createRule, isClientOnlyPath, isNuxtRuntimeFile, report } from "./shared.js";
 
 export const noClientConditionalInTemplate = createRule({
   meta: {
@@ -26,7 +19,7 @@ export const noClientConditionalInTemplate = createRule({
     return {
       TemplateNode(node: AnyNode) {
         if (node.type !== "VElement") return;
-        const expressions = templateExpressions(node, ctx.file.text);
+        const expressions = conditionalExpressions(node, ctx.file.text);
         if (
           !expressions.some((text) =>
             /\b(import\.meta\.client|process\.client|window|document|navigator)\b/.test(text),
@@ -46,3 +39,22 @@ export const noClientConditionalInTemplate = createRule({
     };
   },
 });
+
+function conditionalExpressions(node: AnyNode, source: string): string[] {
+  return (node.startTag?.attributes ?? [])
+    .filter(
+      (attr: AnyNode) =>
+        attr.directive &&
+        (attr.key?.name?.name === "if" ||
+          attr.key?.name?.name === "else-if" ||
+          attr.key?.name?.name === "show"),
+    )
+    .map((attr: AnyNode) => {
+      const expression = attr.value?.expression;
+      if (!expression) return "";
+      if (expression.raw) return String(expression.raw);
+      if (expression.start != null && expression.end != null)
+        return source.slice(expression.start, expression.end);
+      return "";
+    });
+}

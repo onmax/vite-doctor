@@ -19,6 +19,10 @@ export { requireLifecycleCleanup } from "./require-lifecycle-cleanup.js";
 export { preferUseIdForStableIds } from "./prefer-use-id-for-stable-ids.js";
 export { noRandomOrLocalTimeRender } from "./no-random-or-local-time-render.js";
 export { dataAllowMismatchSurgical } from "./data-allow-mismatch-surgical.js";
+export { preferDefineModel } from "./prefer-define-model.js";
+export { preferPropsDestructureDefaults } from "./prefer-props-destructure-defaults.js";
+export { preferTypeProps } from "./prefer-type-props.js";
+export { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 
 import { noPropMutation } from "./no-prop-mutation.js";
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
@@ -41,6 +45,10 @@ import { requireLifecycleCleanup } from "./require-lifecycle-cleanup.js";
 import { preferUseIdForStableIds } from "./prefer-use-id-for-stable-ids.js";
 import { noRandomOrLocalTimeRender } from "./no-random-or-local-time-render.js";
 import { dataAllowMismatchSurgical } from "./data-allow-mismatch-surgical.js";
+import { preferDefineModel } from "./prefer-define-model.js";
+import { preferPropsDestructureDefaults } from "./prefer-props-destructure-defaults.js";
+import { preferTypeProps } from "./prefer-type-props.js";
+import { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 import type { RulePack } from "../../primitives.js";
 
 const rules = [
@@ -65,6 +73,10 @@ const rules = [
   preferUseIdForStableIds,
   noRandomOrLocalTimeRender,
   dataAllowMismatchSurgical,
+  preferDefineModel,
+  preferPropsDestructureDefaults,
+  preferTypeProps,
+  preferComposableRefReturn,
 ];
 
 const vueRulePack: RulePack = {

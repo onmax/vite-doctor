@@ -272,6 +272,58 @@
       "severity": "warn",
       "fixable": "suggestion",
       "docsUrl": ""
+    },
+    {
+      "pack": "vue-doctor/vue",
+      "source": "packages/core/src/rules/vue/prefer-define-model.ts",
+      "id": "vue/style/prefer-define-model",
+      "title": "Prefer defineModel for component v-model",
+      "description": "",
+      "why": "",
+      "recommendedReplacement": "",
+      "category": "style",
+      "severity": "warn",
+      "fixable": "suggestion",
+      "docsUrl": ""
+    },
+    {
+      "pack": "vue-doctor/vue",
+      "source": "packages/core/src/rules/vue/prefer-props-destructure-defaults.ts",
+      "id": "vue/style/prefer-props-destructure-defaults",
+      "title": "Prefer props destructure defaults",
+      "description": "",
+      "why": "",
+      "recommendedReplacement": "",
+      "category": "style",
+      "severity": "warn",
+      "fixable": "suggestion",
+      "docsUrl": ""
+    },
+    {
+      "pack": "vue-doctor/vue",
+      "source": "packages/core/src/rules/vue/prefer-type-props.ts",
+      "id": "vue/style/prefer-type-props",
+      "title": "Prefer TypeScript props declarations",
+      "description": "",
+      "why": "",
+      "recommendedReplacement": "",
+      "category": "style",
+      "severity": "warn",
+      "fixable": "suggestion",
+      "docsUrl": ""
+    },
+    {
+      "pack": "vue-doctor/vue",
+      "source": "packages/core/src/rules/vue/prefer-composable-ref-return.ts",
+      "id": "vue/reactivity/prefer-composable-ref-return",
+      "title": "Prefer refs from reusable composables",
+      "description": "",
+      "why": "",
+      "recommendedReplacement": "",
+      "category": "reactivity",
+      "severity": "warn",
+      "fixable": "suggestion",
+      "docsUrl": ""
     }
   ]
 }

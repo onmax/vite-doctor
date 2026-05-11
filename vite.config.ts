@@ -4,8 +4,11 @@ export default defineConfig({
   staged: {
     "*": "vp check --fix",
   },
-  fmt: {},
-  lint: { options: { typeAware: true, typeCheck: true } },
+  fmt: { ignorePatterns: ["**/dist/**", "**/.vue-doctor/**"] },
+  lint: {
+    ignorePatterns: ["**/dist/**", "**/.vue-doctor/**"],
+    options: { typeAware: true, typeCheck: true },
+  },
   run: {
     cache: true,
   },

@@ -1,4 +1,5 @@
-import { AnyNode, createRule, isClientOnlyPath, isRuntimeAppFile, report } from "./shared.js";
+import { AnyNode, createRule, isClientOnlyPath, report } from "./shared.js";
+import { createNuxtRuntimeEvidence } from "./evidence.js";
 
 export const noRouterNavigationInSetup = createRule({
   meta: {
@@ -10,12 +11,14 @@ export const noRouterNavigationInSetup = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    if (!isRuntimeAppFile(ctx) || isClientOnlyPath(ctx.file.relativePath)) return;
+    const evidence = createNuxtRuntimeEvidence(ctx);
+    if (!evidence.isRuntimeAppFile() || isClientOnlyPath(ctx.file.relativePath)) return;
     return {
       ScriptNode(node: AnyNode) {
         if (!["router.push", "router.replace"].includes(ctx.helpers.getCalleeName(node) ?? ""))
           return;
         if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
+        if (evidence.isClientCallable(node)) return;
         if (ctx.file.isVueSfc && !ctx.helpers.isLikelyEventHandler(ctx.file.text, node.start)) {
           report(
             ctx,

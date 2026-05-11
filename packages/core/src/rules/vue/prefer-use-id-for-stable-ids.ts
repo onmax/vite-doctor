@@ -10,6 +10,8 @@ export const preferUseIdForStableIds = createRule({
     requires: { script: true, vue: true },
   },
   create(ctx) {
+    if (ctx.project.framework === "nuxt") return;
+    if (!ctx.project.ssr) return;
     return {
       ScriptNode(node: AnyNode) {
         const name = ctx.helpers.getCalleeName(node);

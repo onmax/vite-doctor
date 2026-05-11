@@ -7,8 +7,25 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const vueSources = ruleSourcesFromIndex(join(root, "packages/core/src/rules/vue/index.ts"));
 const nuxtRulesDir = join(root, "packages/nuxt/src/rules");
+const nitroRulesDir = join(nuxtRulesDir, "nitro");
+const nitroLegacyFiles = new Set([
+  "no-use-nuxt-app-in-nitro.ts",
+  "no-navigate-to-in-nitro.ts",
+  "prefer-event-fetch.ts",
+  "require-event-runtime-config-in-server.ts",
+  "no-client-composables-in-server.ts",
+  "no-browser-api-in-server.ts",
+]);
+const nitroSources = [
+  ...[...nitroLegacyFiles].map((file) => join(nuxtRulesDir, "nuxt", file)),
+  ...ruleSourcesFromIndex(join(nitroRulesDir, "index.ts")).filter((file) =>
+    file.startsWith(nitroRulesDir),
+  ),
+];
 const nuxtSources = [
-  ...ruleSourcesFromIndex(join(nuxtRulesDir, "nuxt/index.ts")),
+  ...ruleSourcesFromIndex(join(nuxtRulesDir, "nuxt/index.ts")).filter(
+    (file) => !nitroLegacyFiles.has(file.split("/").at(-1)),
+  ),
   ...readdirSync(nuxtRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "nuxt.ts")
     .sort()
@@ -17,12 +34,14 @@ const nuxtSources = [
 
 const vueRules = collectRules(vueSources, "vue-doctor/vue");
 const nuxtRules = collectRules(nuxtSources, "nuxt-doctor/nuxt");
+const nitroRules = collectRules(nitroSources, "nuxt-doctor/nitro");
 const publicRulesDir = join(root, "docs/public/rules");
 
 mkdirSync(publicRulesDir, { recursive: true });
 writeJson(join(publicRulesDir, "vue.json"), { rules: vueRules });
-writeJson(join(publicRulesDir, "nuxt.json"), { rules: nuxtRules });
-writeJson(join(publicRulesDir, "all.json"), { rules: [...vueRules, ...nuxtRules] });
+writeJson(join(publicRulesDir, "nitro.json"), { rules: nitroRules });
+writeJson(join(publicRulesDir, "nuxt.json"), { rules: [...nitroRules, ...nuxtRules] });
+writeJson(join(publicRulesDir, "all.json"), { rules: [...vueRules, ...nitroRules, ...nuxtRules] });
 
 writeRuleDocs({
   dir: join(root, "docs/content/1.vue/3.rules"),
@@ -44,12 +63,27 @@ writeRuleDocs({
     title: "Rules",
     description: "Nuxt 4 diagnostics in the Nuxt and ecosystem rule packs.",
     intro: [
-      "Nuxt rules cover auto-imports, fetching, routing, Nuxt context, Nitro/server boundaries, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.",
+      "Nuxt rules cover auto-imports, fetching, routing, Nuxt context, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.",
       "These pages are generated from rule metadata in `packages/nuxt/src/rules`.",
     ],
     command: "vp exec nuxt-doctor rules --format json",
   },
   rules: nuxtRules,
+});
+
+writeRuleDocs({
+  dir: join(root, "docs/content/3.nitro/2.rules"),
+  index: {
+    title: "Rules",
+    description: "Nitro request-runtime diagnostics in the Nuxt Doctor rule pack.",
+    intro: [
+      "Nitro rules cover server and request-runtime boundaries, event-aware helpers, validation, HTTP method assertions, and request metadata.",
+      "Nuxt Doctor consumes this shared Nitro rule pack for `server/` and `app/server/` diagnostics.",
+      "These pages are generated from rule metadata in `packages/nuxt/src/rules/nitro` and shared Nuxt server rules.",
+    ],
+    command: "vp exec nuxt-doctor rules --format json",
+  },
+  rules: nitroRules,
 });
 
 function collectRules(files, defaultPack) {
@@ -88,21 +122,33 @@ function writeRuleDocs({ dir, index, rules }) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
 
+  writeFileSync(join(dir, ".navigation.yml"), renderRulesNavigation(rules));
   writeFileSync(join(dir, "index.md"), renderRulesIndex({ ...index, rules }));
 
+  const categories = new Map();
   for (const rule of rules) {
-    const file = join(dir, `${rulePath(rule)}.md`);
+    const path = rulePath(rule);
+    const [category] = path.split("/");
+    categories.set(category, categoryTitle(rule.category || category));
+
+    const file = join(dir, `${path}.md`);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, renderRulePage(rule));
+  }
+
+  for (const [category, title] of [...categories].sort(([a], [b]) => a.localeCompare(b))) {
+    writeFileSync(join(dir, category, ".navigation.yml"), `title: ${yamlString(title)}\n`);
   }
 }
 
 function renderRulesIndex({ title, description, intro, command, rules }) {
   const lines = [
     "---",
-    `title: ${yamlString(title)}`,
+    `title: ${yamlString("Rule reference")}`,
     `description: ${yamlString(description)}`,
     "---",
+    "",
+    `# ${title}`,
     "",
     ...intro.flatMap((line) => [line, ""]),
     "The same metadata is exported as JSON under `/rules/` in the docs site.",
@@ -132,6 +178,7 @@ function renderRulesIndex({ title, description, intro, command, rules }) {
     "The docs build also writes static JSON files:",
     "",
     "- `/rules/vue.json`",
+    "- `/rules/nitro.json`",
     "- `/rules/nuxt.json`",
     "- `/rules/all.json`",
     "",
@@ -143,6 +190,20 @@ function renderRulesIndex({ title, description, intro, command, rules }) {
     "",
   );
   return `${lines.join("\n")}`;
+}
+
+function renderRulesNavigation(rules) {
+  const categories = [...new Set(rules.map((rule) => rulePath(rule).split("/")[0]).filter(Boolean))]
+    .map(String)
+    .sort((a, b) => a.localeCompare(b));
+
+  return [
+    "title: Rules",
+    "navigation:",
+    "  - index.md",
+    ...categories.map((category) => `  - ${category}`),
+    "",
+  ].join("\n");
 }
 
 function renderRulePage(rule) {
@@ -265,6 +326,14 @@ function slugSegment(value) {
     .replace(/^-+|-+$/g, "");
 }
 
+function categoryTitle(value) {
+  return slugSegment(value)
+    .split("-")
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
 function yamlString(value) {
   return JSON.stringify(String(value ?? ""));
 }
@@ -304,6 +373,7 @@ function visibleLength(value) {
 for (const file of [
   join(root, "docs/content/1.vue/3.rules/index.md"),
   join(root, "docs/content/2.nuxt/4.rules/index.md"),
+  join(root, "docs/content/3.nitro/2.rules/index.md"),
 ]) {
   if (!existsSync(dirname(file))) throw new Error(`Missing docs directory for ${file}`);
 }

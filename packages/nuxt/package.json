@@ -49,11 +49,35 @@
       "types": "./dist/runtime/mcp/tools/doctor-explain-rule.d.mts",
       "default": "./dist/runtime/mcp/tools/doctor-explain-rule.mjs"
     },
+    "./runtime/mcp/tools/doctor-dead-code": {
+      "types": "./dist/runtime/mcp/tools/doctor-dead-code.d.mts",
+      "default": "./dist/runtime/mcp/tools/doctor-dead-code.mjs"
+    },
+    "./runtime/mcp/tools/doctor-duplicates": {
+      "types": "./dist/runtime/mcp/tools/doctor-duplicates.d.mts",
+      "default": "./dist/runtime/mcp/tools/doctor-duplicates.mjs"
+    },
+    "./runtime/mcp/tools/doctor-health": {
+      "types": "./dist/runtime/mcp/tools/doctor-health.d.mts",
+      "default": "./dist/runtime/mcp/tools/doctor-health.mjs"
+    },
+    "./runtime/mcp/tools/doctor-graph": {
+      "types": "./dist/runtime/mcp/tools/doctor-graph.d.mts",
+      "default": "./dist/runtime/mcp/tools/doctor-graph.mjs"
+    },
+    "./runtime/mcp/tools/doctor-refs": {
+      "types": "./dist/runtime/mcp/tools/doctor-refs.d.mts",
+      "default": "./dist/runtime/mcp/tools/doctor-refs.mjs"
+    },
+    "./runtime/mcp/tools/doctor-explain-diagnostic": {
+      "types": "./dist/runtime/mcp/tools/doctor-explain-diagnostic.d.mts",
+      "default": "./dist/runtime/mcp/tools/doctor-explain-diagnostic.mjs"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vp pack src/index.ts src/module.ts src/cli.ts src/bin.ts src/rules/index.ts src/runtime/mcp/tools/doctor-report.ts src/runtime/mcp/tools/doctor-rules.ts src/runtime/mcp/tools/doctor-explain-rule.ts",
-    "dev": "vp pack src/index.ts src/module.ts src/cli.ts src/bin.ts src/rules/index.ts src/runtime/mcp/tools/doctor-report.ts src/runtime/mcp/tools/doctor-rules.ts src/runtime/mcp/tools/doctor-explain-rule.ts --watch",
+    "build": "vp pack src/index.ts src/module.ts src/cli.ts src/bin.ts src/rules/index.ts src/runtime/mcp/tools/doctor-report.ts src/runtime/mcp/tools/doctor-rules.ts src/runtime/mcp/tools/doctor-explain-rule.ts src/runtime/mcp/tools/doctor-dead-code.ts src/runtime/mcp/tools/doctor-duplicates.ts src/runtime/mcp/tools/doctor-health.ts src/runtime/mcp/tools/doctor-graph.ts src/runtime/mcp/tools/doctor-refs.ts src/runtime/mcp/tools/doctor-explain-diagnostic.ts",
+    "dev": "vp pack src/index.ts src/module.ts src/cli.ts src/bin.ts src/rules/index.ts src/runtime/mcp/tools/doctor-report.ts src/runtime/mcp/tools/doctor-rules.ts src/runtime/mcp/tools/doctor-explain-rule.ts src/runtime/mcp/tools/doctor-dead-code.ts src/runtime/mcp/tools/doctor-duplicates.ts src/runtime/mcp/tools/doctor-health.ts src/runtime/mcp/tools/doctor-graph.ts src/runtime/mcp/tools/doctor-refs.ts src/runtime/mcp/tools/doctor-explain-diagnostic.ts --watch",
     "test": "vp test --passWithNoTests",
     "check": "vp check"
   },

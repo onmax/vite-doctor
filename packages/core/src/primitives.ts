@@ -1,6 +1,40 @@
 export type DoctorSeverity = "blocker" | "error" | "warn" | "info";
-export type FixSafety = "safe" | "unsafe" | "suggestion";
+export type FixSafety = "safe" | "unsafe" | "suggestion" | "structural-review";
 export type DoctorFramework = "vue" | "nuxt";
+export type ExecutionKind =
+  | "file"
+  | "manifest"
+  | "workspace"
+  | "graph"
+  | "type"
+  | "duplication"
+  | "health";
+export type RuleCost = "tiny" | "small" | "medium" | "large" | "xlarge";
+export type CacheScope =
+  | "none"
+  | "file-text"
+  | "sfc-block"
+  | "workspace-graph"
+  | "type-project"
+  | "run";
+export type Determinism = "deterministic" | "env-dependent" | "runtime-dependent";
+export type EvidenceKind =
+  | "facts"
+  | "ast"
+  | "graph"
+  | "types"
+  | "manifest"
+  | "coverage"
+  | "git"
+  | "runtime";
+export type Confidence =
+  | "proven"
+  | "type-backed"
+  | "manifest-backed"
+  | "runtime-backed"
+  | "heuristic-high"
+  | "heuristic-medium"
+  | "heuristic-low";
 
 export interface SourceRange {
   start: number;
@@ -34,6 +68,19 @@ export interface Diagnostic {
   fingerprint?: string;
   suppressed?: boolean;
   suppressionReason?: string;
+  confidence?: Confidence;
+  evidence?: DiagnosticEvidence[];
+  fixGroupId?: string;
+  analysisPhase?: ExecutionKind;
+  cacheHit?: boolean;
+}
+
+export interface DiagnosticEvidence {
+  kind: EvidenceKind;
+  summary: string;
+  file?: string;
+  range?: SourceRange;
+  relatedId?: string;
 }
 
 export interface RuleMeta {
@@ -68,6 +115,13 @@ export interface RuleMeta {
     node?: string;
   };
   sourceKinds?: Array<"app" | "layer" | "module">;
+  execution?: ExecutionKind;
+  cost?: RuleCost;
+  cacheScope?: CacheScope;
+  determinism?: Determinism;
+  parallelSafe?: boolean;
+  producesEvidence?: EvidenceKind[];
+  consumesEvidence?: EvidenceKind[];
 }
 
 export interface SfcBlockHashes {
@@ -93,8 +147,17 @@ export interface SfcHandle {
 
 export interface TypeGraph {
   programId: string;
+  projectRoots?: string[];
+  files?: string[];
   resolveType(file: string, offset: number): unknown;
   findSymbolRefs(file: string, offset: number): Array<{ file: string; range: SourceRange }>;
+  resolveExportTarget?(file: string, exportName: string): ResolvedSymbol | null;
+}
+
+export interface ResolvedSymbol {
+  file: string;
+  name: string;
+  range?: SourceRange;
 }
 
 export interface AutoImportEntry {
@@ -134,6 +197,18 @@ export interface NuxtProjectInfo {
     appScanRoots: string[];
     sharedScanRoots: string[];
     hasManifest: boolean;
+    pages?: Array<{ path?: string; file?: string; name?: string }>;
+    prerenderRoutes?: string[];
+    buildManifest?: {
+      hasBuildManifest: boolean;
+      chunks: Array<{ file?: string; src?: string; isEntry?: boolean; isDynamicEntry?: boolean }>;
+    };
+    evidence?: {
+      routeGraph: boolean;
+      buildManifest: boolean;
+      prerenderRoutes: number;
+      serverRoutes: number;
+    };
   };
 }
 
@@ -160,6 +235,12 @@ export interface NuxtDoctorManifest {
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
+  pages?: Array<{ path?: string; file?: string; name?: string }>;
+  prerenderRoutes?: string[];
+  buildManifest?: {
+    hasBuildManifest: boolean;
+    chunks: Array<{ file?: string; src?: string; isEntry?: boolean; isDynamicEntry?: boolean }>;
+  };
   modules: Array<{ name: string; version?: string; doctorPlugin?: string }>;
   moduleSources?: NuxtModuleSource[];
   runtimeConfig?: unknown;
@@ -173,12 +254,118 @@ export interface NuxtDoctorManifest {
 export interface ProjectInfo {
   root: string;
   framework: DoctorFramework;
+  ssr: boolean;
   vueVersion: string;
   nuxtVersion?: string;
   isMonorepo: boolean;
   packageName?: string;
   tsconfigPath?: string;
   nuxt?: NuxtProjectInfo;
+}
+
+export interface ImportFact {
+  source: string;
+  specifiers: string[];
+  kind: "value" | "type" | "mixed";
+  range?: SourceRange;
+}
+
+export interface ExportFact {
+  name: string;
+  kind: "value" | "type" | "mixed";
+  localName?: string;
+  source?: string;
+  range?: SourceRange;
+}
+
+export interface DynamicImportFact {
+  source: string | null;
+  range?: SourceRange;
+}
+
+export interface CallFact {
+  name: string;
+  range?: SourceRange;
+}
+
+export interface MacroFact {
+  name: string;
+  range?: SourceRange;
+}
+
+export interface TemplateFact {
+  name: string;
+  value?: string;
+  range?: SourceRange;
+}
+
+export interface ComplexityFact {
+  cyclomatic: number;
+  cognitive: number;
+  lines: number;
+}
+
+export interface TokenFingerprintFacts {
+  hashes: string[];
+  normalizedTokens: string[];
+}
+
+export interface FileFacts {
+  fileId: number;
+  path: string;
+  relativePath: string;
+  sourceKind: SourceFileHandle["sourceKind"];
+  moduleName?: string;
+  lang: "ts" | "tsx" | "js" | "jsx" | "vue" | "md" | "mdc" | "unknown";
+  fileHash: string;
+  sfc?: SfcBlockHashes;
+  imports: ImportFact[];
+  exports: ExportFact[];
+  dynamicImports: DynamicImportFact[];
+  calls: CallFact[];
+  templateRefs: TemplateFact[];
+  macros: MacroFact[];
+  complexity: ComplexityFact;
+  tokens: TokenFingerprintFacts;
+  diagnosticsHints: string[];
+}
+
+export interface GraphEdge {
+  from: number;
+  to?: number;
+  specifier?: string;
+  kind: "import" | "type-import" | "dynamic-import" | "export" | "re-export" | "virtual-root";
+}
+
+export interface VirtualRootNode {
+  id: string;
+  file?: string;
+  fileId?: number;
+  kind:
+    | "package"
+    | "nuxt-page"
+    | "nuxt-plugin"
+    | "nuxt-server"
+    | "nuxt-component"
+    | "nuxt-auto-import"
+    | "nuxt-layer"
+    | "nuxt-module"
+    | "config";
+  evidence: string;
+}
+
+export interface WorkspaceGraph {
+  files: Map<number, FileFacts>;
+  fileIdsByPath: Map<string, number>;
+  importEdges: GraphEdge[];
+  exportEdges: GraphEdge[];
+  virtualRoots: VirtualRootNode[];
+  reverseIndex: {
+    importersByFile: Map<number, number[]>;
+    refsByExport: Map<string, Array<{ fileId: number; range?: SourceRange }>>;
+    exportsByName: Map<string, ExportFact[]>;
+  };
+  sccs: number[][];
 }
 
 export interface RuleCache {
@@ -223,6 +410,7 @@ export interface SourceFileHandle {
   templateAst?: Record<string, unknown> | null;
   sfc?: SfcHandle;
   project: ProjectInfo;
+  facts?: FileFacts;
   matches(pattern: string): boolean;
   inAppDir(dir: string): boolean;
   isModuleSource(): boolean;
@@ -233,6 +421,8 @@ export interface RuleContext {
   file: SourceFileHandle;
   sfc?: SfcHandle;
   types?: TypeGraph;
+  severity: DoctorSeverity;
+  options: unknown;
   report(diagnostic: Diagnostic): void;
   getFileText(file: string): string;
   getJson<T = unknown>(file: string): T | null;
@@ -272,6 +462,7 @@ export interface RulePack {
 
 export interface DoctorRunResult {
   version: string;
+  reportVersion?: 2;
   framework: DoctorFramework;
   root: string;
   score: number;
@@ -286,6 +477,14 @@ export interface DoctorRunResult {
   diagnostics: Diagnostic[];
   suppressedDiagnostics?: Diagnostic[];
   timings?: Record<string, number>;
+  phases?: Record<string, number>;
+  graph?: {
+    files: number;
+    importEdges: number;
+    exportEdges: number;
+    virtualRoots: number;
+    cycles: number;
+  };
   project: ProjectInfo;
 }
 

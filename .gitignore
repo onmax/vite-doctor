@@ -13,6 +13,8 @@ dist-ssr
 .nuxt
 .output
 .data
+.vue-doctor
+**/.vue-doctor
 docs/.nuxt
 docs/.output
 docs/.data

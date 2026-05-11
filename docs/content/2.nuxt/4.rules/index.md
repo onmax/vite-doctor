@@ -1,9 +1,11 @@
 ---
-title: "Rules"
+title: "Rule reference"
 description: "Nuxt 4 diagnostics in the Nuxt and ecosystem rule packs."
 ---
 
-Nuxt rules cover auto-imports, fetching, routing, Nuxt context, Nitro/server boundaries, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.
+# Rules
+
+Nuxt rules cover auto-imports, fetching, routing, Nuxt context, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.
 
 These pages are generated from rule metadata in `packages/nuxt/src/rules`.
 
@@ -22,8 +24,6 @@ The same metadata is exported as JSON under `/rules/` in the docs site.
 | [`nuxt/routing/no-useroute-in-middleware`](./routing/no-useroute-in-middleware)                                                                 | Use middleware to/from arguments instead of useRoute        | `nuxt-doctor/nuxt`             | `error`  | `routing`        | suggestion |
 | [`nuxt/routing/return-navigateto-in-middleware`](./routing/return-navigateto-in-middleware)                                                     | Return navigateTo in route middleware                       | `nuxt-doctor/nuxt`             | `error`  | `routing`        | safe       |
 | [`nuxt/routing/no-router-navigation-in-setup`](./routing/no-router-navigation-in-setup)                                                         | Do not navigate with router.push/replace during setup       | `nuxt-doctor/nuxt`             | `warn`   | `routing`        | suggestion |
-| [`nuxt/context/no-usenuxtapp-in-nitro`](./context/no-usenuxtapp-in-nitro)                                                                       | Do not use useNuxtApp in Nitro routes                       | `nuxt-doctor/nuxt`             | `error`  | `server`         | suggestion |
-| [`nuxt/context/no-navigateto-in-nitro`](./context/no-navigateto-in-nitro)                                                                       | Do not use navigateTo in Nitro routes                       | `nuxt-doctor/nuxt`             | `error`  | `server`         | suggestion |
 | [`nuxt/runtime/no-secret-in-public-config`](./runtime/no-secret-in-public-config)                                                               | Do not expose secrets in runtimeConfig.public               | `nuxt-doctor/nuxt`             | `error`  | `runtime-config` | suggestion |
 | [`nuxt/hydration/no-browser-side-effects-in-setup`](./hydration/no-browser-side-effects-in-setup)                                               | Avoid browser side effects in universal setup               | `nuxt-doctor/nuxt`             | `error`  | `hydration`      | suggestion |
 | [`nuxt/hydration/no-browser-global-in-universal-code`](./hydration/no-browser-global-in-universal-code)                                         | Avoid browser globals in universal code                     | `nuxt-doctor/nuxt`             | `error`  | `hydration`      | suggestion |
@@ -44,12 +44,8 @@ The same metadata is exported as JSON under `/rules/` in the docs site.
 | [`nuxt/fetch/require-stable-asyncdata-key`](./fetch/require-stable-asyncdata-key)                                                               | Use stable keys for async data payload entries              | `nuxt-doctor/nuxt`             | `warn`   | `fetching`       | suggestion |
 | [`nuxt/state/prefer-explicit-usestate-key-in-exported-composables`](./state/prefer-explicit-usestate-key-in-exported-composables)               | Use explicit useState keys in exported composables          | `nuxt-doctor/nuxt`             | `warn`   | `hydration`      | suggestion |
 | [`nuxt/context/no-composable-after-await`](./context/no-composable-after-await)                                                                 | Call Nuxt composables before await                          | `nuxt-doctor/nuxt`             | `error`  | `context`        | suggestion |
-| [`nuxt/server/prefer-event-fetch`](./server/prefer-event-fetch)                                                                                 | Use event.$fetch in Nitro handlers                          | `nuxt-doctor/nuxt`             | `warn`   | `server`         | suggestion |
 | [`nuxt/fetch/forward-auth-headers-ssr`](./fetch/forward-auth-headers-ssr)                                                                       | Forward auth headers for SSR server fetches                 | `nuxt-doctor/nuxt`             | `warn`   | `fetching`       | suggestion |
 | [`nuxt/runtime/no-plain-env-in-app-code`](./runtime/no-plain-env-in-app-code)                                                                   | Use runtimeConfig instead of process.env in app code        | `nuxt-doctor/nuxt`             | `error`  | `runtime-config` | suggestion |
-| [`nuxt/runtime/require-event-runtime-config-in-server`](./runtime/require-event-runtime-config-in-server)                                       | Pass event to useRuntimeConfig in server handlers           | `nuxt-doctor/nuxt`             | `warn`   | `runtime-config` | suggestion |
-| [`nuxt/server/no-client-composables`](./server/no-client-composables)                                                                           | Do not use app composables in Nitro server files            | `nuxt-doctor/nuxt`             | `error`  | `server`         | suggestion |
-| [`nuxt/server/no-browser-api`](./server/no-browser-api)                                                                                         | Do not use browser APIs in Nitro server files               | `nuxt-doctor/nuxt`             | `error`  | `server`         | suggestion |
 | [`nuxt/fetch/prefer-create-use-fetch`](./fetch/prefer-create-use-fetch)                                                                         | Prefer Nuxt data factories for custom data composables      | `nuxt-doctor/nuxt`             | `info`   | `fetching`       | suggestion |
 | [`nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir`](./fetch/create-usefetch-must-be-exported-in-scanned-dir)                         | Export data factories from scanned composable directories   | `nuxt-doctor/nuxt`             | `error`  | `fetching`       | suggestion |
 | [`nuxt/fetch/keyed-composable-registration-required`](./fetch/keyed-composable-registration-required)                                           | Register custom keyed data composables                      | `nuxt-doctor/nuxt`             | `warn`   | `fetching`       | suggestion |
@@ -83,6 +79,7 @@ The same metadata is exported as JSON under `/rules/` in the docs site.
 The docs build also writes static JSON files:
 
 - `/rules/vue.json`
+- `/rules/nitro.json`
 - `/rules/nuxt.json`
 - `/rules/all.json`
 

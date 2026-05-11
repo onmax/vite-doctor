@@ -1,8 +1,8 @@
 ---
 title: "Do not use browser APIs in Nitro server files"
-description: "nuxt/server/no-browser-api in nuxt-doctor/nuxt."
+description: "nuxt/server/no-browser-api in nuxt-doctor/nitro."
 ruleId: "nuxt/server/no-browser-api"
-pack: "nuxt-doctor/nuxt"
+pack: "nuxt-doctor/nitro"
 severity: "error"
 category: "server"
 fix: "suggestion"
@@ -14,7 +14,7 @@ fix: "suggestion"
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
+- Pack: `nuxt-doctor/nitro`
 - Severity: `error`
 - Category: `server`
 - Fix: `suggestion`

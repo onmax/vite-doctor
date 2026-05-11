@@ -1,4 +1,5 @@
-import { AnyNode, createRule, isRuntimeAppFile, report } from "./shared.js";
+import { AnyNode, createRule, report } from "./shared.js";
+import { createNuxtRuntimeEvidence } from "./evidence.js";
 
 export const noPlainEnvInAppCode = createRule({
   meta: {
@@ -10,7 +11,8 @@ export const noPlainEnvInAppCode = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    if (!isRuntimeAppFile(ctx)) return;
+    const evidence = createNuxtRuntimeEvidence(ctx);
+    if (!evidence.isRuntimeAppFile()) return;
     return {
       ScriptNode(node: AnyNode) {
         if (ctx.helpers.getNodeName(node) !== "process.env") return;

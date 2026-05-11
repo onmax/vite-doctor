@@ -19,7 +19,7 @@ The workspace exposes Vue and Nuxt entry points backed by one shared engine:
 - `vue-doctor` for Vue projects
 - `nuxt-doctor` for Nuxt projects, including the `nuxt doctor` command when installed as a module
 
-Nuxt Doctor extends Vue Doctor with Nuxt project detection, Nuxt manifest support, Nuxt-specific rules, and a Nuxt module that can generate `.nuxt/doctor.manifest.json`.
+Nuxt Doctor extends Vue Doctor with Nuxt project detection, Nuxt manifest support, Nuxt-specific rules, a shared Nitro rule pack for `server/` and `app/server/` code, and a Nuxt module that can generate `.nuxt/doctor.manifest.json`.
 
 ## Usage
 
@@ -75,7 +75,7 @@ vp run dev
 
 - `@vue-doctor/core`: analyzer pipeline, public rule/plugin API, config loading, scoring, fixing, and text output.
 - `vue-doctor`: Vue CLI with the built-in Vue rules.
-- `nuxt-doctor`: Nuxt module, Nuxt command integration, manifest generator, and built-in Nuxt rules.
+- `nuxt-doctor`: Nuxt module, Nuxt command integration, manifest generator, built-in Nuxt rules, and the exported `nitroRulePack` consumed by Nuxt scans.
 
 ## Nuxt Module
 

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "pathe";
-import { AnyNode, createRule, isContentDocsFile, toPosixPath } from "./shared.js";
+import { AnyNode, createRule, toPosixPath } from "./shared.js";
+import { createNuxtRuntimeEvidence } from "./evidence.js";
 
 export const noRouteMiddlewareApiSecurity = createRule({
   meta: {
@@ -12,7 +13,8 @@ export const noRouteMiddlewareApiSecurity = createRule({
     requires: { nuxt: true, crossFile: true },
   },
   create(ctx) {
-    if (isContentDocsFile(ctx)) return;
+    const evidence = createNuxtRuntimeEvidence(ctx);
+    if (evidence.isContentDocsFile()) return;
     const hasServerHandlers =
       [...(ctx.project.nuxt?.serverDirs.api ?? []), ...(ctx.project.nuxt?.serverDirs.routes ?? [])]
         .length > 0;

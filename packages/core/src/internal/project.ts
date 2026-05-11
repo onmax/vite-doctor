@@ -5,10 +5,10 @@ import type {
   AutoImportEntry,
   DoctorFramework,
   NuxtDoctorManifest,
-  NuxtModuleSource,
   NuxtProjectInfo,
   ProjectInfo,
 } from "../primitives.js";
+import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
 
 export async function detectProject(
   root: string,
@@ -16,6 +16,7 @@ export async function detectProject(
 ): Promise<ProjectInfo> {
   const packageJson = readJson<{
     name?: string;
+    scripts?: Record<string, string>;
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
   }>(join(root, "package.json"));
@@ -24,6 +25,7 @@ export async function detectProject(
   const vueVersion = deps.vue ?? ">=3.5";
   const framework: DoctorFramework =
     requested === "auto" ? (nuxtVersion ? "nuxt" : "vue") : requested;
+  const ssr = framework === "nuxt" || hasVueSsrEvidence(packageJson, deps);
   const isMonorepo =
     existsSync(join(root, "pnpm-workspace.yaml")) || existsSync(join(root, "turbo.json"));
   const nuxt =
@@ -31,6 +33,7 @@ export async function detectProject(
   return {
     root: resolve(root),
     framework,
+    ssr,
     vueVersion: cleanVersion(vueVersion),
     nuxtVersion: nuxt ? cleanVersion(nuxtVersion ?? nuxt.version) : undefined,
     isMonorepo,
@@ -38,6 +41,24 @@ export async function detectProject(
     tsconfigPath: existsSync(join(root, "tsconfig.json")) ? join(root, "tsconfig.json") : undefined,
     nuxt,
   };
+}
+
+function hasVueSsrEvidence(
+  packageJson: { scripts?: Record<string, string> } | null,
+  deps: Record<string, string | undefined>,
+): boolean {
+  const packageNames = Object.keys(deps);
+  if (
+    packageNames.some((name) =>
+      /^(vitepress|vuepress|@vuepress\/|@vue\/server-renderer|vite-ssg|vite-plugin-ssr|vike|nuxt)$/.test(
+        name,
+      ),
+    )
+  )
+    return true;
+  return Object.values(packageJson?.scripts ?? {}).some((script) =>
+    /\b(vitepress|vuepress|vite-ssg|vike|vite\s+build\s+--ssr)\b/.test(script),
+  );
 }
 
 async function detectNuxt(
@@ -86,33 +107,9 @@ async function normalizeNuxtProject(
     serverDirs: await serverDirs(root),
     manifestPath,
     modules: mergeDetectedModules(manifest?.modules ?? [], deps, root),
-    moduleSources: normalizeModuleSources(manifest?.moduleSources ?? []),
-    manifest: {
-      importsDirs: (manifest?.importsDirs ?? []).map((dir) => resolve(root, dir)),
-      pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
-      keyedComposables: (manifest?.keyedComposables ?? []).map(String),
-      aliases: manifest?.aliases ?? {},
-      appScanRoots: (manifest?.appScanRoots ?? [manifest?.appDir ?? "app"]).map((dir) =>
-        resolve(root, dir),
-      ),
-      sharedScanRoots: (manifest?.sharedScanRoots ?? ["shared/utils", "shared/types"]).map((dir) =>
-        resolve(root, dir),
-      ),
-      hasManifest: Boolean(manifestPath),
-    },
+    moduleSources: normalizeNuxtModuleSources(manifest?.moduleSources ?? []),
+    manifest: createNuxtProjectInventory(root, manifest, manifestPath),
   };
-}
-
-function normalizeModuleSources(sources: NuxtModuleSource[]): NuxtModuleSource[] {
-  return sources
-    .filter((source) => source.module && source.root)
-    .map((source) => ({
-      ...source,
-      root: resolve(source.root),
-      packageDir: source.packageDir ? resolve(source.packageDir) : undefined,
-      runtimeDirs: source.runtimeDirs?.map((dir) => resolve(dir)),
-      appDirs: source.appDirs?.map((dir) => resolve(dir)),
-    }));
 }
 
 async function detectNuxtAppRoots(root: string): Promise<string[]> {

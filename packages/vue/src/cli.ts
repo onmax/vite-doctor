@@ -36,7 +36,16 @@ async function main() {
     return;
   }
 
-  if (command !== "scan" && command !== "check") {
+  if (
+    command === "dead-code" ||
+    command === "dupes" ||
+    command === "health" ||
+    command === "graph"
+  ) {
+    args.unshift("--analyses", command === "dupes" ? "dupes" : command);
+  } else if (command === "benchmark" || command === "adopt") {
+    args.unshift("--profile");
+  } else if (command !== "scan" && command !== "check") {
     console.error(`Unknown command: ${command}`);
     process.exitCode = 1;
     return;
@@ -62,7 +71,13 @@ function isCommand(value: string | undefined): boolean {
     value === "check" ||
     value === "rules" ||
     value === "explain" ||
-    value === "cache"
+    value === "cache" ||
+    value === "dead-code" ||
+    value === "dupes" ||
+    value === "health" ||
+    value === "graph" ||
+    value === "benchmark" ||
+    value === "adopt"
   );
 }
 
@@ -74,6 +89,13 @@ function parseRunArgs(args: string[]): { path: string; options: DoctorRunOptions
     if (arg === "--trusted-config" || arg === "--config") options.config = true;
     else if (arg === "--changed") options.changed = true;
     else if (arg === "--types") options.types = true;
+    else if (arg === "--threads") options.threads = Number(args[++index]);
+    else if (arg === "--coverage") options.coverage = args[++index];
+    else if (arg === "--runtime-evidence") options.runtimeEvidence = args[++index];
+    else if (arg === "--analyses") options.analyses = args[++index];
+    else if (arg === "--emit-graph") options.emitGraph = true;
+    else if (arg === "--confidence-min") options.confidenceMin = args[++index];
+    else if (arg === "--structural-review") options.structuralReview = true;
     else if (arg === "--no-types") options.types = false;
     else if (arg === "--profile") options.profile = true;
     else if (arg === "--new-only") options.newOnly = true;

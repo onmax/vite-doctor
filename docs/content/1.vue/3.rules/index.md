@@ -1,7 +1,9 @@
 ---
-title: "Rules"
+title: "Rule reference"
 description: "Vue 3.5 diagnostics in the core rule pack."
 ---
+
+# Rules
 
 Vue rules cover reactivity, computed values, watchers, lifecycle cleanup, template correctness, SSR safety, and template security.
 
@@ -34,12 +36,17 @@ The same metadata is exported as JSON under `/rules/` in the docs site.
 | [`vue/ssr/use-id-for-stable-ids`](./ssr/use-id-for-stable-ids)                                     | Use useId for SSR-stable ids                       | `vue-doctor/vue` | `warn`   | `ssr`        | suggestion |
 | [`vue/ssr/no-random-or-local-time-render`](./ssr/no-random-or-local-time-render)                   | Avoid random or local-time SSR render values       | `vue-doctor/vue` | `warn`   | `ssr`        | suggestion |
 | [`vue/ssr/data-allow-mismatch-surgical`](./ssr/data-allow-mismatch-surgical)                       | Use data-allow-mismatch only surgically            | `vue-doctor/vue` | `warn`   | `ssr`        | suggestion |
+| [`vue/style/prefer-define-model`](./style/prefer-define-model)                                     | Prefer defineModel for component v-model           | `vue-doctor/vue` | `warn`   | `style`      | suggestion |
+| [`vue/style/prefer-props-destructure-defaults`](./style/prefer-props-destructure-defaults)         | Prefer props destructure defaults                  | `vue-doctor/vue` | `warn`   | `style`      | suggestion |
+| [`vue/style/prefer-type-props`](./style/prefer-type-props)                                         | Prefer TypeScript props declarations               | `vue-doctor/vue` | `warn`   | `style`      | suggestion |
+| [`vue/reactivity/prefer-composable-ref-return`](./reactivity/prefer-composable-ref-return)         | Prefer refs from reusable composables              | `vue-doctor/vue` | `warn`   | `reactivity` | suggestion |
 
 ## JSON export
 
 The docs build also writes static JSON files:
 
 - `/rules/vue.json`
+- `/rules/nitro.json`
 - `/rules/nuxt.json`
 - `/rules/all.json`
 
