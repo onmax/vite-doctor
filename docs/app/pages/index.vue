@@ -96,6 +96,7 @@ const demos: Record<Framework, Demo> = {
 
 const framework = ref<Framework>("nuxt");
 const demo = computed(() => demos[framework.value]);
+const requestUrl = useRequestURL();
 
 const typed = ref("");
 const stage = ref(0);
@@ -237,13 +238,16 @@ function severityColor(id: string) {
 const agentResources = computed(() => {
   const o = demo.value.origin;
   const pkg = demo.value.pkg;
-  const mcpJson = `{
+  const mcpJson =
+    framework.value === "nuxt"
+      ? `{
   "mcpServers": {
     "${pkg}": {
-      "url": "https://${o}/mcp"
+      "url": "${requestUrl.origin}/mcp"
     }
   }
-}`;
+}`
+      : "";
   return {
     mcpJson,
     rawUrl: `https://${o}/raw/${framework.value}.md`,
@@ -493,7 +497,10 @@ onBeforeUnmount(clearTimers);
             </div>
 
             <div v-else key="agents" class="mt-4 space-y-3 text-sm">
-              <div class="overflow-hidden rounded-md border border-white/10 bg-black/40">
+              <div
+                v-if="agentResources.mcpJson"
+                class="overflow-hidden rounded-md border border-white/10 bg-black/40"
+              >
                 <div
                   class="flex items-center justify-between border-b border-white/5 bg-white/[0.03] px-3 py-1.5 text-xs text-neutral-500"
                 >
@@ -551,9 +558,12 @@ onBeforeUnmount(clearTimers);
                 />
               </div>
 
-              <p class="pt-1 text-xs text-neutral-500">
-                Drop the snippet into your client's MCP config, or paste a /raw URL into the system
-                prompt for grounded answers.
+              <p v-if="agentResources.mcpJson" class="pt-1 text-xs text-neutral-500">
+                Start your Nuxt app with nuxt-doctor/module installed, then drop the snippet into
+                your client's MCP config.
+              </p>
+              <p v-else class="pt-1 text-xs text-neutral-500">
+                Paste a /raw URL into the system prompt for grounded answers.
               </p>
             </div>
           </Transition>
