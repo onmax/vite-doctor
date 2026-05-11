@@ -199,6 +199,9 @@ importers:
       docus:
         specifier: 'catalog:'
         version: 5.8.1(ac70608be5d2c5fcf8a74f475c4b190c)
+      h3:
+        specifier: ^1.15.11
+        version: 1.15.11
       nanotar:
         specifier: ^0.2.0
         version: 0.2.1

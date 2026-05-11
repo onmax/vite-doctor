@@ -1,6 +1,6 @@
 import { parseTar } from "nanotar";
 import type { FileSystemTree } from "@webcontainer/api";
-import type { GhRef } from "./parseGhUrl";
+import type { GhRef } from "./parseGhUrl.js";
 
 export class PrivateOrMissingError extends Error {
   constructor() {
@@ -21,7 +21,7 @@ const MAX_FILES = 5000;
 const SKIP_DIR = /(^|\/)(node_modules|\.git|dist|\.next|\.nuxt|\.output|coverage)(\/|$)/;
 
 export async function fetchAndUnpackTarball(ref: GhRef): Promise<FileSystemTree> {
-  const url = `https://codeload.github.com/${ref.owner}/${ref.repo}/tar.gz/${ref.ref}`;
+  const url = `/api/github-tarball/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.repo)}?ref=${encodeURIComponent(ref.ref)}`;
   const res = await fetch(url);
   if (res.status === 404) throw new PrivateOrMissingError();
   if (!res.ok || !res.body) throw new Error(`Fetch failed: ${res.status}`);
