@@ -20,7 +20,11 @@
     "@nuxt/fonts": "catalog:",
     "@nuxt/ui": "catalog:",
     "@vueuse/core": "catalog:",
+    "@webcontainer/api": "^1.6.1",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "docus": "catalog:",
+    "nanotar": "^0.2.0",
     "nuxt": "catalog:",
     "nuxt-doctor": "workspace:*",
     "std-env": "catalog:",
@@ -28,6 +32,8 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "esbuild": "^0.25.0",
+    "oxc-parser": "catalog:",
     "wrangler": "catalog:"
   }
 }

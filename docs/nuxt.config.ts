@@ -7,9 +7,28 @@ const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
 export default defineNuxtConfig({
   extends: ["docus"],
 
-  modules: [["nuxt-doctor/module", { mcp: false }]],
+  modules: [["nuxt-doctor/module", { mcp: false }], "~~/modules/wc-fixture"],
 
   css: ["~/assets/css/main.css"],
+
+  vite: {
+    optimizeDeps: { exclude: ["@webcontainer/api"] },
+    server: {
+      headers: {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+      },
+    },
+  },
+
+  routeRules: {
+    "/**": {
+      headers: {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+      },
+    },
+  },
 
   content: {
     database: {
