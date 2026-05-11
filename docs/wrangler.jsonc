@@ -2,8 +2,14 @@
   "$schema": "../node_modules/wrangler/config-schema.json",
   "name": "nuxt-doctor",
   "main": ".output/server/index.mjs",
-  "compatibility_date": "2026-05-10",
+  "compatibility_date": "2026-05-11",
   "compatibility_flags": ["nodejs_compat", "no_nodejs_compat_v2"],
+  "rules": [
+    {
+      "type": "ESModule",
+      "globs": ["chunks/**/*.mjs"],
+    },
+  ],
   "assets": {
     "binding": "ASSETS",
     "directory": ".output/public",
