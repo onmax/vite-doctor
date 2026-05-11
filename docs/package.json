@@ -25,5 +25,8 @@
     "nuxt-doctor": "workspace:*",
     "tailwindcss": "catalog:",
     "zod": "catalog:"
+  },
+  "devDependencies": {
+    "wrangler": "catalog:"
   }
 }

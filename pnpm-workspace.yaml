@@ -42,6 +42,7 @@ catalog:
   tinyexec: ^1.1.2
   "@typescript-eslint/parser": ^8.59.2
   zod: ^4.4.3
+  wrangler: ^4.90.0
 overrides:
   vite: "catalog:"
   vitest: "catalog:"
@@ -59,3 +60,4 @@ allowBuilds:
   esbuild: true
   sharp: true
   vue-demi: true
+  workerd: true
