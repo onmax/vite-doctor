@@ -1,6 +1,8 @@
 import { defineNuxtConfig } from "nuxt/config";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { join } from "pathe";
+import { env, process } from "std-env";
+
+const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
 
 export default defineNuxtConfig({
   extends: ["docus"],
@@ -12,7 +14,7 @@ export default defineNuxtConfig({
   content: {
     database: {
       type: "sqlite",
-      filename: join(tmpdir(), `nuxt-doctor-content-${process.pid}.sqlite`),
+      filename: join(tempDir, `nuxt-doctor-content-${process.pid}.sqlite`),
     },
   },
 
@@ -30,6 +32,7 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
 
   nitro: {
+    preset: "cloudflare_module",
     sourceMap: false,
     cloudflare: {
       nodeCompat: true,
