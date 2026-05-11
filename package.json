@@ -13,6 +13,8 @@
     "docs:rules": "node tools/generate-rule-docs.mjs",
     "docs:dev": "pnpm docs:rules && vp run docs#dev",
     "build": "vp run -r build",
+    "deploy": "pnpm --dir docs exec wrangler deploy",
+    "deploy:preview": "pnpm --dir docs exec wrangler versions upload --preview-alias preview",
     "test": "vp run -r test",
     "check": "vp check",
     "doctor": "vp exec nuxt-doctor .",
