@@ -13,6 +13,7 @@ navigation:
   - images
   - imports
   - layers
+  - lifecycle
   - links
   - middleware
   - plugins

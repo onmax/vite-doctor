@@ -60,6 +60,13 @@ import { runNuxtDoctorMcpReport } from "../src/runtime/mcp/doctor.ts";
 import { createRulesReport, createTextReport, explainRule } from "../../core/src/index.ts";
 import { nitroRulePack, nuxtDoctorPlugins, nuxtRulePacks } from "../src/rules/index.ts";
 import { createNuxtRuntimeEvidence } from "../src/rules/nuxt/evidence.ts";
+import {
+  preferUseEventListener,
+  preferUseObservers,
+  preferUseScrollAndElement,
+  preferUseStorage,
+  preferUseTimers,
+} from "../src/rules/vueuse.ts";
 
 const cases = [
   {
@@ -1100,6 +1107,139 @@ async function handleSelect(to: string) {
   expect(generatedShared.diagnostics.map((item) => item.file)).toHaveLength(1);
   expect(generatedShared.diagnostics[0]?.file).toContain("shared/utils/nested/math.ts");
   expect(clientAwait.diagnostics).toHaveLength(0);
+});
+
+test("VueUse preference rules suggest composables for raw browser APIs", async () => {
+  const timers = await runRuleFixture({
+    rule: preferUseTimers,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+setTimeout(() => {}, 100)
+window.setInterval(() => {}, 1000)
+requestAnimationFrame(() => {})
+</script>`,
+    },
+  });
+  const observers = await runRuleFixture({
+    rule: preferUseObservers,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+new IntersectionObserver(() => {})
+new ResizeObserver(() => {})
+new MutationObserver(() => {})
+</script>`,
+    },
+  });
+  const events = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+window.addEventListener('resize', () => {})
+document.addEventListener('click', () => {})
+addEventListener('online', () => {})
+</script>`,
+    },
+  });
+  const storage = await runRuleFixture({
+    rule: preferUseStorage,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+localStorage.getItem('theme')
+sessionStorage.setItem('tab', 'one')
+</script>`,
+    },
+  });
+  const scroll = await runRuleFixture({
+    rule: preferUseScrollAndElement,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+const y = window.scrollY
+window.scrollTo(0, 100)
+target.value?.getBoundingClientRect()
+</script>`,
+    },
+  });
+
+  expect(timers.diagnostics.map((item) => item.suggestion)).toEqual([
+    "Use VueUse useTimeoutFn() for lifecycle-aware timing.",
+    "Use VueUse useIntervalFn() for lifecycle-aware timing.",
+    "Use VueUse useRafFn() for lifecycle-aware timing.",
+  ]);
+  expect(observers.diagnostics.map((item) => item.suggestion)).toEqual([
+    "Use VueUse useIntersectionObserver() for reactive observer cleanup.",
+    "Use VueUse useResizeObserver() for reactive observer cleanup.",
+    "Use VueUse useMutationObserver() for reactive observer cleanup.",
+  ]);
+  expect(events.diagnostics).toHaveLength(3);
+  expect(storage.diagnostics.map((item) => item.suggestion)).toEqual([
+    "Use VueUse useStorage() for reactive client storage state.",
+    "Use VueUse useSessionStorage() for reactive client storage state.",
+  ]);
+  expect(scroll.diagnostics.map((item) => item.suggestion)).toEqual([
+    "Use VueUse useScroll() for reactive browser state.",
+    "Use VueUse useScroll() for reactive browser state.",
+    "Use VueUse useElementBounding() for reactive browser state.",
+  ]);
+});
+
+test("VueUse preference rules skip existing composables and non-runtime files", async () => {
+  const timers = await runRuleFixture({
+    rule: preferUseTimers,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+useTimeoutFn(() => {
+  setTimeout(() => {}, 100)
+}, 100)
+</script>`,
+      "server/api/timer.ts": `export default defineEventHandler(() => setTimeout(() => {}, 100))`,
+      "shared/types/generated.ts": `// @generated\nsetInterval(() => {}, 100)`,
+    },
+  });
+  const observers = await runRuleFixture({
+    rule: preferUseObservers,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+useIntersectionObserver(target, () => {
+  new IntersectionObserver(() => {})
+})
+</script>`,
+      "app/generated/observer.ts": `new ResizeObserver(() => {})`,
+    },
+  });
+  const events = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+useEventListener(window, 'resize', () => {
+  window.addEventListener('scroll', () => {})
+})
+</script>`,
+      "docs/app/pages/index.vue": `<script setup lang="ts">window.addEventListener('resize', () => {})</script>`,
+    },
+  });
+  const storage = await runRuleFixture({
+    rule: preferUseStorage,
+    framework: "nuxt",
+    files: {
+      "app/components/Panel.vue": `<script setup lang="ts">
+const hasStorage = typeof localStorage !== 'undefined'
+useStorage('theme', localStorage.getItem('theme'))
+</script>`,
+    },
+  });
+
+  expect(timers.diagnostics).toHaveLength(0);
+  expect(observers.diagnostics).toHaveLength(0);
+  expect(events.diagnostics).toHaveLength(0);
+  expect(storage.diagnostics).toHaveLength(0);
 });
 
 test("route middleware security rule reports only auth-like middleware without server guards", async () => {

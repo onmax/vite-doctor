@@ -83,6 +83,7 @@ test("Nuxt all-issues fixture reports Nuxt and ecosystem rule packs", async () =
     "nuxt/state/no-nonserializable-usestate:app/pages/state.vue",
     "nuxt/state/prefer-explicit-usestate-key-in-exported-composables:app/composables/useCounter.ts",
     "vueuse/no-nuxt-auto-import-collision:app/components/IssuePanel.vue",
+    "vueuse/prefer-use-storage:app/components/IssuePanel.vue",
     "vueuse/prefer-usewindow-size:app/components/IssuePanel.vue",
   ]);
 });
