@@ -18,6 +18,7 @@ dist-ssr
 docs/.nuxt
 docs/.output
 docs/.data
+docs/.wc-fixtures
 *.local
 
 # Editor directories and files

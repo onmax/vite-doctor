@@ -1,5 +1,5 @@
 import { defineNuxtModule, createResolver } from "@nuxt/kit";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, relative } from "pathe";
 import { build as esbuild } from "esbuild";
@@ -10,6 +10,16 @@ const BINARY_EXTS = new Set([".wasm", ".node"]);
 interface FixtureEntry {
   contents: string;
   encoding?: "base64";
+}
+
+interface WcFixtureNuxt {
+  options: {
+    buildDir: string;
+    nitro?: {
+      publicAssets?: Array<{ dir: string; baseURL: string }>;
+    };
+  };
+  hook(name: "build:done", cb: () => Promise<void>): void;
 }
 
 async function walk(dir: string, baseDir = dir): Promise<Record<string, FixtureEntry>> {
@@ -140,7 +150,7 @@ function renderFixture(
 
 export default defineNuxtModule({
   meta: { name: "wc-fixture", configKey: "wcFixture" },
-  async setup(_options, nuxt) {
+  async setup(_options: unknown, nuxt: WcFixtureNuxt) {
     const resolver = createResolver(import.meta.url);
     const docsRoot = resolver.resolve("..");
     const repoRoot = resolver.resolve("../..");
@@ -150,9 +160,16 @@ export default defineNuxtModule({
 
     const [vueBundle, nuxtBundle] = await Promise.all([bundleCli(vueEntry), bundleCli(nuxtEntry)]);
 
-    const oxc = await packPackage("oxc-parser", docsRoot, "/node_modules/oxc-parser").catch(
-      () => ({}),
-    );
+    const oxcPackages = await Promise.all([
+      packPackage("oxc-parser", docsRoot, "/node_modules/oxc-parser"),
+      packPackage(
+        "@oxc-parser/binding-wasm32-wasi",
+        docsRoot,
+        "/node_modules/@oxc-parser/binding-wasm32-wasi",
+      ),
+      packPackage("@oxc-project/types", docsRoot, "/node_modules/@oxc-project/types"),
+    ]).catch(() => []);
+    const oxc = Object.assign({}, ...oxcPackages);
     const demoRaw = await walk(join(docsRoot, "examples/demo-nuxt-app")).catch(() => ({}));
     const demoFiles: Record<string, FixtureEntry> = {};
     for (const [p, e] of Object.entries(demoRaw)) demoFiles[`/${p}`] = e;
@@ -160,7 +177,7 @@ export default defineNuxtModule({
     const vueFixture = renderFixture("vue", vueBundle, oxc);
     const nuxtFixture = renderFixture("nuxt", nuxtBundle, oxc);
 
-    const fixtureDir = join(nuxt.options.buildDir, "wc-fixtures");
+    const fixtureDir = join(docsRoot, ".wc-fixtures");
     await mkdir(fixtureDir, { recursive: true });
     await Promise.all([
       writeFile(
@@ -176,6 +193,10 @@ export default defineNuxtModule({
 
     nuxt.options.nitro ||= {};
     nuxt.options.nitro.publicAssets ||= [];
-    nuxt.options.nitro.publicAssets.push({ dir: fixtureDir, baseURL: "/__wc-fixtures" });
+    nuxt.options.nitro.publicAssets.push({ dir: fixtureDir, baseURL: "/__wc-fixtures/" });
+
+    nuxt.hook("build:done", async () => {
+      await cp(fixtureDir, join(docsRoot, ".output/public/__wc-fixtures"), { recursive: true });
+    });
   },
 });

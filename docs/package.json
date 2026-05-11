@@ -18,7 +18,10 @@
   "dependencies": {
     "@nuxt/content": "catalog:",
     "@nuxt/fonts": "catalog:",
+    "@nuxt/kit": "catalog:",
     "@nuxt/ui": "catalog:",
+    "@oxc-parser/binding-wasm32-wasi": "^0.129.0",
+    "@oxc-project/types": "^0.129.0",
     "@vueuse/core": "catalog:",
     "@webcontainer/api": "^1.6.1",
     "@xterm/addon-fit": "^0.10.0",
