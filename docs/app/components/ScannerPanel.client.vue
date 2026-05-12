@@ -4,15 +4,8 @@ import { checkWcCapabilities } from "~/utils/wcCapabilities";
 import type { WcStatus } from "~/composables/useDoctorWc";
 
 const caps = checkWcCapabilities();
-const { status, errorMsg, result, framework, phaseLabel, activePhase, scan, setLogSink } =
+const { status, errorMsg, result, framework, phaseLabel, activePhase, scan, scanDemo, setLogSink } =
   useDoctorWc();
-
-const samples = [
-  { repo: "nuxt/starter", icon: "i-logos-nuxt-icon" },
-  { repo: "atinux/atidone", icon: "i-logos-nuxt-icon" },
-  { repo: "vuejs/petite-vue", icon: "i-logos-vue" },
-  { repo: "vuejs/router", icon: "i-logos-vue" },
-] as const;
 
 const steps: Array<{ id: WcStatus; label: string; description: string }> = [
   {
@@ -122,10 +115,16 @@ async function onScan() {
   await scan(input);
 }
 
-async function selectSample(repo: string) {
+async function useSample() {
   if (busy.value) return;
-  repoUrl.value = repo;
-  await onScan();
+  repoUrl.value = "doctor/sample-nuxt-app";
+  inputError.value = null;
+  hasInteracted.value = true;
+  logsOpen.value = false;
+  logBuffer.clear();
+  await nextTick();
+  terminal.value?.reset();
+  await scanDemo();
 }
 
 watch(logsOpen, async (open) => {
@@ -167,24 +166,14 @@ watch(logsOpen, async (open) => {
           <UIcon v-else name="i-lucide-play" class="size-4" />
           {{ busy ? "Scanning…" : "Scan" }}
         </button>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2">
-        <span
-          class="text-xs font-medium uppercase tracking-wider text-neutral-500 dark:text-neutral-500"
-        >
-          Try
-        </span>
         <button
-          v-for="s in samples"
-          :key="s.repo"
           type="button"
-          class="inline-flex items-center gap-1.5 rounded-full bg-neutral-50 py-1 pr-2.5 pl-1.5 text-xs font-medium text-neutral-700 ring-1 ring-neutral-200 transition-transform duration-100 hover:bg-neutral-100 hover:text-neutral-900 active:translate-y-px disabled:opacity-50 disabled:active:translate-y-0 dark:bg-neutral-950 dark:text-neutral-300 dark:ring-neutral-800 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          class="inline-flex items-center justify-center gap-1.5 rounded-md bg-neutral-50 px-4 py-2 text-sm font-medium text-neutral-700 ring-1 ring-neutral-200 transition-transform duration-100 hover:bg-neutral-100 hover:text-neutral-900 active:translate-y-px disabled:opacity-50 disabled:active:translate-y-0 dark:bg-neutral-950 dark:text-neutral-300 dark:ring-neutral-800 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
           :disabled="busy"
-          @click="selectSample(s.repo)"
+          @click="useSample"
         >
-          <UIcon :name="s.icon" class="size-3.5 shrink-0" aria-hidden="true" />
-          <span class="font-mono">{{ s.repo }}</span>
+          <UIcon name="i-lucide-flask-conical" class="size-4 shrink-0" aria-hidden="true" />
+          Use sample
         </button>
       </div>
 

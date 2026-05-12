@@ -24,13 +24,11 @@ useHead({
 type Audience = "humans" | "agents";
 
 interface Demo {
-  docs: string;
   humansCmd: string;
   agentsCmd: string;
 }
 
 const demo: Demo = {
-  docs: "/vue",
   humansCmd: "pnpm dlx vite-doctor",
   agentsCmd: "pnpm dlx vite-doctor --dry-run",
 };
@@ -41,39 +39,6 @@ const supported = [
   { id: "vue", label: "Vue", icon: "i-logos-vue" },
   { id: "nuxt", label: "Nuxt", icon: "i-logos-nuxt-icon" },
   { id: "nitro", label: "Nitro", icon: "i-unjs-nitro" },
-] as const;
-
-const checks = [
-  {
-    severity: "high",
-    title: "Hydration mismatches",
-    description: "Non-deterministic values and SSR/CSR divergence caught before deployment.",
-  },
-  {
-    severity: "high",
-    title: "Secret exposure",
-    description: "API keys reachable from the client bundle and sensitive payload leaks.",
-  },
-  {
-    severity: "medium",
-    title: "Reactivity hazards",
-    description: "Prop mutation, async computed(), v-for without :key, escape from refs.",
-  },
-  {
-    severity: "medium",
-    title: "Data-fetching pitfalls",
-    description: "Raw fetch in setup, useFetch misses, duplicate SSR/CSR requests.",
-  },
-  {
-    severity: "low",
-    title: "SSR-unsafe APIs",
-    description: "window, document, or localStorage referenced during server-side setup.",
-  },
-  {
-    severity: "low",
-    title: "Runtime config",
-    description: "Missing env vars, non-serializable useState, module misconfiguration.",
-  },
 ] as const;
 
 const currentCmd = computed(() => (audience.value === "humans" ? demo.humansCmd : demo.agentsCmd));
@@ -448,69 +413,6 @@ onBeforeUnmount(() => {
               <MobileFallback />
             </template>
           </ClientOnly>
-        </div>
-      </section>
-
-      <section
-        aria-label="What Doctor catches"
-        class="border-t border-neutral-200/70 pt-10 pb-14 dark:border-neutral-800/70"
-      >
-        <h2
-          class="text-2xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-3xl dark:text-neutral-100"
-        >
-          What Doctor catches
-        </h2>
-        <p class="mt-2 max-w-[60ch] text-base text-pretty text-neutral-600 dark:text-neutral-400">
-          Static rules covering the hazards your agents miss — every check links to a fix in the
-          docs.
-        </p>
-
-        <dl class="mt-8 grid grid-cols-1 gap-x-10 gap-y-7 sm:grid-cols-2">
-          <div v-for="c in checks" :key="c.title" class="flex gap-3">
-            <span
-              class="mt-1.5 inline-block size-1.5 shrink-0"
-              :class="{
-                'bg-rose-500': c.severity === 'high',
-                'bg-amber-500': c.severity === 'medium',
-                'bg-sky-500': c.severity === 'low',
-              }"
-              aria-hidden="true"
-            />
-            <div class="min-w-0">
-              <dt class="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                {{ c.title }}
-              </dt>
-              <dd class="mt-1 text-sm text-pretty text-neutral-600 dark:text-neutral-400">
-                {{ c.description }}
-              </dd>
-            </div>
-          </div>
-        </dl>
-
-        <div class="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-          <a
-            :href="demo.docs"
-            class="inline-flex items-center gap-1.5 rounded-md font-medium text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-          >
-            Read the Doctor docs
-            <UIcon name="i-lucide-arrow-right" class="size-3.5 shrink-0" aria-hidden="true" />
-          </a>
-          <span class="h-3 w-px bg-neutral-200 dark:bg-neutral-800" aria-hidden="true" />
-          <a
-            href="/rules/nuxt"
-            class="rounded-md text-neutral-500 hover:text-neutral-900 dark:text-neutral-500 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-            >Browse all rules</a
-          >
-          <span class="h-3 w-px bg-neutral-200 dark:bg-neutral-800" aria-hidden="true" />
-          <a
-            href="https://github.com/onmax/nuxt-doctor"
-            target="_blank"
-            rel="noopener"
-            class="inline-flex items-center gap-1 rounded-md text-neutral-500 hover:text-neutral-900 dark:text-neutral-500 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-          >
-            Star on GitHub
-            <UIcon name="i-lucide-arrow-up-right" class="size-3 shrink-0" aria-hidden="true" />
-          </a>
         </div>
       </section>
     </main>

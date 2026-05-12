@@ -136,8 +136,9 @@ export function useDoctorWc() {
     if (!isActive(run)) return;
 
     setStatus("scanning", `Running ${run.framework}-doctor`);
-    const relBin = run.binPath.replace(/^\/+/, "");
-    const proc = await wc.spawn("node", [relBin, "scan", "--format", "json"], { cwd: wc.workdir });
+    const proc = await wc.spawn("node", [run.binPath, "scan", "/", "--format", "json"], {
+      cwd: "/",
+    });
     let stdout = "";
     const outputDone = proc.output.pipeTo(
       new WritableStream({

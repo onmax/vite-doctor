@@ -1,4 +1,3 @@
-import { parseTar } from "nanotar";
 import type { FileSystemTree } from "@webcontainer/api";
 import type { GhRef } from "./parseGhUrl.js";
 
@@ -30,11 +29,9 @@ export async function fetchAndUnpackTarball(ref: GhRef): Promise<FileSystemTree>
   const decompressed = res.body.pipeThrough(new DecompressionStream("gzip"));
   const buffer = await readLimited(decompressed, MAX_BYTES);
 
-  const entries = parseTar(new Uint8Array(buffer));
   const tree: FileSystemTree = {};
   let count = 0;
-  for (const entry of entries) {
-    if (entry.type !== "file" || !entry.data) continue;
+  for (const entry of parseTarFiles(new Uint8Array(buffer))) {
     const path = entry.name.replace(/^[^/]+\//, "");
     if (!path || SKIP_DIR.test(path)) continue;
     if (++count > MAX_FILES) throw new TarballTooLargeError(buffer.byteLength);
@@ -84,4 +81,47 @@ function insert(tree: FileSystemTree, path: string, data: Uint8Array) {
   }
   const name = parts[parts.length - 1]!;
   node[name] = { file: { contents: data } };
+}
+
+function parseTarFiles(bytes: Uint8Array): Array<{ name: string; data: Uint8Array }> {
+  const entries: Array<{ name: string; data: Uint8Array }> = [];
+  let offset = 0;
+
+  while (offset + 512 <= bytes.length && !isEmptyBlock(bytes, offset)) {
+    const header = bytes.subarray(offset, offset + 512);
+    const type = String.fromCharCode(header[156] ?? 0);
+    const size = readTarOctal(header, 124, 12);
+    const name = readTarString(header, 0, 100);
+    const prefix = readTarString(header, 345, 155);
+    const fullName = prefix ? `${prefix}/${name}` : name;
+    const dataStart = offset + 512;
+    const dataEnd = dataStart + size;
+
+    if ((type === "0" || type === "\0") && fullName && dataEnd <= bytes.length) {
+      entries.push({ name: fullName, data: bytes.slice(dataStart, dataEnd) });
+    }
+
+    offset = dataStart + Math.ceil(size / 512) * 512;
+  }
+
+  return entries;
+}
+
+function readTarOctal(bytes: Uint8Array, offset: number, length: number): number {
+  const raw = readTarString(bytes, offset, length).trim();
+  return raw ? Number.parseInt(raw, 8) : 0;
+}
+
+function readTarString(bytes: Uint8Array, offset: number, length: number): string {
+  let end = offset;
+  const max = offset + length;
+  while (end < max && bytes[end] !== 0) end += 1;
+  return new TextDecoder().decode(bytes.subarray(offset, end));
+}
+
+function isEmptyBlock(bytes: Uint8Array, offset: number): boolean {
+  for (let index = offset; index < offset + 512; index += 1) {
+    if (bytes[index] !== 0) return false;
+  }
+  return true;
 }
