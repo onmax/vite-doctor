@@ -8,14 +8,31 @@ category: "security"
 fix: "suggestion"
 ---
 
-# Avoid unsafe scripts in useHead
-
 `nuxt/security/no-unsafe-usehead-script`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "security"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `security`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-unsafe-use-head-script.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "security"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-unsafe-use-head-script.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-unsafe-use-head-script.ts"
+docsUrl: ""
+
+---
+
+::

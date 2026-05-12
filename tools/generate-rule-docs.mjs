@@ -8,24 +8,12 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const vueSources = ruleSourcesFromIndex(join(root, "packages/core/src/rules/vue/index.ts"));
 const nuxtRulesDir = join(root, "packages/nuxt/src/rules");
 const nitroRulesDir = join(nuxtRulesDir, "nitro");
-const nitroLegacyFiles = new Set([
-  "no-use-nuxt-app-in-nitro.ts",
-  "no-navigate-to-in-nitro.ts",
-  "prefer-event-fetch.ts",
-  "require-event-runtime-config-in-server.ts",
-  "no-client-composables-in-server.ts",
-  "no-browser-api-in-server.ts",
-]);
-const nitroSources = [
-  ...[...nitroLegacyFiles].map((file) => join(nuxtRulesDir, "nuxt", file)),
-  ...ruleSourcesFromIndex(join(nitroRulesDir, "index.ts")).filter((file) =>
-    file.startsWith(nitroRulesDir),
-  ),
-];
+const nitroSources = readdirSync(nitroRulesDir)
+  .filter((file) => file.endsWith(".ts") && file !== "index.ts")
+  .sort()
+  .map((file) => join(nitroRulesDir, file));
 const nuxtSources = [
-  ...ruleSourcesFromIndex(join(nuxtRulesDir, "nuxt/index.ts")).filter(
-    (file) => !nitroLegacyFiles.has(file.split("/").at(-1)),
-  ),
+  ...ruleSourcesFromIndex(join(nuxtRulesDir, "nuxt/index.ts")),
   ...readdirSync(nuxtRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "nuxt.ts")
     .sort()
@@ -40,7 +28,7 @@ const publicRulesDir = join(root, "docs/public/rules");
 mkdirSync(publicRulesDir, { recursive: true });
 writeJson(join(publicRulesDir, "vue.json"), { rules: vueRules });
 writeJson(join(publicRulesDir, "nitro.json"), { rules: nitroRules });
-writeJson(join(publicRulesDir, "nuxt.json"), { rules: [...nitroRules, ...nuxtRules] });
+writeJson(join(publicRulesDir, "nuxt.json"), { rules: [...vueRules, ...nitroRules, ...nuxtRules] });
 writeJson(join(publicRulesDir, "all.json"), { rules: [...vueRules, ...nitroRules, ...nuxtRules] });
 
 writeRuleDocs({
@@ -65,7 +53,8 @@ writeRuleDocs({
     title: "Rules",
     description: "Nuxt 4 diagnostics in the Nuxt and ecosystem rule packs.",
     intro: [
-      "Nuxt rules cover auto-imports, fetching, routing, Nuxt context, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.",
+      "Nuxt Doctor consumes Vue, Nitro, Nuxt, and ecosystem rule packs for full-stack application diagnostics.",
+      "Nuxt-specific rules cover auto-imports, fetching, routing, Nuxt context, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.",
       "These pages are generated from rule metadata in `packages/nuxt/src/rules`.",
     ],
     command: "vp exec nuxt-doctor rules --format json",
@@ -81,8 +70,8 @@ writeRuleDocs({
     description: "Nitro request-runtime diagnostics in the Nuxt Doctor rule pack.",
     intro: [
       "Nitro rules cover server and request-runtime boundaries, event-aware helpers, validation, HTTP method assertions, and request metadata.",
-      "Nuxt Doctor consumes this shared Nitro rule pack for `server/` and `app/server/` diagnostics.",
-      "These pages are generated from rule metadata in `packages/nuxt/src/rules/nitro` and shared Nuxt server rules.",
+      "Nuxt Doctor consumes this independent Nitro rule pack for `server/` and `app/server/` diagnostics.",
+      "These pages are generated from rule metadata in `packages/nuxt/src/rules/nitro`.",
     ],
     command: "vp exec nuxt-doctor rules --format json",
   },
@@ -94,7 +83,7 @@ function collectRules(files, defaultPack) {
     const text = readFileSync(file, "utf8");
     const ast = parseSync(file, text, { sourceType: "module", lang: "ts" }).program;
     const pack = readPackName(ast) ?? defaultPack ?? fallbackPackName(file);
-    return findMetaObjects(ast)
+    const metaRules = findMetaObjects(ast)
       .map((meta) => ({
         pack,
         source: relative(root, file),
@@ -103,12 +92,28 @@ function collectRules(files, defaultPack) {
         description: readString(meta, "description"),
         why: readString(meta, "why"),
         recommendedReplacement: readString(meta, "recommendedReplacement"),
+        examples: readExamples(meta),
         category: readString(meta, "category"),
         severity: readString(meta, "severity"),
         fixable: readFixable(meta),
         docsUrl: readString(meta, "docsUrl"),
       }))
       .filter((rule) => rule.id);
+    const helperRules = findValidatedInputRuleOptions(ast).map((opts) => ({
+      pack,
+      source: relative(root, file),
+      id: readString(opts, "id"),
+      title: readString(opts, "title"),
+      description: readString(opts, "description"),
+      why: "Raw request input and validation can drift apart when they are separate operations. Nitro and h3 provide validated helpers that keep parsing and validation coupled at the request boundary.",
+      recommendedReplacement: validatedInputReplacement(opts),
+      examples: validatedInputExamples(opts),
+      category: "request",
+      severity: "warn",
+      fixable: "suggestion",
+      docsUrl: "",
+    }));
+    return [...metaRules, ...helperRules].filter((rule) => rule.id);
   });
 }
 
@@ -223,32 +228,74 @@ function renderRulePage(rule) {
     `fix: ${yamlString(rule.fixable || "no")}`,
     "---",
     "",
-    `# ${title}`,
-    "",
     `\`${rule.id}\``,
     "",
   ];
 
-  if (rule.description) lines.push(rule.description, "");
-  if (rule.why) lines.push("## Why", "", rule.why, "");
+  if (rule.description) lines.push(escapeMarkdownText(rule.description), "");
+  lines.push(renderBadgeRow(rule), "");
+  if (rule.examples?.length) lines.push("## Examples", "", ...rule.examples.flatMap(renderExample));
+  if (rule.why) lines.push("## Why", "", escapeMarkdownText(rule.why), "");
   if (rule.recommendedReplacement) {
-    lines.push("## Prefer", "", rule.recommendedReplacement, "");
+    lines.push("## Prefer", "", escapeMarkdownText(rule.recommendedReplacement), "");
   }
 
-  lines.push(
-    "## Metadata",
-    "",
-    `- Pack: \`${rule.pack}\``,
-    `- Severity: \`${rule.severity}\``,
-    `- Category: \`${rule.category}\``,
-    `- Fix: ${rule.fixable ? `\`${rule.fixable}\`` : "none"}`,
-    `- Source: \`${rule.source}\``,
-  );
-
-  if (rule.docsUrl) lines.push(`- Docs: ${rule.docsUrl}`);
+  lines.push("## Metadata", "", renderMetadata(rule));
 
   lines.push("");
   return lines.join("\n");
+}
+
+function renderBadgeRow(rule) {
+  const props = {
+    pack: rule.pack,
+    category: rule.category,
+    severity: rule.severity,
+    fix: rule.fixable || "",
+  };
+
+  return [
+    "::rule-badges",
+    "---",
+    ...Object.entries(props).map(([key, value]) => `${key}: ${yamlString(value)}`),
+    "---",
+    "::",
+  ].join("\n");
+}
+
+function renderMetadata(rule) {
+  const props = {
+    pack: rule.pack,
+    category: rule.category,
+    severity: rule.severity,
+    fix: rule.fixable || "",
+    source: rule.source,
+    sourceUrl: githubSourceUrl(rule.source),
+    docsUrl: rule.docsUrl || "",
+  };
+
+  return [
+    "::rule-metadata",
+    "---",
+    ...Object.entries(props).map(([key, value]) => `${key}: ${yamlString(value)}`),
+    "---",
+    "::",
+  ].join("\n");
+}
+
+function renderExample(example, index) {
+  const language = example.language || "ts";
+  const lines = [];
+  if (example.title) lines.push(`### ${escapeMarkdownText(example.title)}`, "");
+  if (example.invalid) {
+    lines.push(index === 0 ? "Reported pattern:" : "Another reported pattern:", "");
+    lines.push("```" + language, trimCode(example.invalid), "```", "");
+  }
+  if (example.valid) {
+    lines.push("Possible fix:", "");
+    lines.push("```" + language, trimCode(example.valid), "```", "");
+  }
+  return lines;
 }
 
 function findMetaObjects(ast) {
@@ -260,6 +307,18 @@ function findMetaObjects(ast) {
     metas.push(node.value);
   });
   return metas;
+}
+
+function findValidatedInputRuleOptions(ast) {
+  const options = [];
+  walk(ast, (node) => {
+    if (node.type !== "CallExpression") return;
+    if (node.callee?.type !== "Identifier" || node.callee.name !== "createValidatedInputRule")
+      return;
+    const [opts] = node.arguments ?? [];
+    if (opts?.type === "ObjectExpression") options.push(opts);
+  });
+  return options;
 }
 
 function readPackName(ast) {
@@ -277,10 +336,69 @@ function readString(object, key) {
   return typeof value?.value === "string" ? value.value.replace(/\s+/g, " ").trim() : "";
 }
 
+function readText(object, key) {
+  const value = findProperty(object, key)?.value;
+  if (typeof value?.value === "string") return value.value;
+  if (value?.type !== "TemplateLiteral") return "";
+  return value.quasis?.map((quasi) => quasi.value?.cooked ?? quasi.value?.raw ?? "").join("") ?? "";
+}
+
+function readExamples(object) {
+  const value = findProperty(object, "examples")?.value;
+  if (value?.type !== "ArrayExpression") return [];
+  return value.elements
+    .filter((element) => element?.type === "ObjectExpression")
+    .map((element) => ({
+      title: readString(element, "title"),
+      language: readString(element, "language") || "ts",
+      invalid: readText(element, "invalid"),
+      valid: readText(element, "valid"),
+    }))
+    .filter((example) => example.invalid || example.valid);
+}
+
 function readFixable(object) {
   const value = findProperty(object, "fixable")?.value?.value;
   if (typeof value === "string") return value;
   return value === false ? "no" : "no";
+}
+
+function readStringArray(object, key) {
+  const value = findProperty(object, key)?.value;
+  if (value?.type !== "ArrayExpression") return [];
+  return value.elements
+    .map((element) => (typeof element?.value === "string" ? element.value : ""))
+    .filter(Boolean);
+}
+
+function validatedInputReplacement(opts) {
+  const validatedUtility = readString(opts, "validatedUtility");
+  const [rawUtility] = readStringArray(opts, "rawUtilities");
+  if (!validatedUtility || !rawUtility) return readString(opts, "suggestion");
+  return `Use ${validatedUtility}(event, validator) instead of ${rawUtility}(event) followed by separate validation.`;
+}
+
+function validatedInputExamples(opts) {
+  const validatedUtility = readString(opts, "validatedUtility");
+  const [rawUtility] = readStringArray(opts, "rawUtilities");
+  if (!validatedUtility || !rawUtility) return [];
+  return [
+    {
+      title: "Keep reading and validation together",
+      language: "ts",
+      invalid: `export default defineEventHandler(async (event) => {
+  const input = await ${rawUtility}(event)
+  const value = validator.parse(input)
+
+  return value
+})`,
+      valid: `export default defineEventHandler(async (event) => {
+  const value = await ${validatedUtility}(event, validator)
+
+  return value
+})`,
+    },
+  ];
 }
 
 function findProperty(object, name) {
@@ -350,6 +468,21 @@ function cell(value) {
     .replace(/\|/g, "\\|")
     .replace(/\n/g, " ")
     .trim();
+}
+
+function escapeMarkdownText(value) {
+  return String(value ?? "").replace(
+    /\b[A-Za-z_$][\w$]*(?:<[^>\n]+>)?\([^)\n]*\)|<[^>\n]+>/g,
+    (match) => `\`${match.replace(/`/g, "\\`")}\``,
+  );
+}
+
+function trimCode(value) {
+  return String(value ?? "").replace(/^\n+|\s+$/g, "");
+}
+
+function githubSourceUrl(source) {
+  return `https://github.com/onmax/nuxt-doctor/blob/main/${source}`;
 }
 
 function writeJson(file, value) {

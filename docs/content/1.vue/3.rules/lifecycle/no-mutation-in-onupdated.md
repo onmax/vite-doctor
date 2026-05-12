@@ -8,14 +8,31 @@ category: "lifecycle"
 fix: "suggestion"
 ---
 
-# Do not mutate state in onUpdated
-
 `vue/lifecycle/no-mutation-in-onupdated`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "lifecycle"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `lifecycle`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/no-mutation-in-on-updated.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "lifecycle"
+severity: "error"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/no-mutation-in-on-updated.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/no-mutation-in-on-updated.ts"
+docsUrl: ""
+
+---
+
+::

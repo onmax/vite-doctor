@@ -1,21 +1,48 @@
 ---
 title: "Use event.$fetch in Nitro handlers"
-description: "nuxt/server/prefer-event-fetch in nuxt-doctor/nitro."
-ruleId: "nuxt/server/prefer-event-fetch"
+description: "Proxy internal API calls through event.$fetch() when request context matters."
+ruleId: "nitro/server/prefer-event-fetch"
 pack: "nuxt-doctor/nitro"
 severity: "warn"
 category: "server"
 fix: "suggestion"
 ---
 
-# Use event.$fetch in Nitro handlers
+`nitro/server/prefer-event-fetch`
 
-`nuxt/server/prefer-event-fetch`
+Proxy internal API calls through event.$`fetch()` when request context matters.
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nitro"
+category: "server"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
+
+## Why
+
+$`fetch()` does not automatically carry request-scoped context such as headers, cookies, or event context. event.$`fetch()` preserves the current Nitro request context for internal server calls.
+
+## Prefer
+
+Use event.$`fetch()` when proxying to other server routes from a Nitro handler.
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nitro`
-- Severity: `warn`
-- Category: `server`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/prefer-event-fetch.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nitro"
+category: "server"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nitro/prefer-event-fetch.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nitro/prefer-event-fetch.ts"
+docsUrl: ""
+
+---
+
+::

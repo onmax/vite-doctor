@@ -8,14 +8,31 @@ category: "reactivity"
 fix: "safe"
 ---
 
-# Watch destructured props with a getter
-
 `vue/reactivity/defineprops-watch-getter`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "reactivity"
+severity: "error"
+fix: "safe"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `reactivity`
-- Fix: `safe`
-- Source: `packages/core/src/rules/vue/define-props-watch-getter.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "reactivity"
+severity: "error"
+fix: "safe"
+source: "packages/core/src/rules/vue/define-props-watch-getter.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/define-props-watch-getter.ts"
+docsUrl: ""
+
+---
+
+::

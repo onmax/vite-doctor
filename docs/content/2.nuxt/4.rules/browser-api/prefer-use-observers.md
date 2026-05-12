@@ -8,14 +8,31 @@ category: "browser-api"
 fix: "suggestion"
 ---
 
-# Use VueUse observer composables
-
 `vueuse/prefer-use-observers`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/vueuse"
+category: "browser-api"
+severity: "info"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/vueuse`
-- Severity: `info`
-- Category: `browser-api`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/vueuse.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/vueuse"
+category: "browser-api"
+severity: "info"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/vueuse.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/vueuse.ts"
+docsUrl: ""
+
+---
+
+::

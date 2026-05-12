@@ -8,14 +8,31 @@ category: "ui"
 fix: "suggestion"
 ---
 
-# Use UButton for interactive buttons
-
 `nuxt-ui/prefer-u-button`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt-ui"
+category: "ui"
+severity: "info"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt-ui`
-- Severity: `info`
-- Category: `ui`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt-ui.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt-ui"
+category: "ui"
+severity: "info"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt-ui.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt-ui.ts"
+docsUrl: ""
+
+---
+
+::

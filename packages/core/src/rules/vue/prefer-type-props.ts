@@ -8,6 +8,30 @@ export const preferTypeProps = createRule({
   meta: {
     id: "vue/style/prefer-type-props",
     title: "Prefer TypeScript props declarations",
+    description: "Use type-only defineProps declarations in TypeScript <script setup> components.",
+    why: "Runtime prop declarations duplicate information TypeScript can already express, and they make prop contracts harder to reuse across components, composables, and tests.",
+    recommendedReplacement:
+      "Use defineProps<Props>() or defineProps<{ foo: string }>() instead of runtime props objects when the component already uses TypeScript.",
+    examples: [
+      {
+        title: "Declare props with TypeScript",
+        language: "vue",
+        invalid: `<script setup lang="ts">
+const props = defineProps({
+  title: String,
+  count: Number,
+})
+</script>`,
+        valid: `<script setup lang="ts">
+interface Props {
+  title: string
+  count?: number
+}
+
+const props = defineProps<Props>()
+</script>`,
+      },
+    ],
     category: "style",
     severity: "warn",
     fixable: "suggestion",

@@ -8,14 +8,31 @@ category: "images"
 fix: "suggestion"
 ---
 
-# Provide alt text for Nuxt images
-
 `nuxt-image/require-alt`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt-image"
+category: "images"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt-image`
-- Severity: `error`
-- Category: `images`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt-image.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt-image"
+category: "images"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt-image.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt-image.ts"
+docsUrl: ""
+
+---
+
+::

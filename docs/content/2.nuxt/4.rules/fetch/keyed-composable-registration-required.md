@@ -8,14 +8,31 @@ category: "fetching"
 fix: "suggestion"
 ---
 
-# Register custom keyed data composables
-
 `nuxt/fetch/keyed-composable-registration-required`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `fetching`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/keyed-composable-registration-required.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/keyed-composable-registration-required.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/keyed-composable-registration-required.ts"
+docsUrl: ""
+
+---
+
+::

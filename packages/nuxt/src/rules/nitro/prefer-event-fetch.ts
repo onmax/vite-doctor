@@ -1,9 +1,13 @@
-import { AnyNode, createRule, report, sourceForNode } from "./shared.js";
+import { AnyNode, createRule, report, sourceForNode } from "../nuxt/shared.js";
 
 export const preferEventFetch = createRule({
   meta: {
-    id: "nuxt/server/prefer-event-fetch",
+    id: "nitro/server/prefer-event-fetch",
     title: "Use event.$fetch in Nitro handlers",
+    description: "Proxy internal API calls through event.$fetch() when request context matters.",
+    why: "$fetch() does not automatically carry request-scoped context such as headers, cookies, or event context. event.$fetch() preserves the current Nitro request context for internal server calls.",
+    recommendedReplacement:
+      "Use event.$fetch() when proxying to other server routes from a Nitro handler.",
     category: "server",
     severity: "warn",
     fixable: "suggestion",
@@ -18,7 +22,7 @@ export const preferEventFetch = createRule({
         report(
           ctx,
           node,
-          "nuxt/server/prefer-event-fetch",
+          "nitro/server/prefer-event-fetch",
           "warn",
           "server",
           "$fetch() in Nitro handlers does not automatically carry request event context.",

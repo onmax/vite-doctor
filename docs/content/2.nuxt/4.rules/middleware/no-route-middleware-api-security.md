@@ -8,14 +8,31 @@ category: "middleware"
 fix: "suggestion"
 ---
 
-# Route middleware does not secure API routes
-
 `nuxt/middleware/no-route-middleware-api-security`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "middleware"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `middleware`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-route-middleware-api-security.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "middleware"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-route-middleware-api-security.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-route-middleware-api-security.ts"
+docsUrl: ""
+
+---
+
+::

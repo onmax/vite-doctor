@@ -8,14 +8,31 @@ category: "fetching"
 fix: "no"
 ---
 
-# Use Nuxt data fetching primitives for SSR render data
-
 `nuxt/fetch/no-raw-fetch-in-setup`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "warn"
+fix: "no"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `fetching`
-- Fix: `no`
-- Source: `packages/nuxt/src/rules/nuxt/no-raw-fetch-in-setup.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "warn"
+fix: "no"
+source: "packages/nuxt/src/rules/nuxt/no-raw-fetch-in-setup.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-raw-fetch-in-setup.ts"
+docsUrl: ""
+
+---
+
+::

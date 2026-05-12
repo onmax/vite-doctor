@@ -42,6 +42,8 @@ test("Nuxt all-issues fixture reports Nuxt and ecosystem rule packs", async () =
 
   expect(uniqueDiagnosticIdentities(result)).toHaveLength(result.diagnostics.length);
   expect(diagnosticKeys(result, nuxtFixture)).toEqual([
+    "nitro/context/no-navigateto-in-nitro:server/api/user.ts",
+    "nitro/context/no-usenuxtapp-in-nitro:server/api/user.ts",
     "nuxt-better-auth/require-standard-auth-handler-mount:app/aaa-security.ts",
     "nuxt-content/no-querycontent-legacy-api:app/pages/account.vue",
     "nuxt-scripts/no-raw-third-party-script-tag:diagnostics/RawScript.vue",
@@ -50,8 +52,6 @@ test("Nuxt all-issues fixture reports Nuxt and ecosystem rule packs", async () =
     "nuxt/composables/no-nested-autoimport-assumption:app/composables/nested/useThing.ts",
     "nuxt/context/no-composable-after-await:app/composables/useWrappedUser.ts",
     "nuxt/context/no-composable-after-await:app/pages/wrapper.vue",
-    "nuxt/context/no-navigateto-in-nitro:server/api/user.ts",
-    "nuxt/context/no-usenuxtapp-in-nitro:server/api/user.ts",
     "nuxt/fetch/forward-auth-headers-ssr:app/components/IssuePanel.vue",
     "nuxt/fetch/forward-auth-headers-ssr:app/composables/useWrappedUser.ts",
     "nuxt/fetch/forward-auth-headers-ssr:app/pages/wrapper.vue",

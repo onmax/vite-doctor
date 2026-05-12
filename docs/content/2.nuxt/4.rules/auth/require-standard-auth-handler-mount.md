@@ -8,14 +8,31 @@ category: "auth"
 fix: "suggestion"
 ---
 
-# Mount Better Auth at the standard catch-all route
-
 `nuxt-better-auth/require-standard-auth-handler-mount`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt-better-auth"
+category: "auth"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt-better-auth`
-- Severity: `warn`
-- Category: `auth`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt-better-auth.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt-better-auth"
+category: "auth"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt-better-auth.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt-better-auth.ts"
+docsUrl: ""
+
+---
+
+::

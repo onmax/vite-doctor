@@ -8,14 +8,31 @@ category: "template"
 fix: "suggestion"
 ---
 
-# Require stable keys on v-for
-
 `vue/template/require-v-for-key`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "template"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `template`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/require-v-for-key.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "template"
+severity: "error"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/require-v-for-key.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/require-v-for-key.ts"
+docsUrl: ""
+
+---
+
+::

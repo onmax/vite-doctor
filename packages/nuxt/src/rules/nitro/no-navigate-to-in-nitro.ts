@@ -1,9 +1,13 @@
-import { AnyNode, createRule, report } from "./shared.js";
+import { AnyNode, createRule, report } from "../nuxt/shared.js";
 
 export const noNavigateToInNitro = createRule({
   meta: {
-    id: "nuxt/context/no-navigateto-in-nitro",
+    id: "nitro/context/no-navigateto-in-nitro",
     title: "Do not use navigateTo in Nitro routes",
+    description:
+      "Nitro handlers should redirect with server response utilities instead of Nuxt app navigation.",
+    why: "navigateTo() is a Nuxt app navigation helper. Nitro handlers need to write an HTTP redirect response for the current request event.",
+    recommendedReplacement: "Use sendRedirect(event, path) in Nitro handlers.",
     category: "server",
     severity: "error",
     fixable: "suggestion",
@@ -17,7 +21,7 @@ export const noNavigateToInNitro = createRule({
           report(
             ctx,
             node,
-            "nuxt/context/no-navigateto-in-nitro",
+            "nitro/context/no-navigateto-in-nitro",
             "error",
             "server",
             "navigateTo() is for Nuxt app navigation. Use sendRedirect(event, path) in Nitro handlers.",

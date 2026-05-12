@@ -8,14 +8,31 @@ category: "context"
 fix: "suggestion"
 ---
 
-# Call Nuxt composables before await
-
 `nuxt/context/no-composable-after-await`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "context"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `context`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-composable-after-await.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "context"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-composable-after-await.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-composable-after-await.ts"
+docsUrl: ""
+
+---
+
+::

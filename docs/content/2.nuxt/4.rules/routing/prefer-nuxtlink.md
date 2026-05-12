@@ -8,14 +8,31 @@ category: "routing"
 fix: "safe"
 ---
 
-# Use NuxtLink for internal navigation
-
 `nuxt/routing/prefer-nuxtlink`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "warn"
+fix: "safe"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `routing`
-- Fix: `safe`
-- Source: `packages/nuxt/src/rules/nuxt/prefer-nuxt-link.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "warn"
+fix: "safe"
+source: "packages/nuxt/src/rules/nuxt/prefer-nuxt-link.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/prefer-nuxt-link.ts"
+docsUrl: ""
+
+---
+
+::

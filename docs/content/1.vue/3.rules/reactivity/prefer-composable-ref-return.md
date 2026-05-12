@@ -8,14 +8,31 @@ category: "reactivity"
 fix: "suggestion"
 ---
 
-# Prefer refs from reusable composables
-
 `vue/reactivity/prefer-composable-ref-return`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "reactivity"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `warn`
-- Category: `reactivity`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/prefer-composable-ref-return.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "reactivity"
+severity: "warn"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/prefer-composable-ref-return.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/prefer-composable-ref-return.ts"
+docsUrl: ""
+
+---
+
+::

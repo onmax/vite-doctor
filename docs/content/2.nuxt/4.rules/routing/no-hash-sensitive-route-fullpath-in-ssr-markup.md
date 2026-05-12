@@ -8,14 +8,31 @@ category: "routing"
 fix: "suggestion"
 ---
 
-# Avoid route.fullPath in SSR markup
-
 `nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `routing`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-hash-sensitive-route-fullpath-in-ssr-markup.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-hash-sensitive-route-fullpath-in-ssr-markup.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-hash-sensitive-route-fullpath-in-ssr-markup.ts"
+docsUrl: ""
+
+---
+
+::

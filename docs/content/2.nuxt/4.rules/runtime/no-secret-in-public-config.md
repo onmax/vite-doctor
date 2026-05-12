@@ -8,14 +8,31 @@ category: "runtime-config"
 fix: "suggestion"
 ---
 
-# Do not expose secrets in runtimeConfig.public
-
 `nuxt/runtime/no-secret-in-public-config`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "runtime-config"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `runtime-config`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-secret-in-public-config.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "runtime-config"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-secret-in-public-config.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-secret-in-public-config.ts"
+docsUrl: ""
+
+---
+
+::

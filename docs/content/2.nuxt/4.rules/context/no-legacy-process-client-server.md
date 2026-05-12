@@ -8,14 +8,31 @@ category: "context"
 fix: "safe"
 ---
 
-# Use import.meta client/server flags
-
 `nuxt/context/no-legacy-process-client-server`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "context"
+severity: "warn"
+fix: "safe"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `context`
-- Fix: `safe`
-- Source: `packages/nuxt/src/rules/nuxt/no-legacy-process-client-server.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "context"
+severity: "warn"
+fix: "safe"
+source: "packages/nuxt/src/rules/nuxt/no-legacy-process-client-server.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-legacy-process-client-server.ts"
+docsUrl: ""
+
+---
+
+::

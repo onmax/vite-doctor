@@ -8,14 +8,31 @@ category: "watchers"
 fix: "suggestion"
 ---
 
-# Clean up watcher side effects
-
 `vue/watch/require-side-effect-cleanup`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "watchers"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `warn`
-- Category: `watchers`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/require-watcher-cleanup.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "watchers"
+severity: "warn"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/require-watcher-cleanup.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/require-watcher-cleanup.ts"
+docsUrl: ""
+
+---
+
+::

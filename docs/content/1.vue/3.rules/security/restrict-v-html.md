@@ -8,14 +8,31 @@ category: "security"
 fix: "suggestion"
 ---
 
-# Restrict v-html to trusted HTML
-
 `vue/security/restrict-v-html`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "security"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `security`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/restrict-v-html.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "security"
+severity: "error"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/restrict-v-html.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/restrict-v-html.ts"
+docsUrl: ""
+
+---
+
+::

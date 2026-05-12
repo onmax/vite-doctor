@@ -8,14 +8,31 @@ category: "watchers"
 fix: "suggestion"
 ---
 
-# Register watchers and lifecycle hooks before await
-
 `vue/watch/no-after-await`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "watchers"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `watchers`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/no-after-await.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "watchers"
+severity: "error"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/no-after-await.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/no-after-await.ts"
+docsUrl: ""
+
+---
+
+::

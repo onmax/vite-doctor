@@ -8,14 +8,31 @@ category: "template"
 fix: "suggestion"
 ---
 
-# Do not combine v-if and v-for on the same element
-
 `vue/template/no-v-if-with-v-for`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "template"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `template`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/no-v-if-with-v-for.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "template"
+severity: "error"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/no-v-if-with-v-for.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/no-v-if-with-v-for.ts"
+docsUrl: ""
+
+---
+
+::

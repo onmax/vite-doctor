@@ -8,14 +8,31 @@ category: "ssr"
 fix: "suggestion"
 ---
 
-# Do not read browser APIs in SSR setup paths
-
 `vue/ssr/no-browser-api-in-setup`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "ssr"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `ssr`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/no-browser-api-in-setup.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "ssr"
+severity: "error"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/no-browser-api-in-setup.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/no-browser-api-in-setup.ts"
+docsUrl: ""
+
+---
+
+::

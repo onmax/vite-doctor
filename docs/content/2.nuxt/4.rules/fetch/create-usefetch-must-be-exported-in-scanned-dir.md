@@ -8,14 +8,31 @@ category: "fetching"
 fix: "suggestion"
 ---
 
-# Export data factories from scanned composable directories
-
 `nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `fetching`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/create-use-fetch-must-be-exported-in-scanned-dir.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/create-use-fetch-must-be-exported-in-scanned-dir.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/create-use-fetch-must-be-exported-in-scanned-dir.ts"
+docsUrl: ""
+
+---
+
+::

@@ -8,14 +8,31 @@ category: "fetching"
 fix: "suggestion"
 ---
 
-# Forward auth headers for SSR server fetches
-
 `nuxt/fetch/forward-auth-headers-ssr`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `fetching`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/forward-auth-headers-ssr.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/forward-auth-headers-ssr.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/forward-auth-headers-ssr.ts"
+docsUrl: ""
+
+---
+
+::

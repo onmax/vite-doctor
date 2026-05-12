@@ -8,14 +8,31 @@ category: "routing"
 fix: "safe"
 ---
 
-# Return navigateTo in route middleware
-
 `nuxt/routing/return-navigateto-in-middleware`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "error"
+fix: "safe"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `routing`
-- Fix: `safe`
-- Source: `packages/nuxt/src/rules/nuxt/return-navigate-to-in-middleware.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "error"
+fix: "safe"
+source: "packages/nuxt/src/rules/nuxt/return-navigate-to-in-middleware.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/return-navigate-to-in-middleware.ts"
+docsUrl: ""
+
+---
+
+::

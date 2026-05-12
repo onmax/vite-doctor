@@ -5,7 +5,9 @@ description: "Nuxt 4 diagnostics in the Nuxt and ecosystem rule packs."
 
 # Rules
 
-Nuxt rules cover auto-imports, fetching, routing, Nuxt context, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.
+Nuxt Doctor consumes Vue, Nitro, Nuxt, and ecosystem rule packs for full-stack application diagnostics.
+
+Nuxt-specific rules cover auto-imports, fetching, routing, Nuxt context, runtime config, hydration, middleware security, state serialization, content, Docus, and optional module overlays.
 
 These pages are generated from rule metadata in `packages/nuxt/src/rules`.
 

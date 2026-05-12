@@ -8,14 +8,31 @@ category: "fetching"
 fix: "suggestion"
 ---
 
-# Use stable keys for async data payload entries
-
 `nuxt/fetch/require-stable-asyncdata-key`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `fetching`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/require-stable-async-data-key.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/require-stable-async-data-key.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/require-stable-async-data-key.ts"
+docsUrl: ""
+
+---
+
+::

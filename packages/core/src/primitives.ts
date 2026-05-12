@@ -89,6 +89,7 @@ export interface RuleMeta {
   description?: string;
   why?: string;
   recommendedReplacement?: string;
+  examples?: RuleExample[];
   category: string;
   severity: DoctorSeverity;
   fixable?: FixSafety | false;
@@ -429,6 +430,13 @@ export interface RuleContext {
   cache: RuleCache;
   helpers: DoctorHelpers;
   range(nodeOrStart: unknown, end?: number): SourceRange | undefined;
+}
+
+export interface RuleExample {
+  title?: string;
+  language?: string;
+  invalid?: string;
+  valid?: string;
 }
 
 export interface RuleVisitor {

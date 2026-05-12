@@ -8,14 +8,31 @@ category: "layers"
 fix: "suggestion"
 ---
 
-# Do not shadow Docus app.vue with an empty app shell
-
 `docus/layers/no-empty-app-vue-shadow`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/docus"
+category: "layers"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/docus`
-- Severity: `error`
-- Category: `layers`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/docus.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/docus"
+category: "layers"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/docus.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/docus.ts"
+docsUrl: ""
+
+---
+
+::

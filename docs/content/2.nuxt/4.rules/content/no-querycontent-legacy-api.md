@@ -8,14 +8,31 @@ category: "content"
 fix: "suggestion"
 ---
 
-# Use queryCollection instead of queryContent
-
 `nuxt-content/no-querycontent-legacy-api`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt-content"
+category: "content"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt-content`
-- Severity: `warn`
-- Category: `content`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt-content.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt-content"
+category: "content"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt-content.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt-content.ts"
+docsUrl: ""
+
+---
+
+::

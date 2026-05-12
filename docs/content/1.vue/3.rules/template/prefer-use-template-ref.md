@@ -8,14 +8,31 @@ category: "template"
 fix: "suggestion"
 ---
 
-# Prefer useTemplateRef for template refs
-
 `vue/template/prefer-use-template-ref`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "template"
+severity: "info"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `info`
-- Category: `template`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/prefer-use-template-ref.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "template"
+severity: "info"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/prefer-use-template-ref.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/prefer-use-template-ref.ts"
+docsUrl: ""
+
+---
+
+::

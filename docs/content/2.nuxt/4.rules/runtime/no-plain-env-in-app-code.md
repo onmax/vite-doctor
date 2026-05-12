@@ -8,14 +8,31 @@ category: "runtime-config"
 fix: "suggestion"
 ---
 
-# Use runtimeConfig instead of process.env in app code
-
 `nuxt/runtime/no-plain-env-in-app-code`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "runtime-config"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `runtime-config`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-plain-env-in-app-code.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "runtime-config"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-plain-env-in-app-code.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-plain-env-in-app-code.ts"
+docsUrl: ""
+
+---
+
+::

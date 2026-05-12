@@ -1,10 +1,10 @@
 import type { RulePack } from "@vue-doctor/core";
-import { noUseNuxtAppInNitro } from "../nuxt/no-use-nuxt-app-in-nitro.js";
-import { noNavigateToInNitro } from "../nuxt/no-navigate-to-in-nitro.js";
-import { preferEventFetch } from "../nuxt/prefer-event-fetch.js";
-import { requireEventRuntimeConfigInServer } from "../nuxt/require-event-runtime-config-in-server.js";
-import { noClientComposablesInServer } from "../nuxt/no-client-composables-in-server.js";
-import { noBrowserApiInServer } from "../nuxt/no-browser-api-in-server.js";
+import { noUseNuxtAppInNitro } from "./no-use-nuxt-app-in-nitro.js";
+import { noNavigateToInNitro } from "./no-navigate-to-in-nitro.js";
+import { preferEventFetch } from "./prefer-event-fetch.js";
+import { requireEventRuntimeConfigInServer } from "./require-event-runtime-config-in-server.js";
+import { noClientComposablesInServer } from "./no-client-composables-in-server.js";
+import { noBrowserApiInServer } from "./no-browser-api-in-server.js";
 import { preferValidatedBody } from "./prefer-validated-body.js";
 import { preferValidatedQuery } from "./prefer-validated-query.js";
 import { preferValidatedRouterParams } from "./prefer-validated-router-params.js";

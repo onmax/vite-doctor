@@ -8,14 +8,31 @@ category: "watchers"
 fix: "suggestion"
 ---
 
-# Use post-flush watchers for DOM reads
-
 `vue/watch/require-post-flush-for-dom-read`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "watchers"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `warn`
-- Category: `watchers`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/require-post-flush-for-dom-watch.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "watchers"
+severity: "warn"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/require-post-flush-for-dom-watch.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/require-post-flush-for-dom-watch.ts"
+docsUrl: ""
+
+---
+
+::

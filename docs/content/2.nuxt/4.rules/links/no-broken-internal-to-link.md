@@ -8,14 +8,31 @@ category: "content"
 fix: "suggestion"
 ---
 
-# Do not link to missing content routes
-
 `nuxt-content/links/no-broken-internal-to-link`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/docus"
+category: "content"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/docus`
-- Severity: `warn`
-- Category: `content`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/docus.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/docus"
+category: "content"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/docus.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/docus.ts"
+docsUrl: ""
+
+---
+
+::

@@ -8,14 +8,31 @@ category: "hydration"
 fix: "suggestion"
 ---
 
-# Use NuxtTime or ClientOnly for time-dependent rendering
-
 `nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `hydration`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-time-dependent-render-without-nuxt-time-or-client-only.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-time-dependent-render-without-nuxt-time-or-client-only.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-time-dependent-render-without-nuxt-time-or-client-only.ts"
+docsUrl: ""
+
+---
+
+::

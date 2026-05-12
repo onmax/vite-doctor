@@ -8,14 +8,31 @@ category: "seo"
 fix: "suggestion"
 ---
 
-# Use Nuxt SEO composables for metadata
-
 `nuxt/seo/prefer-seo-composables`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "seo"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `seo`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/prefer-seo-composables.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "seo"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/prefer-seo-composables.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/prefer-seo-composables.ts"
+docsUrl: ""
+
+---
+
+::

@@ -8,14 +8,31 @@ category: "lifecycle"
 fix: "suggestion"
 ---
 
-# Clean up lifecycle resources
-
 `vue/lifecycle/require-cleanup`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "lifecycle"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `warn`
-- Category: `lifecycle`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/require-lifecycle-cleanup.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "lifecycle"
+severity: "warn"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/require-lifecycle-cleanup.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/require-lifecycle-cleanup.ts"
+docsUrl: ""
+
+---
+
+::

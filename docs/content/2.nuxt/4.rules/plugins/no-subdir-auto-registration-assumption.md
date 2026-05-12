@@ -8,14 +8,31 @@ category: "plugins"
 fix: "suggestion"
 ---
 
-# Nested plugins are not auto-registered by default
-
 `nuxt/plugins/no-subdir-auto-registration-assumption`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "plugins"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `plugins`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-subdir-plugin-auto-registration-assumption.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "plugins"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-subdir-plugin-auto-registration-assumption.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-subdir-plugin-auto-registration-assumption.ts"
+docsUrl: ""
+
+---
+
+::

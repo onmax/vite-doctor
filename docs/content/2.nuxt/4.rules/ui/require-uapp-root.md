@@ -8,14 +8,31 @@ category: "ui"
 fix: "suggestion"
 ---
 
-# Use UApp when Nuxt UI app services are used
-
 `nuxt-ui/require-uapp-root`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt-ui"
+category: "ui"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt-ui`
-- Severity: `warn`
-- Category: `ui`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt-ui.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt-ui"
+category: "ui"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt-ui.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt-ui.ts"
+docsUrl: ""
+
+---
+
+::

@@ -1,9 +1,12 @@
-import { AnyNode, createRule, report } from "./shared.js";
+import { AnyNode, createRule, report } from "../nuxt/shared.js";
 
 export const requireEventRuntimeConfigInServer = createRule({
   meta: {
-    id: "nuxt/runtime/require-event-runtime-config-in-server",
+    id: "nitro/runtime/require-event-runtime-config-in-server",
     title: "Pass event to useRuntimeConfig in server handlers",
+    description: "Read runtime config with the Nitro event inside server handlers.",
+    why: "Passing the event lets Nitro resolve request-aware runtime config consistently in server code.",
+    recommendedReplacement: "Use useRuntimeConfig(event).",
     category: "runtime-config",
     severity: "warn",
     fixable: "suggestion",
@@ -18,7 +21,7 @@ export const requireEventRuntimeConfigInServer = createRule({
         report(
           ctx,
           node,
-          "nuxt/runtime/require-event-runtime-config-in-server",
+          "nitro/runtime/require-event-runtime-config-in-server",
           "warn",
           "runtime-config",
           "Server handlers should read runtime config with the request event.",

@@ -8,14 +8,31 @@ category: "routing"
 fix: "safe"
 ---
 
-# Use Nuxt's useRoute in Nuxt app code
-
 `nuxt/routing/prefer-nuxt-useroute`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "error"
+fix: "safe"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `routing`
-- Fix: `safe`
-- Source: `packages/nuxt/src/rules/nuxt/prefer-nuxt-use-route.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "error"
+fix: "safe"
+source: "packages/nuxt/src/rules/nuxt/prefer-nuxt-use-route.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/prefer-nuxt-use-route.ts"
+docsUrl: ""
+
+---
+
+::

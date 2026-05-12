@@ -8,14 +8,31 @@ category: "routing"
 fix: "suggestion"
 ---
 
-# Use middleware to/from arguments instead of useRoute
-
 `nuxt/routing/no-useroute-in-middleware`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `routing`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-use-route-in-middleware.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-use-route-in-middleware.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-use-route-in-middleware.ts"
+docsUrl: ""
+
+---
+
+::

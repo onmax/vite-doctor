@@ -8,14 +8,31 @@ category: "routing"
 fix: "safe"
 ---
 
-# Use NuxtPage instead of RouterView
-
 `nuxt/routing/prefer-nuxtpage-over-routerview`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "error"
+fix: "safe"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `routing`
-- Fix: `safe`
-- Source: `packages/nuxt/src/rules/nuxt/prefer-nuxt-page-over-router-view.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "error"
+fix: "safe"
+source: "packages/nuxt/src/rules/nuxt/prefer-nuxt-page-over-router-view.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/prefer-nuxt-page-over-router-view.ts"
+docsUrl: ""
+
+---
+
+::

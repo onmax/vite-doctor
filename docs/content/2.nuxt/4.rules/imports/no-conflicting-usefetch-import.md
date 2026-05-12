@@ -8,14 +8,31 @@ category: "imports"
 fix: "safe"
 ---
 
-# Do not shadow Nuxt useFetch
-
 `nuxt/imports/no-conflicting-usefetch-import`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "imports"
+severity: "error"
+fix: "safe"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `imports`
-- Fix: `safe`
-- Source: `packages/nuxt/src/rules/nuxt/no-conflicting-use-fetch-import.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "imports"
+severity: "error"
+fix: "safe"
+source: "packages/nuxt/src/rules/nuxt/no-conflicting-use-fetch-import.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-conflicting-use-fetch-import.ts"
+docsUrl: ""
+
+---
+
+::

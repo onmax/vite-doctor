@@ -8,14 +8,31 @@ category: "hydration"
 fix: "suggestion"
 ---
 
-# Use useWindowSize for reactive viewport size
-
 `vueuse/prefer-usewindow-size`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/vueuse"
+category: "hydration"
+severity: "info"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/vueuse`
-- Severity: `info`
-- Category: `hydration`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/vueuse.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/vueuse"
+category: "hydration"
+severity: "info"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/vueuse.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/vueuse.ts"
+docsUrl: ""
+
+---
+
+::

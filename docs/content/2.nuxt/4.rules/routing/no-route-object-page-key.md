@@ -8,14 +8,31 @@ category: "routing"
 fix: "suggestion"
 ---
 
-# Do not use route objects as NuxtPage page keys
-
 `nuxt/routing/no-route-object-page-key`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `routing`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-route-object-page-key.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "routing"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-route-object-page-key.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-route-object-page-key.ts"
+docsUrl: ""
+
+---
+
+::

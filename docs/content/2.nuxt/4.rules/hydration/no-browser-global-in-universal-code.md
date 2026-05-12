@@ -8,14 +8,31 @@ category: "hydration"
 fix: "suggestion"
 ---
 
-# Avoid browser globals in universal code
-
 `nuxt/hydration/no-browser-global-in-universal-code`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `hydration`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-browser-global-in-universal-code.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-browser-global-in-universal-code.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-browser-global-in-universal-code.ts"
+docsUrl: ""
+
+---
+
+::

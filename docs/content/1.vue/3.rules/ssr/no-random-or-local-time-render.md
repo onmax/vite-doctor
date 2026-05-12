@@ -8,14 +8,31 @@ category: "ssr"
 fix: "suggestion"
 ---
 
-# Avoid random or local-time SSR render values
-
 `vue/ssr/no-random-or-local-time-render`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "ssr"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `warn`
-- Category: `ssr`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/no-random-or-local-time-render.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "ssr"
+severity: "warn"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/no-random-or-local-time-render.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/no-random-or-local-time-render.ts"
+docsUrl: ""
+
+---
+
+::

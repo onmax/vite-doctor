@@ -8,14 +8,31 @@ category: "images"
 fix: "suggestion"
 ---
 
-# Use NuxtImg for app images
-
 `nuxt-image/prefer-nuxtimg`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt-image"
+category: "images"
+severity: "info"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt-image`
-- Severity: `info`
-- Category: `images`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt-image.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt-image"
+category: "images"
+severity: "info"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt-image.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt-image.ts"
+docsUrl: ""
+
+---
+
+::

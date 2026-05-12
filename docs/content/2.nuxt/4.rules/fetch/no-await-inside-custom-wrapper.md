@@ -8,14 +8,31 @@ category: "fetching"
 fix: "suggestion"
 ---
 
-# Do not await inside custom useFetch/useAsyncData wrappers
-
 `nuxt/fetch/no-await-inside-custom-wrapper`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `fetching`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-await-inside-custom-wrapper.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "fetching"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-await-inside-custom-wrapper.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-await-inside-custom-wrapper.ts"
+docsUrl: ""
+
+---
+
+::

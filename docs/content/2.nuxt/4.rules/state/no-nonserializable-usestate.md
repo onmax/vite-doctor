@@ -8,14 +8,31 @@ category: "hydration"
 fix: "suggestion"
 ---
 
-# useState values must be serializable
-
 `nuxt/state/no-nonserializable-usestate`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `error`
-- Category: `hydration`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-non-serializable-use-state.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-non-serializable-use-state.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-non-serializable-use-state.ts"
+docsUrl: ""
+
+---
+
+::

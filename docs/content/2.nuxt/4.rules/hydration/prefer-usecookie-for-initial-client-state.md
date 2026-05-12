@@ -8,14 +8,31 @@ category: "hydration"
 fix: "suggestion"
 ---
 
-# Use useCookie for SSR-visible browser preference state
-
 `nuxt/hydration/prefer-usecookie-for-initial-client-state`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `hydration`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/prefer-use-cookie-for-initial-client-state.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/prefer-use-cookie-for-initial-client-state.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/prefer-use-cookie-for-initial-client-state.ts"
+docsUrl: ""
+
+---
+
+::

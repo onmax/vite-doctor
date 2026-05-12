@@ -8,14 +8,31 @@ category: "app-config"
 fix: "suggestion"
 ---
 
-# Use app.config keys read by Docus
-
 `docus/appconfig/no-unknown-key`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/docus"
+category: "app-config"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/docus`
-- Severity: `warn`
-- Category: `app-config`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/docus.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/docus"
+category: "app-config"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/docus.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/docus.ts"
+docsUrl: ""
+
+---
+
+::

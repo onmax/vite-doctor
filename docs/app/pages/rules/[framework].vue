@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { queryCollection } from "#imports";
+import doctorPackage from "../../../../package.json";
+import nuxtRulesReport from "../../../public/rules/nuxt.json";
+import nitroRulesReport from "../../../public/rules/nitro.json";
+import vueRulesReport from "../../../public/rules/vue.json";
+
+type Framework = "vue" | "nuxt" | "nitro";
 
 definePageMeta({
   header: false,
   footer: false,
   layout: false,
-  validate: (route) => ["vue", "nuxt"].includes(String(route.params.framework)),
+  validate: (route) => ["vue", "nuxt", "nitro"].includes(String(route.params.framework)),
 });
 
 interface RuleEntry {
@@ -19,30 +24,52 @@ interface RuleEntry {
   fix: "safe" | "suggestion" | "no";
 }
 
-const route = useRoute();
-const framework = computed(() => String(route.params.framework) as "vue" | "nuxt");
+interface RawRuleEntry {
+  id: string;
+  title: string;
+  description: string;
+  pack: string;
+  severity: RuleEntry["severity"];
+  category: string;
+  fixable: RuleEntry["fix"];
+  docsUrl: string;
+}
 
-const META: Record<
-  "vue" | "nuxt",
-  { label: string; pack: string; icon: string; other: "vue" | "nuxt"; otherLabel: string }
-> = {
+interface RulesReport {
+  rules: RawRuleEntry[];
+}
+
+const route = useRoute();
+const framework = computed(() => String(route.params.framework) as Framework);
+const search = ref("");
+const openRuleIds = ref(new Set<string>());
+
+const META: Record<Framework, { label: string; pack: string; icon: string }> = {
   vue: {
     label: "Vue",
     pack: "vue-doctor",
     icon: "i-logos-vue",
-    other: "nuxt",
-    otherLabel: "Nuxt",
   },
   nuxt: {
     label: "Nuxt",
     pack: "nuxt-doctor",
     icon: "i-logos-nuxt-icon",
-    other: "vue",
-    otherLabel: "Vue",
+  },
+  nitro: {
+    label: "Nitro",
+    pack: "nuxt-doctor/nitro",
+    icon: "i-unjs-nitro",
   },
 };
 
+const FRAMEWORKS = Object.keys(META) as Framework[];
+
 const meta = computed(() => META[framework.value]);
+const ruleReports: Record<Framework, RulesReport> = {
+  vue: vueRulesReport as RulesReport,
+  nuxt: nuxtRulesReport as RulesReport,
+  nitro: nitroRulesReport as RulesReport,
+};
 
 useHead(() => ({
   title: `${meta.value.label} Doctor rules — every check, one page.`,
@@ -57,31 +84,26 @@ useHead(() => ({
     { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
     {
       rel: "stylesheet",
-      href: "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap",
     },
   ],
 }));
 
-const { data: rules } = await useAsyncData(
-  () => `rules-${framework.value}`,
-  async () => {
-    const collection = queryCollection("docs" as never) as unknown as {
-      where: (k: string, op: string, v: string) => unknown;
+const rules = computed<RuleEntry[]>(() =>
+  ruleReports[framework.value].rules.map((r) => {
+    const fix = r.fixable || "no";
+    return {
+      path: ruleHref(r, framework.value),
+      title: r.title,
+      description: r.description,
+      ruleId: r.id,
+      pack: r.pack,
+      severity: r.severity,
+      category: r.category,
+      fix,
     };
-    const builder = collection.where("path", "LIKE", `/${framework.value}/rules/%`) as {
-      order: (k: string, dir: string) => unknown;
-    };
-    const ordered = builder.order("path", "ASC") as { all: () => Promise<unknown[]> };
-    const items = (await ordered.all()) as Array<Partial<RuleEntry> & { path: string }>;
-    return items.filter((r): r is RuleEntry => Boolean(r.ruleId));
-  },
-  { watch: [framework] },
+  }),
 );
-
-interface Group {
-  category: string;
-  rules: RuleEntry[];
-}
 
 const CATEGORY_LABELS: Record<string, string> = {
   "app-config": "App config",
@@ -111,6 +133,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   scripts: "Scripts",
   security: "Security",
   seo: "SEO",
+  server: "Server",
   shared: "Shared",
   ssr: "SSR safety",
   state: "State",
@@ -118,31 +141,210 @@ const CATEGORY_LABELS: Record<string, string> = {
   template: "Template",
   ui: "UI",
   watch: "Watchers",
+  watchers: "Watchers",
 };
 
-const grouped = computed<Group[]>(() => {
-  const map = new Map<string, RuleEntry[]>();
-  for (const r of rules.value ?? []) {
-    const arr = map.get(r.category) ?? [];
-    arr.push(r);
-    map.set(r.category, arr);
-  }
-  return [...map.entries()]
-    .map(([category, rules]) => ({
-      category,
-      rules: rules.slice().sort((a, b) => a.title.localeCompare(b.title)),
-    }))
-    .sort((a, b) => a.category.localeCompare(b.category));
+const totalRules = computed(() => rules.value.length);
+const sortedRules = computed(() =>
+  rules.value.slice().sort((a, b) => {
+    const category = categoryLabel(a.category).localeCompare(categoryLabel(b.category));
+    if (category) return category;
+    return a.ruleId.localeCompare(b.ruleId);
+  }),
+);
+const filteredRules = computed(() => {
+  const query = search.value.trim().toLowerCase();
+  if (!query) return sortedRules.value;
+  return sortedRules.value.filter((rule) =>
+    [
+      rule.ruleId,
+      rule.title,
+      rule.description,
+      rule.pack,
+      rule.category,
+      categoryLabel(rule.category),
+      rule.severity,
+      fixLabel(rule.fix),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query),
+  );
 });
 
-const totalRules = computed(() => rules.value?.length ?? 0);
+const ruleStats = computed(() => {
+  const items = rules.value;
+  return [
+    {
+      label: "Errors",
+      value: items.filter((rule) => rule.severity === "error").length,
+      icon: "i-lucide-circle-alert",
+      class: "text-rose-600 dark:text-rose-400",
+    },
+    {
+      label: "Warnings",
+      value: items.filter((rule) => rule.severity === "warn").length,
+      icon: "i-lucide-triangle-alert",
+      class: "text-amber-600 dark:text-amber-400",
+    },
+    {
+      label: "Fixes",
+      value: items.filter((rule) => rule.fix !== "no").length,
+      icon: "i-lucide-wand-sparkles",
+      class: "text-emerald-600 dark:text-emerald-400",
+    },
+    {
+      label: "Categories",
+      value: new Set(items.map((rule) => rule.category)).size,
+      icon: "i-lucide-list-filter",
+      class: "text-blue-600 dark:text-blue-400",
+    },
+  ];
+});
+
+const isFiltered = computed(() => search.value.trim().length > 0);
+const versionLabel = computed(() => `v${doctorPackage.version}`);
+
+watch(framework, () => {
+  search.value = "";
+  collapseAll();
+});
 
 function categoryLabel(slug: string) {
   return CATEGORY_LABELS[slug] ?? slug.replace(/-/g, " ");
 }
 
-function ruleSlug(ruleId: string) {
-  return ruleId.split("/").pop() ?? ruleId;
+function packLabel(pack: string) {
+  return pack.replace(/^(nuxt|vue)-doctor\//, "");
+}
+
+function ruleHref(rule: RawRuleEntry, currentFramework: Framework) {
+  const base =
+    rule.pack === "nuxt-doctor/nitro"
+      ? "/nitro/rules"
+      : rule.pack.startsWith("vue-doctor/")
+        ? "/vue/rules"
+        : currentFramework === "vue"
+          ? "/vue/rules"
+          : "/nuxt/rules";
+  return `${base}/${ruleDocsPath(rule)}`;
+}
+
+function ruleDocsPath(rule: RawRuleEntry) {
+  const parts = rule.id.split("/");
+  const pathParts =
+    parts.length > 2
+      ? parts.slice(1)
+      : [rule.category || rule.pack.split("/").at(-1) || "rules", parts.at(-1) || rule.id];
+  return pathParts.map(slugSegment).join("/");
+}
+
+function slugSegment(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function ruleNameParts(ruleId: string) {
+  return ruleId.split(/([:/])/g).filter(Boolean);
+}
+
+function ruleNamePartClass(part: string, index: number, parts: string[]) {
+  if (part === "/" || part === ":") return "text-neutral-400 dark:text-neutral-600";
+  if (index === 0) return "text-indigo-600 dark:text-indigo-400";
+  if (index < parts.length - 1) return categoryNameClass(part);
+  return "text-neutral-800 dark:text-neutral-100";
+}
+
+function categoryNameClass(category: string) {
+  return (
+    {
+      auth: "text-purple-600 dark:text-purple-400",
+      cache: "text-orange-600 dark:text-orange-400",
+      context: "text-violet-600 dark:text-violet-400",
+      fetch: "text-sky-600 dark:text-sky-400",
+      hydration: "text-cyan-600 dark:text-cyan-400",
+      imports: "text-teal-600 dark:text-teal-400",
+      request: "text-emerald-600 dark:text-emerald-400",
+      runtime: "text-amber-600 dark:text-amber-400",
+      security: "text-rose-600 dark:text-rose-400",
+      server: "text-emerald-600 dark:text-emerald-400",
+      state: "text-blue-600 dark:text-blue-400",
+      ui: "text-pink-600 dark:text-pink-400",
+    }[category] ?? "text-teal-600 dark:text-teal-400"
+  );
+}
+
+function severityIcon(severity: RuleEntry["severity"]) {
+  return {
+    error: "i-lucide-circle-alert",
+    warn: "i-lucide-triangle-alert",
+    info: "i-lucide-info",
+  }[severity];
+}
+
+function severityClass(severity: RuleEntry["severity"]) {
+  return {
+    error: "text-rose-600 dark:text-rose-400",
+    warn: "text-amber-600 dark:text-amber-400",
+    info: "text-sky-600 dark:text-sky-400",
+  }[severity];
+}
+
+function severityBadgeColor(severity: RuleEntry["severity"]) {
+  return {
+    error: "error",
+    warn: "warning",
+    info: "info",
+  }[severity] as "error" | "warning" | "info";
+}
+
+function fixLabel(fix: RuleEntry["fix"]) {
+  if (fix === "safe") return "Auto-fix";
+  if (fix === "suggestion") return "Suggestion";
+  return "No fix";
+}
+
+function fixIcon(fix: RuleEntry["fix"]) {
+  if (fix === "safe") return "i-lucide-wand-sparkles";
+  if (fix === "suggestion") return "i-lucide-plug";
+  return "i-lucide-plug-zap";
+}
+
+function fixClass(fix: RuleEntry["fix"]) {
+  if (fix === "safe") return "text-emerald-600 dark:text-emerald-400";
+  if (fix === "suggestion") return "text-teal-600 dark:text-teal-400";
+  return "text-neutral-300 dark:text-neutral-700";
+}
+
+function fixBadgeColor(fix: RuleEntry["fix"]) {
+  if (fix === "safe") return "success";
+  if (fix === "suggestion") return "primary";
+  return "neutral";
+}
+
+function isRuleOpen(ruleId: string) {
+  return openRuleIds.value.has(ruleId);
+}
+
+function setRuleOpen(ruleId: string, open: boolean) {
+  const next = new Set(openRuleIds.value);
+  if (open) next.add(ruleId);
+  else next.delete(ruleId);
+  openRuleIds.value = next;
+}
+
+function handleToggle(ruleId: string, event: Event) {
+  setRuleOpen(ruleId, (event.currentTarget as HTMLDetailsElement).open);
+}
+
+function expandAll() {
+  openRuleIds.value = new Set(filteredRules.value.map((rule) => rule.ruleId));
+}
+
+function collapseAll() {
+  openRuleIds.value = new Set();
 }
 
 const colorMode = useColorMode();
@@ -154,217 +356,275 @@ function toggleTheme() {
 
 <template>
   <div
-    class="relative min-h-dvh w-full antialiased isolate overflow-hidden bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:text-emerald-50"
+    class="relative min-h-dvh w-full isolate overflow-hidden bg-white font-sans text-neutral-800 antialiased dark:bg-neutral-950 dark:text-neutral-200 selection:bg-primary-500/20 selection:text-primary-900 dark:selection:text-primary-50"
   >
-    <header class="mx-auto flex max-w-4xl items-center justify-between px-6 pt-6 sm:px-10 sm:pt-7">
-      <a
-        href="/"
-        aria-label="Homepage"
-        class="inline-flex items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-500"
-      >
-        <span
-          class="inline-flex size-7 items-center justify-center rounded-md bg-emerald-600 text-white dark:bg-emerald-500"
-          aria-hidden="true"
-        >
-          <svg
-            viewBox="0 0 20 20"
-            class="size-3.5"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="square"
-            stroke-linejoin="miter"
-          >
-            <path d="M5 7l3 3-3 3" />
-            <path d="M10 13h5" />
-          </svg>
-        </span>
-        <span class="text-base font-semibold tracking-tight">Doctor</span>
-      </a>
-
-      <nav class="flex items-center gap-0.5 sm:gap-1">
-        <a
-          href="/"
-          class="rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-        >
-          Home
-        </a>
-        <a
-          href="https://github.com/onmax/nuxt-doctor"
-          target="_blank"
-          rel="noopener"
-          class="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-        >
-          GitHub
-          <UIcon
-            name="i-lucide-arrow-up-right"
-            class="hidden size-3.5 shrink-0 sm:inline-block"
-            aria-hidden="true"
-          />
-        </a>
-        <button
-          type="button"
-          :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
-          class="relative ml-1 inline-flex size-8 items-center justify-center rounded-md text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-          @click="toggleTheme"
-        >
-          <UIcon
-            :name="isDark ? 'i-lucide-sun' : 'i-lucide-moon'"
-            class="size-4"
-            aria-hidden="true"
-          />
-        </button>
-      </nav>
-    </header>
-
-    <main class="mx-auto max-w-4xl px-6 pb-20 sm:px-10">
-      <section class="pt-10 pb-10 sm:pt-14 lg:pt-16">
-        <p
-          class="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-neutral-500 dark:text-neutral-500"
-        >
-          <UIcon :name="meta.icon" class="size-3.5 shrink-0" aria-hidden="true" />
-          {{ meta.label }} rules
-        </p>
-
-        <h1
-          class="mt-3 max-w-[24ch] text-4xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-5xl dark:text-neutral-100"
-        >
-          {{ totalRules }} {{ meta.label }} rules. One page.
-        </h1>
-        <p class="mt-4 max-w-[60ch] text-base text-pretty text-neutral-600 dark:text-neutral-400">
-          Every check Doctor runs against
-          <code class="font-mono text-neutral-700 dark:text-neutral-300">{{ meta.pack }}</code
-          >, grouped by category. Severity, fix-ability, and rule ID are listed inline.
-        </p>
-
-        <div
-          class="mt-7 inline-flex items-center gap-1 rounded-full bg-neutral-100/70 p-1 text-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
-          role="tablist"
-          aria-label="Framework"
-        >
+    <main class="w-full px-4 pt-3 pb-10 sm:px-8 lg:px-10">
+      <header class="py-2">
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           <a
-            v-for="fw in ['vue', 'nuxt'] as const"
-            :key="fw"
-            :href="`/rules/${fw}`"
-            role="tab"
-            :aria-selected="framework === fw"
-            class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition-transform duration-100 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-            :class="
-              framework === fw
-                ? 'bg-white text-neutral-900 ring-1 ring-neutral-200 dark:bg-neutral-800 dark:text-neutral-100 dark:ring-neutral-700'
-                : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100'
-            "
+            href="/"
+            class="inline-flex items-center gap-2 rounded-md text-3xl font-light tracking-tight text-neutral-800 hover:text-neutral-950 dark:text-neutral-100 dark:hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+            aria-label="Doctor home"
           >
-            <UIcon
-              :name="fw === 'vue' ? 'i-logos-vue' : 'i-logos-nuxt-icon'"
-              class="size-3.5 shrink-0"
+            <span
+              class="inline-flex size-7 items-center justify-center rounded-md bg-primary-600 text-white ring-1 ring-primary-700/20 dark:bg-primary-500"
               aria-hidden="true"
-            />
-            {{ fw === "vue" ? "Vue" : "Nuxt" }}
+            >
+              <UIcon name="i-lucide-stethoscope" class="size-4" />
+            </span>
+            <h1>{{ meta.label }} Doctor rules</h1>
           </a>
+          <span class="-translate-y-2 font-mono text-sm text-neutral-500 dark:text-neutral-500">
+            {{ versionLabel }}
+          </span>
         </div>
 
-        <dl
-          class="mt-6 grid grid-cols-3 gap-x-6 gap-y-1 max-w-md text-sm text-neutral-600 dark:text-neutral-400"
+        <div
+          class="mt-2 flex flex-wrap items-center gap-1 text-sm text-neutral-600 dark:text-neutral-400"
         >
-          <div class="flex items-center gap-2">
-            <span class="inline-block size-1.5 bg-rose-500" aria-hidden="true" />
-            <dt class="font-medium text-neutral-700 dark:text-neutral-300">error</dt>
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="inline-block size-1.5 bg-amber-500" aria-hidden="true" />
-            <dt class="font-medium text-neutral-700 dark:text-neutral-300">warn</dt>
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="inline-block size-1.5 bg-sky-500" aria-hidden="true" />
-            <dt class="font-medium text-neutral-700 dark:text-neutral-300">info</dt>
-          </div>
-        </dl>
-      </section>
+          <span>Composed with</span>
+          <strong class="font-semibold text-neutral-900 dark:text-neutral-100">{{
+            totalRules
+          }}</strong>
+          <span>rule items from</span>
+          <code class="font-mono text-neutral-800 dark:text-neutral-200">{{ meta.pack }}</code>
+        </div>
 
-      <section
-        v-for="g in grouped"
-        :key="g.category"
-        class="border-t border-neutral-200/70 py-8 first:border-t-0 first:pt-0 dark:border-neutral-800/70"
-      >
-        <header class="flex items-baseline justify-between gap-4">
-          <h2 class="text-xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-100">
-            {{ categoryLabel(g.category) }}
-          </h2>
-          <span class="text-xs font-medium uppercase tracking-wider text-neutral-500 tabular-nums">
-            {{ g.rules.length }} {{ g.rules.length === 1 ? "rule" : "rules" }}
-          </span>
-        </header>
+        <nav class="mt-4 flex flex-wrap items-center gap-3" aria-label="Rule sets">
+          <UButton
+            v-for="fw in FRAMEWORKS"
+            :key="fw"
+            :to="`/rules/${fw}`"
+            :color="framework === fw ? 'primary' : 'neutral'"
+            :variant="framework === fw ? 'soft' : 'outline'"
+            size="sm"
+            class="rounded-md"
+          >
+            <UIcon :name="META[fw].icon" class="size-4 shrink-0" aria-hidden="true" />
+            {{ META[fw].label }}
+          </UButton>
 
-        <ul role="list" class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <li v-for="r in g.rules" :key="r.ruleId">
-            <a
-              :href="r.path"
-              class="group relative flex items-start gap-3 rounded-md px-3 py-3 ring-1 ring-neutral-200 transition-colors hover:bg-neutral-50 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:bg-neutral-900 dark:hover:ring-neutral-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          <button
+            type="button"
+            :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
+            class="relative inline-flex size-8 items-center justify-center rounded-md text-neutral-500 hover:bg-primary-400/5 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+            @click="toggleTheme"
+          >
+            <UIcon :name="isDark ? 'i-lucide-moon-star' : 'i-lucide-sun'" class="size-5" />
+          </button>
+          <a
+            href="https://github.com/onmax/nuxt-doctor"
+            target="_blank"
+            rel="noopener"
+            aria-label="Open GitHub repository"
+            class="relative inline-flex size-8 items-center justify-center rounded-md text-neutral-500 hover:bg-primary-400/5 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+          >
+            <UIcon name="i-simple-icons-github" class="size-4" />
+          </a>
+        </nav>
+      </header>
+
+      <section class="mt-7 grid gap-3">
+        <UInput
+          v-model="search"
+          name="rules-search"
+          :placeholder="`Search ${meta.label} rule IDs, categories, or descriptions...`"
+          icon="i-lucide-search"
+          size="xl"
+          variant="outline"
+          class="w-full"
+        />
+
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <span
+              class="inline-flex items-center gap-2 rounded-full border border-neutral-950/10 bg-neutral-950/5 px-3 py-1 text-sm text-neutral-700 dark:border-white/10 dark:bg-white/5 dark:text-neutral-300"
             >
-              <span
-                class="mt-1.5 inline-block size-1.5 shrink-0"
-                :class="{
-                  'bg-rose-500': r.severity === 'error',
-                  'bg-amber-500': r.severity === 'warn',
-                  'bg-sky-500': r.severity === 'info',
-                }"
-                aria-hidden="true"
-              />
-              <div class="min-w-0 flex-1">
-                <p class="text-sm font-medium text-neutral-900 text-pretty dark:text-neutral-100">
-                  {{ r.title }}
-                </p>
-                <p
-                  class="mt-1 truncate font-mono text-[0.75rem] text-neutral-500 dark:text-neutral-500"
-                  :title="r.ruleId"
-                >
-                  {{ ruleSlug(r.ruleId) }}
-                </p>
-              </div>
-              <span
-                v-if="r.fix && r.fix !== 'no'"
-                class="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[0.6875rem] font-medium text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20"
-                :title="r.fix === 'safe' ? 'Auto-fix is safe' : 'Suggested fix available'"
+              <UIcon name="i-lucide-list-checks" class="size-4" aria-hidden="true" />
+              <span class="font-semibold tabular-nums">{{ filteredRules.length }}</span>
+              <span>{{ isFiltered ? "rules filtered" : "rules enabled" }}</span>
+              <span class="text-neutral-500 dark:text-neutral-500"
+                >out of {{ totalRules }} rules</span
               >
-                <UIcon name="i-lucide-wand-sparkles" class="size-3 shrink-0" aria-hidden="true" />
-                {{ r.fix === "safe" ? "auto-fix" : "fix" }}
+            </span>
+
+            <span
+              v-for="stat in ruleStats"
+              :key="stat.label"
+              class="inline-flex items-center gap-1.5 rounded-full border border-neutral-950/10 px-3 py-1 text-sm text-neutral-600 dark:border-white/10 dark:text-neutral-400"
+            >
+              <UIcon :name="stat.icon" class="size-4" :class="stat.class" aria-hidden="true" />
+              <span class="font-semibold tabular-nums text-neutral-800 dark:text-neutral-200">
+                {{ stat.value }}
               </span>
-              <UIcon
-                name="i-lucide-arrow-up-right"
-                class="size-3.5 shrink-0 text-neutral-400 transition-colors group-hover:text-emerald-600 dark:group-hover:text-emerald-400"
-                aria-hidden="true"
-              />
-            </a>
-          </li>
-        </ul>
+              <span>{{ stat.label.toLowerCase() }}</span>
+            </span>
+          </div>
+
+          <div class="flex-auto" />
+
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="sm"
+            class="rounded-md"
+            @click="expandAll"
+          >
+            Expand All
+          </UButton>
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="sm"
+            class="rounded-md"
+            @click="collapseAll"
+          >
+            Collapse All
+          </UButton>
+        </div>
       </section>
 
-      <p
-        v-if="!grouped.length"
-        class="border-t border-neutral-200/70 py-12 text-center text-sm text-neutral-500 dark:border-neutral-800/70"
-      >
-        No rules found. Check the content database is populated.
-      </p>
+      <section class="mt-3">
+        <p
+          v-if="!filteredRules.length"
+          class="py-8 text-sm text-neutral-500 italic dark:text-neutral-500"
+        >
+          No matched rule items.
+        </p>
 
-      <nav
-        class="mt-10 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-neutral-200/70 pt-8 text-sm dark:border-neutral-800/70"
-      >
-        <a
-          href="/"
-          class="inline-flex items-center gap-1.5 rounded-md font-medium text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-        >
-          <UIcon name="i-lucide-arrow-left" class="size-3.5 shrink-0" aria-hidden="true" />
-          Back to home
-        </a>
-        <span class="h-3 w-px bg-neutral-200 dark:bg-neutral-800" aria-hidden="true" />
-        <a
-          :href="`/rules/${meta.other}`"
-          class="rounded-md text-neutral-500 hover:text-neutral-900 dark:text-neutral-500 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-        >
-          {{ meta.otherLabel }} rules instead →
-        </a>
-      </nav>
+        <ol v-else role="list" class="grid gap-3 pt-2">
+          <li v-for="(rule, index) in filteredRules" :key="rule.ruleId" class="relative sm:pl-10">
+            <span
+              class="absolute top-2 right-[calc(100%-1.75rem)] hidden w-8 text-right font-mono text-base text-neutral-400 tabular-nums sm:block dark:text-neutral-600"
+            >
+              #{{ index + 1 }}
+            </span>
+
+            <details
+              class="group relative rounded-lg border border-neutral-950/10 bg-neutral-50/70 dark:border-white/10 dark:bg-white/[0.03]"
+              :open="isRuleOpen(rule.ruleId)"
+              @toggle="handleToggle(rule.ruleId, $event)"
+            >
+              <summary
+                class="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 font-mono text-sm select-none [&::-webkit-details-marker]:hidden"
+              >
+                <div class="flex min-w-0 items-center gap-2">
+                  <span
+                    class="font-mono text-neutral-400 tabular-nums sm:hidden dark:text-neutral-600"
+                  >
+                    #{{ index + 1 }}
+                  </span>
+                  <UIcon
+                    name="i-lucide-chevron-right"
+                    class="size-4 shrink-0 text-neutral-400 transition group-open:rotate-90 dark:text-neutral-600"
+                    aria-hidden="true"
+                  />
+                  <a
+                    :href="rule.path"
+                    class="min-w-0 truncate rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+                    @click.stop
+                  >
+                    <span
+                      v-for="(part, partIndex) in ruleNameParts(rule.ruleId)"
+                      :key="`${rule.ruleId}-${partIndex}`"
+                      :class="ruleNamePartClass(part, partIndex, ruleNameParts(rule.ruleId))"
+                    >
+                      {{ part }}
+                    </span>
+                  </a>
+                </div>
+
+                <div class="flex items-center gap-3 text-sm">
+                  <UTooltip :text="categoryLabel(rule.category)">
+                    <span
+                      class="inline-flex items-center gap-1 text-neutral-300 dark:text-neutral-700"
+                    >
+                      <UIcon name="i-lucide-file-search" class="size-4" aria-hidden="true" />
+                    </span>
+                  </UTooltip>
+                  <UTooltip :text="rule.severity">
+                    <span
+                      class="inline-flex items-center gap-1"
+                      :class="severityClass(rule.severity)"
+                    >
+                      <UIcon
+                        :name="severityIcon(rule.severity)"
+                        class="size-4"
+                        aria-hidden="true"
+                      />
+                      <span class="hidden font-mono tabular-nums sm:inline">{{
+                        rule.severity
+                      }}</span>
+                    </span>
+                  </UTooltip>
+                  <UTooltip :text="fixLabel(rule.fix)">
+                    <span class="inline-flex items-center gap-1" :class="fixClass(rule.fix)">
+                      <UIcon :name="fixIcon(rule.fix)" class="size-4" aria-hidden="true" />
+                      <span v-if="rule.fix !== 'no'" class="hidden font-mono tabular-nums sm:inline"
+                        >1</span
+                      >
+                    </span>
+                  </UTooltip>
+                  <UTooltip :text="packLabel(rule.pack)">
+                    <span
+                      class="hidden items-center gap-1 text-blue-500 sm:inline-flex dark:text-blue-400"
+                    >
+                      <UIcon name="i-lucide-list" class="size-4" aria-hidden="true" />
+                    </span>
+                  </UTooltip>
+                </div>
+              </summary>
+
+              <div class="border-t border-neutral-950/10 px-4 py-4 dark:border-white/10">
+                <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+                  <div class="min-w-0">
+                    <p
+                      class="max-w-[80ch] text-base text-pretty text-neutral-700 dark:text-neutral-300"
+                    >
+                      {{ rule.description }}
+                    </p>
+                    <div class="mt-3 flex flex-wrap items-center gap-2">
+                      <UBadge color="neutral" variant="soft" class="rounded-md font-mono">
+                        {{ categoryLabel(rule.category) }}
+                      </UBadge>
+                      <UBadge
+                        :color="severityBadgeColor(rule.severity)"
+                        variant="soft"
+                        class="rounded-md font-mono"
+                      >
+                        {{ rule.severity }}
+                      </UBadge>
+                      <UBadge
+                        :color="fixBadgeColor(rule.fix)"
+                        variant="soft"
+                        class="rounded-md font-mono"
+                      >
+                        {{ fixLabel(rule.fix) }}
+                      </UBadge>
+                      <UBadge color="neutral" variant="outline" class="rounded-md font-mono">
+                        {{ packLabel(rule.pack) }}
+                      </UBadge>
+                    </div>
+                  </div>
+
+                  <div class="flex items-start gap-2">
+                    <UButton
+                      :to="rule.path"
+                      color="neutral"
+                      variant="outline"
+                      size="sm"
+                      class="rounded-md"
+                      trailing-icon="i-lucide-arrow-up-right"
+                    >
+                      Open rule
+                    </UButton>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </li>
+        </ol>
+      </section>
     </main>
   </div>
 </template>

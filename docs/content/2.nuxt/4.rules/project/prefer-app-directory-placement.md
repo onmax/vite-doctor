@@ -8,14 +8,31 @@ category: "architecture"
 fix: "suggestion"
 ---
 
-# Place app directories under app/
-
 `nuxt/project/prefer-app-directory-placement`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "architecture"
+severity: "info"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `info`
-- Category: `architecture`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/prefer-app-directory-placement.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "architecture"
+severity: "info"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/prefer-app-directory-placement.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/prefer-app-directory-placement.ts"
+docsUrl: ""
+
+---
+
+::

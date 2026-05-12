@@ -8,14 +8,31 @@ category: "imports"
 fix: "suggestion"
 ---
 
-# Avoid VueUse names that collide with Nuxt auto-imports
-
 `vueuse/no-nuxt-auto-import-collision`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/vueuse"
+category: "imports"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/vueuse`
-- Severity: `warn`
-- Category: `imports`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/vueuse.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/vueuse"
+category: "imports"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/vueuse.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/vueuse.ts"
+docsUrl: ""
+
+---
+
+::

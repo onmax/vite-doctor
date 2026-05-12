@@ -8,14 +8,31 @@ category: "imports"
 fix: "suggestion"
 ---
 
-# Avoid auto-import name collisions
-
 `nuxt/imports/no-auto-import-collision`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "imports"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `imports`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-auto-import-collision.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "imports"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-auto-import-collision.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-auto-import-collision.ts"
+docsUrl: ""
+
+---
+
+::

@@ -8,14 +8,31 @@ category: "cache"
 fix: "suggestion"
 ---
 
-# Cache expensive public server handlers
-
 `nuxthub/prefer-cached-event-handler`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxthub"
+category: "cache"
+severity: "info"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxthub`
-- Severity: `info`
-- Category: `cache`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxthub.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxthub"
+category: "cache"
+severity: "info"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxthub.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxthub.ts"
+docsUrl: ""
+
+---
+
+::

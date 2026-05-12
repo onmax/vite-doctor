@@ -8,14 +8,31 @@ category: "cache"
 fix: "suggestion"
 ---
 
-# Do not cache personalized handlers without varying
-
 `nuxthub/no-personalized-cached-handler`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxthub"
+category: "cache"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxthub`
-- Severity: `error`
-- Category: `cache`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxthub.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxthub"
+category: "cache"
+severity: "error"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxthub.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxthub.ts"
+docsUrl: ""
+
+---
+
+::

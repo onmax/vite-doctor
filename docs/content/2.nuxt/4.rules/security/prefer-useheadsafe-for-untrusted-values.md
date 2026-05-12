@@ -8,14 +8,31 @@ category: "security"
 fix: "suggestion"
 ---
 
-# Use useHeadSafe for untrusted head values
-
 `nuxt/security/prefer-useheadsafe-for-untrusted-values`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "security"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `security`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/prefer-use-head-safe-for-untrusted-values.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "security"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/prefer-use-head-safe-for-untrusted-values.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/prefer-use-head-safe-for-untrusted-values.ts"
+docsUrl: ""
+
+---
+
+::

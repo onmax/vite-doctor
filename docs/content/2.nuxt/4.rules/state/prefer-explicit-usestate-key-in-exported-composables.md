@@ -8,14 +8,31 @@ category: "hydration"
 fix: "suggestion"
 ---
 
-# Use explicit useState keys in exported composables
-
 `nuxt/state/prefer-explicit-usestate-key-in-exported-composables`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `hydration`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/prefer-explicit-use-state-key-in-exported-composables.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "hydration"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/prefer-explicit-use-state-key-in-exported-composables.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/prefer-explicit-use-state-key-in-exported-composables.ts"
+docsUrl: ""
+
+---
+
+::

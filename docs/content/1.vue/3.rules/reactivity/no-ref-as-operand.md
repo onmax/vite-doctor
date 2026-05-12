@@ -8,14 +8,31 @@ category: "reactivity"
 fix: "suggestion"
 ---
 
-# Use .value when refs are operands
-
 `vue/reactivity/no-ref-as-operand`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "reactivity"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `reactivity`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/no-ref-as-operand.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "reactivity"
+severity: "error"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/no-ref-as-operand.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/no-ref-as-operand.ts"
+docsUrl: ""
+
+---
+
+::

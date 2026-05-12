@@ -8,14 +8,31 @@ category: "images"
 fix: "suggestion"
 ---
 
-# Provide image dimensions or sizes
-
 `nuxt-image/prefer-responsive-dimensions`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt-image"
+category: "images"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt-image`
-- Severity: `warn`
-- Category: `images`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt-image.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt-image"
+category: "images"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt-image.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt-image.ts"
+docsUrl: ""
+
+---
+
+::

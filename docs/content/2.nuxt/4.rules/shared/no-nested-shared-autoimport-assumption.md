@@ -8,14 +8,31 @@ category: "imports"
 fix: "suggestion"
 ---
 
-# Only shared utils and types are auto-imported
-
 `nuxt/shared/no-nested-shared-autoimport-assumption`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "imports"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `warn`
-- Category: `imports`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/no-nested-shared-autoimport-assumption.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "imports"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt/no-nested-shared-autoimport-assumption.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-nested-shared-autoimport-assumption.ts"
+docsUrl: ""
+
+---
+
+::

@@ -1,21 +1,48 @@
 ---
 title: "Pass event to useRuntimeConfig in server handlers"
-description: "nuxt/runtime/require-event-runtime-config-in-server in nuxt-doctor/nitro."
-ruleId: "nuxt/runtime/require-event-runtime-config-in-server"
+description: "Read runtime config with the Nitro event inside server handlers."
+ruleId: "nitro/runtime/require-event-runtime-config-in-server"
 pack: "nuxt-doctor/nitro"
 severity: "warn"
 category: "runtime-config"
 fix: "suggestion"
 ---
 
-# Pass event to useRuntimeConfig in server handlers
+`nitro/runtime/require-event-runtime-config-in-server`
 
-`nuxt/runtime/require-event-runtime-config-in-server`
+Read runtime config with the Nitro event inside server handlers.
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nitro"
+category: "runtime-config"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
+
+## Why
+
+Passing the event lets Nitro resolve request-aware runtime config consistently in server code.
+
+## Prefer
+
+Use `useRuntimeConfig(event)`.
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nitro`
-- Severity: `warn`
-- Category: `runtime-config`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt/require-event-runtime-config-in-server.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nitro"
+category: "runtime-config"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nitro/require-event-runtime-config-in-server.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nitro/require-event-runtime-config-in-server.ts"
+docsUrl: ""
+
+---
+
+::

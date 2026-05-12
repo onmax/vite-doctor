@@ -8,14 +8,31 @@ category: "imports"
 fix: "safe"
 ---
 
-# Avoid explicit imports of Nuxt auto-imports
-
 `nuxt/imports/no-explicit-auto-import`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt"
+category: "imports"
+severity: "info"
+fix: "safe"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt`
-- Severity: `info`
-- Category: `imports`
-- Fix: `safe`
-- Source: `packages/nuxt/src/rules/nuxt/no-explicit-auto-import.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt"
+category: "imports"
+severity: "info"
+fix: "safe"
+source: "packages/nuxt/src/rules/nuxt/no-explicit-auto-import.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt/no-explicit-auto-import.ts"
+docsUrl: ""
+
+---
+
+::

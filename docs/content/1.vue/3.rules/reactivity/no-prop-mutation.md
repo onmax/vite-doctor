@@ -8,14 +8,31 @@ category: "reactivity"
 fix: "suggestion"
 ---
 
-# Do not mutate props
-
 `vue/reactivity/no-prop-mutation`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "reactivity"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `reactivity`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/no-prop-mutation.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "reactivity"
+severity: "error"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/no-prop-mutation.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/no-prop-mutation.ts"
+docsUrl: ""
+
+---
+
+::

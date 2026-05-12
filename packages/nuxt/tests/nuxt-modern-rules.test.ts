@@ -23,12 +23,8 @@ import {
   noRouteMiddlewareApiSecurity,
   noVueOrNitroContextInShared,
   noComposableAfterAwait,
-  preferEventFetch,
   forwardAuthHeadersSsr,
   noPlainEnvInAppCode,
-  requireEventRuntimeConfigInServer,
-  noClientComposablesInServer,
-  noBrowserApiInServer,
   preferCreateUseFetch,
   createUseFetchMustBeExportedInScannedDir,
   keyedComposableRegistrationRequired,
@@ -44,11 +40,15 @@ import {
   requireStableAsyncDataKey,
 } from "../src/rules/nuxt.ts";
 import {
+  noBrowserApiInServer,
+  noClientComposablesInServer,
+  preferEventFetch,
   preferAssertMethod,
   preferGetRequestIp,
   preferValidatedBody,
   preferValidatedQuery,
   preferValidatedRouterParams,
+  requireEventRuntimeConfigInServer,
 } from "../src/rules/nitro/index.ts";
 import { runRuleFixture } from "../../core/src/testkit.ts";
 import {
@@ -174,7 +174,7 @@ const cases = [
   },
   {
     rule: preferEventFetch,
-    id: "nuxt/server/prefer-event-fetch",
+    id: "nitro/server/prefer-event-fetch",
     file: "server/api/user.ts",
     source: `export default defineEventHandler((event) => $fetch('/api/team'))`,
   },
@@ -192,19 +192,19 @@ const cases = [
   },
   {
     rule: requireEventRuntimeConfigInServer,
-    id: "nuxt/runtime/require-event-runtime-config-in-server",
+    id: "nitro/runtime/require-event-runtime-config-in-server",
     file: "server/api/user.ts",
     source: `export default defineEventHandler((event) => useRuntimeConfig())`,
   },
   {
     rule: noClientComposablesInServer,
-    id: "nuxt/server/no-client-composables",
+    id: "nitro/server/no-client-composables",
     file: "server/api/user.ts",
     source: `export default defineEventHandler(() => useRoute())`,
   },
   {
     rule: noBrowserApiInServer,
-    id: "nuxt/server/no-browser-api",
+    id: "nitro/server/no-browser-api",
     file: "server/api/user.ts",
     source: `export default defineEventHandler(() => window.location.href)`,
   },
@@ -334,8 +334,8 @@ test("Nitro pack is exported and consumed by Nuxt rule packs", () => {
   const packs = nuxtRulePacks();
   expect(nitroRulePack.rules.map((rule) => rule.meta.id)).toEqual(
     expect.arrayContaining([
-      "nuxt/server/prefer-event-fetch",
-      "nuxt/runtime/require-event-runtime-config-in-server",
+      "nitro/server/prefer-event-fetch",
+      "nitro/runtime/require-event-runtime-config-in-server",
       "nitro/request/prefer-validated-body",
       "nitro/request/prefer-validated-query",
       "nitro/request/prefer-validated-router-params",
@@ -346,7 +346,7 @@ test("Nitro pack is exported and consumed by Nuxt rule packs", () => {
   expect(packs.map((pack) => pack.name)).toContain("nuxt-doctor/nitro");
   expect(
     packs.find((pack) => pack.name === "nuxt-doctor/nuxt")?.rules.map((rule) => rule.meta.id),
-  ).not.toContain("nuxt/server/prefer-event-fetch");
+  ).not.toContain("nitro/server/prefer-event-fetch");
 });
 
 test("Nitro request rules prefer validated H3 utilities", async () => {
@@ -740,7 +740,7 @@ test("server fetch request-sensitive internal routes require event context", asy
     },
   });
 
-  expect(result.diagnostics[0]?.ruleId).toBe("nuxt/server/prefer-event-fetch");
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/server/prefer-event-fetch");
 });
 
 test("server browser API rule ignores browser-global property names", async () => {

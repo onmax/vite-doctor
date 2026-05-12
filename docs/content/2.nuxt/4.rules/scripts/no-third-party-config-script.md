@@ -8,14 +8,31 @@ category: "scripts"
 fix: "suggestion"
 ---
 
-# Use Nuxt Scripts instead of raw app.head scripts
-
 `nuxt-scripts/no-third-party-config-script`
+
+## ::rule-badges
+
+pack: "nuxt-doctor/nuxt-scripts"
+category: "scripts"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `nuxt-doctor/nuxt-scripts`
-- Severity: `warn`
-- Category: `scripts`
-- Fix: `suggestion`
-- Source: `packages/nuxt/src/rules/nuxt-scripts.ts`
+## ::rule-metadata
+
+pack: "nuxt-doctor/nuxt-scripts"
+category: "scripts"
+severity: "warn"
+fix: "suggestion"
+source: "packages/nuxt/src/rules/nuxt-scripts.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/nuxt/src/rules/nuxt-scripts.ts"
+docsUrl: ""
+
+---
+
+::

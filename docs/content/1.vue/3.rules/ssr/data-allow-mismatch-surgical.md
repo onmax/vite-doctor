@@ -8,14 +8,31 @@ category: "ssr"
 fix: "suggestion"
 ---
 
-# Use data-allow-mismatch only surgically
-
 `vue/ssr/data-allow-mismatch-surgical`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "ssr"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `warn`
-- Category: `ssr`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/data-allow-mismatch-surgical.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "ssr"
+severity: "warn"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/data-allow-mismatch-surgical.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/data-allow-mismatch-surgical.ts"
+docsUrl: ""
+
+---
+
+::

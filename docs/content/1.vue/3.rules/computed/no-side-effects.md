@@ -8,14 +8,31 @@ category: "computed"
 fix: "suggestion"
 ---
 
-# Computed getters should be pure
-
 `vue/computed/no-side-effects`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "computed"
+severity: "error"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `error`
-- Category: `computed`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/computed-no-side-effects.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "computed"
+severity: "error"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/computed-no-side-effects.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/computed-no-side-effects.ts"
+docsUrl: ""
+
+---
+
+::

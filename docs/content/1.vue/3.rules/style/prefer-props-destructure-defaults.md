@@ -8,14 +8,31 @@ category: "style"
 fix: "suggestion"
 ---
 
-# Prefer props destructure defaults
-
 `vue/style/prefer-props-destructure-defaults`
+
+## ::rule-badges
+
+pack: "vue-doctor/vue"
+category: "style"
+severity: "warn"
+fix: "suggestion"
+
+---
+
+::
 
 ## Metadata
 
-- Pack: `vue-doctor/vue`
-- Severity: `warn`
-- Category: `style`
-- Fix: `suggestion`
-- Source: `packages/core/src/rules/vue/prefer-props-destructure-defaults.ts`
+## ::rule-metadata
+
+pack: "vue-doctor/vue"
+category: "style"
+severity: "warn"
+fix: "suggestion"
+source: "packages/core/src/rules/vue/prefer-props-destructure-defaults.ts"
+sourceUrl: "https://github.com/onmax/nuxt-doctor/blob/main/packages/core/src/rules/vue/prefer-props-destructure-defaults.ts"
+docsUrl: ""
+
+---
+
+::
