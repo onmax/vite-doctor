@@ -79,7 +79,7 @@ List the Nuxt and Vue rule packs:
 pnpm dlx nuxt-doctor rules
 ```
 
-Fail CI on warnings:
+Fail on warnings:
 
 ```bash
 pnpm dlx nuxt-doctor . --max-warnings 0

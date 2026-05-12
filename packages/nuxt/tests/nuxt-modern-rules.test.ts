@@ -37,6 +37,7 @@ import {
   preferUseHeadSafeForUntrustedValues,
   preferAppDirectoryPlacement,
   preferExplicitUseStateKeyInExportedComposables,
+  preferNuxtLink,
   preferNuxtPageOverRouterView,
   preferUseCookieForInitialClientState,
   noNonSerializableUseState,
@@ -98,6 +99,12 @@ const cases = [
     id: "nuxt/routing/prefer-nuxtpage-over-routerview",
     file: "app/app.vue",
     source: `<template><RouterView /></template>`,
+  },
+  {
+    rule: preferNuxtLink,
+    id: "nuxt/routing/prefer-nuxtlink",
+    file: "app/pages/index.vue",
+    source: `<template><a href="/about">About</a></template>`,
   },
   {
     rule: noRouteObjectPageKey,
@@ -260,6 +267,67 @@ test("app directory placement is only reported for Nuxt 4 projects", async () =>
   });
 
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test("prefer NuxtLink reports relative internal anchors", async () => {
+  const result = await runRuleFixture({
+    rule: preferNuxtLink,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<template><a href="./settings">Settings</a></template>`,
+      "app/pages/profile.vue": `<template><a href="../profile">Profile</a></template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "nuxt/routing/prefer-nuxtlink",
+    "nuxt/routing/prefer-nuxtlink",
+  ]);
+});
+
+test("prefer NuxtLink ignores non-app-navigation anchors", async () => {
+  const result = await runRuleFixture({
+    rule: preferNuxtLink,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<template>
+  <a href="https://example.com">External</a>
+  <a href="//example.com">Protocol relative</a>
+  <a href="mailto:hello@example.com">Email</a>
+  <a href="tel:+15555555555">Call</a>
+  <a href="sms:+15555555555">Text</a>
+  <a href="javascript:void 0">Action</a>
+  <a href="data:text/plain,hello">Data</a>
+  <a href="blob:https://example.com/file">Blob</a>
+  <a href="#section">Jump</a>
+  <a href="/file.pdf" download>Download</a>
+  <a href="/about" target="_blank">New tab</a>
+  <NuxtLink to="/about">About</NuxtLink>
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("prefer NuxtLink provides a safe fix for static internal anchors", async () => {
+  const result = await runRuleFixture({
+    rule: preferNuxtLink,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<template><a class="nav" href="/about">About</a></template>`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.fix).toEqual({
+    kind: "safe",
+    edits: [
+      {
+        range: expect.any(Object),
+        text: `<NuxtLink class="nav" to="/about">About</NuxtLink>`,
+      },
+    ],
+  });
 });
 
 test("Nitro pack is exported and consumed by Nuxt rule packs", () => {

@@ -24,11 +24,11 @@ export async function fetchAndUnpackTarball(ref: GhRef): Promise<FileSystemTree>
   const url = `/api/github-tarball/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.repo)}?ref=${encodeURIComponent(ref.ref)}`;
   const res = await fetch(url);
   if (res.status === 404) throw new PrivateOrMissingError();
+  if (res.status === 413) throw new TarballTooLargeError(MAX_BYTES);
   if (!res.ok || !res.body) throw new Error(`Fetch failed: ${res.status}`);
 
   const decompressed = res.body.pipeThrough(new DecompressionStream("gzip"));
-  const buffer = await new Response(decompressed).arrayBuffer();
-  if (buffer.byteLength > MAX_BYTES) throw new TarballTooLargeError(buffer.byteLength);
+  const buffer = await readLimited(decompressed, MAX_BYTES);
 
   const entries = parseTar(new Uint8Array(buffer));
   const tree: FileSystemTree = {};
@@ -41,6 +41,35 @@ export async function fetchAndUnpackTarball(ref: GhRef): Promise<FileSystemTree>
     insert(tree, path, entry.data);
   }
   return tree;
+}
+
+async function readLimited(stream: ReadableStream<Uint8Array>, maxBytes: number) {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new TarballTooLargeError(total);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const buffer = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return buffer;
 }
 
 function insert(tree: FileSystemTree, path: string, data: Uint8Array) {

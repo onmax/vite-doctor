@@ -13,33 +13,33 @@ The same metadata is exported as JSON under `/rules/` in the docs site.
 
 ## Rules
 
-| Rule                                                                                               | Title                                              | Pack             | Severity | Category     | Fix        |
-| -------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------- | -------- | ------------ | ---------- |
-| [`vue/reactivity/no-prop-mutation`](./reactivity/no-prop-mutation)                                 | Do not mutate props                                | `vue-doctor/vue` | `error`  | `reactivity` | suggestion |
-| [`vue/reactivity/defineprops-watch-getter`](./reactivity/defineprops-watch-getter)                 | Watch destructured props with a getter             | `vue-doctor/vue` | `error`  | `reactivity` | safe       |
-| [`vue/reactivity/no-ref-as-operand`](./reactivity/no-ref-as-operand)                               | Use .value when refs are operands                  | `vue-doctor/vue` | `error`  | `reactivity` | suggestion |
-| [`vue/computed/no-side-effects`](./computed/no-side-effects)                                       | Computed getters should be pure                    | `vue-doctor/vue` | `error`  | `computed`   | suggestion |
-| [`vue/computed/no-async`](./computed/no-async)                                                     | Do not use async computed getters                  | `vue-doctor/vue` | `error`  | `computed`   | suggestion |
-| [`vue/watch/no-after-await`](./watch/no-after-await)                                               | Register watchers and lifecycle hooks before await | `vue-doctor/vue` | `error`  | `watchers`   | suggestion |
-| [`vue/watch/no-onwatchercleanup-after-await`](./watch/no-onwatchercleanup-after-await)             | Call onWatcherCleanup synchronously                | `vue-doctor/vue` | `error`  | `watchers`   | suggestion |
-| [`vue/template/require-v-for-key`](./template/require-v-for-key)                                   | Require stable keys on v-for                       | `vue-doctor/vue` | `error`  | `template`   | suggestion |
-| [`vue/template/no-v-if-with-v-for`](./template/no-v-if-with-v-for)                                 | Do not combine v-if and v-for on the same element  | `vue-doctor/vue` | `error`  | `template`   | suggestion |
-| [`vue/template/prefer-use-template-ref`](./template/prefer-use-template-ref)                       | Prefer useTemplateRef for template refs            | `vue-doctor/vue` | `info`   | `template`   | suggestion |
-| [`vue/ssr/no-browser-api-in-setup`](./ssr/no-browser-api-in-setup)                                 | Do not read browser APIs in SSR setup paths        | `vue-doctor/vue` | `error`  | `ssr`        | suggestion |
-| [`vue/security/restrict-v-html`](./security/restrict-v-html)                                       | Restrict v-html to trusted HTML                    | `vue-doctor/vue` | `error`  | `security`   | suggestion |
-| [`vue/reactivity/no-setup-props-destructure`](./reactivity/no-setup-props-destructure)             | Do not destructure setup props                     | `vue-doctor/vue` | `error`  | `reactivity` | suggestion |
-| [`vue/watch/no-async-watcheffect-after-await-read`](./watch/no-async-watcheffect-after-await-read) | Do not read watchEffect dependencies after await   | `vue-doctor/vue` | `warn`   | `watchers`   | suggestion |
-| [`vue/watch/require-side-effect-cleanup`](./watch/require-side-effect-cleanup)                     | Clean up watcher side effects                      | `vue-doctor/vue` | `warn`   | `watchers`   | suggestion |
-| [`vue/watch/require-post-flush-for-dom-read`](./watch/require-post-flush-for-dom-read)             | Use post-flush watchers for DOM reads              | `vue-doctor/vue` | `warn`   | `watchers`   | suggestion |
-| [`vue/lifecycle/no-mutation-in-onupdated`](./lifecycle/no-mutation-in-onupdated)                   | Do not mutate state in onUpdated                   | `vue-doctor/vue` | `error`  | `lifecycle`  | suggestion |
-| [`vue/lifecycle/require-cleanup`](./lifecycle/require-cleanup)                                     | Clean up lifecycle resources                       | `vue-doctor/vue` | `warn`   | `lifecycle`  | suggestion |
-| [`vue/ssr/use-id-for-stable-ids`](./ssr/use-id-for-stable-ids)                                     | Use useId for SSR-stable ids                       | `vue-doctor/vue` | `warn`   | `ssr`        | suggestion |
-| [`vue/ssr/no-random-or-local-time-render`](./ssr/no-random-or-local-time-render)                   | Avoid random or local-time SSR render values       | `vue-doctor/vue` | `warn`   | `ssr`        | suggestion |
-| [`vue/ssr/data-allow-mismatch-surgical`](./ssr/data-allow-mismatch-surgical)                       | Use data-allow-mismatch only surgically            | `vue-doctor/vue` | `warn`   | `ssr`        | suggestion |
-| [`vue/style/prefer-define-model`](./style/prefer-define-model)                                     | Prefer defineModel for component v-model           | `vue-doctor/vue` | `warn`   | `style`      | suggestion |
-| [`vue/style/prefer-props-destructure-defaults`](./style/prefer-props-destructure-defaults)         | Prefer props destructure defaults                  | `vue-doctor/vue` | `warn`   | `style`      | suggestion |
-| [`vue/style/prefer-type-props`](./style/prefer-type-props)                                         | Prefer TypeScript props declarations               | `vue-doctor/vue` | `warn`   | `style`      | suggestion |
-| [`vue/reactivity/prefer-composable-ref-return`](./reactivity/prefer-composable-ref-return)         | Prefer refs from reusable composables              | `vue-doctor/vue` | `warn`   | `reactivity` | suggestion |
+| Rule                                                                                                        | Title                                              | Pack             | Severity | Category     | Fix        |
+| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------- | -------- | ------------ | ---------- |
+| [`vue/reactivity/no-prop-mutation`](/vue/rules/reactivity/no-prop-mutation)                                 | Do not mutate props                                | `vue-doctor/vue` | `error`  | `reactivity` | suggestion |
+| [`vue/reactivity/defineprops-watch-getter`](/vue/rules/reactivity/defineprops-watch-getter)                 | Watch destructured props with a getter             | `vue-doctor/vue` | `error`  | `reactivity` | safe       |
+| [`vue/reactivity/no-ref-as-operand`](/vue/rules/reactivity/no-ref-as-operand)                               | Use .value when refs are operands                  | `vue-doctor/vue` | `error`  | `reactivity` | suggestion |
+| [`vue/computed/no-side-effects`](/vue/rules/computed/no-side-effects)                                       | Computed getters should be pure                    | `vue-doctor/vue` | `error`  | `computed`   | suggestion |
+| [`vue/computed/no-async`](/vue/rules/computed/no-async)                                                     | Do not use async computed getters                  | `vue-doctor/vue` | `error`  | `computed`   | suggestion |
+| [`vue/watch/no-after-await`](/vue/rules/watch/no-after-await)                                               | Register watchers and lifecycle hooks before await | `vue-doctor/vue` | `error`  | `watchers`   | suggestion |
+| [`vue/watch/no-onwatchercleanup-after-await`](/vue/rules/watch/no-onwatchercleanup-after-await)             | Call onWatcherCleanup synchronously                | `vue-doctor/vue` | `error`  | `watchers`   | suggestion |
+| [`vue/template/require-v-for-key`](/vue/rules/template/require-v-for-key)                                   | Require stable keys on v-for                       | `vue-doctor/vue` | `error`  | `template`   | suggestion |
+| [`vue/template/no-v-if-with-v-for`](/vue/rules/template/no-v-if-with-v-for)                                 | Do not combine v-if and v-for on the same element  | `vue-doctor/vue` | `error`  | `template`   | suggestion |
+| [`vue/template/prefer-use-template-ref`](/vue/rules/template/prefer-use-template-ref)                       | Prefer useTemplateRef for template refs            | `vue-doctor/vue` | `info`   | `template`   | suggestion |
+| [`vue/ssr/no-browser-api-in-setup`](/vue/rules/ssr/no-browser-api-in-setup)                                 | Do not read browser APIs in SSR setup paths        | `vue-doctor/vue` | `error`  | `ssr`        | suggestion |
+| [`vue/security/restrict-v-html`](/vue/rules/security/restrict-v-html)                                       | Restrict v-html to trusted HTML                    | `vue-doctor/vue` | `error`  | `security`   | suggestion |
+| [`vue/reactivity/no-setup-props-destructure`](/vue/rules/reactivity/no-setup-props-destructure)             | Do not destructure setup props                     | `vue-doctor/vue` | `error`  | `reactivity` | suggestion |
+| [`vue/watch/no-async-watcheffect-after-await-read`](/vue/rules/watch/no-async-watcheffect-after-await-read) | Do not read watchEffect dependencies after await   | `vue-doctor/vue` | `warn`   | `watchers`   | suggestion |
+| [`vue/watch/require-side-effect-cleanup`](/vue/rules/watch/require-side-effect-cleanup)                     | Clean up watcher side effects                      | `vue-doctor/vue` | `warn`   | `watchers`   | suggestion |
+| [`vue/watch/require-post-flush-for-dom-read`](/vue/rules/watch/require-post-flush-for-dom-read)             | Use post-flush watchers for DOM reads              | `vue-doctor/vue` | `warn`   | `watchers`   | suggestion |
+| [`vue/lifecycle/no-mutation-in-onupdated`](/vue/rules/lifecycle/no-mutation-in-onupdated)                   | Do not mutate state in onUpdated                   | `vue-doctor/vue` | `error`  | `lifecycle`  | suggestion |
+| [`vue/lifecycle/require-cleanup`](/vue/rules/lifecycle/require-cleanup)                                     | Clean up lifecycle resources                       | `vue-doctor/vue` | `warn`   | `lifecycle`  | suggestion |
+| [`vue/ssr/use-id-for-stable-ids`](/vue/rules/ssr/use-id-for-stable-ids)                                     | Use useId for SSR-stable ids                       | `vue-doctor/vue` | `warn`   | `ssr`        | suggestion |
+| [`vue/ssr/no-random-or-local-time-render`](/vue/rules/ssr/no-random-or-local-time-render)                   | Avoid random or local-time SSR render values       | `vue-doctor/vue` | `warn`   | `ssr`        | suggestion |
+| [`vue/ssr/data-allow-mismatch-surgical`](/vue/rules/ssr/data-allow-mismatch-surgical)                       | Use data-allow-mismatch only surgically            | `vue-doctor/vue` | `warn`   | `ssr`        | suggestion |
+| [`vue/style/prefer-define-model`](/vue/rules/style/prefer-define-model)                                     | Prefer defineModel for component v-model           | `vue-doctor/vue` | `warn`   | `style`      | suggestion |
+| [`vue/style/prefer-props-destructure-defaults`](/vue/rules/style/prefer-props-destructure-defaults)         | Prefer props destructure defaults                  | `vue-doctor/vue` | `warn`   | `style`      | suggestion |
+| [`vue/style/prefer-type-props`](/vue/rules/style/prefer-type-props)                                         | Prefer TypeScript props declarations               | `vue-doctor/vue` | `warn`   | `style`      | suggestion |
+| [`vue/reactivity/prefer-composable-ref-return`](/vue/rules/reactivity/prefer-composable-ref-return)         | Prefer refs from reusable composables              | `vue-doctor/vue` | `warn`   | `reactivity` | suggestion |
 
 ## JSON export
 

@@ -87,9 +87,13 @@ export function useDoctorWc() {
   const result = useState<DoctorRunResult | null>("doctor-wc-result", () => null);
   const framework = useState<Framework>("doctor-wc-framework", () => "nuxt");
   const phaseLabel = useState<string>("doctor-wc-phase", () => "");
+  const activePhase = useState<WcStatus | null>("doctor-wc-active-phase", () => null);
   const logSink = useState<((data: string) => void) | null>("doctor-wc-log", () => null);
 
   function setStatus(next: WcStatus, label = "") {
+    if (next !== "error" && next !== "done" && next !== "idle") {
+      activePhase.value = next;
+    }
     status.value = next;
     phaseLabel.value = label;
   }
@@ -102,6 +106,7 @@ export function useDoctorWc() {
     activeRunId += 1;
     errorMsg.value = null;
     result.value = null;
+    activePhase.value = null;
     setStatus("idle");
     return activeRunId;
   }
@@ -224,10 +229,22 @@ export function useDoctorWc() {
     activeRunId += 1;
     result.value = null;
     errorMsg.value = null;
+    activePhase.value = null;
     setStatus("idle");
   }
 
-  return { status, errorMsg, result, framework, phaseLabel, scan, scanDemo, reset, setLogSink };
+  return {
+    status,
+    errorMsg,
+    result,
+    framework,
+    phaseLabel,
+    activePhase,
+    scan,
+    scanDemo,
+    reset,
+    setLogSink,
+  };
 }
 
 function readTreeText(tree: FileSystemTree, path: string): string | null {

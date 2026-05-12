@@ -15,14 +15,14 @@ The same metadata is exported as JSON under `/rules/` in the docs site.
 
 ## Rules
 
-| Rule                                                                                                      | Title                                             | Pack                | Severity | Category         | Fix        |
-| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------- | -------- | ---------------- | ---------- |
-| [`nuxt/context/no-usenuxtapp-in-nitro`](./context/no-usenuxtapp-in-nitro)                                 | Do not use useNuxtApp in Nitro routes             | `nuxt-doctor/nitro` | `error`  | `server`         | suggestion |
-| [`nuxt/context/no-navigateto-in-nitro`](./context/no-navigateto-in-nitro)                                 | Do not use navigateTo in Nitro routes             | `nuxt-doctor/nitro` | `error`  | `server`         | suggestion |
-| [`nuxt/server/prefer-event-fetch`](./server/prefer-event-fetch)                                           | Use event.$fetch in Nitro handlers                | `nuxt-doctor/nitro` | `warn`   | `server`         | suggestion |
-| [`nuxt/runtime/require-event-runtime-config-in-server`](./runtime/require-event-runtime-config-in-server) | Pass event to useRuntimeConfig in server handlers | `nuxt-doctor/nitro` | `warn`   | `runtime-config` | suggestion |
-| [`nuxt/server/no-client-composables`](./server/no-client-composables)                                     | Do not use app composables in Nitro server files  | `nuxt-doctor/nitro` | `error`  | `server`         | suggestion |
-| [`nuxt/server/no-browser-api`](./server/no-browser-api)                                                   | Do not use browser APIs in Nitro server files     | `nuxt-doctor/nitro` | `error`  | `server`         | suggestion |
+| Rule                                                                                                                 | Title                                             | Pack                | Severity | Category         | Fix        |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------- | -------- | ---------------- | ---------- |
+| [`nuxt/context/no-usenuxtapp-in-nitro`](/nitro/rules/context/no-usenuxtapp-in-nitro)                                 | Do not use useNuxtApp in Nitro routes             | `nuxt-doctor/nitro` | `error`  | `server`         | suggestion |
+| [`nuxt/context/no-navigateto-in-nitro`](/nitro/rules/context/no-navigateto-in-nitro)                                 | Do not use navigateTo in Nitro routes             | `nuxt-doctor/nitro` | `error`  | `server`         | suggestion |
+| [`nuxt/server/prefer-event-fetch`](/nitro/rules/server/prefer-event-fetch)                                           | Use event.$fetch in Nitro handlers                | `nuxt-doctor/nitro` | `warn`   | `server`         | suggestion |
+| [`nuxt/runtime/require-event-runtime-config-in-server`](/nitro/rules/runtime/require-event-runtime-config-in-server) | Pass event to useRuntimeConfig in server handlers | `nuxt-doctor/nitro` | `warn`   | `runtime-config` | suggestion |
+| [`nuxt/server/no-client-composables`](/nitro/rules/server/no-client-composables)                                     | Do not use app composables in Nitro server files  | `nuxt-doctor/nitro` | `error`  | `server`         | suggestion |
+| [`nuxt/server/no-browser-api`](/nitro/rules/server/no-browser-api)                                                   | Do not use browser APIs in Nitro server files     | `nuxt-doctor/nitro` | `error`  | `server`         | suggestion |
 
 ## JSON export
 

@@ -16,6 +16,7 @@ Doctor-style analyzers for modern Vue 3.5+ and Nuxt 4 codebases.
 
 The workspace exposes Vue and Nuxt entry points backed by one shared engine:
 
+- `vite-doctor` for running a project's existing scripts with auto-detected tooling
 - `vue-doctor` for Vue projects
 - `nuxt-doctor` for Nuxt projects, including the `nuxt doctor` command when installed as a module
 
@@ -26,9 +27,12 @@ Nuxt Doctor extends Vue Doctor with Nuxt project detection, Nuxt manifest suppor
 Run Doctor from a project root:
 
 ```bash
+pnpm dlx vite-doctor
 pnpm dlx vue-doctor
 pnpm dlx nuxt module add nuxt-doctor
 ```
+
+Run `pnpm dlx vite-doctor --dry-run` to preview the detected package manager and planned scripts. The CLI prefers `ci`, then `ready`, then available standard scripts: `check`, `lint`, `typecheck` or `type:check`, `test`, and `build`.
 
 Install Nuxt Doctor in a Nuxt project when you want the module and `nuxt doctor` command:
 
@@ -73,6 +77,7 @@ vp run dev
 
 ## Packages
 
+- `vite-doctor`: universal CLI runner that detects the package manager and runs existing project scripts.
 - `@vue-doctor/core`: analyzer pipeline, public rule/plugin API, config loading, scoring, fixing, and text output.
 - `vue-doctor`: Vue CLI with the built-in Vue rules.
 - `nuxt-doctor`: Nuxt module, Nuxt command integration, manifest generator, built-in Nuxt rules, and the exported `nitroRulePack` consumed by Nuxt scans.

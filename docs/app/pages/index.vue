@@ -21,168 +21,62 @@ useHead({
   ],
 });
 
-type Framework = "vue" | "nuxt";
 type Audience = "humans" | "agents";
-type Severity = "high" | "medium" | "low";
-
-interface Finding {
-  severity: Severity;
-  title: string;
-  description: string;
-  location: string;
-}
 
 interface Demo {
-  label: string;
-  pkg: string;
-  logo: string;
   docs: string;
   humansCmd: string;
   agentsCmd: string;
-  score: number;
-  total: number;
-  scanned: number;
-  duration: string;
-  findings: Finding[];
 }
 
-const demos: Record<Framework, Demo> = {
-  vue: {
-    label: "Vue",
-    pkg: "vue-doctor",
-    logo: "/vue-doctor-logo.svg",
-    docs: "/vue",
-    humansCmd: "pnpm dlx vue-doctor",
-    agentsCmd: "pnpm dlx vue-doctor rules --format json",
-    score: 72,
-    total: 14,
-    scanned: 96,
-    duration: "1.42s",
-    findings: [
-      {
-        severity: "high",
-        title: "v-html on untrusted input",
-        description: "XSS risk: comment body bound with v-html.",
-        location: "components/Comment.vue:42",
-      },
-      {
-        severity: "medium",
-        title: "Prop mutated in child",
-        description: "Direct write to a v-model prop.",
-        location: "components/Form.vue:18",
-      },
-      {
-        severity: "medium",
-        title: "Async function in computed()",
-        description: "Computed must be synchronous.",
-        location: "composables/useTotals.ts:7",
-      },
-      {
-        severity: "medium",
-        title: "v-for missing :key",
-        description: "List items rendered without :key.",
-        location: "components/List.vue:14",
-      },
-      {
-        severity: "low",
-        title: "window used in setup",
-        description: "Browser API runs during SSR.",
-        location: "composables/useScroll.ts:3",
-      },
-    ],
-  },
-  nuxt: {
-    label: "Nuxt",
-    pkg: "nuxt-doctor",
-    logo: "/nuxt-doctor-logo.svg",
-    docs: "/nuxt",
-    humansCmd: "pnpm dlx nuxt module add nuxt-doctor",
-    agentsCmd: "npx nuxt-doctor mcp --add cursor",
-    score: 42,
-    total: 16,
-    scanned: 128,
-    duration: "2.34s",
-    findings: [
-      {
-        severity: "high",
-        title: "Hydration mismatch",
-        description: "Non-deterministic value rendered server-side.",
-        location: "components/UserCard.vue:23",
-      },
-      {
-        severity: "medium",
-        title: "Runtime secret exposed",
-        description: "API key reachable in the public bundle.",
-        location: "composables/useApi.ts:12",
-      },
-      {
-        severity: "medium",
-        title: "Middleware data leak",
-        description: "Sensitive payload returned to the client.",
-        location: "middleware/auth.global.ts:1",
-      },
-      {
-        severity: "medium",
-        title: "Raw fetch in setup",
-        description: "useFetch missed. Duplicates across SSR and CSR.",
-        location: "composables/useUser.ts:8",
-      },
-      {
-        severity: "low",
-        title: "Non-serializable useState",
-        description: "State won't transfer from server to client.",
-        location: "composables/useCart.ts:5",
-      },
-    ],
-  },
+const demo: Demo = {
+  docs: "/vue",
+  humansCmd: "pnpm dlx vite-doctor",
+  agentsCmd: "pnpm dlx vite-doctor --dry-run",
 };
 
-const framework = ref<Framework>("nuxt");
 const audience = ref<Audience>("humans");
-const demo = computed(() => demos[framework.value]);
-
-// Live scan state — sample preview hides as soon as the user starts a real scan.
-const { result: liveResult } = useDoctorWc();
-const hasInteracted = useState<boolean>("doctor-wc-interacted", () => false);
-const showSample = computed(() => !liveResult.value && !hasInteracted.value);
 
 const supported = [
   { id: "vue", label: "Vue", icon: "i-logos-vue" },
   { id: "nuxt", label: "Nuxt", icon: "i-logos-nuxt-icon" },
   { id: "nitro", label: "Nitro", icon: "i-unjs-nitro" },
 ] as const;
-const currentCmd = computed(() =>
-  audience.value === "humans" ? demo.value.humansCmd : demo.value.agentsCmd,
-);
-const visibleFindings = computed(() => demo.value.findings.slice(0, 3));
 
-const progress = ref(0);
-let tweenTimers: ReturnType<typeof setTimeout>[] = [];
-function clearTween() {
-  tweenTimers.forEach(clearTimeout);
-  tweenTimers = [];
-}
-function tweenProgress() {
-  clearTween();
-  const target = demo.value.score;
-  progress.value = 0;
-  const totalMs = 900;
-  const stepMs = 24;
-  const steps = Math.max(1, Math.round(totalMs / stepMs));
-  let i = 0;
-  const tick = () => {
-    i += 1;
-    progress.value = Math.min(target, Math.round((target * i) / steps));
-    if (i < steps) tweenTimers.push(setTimeout(tick, stepMs));
-  };
-  tick();
-}
+const checks = [
+  {
+    severity: "high",
+    title: "Hydration mismatches",
+    description: "Non-deterministic values and SSR/CSR divergence caught before deployment.",
+  },
+  {
+    severity: "high",
+    title: "Secret exposure",
+    description: "API keys reachable from the client bundle and sensitive payload leaks.",
+  },
+  {
+    severity: "medium",
+    title: "Reactivity hazards",
+    description: "Prop mutation, async computed(), v-for without :key, escape from refs.",
+  },
+  {
+    severity: "medium",
+    title: "Data-fetching pitfalls",
+    description: "Raw fetch in setup, useFetch misses, duplicate SSR/CSR requests.",
+  },
+  {
+    severity: "low",
+    title: "SSR-unsafe APIs",
+    description: "window, document, or localStorage referenced during server-side setup.",
+  },
+  {
+    severity: "low",
+    title: "Runtime config",
+    description: "Missing env vars, non-serializable useState, module misconfiguration.",
+  },
+] as const;
 
-function selectFramework(f: Framework) {
-  if (framework.value === f) return;
-  framework.value = f;
-  tweenProgress();
-}
+const currentCmd = computed(() => (audience.value === "humans" ? demo.humansCmd : demo.agentsCmd));
 
 const copied = ref<string | null>(null);
 async function copy(value: string, key: string) {
@@ -200,12 +94,6 @@ const isDark = computed(() => colorMode.value === "dark");
 function toggleTheme() {
   colorMode.preference = isDark.value ? "light" : "dark";
 }
-
-const ARC_LENGTH = 157.08;
-const dashArray = computed(() => {
-  const filled = (progress.value / 100) * ARC_LENGTH;
-  return `${filled} ${ARC_LENGTH}`;
-});
 
 const lifelineSvg = ref<SVGSVGElement | null>(null);
 const lifelineAnimations: Array<{ cancel: () => void }> = [];
@@ -293,39 +181,15 @@ interface Row {
   segments: Point[];
 }
 
-// Coprime-ish durations and unrelated delays keep rows visually independent.
-// Spike positions are staggered per row so heartbeats don't line up vertically.
+const PATH_HEIGHT = 800;
+
 const rowPaths: Row[] = (
   [
     {
-      y: 70,
-      spikes: [180, 620, 1080, 1540, 2020, 2480, 2940, 3380],
-      duration: 11,
+      y: 760,
+      spikes: [180, 580, 1020, 1480, 1940, 2400, 2860, 3320],
+      duration: 14,
       delay: 0,
-    },
-    {
-      y: 200,
-      spikes: [340, 820, 1280, 1760, 2240, 2700, 3160],
-      duration: 17,
-      delay: 3.2,
-    },
-    {
-      y: 330,
-      spikes: [240, 720, 1180, 1620, 2080, 2540, 3020, 3460],
-      duration: 13,
-      delay: 1.7,
-    },
-    {
-      y: 460,
-      spikes: [420, 880, 1340, 1820, 2280, 2760, 3220],
-      duration: 19,
-      delay: 7.4,
-    },
-    {
-      y: 590,
-      spikes: [120, 580, 1020, 1500, 1960, 2420, 2880, 3340],
-      duration: 9,
-      delay: 5.1,
     },
   ] satisfies Array<{ y: number; spikes: number[]; duration: number; delay: number }>
 ).map((r) => {
@@ -333,30 +197,7 @@ const rowPaths: Row[] = (
   return { y: r.y, duration: r.duration, delay: r.delay, segments, d: pathFromSegments(segments) };
 });
 
-const scanTimeLabel = ref("just now");
-function formatRelativeTime(date: Date) {
-  const diffMs = Date.now() - date.getTime();
-  const diffSec = Math.round(diffMs / 1000);
-  if (diffSec < 5) return "just now";
-  if (diffSec < 60) return `${diffSec}s ago`;
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  return date.toLocaleDateString();
-}
-
-let scanAt: Date | null = null;
-let relTimer: ReturnType<typeof setInterval> | null = null;
-
 onMounted(() => {
-  scanAt = new Date();
-  scanTimeLabel.value = formatRelativeTime(scanAt);
-  relTimer = setInterval(() => {
-    if (scanAt) scanTimeLabel.value = formatRelativeTime(scanAt);
-  }, 1000);
-  tweenProgress();
-
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (!lifelineSvg.value || reduced) return;
 
@@ -380,8 +221,6 @@ onMounted(() => {
   });
 });
 onBeforeUnmount(() => {
-  clearTween();
-  if (relTimer) clearInterval(relTimer);
   lifelineAnimations.forEach((a) => a?.cancel?.());
   lifelineAnimations.length = 0;
 });
@@ -394,6 +233,8 @@ onBeforeUnmount(() => {
     <svg
       ref="lifelineSvg"
       aria-hidden="true"
+      :viewBox="`0 0 ${PATH_WIDTH} ${PATH_HEIGHT}`"
+      preserveAspectRatio="xMidYMax slice"
       class="lifeline-bg pointer-events-none absolute inset-0 -z-10 size-full text-emerald-700 dark:text-emerald-300"
     >
       <defs>
@@ -414,7 +255,7 @@ onBeforeUnmount(() => {
             :x="-TRAIL_WIDTH"
             y="0"
             :width="TRAIL_WIDTH"
-            height="100%"
+            :height="PATH_HEIGHT"
             fill="url(#lifeline-trail)"
           />
         </mask>
@@ -429,7 +270,7 @@ onBeforeUnmount(() => {
         stroke-linecap="round"
         stroke-linejoin="round"
       >
-        <path :d="row.d" class="[stroke-opacity:0.07] dark:[stroke-opacity:0.1]" />
+        <path :d="row.d" class="[stroke-opacity:0.05] dark:[stroke-opacity:0.08]" />
         <path
           :d="row.d"
           :mask="`url(#lifeline-mask-${i})`"
@@ -450,10 +291,10 @@ onBeforeUnmount(() => {
       <a
         href="/"
         aria-label="Homepage"
-        class="inline-flex items-center gap-2.5 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-500"
+        class="inline-flex items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-500"
       >
         <span
-          class="inline-flex size-7 items-center justify-center rounded-sm bg-emerald-600 text-white dark:bg-emerald-500"
+          class="inline-flex size-7 items-center justify-center rounded-md bg-emerald-600 text-white dark:bg-emerald-500"
           aria-hidden="true"
         >
           <svg
@@ -474,14 +315,14 @@ onBeforeUnmount(() => {
 
       <nav class="flex items-center gap-0.5 sm:gap-1">
         <a
-          href="/docs"
-          class="rounded-sm px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          href="/vue"
+          class="rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
           Docs
         </a>
         <a
-          href="/rules"
-          class="rounded-sm px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          href="/rules/nuxt"
+          class="rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
           Rules
         </a>
@@ -489,7 +330,7 @@ onBeforeUnmount(() => {
           href="https://github.com/onmax/nuxt-doctor"
           target="_blank"
           rel="noopener"
-          class="inline-flex items-center gap-1 rounded-sm px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          class="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
           GitHub
           <UIcon
@@ -501,7 +342,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
-          class="relative ml-1 inline-flex size-8 items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          class="relative ml-1 inline-flex size-8 items-center justify-center rounded-md text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
           @click="toggleTheme"
         >
           <UIcon
@@ -515,25 +356,8 @@ onBeforeUnmount(() => {
 
     <main class="mx-auto max-w-3xl px-6 pb-20 sm:px-10">
       <section class="pt-10 pb-12 text-center sm:pt-14 lg:pt-20 lg:pb-16">
-        <p
-          class="inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-xs font-medium tracking-wider text-neutral-500 uppercase dark:text-neutral-500"
-        >
-          <span>Works with</span>
-          <span class="flex items-center gap-x-3">
-            <span v-for="(s, i) in supported" :key="s.id" class="contents">
-              <span v-if="i > 0" class="text-neutral-300 dark:text-neutral-700" aria-hidden="true"
-                >·</span
-              >
-              <span class="inline-flex items-center gap-1.5 text-neutral-700 dark:text-neutral-300">
-                <UIcon :name="s.icon" class="size-4 shrink-0" aria-hidden="true" />
-                {{ s.label }}
-              </span>
-            </span>
-          </span>
-        </p>
-
         <h1
-          class="mx-auto mt-8 max-w-[20ch] text-4xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-5xl lg:text-6xl dark:text-neutral-100"
+          class="mx-auto max-w-[20ch] text-4xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-5xl lg:text-6xl dark:text-neutral-100"
         >
           Catch the bugs your agents ship.
         </h1>
@@ -543,49 +367,34 @@ onBeforeUnmount(() => {
           Static-analysis CLI and Nuxt module. Flags reactivity, hydration, and runtime-config
           hazards in seconds, before they hit production.
         </p>
+
+        <p
+          class="mt-8 inline-flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm font-medium text-neutral-700 dark:text-neutral-300"
+        >
+          <span v-for="s in supported" :key="s.id" class="inline-flex items-center gap-1.5">
+            <UIcon :name="s.icon" class="size-4 shrink-0" aria-hidden="true" />
+            {{ s.label }}
+          </span>
+        </p>
       </section>
 
       <section aria-label="Install" class="pb-10">
-        <div class="mb-3 flex flex-wrap items-center justify-center gap-2 sm:justify-between">
+        <div class="mb-3 flex justify-center">
           <div
             class="inline-flex items-center gap-1 rounded-full bg-neutral-100/70 p-1 text-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
             role="tablist"
-            aria-label="Framework"
-          >
-            <button
-              v-for="f in ['vue', 'nuxt'] as Framework[]"
-              :key="f"
-              type="button"
-              role="tab"
-              :aria-selected="framework === f"
-              class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-              :class="
-                framework === f
-                  ? 'bg-white text-neutral-900 ring-1 ring-neutral-200 dark:bg-neutral-800 dark:text-neutral-100 dark:ring-neutral-700'
-                  : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100'
-              "
-              @click="selectFramework(f)"
-            >
-              <img :src="demos[f].logo" alt="" class="size-3.5" />
-              {{ demos[f].label }}
-            </button>
-          </div>
-
-          <div
-            class="inline-flex items-center gap-1 rounded-full bg-neutral-100/70 p-1 text-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
-            role="tablist"
-            aria-label="Audience"
+            aria-label="Output for"
           >
             <button
               v-for="m in [
-                { id: 'humans' as Audience, label: 'Humans', icon: 'i-lucide-user' },
-                { id: 'agents' as Audience, label: 'Agents', icon: 'i-lucide-bot' },
+                { id: 'humans' as Audience, label: 'For Humans', icon: 'i-lucide-user' },
+                { id: 'agents' as Audience, label: 'For Agents', icon: 'i-lucide-bot' },
               ]"
               :key="m.id"
               type="button"
               role="tab"
               :aria-selected="audience === m.id"
-              class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+              class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition-transform duration-100 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
               :class="
                 audience === m.id
                   ? 'bg-white text-neutral-900 ring-1 ring-neutral-200 dark:bg-neutral-800 dark:text-neutral-100 dark:ring-neutral-700'
@@ -600,7 +409,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div
-          class="overflow-hidden bg-white ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
+          class="overflow-hidden rounded-md bg-white ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
         >
           <div
             class="flex items-center gap-2 bg-neutral-950 px-4 py-3 dark:inset-ring dark:inset-ring-white/5"
@@ -614,7 +423,7 @@ onBeforeUnmount(() => {
             <button
               type="button"
               :aria-label="copied === 'cmd' ? 'Copied' : 'Copy command'"
-              class="inline-flex items-center gap-1.5 bg-white/5 px-2.5 py-1.5 text-sm font-medium text-neutral-200 ring-1 ring-white/10 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
+              class="inline-flex items-center gap-1.5 rounded-sm bg-white/5 px-2.5 py-1.5 text-sm font-medium text-neutral-200 ring-1 ring-white/10 transition-transform duration-100 hover:bg-white/10 hover:text-white active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
               @click="copy(currentCmd, 'cmd')"
             >
               <UIcon
@@ -629,217 +438,94 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section aria-label="Try it live" class="pb-10">
+      <section aria-label="Try it live" class="pb-14">
         <div
-          class="overflow-hidden bg-white ring-1 ring-neutral-200 transition-all dark:bg-neutral-900 dark:ring-neutral-800"
+          class="overflow-hidden rounded-md bg-white ring-1 ring-neutral-200 transition-all dark:bg-neutral-900 dark:ring-neutral-800 dark:inset-ring dark:inset-ring-white/5"
         >
           <ClientOnly>
             <ScannerPanel />
             <template #fallback>
-              <MobileFallback :framework="framework" />
+              <MobileFallback />
             </template>
           </ClientOnly>
-
-          <section
-            v-if="showSample"
-            :key="framework"
-            class="grow-section border-t border-neutral-100 dark:border-neutral-800"
-          >
-            <div
-              class="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-neutral-100 px-5 py-3 text-sm dark:border-neutral-800"
-            >
-              <span class="inline-flex items-center gap-2">
-                <span class="inline-block size-1.5 bg-emerald-500" aria-hidden="true" />
-                <span class="font-medium text-neutral-900 dark:text-neutral-100">Sample scan</span>
-              </span>
-              <span
-                class="hidden h-3 w-px bg-neutral-200 sm:inline-block dark:bg-neutral-800"
-                aria-hidden="true"
-              />
-              <span class="text-neutral-500 tabular-nums dark:text-neutral-500">{{
-                scanTimeLabel
-              }}</span>
-              <span
-                class="hidden h-3 w-px bg-neutral-200 sm:inline-block dark:bg-neutral-800"
-                aria-hidden="true"
-              />
-              <span class="font-mono text-neutral-500 tabular-nums dark:text-neutral-500">{{
-                demo.duration
-              }}</span>
-            </div>
-
-            <div
-              class="grid grid-cols-[auto_1fr] items-center gap-6 px-5 py-5 sm:gap-8 sm:px-6 sm:py-6"
-            >
-              <div class="flex flex-col items-center">
-                <svg viewBox="0 0 130 80" class="w-32 sm:w-36" aria-hidden="true">
-                  <defs>
-                    <linearGradient id="gauge-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stop-color="var(--color-rose-500)" />
-                      <stop offset="55%" stop-color="var(--color-amber-400)" />
-                      <stop offset="100%" stop-color="var(--color-emerald-500)" />
-                    </linearGradient>
-                  </defs>
-                  <path
-                    d="M 15 65 A 50 50 0 0 1 115 65"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="9"
-                    stroke-linecap="butt"
-                    class="text-neutral-200 dark:text-neutral-800"
-                  />
-                  <path
-                    v-if="progress > 0"
-                    d="M 15 65 A 50 50 0 0 1 115 65"
-                    fill="none"
-                    stroke="url(#gauge-gradient)"
-                    stroke-width="9"
-                    stroke-linecap="butt"
-                    :stroke-dasharray="dashArray"
-                    class="[transition:stroke-dasharray_60ms_linear]"
-                  />
-                </svg>
-                <div class="-mt-7 flex items-baseline gap-1">
-                  <span
-                    class="text-3xl font-semibold tabular-nums tracking-tight text-neutral-900 sm:text-4xl dark:text-neutral-100"
-                    >{{ progress }}</span
-                  >
-                  <span class="text-sm text-neutral-500 tabular-nums">/ 100</span>
-                </div>
-              </div>
-
-              <div class="border-l border-neutral-100 pl-6 dark:border-neutral-800 sm:pl-8">
-                <div class="flex items-baseline gap-2">
-                  <span
-                    class="text-3xl font-semibold tabular-nums tracking-tight text-neutral-900 sm:text-4xl dark:text-neutral-100"
-                    >{{ demo.total }}</span
-                  >
-                  <span class="text-base font-medium text-neutral-700 dark:text-neutral-300"
-                    >issues found</span
-                  >
-                </div>
-                <p class="mt-1 text-sm text-neutral-500 tabular-nums dark:text-neutral-500">
-                  across
-                  <span class="font-medium text-neutral-700 dark:text-neutral-300">{{
-                    demo.scanned
-                  }}</span>
-                  files
-                </p>
-              </div>
-            </div>
-
-            <ul
-              role="list"
-              class="finding-list border-t border-neutral-100 dark:border-neutral-800"
-            >
-              <li
-                v-for="(f, i) in visibleFindings"
-                :key="`${framework}-${f.location}`"
-                :style="{ '--finding-index': i }"
-                class="finding-row flex flex-col gap-2 border-t border-neutral-100 px-5 py-3.5 first:border-t-0 sm:grid sm:grid-cols-[88px_minmax(0,1fr)_auto] sm:items-center sm:gap-4 sm:px-6 dark:border-neutral-800"
-              >
-                <span class="inline-flex items-center gap-2">
-                  <span
-                    class="inline-block size-1.5 shrink-0"
-                    :class="{
-                      'bg-rose-500': f.severity === 'high',
-                      'bg-amber-500': f.severity === 'medium',
-                      'bg-sky-500': f.severity === 'low',
-                    }"
-                    aria-hidden="true"
-                  />
-                  <span
-                    class="text-sm font-medium capitalize"
-                    :class="{
-                      'text-rose-700 dark:text-rose-300': f.severity === 'high',
-                      'text-amber-700 dark:text-amber-300': f.severity === 'medium',
-                      'text-sky-700 dark:text-sky-300': f.severity === 'low',
-                    }"
-                    >{{ f.severity }}</span
-                  >
-                </span>
-                <div class="min-w-0">
-                  <p class="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                    {{ f.title }}
-                  </p>
-                  <p class="mt-0.5 text-sm text-neutral-500 text-pretty dark:text-neutral-500">
-                    {{ f.description }}
-                  </p>
-                </div>
-                <code
-                  class="truncate font-mono text-xs text-neutral-500 sm:text-[0.8125rem] sm:text-right dark:text-neutral-500"
-                  :title="f.location"
-                  >{{ f.location }}</code
-                >
-              </li>
-            </ul>
-
-            <a
-              :href="demo.docs"
-              class="flex items-center justify-between border-t border-neutral-100 px-5 py-3.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50/60 hover:text-emerald-800 sm:px-6 dark:border-neutral-800 dark:text-emerald-400 dark:hover:bg-emerald-500/5 dark:hover:text-emerald-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-500"
-            >
-              See all {{ demo.total }} issues
-              <UIcon name="i-lucide-arrow-right" class="size-4 shrink-0" aria-hidden="true" />
-            </a>
-          </section>
         </div>
       </section>
 
-      <nav class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 pt-4 text-sm">
-        <a
-          :href="demo.docs"
-          class="inline-flex items-center gap-1.5 font-medium text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+      <section
+        aria-label="What Doctor catches"
+        class="border-t border-neutral-200/70 pt-10 pb-14 dark:border-neutral-800/70"
+      >
+        <h2
+          class="text-2xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-3xl dark:text-neutral-100"
         >
-          Read the {{ demo.label }} Doctor docs
-          <UIcon name="i-lucide-arrow-right" class="size-3.5 shrink-0" aria-hidden="true" />
-        </a>
-        <span class="h-3 w-px bg-neutral-200 dark:bg-neutral-800" aria-hidden="true" />
-        <a
-          href="/rules"
-          class="text-neutral-500 hover:text-neutral-900 dark:text-neutral-500 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-        >Browse all rules</a>
-        <span class="h-3 w-px bg-neutral-200 dark:bg-neutral-800" aria-hidden="true" />
-        <a
-          href="https://github.com/onmax/nuxt-doctor"
-          target="_blank"
-          rel="noopener"
-          class="inline-flex items-center gap-1 text-neutral-500 hover:text-neutral-900 dark:text-neutral-500 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-        >
-          Star on GitHub
-          <UIcon name="i-lucide-arrow-up-right" class="size-3 shrink-0" aria-hidden="true" />
-        </a>
-      </nav>
+          What Doctor catches
+        </h2>
+        <p class="mt-2 max-w-[60ch] text-base text-pretty text-neutral-600 dark:text-neutral-400">
+          Static rules covering the hazards your agents miss — every check links to a fix in the
+          docs.
+        </p>
+
+        <dl class="mt-8 grid grid-cols-1 gap-x-10 gap-y-7 sm:grid-cols-2">
+          <div v-for="c in checks" :key="c.title" class="flex gap-3">
+            <span
+              class="mt-1.5 inline-block size-1.5 shrink-0"
+              :class="{
+                'bg-rose-500': c.severity === 'high',
+                'bg-amber-500': c.severity === 'medium',
+                'bg-sky-500': c.severity === 'low',
+              }"
+              aria-hidden="true"
+            />
+            <div class="min-w-0">
+              <dt class="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                {{ c.title }}
+              </dt>
+              <dd class="mt-1 text-sm text-pretty text-neutral-600 dark:text-neutral-400">
+                {{ c.description }}
+              </dd>
+            </div>
+          </div>
+        </dl>
+
+        <div class="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+          <a
+            :href="demo.docs"
+            class="inline-flex items-center gap-1.5 rounded-md font-medium text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          >
+            Read the Doctor docs
+            <UIcon name="i-lucide-arrow-right" class="size-3.5 shrink-0" aria-hidden="true" />
+          </a>
+          <span class="h-3 w-px bg-neutral-200 dark:bg-neutral-800" aria-hidden="true" />
+          <a
+            href="/rules/nuxt"
+            class="rounded-md text-neutral-500 hover:text-neutral-900 dark:text-neutral-500 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+            >Browse all rules</a
+          >
+          <span class="h-3 w-px bg-neutral-200 dark:bg-neutral-800" aria-hidden="true" />
+          <a
+            href="https://github.com/onmax/nuxt-doctor"
+            target="_blank"
+            rel="noopener"
+            class="inline-flex items-center gap-1 rounded-md text-neutral-500 hover:text-neutral-900 dark:text-neutral-500 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          >
+            Star on GitHub
+            <UIcon name="i-lucide-arrow-up-right" class="size-3 shrink-0" aria-hidden="true" />
+          </a>
+        </div>
+      </section>
     </main>
   </div>
 </template>
 
 <style scoped>
-.finding-list {
-  margin: 0;
-  padding: 0;
-}
-
-.finding-row {
-  animation: finding-in 320ms cubic-bezier(0.2, 0.6, 0.2, 1) both;
-  animation-delay: calc(var(--finding-index) * 70ms + 80ms);
-}
-
-@keyframes finding-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-.grow-section {
-  animation: grow-in 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-
-@keyframes grow-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .finding-row,
-  .grow-section { animation: none; }
+.lifeline-bg {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    transparent 55%,
+    black 90%,
+    black 100%
+  );
+  mask-image: linear-gradient(to bottom, transparent 0%, transparent 55%, black 90%, black 100%);
 }
 </style>

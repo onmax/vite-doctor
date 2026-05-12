@@ -24,7 +24,7 @@ Diagnose Vue and Nuxt codebase health.
 Framework-aware diagnostics for Vue 3.5 and Nuxt 4. Catch reactivity mistakes, SSR hazards, hydration risks, route middleware leaks, runtime config exposure, and stale module APIs before they reach review.
 
 #links
-:u-button{to="/nuxt/getting-started" size="xl" trailing-icon="i-lucide-arrow-right" label="Get started"}
+:u-button{to="/cli" size="xl" trailing-icon="i-lucide-arrow-right" label="Use the CLI"}
 :u-button{to="https://github.com/onmax/nuxt-doctor" size="xl" color="neutral" variant="outline" icon="i-simple-icons-github" label="GitHub" target="\_blank"}
 
 #body
@@ -36,6 +36,10 @@ pnpm dlx nuxt module add nuxt-doctor
 
 ```bash [Vue]
 pnpm dlx vue-doctor
+```
+
+```bash [Project CLI]
+pnpm dlx vite-doctor
 ```
 
 :::
@@ -57,7 +61,7 @@ Doctor reads Vue SFCs, templates, Nuxt project metadata, and optional Nuxt manif
 Pick your track
 
 #title
-Same engine, two entry points.
+CLI entry points.
 
 #description
 Run the Vue analyzer on any Vue 3.5 codebase, or extend it with Nuxt 4 awareness for routing, Nitro, runtime config, and modules.
@@ -100,13 +104,34 @@ Same engine plus Nuxt 4 imports, routing, Nitro, runtime config, and module mani
 
 ::u-page-section
 #headline
+Project CLI
+
+#title
+Run the checks the project already defines.
+
+#description
+`vite-doctor` detects the package manager and runs the scripts in `package.json`. Use it when you want one command for local checks, agent runs, or automation.
+
+#links
+:u-button{to="/cli" trailing-icon="i-lucide-arrow-right" label="Read the CLI guide"}
+
+#body
+
+```bash
+pnpm dlx vite-doctor --dry-run
+```
+
+::
+
+::u-page-section
+#headline
 Flags
 
 #title
 Tune the scan to the moment.
 
 #description
-The same flags work for `vue-doctor` and `nuxt-doctor`. Mix them to triage a single rule, gate a CI job, or stream JSON to an agent.
+The same flags work for `vue-doctor` and `nuxt-doctor`. Mix them to triage a single rule, tighten automation, or stream JSON to an agent.
 
 #body
 :::u-page-grid{class="flag-grid !grid-cols-1 sm:!grid-cols-2 lg:!grid-cols-3 !gap-4"}
@@ -122,7 +147,7 @@ variant: subtle
 #title
 `--changed`
 #description
-Scan only files that changed against the base branch. Useful in CI and pre-commit.
+Scan only files that changed against the base branch. Useful in automated checks and pre-commit.
 ::::
 
 ::::u-page-card
@@ -148,7 +173,7 @@ variant: subtle
 #title
 `--rules <id>`
 #description
-Run a single rule or rule prefix when triaging or building a CI policy.
+Run a single rule or rule prefix when triaging or building a check policy.
 ::::
 
 ::::u-page-card
@@ -161,7 +186,7 @@ variant: subtle
 #title
 `--severity error`
 #description
-Report only errors and blockers. Pair with `--max-warnings 0` to fail CI on warnings.
+Report only errors and blockers. Pair with `--max-warnings 0` to fail on warnings.
 ::::
 
 ::::u-page-card
@@ -197,7 +222,7 @@ Local `doctor.config.*` is executable, so Doctor only loads it when you opt in.
 Where it runs
 
 #title
-Local, CI, or from an agent.
+Local, automated, or from an agent.
 
 #body
 :::u-page-grid{class="!grid-cols-1 sm:!grid-cols-3 !gap-4"}
@@ -213,7 +238,7 @@ to: /nuxt/getting-started
 #title
 CLI-first scans
 #description
-Run `vue-doctor` or `nuxt-doctor` locally, in CI, or against changed files.
+Run `vue-doctor` or `nuxt-doctor` locally, in automation, or against changed files.
 ::::
 
 ::::u-page-card

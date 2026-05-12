@@ -17,6 +17,7 @@ export { preferUseCookieForInitialClientState } from "./prefer-use-cookie-for-in
 export { noTimeDependentRenderWithoutNuxtTimeOrClientOnly } from "./no-time-dependent-render-without-nuxt-time-or-client-only.js";
 export { noRouteMiddlewareApiSecurity } from "./no-route-middleware-api-security.js";
 export { preferNuxtPageOverRouterView } from "./prefer-nuxt-page-over-router-view.js";
+export { preferNuxtLink } from "./prefer-nuxt-link.js";
 export { noRouteObjectPageKey } from "./no-route-object-page-key.js";
 export { noHashSensitiveRouteFullpathInSsrMarkup } from "./no-hash-sensitive-route-fullpath-in-ssr-markup.js";
 export { noLegacyProcessClientServer } from "./no-legacy-process-client-server.js";
@@ -59,6 +60,7 @@ import { preferUseCookieForInitialClientState } from "./prefer-use-cookie-for-in
 import { noTimeDependentRenderWithoutNuxtTimeOrClientOnly } from "./no-time-dependent-render-without-nuxt-time-or-client-only.js";
 import { noRouteMiddlewareApiSecurity } from "./no-route-middleware-api-security.js";
 import { preferNuxtPageOverRouterView } from "./prefer-nuxt-page-over-router-view.js";
+import { preferNuxtLink } from "./prefer-nuxt-link.js";
 import { noRouteObjectPageKey } from "./no-route-object-page-key.js";
 import { noHashSensitiveRouteFullpathInSsrMarkup } from "./no-hash-sensitive-route-fullpath-in-ssr-markup.js";
 import { noLegacyProcessClientServer } from "./no-legacy-process-client-server.js";
@@ -99,6 +101,7 @@ const rules = [
   noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
   noRouteMiddlewareApiSecurity,
   preferNuxtPageOverRouterView,
+  preferNuxtLink,
   noRouteObjectPageKey,
   noHashSensitiveRouteFullpathInSsrMarkup,
   noLegacyProcessClientServer,

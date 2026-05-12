@@ -46,6 +46,7 @@ writeJson(join(publicRulesDir, "all.json"), { rules: [...vueRules, ...nitroRules
 writeRuleDocs({
   dir: join(root, "docs/content/1.vue/3.rules"),
   index: {
+    basePath: "/vue/rules",
     title: "Rules",
     description: "Vue 3.5 diagnostics in the core rule pack.",
     intro: [
@@ -60,6 +61,7 @@ writeRuleDocs({
 writeRuleDocs({
   dir: join(root, "docs/content/2.nuxt/4.rules"),
   index: {
+    basePath: "/nuxt/rules",
     title: "Rules",
     description: "Nuxt 4 diagnostics in the Nuxt and ecosystem rule packs.",
     intro: [
@@ -74,6 +76,7 @@ writeRuleDocs({
 writeRuleDocs({
   dir: join(root, "docs/content/3.nitro/2.rules"),
   index: {
+    basePath: "/nitro/rules",
     title: "Rules",
     description: "Nitro request-runtime diagnostics in the Nuxt Doctor rule pack.",
     intro: [
@@ -141,7 +144,7 @@ function writeRuleDocs({ dir, index, rules }) {
   }
 }
 
-function renderRulesIndex({ title, description, intro, command, rules }) {
+function renderRulesIndex({ basePath, title, description, intro, command, rules }) {
   const lines = [
     "---",
     `title: ${yamlString("Rule reference")}`,
@@ -161,7 +164,7 @@ function renderRulesIndex({ title, description, intro, command, rules }) {
     ...renderMarkdownTable(
       ["Rule", "Title", "Pack", "Severity", "Category", "Fix"],
       rules.map((rule) => [
-        `[\`${rule.id}\`](./${rulePath(rule)})`,
+        `[\`${rule.id}\`](${basePath}/${rulePath(rule)})`,
         cell(rule.title),
         `\`${rule.pack}\``,
         `\`${rule.severity}\``,

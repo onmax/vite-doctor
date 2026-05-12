@@ -30,7 +30,7 @@ catalog:
   "@vue/compiler-sfc": ^3.5.34
   vue-eslint-parser: ^10.4.0
   oxc-parser: ^0.129.0
-  commander: ^14.0.3
+  commander: ^13.1.0
   picocolors: ^1.1.1
   pathe: ^2.0.3
   std-env: ^4.1.0

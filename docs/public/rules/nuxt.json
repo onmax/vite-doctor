@@ -301,6 +301,19 @@
     },
     {
       "pack": "nuxt-doctor/nuxt",
+      "source": "packages/nuxt/src/rules/nuxt/prefer-nuxt-link.ts",
+      "id": "nuxt/routing/prefer-nuxtlink",
+      "title": "Use NuxtLink for internal navigation",
+      "description": "",
+      "why": "",
+      "recommendedReplacement": "",
+      "category": "routing",
+      "severity": "warn",
+      "fixable": "safe",
+      "docsUrl": ""
+    },
+    {
+      "pack": "nuxt-doctor/nuxt",
       "source": "packages/nuxt/src/rules/nuxt/no-route-object-page-key.ts",
       "id": "nuxt/routing/no-route-object-page-key",
       "title": "Do not use route objects as NuxtPage page keys",
