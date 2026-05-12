@@ -23,6 +23,7 @@ export { preferDefineModel } from "./prefer-define-model.js";
 export { preferPropsDestructureDefaults } from "./prefer-props-destructure-defaults.js";
 export { preferTypeProps } from "./prefer-type-props.js";
 export { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
+export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
 import { noPropMutation } from "./no-prop-mutation.js";
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
@@ -49,6 +50,7 @@ import { preferDefineModel } from "./prefer-define-model.js";
 import { preferPropsDestructureDefaults } from "./prefer-props-destructure-defaults.js";
 import { preferTypeProps } from "./prefer-type-props.js";
 import { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
+import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 import type { RulePack } from "../../primitives.js";
 
 const rules = [
@@ -77,6 +79,8 @@ const rules = [
   preferPropsDestructureDefaults,
   preferTypeProps,
   preferComposableRefReturn,
+  noUnusedTranslations,
+  noUntranslatedText,
 ];
 
 const vueRulePack: RulePack = {

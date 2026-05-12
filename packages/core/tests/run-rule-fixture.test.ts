@@ -12,6 +12,8 @@ import {
   preferDefineModel,
   preferPropsDestructureDefaults,
   preferTypeProps,
+  noUntranslatedText,
+  noUnusedTranslations,
 } from "../src/rules/vue.ts";
 import { createRule } from "../src/index.ts";
 import {
@@ -405,6 +407,84 @@ export function useState() {
   });
 
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test("i18n unused translations reports unused nested base locale keys", async () => {
+  const result = await runRuleFixture({
+    rule: noUnusedTranslations,
+    framework: "vue",
+    dependencies: { "vue-i18n": "^11.0.0" },
+    files: {
+      "src/App.vue": `<template>{{ t('common.save') }}</template>`,
+      "locales/en.json": JSON.stringify({
+        common: { save: "Save", cancel: "Cancel" },
+      }),
+      "locales/fr.json": JSON.stringify({
+        common: { save: "Enregistrer", cancel: "Annuler" },
+      }),
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.message)).toEqual([
+    'Translation key "common.cancel" is not used by any static Vue i18n call.',
+  ]);
+});
+
+test("i18n unused translations accepts $t and dynamic keys stay unresolved", async () => {
+  const result = await runRuleFixture({
+    rule: noUnusedTranslations,
+    framework: "vue",
+    dependencies: { "vue-i18n": "^11.0.0" },
+    files: {
+      "src/App.vue": `<template>{{ $t('home.title') }} {{ t(prefix + name) }}</template>`,
+      "locales/en.json": JSON.stringify({
+        home: { title: "Home", dynamic: "Dynamic" },
+      }),
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.message)).toEqual([
+    'Translation key "home.dynamic" is not used by any static Vue i18n call.',
+  ]);
+});
+
+test("i18n untranslated text reports visible template text and static attributes", async () => {
+  const result = await runRuleFixture({
+    rule: noUntranslatedText,
+    framework: "vue",
+    dependencies: { "vue-i18n": "^11.0.0" },
+    files: {
+      "src/App.vue": `<template>
+  <label>Email</label>
+  <input placeholder="Email address">
+  <p>{{ t('home.title') }}</p>
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.message)).toEqual([
+    'Visible text "Email" should come from Vue i18n.',
+    'Attribute "placeholder" contains untranslated text "Email address".',
+  ]);
+});
+
+test("i18n unused translations reads Nuxt langDir locale files", async () => {
+  const result = await runRuleFixture({
+    rule: noUnusedTranslations,
+    framework: "nuxt",
+    dependencies: { "@nuxtjs/i18n": "^10.0.0" },
+    files: {
+      "nuxt.config.ts": `export default defineNuxtConfig({ i18n: { langDir: 'app/i18n' } })`,
+      "app/pages/index.vue": `<template>{{ $t('home.title') }}</template>`,
+      "app/i18n/en.json": JSON.stringify({
+        home: { title: "Home", subtitle: "Welcome" },
+      }),
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.message)).toEqual([
+    'Translation key "home.subtitle" is not used by any static Vue i18n call.',
+  ]);
 });
 
 test("vue browser API rule ignores types and object event callbacks", async () => {
