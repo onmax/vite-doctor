@@ -2,7 +2,7 @@ import { visitorKeys } from "oxc-parser";
 import type { RuleVisitor, SourceFileHandle } from "../primitives.js";
 
 export async function runVisitor(visitor: RuleVisitor, file: SourceFileHandle) {
-  if (file.sfc) visitor.SFC?.(file.sfc);
+  if (file.sfc) await visitor.SFC?.(file.sfc);
   if (file.scriptAst)
     walkScript(file.scriptAst, (node) => {
       visitor.ScriptNode?.(node);

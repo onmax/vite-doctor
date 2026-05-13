@@ -112,9 +112,7 @@ test("rule examples do not reuse generic placeholders", () => {
       .filter((example) => {
         const pair = `${example.invalid}\n${example.valid}`;
         return (
-          (rule.id !== "vue/reactivity/no-prop-mutation" &&
-            pair.includes("props.count++") &&
-            pair.includes("defineModel")) ||
+          (pair.includes("props.count++") && pair.includes("defineModel")) ||
           (rule.id !== "nitro/server/prefer-event-fetch" &&
             !rule.id.startsWith("nitro/request/prefer-validated-") &&
             pair.includes("readBody(event)") &&
@@ -128,17 +126,6 @@ test("rule examples do not reuse generic placeholders", () => {
   );
 
   expect(placeholderExamples).toEqual([]);
-});
-
-test("rule source emits official useful links when available", async () => {
-  const docs = getRuleDocuments();
-  const rule = docs.find((item) => item.id === "vue/computed/no-async");
-  expect(rule).toBeTruthy();
-
-  const markdown = await rulesCollectionSource.getItem(rule!.key);
-  expect(markdown).toContain("## Useful links");
-  expect(markdown).toContain("https://vuejs.org/guide/essentials/computed");
-  expect(markdown).toContain("https://eslint.vuejs.org/rules/no-async-in-computed-properties");
 });
 
 test("fetch factory docs demonstrate createUseFetch", async () => {

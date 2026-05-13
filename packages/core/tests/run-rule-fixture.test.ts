@@ -1,12 +1,7 @@
 import { expect, test } from "vite-plus/test";
 import {
-  computedNoAsync,
-  computedNoSideEffects,
   definePropsWatchGetter,
-  noAfterAwait,
-  noPropMutation,
   noRefAsOperand,
-  noVIfWithVFor,
   noBrowserApiInSetup,
   preferComposableRefReturn,
   preferDefineModel,
@@ -503,23 +498,6 @@ const items = [{
   expect(result.diagnostics).toHaveLength(0);
 });
 
-test("maps eslint-plugin-vue no-mutating-props to the Doctor rule id", async () => {
-  const result = await runRuleFixture({
-    rule: noPropMutation,
-    framework: "vue",
-    files: {
-      "app.vue": `<script setup lang="ts">
-const props = defineProps<{ count: number }>()
-props.count++
-</script>`,
-    },
-  });
-
-  expect(result.diagnostics).toHaveLength(1);
-  expect(result.diagnostics[0]!.ruleId).toBe("vue/reactivity/no-prop-mutation");
-  expect(result.diagnostics[0]!.tags).toContain("eslint-plugin-vue");
-});
-
 test("maps delegated eslint-plugin-vue rule ids to stable Doctor ids", async () => {
   const cases = [
     {
@@ -530,46 +508,6 @@ import { ref } from 'vue'
 const count = ref(0)
 const doubled = count + 1
 </script>`,
-    },
-    {
-      rule: computedNoSideEffects,
-      id: "vue/computed/no-side-effects",
-      source: `<script setup lang="ts">
-import { computed, ref } from 'vue'
-const count = ref(0)
-const doubled = computed(() => {
-  count.value++
-  return count.value
-})
-</script>`,
-    },
-    {
-      rule: computedNoAsync,
-      id: "vue/computed/no-async",
-      source: `<script setup lang="ts">
-import { computed } from 'vue'
-const user = computed(async () => await fetch('/api/user'))
-</script>`,
-    },
-    {
-      rule: noAfterAwait,
-      id: "vue/watch/no-after-await",
-      source: `<script lang="ts">
-import { watch } from 'vue'
-export default {
-  async setup() {
-    await Promise.resolve()
-    watch(() => true, () => {})
-  }
-}
-</script>`,
-    },
-    {
-      rule: noVIfWithVFor,
-      id: "vue/template/no-v-if-with-v-for",
-      source: `<template>
-  <li v-for="item in items" v-if="item.active">{{ item.name }}</li>
-</template>`,
     },
   ];
 

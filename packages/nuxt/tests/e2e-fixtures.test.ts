@@ -2,7 +2,8 @@ import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { relative } from "pathe";
 import { $fetch, setup } from "@nuxt/test-utils/e2e";
-import { defineDoctorPlugin, runDoctor, vueRulePack } from "../../core/src/index.ts";
+import { defineDoctorPlugin, runDoctor } from "../../core/src/index.ts";
+import { vueRulePack } from "../../core/src/vue-rules.ts";
 import { nuxtRulePacks } from "../src/rules/index.ts";
 
 const vueFixture = fileURLToPath(new URL("../fixtures/vue-all-issues", import.meta.url));
@@ -17,16 +18,12 @@ test("Vue all-issues fixture reports the Vue rule pack", async () => {
 
   expect(uniqueDiagnosticIdentities(result)).toHaveLength(result.diagnostics.length);
   expect(diagnosticKeys(result, vueFixture)).toEqual([
-    "vue/computed/no-async:app.vue",
-    "vue/computed/no-side-effects:app.vue",
     "vue/reactivity/defineprops-watch-getter:app.vue",
-    "vue/reactivity/no-prop-mutation:app.vue",
     "vue/reactivity/no-ref-as-operand:app.vue",
     "vue/security/restrict-v-html:src/components/TemplateRefsAndHtml.vue",
     "vue/ssr/no-browser-api-in-setup:app.vue",
+    "vue/template/html-button-has-type:src/components/TemplateRefsAndHtml.vue",
     "vue/template/prefer-use-template-ref:src/components/TemplateRefsAndHtml.vue",
-    "vue/template/require-v-for-key:src/components/ListWithoutKey.vue",
-    "vue/watch/no-after-await:src/components/WatchAfterAwait.vue",
   ]);
 });
 
@@ -82,6 +79,7 @@ test("Nuxt all-issues fixture reports Nuxt and ecosystem rule packs", async () =
     "nuxt/state/no-nonserializable-usestate:app/composables/useSocketState.ts",
     "nuxt/state/no-nonserializable-usestate:app/pages/state.vue",
     "nuxt/state/prefer-explicit-usestate-key-in-exported-composables:app/composables/useCounter.ts",
+    "vue/template/html-button-has-type:app/pages/account.vue",
     "vueuse/no-nuxt-auto-import-collision:app/components/IssuePanel.vue",
     "vueuse/prefer-use-storage:app/components/IssuePanel.vue",
     "vueuse/prefer-usewindow-size:app/components/IssuePanel.vue",

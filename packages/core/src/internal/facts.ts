@@ -21,29 +21,29 @@ export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
   let fileId = 0;
   for (const file of session.files) {
-    const handle = parseSourceFile(session, file, fileId++);
+    const handle = await parseSourceFile(session, file, fileId++);
     session.handles.push(handle);
     if (handle.facts) session.facts.push(handle.facts);
   }
   markSession(session, "parse", started);
 }
 
-function parseSourceFile(
+async function parseSourceFile(
   session: ScanSession,
   file: ScanFileEntry,
   fileId: number,
-): SourceFileHandle {
+): Promise<SourceFileHandle> {
   const absolute = file.path;
   const text = readFileSync(absolute, "utf8");
   const hash = sha256(text);
   const cacheKey = createCacheKey(session, "fileFacts", `${absolute}:${hash}`);
   const cachedFacts = session.cache.get<FileFacts>(cacheKey);
   const isVueSfc = absolute.endsWith(".vue");
-  const sfc = isVueSfc ? parseSfcFile(absolute, text, hash) : undefined;
+  const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
   const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor as any, text) : undefined;
-  const scriptText = script?.text ?? text;
+  const scriptText = isVueSfc ? (script?.text ?? "") : text;
   const scriptAst = scriptText.trim() ? parseScript(absolute, scriptText, script?.lang) : null;
-  const templateAst = isVueSfc ? parseTemplate(absolute, text) : null;
+  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text) : null;
   const facts =
     cachedFacts && cachedFacts.fileHash === hash
       ? { ...cachedFacts, fileId }
@@ -62,19 +62,40 @@ function parseSourceFile(
     sfc,
     facts,
     project: session.project,
-    matches(pattern) {
+    matches(this: SourceFileHandle, pattern) {
       return nativeMatch(this.relativePath, pattern);
     },
-    inAppDir(dir) {
+    inAppDir(this: SourceFileHandle, dir) {
       const appDir = session.project.nuxt?.appDir
         ? relative(session.root, session.project.nuxt.appDir)
         : "app";
       return this.relativePath.startsWith(`${appDir}/${dir}/`);
     },
-    isModuleSource() {
+    isModuleSource(this: SourceFileHandle) {
       return this.sourceKind === "module";
     },
   };
+}
+
+async function parseOptionalSfc(
+  absolute: string,
+  text: string,
+  hash: string,
+): Promise<SourceFileHandle["sfc"]> {
+  try {
+    return await parseSfcFile(absolute, text, hash);
+  } catch (error) {
+    if (isModuleNotFound(error)) return undefined;
+    throw error;
+  }
+}
+
+function isModuleNotFound(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as Error & { code?: string }).code === "ERR_MODULE_NOT_FOUND"
+  );
 }
 
 function createFileFacts(

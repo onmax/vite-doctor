@@ -211,12 +211,11 @@ test("rule config disables exact rule ids", async () => {
   await withFixture(
     {
       "src/app.ts": "const ok = true",
-      "doctor.config.ts": `export default { rules: { "test/report-program": "off" } }\n`,
     },
     async (root) => {
       const result = await runDoctor({
         root,
-        config: true,
+        config: { rules: { "test/report-program": "off" } },
         framework: "vue",
         plugins: [pluginWith(reportProgramRule)],
       });
@@ -230,12 +229,11 @@ test("rule config applies severity strings and tuple options", async () => {
   await withFixture(
     {
       "src/app.ts": "const ok = true",
-      "doctor.config.ts": `export default { rules: { "test/options-rule": ["error", { mode: "strict" }] } }\n`,
     },
     async (root) => {
       const result = await runDoctor({
         root,
-        config: true,
+        config: { rules: { "test/options-rule": ["error", { mode: "strict" }] } },
         framework: "vue",
         plugins: [pluginWith(optionRule)],
       });
@@ -251,13 +249,12 @@ test("malformed rule config fails predictably", async () => {
   await withFixture(
     {
       "src/app.ts": "const ok = true",
-      "doctor.config.ts": `export default { rules: { "test/report-program": ["fatal", {}] } }\n`,
     },
     async (root) => {
       await expect(
         runDoctor({
           root,
-          config: true,
+          config: { rules: { "test/report-program": ["fatal" as any, {}] } },
           framework: "vue",
           plugins: [pluginWith(reportProgramRule)],
         }),
@@ -270,12 +267,11 @@ test("preset selection runs configured pack rules and config overrides presets",
   await withFixture(
     {
       "src/app.ts": "const ok = true",
-      "doctor.config.ts": `export default { rules: { "test/report-program": "error" } }\n`,
     },
     async (root) => {
       const result = await runDoctor({
         root,
-        config: true,
+        config: { rules: { "test/report-program": "error" } },
         preset: "strict",
         framework: "vue",
         plugins: [
@@ -303,12 +299,11 @@ test("severity filters use final configured severity", async () => {
   await withFixture(
     {
       "src/app.ts": "const ok = true",
-      "doctor.config.ts": `export default { rules: { "test/report-program": "error" } }\n`,
     },
     async (root) => {
       const result = await runDoctor({
         root,
-        config: true,
+        config: { rules: { "test/report-program": "error" } },
         severity: "error",
         framework: "vue",
         plugins: [pluginWith(reportProgramRule, secondRule)],
@@ -445,22 +440,22 @@ test("runDoctor does not load repository-local config by default", async () => {
   );
 });
 
-test("trusted runDoctor config opt-in loads local config", async () => {
+test("runDoctor accepts an already-loaded config object", async () => {
   await withFixture(
     {
       "src/app.ts": "const ignored = true",
-      "doctor.config.ts": `${maliciousConfigSource("trusted-marker")}\nexport default { exclude: ["src/**", "doctor.config.*"] }\n`,
+      "doctor.config.ts": maliciousConfigSource("trusted-marker"),
     },
     async (root) => {
       const result = await runDoctor({
         root,
-        config: true,
+        config: { exclude: ["src/**", "doctor.config.*"] },
         framework: "vue",
         plugins: [pluginWith(reportProgramRule)],
       });
 
       expect(result.diagnostics).toHaveLength(0);
-      expect(existsSync(join(root, "trusted-marker"))).toBe(true);
+      expect(existsSync(join(root, "trusted-marker"))).toBe(false);
     },
   );
 });

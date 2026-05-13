@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { dirname, join, resolve } from "pathe";
 import { expect, test } from "vite-plus/test";
-import { createRule, defineDoctorPlugin, runDoctor, vueRulePack } from "../../core/src/index.ts";
+import { createRule, defineDoctorPlugin, runDoctor } from "../../core/src/index.ts";
+import { vueRulePack } from "../../core/src/vue-rules.ts";
 import nuxtContentRulePack from "../src/rules/nuxt-content.ts";
 import docusRulePack from "../src/rules/docus.ts";
 import { preferUButton, preferUFormControls } from "../src/rules/nuxt-ui.ts";
@@ -69,6 +70,11 @@ import { runNuxtDoctorMcpReport } from "../src/runtime/mcp/doctor.ts";
 import { createRulesReport, createTextReport, explainRule } from "../../core/src/index.ts";
 import { nitroRulePack, nuxtDoctorPlugins, nuxtRulePacks } from "../src/rules/index.ts";
 import { createNuxtRuntimeEvidence } from "../src/rules/nuxt/evidence.ts";
+import {
+  htmlButtonHasType,
+  preferSameNamePropShorthand,
+  preferTrueAttributeShorthand,
+} from "../../core/src/rules/vue/index.ts";
 import {
   preferUseEventListener,
   preferUseObservers,
@@ -313,6 +319,112 @@ for (const item of cases) {
     expect(result.diagnostics[0]?.ruleId).toBe(item.id);
   });
 }
+
+test("same-name prop shorthand reports matching prop bindings", async () => {
+  const result = await runRuleFixture({
+    rule: preferSameNamePropShorthand,
+    framework: "vue",
+    files: {
+      "app.vue": `<template>
+  <MyCmp :my-prop="myProp" :user="user" v-bind:account-id="accountId" />
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.message)).toEqual([
+    "Use Vue's same-name prop shorthand for my-prop.",
+    "Use Vue's same-name prop shorthand for user.",
+    "Use Vue's same-name prop shorthand for account-id.",
+  ]);
+});
+
+test("same-name prop shorthand ignores unclear prop bindings", async () => {
+  const result = await runRuleFixture({
+    rule: preferSameNamePropShorthand,
+    framework: "vue",
+    files: {
+      "app.vue": `<template>
+  <MyCmp
+    :my-prop="value"
+    :other-prop="props.otherProp"
+    :count="getCount()"
+    :[name]="name"
+    v-bind="attrs"
+    :already-shorthand
+  />
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("same-name prop shorthand provides suggestion fixes", async () => {
+  const result = await runRuleFixture({
+    rule: preferSameNamePropShorthand,
+    framework: "vue",
+    files: {
+      "app.vue": `<template><MyCmp :my-prop="myProp" v-bind:user="user" /></template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.fix)).toEqual([
+    {
+      kind: "suggestion",
+      edits: [{ range: expect.any(Object), text: "" }],
+    },
+    {
+      kind: "suggestion",
+      edits: [{ range: expect.any(Object), text: "" }],
+    },
+  ]);
+});
+
+test("native buttons require explicit type", async () => {
+  const result = await runRuleFixture({
+    rule: htmlButtonHasType,
+    framework: "vue",
+    files: {
+      "app.vue": `<template>
+  <button @click="save">Save</button>
+  <button type="button">Cancel</button>
+  <button type="submit">Submit</button>
+  <button :type="kind">Dynamic</button>
+  <UButton>UI</UButton>
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/template/html-button-has-type",
+  ]);
+  expect(result.diagnostics[0]?.fix).toEqual({
+    kind: "suggestion",
+    edits: [{ range: expect.any(Object), text: ' type="button"' }],
+  });
+});
+
+test("true attribute shorthand reports only native boolean attributes", async () => {
+  const result = await runRuleFixture({
+    rule: preferTrueAttributeShorthand,
+    framework: "vue",
+    files: {
+      "app.vue": `<template>
+  <button :disabled="true">Save</button>
+  <input :checked="isChecked">
+  <MyCmp :enabled="true" />
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/template/prefer-true-attribute-shorthand",
+  ]);
+  expect(result.diagnostics[0]?.fix).toEqual({
+    kind: "suggestion",
+    edits: [{ range: expect.any(Object), text: "disabled" }],
+  });
+});
 
 test("async data mutation rule resolves lowercase and enum-like methods", async () => {
   const result = await runRuleFixture({

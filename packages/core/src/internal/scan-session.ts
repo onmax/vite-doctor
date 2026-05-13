@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "pathe";
-import { loadConfig } from "c12";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import type {
   Diagnostic,
@@ -19,6 +18,10 @@ import { detectProject } from "./project.js";
 import { selectScanFiles, type ScanFileEntry } from "./source-inventory.js";
 import { createHelpers } from "./doctor-helpers.js";
 import { VERSION, nativeMatch, sha256 } from "./utils.js";
+
+const DEFAULT_CONFIG: DoctorConfig = {
+  cache: { dir: ".vue-doctor/cache" },
+};
 
 class MemoryRuleCache implements RuleCache {
   private values = new Map<string, unknown>();
@@ -102,17 +105,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   const phases: Record<string, number> = {};
 
   let started = performance.now();
-  const config = options.config
-    ? ((
-        await loadConfig<DoctorConfig>({
-          cwd: root,
-          name: "doctor",
-          configFile: "doctor.config",
-          dotenv: false,
-          globalRc: false,
-        })
-      ).config ?? {})
-    : {};
+  const config = mergeDoctorConfig(DEFAULT_CONFIG, options.config);
   const sessionBase = { root, options, config, timings };
   markSession(sessionBase, "config", started);
 
@@ -167,6 +160,20 @@ export async function runPhase(
 export function cleanCache(root = process.cwd(), config?: DoctorConfig): void {
   const dir = resolve(root, config?.cache?.dir ?? ".vue-doctor/cache");
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+}
+
+export function mergeDoctorConfig(defaults: DoctorConfig, config: DoctorConfig = {}): DoctorConfig {
+  return {
+    ...defaults,
+    ...config,
+    cache: { ...defaults.cache, ...config.cache },
+    rules: { ...defaults.rules, ...config.rules },
+    score: {
+      ...defaults.score,
+      ...config.score,
+      weights: { ...defaults.score?.weights, ...config.score?.weights },
+    },
+  };
 }
 
 async function collectRulePacks(

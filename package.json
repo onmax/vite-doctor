@@ -24,26 +24,11 @@
     "release:publish:alpha:provenance": "pnpm --dir packages/vite publish --provenance --access public --tag alpha",
     "prepare": "vp config"
   },
-  "dependencies": {
-    "@typescript-eslint/parser": "catalog:",
-    "@vue/compiler-sfc": "catalog:",
-    "c12": "catalog:",
-    "commander": "catalog:",
-    "defu": "catalog:",
-    "eslint": "catalog:",
-    "eslint-plugin-vue": "catalog:",
-    "magic-string": "catalog:",
-    "mlly": "catalog:",
-    "oxc-parser": "catalog:",
-    "pathe": "catalog:",
-    "picocolors": "catalog:",
-    "tinyexec": "catalog:",
-    "vue-eslint-parser": "catalog:"
-  },
   "devDependencies": {
     "@changesets/changelog-git": "catalog:",
     "@changesets/cli": "catalog:",
     "nuxt-doctor": "workspace:*",
+    "tsdown": "catalog:",
     "vite-doctor": "workspace:*",
     "vite-plus": "catalog:",
     "vue-doctor": "workspace:*"

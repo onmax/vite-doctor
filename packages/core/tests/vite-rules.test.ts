@@ -123,8 +123,12 @@ console.log('/src/assets/logo.svg', logo, asset, worker, other, VITE_API_URL)`,
   test("narrows noisy Vite recommended heuristics", async () => {
     const result = await runProjectFixture({
       framework: "vite",
-      rules: [noDynamicNewUrl, requireDisposeForSideEffects, noNodeApiInWorker],
+      rules: [noDynamicNewUrl, requireDisposeForSideEffects, noNodeApiInWorker, requirePluginName],
       files: {
+        "packages/vite/src/cli.ts": `const scanArgs = {
+  path: { type: 'positional' },
+  config: { type: 'boolean' },
+}`,
         "src/node/plugins/worker.ts": `import fs from 'node:fs'
 export function plugin() {
   return 'worker plugin'
@@ -132,6 +136,10 @@ export function plugin() {
         "src/node/server/hmr.ts": `const text = "import.meta.hot.accept("
 globalThis.addEventListener?.('message', () => {})`,
         "src/main.ts": `fetch(new URL(route, import.meta.url))`,
+        "workspace-aliases.ts": `import { fileURLToPath } from 'node:url'
+function workspacePath(path: string): string {
+  return fileURLToPath(new URL(path, import.meta.url))
+}`,
       },
     });
 

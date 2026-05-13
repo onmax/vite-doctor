@@ -1,7 +1,7 @@
 {
   "name": "vite-doctor",
   "version": "0.0.1-alpha.1",
-  "description": "Universal CLI command runner for JavaScript projects.",
+  "description": "Small Vite Doctor CLI for project diagnostics.",
   "keywords": [
     "cli",
     "doctor",
@@ -24,18 +24,9 @@
   "type": "module",
   "types": "./dist/index.d.mts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.mts",
-      "default": "./dist/index.mjs"
-    },
-    "./nuxt": {
-      "types": "./dist/nuxt.d.mts",
-      "default": "./dist/nuxt.mjs"
-    },
-    "./plugin": {
-      "types": "./dist/plugin.d.mts",
-      "default": "./dist/plugin.mjs"
-    },
+    ".": "./dist/index.mjs",
+    "./cli": "./dist/cli.mjs",
+    "./plugin": "./dist/plugin.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -43,22 +34,24 @@
     "tag": "alpha"
   },
   "scripts": {
-    "build": "vp pack src/index.ts src/cli.ts src/nuxt.ts src/plugin.ts",
-    "dev": "vp pack src/index.ts src/cli.ts src/nuxt.ts src/plugin.ts --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "vp test --passWithNoTests",
     "check": "vp check"
   },
   "dependencies": {
-    "eslint-plugin-vue": "catalog:",
-    "oxc-parser": "catalog:",
-    "pathe": "catalog:",
-    "typescript": "catalog:"
+    "cac": "^6.7.14",
+    "consola": "^3.4.2",
+    "oxc-parser": "^0.129.0",
+    "pathe": "^2.0.3"
   },
   "devDependencies": {
     "@vue-doctor/core": "workspace:*",
     "nuxt-doctor": "workspace:*",
+    "tsdown": "catalog:",
     "vite": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vue-doctor": "workspace:*"
   },
   "peerDependencies": {
     "vite": "*"

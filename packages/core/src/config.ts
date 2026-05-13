@@ -17,11 +17,10 @@ export interface DoctorConfig {
 export interface DoctorRunOptions {
   root?: string;
   /**
-   * Load executable doctor.config.* from the scan root.
-   *
-   * Keep this disabled for scans of repositories you do not fully trust.
+   * Already-loaded Doctor config.
+   * Executable config loading lives in @vue-doctor/config.
    */
-  config?: boolean;
+  config?: DoctorConfig;
   framework?: "auto" | DoctorFramework;
   preset?: string;
   changed?: boolean;

@@ -99,7 +99,7 @@ export const requireDisposeForSideEffects = createRule({
 });
 
 function isPluginSource(path: string): boolean {
-  return isViteConfigFile(path) || /(?:^|\/)(?:plugins?|vite)\/.*\.[cm]?[jt]s$/.test(path);
+  return isViteConfigFile(path) || /(?:^|\/)plugins?\/.*\.[cm]?[jt]s$/.test(path);
 }
 
 function isPluginObject(node: AnyNode): boolean {

@@ -1,5 +1,10 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { cac } from "cac";
+import { consola } from "consola";
 import { resolve } from "pathe";
+import { loadDoctorConfig } from "@vue-doctor/config";
 import {
   cleanCache,
   createReport,
@@ -7,111 +12,119 @@ import {
   defineDoctorPlugin,
   explainRule,
   runDoctor,
-  vueRulePack,
   type DoctorRunOptions,
 } from "@vue-doctor/core";
+import { applyDoctorOptions, normalizeDoctorCommand } from "@vue-doctor/core/internal/cli";
+import { vueRulePack } from "@vue-doctor/core/vue-rules";
 
-await main();
+const commands = new Set(["scan", "check", "rules", "explain", "cache"]);
 
-async function main() {
-  const args = process.argv.slice(2);
-  const command = isCommand(args[0]) ? args.shift()! : "scan";
+export async function main(args = process.argv.slice(2), cwd = process.cwd()): Promise<number> {
+  let exitCode = 0;
+  const cli = cac("vue-doctor");
+  addScanCommand(cli, "scan", cwd, (code) => (exitCode = code));
+  addScanCommand(cli, "check", cwd, (code) => (exitCode = code));
+  cli
+    .command("rules", "List Vue Doctor rules.")
+    .option("--format <format>", "Output format.")
+    .action((options) => {
+      process.stdout.write(createRulesReport([vueRulePack], options.format));
+    });
+  cli
+    .command("explain <rule>", "Explain a Vue Doctor rule.")
+    .option("--format <format>", "Output format.")
+    .action((rule: string, options) => {
+      process.stdout.write(explainRule([vueRulePack], rule, options.format));
+    });
+  cli.command("cache <action>", "Manage Doctor cache.").action((action: string) => {
+    if (action === "clean") {
+      cleanCache(cwd);
+      consola.log("Doctor cache cleaned");
+      return;
+    }
+    consola.error(`Unknown cache command: ${action}`);
+    exitCode = 1;
+  });
+  cli.help();
 
-  if (command === "rules") {
-    const { options } = parseRunArgs(args);
-    process.stdout.write(createRulesReport([vueRulePack], options.format));
-    return;
+  try {
+    cli.parse(["node", "vue-doctor", ...normalizeDoctorCommand(args, commands)], { run: false });
+    const result = await cli.runMatchedCommand();
+    if (typeof result === "number") exitCode = result;
+    return exitCode;
+  } catch (error) {
+    consola.error(error instanceof Error ? error.message : String(error));
+    return 1;
   }
+}
 
-  if (command === "explain") {
-    const ruleId = args.find((arg) => !arg.startsWith("-")) ?? "";
-    const { options } = parseRunArgs(args.filter((arg) => arg !== ruleId));
-    process.stdout.write(explainRule([vueRulePack], ruleId, options.format));
-    return;
-  }
+function addScanCommand(
+  cli: ReturnType<typeof cac>,
+  name: "scan" | "check",
+  cwd: string,
+  setExitCode: (code: number) => void,
+) {
+  cli
+    .command(`${name} [path]`, `Run ${name} diagnostics.`)
+    .option("--config", "Load trusted doctor.config.*.")
+    .option("--trusted-config", "Load trusted doctor.config.*.")
+    .option("--changed", "Only scan changed files.")
+    .option("--types", "Enable type-aware checks.")
+    .option("--threads <threads>", "Thread count.")
+    .option("--coverage <file>", "Coverage file.")
+    .option("--runtime-evidence <file>", "Runtime evidence file.")
+    .option("--analyses <analyses>", "Analyses to run.")
+    .option("--emit-graph", "Emit graph.")
+    .option("--confidence-min <confidence>", "Minimum confidence.")
+    .option("--structural-review", "Enable structural review.")
+    .option("--no-types", "Disable type-aware checks.")
+    .option("--profile", "Include timings.")
+    .option("--new-only", "Only report new diagnostics.")
+    .option("--update-baseline", "Update baseline.")
+    .option("--cache", "Use cache.")
+    .option("--no-cache", "Disable cache.")
+    .option("--fix", "Apply safe fixes.")
+    .option("--unsafe-fix", "Apply unsafe fixes.")
+    .option("--max-warnings <count>", "Maximum warnings.")
+    .option("--rules <rules>", "Rule selector.")
+    .option("--severity <severity>", "Minimum severity.")
+    .option("--preset <preset>", "Rule preset.")
+    .option("--since <ref>", "Git base ref.")
+    .option("--baseline <file>", "Baseline file.")
+    .option("--format <format>", "Output format.")
+    .action(async (path = ".", options) => {
+      const runOptions: DoctorRunOptions = {};
+      applyDoctorOptions(runOptions, options);
+      const root = resolve(cwd, path);
+      if (options.config || options.trustedConfig) {
+        runOptions.config = await loadDoctorConfig({ cwd: root });
+      }
+      const result = await runVueDoctor(root, runOptions);
+      setExitCode(shouldFail(result, runOptions) ? 1 : 0);
+    });
+}
 
-  if (command === "cache" && args[0] === "clean") {
-    cleanCache(process.cwd());
-    console.log("Doctor cache cleaned");
-    return;
-  }
-
-  if (
-    command === "dead-code" ||
-    command === "dupes" ||
-    command === "health" ||
-    command === "graph"
-  ) {
-    args.unshift("--analyses", command === "dupes" ? "dupes" : command);
-  } else if (command === "benchmark" || command === "adopt") {
-    args.unshift("--profile");
-  } else if (command !== "scan" && command !== "check") {
-    console.error(`Unknown command: ${command}`);
-    process.exitCode = 1;
-    return;
-  }
-
-  const { path, options } = parseRunArgs(args);
+async function runVueDoctor(root: string, options: DoctorRunOptions) {
   const result = await runDoctor({
     ...options,
-    root: resolve(process.cwd(), path),
     framework: "vue",
+    root,
     plugins: [defineDoctorPlugin({ name: "vue-doctor/builtin-vue", rulePacks: [vueRulePack] })],
   });
 
   process.stdout.write(createReport(result, options.format));
-  if (result.summary.blocker || result.summary.error) process.exitCode = 1;
-  if (options.maxWarnings !== undefined && result.summary.warn > options.maxWarnings)
-    process.exitCode = 1;
+  return result;
 }
 
-function isCommand(value: string | undefined): boolean {
+function shouldFail(result: Awaited<ReturnType<typeof runDoctor>>, options: DoctorRunOptions) {
   return (
-    value === "scan" ||
-    value === "check" ||
-    value === "rules" ||
-    value === "explain" ||
-    value === "cache" ||
-    value === "dead-code" ||
-    value === "dupes" ||
-    value === "health" ||
-    value === "graph" ||
-    value === "benchmark" ||
-    value === "adopt"
+    result.summary.blocker > 0 ||
+    result.summary.error > 0 ||
+    (options.maxWarnings !== undefined && result.summary.warn > options.maxWarnings)
   );
 }
 
-function parseRunArgs(args: string[]): { path: string; options: DoctorRunOptions } {
-  const options: DoctorRunOptions = {};
-  let path = ".";
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]!;
-    if (arg === "--trusted-config" || arg === "--config") options.config = true;
-    else if (arg === "--changed") options.changed = true;
-    else if (arg === "--types") options.types = true;
-    else if (arg === "--threads") options.threads = Number(args[++index]);
-    else if (arg === "--coverage") options.coverage = args[++index];
-    else if (arg === "--runtime-evidence") options.runtimeEvidence = args[++index];
-    else if (arg === "--analyses") options.analyses = args[++index];
-    else if (arg === "--emit-graph") options.emitGraph = true;
-    else if (arg === "--confidence-min") options.confidenceMin = args[++index];
-    else if (arg === "--structural-review") options.structuralReview = true;
-    else if (arg === "--no-types") options.types = false;
-    else if (arg === "--profile") options.profile = true;
-    else if (arg === "--new-only") options.newOnly = true;
-    else if (arg === "--update-baseline") options.updateBaseline = true;
-    else if (arg === "--cache") options.cache = true;
-    else if (arg === "--no-cache") options.cache = false;
-    else if (arg === "--fix") options.fix = true;
-    else if (arg === "--unsafe-fix") options.unsafeFix = true;
-    else if (arg === "--max-warnings") options.maxWarnings = Number(args[++index]);
-    else if (arg === "--rules") options.rules = args[++index];
-    else if (arg === "--severity") options.severity = args[++index] as DoctorRunOptions["severity"];
-    else if (arg === "--preset") options.preset = args[++index];
-    else if (arg === "--since") options.since = args[++index];
-    else if (arg === "--baseline") options.baseline = args[++index];
-    else if (arg === "--format") options.format = args[++index];
-    else if (!arg.startsWith("-")) path = arg;
-  }
-  return { path, options };
+const currentFile = fileURLToPath(import.meta.url);
+if (process.argv[1] && realpathSync(process.argv[1]) === currentFile) {
+  process.exitCode = await main();
 }

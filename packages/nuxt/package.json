@@ -25,59 +25,25 @@
   "type": "module",
   "types": "./dist/index.d.mts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.mts",
-      "default": "./dist/index.mjs"
-    },
-    "./module": {
-      "types": "./dist/module.d.mts",
-      "default": "./dist/module.mjs"
-    },
-    "./rules": {
-      "types": "./dist/rules/index.d.mts",
-      "default": "./dist/rules/index.mjs"
-    },
-    "./runtime/mcp/tools/doctor-report": {
-      "types": "./dist/runtime/mcp/tools/doctor-report.d.mts",
-      "default": "./dist/runtime/mcp/tools/doctor-report.mjs"
-    },
-    "./runtime/mcp/tools/doctor-rules": {
-      "types": "./dist/runtime/mcp/tools/doctor-rules.d.mts",
-      "default": "./dist/runtime/mcp/tools/doctor-rules.mjs"
-    },
-    "./runtime/mcp/tools/doctor-explain-rule": {
-      "types": "./dist/runtime/mcp/tools/doctor-explain-rule.d.mts",
-      "default": "./dist/runtime/mcp/tools/doctor-explain-rule.mjs"
-    },
-    "./runtime/mcp/tools/doctor-dead-code": {
-      "types": "./dist/runtime/mcp/tools/doctor-dead-code.d.mts",
-      "default": "./dist/runtime/mcp/tools/doctor-dead-code.mjs"
-    },
-    "./runtime/mcp/tools/doctor-duplicates": {
-      "types": "./dist/runtime/mcp/tools/doctor-duplicates.d.mts",
-      "default": "./dist/runtime/mcp/tools/doctor-duplicates.mjs"
-    },
-    "./runtime/mcp/tools/doctor-health": {
-      "types": "./dist/runtime/mcp/tools/doctor-health.d.mts",
-      "default": "./dist/runtime/mcp/tools/doctor-health.mjs"
-    },
-    "./runtime/mcp/tools/doctor-graph": {
-      "types": "./dist/runtime/mcp/tools/doctor-graph.d.mts",
-      "default": "./dist/runtime/mcp/tools/doctor-graph.mjs"
-    },
-    "./runtime/mcp/tools/doctor-refs": {
-      "types": "./dist/runtime/mcp/tools/doctor-refs.d.mts",
-      "default": "./dist/runtime/mcp/tools/doctor-refs.mjs"
-    },
-    "./runtime/mcp/tools/doctor-explain-diagnostic": {
-      "types": "./dist/runtime/mcp/tools/doctor-explain-diagnostic.d.mts",
-      "default": "./dist/runtime/mcp/tools/doctor-explain-diagnostic.mjs"
-    },
+    ".": "./dist/index.mjs",
+    "./bin": "./dist/bin.mjs",
+    "./cli": "./dist/cli.mjs",
+    "./module": "./dist/module.mjs",
+    "./rules": "./dist/rules/index.mjs",
+    "./runtime/mcp/tools/doctor-dead-code": "./dist/runtime/mcp/tools/doctor-dead-code.mjs",
+    "./runtime/mcp/tools/doctor-duplicates": "./dist/runtime/mcp/tools/doctor-duplicates.mjs",
+    "./runtime/mcp/tools/doctor-explain-diagnostic": "./dist/runtime/mcp/tools/doctor-explain-diagnostic.mjs",
+    "./runtime/mcp/tools/doctor-explain-rule": "./dist/runtime/mcp/tools/doctor-explain-rule.mjs",
+    "./runtime/mcp/tools/doctor-graph": "./dist/runtime/mcp/tools/doctor-graph.mjs",
+    "./runtime/mcp/tools/doctor-health": "./dist/runtime/mcp/tools/doctor-health.mjs",
+    "./runtime/mcp/tools/doctor-refs": "./dist/runtime/mcp/tools/doctor-refs.mjs",
+    "./runtime/mcp/tools/doctor-report": "./dist/runtime/mcp/tools/doctor-report.mjs",
+    "./runtime/mcp/tools/doctor-rules": "./dist/runtime/mcp/tools/doctor-rules.mjs",
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vp pack src/index.ts src/module.ts src/cli.ts src/bin.ts src/rules/index.ts src/runtime/mcp/tools/doctor-report.ts src/runtime/mcp/tools/doctor-rules.ts src/runtime/mcp/tools/doctor-explain-rule.ts src/runtime/mcp/tools/doctor-dead-code.ts src/runtime/mcp/tools/doctor-duplicates.ts src/runtime/mcp/tools/doctor-health.ts src/runtime/mcp/tools/doctor-graph.ts src/runtime/mcp/tools/doctor-refs.ts src/runtime/mcp/tools/doctor-explain-diagnostic.ts",
-    "dev": "vp pack src/index.ts src/module.ts src/cli.ts src/bin.ts src/rules/index.ts src/runtime/mcp/tools/doctor-report.ts src/runtime/mcp/tools/doctor-rules.ts src/runtime/mcp/tools/doctor-explain-rule.ts src/runtime/mcp/tools/doctor-dead-code.ts src/runtime/mcp/tools/doctor-duplicates.ts src/runtime/mcp/tools/doctor-health.ts src/runtime/mcp/tools/doctor-graph.ts src/runtime/mcp/tools/doctor-refs.ts src/runtime/mcp/tools/doctor-explain-diagnostic.ts --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "vp test --passWithNoTests",
     "check": "vp check"
   },
@@ -85,8 +51,11 @@
     "@nuxt/devtools-kit": "catalog:",
     "@nuxt/kit": "catalog:",
     "@nuxtjs/mcp-toolkit": "catalog:",
+    "@vue-doctor/config": "workspace:*",
     "@vue-doctor/core": "workspace:*",
     "agents": "catalog:",
+    "cac": "catalog:",
+    "consola": "catalog:",
     "pathe": "catalog:",
     "zod": "catalog:"
   },
@@ -102,6 +71,7 @@
     "happy-dom": "catalog:",
     "nuxt": "catalog:",
     "nuxt-better-auth": "catalog:",
+    "tsdown": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:"
   },

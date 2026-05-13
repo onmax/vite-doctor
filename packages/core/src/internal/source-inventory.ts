@@ -1,7 +1,7 @@
+import { execFile } from "node:child_process";
 import { statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { relative, resolve } from "pathe";
-import { x } from "tinyexec";
 import type { DoctorConfig } from "../config.js";
 import type { DoctorRunOptions } from "../config.js";
 import type { ProjectInfo, SourceFileHandle } from "../primitives.js";
@@ -117,9 +117,18 @@ async function gitChangedFiles(root: string, since?: string): Promise<string[]> 
     const args = since
       ? ["diff", "--name-only", "--diff-filter=ACMR", since, "--"]
       : ["diff", "--name-only", "--diff-filter=ACMR", "--cached", "--"];
-    const { stdout } = await x("git", args, { nodeOptions: { cwd: root } });
+    const stdout = await execFileText("git", args, root);
     return stdout.split(/\r?\n/).filter(Boolean);
   } catch {
     return [];
   }
+}
+
+function execFileText(command: string, args: string[], cwd: string): Promise<string> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(command, args, { cwd, encoding: "utf8" }, (error, stdout) => {
+      if (error) reject(error);
+      else resolvePromise(stdout);
+    });
+  });
 }

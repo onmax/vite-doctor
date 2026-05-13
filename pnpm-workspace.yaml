@@ -31,7 +31,8 @@ catalog:
   "@vue/compiler-sfc": ^3.5.34
   vue-eslint-parser: ^10.4.0
   oxc-parser: ^0.129.0
-  commander: ^13.1.0
+  cac: ^6.7.14
+  consola: ^3.4.2
   picocolors: ^1.1.1
   pathe: ^2.0.3
   std-env: ^4.1.0
@@ -39,9 +40,9 @@ catalog:
   magic-string: ^0.30.21
   mlly: ^1.8.2
   defu: ^6.1.7
+  tsdown: ^0.22.0
   eslint: ^10.3.0
   eslint-plugin-vue: ^10.9.1
-  tinyexec: ^1.1.2
   "@typescript-eslint/parser": ^8.59.2
   zod: ^4.4.3
   wrangler: ^4.90.0

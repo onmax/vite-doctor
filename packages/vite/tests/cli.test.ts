@@ -3,105 +3,12 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
-import { detectPackageManager, parsePackageManager, planCi, selectScripts } from "../src/index.ts";
 import { main } from "../src/cli.ts";
-import nuxtModule from "../src/nuxt.ts";
 import { doctor } from "../src/plugin.ts";
 
-test("detects package manager from packageManager field", () => {
-  expect(parsePackageManager("pnpm@11.0.9")).toBe("pnpm");
-  expect(parsePackageManager("bun@1.2.0")).toBe("bun");
-  expect(parsePackageManager("yarn@4.0.0")).toBe("yarn");
-  expect(parsePackageManager("npm@11.0.0")).toBe("npm");
-});
-
-test("detects package manager from lockfiles", async () => {
-  await withFixture({ "pnpm-lock.yaml": "" }, (root) => {
-    expect(detectPackageManager(root, {})).toBe("pnpm");
-  });
-  await withFixture({ "bun.lock": "" }, (root) => {
-    expect(detectPackageManager(root, {})).toBe("bun");
-  });
-  await withFixture({ "yarn.lock": "" }, (root) => {
-    expect(detectPackageManager(root, {})).toBe("yarn");
-  });
-  await withFixture({ "package-lock.json": "" }, (root) => {
-    expect(detectPackageManager(root, {})).toBe("npm");
-  });
-});
-
-test("prefers package ci script unless it calls vite-doctor", () => {
-  expect(selectScripts({ ci: "pnpm test", ready: "pnpm build" })).toEqual(["ci"]);
-  expect(selectScripts({ ci: "vite-doctor", ready: "pnpm test" })).toEqual(["ready"]);
-});
-
-test("prefers ready before standard scripts", () => {
-  expect(selectScripts({ ready: "vp fmt", test: "vp test", build: "vp build" })).toEqual(["ready"]);
-});
-
-test("selects standard scripts in stable order", () => {
-  expect(
-    selectScripts({
-      build: "vite build",
-      "type:check": "vue-tsc",
-      lint: "eslint .",
-      test: "vitest",
-      check: "biome check .",
-    }),
-  ).toEqual(["check", "lint", "type:check", "test", "build"]);
-
-  expect(selectScripts({ typecheck: "tsc", "type:check": "vue-tsc" })).toEqual(["typecheck"]);
-});
-
-test("fails when no package json exists", async () => {
-  await withFixture({}, (root) => {
-    expect(() => planCi(root)).toThrow(/No package\.json found/);
-  });
-});
-
-test("fails when no known scripts exist", async () => {
-  await withFixture(
-    { "package.json": JSON.stringify({ scripts: { dev: "vite dev" } }) },
-    (root) => {
-      expect(() => planCi(root)).toThrow(/No project scripts found/);
-    },
-  );
-});
-
-test("dry-run plan for this repo uses pnpm ready", () => {
+test("CLI rejects removed run command", async () => {
   const repoRoot = findRepoRoot();
-  const plan = planCi(repoRoot);
-
-  expect(plan.packageManager).toBe("pnpm");
-  expect(plan.commands.map((command) => command.display)).toEqual(["pnpm run ready"]);
-});
-
-test("CLI dry-run for this repo prints pnpm ready", async () => {
-  const repoRoot = findRepoRoot();
-  const lines: string[] = [];
-  const log = console.log;
-  console.log = (...args: unknown[]) => {
-    lines.push(args.map(String).join(" "));
-  };
-  try {
-    await expect(main(["--dry-run"], repoRoot)).resolves.toBe(0);
-  } finally {
-    console.log = log;
-  }
-
-  expect(lines).toContain("Package manager: pnpm");
-  expect(lines).toContain("- pnpm run ready");
-});
-
-test("CLI accepts run as the explicit command", async () => {
-  const repoRoot = findRepoRoot();
-  const log = console.log;
-  console.log = () => {};
-  try {
-    await expect(main(["run", "--dry-run"], repoRoot)).resolves.toBe(0);
-  } finally {
-    console.log = log;
-  }
+  await expect(main(["run", "--dry-run"], repoRoot)).resolves.toBe(1);
 });
 
 test("CLI prints Vite rule metadata", async () => {
@@ -121,7 +28,7 @@ test("CLI prints Vite rule metadata", async () => {
   expect(writes.join("")).toContain("vite/define/no-secret-define");
 });
 
-test("CLI prints Nuxt rule metadata through vite-doctor", async () => {
+test("CLI lists only Vite rule metadata by default", async () => {
   const repoRoot = findRepoRoot();
   const writes: string[] = [];
   const write = process.stdout.write.bind(process.stdout);
@@ -135,7 +42,8 @@ test("CLI prints Nuxt rule metadata through vite-doctor", async () => {
     process.stdout.write = write;
   }
 
-  expect(writes.join("")).toContain("nuxt/hydration/no-client-conditional-in-template");
+  expect(writes.join("")).toContain("vite/define/no-secret-define");
+  expect(writes.join("")).not.toContain("nuxt/hydration/no-client-conditional-in-template");
 });
 
 test("CLI accepts a path shorthand for scans", async () => {
@@ -175,7 +83,7 @@ test("smart scan applies Vite rules and skips Nuxt-only rules in Vite projects",
   });
 });
 
-test("smart scan applies Vue rules in Vue projects", async () => {
+test("smart scan keeps Vue rules out of default Vite install path", async () => {
   await withFixture(
     {
       "package.json": JSON.stringify({ dependencies: { vue: "^3.5.0" } }),
@@ -187,14 +95,14 @@ const html = "<strong>unsafe</strong>";
     },
     async (root) => {
       const result = await runCli([".", "--rules", "vue/security/restrict-v-html"], root);
-      expect(result.code).toBe(1);
-      expect(result.output).toContain("Detected: Vue");
-      expect(result.output).toContain("vue/security/restrict-v-html");
+      expect(result.code).toBe(0);
+      expect(result.output).toContain("Detected: Vite");
+      expect(result.output).not.toContain("vue/security/restrict-v-html");
     },
   );
 });
 
-test("smart scan applies Nuxt and Nitro rules in Nuxt projects", async () => {
+test("smart scan keeps Nuxt rules out of default Vite install path", async () => {
   await withFixture(
     {
       "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
@@ -208,17 +116,17 @@ useRoute();
     },
     async (root) => {
       const nuxt = await runCli([".", "--rules", "nuxt/routing/prefer-nuxt-useroute"], root);
-      expect(nuxt.code).toBe(1);
-      expect(nuxt.output).toContain("Detected: Nuxt");
-      expect(nuxt.output).toContain("nuxt/routing/prefer-nuxt-useroute");
+      expect(nuxt.code).toBe(0);
+      expect(nuxt.output).toContain("Detected: Vite");
+      expect(nuxt.output).not.toContain("nuxt/routing/prefer-nuxt-useroute");
 
       const nitro = await runCli(
         [".", "--rules", "nitro/request/prefer-get-request-ip", "--max-warnings", "0"],
         root,
       );
-      expect(nitro.code).toBe(1);
-      expect(nitro.output).toContain("Detected: Nuxt");
-      expect(nitro.output).toContain("nitro/request/prefer-get-request-ip");
+      expect(nitro.code).toBe(0);
+      expect(nitro.output).toContain("Detected: Vite");
+      expect(nitro.output).not.toContain("nitro/request/prefer-get-request-ip");
     },
   );
 });
@@ -236,7 +144,7 @@ useRoute();
     async (root) => {
       const automatic = await runCli([".", "--rules", "nuxt/routing/prefer-nuxt-useroute"], root);
       expect(automatic.code).toBe(0);
-      expect(automatic.output).toContain("Detected: Vue");
+      expect(automatic.output).toContain("Detected: Vite");
 
       const forced = await runCli(
         [".", "--framework", "nuxt", "--rules", "nuxt/routing/prefer-nuxt-useroute"],
@@ -247,6 +155,35 @@ useRoute();
       expect(forced.output).toContain("nuxt/routing/prefer-nuxt-useroute");
     },
   );
+});
+
+test("framework override can enable Vue rules explicitly", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vue: "^3.5.0" } }),
+      "src/App.vue": `<template><div v-html="html" /></template>
+<script setup lang="ts">
+const html = "<strong>unsafe</strong>";
+</script>
+`,
+    },
+    async (root) => {
+      const result = await runCli(
+        [".", "--framework", "vue", "--rules", "vue/security/restrict-v-html"],
+        root,
+      );
+      expect(result.code).toBe(1);
+      expect(result.output).toContain("Detected: Vue");
+      expect(result.output).toContain("vue/security/restrict-v-html");
+    },
+  );
+});
+
+test("CLI rejects executable config loading in vite-doctor", async () => {
+  await withFixture(viteErrorFixture(), async (root) => {
+    const result = await main([".", "--trusted-config"], root);
+    expect(result).toBe(1);
+  });
 });
 
 test("CLI scan fails for a missing path", async () => {
@@ -263,10 +200,6 @@ test("CLI scan fails for a missing path", async () => {
   }
 
   expect(errors.join("\n")).toContain("No readable directory found");
-});
-
-test("exports the Nuxt module path", () => {
-  expect(typeof nuxtModule).toBe("function");
 });
 
 test("exports a Vite plugin factory", () => {

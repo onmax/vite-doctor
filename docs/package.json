@@ -26,6 +26,7 @@
     "docus": "catalog:",
     "h3": "^1.15.11",
     "nuxt": "catalog:",
+    "pathe": "catalog:",
     "std-env": "catalog:",
     "tailwindcss": "catalog:",
     "vite-doctor": "workspace:*",

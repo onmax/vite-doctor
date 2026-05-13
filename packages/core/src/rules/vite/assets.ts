@@ -105,7 +105,7 @@ function isAssetUrlContext(node: AnyNode): boolean {
   }
   if (parent?.type === "CallExpression") {
     const callee = parent.callee?.name ?? parent.callee?.property?.name ?? "";
-    return !["fetch", "$fetch", "open", "URL"].includes(callee);
+    return !["fetch", "$fetch", "open", "URL", "fileURLToPath"].includes(callee);
   }
   if (parent?.type === "MemberExpression") {
     const name = parent.property?.name ?? "";

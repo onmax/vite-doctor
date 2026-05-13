@@ -321,19 +321,29 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
 
   if (rule.docsUrl) add("Rule reference", rule.docsUrl);
 
-  if (rule.id === "vue/computed/no-async") {
-    add("Vue computed properties", "https://vuejs.org/guide/essentials/computed");
+  if (rule.id === "vue/template/prefer-same-name-prop-shorthand") {
     add(
-      "eslint-plugin-vue no-async-in-computed-properties",
-      "https://eslint.vuejs.org/rules/no-async-in-computed-properties",
+      "Vue same-name shorthand",
+      "https://vuejs.org/guide/essentials/template-syntax.html#same-name-shorthand",
+    );
+    add("eslint-plugin-vue v-bind-style", "https://eslint.vuejs.org/rules/v-bind-style.html");
+  }
+
+  if (rule.id === "vue/template/html-button-has-type") {
+    add(
+      "HTML button type",
+      "https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/button#type",
     );
   }
 
-  if (rule.id === "vue/computed/no-side-effects") {
-    add("Vue computed properties", "https://vuejs.org/guide/essentials/computed");
+  if (rule.id === "vue/template/prefer-true-attribute-shorthand") {
     add(
-      "eslint-plugin-vue no-side-effects-in-computed-properties",
-      "https://eslint.vuejs.org/rules/no-side-effects-in-computed-properties",
+      "eslint-plugin-vue prefer-true-attribute-shorthand",
+      "https://eslint.vuejs.org/rules/prefer-true-attribute-shorthand.html",
+    );
+    add(
+      "Vue boolean attributes",
+      "https://vuejs.org/guide/essentials/template-syntax.html#boolean-attributes",
     );
   }
 

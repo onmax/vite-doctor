@@ -442,7 +442,7 @@ export interface RuleExample {
 export interface RuleVisitor {
   onWorkspaceStart?(): void | Promise<void>;
   onProjectStart?(project: ProjectInfo): void | Promise<void>;
-  SFC?(sfc: SfcHandle): void;
+  SFC?(sfc: SfcHandle): void | Promise<void>;
   TemplateNode?(node: unknown): void;
   ScriptNode?(node: unknown): void;
   ImportDeclaration?(node: unknown): void;

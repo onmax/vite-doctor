@@ -1434,38 +1434,6 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "vue/computed/no-async": {
-    description: "Flags async in Vue computed code before it leaks into runtime behavior.",
-    why: "Computed values should stay synchronous and side-effect free so Vue can cache them and update dependents predictably.",
-    recommendedReplacement:
-      "Move the async work to useFetch(), useAsyncData(), or an explicit action, and keep the computed getter synchronous.",
-    examples: [
-      {
-        title: "Keep computed synchronous",
-        language: "vue",
-        invalid:
-          "<script setup lang=\"ts\">\nconst user = computed(async () => await $fetch('/api/user'))\n</script>",
-        valid:
-          "<script setup lang=\"ts\">\nconst { data: user } = await useFetch('/api/user')\n</script>",
-      },
-    ],
-  },
-  "vue/computed/no-side-effects": {
-    description: "Flags side effects in Vue computed code before it leaks into runtime behavior.",
-    why: "Computed values should stay synchronous and side-effect free so Vue can cache them and update dependents predictably.",
-    recommendedReplacement:
-      "Return a derived value from computed(), and move writes or effects into a watcher, event handler, or explicit action.",
-    examples: [
-      {
-        title: "Keep computed side-effect free",
-        language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst count = ref(0)\nconst doubled = computed(() => {\n  count.value++\n  return count.value * 2\n})\n</script>',
-        valid:
-          '<script setup lang="ts">\nconst count = ref(0)\nconst doubled = computed(() => count.value * 2)\n</script>',
-      },
-    ],
-  },
   "vue/i18n/no-untranslated-text": {
     description: "Flags untranslated text in Vue i18n code before it leaks into runtime behavior.",
     why: "Vue gives this pattern a specific contract. Staying inside that contract makes the code easier to test, refactor, and run across server and client runtimes.",
@@ -1542,23 +1510,6 @@ export const ruleDocumentationMetadata = {
           '<script setup lang="ts">\nconst props = defineProps<{ id: string }>()\nwatch(props.id, loadUser)\n</script>',
         valid:
           '<script setup lang="ts">\nconst props = defineProps<{ id: string }>()\nwatch(() => props.id, loadUser)\n</script>',
-      },
-    ],
-  },
-  "vue/reactivity/no-prop-mutation": {
-    description:
-      "Flags prop mutation in Vue reactivity code before it leaks into runtime behavior.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
-    recommendedReplacement:
-      "Remove prop mutation, or move it to the Vue runtime/API that owns that behavior.",
-    examples: [
-      {
-        title: "Avoid prop mutation",
-        language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
       },
     ],
   },
@@ -1714,20 +1665,17 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "vue/template/no-v-if-with-v-for": {
-    description:
-      "Flags v if with v for in Vue template code before it leaks into runtime behavior.",
-    why: "Vue gives this pattern a specific contract. Staying inside that contract makes the code easier to test, refactor, and run across server and client runtimes.",
+  "vue/template/html-button-has-type": {
+    description: "Requires native buttons to declare an explicit type attribute.",
+    why: "Native buttons default to submit inside forms, which can trigger accidental submissions when a button is only meant to run a click action.",
     recommendedReplacement:
-      "Remove v if with v for, or move it to the Vue runtime/API that owns that behavior.",
+      'Add type="button", type="submit", or type="reset" to native button elements.',
     examples: [
       {
-        title: "Filter before rendering lists",
+        title: "Add an explicit button type",
         language: "vue",
-        invalid:
-          '<template>\n  <li v-for="item in items" v-if="item.visible" :key="item.id">{{ item.name }}</li>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst visibleItems = computed(() => items.filter(item => item.visible))\n</script>\n\n<template>\n  <li v-for="item in visibleItems" :key="item.id">{{ item.name }}</li>\n</template>',
+        invalid: '<template>\n  <button @click="save">Save</button>\n</template>',
+        valid: '<template>\n  <button type="button" @click="save">Save</button>\n</template>',
       },
     ],
   },
@@ -1747,33 +1695,39 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "vue/template/require-v-for-key": {
+  "vue/template/prefer-true-attribute-shorthand": {
     description:
-      "Checks that Vue template code includes the v for key needed for predictable behavior.",
-    why: "Vue gives this pattern a specific contract. Staying inside that contract makes the code easier to test, refactor, and run across server and client runtimes.",
+      "Finds native boolean attributes that bind the literal true value instead of using native attribute presence.",
+    why: "Native boolean attributes are true by presence, so binding a literal true adds template noise without changing behavior.",
     recommendedReplacement:
-      "Add v for key where Vue expects it, close to the code that depends on it.",
+      'Use the bare native attribute, such as disabled, instead of :disabled="true".',
     examples: [
       {
-        title: "Key v-for items",
+        title: "Use native boolean shorthand",
         language: "vue",
-        invalid: '<template>\n  <li v-for="item in items">{{ item.name }}</li>\n</template>',
-        valid:
-          '<template>\n  <li v-for="item in items" :key="item.id">{{ item.name }}</li>\n</template>',
+        invalid: '<template>\n  <button :disabled="true">Save</button>\n</template>',
+        valid: "<template>\n  <button disabled>Save</button>\n</template>",
       },
     ],
   },
-  "vue/watch/no-after-await": {
-    description: "Flags after await in Vue watch code before it leaks into runtime behavior.",
-    why: "Effects that outlive their component create leaks and stale updates. Register cleanup where Vue or VueUse can dispose it automatically.",
+  "vue/template/prefer-same-name-prop-shorthand": {
+    description:
+      "Finds Vue props that can use Vue 3.4 same-name v-bind shorthand because the prop and bound variable have the same logical name.",
+    why: "Same-name shorthand removes duplicated identifiers from templates while preserving the prop name readers need to see.",
     recommendedReplacement:
-      "Remove after await, or move it to the Vue runtime/API that owns that behavior.",
+      "Use :prop or v-bind:prop only when the bound variable has the same logical name. See Vue same-name shorthand and eslint-plugin-vue v-bind-style sameNameShorthand.",
     examples: [
       {
-        title: "Register watchers before await",
+        title: "Use same-name prop shorthand",
         language: "vue",
-        invalid: '<script setup lang="ts">\nawait loadSettings()\nwatch(source, sync)\n</script>',
-        valid: '<script setup lang="ts">\nwatch(source, sync)\nawait loadSettings()\n</script>',
+        invalid: '<template>\n  <MyCmp :my-prop="myProp" />\n</template>',
+        valid: "<template>\n  <MyCmp :my-prop />\n</template>",
+      },
+      {
+        title: "Keep explicit binding when names differ",
+        language: "vue",
+        invalid: '<template>\n  <MyCmp :my-prop="myProp" />\n</template>',
+        valid: '<template>\n  <MyCmp :my-prop="selectedValue" />\n</template>',
       },
     ],
   },

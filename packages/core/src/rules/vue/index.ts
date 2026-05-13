@@ -1,13 +1,9 @@
-export { noPropMutation } from "./no-prop-mutation.js";
 export { definePropsWatchGetter } from "./define-props-watch-getter.js";
 export { noRefAsOperand } from "./no-ref-as-operand.js";
-export { computedNoSideEffects } from "./computed-no-side-effects.js";
-export { computedNoAsync } from "./computed-no-async.js";
-export { noAfterAwait } from "./no-after-await.js";
 export { noOnWatcherCleanupAfterAwait } from "./no-on-watcher-cleanup-after-await.js";
-export { requireVForKey } from "./require-v-for-key.js";
-export { noVIfWithVFor } from "./no-v-if-with-v-for.js";
+export { htmlButtonHasType } from "./html-button-has-type.js";
 export { preferUseTemplateRef } from "./prefer-use-template-ref.js";
+export { preferTrueAttributeShorthand } from "./prefer-true-attribute-shorthand.js";
 export { noBrowserApiInSetup } from "./no-browser-api-in-setup.js";
 export { restrictVHtml } from "./restrict-v-html.js";
 export { noSetupPropsDestructure } from "./no-setup-props-destructure.js";
@@ -23,18 +19,15 @@ export { preferDefineModel } from "./prefer-define-model.js";
 export { preferPropsDestructureDefaults } from "./prefer-props-destructure-defaults.js";
 export { preferTypeProps } from "./prefer-type-props.js";
 export { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
+export { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
-import { noPropMutation } from "./no-prop-mutation.js";
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
-import { computedNoSideEffects } from "./computed-no-side-effects.js";
-import { computedNoAsync } from "./computed-no-async.js";
-import { noAfterAwait } from "./no-after-await.js";
 import { noOnWatcherCleanupAfterAwait } from "./no-on-watcher-cleanup-after-await.js";
-import { requireVForKey } from "./require-v-for-key.js";
-import { noVIfWithVFor } from "./no-v-if-with-v-for.js";
+import { htmlButtonHasType } from "./html-button-has-type.js";
 import { preferUseTemplateRef } from "./prefer-use-template-ref.js";
+import { preferTrueAttributeShorthand } from "./prefer-true-attribute-shorthand.js";
 import { noBrowserApiInSetup } from "./no-browser-api-in-setup.js";
 import { restrictVHtml } from "./restrict-v-html.js";
 import { noSetupPropsDestructure } from "./no-setup-props-destructure.js";
@@ -50,20 +43,17 @@ import { preferDefineModel } from "./prefer-define-model.js";
 import { preferPropsDestructureDefaults } from "./prefer-props-destructure-defaults.js";
 import { preferTypeProps } from "./prefer-type-props.js";
 import { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
+import { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 import type { RulePack } from "../../primitives.js";
 
 const rules = [
-  noPropMutation,
   definePropsWatchGetter,
   noRefAsOperand,
-  computedNoSideEffects,
-  computedNoAsync,
-  noAfterAwait,
   noOnWatcherCleanupAfterAwait,
-  requireVForKey,
-  noVIfWithVFor,
+  htmlButtonHasType,
   preferUseTemplateRef,
+  preferTrueAttributeShorthand,
   noBrowserApiInSetup,
   restrictVHtml,
   noSetupPropsDestructure,
@@ -79,6 +69,7 @@ const rules = [
   preferPropsDestructureDefaults,
   preferTypeProps,
   preferComposableRefReturn,
+  preferSameNamePropShorthand,
   noUnusedTranslations,
   noUntranslatedText,
 ];

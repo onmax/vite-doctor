@@ -1,12 +1,10 @@
 import { createRule, type DoctorRule, type RuleContext } from "../../primitives.js";
-import { Linter } from "eslint";
-import vuePlugin from "eslint-plugin-vue";
-import vueParser from "vue-eslint-parser";
-import tsParser from "@typescript-eslint/parser";
 
 export { createRule };
 
 export type AnyNode = any;
+
+const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
 
 export const BROWSER_GLOBALS = new Set([
   "window",
@@ -17,24 +15,11 @@ export const BROWSER_GLOBALS = new Set([
 ]);
 
 export const delegatedMessages: Record<string, string> = {
-  "vue/reactivity/no-prop-mutation":
-    "Props are read-only. Emit an update event or copy the value into local state instead.",
   "vue/reactivity/no-ref-as-operand": "Refs used as script operands must be unwrapped with .value.",
-  "vue/computed/no-side-effects":
-    "Computed getters must be pure. Move mutations, DOM writes, or network work into an action, watcher, or lifecycle hook.",
-  "vue/computed/no-async":
-    "Async computed getters do not model loading, errors, or cancellation well. Use useFetch(), useAsyncData(), or an explicit async action.",
-  "vue/watch/no-after-await":
-    "Watchers registered after await may not be owner-bound. Register them before the first await in setup/composables.",
-  "vue/template/no-v-if-with-v-for":
-    "v-if and v-for on the same element create ambiguous filtering and rendering behavior. Filter with computed state before rendering.",
 };
 
 export const delegatedSuggestions: Record<string, string> = {
-  "vue/reactivity/no-prop-mutation":
-    "Replace the mutation with emit('update:...') or derived local state.",
   "vue/reactivity/no-ref-as-operand": "Use .value in script expressions.",
-  "vue/template/no-v-if-with-v-for": "Filter the source list before rendering.",
 };
 
 export function report(
@@ -132,7 +117,16 @@ export function createEslintVueRule(options: {
     create(ctx) {
       if (!ctx.file.isVueSfc) return;
       return {
-        SFC() {
+        async SFC() {
+          const [{ Linter }, vuePlugin, vueParser, tsParser] = await Promise.all([
+            optionalImport<typeof import("eslint")>("eslint"),
+            optionalImport<typeof import("eslint-plugin-vue")>("eslint-plugin-vue"),
+            optionalImport<typeof import("vue-eslint-parser")>("vue-eslint-parser"),
+            optionalImport<typeof import("@typescript-eslint/parser")>("@typescript-eslint/parser"),
+          ]);
+          const vuePluginRuntime = defaultExport(vuePlugin);
+          const vueParserRuntime = defaultExport(vueParser);
+          const tsParserRuntime = defaultExport(tsParser);
           const linter = new Linter({ configType: "flat" });
           const messages = linter.verify(
             ctx.file.text,
@@ -141,16 +135,16 @@ export function createEslintVueRule(options: {
                 name: "vue-doctor/eslint-plugin-vue",
                 files: ["**/*.vue"],
                 languageOptions: {
-                  parser: vueParser as any,
+                  parser: vueParserRuntime as any,
                   ecmaVersion: "latest",
                   sourceType: "module",
                   parserOptions: {
-                    parser: tsParser,
+                    parser: tsParserRuntime,
                     ecmaVersion: "latest",
                     sourceType: "module",
                   },
                 },
-                plugins: { vue: vuePlugin as any },
+                plugins: { vue: vuePluginRuntime as any },
                 rules: { [options.eslintId]: eslintRuleConfig(ctx.options) },
               },
             ],
@@ -187,6 +181,10 @@ export function createEslintVueRule(options: {
       };
     },
   });
+}
+
+function defaultExport<T>(mod: T): T {
+  return ((mod as { default?: T }).default ?? mod) as T;
 }
 
 function eslintRuleConfig(options: unknown): "error" | ["error", ...unknown[]] {

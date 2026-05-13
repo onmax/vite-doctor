@@ -13,7 +13,6 @@ export interface ViteDoctorPluginOptions {
   preset?: string;
   severity?: "error" | "warn" | "info";
   maxWarnings?: number;
-  config?: boolean;
   cache?: boolean;
   format?: "text" | "json" | "sarif";
 }
@@ -40,7 +39,6 @@ export function doctor(options: ViteDoctorPluginOptions = {}): Plugin {
         preset: options.preset,
         severity: options.severity,
         maxWarnings: options.maxWarnings,
-        config: options.config ?? false,
         cache: options.cache ?? true,
         format: options.format,
       });

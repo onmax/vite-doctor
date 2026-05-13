@@ -1,31 +1,26 @@
 {
-  "name": "vue-doctor",
+  "name": "@vue-doctor/config",
   "version": "0.0.0",
-  "description": "CLI diagnostics for Vue projects using Vue Doctor rules.",
+  "description": "Trusted executable config loading for Doctor packages.",
   "keywords": [
+    "config",
     "doctor",
-    "lint",
-    "static-analysis",
-    "vue"
+    "static-analysis"
   ],
   "homepage": "https://github.com/onmax/nuxt-doctor#readme",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/onmax/nuxt-doctor.git",
-    "directory": "packages/vue"
-  },
-  "bin": {
-    "vue-doctor": "./dist/cli.mjs"
+    "directory": "packages/config"
   },
   "files": [
     "dist"
   ],
   "type": "module",
-  "types": "./dist/cli.d.mts",
+  "types": "./dist/index.d.mts",
   "exports": {
-    "./cli": "./dist/cli.mjs",
-    "./rules": "./dist/rules.mjs",
+    ".": "./dist/index.mjs",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -35,11 +30,9 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@vue-doctor/config": "workspace:*",
     "@vue-doctor/core": "workspace:*",
-    "cac": "catalog:",
-    "consola": "catalog:",
-    "pathe": "catalog:"
+    "c12": "catalog:",
+    "defu": "catalog:"
   },
   "devDependencies": {
     "tsdown": "catalog:",
