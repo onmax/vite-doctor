@@ -46,7 +46,7 @@ to: /nuxt/getting-started
 #title
 Run Nuxt Doctor
 #description
-Scan Nitro code through the Nuxt Doctor CLI.
+Scan Nitro code through the Vite Doctor CLI.
 ::::
 :::
 ::
@@ -56,11 +56,11 @@ Scan Nitro code through the Nuxt Doctor CLI.
 List the Nuxt and Nitro rule packs:
 
 ```bash
-pnpm dlx nuxt-doctor rules
+pnpm dlx vite-doctor rules
 ```
 
 Scan a Nuxt app, including Nitro server code:
 
 ```bash
-pnpm dlx nuxt-doctor .
+pnpm dlx vite-doctor .
 ```

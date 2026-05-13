@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { detectPackageManager, parsePackageManager, planCi, selectScripts } from "../src/index.ts";
 import { main } from "../src/cli.ts";
+import nuxtModule from "../src/nuxt.ts";
+import { doctor } from "../src/plugin.ts";
 
 test("detects package manager from packageManager field", () => {
   expect(parsePackageManager("pnpm@11.0.9")).toBe("pnpm");
@@ -119,6 +121,46 @@ test("CLI prints Vite rule metadata", async () => {
   expect(writes.join("")).toContain("vite/define/no-secret-define");
 });
 
+test("CLI prints Nuxt rule metadata through vite-doctor", async () => {
+  const repoRoot = findRepoRoot();
+  const writes: string[] = [];
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    await expect(main(["rules", "--format", "json"], repoRoot)).resolves.toBe(0);
+  } finally {
+    process.stdout.write = write;
+  }
+
+  expect(writes.join("")).toContain("nuxt/hydration/no-client-conditional-in-template");
+});
+
+test("CLI accepts a path shorthand for scans", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "src/main.ts": "console.log('ok')\n",
+    },
+    async (root) => {
+      const writes: string[] = [];
+      const write = process.stdout.write.bind(process.stdout);
+      process.stdout.write = ((chunk: string | Uint8Array) => {
+        writes.push(String(chunk));
+        return true;
+      }) as typeof process.stdout.write;
+      try {
+        await expect(main(["."], root)).resolves.toBe(0);
+      } finally {
+        process.stdout.write = write;
+      }
+      expect(writes.join("")).toContain("Detected: Vite");
+    },
+  );
+});
+
 test("CLI scan fails for a missing path", async () => {
   const repoRoot = findRepoRoot();
   const errors: string[] = [];
@@ -135,7 +177,72 @@ test("CLI scan fails for a missing path", async () => {
   expect(errors.join("\n")).toContain("No readable directory found");
 });
 
-async function withFixture(files: Record<string, string>, fn: (root: string) => void) {
+test("exports the Nuxt module path", () => {
+  expect(typeof nuxtModule).toBe("function");
+});
+
+test("exports a Vite plugin factory", () => {
+  const plugin = doctor();
+  expect(plugin.name).toBe("vite-doctor");
+});
+
+test("Vite plugin defaults to build-only checks", async () => {
+  await withFixture(viteErrorFixture(), async (root) => {
+    const plugin = doctor({ rules: "vite/define/no-secret-define" });
+    const logs = await runVitePlugin(plugin, root, "serve");
+    expect(logs).toEqual([]);
+  });
+});
+
+test("Vite plugin fails builds in error mode", async () => {
+  await withFixture(viteErrorFixture(), async (root) => {
+    const plugin = doctor({ rules: "vite/define/no-secret-define" });
+    await expect(runVitePlugin(plugin, root, "build")).rejects.toThrow(
+      /vite\/define\/no-secret-define/,
+    );
+  });
+});
+
+test("Vite plugin reports but does not fail in warn mode", async () => {
+  await withFixture(viteErrorFixture(), async (root) => {
+    const plugin = doctor({ mode: "warn", rules: "vite/define/no-secret-define" });
+    const logs = await runVitePlugin(plugin, root, "build");
+    expect(logs.join("\n")).toContain("vite/define/no-secret-define");
+  });
+});
+
+test("Vite plugin fails when maxWarnings is zero", async () => {
+  await withFixture(viteWarningFixture(), async (root) => {
+    const plugin = doctor({
+      rules: "vite/env/no-broad-env-prefix",
+      maxWarnings: 0,
+    });
+    await expect(runVitePlugin(plugin, root, "build")).rejects.toThrow(
+      /vite\/env\/no-broad-env-prefix/,
+    );
+  });
+});
+
+test("Vite plugin keeps executable config disabled by default", async () => {
+  await withFixture(
+    {
+      ...viteErrorFixture(),
+      "doctor.config.ts":
+        "import { defineDoctorConfig } from '@vue-doctor/core'\nexport default defineDoctorConfig({ rules: { 'vite/define/no-secret-define': 'off' } })\n",
+    },
+    async (root) => {
+      const plugin = doctor({ rules: "vite/define/no-secret-define" });
+      await expect(runVitePlugin(plugin, root, "build")).rejects.toThrow(
+        /vite\/define\/no-secret-define/,
+      );
+    },
+  );
+});
+
+async function withFixture(
+  files: Record<string, string>,
+  fn: (root: string) => void | Promise<void>,
+) {
   const root = await mkdtemp(join(tmpdir(), "vite-doctor-"));
   try {
     for (const [file, contents] of Object.entries(files)) {
@@ -143,10 +250,56 @@ async function withFixture(files: Record<string, string>, fn: (root: string) => 
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, contents);
     }
-    fn(root);
+    await fn(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+function viteErrorFixture() {
+  return {
+    "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+    "vite.config.ts":
+      "export default {\n  define: {\n    SECRET_KEY: JSON.stringify('secret'),\n  },\n}\n",
+  };
+}
+
+function viteWarningFixture() {
+  return {
+    "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+    "vite.config.ts": "export default { envPrefix: ['APP_'] }\n",
+  };
+}
+
+async function runVitePlugin(
+  plugin: ReturnType<typeof doctor>,
+  root: string,
+  command: "build" | "serve",
+) {
+  const logs: string[] = [];
+  const logger = {
+    info: (message: string) => logs.push(message),
+    warn: (message: string) => logs.push(message),
+  };
+  const context: any = {
+    error(message: string) {
+      throw new Error(message);
+    },
+  };
+
+  const configResolved = plugin.configResolved;
+  if (typeof configResolved === "function") {
+    await configResolved.call(context, { root, command, logger } as any);
+  }
+
+  const buildStart = plugin.buildStart;
+  if (typeof buildStart === "function") {
+    await buildStart.call(context, {} as any);
+  } else if (buildStart && "handler" in buildStart) {
+    await buildStart.handler.call(context, {} as any);
+  }
+
+  return logs;
 }
 
 function findRepoRoot(): string {

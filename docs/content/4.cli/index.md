@@ -97,17 +97,17 @@ jobs:
 
 ## Run framework scans
 
-Use `vite-doctor` for project command orchestration. Use the framework CLIs when you want Doctor's Vue and Nuxt diagnostics directly:
+Use `vite-doctor` for project command orchestration and framework-aware scans:
 
 ```bash
 pnpm dlx vue-doctor
-pnpm dlx nuxt-doctor . --max-warnings 0
+pnpm dlx vite-doctor . --max-warnings 0
 ```
 
 Nuxt projects can also add the module and run `nuxt doctor`:
 
 ```bash
-pnpm dlx nuxt module add nuxt-doctor
+pnpm dlx nuxt module add vite-doctor/nuxt
 pnpm exec nuxt doctor
 ```
 

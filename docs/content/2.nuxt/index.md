@@ -3,7 +3,7 @@ title: Overview
 description: Use Nuxt Doctor to scan Nuxt 4 apps and modules.
 ---
 
-Nuxt Doctor extends Vue Doctor with Nuxt 4 project detection, auto-import awareness, route middleware checks, Nitro/server rules, runtime config checks, hydration diagnostics, module overlays, and the optional `nuxt-doctor/module` manifest.
+Nuxt Doctor extends Vue Doctor with Nuxt 4 project detection, auto-import awareness, route middleware checks, Nitro/server rules, runtime config checks, hydration diagnostics, module overlays, and the optional `vite-doctor/nuxt` manifest.
 
 ## What it checks
 
@@ -34,7 +34,7 @@ to: /nuxt/getting-started
 #title
 Install and run
 #description
-Add Nuxt Doctor with the Nuxt CLI, then run `nuxt doctor`.
+Install once, get Nuxt-aware checks.
 ::::
 
 ::::u-page-card
@@ -67,20 +67,20 @@ Expose read-only MCP reports and combine them with agent-ready runtime logs.
 
 ## Commands
 
-Add Nuxt Doctor to a Nuxt app:
+Add the Vite Doctor Nuxt module to a Nuxt app:
 
 ```bash
-pnpm dlx nuxt module add nuxt-doctor
+pnpm dlx nuxt module add vite-doctor/nuxt
 ```
 
 List the Nuxt and Vue rule packs:
 
 ```bash
-pnpm dlx nuxt-doctor rules
+pnpm dlx vite-doctor rules
 ```
 
 Fail on warnings:
 
 ```bash
-pnpm dlx nuxt-doctor . --max-warnings 0
+pnpm dlx vite-doctor . --max-warnings 0
 ```

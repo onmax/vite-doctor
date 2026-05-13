@@ -1,5 +1,5 @@
 {
-  "name": "vite-doctor",
+  "name": "doctor-workspace",
   "version": "0.0.0",
   "private": true,
   "repository": {
@@ -16,7 +16,7 @@
     "deploy:preview": "pnpm --dir docs exec wrangler versions upload --preview-alias preview --no-bundle",
     "test": "vp run -r test",
     "check": "vp check",
-    "doctor": "vp exec nuxt-doctor .",
+    "doctor": "vp exec vite-doctor .",
     "prepare": "vp config"
   },
   "dependencies": {
@@ -37,6 +37,7 @@
   },
   "devDependencies": {
     "nuxt-doctor": "workspace:*",
+    "vite-doctor": "workspace:*",
     "vite-plus": "catalog:",
     "vue-doctor": "workspace:*"
   },

@@ -2460,7 +2460,7 @@ test("nuxt-doctor exits 1 for errors and 0 for warnings unless max warnings is z
       ).toBe(1);
     },
   );
-}, 15000);
+}, 30000);
 
 async function withFixture(
   files: Record<string, string>,

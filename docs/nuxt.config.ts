@@ -13,7 +13,7 @@ const ruleDetailRoutes = getRuleDocuments().map((rule) => rule.path);
 export default defineNuxtConfig({
   extends: ["docus"],
 
-  modules: [["nuxt-doctor/module", { mcp: false }]],
+  modules: [["vite-doctor/nuxt", { mcp: false }]],
 
   css: ["~/assets/css/main.css"],
 

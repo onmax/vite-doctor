@@ -28,20 +28,38 @@
       "types": "./dist/index.d.mts",
       "default": "./dist/index.mjs"
     },
+    "./nuxt": {
+      "types": "./dist/nuxt.d.mts",
+      "default": "./dist/nuxt.mjs"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.mts",
+      "default": "./dist/plugin.mjs"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vp pack src/index.ts src/cli.ts",
-    "dev": "vp pack src/index.ts src/cli.ts --watch",
+    "build": "vp pack src/index.ts src/cli.ts src/nuxt.ts src/plugin.ts",
+    "dev": "vp pack src/index.ts src/cli.ts src/nuxt.ts src/plugin.ts --watch",
     "test": "vp test --passWithNoTests",
     "check": "vp check"
   },
   "dependencies": {
     "@vue-doctor/core": "workspace:*",
+    "nuxt-doctor": "workspace:*",
     "pathe": "catalog:"
   },
   "devDependencies": {
+    "vite": "catalog:",
     "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "vite": "*"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=22.20.0"

@@ -16,4 +16,9 @@ defineProps<{
 .rule-content :deep(.header-anchor) {
   display: none;
 }
+
+.rule-content :deep(h2 > a > span.absolute),
+.rule-content :deep(h3 > a > span.absolute) {
+  display: none;
+}
 </style>

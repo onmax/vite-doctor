@@ -7,17 +7,17 @@ import {
   cleanCache,
   createReport,
   createRulesReport,
-  defineDoctorPlugin,
   explainRule,
   runDoctor,
-  viteRulePack,
   type DoctorRunOptions,
 } from "@vue-doctor/core";
 import { planCi, type PlannedCommand } from "./index.js";
+import { viteDoctorPlugins, viteDoctorRulePacks } from "./rules.js";
 
 export async function main(args = process.argv.slice(2), cwd = process.cwd()): Promise<number> {
   const dryRun = args.includes("--dry-run");
-  const command = args.find((arg) => !arg.startsWith("-")) ?? "run";
+  const firstPositional = args.find((arg) => !arg.startsWith("-"));
+  const command = firstPositional ? (isCommand(firstPositional) ? firstPositional : "scan") : "run";
 
   if (args.includes("--help") || args.includes("-h")) {
     printHelp();
@@ -26,7 +26,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
 
   if (command === "rules") {
     const { options } = parseRunArgs(args.filter((arg) => arg !== command));
-    process.stdout.write(createRulesReport([viteRulePack], options.format));
+    process.stdout.write(createRulesReport(viteDoctorRulePacks(), options.format));
     return 0;
   }
 
@@ -34,7 +34,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
     const rest = args.filter((arg) => arg !== command);
     const ruleId = rest.find((arg) => !arg.startsWith("-")) ?? "";
     const { options } = parseRunArgs(rest.filter((arg) => arg !== ruleId));
-    process.stdout.write(explainRule([viteRulePack], ruleId, options.format));
+    process.stdout.write(explainRule(viteDoctorRulePacks(), ruleId, options.format));
     return 0;
   }
 
@@ -55,10 +55,8 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
     const result = await runDoctor({
       ...options,
       root,
-      framework: "vite",
-      plugins: [
-        defineDoctorPlugin({ name: "vite-doctor/builtin-vite", rulePacks: [viteRulePack] }),
-      ],
+      framework: options.framework ?? "auto",
+      plugins: viteDoctorPlugins(),
     });
     process.stdout.write(createReport(result, options.format));
     if (result.summary.blocker || result.summary.error) return 1;
@@ -97,6 +95,7 @@ function printHelp() {
 
 Usage:
   vite-doctor [run] [--dry-run]
+  vite-doctor [path]
   vite-doctor scan [path]
   vite-doctor check [path]
   vite-doctor rules [--format json]
@@ -121,6 +120,8 @@ function parseRunArgs(args: string[]): { path: string; options: DoctorRunOptions
     else if (arg === "--fix") options.fix = true;
     else if (arg === "--unsafe-fix") options.unsafeFix = true;
     else if (arg === "--max-warnings") options.maxWarnings = Number(args[++index]);
+    else if (arg === "--framework")
+      options.framework = args[++index] as DoctorRunOptions["framework"];
     else if (arg === "--rules") options.rules = args[++index];
     else if (arg === "--severity") options.severity = args[++index] as DoctorRunOptions["severity"];
     else if (arg === "--preset") options.preset = args[++index];
@@ -130,6 +131,10 @@ function parseRunArgs(args: string[]): { path: string; options: DoctorRunOptions
     else if (!arg.startsWith("-")) path = arg;
   }
   return { path, options };
+}
+
+function isCommand(value: string) {
+  return ["run", "ci", "rules", "explain", "cache", "scan", "check"].includes(value);
 }
 
 function runCommand(item: PlannedCommand, cwd: string): Promise<number> {

@@ -33,7 +33,7 @@ const commandTabs = computed(() => [
     label: "For humans",
     value: "humans",
     icon: "i-lucide-user",
-    command: "pnpm dlx vite-doctor",
+    command: "pnpm dlx vite-doctor .",
   },
   {
     label: "For agents",
@@ -42,6 +42,24 @@ const commandTabs = computed(() => [
     command: `npx add-mcp ${mcpEndpoint.value}`,
   },
 ]);
+
+const humanIntegrations = [
+  {
+    label: "CLI",
+    icon: "i-lucide-terminal",
+    command: "pnpm dlx vite-doctor .",
+  },
+  {
+    label: "Nuxt module",
+    icon: "i-lucide-package",
+    command: "pnpm dlx nuxt module add vite-doctor/nuxt",
+  },
+  {
+    label: "Build plugin",
+    icon: "i-lucide-plug",
+    command: "doctor({ run: 'build' })",
+  },
+] as const;
 
 const activeCommandTab = ref<"humans" | "agents">("humans");
 const commandMeasure = ref<HTMLElement | null>(null);
@@ -74,8 +92,8 @@ const features = [
   {
     id: "agents",
     icon: "i-lucide-bot",
-    title: "Give agents the project context they miss",
-    description: "Give AI tools structured Nuxt evidence instead of another guess.",
+    title: "Show agents the real project state",
+    description: "Send rule results, file paths, and framework evidence they can act on.",
   },
 ] as const;
 
@@ -305,6 +323,31 @@ function toggleTheme() {
             >
               Installation
             </UButton>
+            <div
+              v-if="activeCommandTab === 'humans'"
+              class="mt-1 grid w-full max-w-xl gap-2 sm:grid-cols-3"
+              aria-label="Human integration choices"
+            >
+              <button
+                v-for="item in humanIntegrations"
+                :key="item.label"
+                type="button"
+                class="group min-w-0 rounded-md border border-neutral-200 bg-white px-3 py-2 text-left transition-colors hover:border-neutral-300 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-white/10 dark:bg-neutral-950 dark:hover:border-white/20 dark:hover:bg-neutral-900"
+                @click="copy(item.command, `integration-${item.label}`)"
+              >
+                <span
+                  class="mb-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-neutral-900 dark:text-neutral-100"
+                >
+                  <UIcon :name="item.icon" class="size-3.5" aria-hidden="true" />
+                  {{ item.label }}
+                </span>
+                <code
+                  class="block truncate font-mono text-[0.75rem] text-neutral-500 dark:text-neutral-400"
+                >
+                  {{ item.command }}
+                </code>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -319,7 +362,7 @@ function toggleTheme() {
               <span class="inline-flex size-2 rounded-full bg-[#ffbd2e]/80" aria-hidden="true" />
               <span class="inline-flex size-2 rounded-full bg-[#28c840]/80" aria-hidden="true" />
               <span class="ml-2 min-w-0 truncate font-mono text-neutral-500">~/your-app</span>
-              <span class="ml-auto hidden font-mono text-neutral-700 sm:inline">vite-doctor</span>
+              <span class="ml-auto hidden font-mono text-neutral-500 sm:inline">vite-doctor</span>
             </div>
             <div
               class="space-y-2.5 px-4.5 py-4 font-mono text-[0.75rem]/5 text-neutral-300 sm:space-y-3 sm:px-5 sm:py-5 sm:text-[0.8125rem]/6"
@@ -327,7 +370,7 @@ function toggleTheme() {
               <p class="flex items-start gap-2">
                 <span class="select-none text-emerald-400/90" aria-hidden="true">$</span>
                 <span class="min-w-0 break-words text-neutral-100/95">
-                  pnpm dlx nuxt-doctor . --rules nuxt/hydration
+                  pnpm dlx vite-doctor . --rules nuxt/hydration
                 </span>
               </p>
               <div class="space-y-1">
@@ -400,7 +443,7 @@ function toggleTheme() {
           <div
             v-for="feature in features"
             :key="feature.id"
-            class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-neutral-950/10 py-5 not-first:border-t md:block md:px-6 md:py-6 md:not-first:border-t-0 md:not-first:border-l md:first:pr-6 md:last:pl-6 dark:border-white/10"
+            class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-neutral-950/10 py-5 not-first:border-t md:block md:px-6 md:py-6 md:not-first:border-t-0 md:not-first:border-l md:first:pl-0 md:first:pr-6 md:last:pr-0 md:last:pl-6 dark:border-white/10"
           >
             <span
               class="row-span-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-neutral-50 text-neutral-700 ring-1 ring-neutral-950/10 md:mb-4 dark:bg-white/[0.03] dark:text-neutral-300 dark:ring-white/10"
