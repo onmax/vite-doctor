@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "pathe";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { parseSync, visitorKeys } from "oxc-parser";
 import { ruleDocumentationMetadata } from "./metadata.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
@@ -56,8 +56,10 @@ export interface RulesReport {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const require = createRequire(import.meta.url);
 
 let cachedRules: RuleDocument[] | null = null;
+let parser: typeof import("oxc-parser") | null = null;
 
 export function getRuleDocuments() {
   if (!cachedRules) cachedRules = collectRuleDocuments();
@@ -125,12 +127,13 @@ function collectRuleDocuments() {
 }
 
 function collectRules(files: string[], defaultPack: string, framework: RuleFramework) {
+  const { parseSync, visitorKeys } = loadParser();
   return files.flatMap((file) => {
     const text = readFileSync(file, "utf8");
     const ast = parseSync(file, text, { sourceType: "module", lang: "ts" }).program;
     const pack = readPackName(ast) ?? defaultPack;
     const source = relative(root, file);
-    const metaRules = findMetaObjects(ast)
+    const metaRules = findMetaObjects(ast, visitorKeys)
       .map((meta) => {
         const rule = {
           pack,
@@ -151,7 +154,7 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         return applyDocumentationMetadata(rule);
       })
       .filter((rule) => rule.id);
-    const helperRules = findValidatedInputRuleOptions(ast).map((opts) => ({
+    const helperRules = findValidatedInputRuleOptions(ast, visitorKeys).map((opts) => ({
       pack,
       source,
       framework,
@@ -169,6 +172,11 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
     }));
     return [...metaRules, ...helperRules].filter((rule) => rule.id);
   });
+}
+
+function loadParser() {
+  parser ??= require("oxc-parser") as typeof import("oxc-parser");
+  return parser;
 }
 
 function applyDocumentationMetadata<T extends Omit<RuleDocument, "path" | "key">>(rule: T): T {
@@ -384,9 +392,9 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   return [...links.values()];
 }
 
-function findMetaObjects(ast: any) {
+function findMetaObjects(ast: any, visitorKeys: typeof import("oxc-parser").visitorKeys) {
   const metas: any[] = [];
-  walk(ast, (node) => {
+  walk(ast, visitorKeys, (node) => {
     if (node.type !== "Property" || propertyName(node) !== "meta") return;
     if (node.value?.type !== "ObjectExpression") return;
     if (!readString(node.value, "id")) return;
@@ -395,9 +403,12 @@ function findMetaObjects(ast: any) {
   return metas;
 }
 
-function findValidatedInputRuleOptions(ast: any) {
+function findValidatedInputRuleOptions(
+  ast: any,
+  visitorKeys: typeof import("oxc-parser").visitorKeys,
+) {
   const options: any[] = [];
-  walk(ast, (node) => {
+  walk(ast, visitorKeys, (node) => {
     if (node.type !== "CallExpression") return;
     if (node.callee?.type !== "Identifier" || node.callee.name !== "createValidatedInputRule")
       return;
@@ -409,7 +420,7 @@ function findValidatedInputRuleOptions(ast: any) {
 
 function readPackName(ast: any) {
   let packName: string | null = null;
-  walk(ast, (node) => {
+  walk(ast, loadParser().visitorKeys, (node) => {
     if (packName || node.type !== "ObjectExpression") return;
     if (!findProperty(node, "rules")) return;
     packName = readString(node, "name") || null;
@@ -499,16 +510,20 @@ function propertyName(property: any) {
   return null;
 }
 
-function walk(node: any, visit: (node: any) => void) {
+function walk(
+  node: any,
+  visitorKeys: typeof import("oxc-parser").visitorKeys,
+  visit: (node: any) => void,
+) {
   if (!node || typeof node !== "object") return;
   visit(node);
   const keys = visitorKeys[node.type as keyof typeof visitorKeys] ?? [];
   for (const key of keys) {
     const value = node[key];
     if (Array.isArray(value)) {
-      for (const child of value) walk(child, visit);
+      for (const child of value) walk(child, visitorKeys, visit);
     } else {
-      walk(value, visit);
+      walk(value, visitorKeys, visit);
     }
   }
 }
