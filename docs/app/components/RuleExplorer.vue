@@ -423,13 +423,7 @@ const activeFrameworkLinkClass = computed(
       </p>
 
       <ol v-else role="list" class="grid gap-3 pt-2">
-        <li v-for="(rule, index) in filteredRules" :key="rule.ruleId" class="relative sm:pl-10">
-          <span
-            class="absolute top-2 right-[calc(100%-1.75rem)] hidden w-8 text-right font-mono text-base text-neutral-400 tabular-nums sm:block dark:text-neutral-600"
-          >
-            #{{ index + 1 }}
-          </span>
-
+        <li v-for="(rule, index) in filteredRules" :key="rule.ruleId" class="relative">
           <details
             class="group relative rounded-lg border border-neutral-950/10 bg-neutral-50/70 transition dark:border-white/10 dark:bg-white/[0.03]"
             :open="isRuleOpen(rule.ruleId)"

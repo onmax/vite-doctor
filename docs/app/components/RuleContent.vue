@@ -11,3 +11,9 @@ defineProps<{
     <ContentRenderer v-if="rule" :value="rule" />
   </div>
 </template>
+
+<style scoped>
+.rule-content :deep(.header-anchor) {
+  display: none;
+}
+</style>

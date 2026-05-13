@@ -294,13 +294,13 @@ function renderMdcComponent(name: string, props: Record<string, string>) {
 function renderExample(example: RuleExample, index: number) {
   const language = example.language || "ts";
   const lines = [];
-  lines.push(`### ${index === 0 ? "Before and after" : "Alternative before and after"}`, "");
+  if (index > 0) lines.push(`### Alternative ${index + 1}`, "");
   if (example.invalid) {
-    lines.push("Before:", "");
+    lines.push("Before", "");
     lines.push(`\`\`\`${language}`, trimCode(example.invalid), "```", "");
   }
   if (example.valid) {
-    lines.push("After:", "");
+    lines.push("After", "");
     lines.push(`\`\`\`${language}`, trimCode(example.valid), "```", "");
   }
   return lines;
