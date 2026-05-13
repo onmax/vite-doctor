@@ -12,7 +12,8 @@ import type {
 } from "../primitives.js";
 import { applyDiagnosticPolicy } from "./diagnostic-policy.js";
 import { markSession, type ScanSession } from "./scan-session.js";
-import { DEFAULT_WEIGHTS, VERSION, sha256 } from "./utils.js";
+import { scoreDiagnostics } from "./scoring.js";
+import { VERSION, sha256 } from "./utils.js";
 
 export function applyRequestedFixes(session: ScanSession): void {
   if (!session.options.fix && !session.options.unsafeFix && !session.options.structuralReview)
@@ -82,56 +83,15 @@ export function createResult(
   phases?: Record<string, number>,
   graph?: WorkspaceGraph,
 ): DoctorRunResult {
-  const weights = { ...DEFAULT_WEIGHTS, ...config.score?.weights };
-  const summary = {
-    blocker: diagnostics.filter((d) => d.severity === "blocker").length,
-    error: diagnostics.filter((d) => d.severity === "error").length,
-    warn: diagnostics.filter((d) => d.severity === "warn").length,
-    info: diagnostics.filter((d) => d.severity === "info").length,
-    fixable: diagnostics.filter((d) => d.fix?.kind === "safe").length,
-  };
-  const blockerPenalty = Math.min(100, summary.blocker * weights.blocker);
-  const errorPenalty = Math.min(summary.blocker ? 100 : 60, summary.error * weights.error);
-  const warnPenalty = Math.min(
-    summary.error || summary.blocker ? 30 : 25,
-    summary.warn * weights.warn,
-  );
-  const infoPenalty = Math.min(10, summary.info * weights.info);
-  const penalty = Math.min(100, blockerPenalty + errorPenalty + warnPenalty + infoPenalty);
-  const categories: Record<string, Diagnostic[]> = {};
-  for (const diagnostic of diagnostics) {
-    categories[diagnostic.category] ??= [];
-    categories[diagnostic.category].push(diagnostic);
-  }
-  const categoryScores = Object.fromEntries(
-    Object.entries(categories).map(([category, items]) => {
-      const categorySummary = {
-        blocker: items.filter((d) => d.severity === "blocker").length,
-        error: items.filter((d) => d.severity === "error").length,
-        warn: items.filter((d) => d.severity === "warn").length,
-        info: items.filter((d) => d.severity === "info").length,
-      };
-      const categoryPenalty = Math.min(
-        100,
-        Math.min(100, categorySummary.blocker * weights.blocker) +
-          Math.min(categorySummary.blocker ? 100 : 60, categorySummary.error * weights.error) +
-          Math.min(
-            categorySummary.error || categorySummary.blocker ? 30 : 25,
-            categorySummary.warn * weights.warn,
-          ) +
-          Math.min(10, categorySummary.info * weights.info),
-      );
-      return [category, Math.max(0, 100 - categoryPenalty)];
-    }),
-  );
+  const scoring = scoreDiagnostics(diagnostics, config);
   return {
     version: VERSION,
     reportVersion: 2,
     framework: project.framework,
     root,
-    score: Math.max(0, 100 - penalty),
-    categoryScores,
-    summary,
+    score: scoring.score,
+    categoryScores: scoring.categoryScores,
+    summary: scoring.summary,
     diagnostics,
     suppressedDiagnostics,
     timings,

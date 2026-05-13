@@ -15,6 +15,7 @@ import {
   explainRule,
   runDoctor,
 } from "../src/index.ts";
+import { scoreDiagnostics } from "../src/internal/scoring.ts";
 
 const reportProgramRule = createRule({
   meta: {
@@ -355,6 +356,30 @@ test("health score is not exhausted by warnings alone", async () => {
   );
 });
 
+test("diagnostic scoring preserves overall and category penalties", () => {
+  const diagnostics = [
+    diagnostic("blocker", "architecture", "safe"),
+    diagnostic("error", "architecture"),
+    diagnostic("warn", "architecture"),
+    diagnostic("warn", "routing"),
+    diagnostic("info", "routing"),
+  ];
+  const scoring = scoreDiagnostics(diagnostics, {});
+
+  expect(scoring.summary).toEqual({
+    blocker: 1,
+    error: 1,
+    warn: 2,
+    info: 1,
+    fixable: 1,
+  });
+  expect(scoring.score).toBe(70);
+  expect(scoring.categoryScores).toEqual({
+    architecture: 74,
+    routing: 96,
+  });
+});
+
 test("sarif reporter includes partial fingerprints", async () => {
   await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
     const result = await runDoctor({
@@ -503,6 +528,17 @@ async function runCli(cli: string, args: string[]) {
 
 function maliciousConfigSource(marker: string) {
   return `import { writeFileSync } from "node:fs";\nwriteFileSync(new URL("./${marker}", import.meta.url), "executed");\n`;
+}
+
+function diagnostic(severity: string, category: string, fixKind?: string) {
+  return {
+    ruleId: `test/${severity}-${category}`,
+    severity,
+    category,
+    file: "src/app.ts",
+    message: "Diagnostic",
+    fix: fixKind ? { kind: fixKind, edits: [] } : undefined,
+  } as any;
 }
 
 function pluginWith(...rules: any[]) {

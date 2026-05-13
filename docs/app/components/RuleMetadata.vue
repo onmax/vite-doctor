@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { fixBadgeColor, fixLabel, severityBadgeColor } from "../utils/rule-metadata";
+
 const props = defineProps<{
   pack: string;
   category: string;
@@ -8,18 +10,6 @@ const props = defineProps<{
   sourceUrl: string;
   docsUrl?: string;
 }>();
-
-const severityColor = computed(() => {
-  if (props.severity === "error") return "error";
-  if (props.severity === "warn") return "warning";
-  return "info";
-});
-
-const fixColor = computed(() => {
-  if (props.fix === "safe") return "success";
-  if (props.fix === "suggestion") return "primary";
-  return "neutral";
-});
 </script>
 
 <template>
@@ -31,11 +21,15 @@ const fixColor = computed(() => {
       <UBadge color="neutral" variant="soft" class="rounded-md font-mono">
         {{ category }}
       </UBadge>
-      <UBadge :color="severityColor" variant="soft" class="rounded-md font-mono">
+      <UBadge
+        :color="severityBadgeColor(props.severity)"
+        variant="soft"
+        class="rounded-md font-mono"
+      >
         {{ severity }}
       </UBadge>
-      <UBadge :color="fixColor" variant="soft" class="rounded-md font-mono">
-        {{ fix || "no fix" }}
+      <UBadge :color="fixBadgeColor(props.fix)" variant="soft" class="rounded-md font-mono">
+        {{ fixLabel(props.fix) }}
       </UBadge>
     </div>
 

@@ -102,6 +102,39 @@ test("CLI accepts run as the explicit command", async () => {
   }
 });
 
+test("CLI prints Vite rule metadata", async () => {
+  const repoRoot = findRepoRoot();
+  const writes: string[] = [];
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    await expect(main(["rules", "--format", "json"], repoRoot)).resolves.toBe(0);
+  } finally {
+    process.stdout.write = write;
+  }
+
+  expect(writes.join("")).toContain("vite/define/no-secret-define");
+});
+
+test("CLI scan fails for a missing path", async () => {
+  const repoRoot = findRepoRoot();
+  const errors: string[] = [];
+  const error = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  };
+  try {
+    await expect(main(["scan", "__missing_vite_doctor_path__"], repoRoot)).resolves.toBe(1);
+  } finally {
+    console.error = error;
+  }
+
+  expect(errors.join("\n")).toContain("No readable directory found");
+});
+
 async function withFixture(files: Record<string, string>, fn: (root: string) => void) {
   const root = await mkdtemp(join(tmpdir(), "vite-doctor-"));
   try {

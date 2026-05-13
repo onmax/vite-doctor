@@ -1,0 +1,40 @@
+import { AnyNode, createRule, report } from "./shared.js";
+import {
+  collectReplayableSideEffects,
+  getAsyncDataCall,
+  replayableSeverity,
+} from "./async-data.js";
+
+export const asyncDataHandlerPure = createRule({
+  meta: {
+    id: "nuxt/async-data-handler-pure",
+    title: "Keep async data handlers replay-safe",
+    category: "fetching",
+    severity: "warn",
+    fixable: "suggestion",
+    requires: { script: true, nuxt: true },
+  },
+  create(ctx) {
+    return {
+      ScriptNode(node: AnyNode) {
+        const call = getAsyncDataCall(ctx, node);
+        if (!call?.handler) return;
+        for (const effect of collectReplayableSideEffects(ctx, call.handler)) {
+          const isMutatingFetch = effect.kind === "mutating-fetch";
+          report(
+            ctx,
+            effect.node,
+            "nuxt/async-data-handler-pure",
+            replayableSeverity(effect.confidence),
+            "fetching",
+            isMutatingFetch
+              ? "This async-data handler performs a mutating $fetch() request that can replay."
+              : "This async-data handler performs a side effect that can replay.",
+            "Return data from the handler. Move effects to explicit event handlers, callOnce(), or guarded watchers.",
+          );
+          break;
+        }
+      },
+    };
+  },
+});

@@ -22,10 +22,23 @@ export async function detectProject(
   }>(join(root, "package.json"));
   const deps = { ...packageJson?.dependencies, ...packageJson?.devDependencies };
   const nuxtVersion = deps.nuxt ?? deps["@nuxt/kit"];
+  const viteVersion = deps.vite;
+  const nitroVersion = deps.nitro ?? deps["nitropack"];
+  const hasVue = Boolean(deps.vue);
   const vueVersion = deps.vue ?? ">=3.5";
   const framework: DoctorFramework =
-    requested === "auto" ? (nuxtVersion ? "nuxt" : "vue") : requested;
-  const ssr = framework === "nuxt" || hasVueSsrEvidence(packageJson, deps);
+    requested === "auto"
+      ? nuxtVersion
+        ? "nuxt"
+        : nitroVersion
+          ? "nitro"
+          : hasVue
+            ? "vue"
+            : viteVersion
+              ? "vite"
+              : "vue"
+      : requested;
+  const ssr = framework === "nuxt" || framework === "nitro" || hasVueSsrEvidence(packageJson, deps);
   const isMonorepo =
     existsSync(join(root, "pnpm-workspace.yaml")) || existsSync(join(root, "turbo.json"));
   const nuxt =

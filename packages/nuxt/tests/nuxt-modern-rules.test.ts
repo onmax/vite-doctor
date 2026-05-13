@@ -38,6 +38,14 @@ import {
   preferUseCookieForInitialClientState,
   noNonSerializableUseState,
   requireStableAsyncDataKey,
+  asyncDataNoMutationMethods,
+  noManualActionUseFetch,
+  asyncDataHandlerPure,
+  previewModeGlobalRefresh,
+  noGlobalRefreshWithoutJustification,
+  asyncDataExplicitKeyForRefreshable,
+  postFetchRequiresReadonlyMarker,
+  noMutationToastInUseFetchCallback,
 } from "../src/rules/nuxt.ts";
 import {
   noBrowserApiInServer,
@@ -50,7 +58,7 @@ import {
   preferValidatedRouterParams,
   requireEventRuntimeConfigInServer,
 } from "../src/rules/nitro/index.ts";
-import { runRuleFixture } from "../../core/src/testkit.ts";
+import { runProjectFixture, runRuleFixture } from "../../core/src/testkit.ts";
 import {
   collectNuxtDoctorRulePacks,
   resolveNuxtDoctorMcpOptions,
@@ -161,6 +169,54 @@ const cases = [
     source: `export function useUser() { return useAsyncData(() => $fetch('/api/user')) }`,
   },
   {
+    rule: asyncDataNoMutationMethods,
+    id: "nuxt/async-data-no-mutation-methods",
+    file: "app/pages/settings.vue",
+    source: `<script setup lang="ts">useFetch('/api/settings', { method: 'PATCH' })</script>`,
+  },
+  {
+    rule: noManualActionUseFetch,
+    id: "nuxt/no-manual-action-usefetch",
+    file: "app/pages/settings.vue",
+    source: `<script setup lang="ts">const { execute } = useLazyFetch('/api/settings', { method: 'PATCH', immediate: false })</script>`,
+  },
+  {
+    rule: asyncDataHandlerPure,
+    id: "nuxt/async-data-handler-pure",
+    file: "app/pages/settings.vue",
+    source: `<script setup lang="ts">useAsyncData('settings', () => $fetch('/api/settings', { method: 'put' }))</script>`,
+  },
+  {
+    rule: previewModeGlobalRefresh,
+    id: "nuxt/preview-mode-global-refresh",
+    file: "app/plugins/preview.ts",
+    source: `usePreviewMode({ shouldEnable: () => import.meta.dev })`,
+  },
+  {
+    rule: noGlobalRefreshWithoutJustification,
+    id: "nuxt/no-global-refresh-without-justification",
+    file: "app/plugins/refresh.ts",
+    source: `export default defineNuxtPlugin(() => refreshNuxtData())`,
+  },
+  {
+    rule: asyncDataExplicitKeyForRefreshable,
+    id: "nuxt/async-data-explicit-key-for-refreshable",
+    file: "app/pages/settings.vue",
+    source: `<script setup lang="ts">const { refresh } = useFetch('/api/settings')</script>`,
+  },
+  {
+    rule: postFetchRequiresReadonlyMarker,
+    id: "nuxt/post-fetch-requires-readonly-marker",
+    file: "app/pages/search.vue",
+    source: `<script setup lang="ts">useFetch('/api/search', { method: 'POST', body })</script>`,
+  },
+  {
+    rule: noMutationToastInUseFetchCallback,
+    id: "nuxt/no-mutation-toast-in-usefetch-callback",
+    file: "app/pages/settings.vue",
+    source: `<script setup lang="ts">useLazyFetch('/api/settings', { method: 'PATCH', onResponse() { toast.add({ title: 'Saved' }) } })</script>`,
+  },
+  {
     rule: preferExplicitUseStateKeyInExportedComposables,
     id: "nuxt/state/prefer-explicit-usestate-key-in-exported-composables",
     file: "app/composables/useCounter.ts",
@@ -257,6 +313,336 @@ for (const item of cases) {
     expect(result.diagnostics[0]?.ruleId).toBe(item.id);
   });
 }
+
+test("async data mutation rule resolves lowercase and enum-like methods", async () => {
+  const result = await runRuleFixture({
+    rule: asyncDataNoMutationMethods,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+useFetch('/api/a', { method: 'patch' })
+useLazyFetch('/api/b', { method: HttpMethod.DELETE })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["error", "error"]);
+});
+
+test("POST async data requires explicit readonly intent", async () => {
+  const result = await runRuleFixture({
+    rule: postFetchRequiresReadonlyMarker,
+    framework: "nuxt",
+    files: {
+      "app/pages/search.vue": `<script setup lang="ts">
+useFetch('/api/rules/query', {
+  method: 'POST',
+  // nuxt-doctor: async-data-readonly
+  body,
+})
+useFetch('/api/search', {
+  method: 'POST',
+  meta: { readonly: true },
+  body,
+})
+useFetch('/api/settings', { method: 'POST', body })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.severity).toBe("error");
+});
+
+test("POST async data warns for unmarked query-like paths and errors for write-like paths", async () => {
+  const result = await runRuleFixture({
+    rule: postFetchRequiresReadonlyMarker,
+    framework: "nuxt",
+    files: {
+      "app/pages/search.vue": `<script setup lang="ts">
+useFetch('/api/rules/query', { method: 'POST', body })
+useFetch('/api/jobs/trigger', { method: 'POST', body })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn", "error"]);
+});
+
+test("POST async data supports readonly path and write-like segment options", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [postFetchRequiresReadonlyMarker],
+    config: {
+      rules: {
+        "nuxt/post-fetch-requires-readonly-marker": [
+          "error",
+          {
+            readonlyPaths: ["/api/cube/**"],
+            writeLikePathSegments: ["mutate"],
+          },
+        ],
+      },
+    },
+    files: {
+      "app/pages/search.vue": `<script setup lang="ts">
+useFetch('/api/cube/query', { method: 'POST', body })
+useFetch('/api/foo/mutate', { method: 'POST', body })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.severity).toBe("error");
+});
+
+test("manual action useFetch warns for manual refresh and errors for mutating methods", async () => {
+  const result = await runRuleFixture({
+    rule: noManualActionUseFetch,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+const { refresh } = useAsyncData('settings', () => $fetch('/api/settings'), { immediate: false })
+const { execute } = useLazyFetch('/api/settings', { method: 'DELETE', immediate: false })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn", "error"]);
+});
+
+test("manual action useFetch keeps read-like POST immediate:false as warning", async () => {
+  const result = await runRuleFixture({
+    rule: noManualActionUseFetch,
+    framework: "nuxt",
+    files: {
+      "app/pages/search.vue": `<script setup lang="ts">
+const { execute } = useLazyFetch('/api/search', { method: 'POST', immediate: false })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.severity).toBe("warn");
+});
+
+test("preview mode rule accepts explicit callbacks", async () => {
+  const result = await runRuleFixture({
+    rule: previewModeGlobalRefresh,
+    framework: "nuxt",
+    files: {
+      "app/plugins/preview.ts": `usePreviewMode({
+  shouldEnable: () => import.meta.dev,
+  onEnable: () => {},
+  onDisable: () => {},
+})`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("preview mode rule can require review even with explicit callbacks", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [previewModeGlobalRefresh],
+    config: {
+      rules: {
+        "nuxt/preview-mode-global-refresh": [
+          "warn",
+          { allowPreviewBroadEnablementWithExplicitCallbacks: false },
+        ],
+      },
+    },
+    files: {
+      "app/plugins/preview.ts": `usePreviewMode({
+  shouldEnable: () => import.meta.dev,
+  onEnable: () => {},
+  onDisable: () => {},
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nuxt/preview-mode-global-refresh");
+});
+
+test("global refresh rule accepts keyed refreshes and explicit global intent", async () => {
+  const result = await runRuleFixture({
+    rule: noGlobalRefreshWithoutJustification,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+refreshNuxtData('settings')
+refreshNuxtData(['a', 'b'])
+// nuxt-doctor: global-refresh-intentional preview mode refreshes all read data
+refreshNuxtData()
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("global refresh intent marker only suppresses the adjacent call", async () => {
+  const result = await runRuleFixture({
+    rule: noGlobalRefreshWithoutJustification,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+// nuxt-doctor: global-refresh-intentional preview mode refreshes all read data
+refreshNuxtData()
+refreshNuxtData()
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("refreshable async data key rule accepts explicit keys", async () => {
+  const result = await runRuleFixture({
+    rule: asyncDataExplicitKeyForRefreshable,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+const { refresh: refreshA } = useAsyncData('settings', () => $fetch('/api/settings'))
+const { refresh: refreshB } = useFetch('/api/settings', { key: 'settings' })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("refreshable async data key rule reports only locally refreshable unkeyed entries", async () => {
+  const result = await runRuleFixture({
+    rule: asyncDataExplicitKeyForRefreshable,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+refreshNuxtData('settings')
+useFetch('/api/passive')
+const { refresh } = useFetch('/api/settings')
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("refreshable async data key rule warns for a single unkeyed entry with keyed refresh", async () => {
+  const result = await runRuleFixture({
+    rule: asyncDataExplicitKeyForRefreshable,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+useFetch('/api/settings')
+refreshNuxtData('settings')
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("async data handler purity reports replayable side effects conservatively", async () => {
+  const result = await runRuleFixture({
+    rule: asyncDataHandlerPure,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+useAsyncData('settings', async () => {
+  analytics.track('loaded')
+  return $fetch('/api/settings')
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.severity).toBe("warn");
+});
+
+test("async data handler purity narrows store assignment evidence to local Pinia stores", async () => {
+  const result = await runRuleFixture({
+    rule: asyncDataHandlerPure,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+const generic = { seen: false }
+const userStore = useUserStore()
+useAsyncData('generic', () => {
+  generic.seen = true
+  return $fetch('/api/generic')
+})
+useAsyncData('store', () => {
+  userStore.seen = true
+  return $fetch('/api/store')
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.severity).toBe("warn");
+});
+
+test("async data handler purity ignores nested callbacks unless synchronously invoked", async () => {
+  const result = await runRuleFixture({
+    rule: asyncDataHandlerPure,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+useAsyncData('ignored', () => {
+  onMounted(() => toast.add({ title: 'Mounted' }))
+  return $fetch('/api/ignored')
+})
+useAsyncData('invoked', () => {
+  const mark = () => toast.add({ title: 'Loaded' })
+  mark()
+  return $fetch('/api/invoked')
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("async data handler purity supports opt-in side-effect callees", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [asyncDataHandlerPure],
+    config: {
+      rules: {
+        "nuxt/async-data-handler-pure": ["warn", { sideEffectCallees: ["metrics.count"] }],
+      },
+    },
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+useAsyncData('metrics', () => {
+  metrics.count('loaded')
+  return $fetch('/api/settings')
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.severity).toBe("warn");
+});
+
+test("useFetch callback side effects warn for reads and error for writes", async () => {
+  const result = await runRuleFixture({
+    rule: noMutationToastInUseFetchCallback,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+useFetch('/api/settings', { onResponse() { toast.add({ title: 'Loaded' }) } })
+useFetch('/api/settings', { method: 'PUT', onResponse() { toast.add({ title: 'Saved' }) } })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn", "error"]);
+});
 
 test("app directory placement is only reported for Nuxt 4 projects", async () => {
   const result = await runRuleFixture({

@@ -1,6 +1,6 @@
 export type DoctorSeverity = "blocker" | "error" | "warn" | "info";
 export type FixSafety = "safe" | "unsafe" | "suggestion" | "structural-review";
-export type DoctorFramework = "vue" | "nuxt";
+export type DoctorFramework = "vue" | "nuxt" | "vite" | "nitro";
 export type ExecutionKind =
   | "file"
   | "manifest"

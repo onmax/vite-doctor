@@ -6,7 +6,11 @@ import type { DoctorConfig } from "../config.js";
 import type { DoctorRunOptions } from "../config.js";
 import type { ProjectInfo, SourceFileHandle } from "../primitives.js";
 
-const DEFAULT_INCLUDE = ["**/*.{vue,ts,tsx,js,mjs,cjs}"];
+const DEFAULT_INCLUDE = [
+  "**/*.{vue,ts,tsx,js,mjs,cjs}",
+  "vite.config.{ts,js,mjs,cjs,mts,cts}",
+  "vitest.config.{ts,js,mjs,cjs,mts,cts}",
+];
 const CONTENT_INCLUDE = ["content/**/*.{md,mdc}"];
 const DEFAULT_EXCLUDE = [
   "**/node_modules/**",

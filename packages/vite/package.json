@@ -36,6 +36,10 @@
     "test": "vp test --passWithNoTests",
     "check": "vp check"
   },
+  "dependencies": {
+    "@vue-doctor/core": "workspace:*",
+    "pathe": "catalog:"
+  },
   "devDependencies": {
     "vite-plus": "catalog:"
   },

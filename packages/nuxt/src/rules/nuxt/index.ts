@@ -2,6 +2,14 @@ export { noExplicitAutoImport } from "./no-explicit-auto-import.js";
 export { noConflictingUseFetchImport } from "./no-conflicting-use-fetch-import.js";
 export { noAutoImportCollision } from "./no-auto-import-collision.js";
 export { noRawFetchInSetup } from "./no-raw-fetch-in-setup.js";
+export { asyncDataNoMutationMethods } from "./async-data-no-mutation-methods.js";
+export { noManualActionUseFetch } from "./no-manual-action-usefetch.js";
+export { asyncDataHandlerPure } from "./async-data-handler-pure.js";
+export { previewModeGlobalRefresh } from "./preview-mode-global-refresh.js";
+export { noGlobalRefreshWithoutJustification } from "./no-global-refresh-without-justification.js";
+export { asyncDataExplicitKeyForRefreshable } from "./async-data-explicit-key-for-refreshable.js";
+export { postFetchRequiresReadonlyMarker } from "./post-fetch-requires-readonly-marker.js";
+export { noMutationToastInUseFetchCallback } from "./no-mutation-toast-in-usefetch-callback.js";
 export { noAwaitInsideCustomWrapper } from "./no-await-inside-custom-wrapper.js";
 export { preferNuxtUseRoute } from "./prefer-nuxt-use-route.js";
 export { noUseRouteInMiddleware } from "./no-use-route-in-middleware.js";
@@ -41,6 +49,14 @@ import { noExplicitAutoImport } from "./no-explicit-auto-import.js";
 import { noConflictingUseFetchImport } from "./no-conflicting-use-fetch-import.js";
 import { noAutoImportCollision } from "./no-auto-import-collision.js";
 import { noRawFetchInSetup } from "./no-raw-fetch-in-setup.js";
+import { asyncDataNoMutationMethods } from "./async-data-no-mutation-methods.js";
+import { noManualActionUseFetch } from "./no-manual-action-usefetch.js";
+import { asyncDataHandlerPure } from "./async-data-handler-pure.js";
+import { previewModeGlobalRefresh } from "./preview-mode-global-refresh.js";
+import { noGlobalRefreshWithoutJustification } from "./no-global-refresh-without-justification.js";
+import { asyncDataExplicitKeyForRefreshable } from "./async-data-explicit-key-for-refreshable.js";
+import { postFetchRequiresReadonlyMarker } from "./post-fetch-requires-readonly-marker.js";
+import { noMutationToastInUseFetchCallback } from "./no-mutation-toast-in-usefetch-callback.js";
 import { noAwaitInsideCustomWrapper } from "./no-await-inside-custom-wrapper.js";
 import { preferNuxtUseRoute } from "./prefer-nuxt-use-route.js";
 import { noUseRouteInMiddleware } from "./no-use-route-in-middleware.js";
@@ -82,6 +98,14 @@ const rules = [
   noConflictingUseFetchImport,
   noAutoImportCollision,
   noRawFetchInSetup,
+  asyncDataNoMutationMethods,
+  noManualActionUseFetch,
+  asyncDataHandlerPure,
+  previewModeGlobalRefresh,
+  noGlobalRefreshWithoutJustification,
+  asyncDataExplicitKeyForRefreshable,
+  postFetchRequiresReadonlyMarker,
+  noMutationToastInUseFetchCallback,
   noAwaitInsideCustomWrapper,
   preferNuxtUseRoute,
   noUseRouteInMiddleware,

@@ -14,13 +14,13 @@ import {
 export interface RuleFixtureOptions {
   rule: DoctorRule;
   files: Record<string, string>;
-  framework?: "vue" | "nuxt";
+  framework?: "vue" | "nuxt" | "vite" | "nitro";
   dependencies?: Record<string, string>;
 }
 
 export interface ProjectFixtureOptions {
   files: Record<string, string>;
-  framework?: "vue" | "nuxt";
+  framework?: "vue" | "nuxt" | "vite" | "nitro";
   dependencies?: Record<string, string>;
   rules?: DoctorRule[];
   config?: DoctorConfig;
@@ -68,7 +68,11 @@ export async function runProjectFixture(options: ProjectFixtureOptions): Promise
         dependencies:
           options.framework === "nuxt"
             ? { vue: "^3.5.0", nuxt: "^4.0.0", ...options.dependencies }
-            : { vue: "^3.5.0", ...options.dependencies },
+            : options.framework === "vite"
+              ? { vite: "^8.0.0", ...options.dependencies }
+              : options.framework === "nitro"
+                ? { nitropack: "^2.0.0", ...options.dependencies }
+                : { vue: "^3.5.0", ...options.dependencies },
       }),
     );
     for (const [file, text] of Object.entries(options.files)) {

@@ -1,6 +1,18 @@
 #!/usr/bin/env node
+import { statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { resolve } from "pathe";
+import {
+  cleanCache,
+  createReport,
+  createRulesReport,
+  defineDoctorPlugin,
+  explainRule,
+  runDoctor,
+  viteRulePack,
+  type DoctorRunOptions,
+} from "@vue-doctor/core";
 import { planCi, type PlannedCommand } from "./index.js";
 
 export async function main(args = process.argv.slice(2), cwd = process.cwd()): Promise<number> {
@@ -9,6 +21,48 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
 
   if (args.includes("--help") || args.includes("-h")) {
     printHelp();
+    return 0;
+  }
+
+  if (command === "rules") {
+    const { options } = parseRunArgs(args.filter((arg) => arg !== command));
+    process.stdout.write(createRulesReport([viteRulePack], options.format));
+    return 0;
+  }
+
+  if (command === "explain") {
+    const rest = args.filter((arg) => arg !== command);
+    const ruleId = rest.find((arg) => !arg.startsWith("-")) ?? "";
+    const { options } = parseRunArgs(rest.filter((arg) => arg !== ruleId));
+    process.stdout.write(explainRule([viteRulePack], ruleId, options.format));
+    return 0;
+  }
+
+  if (command === "cache" && args.includes("clean")) {
+    cleanCache(cwd);
+    console.log("Doctor cache cleaned");
+    return 0;
+  }
+
+  if (command === "scan" || command === "check") {
+    const { path, options } = parseRunArgs(args.filter((arg) => arg !== command));
+    const root = resolve(cwd, path);
+    const stat = statSync(root, { throwIfNoEntry: false });
+    if (!stat?.isDirectory()) {
+      console.error(`No readable directory found at ${root}`);
+      return 1;
+    }
+    const result = await runDoctor({
+      ...options,
+      root,
+      framework: "vite",
+      plugins: [
+        defineDoctorPlugin({ name: "vite-doctor/builtin-vite", rulePacks: [viteRulePack] }),
+      ],
+    });
+    process.stdout.write(createReport(result, options.format));
+    if (result.summary.blocker || result.summary.error) return 1;
+    if (options.maxWarnings !== undefined && result.summary.warn > options.maxWarnings) return 1;
     return 0;
   }
 
@@ -43,8 +97,39 @@ function printHelp() {
 
 Usage:
   vite-doctor [run] [--dry-run]
+  vite-doctor scan [path]
+  vite-doctor check [path]
+  vite-doctor rules [--format json]
 
-Runs the project's existing scripts with the detected package manager.`);
+Runs the project's existing scripts with the detected package manager by default.`);
+}
+
+function parseRunArgs(args: string[]): { path: string; options: DoctorRunOptions } {
+  const options: DoctorRunOptions = {};
+  let path = ".";
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if (arg === "--trusted-config" || arg === "--config") options.config = true;
+    else if (arg === "--changed") options.changed = true;
+    else if (arg === "--types") options.types = true;
+    else if (arg === "--threads") options.threads = Number(args[++index]);
+    else if (arg === "--analyses") options.analyses = args[++index];
+    else if (arg === "--profile") options.profile = true;
+    else if (arg === "--new-only") options.newOnly = true;
+    else if (arg === "--cache") options.cache = true;
+    else if (arg === "--no-cache") options.cache = false;
+    else if (arg === "--fix") options.fix = true;
+    else if (arg === "--unsafe-fix") options.unsafeFix = true;
+    else if (arg === "--max-warnings") options.maxWarnings = Number(args[++index]);
+    else if (arg === "--rules") options.rules = args[++index];
+    else if (arg === "--severity") options.severity = args[++index] as DoctorRunOptions["severity"];
+    else if (arg === "--preset") options.preset = args[++index];
+    else if (arg === "--since") options.since = args[++index];
+    else if (arg === "--baseline") options.baseline = args[++index];
+    else if (arg === "--format") options.format = args[++index];
+    else if (!arg.startsWith("-")) path = arg;
+  }
+  return { path, options };
 }
 
 function runCommand(item: PlannedCommand, cwd: string): Promise<number> {

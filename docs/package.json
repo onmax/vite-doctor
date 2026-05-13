@@ -8,9 +8,9 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "node ../tools/generate-rule-docs.mjs && nuxi dev",
-    "build": "node ../tools/generate-rule-docs.mjs && nuxi build",
-    "generate": "node ../tools/generate-rule-docs.mjs && nuxi generate",
+    "dev": "nuxi dev",
+    "build": "nuxi build",
+    "generate": "nuxi generate",
     "preview": "nuxi preview",
     "test": "vp test --passWithNoTests",
     "check": "vp check"
@@ -23,16 +23,13 @@
     "@oxc-parser/binding-wasm32-wasi": "^0.129.0",
     "@oxc-project/types": "^0.129.0",
     "@vueuse/core": "catalog:",
-    "@webcontainer/api": "^1.6.1",
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0",
     "docus": "catalog:",
     "h3": "^1.15.11",
-    "nanotar": "^0.2.0",
     "nuxt": "catalog:",
     "nuxt-doctor": "workspace:*",
     "std-env": "catalog:",
     "tailwindcss": "catalog:",
+    "vue": "^3.5.34",
     "zod": "catalog:"
   },
   "devDependencies": {

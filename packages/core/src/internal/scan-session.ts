@@ -230,6 +230,10 @@ function selectRules(
   return registry.rules
     .filter((rule) => !options.preset || presetRules.has(rule.meta.id))
     .filter((rule) => !rule.meta.requires?.nuxt || project.framework === "nuxt")
+    .filter(
+      (rule) =>
+        !rule.meta.requires?.vue || project.framework === "vue" || project.framework === "nuxt",
+    )
     .filter((rule) => !rule.meta.requires?.types || options.types)
     .filter((rule) => supportsFrameworkVersion(rule, project))
     .filter(

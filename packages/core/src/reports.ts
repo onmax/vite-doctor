@@ -4,9 +4,7 @@ import type { Diagnostic, DoctorRunResult, RulePack } from "./primitives.js";
 
 export function createTextReport(result: DoctorRunResult): string {
   const lines: string[] = [];
-  lines.push(
-    `Detected: ${result.project.framework === "nuxt" ? `Nuxt ${result.project.nuxtVersion ?? "4"} + ` : ""}Vue ${result.project.vueVersion}`,
-  );
+  lines.push(`Detected: ${frameworkLabel(result)}`);
   lines.push(`Workspace: ${result.root}`);
   lines.push(`Health score: ${result.score}/100`);
   if (result.project.nuxt?.manifest) {
@@ -104,7 +102,7 @@ export function createSarifReport(result: DoctorRunResult): string {
         {
           tool: {
             driver: {
-              name: result.framework === "nuxt" ? "Nuxt Doctor" : "Vue Doctor",
+              name: doctorName(result),
               semanticVersion: result.version,
               rules: [...rules.values()].map((diagnostic) => ({
                 id: diagnostic.ruleId,
@@ -160,6 +158,21 @@ export function createSarifReport(result: DoctorRunResult): string {
     null,
     2,
   )}\n`;
+}
+
+function frameworkLabel(result: DoctorRunResult): string {
+  if (result.project.framework === "nuxt")
+    return `Nuxt ${result.project.nuxtVersion ?? "4"} + Vue ${result.project.vueVersion}`;
+  if (result.project.framework === "vite") return "Vite";
+  if (result.project.framework === "nitro") return "Nitro";
+  return `Vue ${result.project.vueVersion}`;
+}
+
+function doctorName(result: DoctorRunResult): string {
+  if (result.framework === "nuxt") return "Nuxt Doctor";
+  if (result.framework === "vite") return "Vite Doctor";
+  if (result.framework === "nitro") return "Nitro Doctor";
+  return "Vue Doctor";
 }
 
 export function createReport(result: DoctorRunResult, format = "text"): string {

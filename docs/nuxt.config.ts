@@ -1,31 +1,21 @@
 import { defineNuxtConfig } from "nuxt/config";
 import { join } from "pathe";
 import { env, process } from "std-env";
+import { fileURLToPath } from "node:url";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
 
 export default defineNuxtConfig({
   extends: ["docus"],
 
-  modules: [["nuxt-doctor/module", { mcp: false }], "~~/modules/wc-fixture"],
+  modules: [["nuxt-doctor/module", { mcp: false }]],
 
   css: ["~/assets/css/main.css"],
 
   vite: {
-    optimizeDeps: { exclude: ["@webcontainer/api"] },
-    server: {
-      headers: {
-        "Cross-Origin-Opener-Policy": "same-origin",
-        "Cross-Origin-Embedder-Policy": "require-corp",
-      },
-    },
-  },
-
-  routeRules: {
-    "/**": {
-      headers: {
-        "Cross-Origin-Opener-Policy": "same-origin",
-        "Cross-Origin-Embedder-Policy": "require-corp",
+    resolve: {
+      alias: {
+        extend: fileURLToPath(new URL("./app/utils/extend-default.ts", import.meta.url)),
       },
     },
   },
