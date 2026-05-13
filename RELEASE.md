@@ -29,6 +29,8 @@ Publish the alpha:
 pnpm release:publish:alpha
 ```
 
+Local publishing does not use npm provenance because provenance generation requires a supported CI provider. Use the manual GitHub Actions workflow when publishing with provenance is required.
+
 Verify npm after publishing:
 
 ```bash
@@ -42,4 +44,4 @@ The `alpha` dist-tag should point at `0.0.1-alpha.1`. Do not move `latest` for t
 
 `.github/workflows/release.yml` is manual-only through `workflow_dispatch`. It is prepared for later CI/CD use, but the local manual release remains the default while GitHub Actions quota is constrained.
 
-The workflow requires `NPM_TOKEN` and uses npm provenance through GitHub OIDC.
+The workflow requires `NPM_TOKEN` and uses npm provenance through GitHub OIDC via `pnpm release:publish:alpha:provenance`.

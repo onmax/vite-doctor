@@ -20,7 +20,8 @@
     "release:check": "pnpm ready",
     "release:version": "changeset version && pnpm --dir packages/vite exec npm version 0.0.1-alpha.1 --no-git-tag-version --allow-same-version",
     "release:pack": "mkdir -p artifacts && pnpm --filter vite-doctor build && pnpm --filter vite-doctor pack --pack-destination artifacts",
-    "release:publish:alpha": "pnpm --dir packages/vite publish --provenance --access public --tag alpha",
+    "release:publish:alpha": "pnpm --dir packages/vite publish --access public --tag alpha",
+    "release:publish:alpha:provenance": "pnpm --dir packages/vite publish --provenance --access public --tag alpha",
     "prepare": "vp config"
   },
   "dependencies": {

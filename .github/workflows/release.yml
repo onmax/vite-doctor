@@ -24,6 +24,6 @@ jobs:
       - run: pnpm release:check
       - run: pnpm release:version
       - run: pnpm release:pack
-      - run: pnpm release:publish:alpha
+      - run: pnpm release:publish:alpha:provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
