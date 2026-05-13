@@ -32,7 +32,3 @@ vp run ready
 vp run -r test
 vp run -r build
 ```
-
-## Release
-
-The manual alpha release flow is documented in [RELEASE.md](./RELEASE.md).
