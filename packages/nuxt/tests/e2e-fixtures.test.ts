@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { relative } from "pathe";
 import { $fetch, setup } from "@nuxt/test-utils/e2e";

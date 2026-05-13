@@ -9,6 +9,7 @@ catalog:
   "@nuxt/content": ^3.12.0
   "@nuxt/fonts": ^0.14.0
   "@nuxt/kit": ^4.4.2
+  "@nuxt/devtools-kit": ^3.2.4
   "@nuxt/scripts": ^1.0.6
   "@nuxt/ui": ^4.6.1
   "@nuxtjs/mcp-toolkit": ^0.7.0

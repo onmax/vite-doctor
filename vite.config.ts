@@ -1,6 +1,9 @@
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
+  pack: {
+    deps: { neverBundle: ["eslint-plugin-vue", "oxc-parser", "typescript"] },
+  },
   staged: {
     "*": "vp check --fix",
   },

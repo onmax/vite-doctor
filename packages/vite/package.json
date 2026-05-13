@@ -1,6 +1,6 @@
 {
   "name": "vite-doctor",
-  "version": "0.0.0",
+  "version": "0.0.1-alpha.1",
   "description": "Universal CLI command runner for JavaScript projects.",
   "keywords": [
     "cli",
@@ -49,7 +49,10 @@
     "check": "vp check"
   },
   "dependencies": {
-    "pathe": "catalog:"
+    "eslint-plugin-vue": "catalog:",
+    "oxc-parser": "catalog:",
+    "pathe": "catalog:",
+    "typescript": "catalog:"
   },
   "devDependencies": {
     "@vue-doctor/core": "workspace:*",
