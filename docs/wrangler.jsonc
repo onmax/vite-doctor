@@ -23,7 +23,7 @@
   ],
   "routes": [
     {
-      "pattern": "nuxt-doctor.onmax.me",
+      "pattern": "vite-doctor.onmax.me",
       "custom_domain": true,
     },
   ],
