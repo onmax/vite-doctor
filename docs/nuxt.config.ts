@@ -59,10 +59,6 @@ export default defineNuxtConfig({
   routeRules: {
     ...Object.fromEntries(docsRoutes.map((route) => [route, { prerender: true }])),
     ...Object.fromEntries(ruleIndexRoutes.map((route) => [route, { prerender: true }])),
-    "/vue/rules": { redirect: { to: "/rules/vue", statusCode: 301 }, prerender: true },
-    "/nuxt/rules": { redirect: { to: "/rules/nuxt", statusCode: 301 }, prerender: true },
-    "/nitro/rules": { redirect: { to: "/rules/nitro", statusCode: 301 }, prerender: true },
-    "/vite/rules": { redirect: { to: "/rules/vite", statusCode: 301 }, prerender: true },
     "/_nuxt/**": {
       headers: { "cache-control": "public, max-age=31536000, immutable" },
     },

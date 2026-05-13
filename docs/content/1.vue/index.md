@@ -39,7 +39,7 @@ Add the CLI and scan a Vue project.
 ::::u-page-card
 
 icon: i-lucide-list-checks
-to: /vue/rules
+to: /rules/vue
 
 ---
 

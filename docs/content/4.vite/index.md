@@ -24,7 +24,7 @@ Start with Vite rules
 ---
 
 icon: i-lucide-list-checks
-to: /vite/rules
+to: /rules/vite
 
 ---
 

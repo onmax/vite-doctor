@@ -12,8 +12,9 @@ const sampleRules: RawRuleEntry[] = [
     pack: "vue-doctor/vue",
     severity: "error",
     category: "reactivity",
-    fixable: "suggestion",
-    docsPath: "/vue/rules/reactivity/no-ref-as-operand",
+    fix: "suggestion",
+    ruleId: "vue/reactivity/no-ref-as-operand",
+    path: "/vue/rules/reactivity/no-ref-as-operand",
   },
   {
     id: "nuxt/fetch/no-raw-fetch-in-setup",
@@ -22,8 +23,9 @@ const sampleRules: RawRuleEntry[] = [
     pack: "nuxt-doctor/nuxt",
     severity: "warn",
     category: "fetch",
-    fixable: "no",
-    docsPath: "/nuxt/rules/fetch/no-raw-fetch-in-setup",
+    fix: "no",
+    ruleId: "nuxt/fetch/no-raw-fetch-in-setup",
+    path: "/nuxt/rules/fetch/no-raw-fetch-in-setup",
   },
   {
     id: "vite/env/no-secret-prefix",
@@ -32,8 +34,9 @@ const sampleRules: RawRuleEntry[] = [
     pack: "vite-doctor/vite",
     severity: "warn",
     category: "env",
-    fixable: "safe",
-    docsPath: "/vite/rules/env/no-secret-prefix",
+    fix: "safe",
+    ruleId: "vite/env/no-secret-prefix",
+    path: "/vite/rules/env/no-secret-prefix",
   },
 ];
 

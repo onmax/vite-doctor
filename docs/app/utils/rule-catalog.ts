@@ -9,18 +9,16 @@ import {
 } from "./rule-metadata.js";
 
 export interface RawRuleEntry {
-  id?: string;
-  ruleId?: string;
+  id: string;
+  ruleId: string;
   title: string;
   description: string;
   pack: string;
   severity: Severity;
   category: string;
-  fixable?: FixKind;
-  fix?: FixKind;
+  fix: FixKind;
   docsUrl?: string;
-  docsPath?: string;
-  path?: string;
+  path: string;
   framework?: Framework;
   body?: unknown;
   source?: string;
@@ -52,14 +50,13 @@ export interface CatalogRule {
 
 export function normalizeCatalogRules(
   rules: RawRuleEntry[],
-  currentFramework: FrameworkFilter = "all",
+  _currentFramework: FrameworkFilter = "all",
 ): CatalogRule[] {
   return rules.map((rule) => {
-    const fix = rule.fix || rule.fixable || "no";
+    const fix = rule.fix;
     const framework = rule.framework || frameworkOfPack(rule.pack);
-    const ruleId = rule.ruleId || rule.id || "";
-    const docsPath =
-      rule.path || rule.docsPath || fallbackRuleHref({ ...rule, id: ruleId }, currentFramework);
+    const ruleId = rule.ruleId || rule.id;
+    const docsPath = rule.path;
     const normalized = {
       docsPath,
       path: docsPath,
@@ -92,35 +89,4 @@ export function normalizeCatalogRules(
         .toLowerCase(),
     };
   });
-}
-
-function fallbackRuleHref(rule: RawRuleEntry, currentFramework: FrameworkFilter) {
-  const base =
-    rule.pack === "nuxt-doctor/nitro"
-      ? "/nitro/rules"
-      : rule.pack.startsWith("vite-doctor/")
-        ? "/vite/rules"
-        : rule.pack.startsWith("vue-doctor/")
-          ? "/vue/rules"
-          : currentFramework === "vue"
-            ? "/vue/rules"
-            : "/nuxt/rules";
-  return `${base}/${ruleDocsPath(rule)}`;
-}
-
-export function ruleDocsPath(rule: Pick<RawRuleEntry, "id" | "category" | "pack">) {
-  const id = rule.id || "";
-  const parts = id.split("/");
-  const pathParts =
-    parts.length > 2
-      ? parts.slice(1)
-      : [rule.category || rule.pack.split("/").at(-1) || "rules", parts.at(-1) || id];
-  return pathParts.map((part) => slugSegment(part || "")).join("/");
-}
-
-function slugSegment(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }

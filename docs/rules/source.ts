@@ -128,7 +128,7 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
   return files.flatMap((file) => {
     const text = readFileSync(file, "utf8");
     const ast = parseSync(file, text, { sourceType: "module", lang: "ts" }).program;
-    const pack = readPackName(ast) ?? defaultPack ?? fallbackPackName(file);
+    const pack = readPackName(ast) ?? defaultPack;
     const source = relative(root, file);
     const metaRules = findMetaObjects(ast)
       .map((meta) => {
@@ -511,11 +511,6 @@ function walk(node: any, visit: (node: any) => void) {
       walk(value, visit);
     }
   }
-}
-
-function fallbackPackName(file: string) {
-  const basename = file.split("/").at(-1)?.replace(/\.ts$/, "") ?? "rules";
-  return basename === "vue" ? "vue-doctor/vue" : `nuxt-doctor/${basename}`;
 }
 
 function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {

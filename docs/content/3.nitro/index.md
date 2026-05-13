@@ -26,7 +26,7 @@ Start with Nitro rules
 ---
 
 icon: i-lucide-list-checks
-to: /nitro/rules
+to: /rules/nitro
 
 ---
 
