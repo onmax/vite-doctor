@@ -87,7 +87,12 @@ test("rule source emits complete documentation for every rule", async () => {
       !rule.recommendedReplacement ||
       !rule.examples.length ||
       rule.examples.some(
-        (example) => !example.title || !example.language || !example.invalid || !example.valid,
+        (example) =>
+          !example.title ||
+          !example.language ||
+          !example.invalid ||
+          !example.valid ||
+          example.invalid.trim() === example.valid.trim(),
       ),
   );
 
@@ -101,6 +106,30 @@ test("rule source emits complete documentation for every rule", async () => {
   }
 });
 
+test("rule examples do not reuse generic placeholders", () => {
+  const placeholderExamples = getRuleDocuments().flatMap((rule) =>
+    rule.examples
+      .filter((example) => {
+        const pair = `${example.invalid}\n${example.valid}`;
+        return (
+          (rule.id !== "vue/reactivity/no-prop-mutation" &&
+            pair.includes("props.count++") &&
+            pair.includes("defineModel")) ||
+          (rule.id !== "nitro/server/prefer-event-fetch" &&
+            !rule.id.startsWith("nitro/request/prefer-validated-") &&
+            pair.includes("readBody(event)") &&
+            pair.includes("readValidatedBody(event")) ||
+          (pair.includes("const route = useRoute()") &&
+            pair.includes("nuxtApp.hook('page:finish'")) ||
+          (pair.includes("useFetch('/api/orders'") && pair.includes("key: 'orders'"))
+        );
+      })
+      .map((example) => `${rule.id}: ${example.title}`),
+  );
+
+  expect(placeholderExamples).toEqual([]);
+});
+
 test("rule source emits official useful links when available", async () => {
   const docs = getRuleDocuments();
   const rule = docs.find((item) => item.id === "vue/computed/no-async");
@@ -110,6 +139,15 @@ test("rule source emits official useful links when available", async () => {
   expect(markdown).toContain("## Useful links");
   expect(markdown).toContain("https://vuejs.org/guide/essentials/computed");
   expect(markdown).toContain("https://eslint.vuejs.org/rules/no-async-in-computed-properties");
+});
+
+test("fetch factory docs demonstrate createUseFetch", async () => {
+  const docs = getRuleDocuments();
+  const rule = docs.find((item) => item.id === "nuxt/fetch/prefer-create-use-fetch");
+
+  expect(rule).toBeTruthy();
+  expect(rule!.examples[0]!.invalid).toContain("useFetch('/api/orders')");
+  expect(rule!.examples[0]!.valid).toContain("createUseFetch('/api/orders')");
 });
 
 test("rule explorer model filters and sorts rules", async () => {

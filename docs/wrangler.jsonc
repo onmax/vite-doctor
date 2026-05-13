@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
-  "name": "nuxt-doctor",
+  "name": "vite-doctor",
   "main": ".output/server/index.mjs",
   "compatibility_date": "2026-05-11",
   "compatibility_flags": ["nodejs_compat", "no_nodejs_compat_v2"],
@@ -17,7 +17,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "nuxt-doctor-docs-db",
+      "database_name": "vite-doctor-docs-db",
       "database_id": "82ba8707-b9d7-4119-a60c-d9a77409f842",
     },
   ],

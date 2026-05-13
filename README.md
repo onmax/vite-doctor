@@ -10,17 +10,17 @@
   <img src="docs/public/nuxt-doctor-wordmark.svg" alt="Nuxt Doctor" width="300">
 </p>
 
-# Vue Doctor / Nuxt Doctor
+# Vite Doctor
 
-Doctor-style analyzers for modern Vue 3.5+ and Nuxt 4 codebases.
+Doctor-style tooling for modern Vite, Vue 3.5+, and Nuxt 4 codebases.
 
-The workspace exposes Vue and Nuxt entry points backed by one shared engine:
+The workspace exposes Vite, Vue, and Nuxt entry points backed by one shared engine:
 
 - `vite-doctor` for running a project's existing scripts with auto-detected tooling
 - `vue-doctor` for Vue projects
 - `nuxt-doctor` for Nuxt projects, including the `nuxt doctor` command when installed as a module
 
-Nuxt Doctor extends Vue Doctor with Nuxt project detection, Nuxt manifest support, Nuxt-specific rules, a shared Nitro rule pack for `server/` and `app/server/` code, and a Nuxt module that can generate `.nuxt/doctor.manifest.json`.
+Vite Doctor provides the universal CLI runner, while Vue Doctor and Nuxt Doctor add framework-specific diagnostics. Nuxt Doctor extends Vue Doctor with Nuxt project detection, Nuxt manifest support, Nuxt-specific rules, a shared Nitro rule pack for `server/` and `app/server/` code, and a Nuxt module that can generate `.nuxt/doctor.manifest.json`.
 
 ## Usage
 

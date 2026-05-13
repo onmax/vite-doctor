@@ -32,12 +32,10 @@ export const ruleDocumentationMetadata = {
       "Remove empty app vue shadow, or move it to the Docus runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid empty app vue shadow",
-        language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        title: "Avoid empty app.vue shadow",
+        language: "vue",
+        invalid: "<template>\n  <NuxtPage />\n</template>",
+        valid: "<template>\n  <DocusLayout>\n    <NuxtPage />\n  </DocusLayout>\n</template>",
       },
     ],
   },
@@ -49,12 +47,11 @@ export const ruleDocumentationMetadata = {
       "Remove navigateto in nitro, or move it to the Nitro runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid navigateto in nitro",
+        title: "Avoid navigateTo in Nitro",
         language: "ts",
-        invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
+        invalid: "export default defineEventHandler(() => {\n  return navigateTo('/login')\n})",
         valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler((event) => {\n  return sendRedirect(event, '/login')\n})",
       },
     ],
   },
@@ -66,12 +63,12 @@ export const ruleDocumentationMetadata = {
       "Remove usenuxtapp in nitro, or move it to the Nitro runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid usenuxtapp in nitro",
+        title: "Avoid useNuxtApp in Nitro",
         language: "ts",
         invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler(() => {\n  const nuxtApp = useNuxtApp()\n  return nuxtApp.payload\n})",
         valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler((event) => {\n  return useRuntimeConfig(event).public\n})",
       },
     ],
   },
@@ -82,12 +79,11 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use assertMethod(event, method) at the top of single-method handlers.",
     examples: [
       {
-        title: "Use assert method",
+        title: "Use assertMethod",
         language: "ts",
         invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
-        valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler((event) => {\n  if (getMethod(event) !== 'POST') {\n    throw createError({ statusCode: 405 })\n  }\n})",
+        valid: "export default defineEventHandler((event) => {\n  assertMethod(event, 'POST')\n})",
       },
     ],
   },
@@ -99,12 +95,12 @@ export const ruleDocumentationMetadata = {
       "Use getRequestIP(event) and configure trusted proxy handling centrally.",
     examples: [
       {
-        title: "Use get request IP",
+        title: "Use getRequestIP",
         language: "ts",
         invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler((event) => {\n  return getHeader(event, 'x-forwarded-for')\n})",
         valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler((event) => {\n  return getRequestIP(event, { xForwardedFor: true })\n})",
       },
     ],
   },
@@ -115,12 +111,12 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Pass the event to useRuntimeConfig(event) in Nitro server handlers.",
     examples: [
       {
-        title: "Add event runtime config in server",
+        title: "Pass event to runtime config",
         language: "ts",
         invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler(() => {\n  return useRuntimeConfig().apiSecret\n})",
         valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler((event) => {\n  return useRuntimeConfig(event).apiSecret\n})",
       },
     ],
   },
@@ -131,12 +127,11 @@ export const ruleDocumentationMetadata = {
       "Remove browser API, or move it to the Nitro runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid browser API",
+        title: "Avoid browser APIs in server handlers",
         language: "ts",
-        invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
+        invalid: "export default defineEventHandler(() => {\n  return window.location.href\n})",
         valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler((event) => {\n  return getRequestURL(event).href\n})",
       },
     ],
   },
@@ -148,12 +143,11 @@ export const ruleDocumentationMetadata = {
       "Remove client composables, or move it to the Nitro runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid client composables",
+        title: "Avoid client composables in server handlers",
         language: "ts",
-        invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
+        invalid: "export default defineEventHandler(() => {\n  return useRoute().path\n})",
         valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineEventHandler((event) => {\n  return getRequestURL(event).pathname\n})",
       },
     ],
   },
@@ -182,12 +176,11 @@ export const ruleDocumentationMetadata = {
       "Add standard auth handler mount where Nuxt expects it, close to the code that depends on it.",
     examples: [
       {
-        title: "Add standard auth handler mount",
+        title: "Mount Better Auth handler",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
+        invalid: "// server/api/auth/[...all].ts is missing",
         valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "export default defineEventHandler((event) => {\n  return auth.handler(toWebRequest(event))\n})",
       },
     ],
   },
@@ -199,10 +192,10 @@ export const ruleDocumentationMetadata = {
       "Remove broken internal to link, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid broken internal to link",
-        language: "vue",
-        invalid: '<template>\n  <a href="/dashboard">Dashboard</a>\n</template>',
-        valid: '<template>\n  <NuxtLink to="/dashboard">Dashboard</NuxtLink>\n</template>',
+        title: "Fix broken content links",
+        language: "md",
+        invalid: '::card{to="/missing-page"}\nMissing page\n::',
+        valid: '::card{to="/guide/getting-started"}\nGetting started\n::',
       },
     ],
   },
@@ -214,12 +207,10 @@ export const ruleDocumentationMetadata = {
       "Remove querycontent legacy API, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid querycontent legacy API",
+        title: "Use queryCollection",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        invalid: "const posts = await queryContent('/blog').find()",
+        valid: "const posts = await queryCollection('blog').all()",
       },
     ],
   },
@@ -332,12 +323,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Nuxt-supported u button pattern instead.",
     examples: [
       {
-        title: "Use u button",
-        language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        title: "Use UButton",
+        language: "vue",
+        invalid: '<template>\n  <button type="button">Save</button>\n</template>',
+        valid: '<template>\n  <UButton type="button">Save</UButton>\n</template>',
       },
     ],
   },
@@ -348,12 +337,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Nuxt-supported u form controls pattern instead.",
     examples: [
       {
-        title: "Use u form controls",
-        language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        title: "Use Nuxt UI form controls",
+        language: "vue",
+        invalid: '<template>\n  <input v-model="email" type="email">\n</template>',
+        valid: '<template>\n  <UInput v-model="email" type="email" />\n</template>',
       },
     ],
   },
@@ -366,11 +353,9 @@ export const ruleDocumentationMetadata = {
     examples: [
       {
         title: "Add UApp root",
-        language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        language: "vue",
+        invalid: "<template>\n  <NuxtPage />\n</template>",
+        valid: "<template>\n  <UApp>\n    <NuxtPage />\n  </UApp>\n</template>",
       },
     ],
   },
@@ -382,12 +367,10 @@ export const ruleDocumentationMetadata = {
       "Use the Nuxt-supported async data explicit key for refreshable pattern instead.",
     examples: [
       {
-        title: "Use async data explicit key for refreshable",
+        title: "Add explicit refresh key",
         language: "ts",
-        invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
-        valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+        invalid: "const { data, refresh } = await useFetch('/api/profile')",
+        valid: "const { data, refresh } = await useFetch('/api/profile', {\n  key: 'profile',\n})",
       },
     ],
   },
@@ -398,12 +381,12 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Nuxt-supported async data handler pure pattern instead.",
     examples: [
       {
-        title: "Use async data handler pure",
+        title: "Keep async data handlers pure",
         language: "ts",
         invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
+          "const { data } = await useAsyncData('orders', async () => {\n  await $fetch('/api/audit', { method: 'POST' })\n  return $fetch('/api/orders')\n})",
         valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+          "const { data } = await useAsyncData('orders', () => {\n  return $fetch('/api/orders')\n})",
       },
     ],
   },
@@ -415,12 +398,12 @@ export const ruleDocumentationMetadata = {
       "Use the Nuxt-supported async data no mutation methods pattern instead.",
     examples: [
       {
-        title: "Use async data no mutation methods",
+        title: "Keep mutations out of useFetch",
         language: "ts",
         invalid:
           "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
         valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+          "async function createOrder() {\n  return await $fetch('/api/orders', {\n    method: 'POST',\n    body: { status: 'draft' },\n  })\n}",
       },
     ],
   },
@@ -432,12 +415,11 @@ export const ruleDocumentationMetadata = {
       "Remove nested autoimport assumption, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid nested autoimport assumption",
+        title: "Export nested composables explicitly",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "// app/composables/nested/useThing.ts\nexport function useThing() {\n  return useState('thing')\n}",
+        valid: "// app/composables/useThing.ts\nexport { useThing } from './nested/useThing'",
       },
     ],
   },
@@ -449,12 +431,12 @@ export const ruleDocumentationMetadata = {
       "Remove composable after await, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid composable after await",
+        title: "Call composables before await",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
+          "export default defineNuxtPlugin(async () => {\n  await preloadConfig()\n  const route = useRoute()\n})",
         valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "export default defineNuxtPlugin(async () => {\n  const route = useRoute()\n  await preloadConfig()\n})",
       },
     ],
   },
@@ -466,12 +448,10 @@ export const ruleDocumentationMetadata = {
       "Remove legacy process client server, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid legacy process client server",
+        title: "Use import.meta client flags",
         language: "ts",
-        invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
-        valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+        invalid: "if (process.client) {\n  hydrateChart()\n}",
+        valid: "if (import.meta.client) {\n  hydrateChart()\n}",
       },
     ],
   },
@@ -485,10 +465,8 @@ export const ruleDocumentationMetadata = {
       {
         title: "Use create useFetch must be exported in scanned dir",
         language: "ts",
-        invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
-        valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+        invalid: "const useUser = createUseFetch('/api/user')",
+        valid: "export const useUser = createUseFetch('/api/user')",
       },
     ],
   },
@@ -499,12 +477,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Nuxt-supported forward auth headers SSR pattern instead.",
     examples: [
       {
-        title: "Use forward auth headers SSR",
+        title: "Forward selected auth headers",
         language: "ts",
-        invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
-        valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+        invalid: "const account = await $fetch('/api/account')",
+        valid: "const account = await useRequestFetch()('/api/account')",
       },
     ],
   },
@@ -519,9 +495,9 @@ export const ruleDocumentationMetadata = {
         title: "Use keyed composable registration required",
         language: "ts",
         invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
+          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
         valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
       },
     ],
   },
@@ -533,12 +509,10 @@ export const ruleDocumentationMetadata = {
       "Remove await inside custom wrapper, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid await inside custom wrapper",
+        title: "Return custom async data wrappers directly",
         language: "ts",
-        invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
-        valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+        invalid: "export function useUser() {\n  return await useFetch('/api/user')\n}",
+        valid: "export function useUser() {\n  return useFetch('/api/user')\n}",
       },
     ],
   },
@@ -550,12 +524,11 @@ export const ruleDocumentationMetadata = {
       "Remove raw fetch in setup, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid raw fetch in setup",
-        language: "ts",
-        invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
+        title: "Use Nuxt data fetching in setup",
+        language: "vue",
+        invalid: "<script setup lang=\"ts\">\nconst data = await $fetch('/api/user')\n</script>",
         valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+          "<script setup lang=\"ts\">\nconst { data } = await useFetch('/api/user')\n</script>",
       },
     ],
   },
@@ -568,10 +541,8 @@ export const ruleDocumentationMetadata = {
       {
         title: "Use create use fetch",
         language: "ts",
-        invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
-        valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+        invalid: "export function useOrders() {\n  return useFetch('/api/orders')\n}",
+        valid: "export const useOrders = createUseFetch('/api/orders')",
       },
     ],
   },
@@ -583,12 +554,11 @@ export const ruleDocumentationMetadata = {
       "Add stable useAsyncData key where Nuxt expects it, close to the code that depends on it.",
     examples: [
       {
-        title: "Add stable useAsyncData key",
+        title: "Use stable async data keys",
         language: "ts",
         invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
-        valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+          "const key = Date.now().toString()\nconst { data } = await useAsyncData(key, () => $fetch('/api/user'))",
+        valid: "const { data } = await useAsyncData('user', () => $fetch('/api/user'))",
       },
     ],
   },
@@ -600,12 +570,12 @@ export const ruleDocumentationMetadata = {
       "Remove browser global in universal code, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid browser global in universal code",
+        title: "Avoid browser globals in universal render",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst width = window.innerWidth\n</script>\n\n<template>{{ width }}</template>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst width = ref<number>()\nonMounted(() => { width.value = window.innerWidth })\n</script>\n\n<template>{{ width }}</template>',
       },
     ],
   },
@@ -617,12 +587,11 @@ export const ruleDocumentationMetadata = {
       "Remove browser side effects in setup, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid browser side effects in setup",
+        title: "Move browser side effects out of setup",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+        invalid: "<script setup lang=\"ts\">\nlocalStorage.setItem('seen', '1')\n</script>",
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nonMounted(() => {\n  localStorage.setItem('seen', '1')\n})\n</script>",
       },
     ],
   },
@@ -634,12 +603,10 @@ export const ruleDocumentationMetadata = {
       "Remove client conditional in template, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid client conditional in template",
+        title: "Use ClientOnly for client conditions",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+        invalid: '<template>\n  <p v-if="import.meta.client">Client only</p>\n</template>',
+        valid: "<template>\n  <ClientOnly>\n    <p>Client only</p>\n  </ClientOnly>\n</template>",
       },
     ],
   },
@@ -651,12 +618,10 @@ export const ruleDocumentationMetadata = {
       "Remove time dependent render without nuxttime or clientonly, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid time dependent render without nuxttime or clientonly",
+        title: "Wrap time-dependent render",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+        invalid: "<template>\n  <time>{{ new Date().toLocaleString() }}</time>\n</template>",
+        valid: '<template>\n  <NuxtTime :datetime="new Date()" />\n</template>',
       },
     ],
   },
@@ -668,12 +633,12 @@ export const ruleDocumentationMetadata = {
       "Use the Nuxt-supported usecookie for initial client state pattern instead.",
     examples: [
       {
-        title: "Use usecookie for initial client state",
+        title: "Use cookies for initial client state",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nconst theme = ref(localStorage.getItem('theme') || 'light')\n</script>",
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nconst theme = useCookie('theme', { default: () => 'light' })\n</script>",
       },
     ],
   },
@@ -685,12 +650,10 @@ export const ruleDocumentationMetadata = {
       "Remove auto import collision, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid auto import collision",
+        title: "Avoid auto-import name collisions",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        invalid: "export function useRoute() {\n  return { path: '/custom' }\n}",
+        valid: "export function useCustomRoute() {\n  return { path: '/custom' }\n}",
       },
     ],
   },
@@ -702,12 +665,12 @@ export const ruleDocumentationMetadata = {
       "Remove conflicting useFetch import, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid conflicting useFetch import",
+        title: "Avoid conflicting useFetch imports",
         language: "ts",
         invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
+          "import { useFetch } from '@vueuse/core'\n\nconst { data } = useFetch('/api/user')",
         valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+          "import { useFetch as useVueUseFetch } from '@vueuse/core'\n\nconst { data } = await useFetch('/api/user')",
       },
     ],
   },
@@ -719,12 +682,10 @@ export const ruleDocumentationMetadata = {
       "Remove explicit auto import, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid explicit auto import",
+        title: "Use Nuxt auto-imports directly",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        invalid: "import { useRoute } from '#imports'\n\nconst route = useRoute()",
+        valid: "const route = useRoute()",
       },
     ],
   },
@@ -736,12 +697,12 @@ export const ruleDocumentationMetadata = {
       "Remove route middleware API security, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid route middleware API security",
+        title: "Keep API authorization on the server",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
+          "export default defineNuxtRouteMiddleware((to) => {\n  if (!to.query.token) return abortNavigation()\n})",
         valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "export default defineEventHandler((event) => {\n  const token = getQuery(event).token\n  if (!token) throw createError({ statusCode: 401 })\n})",
       },
     ],
   },
@@ -753,12 +714,10 @@ export const ruleDocumentationMetadata = {
       "Remove global refresh without justification, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid global refresh without justification",
+        title: "Refresh specific async data keys",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        invalid: "await refreshNuxtData()",
+        valid: "await refreshNuxtData('orders')",
       },
     ],
   },
@@ -770,12 +729,12 @@ export const ruleDocumentationMetadata = {
       "Remove manual action useFetch, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid manual action useFetch",
+        title: "Use $fetch for manual mutations",
         language: "ts",
         invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
+          "const { execute } = await useFetch('/api/orders', {\n  method: 'POST',\n  immediate: false,\n})",
         valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+          "async function submitOrder() {\n  await $fetch('/api/orders', { method: 'POST' })\n}",
       },
     ],
   },
@@ -787,12 +746,12 @@ export const ruleDocumentationMetadata = {
       "Remove mutation toast in useFetch callback, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid mutation toast in useFetch callback",
+        title: "Move callback effects into actions",
         language: "ts",
         invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
+          "await useFetch('/api/orders', {\n  method: 'POST',\n  onResponse() {\n    toast.add({ title: 'Saved' })\n  },\n})",
         valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+          "async function saveOrder() {\n  await $fetch('/api/orders', { method: 'POST' })\n  toast.add({ title: 'Saved' })\n}",
       },
     ],
   },
@@ -804,12 +763,11 @@ export const ruleDocumentationMetadata = {
       "Remove subdir auto registration assumption, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid subdir auto registration assumption",
+        title: "Register nested plugins explicitly",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
+        invalid: "// app/plugins/nested/analytics.ts\nexport default defineNuxtPlugin(() => {})",
         valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "export default defineNuxtConfig({\n  plugins: ['~/app/plugins/nested/analytics'],\n})",
       },
     ],
   },
@@ -821,12 +779,12 @@ export const ruleDocumentationMetadata = {
       "Use the Nuxt-supported post fetch requires readonly marker pattern instead.",
     examples: [
       {
-        title: "Use post fetch requires readonly marker",
+        title: "Mark read-only POST async data",
         language: "ts",
         invalid:
-          "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
+          "const { data } = await useFetch('/api/search', {\n  method: 'POST',\n  body: { q },\n})",
         valid:
-          "const { data } = await useFetch('/api/orders', {\n  key: 'orders',\n  query: { status: 'draft' },\n})",
+          "const { data } = await useFetch('/api/search', {\n  method: 'POST',\n  body: { q },\n  meta: { readonly: true },\n})",
       },
     ],
   },
@@ -837,12 +795,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Nuxt-supported preview mode global refresh pattern instead.",
     examples: [
       {
-        title: "Use preview mode global refresh",
+        title: "Refresh preview data by key",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        invalid: "if (preview.value) {\n  await refreshNuxtData()\n}",
+        valid: "if (preview.value) {\n  await refreshNuxtData('preview-posts')\n}",
       },
     ],
   },
@@ -853,12 +809,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Nuxt-supported app directory placement pattern instead.",
     examples: [
       {
-        title: "Use app directory placement",
-        language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        title: "Place app files in app directory",
+        language: "text",
+        invalid: "pages/index.vue\ncomponents/AppHeader.vue",
+        valid: "app/pages/index.vue\napp/components/AppHeader.vue",
       },
     ],
   },
@@ -870,10 +824,11 @@ export const ruleDocumentationMetadata = {
       "Remove hash sensitive route fullpath in SSR markup, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid hash sensitive route fullpath in SSR markup",
-        language: "ts",
-        invalid: "<template>\n  <RouterView />\n</template>",
-        valid: "<template>\n  <NuxtPage />\n</template>",
+        title: "Avoid fullPath in SSR markup",
+        language: "vue",
+        invalid: "<template>\n  <p>{{ useRoute().fullPath }}</p>\n</template>",
+        valid:
+          '<script setup lang="ts">\nconst route = useRoute()\n</script>\n\n<template>\n  <p>{{ route.path }}</p>\n</template>',
       },
     ],
   },
@@ -885,10 +840,12 @@ export const ruleDocumentationMetadata = {
       "Remove route object page key, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid route object page key",
-        language: "ts",
-        invalid: "<template>\n  <RouterView />\n</template>",
-        valid: "<template>\n  <NuxtPage />\n</template>",
+        title: "Use scalar page keys",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\ndefinePageMeta({\n  key: route => route,\n})\n</script>',
+        valid:
+          '<script setup lang="ts">\ndefinePageMeta({\n  key: route => route.fullPath,\n})\n</script>',
       },
     ],
   },
@@ -900,10 +857,12 @@ export const ruleDocumentationMetadata = {
       "Remove router navigation in setup, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid router navigation in setup",
-        language: "ts",
-        invalid: "<template>\n  <RouterView />\n</template>",
-        valid: "<template>\n  <NuxtPage />\n</template>",
+        title: "Move navigation out of setup render",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nconst router = useRouter()\nrouter.push('/login')\n</script>",
+        valid:
+          "<script setup lang=\"ts\">\nconst router = useRouter()\nfunction goToLogin() {\n  return router.push('/login')\n}\n</script>",
       },
     ],
   },
@@ -915,10 +874,12 @@ export const ruleDocumentationMetadata = {
       "Remove useRoute in middleware, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid useRoute in middleware",
+        title: "Use middleware arguments",
         language: "ts",
-        invalid: "<template>\n  <RouterView />\n</template>",
-        valid: "<template>\n  <NuxtPage />\n</template>",
+        invalid:
+          "export default defineNuxtRouteMiddleware(() => {\n  const route = useRoute()\n  if (!route.meta.auth) return\n})",
+        valid:
+          "export default defineNuxtRouteMiddleware((to) => {\n  if (!to.meta.auth) return\n})",
       },
     ],
   },
@@ -929,10 +890,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use Nuxt’s auto-imported useRoute() inside Nuxt app code.",
     examples: [
       {
-        title: "Use nuxt useRoute",
+        title: "Use Nuxt useRoute",
         language: "ts",
-        invalid: "<template>\n  <RouterView />\n</template>",
-        valid: "<template>\n  <NuxtPage />\n</template>",
+        invalid: "import { useRoute } from 'vue-router'\n\nconst route = useRoute()",
+        valid: "const route = useRoute()",
       },
     ],
   },
@@ -971,10 +932,11 @@ export const ruleDocumentationMetadata = {
       "Return navigateTo() from route middleware so Nuxt can apply the redirect.",
     examples: [
       {
-        title: "Return navigateto in middleware",
+        title: "Return navigateTo",
         language: "ts",
-        invalid: "<template>\n  <RouterView />\n</template>",
-        valid: "<template>\n  <NuxtPage />\n</template>",
+        invalid: "export default defineNuxtRouteMiddleware(() => {\n  navigateTo('/login')\n})",
+        valid:
+          "export default defineNuxtRouteMiddleware(() => {\n  return navigateTo('/login')\n})",
       },
     ],
   },
@@ -986,12 +948,10 @@ export const ruleDocumentationMetadata = {
       "Read configuration through useRuntimeConfig() instead of process.env in app code.",
     examples: [
       {
-        title: "Avoid plain env in app code",
+        title: "Use runtime config in app code",
         language: "ts",
-        invalid:
-          "export default defineNuxtConfig({\n  runtimeConfig: {\n    public: { apiSecret: process.env.API_SECRET },\n  },\n})",
-        valid:
-          "export default defineNuxtConfig({\n  runtimeConfig: {\n    apiSecret: process.env.API_SECRET,\n    public: { apiBase: '/api' },\n  },\n})",
+        invalid: "const apiBase = process.env.NUXT_PUBLIC_API_BASE",
+        valid: "const apiBase = useRuntimeConfig().public.apiBase",
       },
     ],
   },
@@ -1035,10 +995,10 @@ export const ruleDocumentationMetadata = {
       "Use the Nuxt-supported useheadsafe for untrusted values pattern instead.",
     examples: [
       {
-        title: "Use useheadsafe for untrusted values",
+        title: "Use useHeadSafe for untrusted values",
         language: "ts",
-        invalid: "useHead({\n  script: [{ src: 'https://example.com/widget.js' }],\n})",
-        valid: "useHeadSafe({\n  script: [{ src: trustedWidgetUrl }],\n})",
+        invalid: "const route = useRoute()\nuseHead({\n  title: route.query.title as string,\n})",
+        valid: "const route = useRoute()\nuseHeadSafe({\n  title: route.query.title as string,\n})",
       },
     ],
   },
@@ -1049,12 +1009,11 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Nuxt-supported seo composables pattern instead.",
     examples: [
       {
-        title: "Use seo composables",
+        title: "Use SEO composables",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "useHead({\n  title: 'Home',\n  meta: [{ name: 'description', content: 'Welcome' }],\n})",
+        valid: "useSeoMeta({\n  title: 'Home',\n  description: 'Welcome',\n})",
       },
     ],
   },
@@ -1066,12 +1025,11 @@ export const ruleDocumentationMetadata = {
       "Remove nested shared autoimport assumption, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid nested shared autoimport assumption",
+        title: "Export nested shared utilities explicitly",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "// shared/utils/nested/math.ts\nexport const add = (a: number, b: number) => a + b",
+        valid: "// shared/utils/math.ts\nexport { add } from './nested/math'",
       },
     ],
   },
@@ -1083,12 +1041,10 @@ export const ruleDocumentationMetadata = {
       "Remove vue or nitro context in shared, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid vue or nitro context in shared",
+        title: "Keep shared utilities runtime-neutral",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        invalid: "export function currentPath() {\n  return useRoute().path\n}",
+        valid: "export function currentPath(path: string) {\n  return path\n}",
       },
     ],
   },
@@ -1100,12 +1056,10 @@ export const ruleDocumentationMetadata = {
       "Remove nonserializable usestate, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid nonserializable usestate",
+        title: "Keep useState serializable",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        invalid: "const socket = useState('socket', () => new WebSocket('wss://example.com'))",
+        valid: "const socketUrl = useState('socket-url', () => 'wss://example.com')",
       },
     ],
   },
@@ -1117,12 +1071,10 @@ export const ruleDocumentationMetadata = {
       "Use the Nuxt-supported explicit usestate key in exported composables pattern instead.",
     examples: [
       {
-        title: "Use explicit usestate key in exported composables",
+        title: "Use explicit useState keys",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+        invalid: "export function useCounter() {\n  return useState(() => 0)\n}",
+        valid: "export function useCounter() {\n  return useState('counter', () => 0)\n}",
       },
     ],
   },
@@ -1134,12 +1086,12 @@ export const ruleDocumentationMetadata = {
       "Remove personalized cached handler, or move it to the Nuxthub runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid personalized cached handler",
+        title: "Avoid personalized cached handlers",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
+          "export default cachedEventHandler(async (event) => {\n  const session = await getUserSession(event)\n  return session.user\n})",
         valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "export default defineEventHandler(async (event) => {\n  const session = await getUserSession(event)\n  return session.user\n})",
       },
     ],
   },
@@ -1150,12 +1102,12 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Nuxthub-supported cached event handler pattern instead.",
     examples: [
       {
-        title: "Use cached event handler",
+        title: "Cache public expensive handlers",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
+          "export default defineEventHandler(async () => {\n  return await queryCollection('docs').all()\n})",
         valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "export default cachedEventHandler(async () => {\n  return await queryCollection('docs').all()\n})",
       },
     ],
   },
@@ -1166,12 +1118,11 @@ export const ruleDocumentationMetadata = {
       "Remove dynamic new URL, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid dynamic new URL",
+        title: "Use static asset URLs",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+        invalid: "const icon = new URL(`./icons/${name}.svg`, import.meta.url).href",
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "const icons = {\n  home: new URL('./icons/home.svg', import.meta.url).href,\n}\nconst icon = icons.home",
       },
     ],
   },
@@ -1183,12 +1134,10 @@ export const ruleDocumentationMetadata = {
       "Remove public src import, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid public src import",
+        title: "Reference public assets by URL",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
-        valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+        invalid: "import logoUrl from '../public/logo.svg'",
+        valid: "const logoUrl = '/logo.svg'",
       },
     ],
   },
@@ -1200,12 +1149,11 @@ export const ruleDocumentationMetadata = {
       "Remove src absolute public URL, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid src absolute public URL",
-        language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+        title: "Import src assets",
+        language: "vue",
+        invalid: '<template>\n  <img src="/src/assets/logo.svg" alt="Logo">\n</template>',
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          '<script setup lang="ts">\nimport logoUrl from \'~/assets/logo.svg\'\n</script>\n\n<template>\n  <img :src="logoUrl" alt="Logo">\n</template>',
       },
     ],
   },
@@ -1233,12 +1181,12 @@ export const ruleDocumentationMetadata = {
       "Remove secret define, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid secret define",
+        title: "Keep secrets out of define",
         language: "ts",
         invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+          "export default defineConfig({\n  define: {\n    __API_SECRET__: JSON.stringify(process.env.API_SECRET),\n  },\n})",
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "export default defineConfig({\n  define: {\n    __PUBLIC_VERSION__: JSON.stringify(process.env.npm_package_version),\n  },\n})",
       },
     ],
   },
@@ -1249,12 +1197,12 @@ export const ruleDocumentationMetadata = {
       "Remove untyped define, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid untyped define",
+        title: "Declare define constants",
         language: "ts",
         invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+          "export default defineConfig({\n  define: {\n    __FEATURE_FLAG__: JSON.stringify(true),\n  },\n})",
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "declare const __FEATURE_FLAG__: boolean\n\nexport default defineConfig({\n  define: {\n    __FEATURE_FLAG__: JSON.stringify(true),\n  },\n})",
       },
     ],
   },
@@ -1265,12 +1213,11 @@ export const ruleDocumentationMetadata = {
       "Remove unused define, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid unused define",
+        title: "Remove unused define constants",
         language: "ts",
         invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
-        valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "export default defineConfig({\n  define: {\n    __UNUSED_FLAG__: JSON.stringify(true),\n  },\n})",
+        valid: "export default defineConfig({\n  define: {},\n})",
       },
     ],
   },
@@ -1281,12 +1228,10 @@ export const ruleDocumentationMetadata = {
       "Remove broad env prefix, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid broad env prefix",
+        title: "Use narrow env prefixes",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
-        valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+        invalid: "export default defineConfig({\n  envPrefix: ['VITE_', 'APP_'],\n})",
+        valid: "export default defineConfig({\n  envPrefix: ['VITE_PUBLIC_'],\n})",
       },
     ],
   },
@@ -1298,12 +1243,10 @@ export const ruleDocumentationMetadata = {
       "Remove client secret pattern, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid client secret pattern",
+        title: "Keep secret env vars server-only",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
-        valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+        invalid: "const token = import.meta.env.VITE_API_SECRET",
+        valid: "const apiBase = import.meta.env.VITE_PUBLIC_API_BASE",
       },
     ],
   },
@@ -1314,12 +1257,10 @@ export const ruleDocumentationMetadata = {
       "Remove empty env prefix, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid empty env prefix",
+        title: "Do not expose every env var",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
-        valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+        invalid: "export default defineConfig({\n  envPrefix: '',\n})",
+        valid: "export default defineConfig({\n  envPrefix: 'VITE_',\n})",
       },
     ],
   },
@@ -1330,12 +1271,11 @@ export const ruleDocumentationMetadata = {
       "Remove untyped env, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid untyped env",
+        title: "Type import.meta.env access",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+        invalid: "const apiBase = import.meta.env.VITE_API_BASE",
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "interface ImportMetaEnv {\n  readonly VITE_API_BASE: string\n}\n\nconst apiBase = import.meta.env.VITE_API_BASE",
       },
     ],
   },
@@ -1346,12 +1286,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Vite-supported direct import meta env access pattern instead.",
     examples: [
       {
-        title: "Use direct import meta env access",
+        title: "Use direct env access",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
-        valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+        invalid: "const env = import.meta.env\nconst apiBase = env.VITE_API_BASE",
+        valid: "const apiBase = import.meta.env.VITE_API_BASE",
       },
     ],
   },
@@ -1363,12 +1301,12 @@ export const ruleDocumentationMetadata = {
       "Add dispose for side effects where Vite expects it, close to the code that depends on it.",
     examples: [
       {
-        title: "Add dispose for side effects",
+        title: "Dispose HMR side effects",
         language: "ts",
         invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+          "const timer = setInterval(sync, 1000)\n\nif (import.meta.hot) {\n  import.meta.hot.accept()\n}",
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "const timer = setInterval(sync, 1000)\n\nif (import.meta.hot) {\n  import.meta.hot.dispose(() => clearInterval(timer))\n}",
       },
     ],
   },
@@ -1379,12 +1317,12 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Vite-supported transform filter pattern instead.",
     examples: [
       {
-        title: "Use transform filter",
+        title: "Filter plugin transforms",
         language: "ts",
         invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+          "export default function markdownPlugin() {\n  return {\n    name: 'markdown',\n    transform(code, id) {\n      if (!id.endsWith('.md')) return\n      return code\n    },\n  }\n}",
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "export default function markdownPlugin() {\n  return {\n    name: 'markdown',\n    transform: {\n      filter: { id: /\\.md$/ },\n      handler(code) { return code },\n    },\n  }\n}",
       },
     ],
   },
@@ -1394,12 +1332,12 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Add name where Vite expects it, close to the code that depends on it.",
     examples: [
       {
-        title: "Add name",
+        title: "Name Vite plugins",
         language: "ts",
         invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+          "export default function plugin() {\n  return {\n    transform(code) { return code },\n  }\n}",
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "export default function plugin() {\n  return {\n    name: 'app-plugin',\n    transform(code) { return code },\n  }\n}",
       },
     ],
   },
@@ -1410,12 +1348,11 @@ export const ruleDocumentationMetadata = {
       "Remove broad fs allow, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid broad fs allow",
+        title: "Limit server.fs.allow",
         language: "ts",
-        invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
+        invalid: "export default defineConfig({\n  server: {\n    fs: { allow: ['..'] },\n  },\n})",
         valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+          "export default defineConfig({\n  server: {\n    fs: { allow: ['packages/ui'] },\n  },\n})",
       },
     ],
   },
@@ -1427,12 +1364,10 @@ export const ruleDocumentationMetadata = {
       "Remove disabled fs strict, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid disabled fs strict",
+        title: "Keep fs strict enabled",
         language: "ts",
-        invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
-        valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+        invalid: "export default defineConfig({\n  server: {\n    fs: { strict: false },\n  },\n})",
+        valid: "export default defineConfig({\n  server: {\n    fs: { strict: true },\n  },\n})",
       },
     ],
   },
@@ -1444,12 +1379,10 @@ export const ruleDocumentationMetadata = {
       "Remove browser global in SSR entry, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid browser global in SSR entry",
+        title: "Avoid browser globals in SSR entry",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
-        valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+        invalid: "export function render() {\n  return window.location.href\n}",
+        valid: "export function render(url: string) {\n  return url\n}",
       },
     ],
   },
@@ -1461,12 +1394,11 @@ export const ruleDocumentationMetadata = {
       "Remove dynamic worker URL, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid dynamic worker URL",
+        title: "Use static worker URLs",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+        invalid: "const worker = new Worker(new URL(`./workers/${name}.ts`, import.meta.url))",
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "const worker = new Worker(new URL('./workers/sync.ts', import.meta.url), { type: 'module' })",
       },
     ],
   },
@@ -1478,12 +1410,11 @@ export const ruleDocumentationMetadata = {
       "Remove node API in worker, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid node API in worker",
+        title: "Avoid Node APIs in workers",
         language: "ts",
         invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
-        valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "import { readFileSync } from 'node:fs'\n\nself.postMessage(readFileSync('data.txt', 'utf8'))",
+        valid: "self.postMessage(await fetch('/data.txt').then(r => r.text()))",
       },
     ],
   },
@@ -1495,12 +1426,11 @@ export const ruleDocumentationMetadata = {
       "Add worker URL pattern where Vite expects it, close to the code that depends on it.",
     examples: [
       {
-        title: "Add worker URL pattern",
+        title: "Use Vite worker URL pattern",
         language: "ts",
-        invalid:
-          "export default defineConfig({\n  define: {\n    __APP_CONFIG__: { feature: true },\n  },\n})",
+        invalid: "const worker = new Worker('./worker.ts')",
         valid:
-          "export default defineConfig({\n  define: {\n    __FEATURE_ENABLED__: JSON.stringify(true),\n  },\n})",
+          "const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })",
       },
     ],
   },
@@ -1511,12 +1441,12 @@ export const ruleDocumentationMetadata = {
       "Move the async work to useFetch(), useAsyncData(), or an explicit action, and keep the computed getter synchronous.",
     examples: [
       {
-        title: "Avoid async",
+        title: "Keep computed synchronous",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nconst user = computed(async () => await $fetch('/api/user'))\n</script>",
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nconst { data: user } = await useFetch('/api/user')\n</script>",
       },
     ],
   },
@@ -1527,12 +1457,12 @@ export const ruleDocumentationMetadata = {
       "Return a derived value from computed(), and move writes or effects into a watcher, event handler, or explicit action.",
     examples: [
       {
-        title: "Avoid side effects",
+        title: "Keep computed side-effect free",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst count = ref(0)\nconst doubled = computed(() => {\n  count.value++\n  return count.value * 2\n})\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst count = ref(0)\nconst doubled = computed(() => count.value * 2)\n</script>',
       },
     ],
   },
@@ -1543,12 +1473,10 @@ export const ruleDocumentationMetadata = {
       "Remove untranslated text, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid untranslated text",
+        title: "Use translation keys",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+        invalid: "<template>\n  <p>Welcome back</p>\n</template>",
+        valid: "<template>\n  <p>{{ t('welcomeBack') }}</p>\n</template>",
       },
     ],
   },
@@ -1560,12 +1488,10 @@ export const ruleDocumentationMetadata = {
       "Remove unused translations, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid unused translations",
-        language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+        title: "Remove unused translations",
+        language: "json",
+        invalid: '{\n  "used": "Save",\n  "unused": "Delete"\n}',
+        valid: '{\n  "used": "Save"\n}',
       },
     ],
   },
@@ -1577,12 +1503,12 @@ export const ruleDocumentationMetadata = {
       "Remove mutation in onupdated, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid mutation in onupdated",
+        title: "Avoid state mutation in onUpdated",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst count = ref(0)\nonUpdated(() => {\n  count.value++\n})\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst count = ref(0)\nwatchEffect(() => {\n  console.log(count.value)\n})\n</script>',
       },
     ],
   },
@@ -1594,12 +1520,12 @@ export const ruleDocumentationMetadata = {
       "Add cleanup where Vue expects it, close to the code that depends on it.",
     examples: [
       {
-        title: "Add cleanup",
+        title: "Clean up lifecycle side effects",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nonMounted(() => {\n  window.addEventListener('resize', onResize)\n})\n</script>",
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nonMounted(() => {\n  window.addEventListener('resize', onResize)\n})\nonBeforeUnmount(() => {\n  window.removeEventListener('resize', onResize)\n})\n</script>",
       },
     ],
   },
@@ -1610,12 +1536,12 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Vue-supported defineProps watch getter pattern instead.",
     examples: [
       {
-        title: "Use defineProps watch getter",
+        title: "Watch props with getters",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst props = defineProps<{ id: string }>()\nwatch(props.id, loadUser)\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst props = defineProps<{ id: string }>()\nwatch(() => props.id, loadUser)\n</script>',
       },
     ],
   },
@@ -1644,12 +1570,12 @@ export const ruleDocumentationMetadata = {
       "Remove ref as operand, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid ref as operand",
+        title: "Read ref values before arithmetic",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst count = ref(1)\nconst next = count + 1\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst count = ref(1)\nconst next = count.value + 1\n</script>',
       },
     ],
   },
@@ -1661,12 +1587,12 @@ export const ruleDocumentationMetadata = {
       "Remove setup props destructure, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid setup props destructure",
+        title: "Preserve prop reactivity",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst { count } = defineProps<{ count: number }>()\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nconst props = defineProps<{ count: number }>()\nconst count = toRef(props, 'count')\n</script>",
       },
     ],
   },
@@ -1677,12 +1603,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Vue-supported composable ref return pattern instead.",
     examples: [
       {
-        title: "Use composable ref return",
-        language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+        title: "Return refs from composables",
+        language: "ts",
+        invalid: "export function useCounter() {\n  const count = ref(0)\n  return count.value\n}",
+        valid: "export function useCounter() {\n  const count = ref(0)\n  return count\n}",
       },
     ],
   },
@@ -1692,12 +1616,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Keep v HTML behind the safest Vue API available for that surface.",
     examples: [
       {
-        title: "Restrict v HTML",
+        title: "Sanitize v-html input",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+        invalid: '<template>\n  <div v-html="comment.body" />\n</template>',
+        valid: '<template>\n  <div v-html="sanitizeHtml(comment.body)" />\n</template>',
       },
     ],
   },
@@ -1708,12 +1630,11 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Vue-supported data allow mismatch surgical pattern instead.",
     examples: [
       {
-        title: "Use data allow mismatch surgical",
+        title: "Scope allowed mismatch narrowly",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          "<template>\n  <main data-allow-mismatch>\n    <UserProfile />\n  </main>\n</template>",
+        valid: "<template>\n  <time data-allow-mismatch>{{ formattedNow }}</time>\n</template>",
       },
     ],
   },
@@ -1725,12 +1646,11 @@ export const ruleDocumentationMetadata = {
       "Remove browser API in setup, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid browser API in setup",
+        title: "Move browser API usage to mounted",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+        invalid: '<script setup lang="ts">\nconst width = window.innerWidth\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst width = ref(0)\nonMounted(() => { width.value = window.innerWidth })\n</script>',
       },
     ],
   },
@@ -1742,12 +1662,11 @@ export const ruleDocumentationMetadata = {
       "Remove random or local time render, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid random or local time render",
+        title: "Avoid random render output",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+        invalid: "<template>\n  <span>{{ Math.random() }}</span>\n</template>",
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst id = useId()\n</script>\n\n<template>\n  <span>{{ id }}</span>\n</template>',
       },
     ],
   },
@@ -1758,12 +1677,10 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Vue-supported use id for stable ids pattern instead.",
     examples: [
       {
-        title: "Use use id for stable ids",
+        title: "Use stable IDs",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+        invalid: '<script setup lang="ts">\nconst id = Math.random().toString(36)\n</script>',
+        valid: '<script setup lang="ts">\nconst id = useId()\n</script>',
       },
     ],
   },
@@ -1773,12 +1690,11 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Vue-supported define model pattern instead.",
     examples: [
       {
-        title: "Use define model",
+        title: "Use defineModel",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\ndefineProps<{ modelValue: string }>()\nconst emit = defineEmits<{ 'update:modelValue': [value: string] }>()\n</script>",
+        valid: '<script setup lang="ts">\nconst modelValue = defineModel<string>()\n</script>',
       },
     ],
   },
@@ -1789,12 +1705,12 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Vue-supported props destructure defaults pattern instead.",
     examples: [
       {
-        title: "Use props destructure defaults",
+        title: "Use reactive props destructure defaults",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nwithDefaults(defineProps<{ label?: string }>(), {\n  label: 'Save',\n})\n</script>",
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nconst { label = 'Save' } = defineProps<{ label?: string }>()\n</script>",
       },
     ],
   },
@@ -1806,12 +1722,12 @@ export const ruleDocumentationMetadata = {
       "Remove v if with v for, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid v if with v for",
+        title: "Filter before rendering lists",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<template>\n  <li v-for="item in items" v-if="item.visible" :key="item.id">{{ item.name }}</li>\n</template>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst visibleItems = computed(() => items.filter(item => item.visible))\n</script>\n\n<template>\n  <li v-for="item in visibleItems" :key="item.id">{{ item.name }}</li>\n</template>',
       },
     ],
   },
@@ -1822,12 +1738,12 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the Vue-supported use template ref pattern instead.",
     examples: [
       {
-        title: "Use use template ref",
+        title: "Use useTemplateRef",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst input = ref<HTMLInputElement>()\n</script>\n\n<template>\n  <input ref="input">\n</template>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nconst input = useTemplateRef<HTMLInputElement>(\'input\')\n</script>\n\n<template>\n  <input ref="input">\n</template>',
       },
     ],
   },
@@ -1839,12 +1755,11 @@ export const ruleDocumentationMetadata = {
       "Add v for key where Vue expects it, close to the code that depends on it.",
     examples: [
       {
-        title: "Add v for key",
+        title: "Key v-for items",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+        invalid: '<template>\n  <li v-for="item in items">{{ item.name }}</li>\n</template>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<template>\n  <li v-for="item in items" :key="item.id">{{ item.name }}</li>\n</template>',
       },
     ],
   },
@@ -1855,12 +1770,10 @@ export const ruleDocumentationMetadata = {
       "Remove after await, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid after await",
+        title: "Register watchers before await",
         language: "vue",
-        invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
-        valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+        invalid: '<script setup lang="ts">\nawait loadSettings()\nwatch(source, sync)\n</script>',
+        valid: '<script setup lang="ts">\nwatch(source, sync)\nawait loadSettings()\n</script>',
       },
     ],
   },
@@ -1872,12 +1785,12 @@ export const ruleDocumentationMetadata = {
       "Remove async watcheffect after await read, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid async watcheffect after await read",
+        title: "Read watchEffect dependencies before await",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nwatchEffect(async () => {\n  await loadSettings()\n  console.log(userId.value)\n})\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nwatchEffect(async () => {\n  const id = userId.value\n  await loadSettings()\n  console.log(id)\n})\n</script>',
       },
     ],
   },
@@ -1889,12 +1802,12 @@ export const ruleDocumentationMetadata = {
       "Remove onwatchercleanup after await, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid onwatchercleanup after await",
+        title: "Register watcher cleanup before await",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nwatch(id, async () => {\n  await loadUser()\n  onWatcherCleanup(cancelLoad)\n})\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nwatch(id, async () => {\n  onWatcherCleanup(cancelLoad)\n  await loadUser()\n})\n</script>',
       },
     ],
   },
@@ -1906,12 +1819,12 @@ export const ruleDocumentationMetadata = {
       "Add post flush for DOM read where Vue expects it, close to the code that depends on it.",
     examples: [
       {
-        title: "Add post flush for DOM read",
+        title: "Use post-flush DOM reads",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nwatch(open, () => {\n  panel.value?.getBoundingClientRect()\n})\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          "<script setup lang=\"ts\">\nwatch(open, () => {\n  panel.value?.getBoundingClientRect()\n}, { flush: 'post' })\n</script>",
       },
     ],
   },
@@ -1923,12 +1836,12 @@ export const ruleDocumentationMetadata = {
       "Add side effect cleanup where Vue expects it, close to the code that depends on it.",
     examples: [
       {
-        title: "Add side effect cleanup",
+        title: "Clean up watcher side effects",
         language: "vue",
         invalid:
-          '<script setup lang="ts">\nconst props = defineProps<{ count: number }>()\n</script>\n\n<template>\n  <button @click="props.count++">{{ props.count }}</button>\n</template>',
+          '<script setup lang="ts">\nwatch(query, () => {\n  const timer = setTimeout(search, 300)\n})\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = defineModel<number>(\'count\')\n</script>\n\n<template>\n  <button @click="count++">{{ count }}</button>\n</template>',
+          '<script setup lang="ts">\nwatch(query, (_, __, onCleanup) => {\n  const timer = setTimeout(search, 300)\n  onCleanup(() => clearTimeout(timer))\n})\n</script>',
       },
     ],
   },
@@ -1940,12 +1853,12 @@ export const ruleDocumentationMetadata = {
       "Remove nuxt auto import collision, or move it to the VueUse runtime/API that owns that behavior.",
     examples: [
       {
-        title: "Avoid nuxt auto import collision",
+        title: "Alias VueUse Nuxt collisions",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
+          "import { useFetch } from '@vueuse/core'\n\nconst response = useFetch('/api/user')",
         valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "import { useFetch as useVueUseFetch } from '@vueuse/core'\n\nconst response = useVueUseFetch('/api/user')",
       },
     ],
   },
@@ -1956,12 +1869,11 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the VueUse-supported use observers pattern instead.",
     examples: [
       {
-        title: "Use use observers",
-        language: "ts",
+        title: "Use VueUse observers",
+        language: "vue",
         invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
-        valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
+          '<script setup lang="ts">\nonMounted(() => {\n  const observer = new ResizeObserver(onResize)\n  observer.observe(panel.value!)\n})\n</script>',
+        valid: '<script setup lang="ts">\nuseResizeObserver(panel, onResize)\n</script>',
       },
     ],
   },
@@ -1972,12 +1884,11 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the VueUse-supported use scroll and element pattern instead.",
     examples: [
       {
-        title: "Use use scroll and element",
-        language: "ts",
+        title: "Use VueUse scroll helpers",
+        language: "vue",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "<script setup lang=\"ts\">\nconst y = ref(window.scrollY)\nwindow.addEventListener('scroll', () => { y.value = window.scrollY })\n</script>",
+        valid: '<script setup lang="ts">\nconst { y } = useWindowScroll()\n</script>',
       },
     ],
   },
@@ -1989,12 +1900,11 @@ export const ruleDocumentationMetadata = {
       "Use VueUse useStorage() for client storage so refs, serialization, and cleanup stay together.",
     examples: [
       {
-        title: "Use use storage",
+        title: "Use VueUse storage",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "const theme = ref(localStorage.getItem('theme') || 'light')\nwatch(theme, value => localStorage.setItem('theme', value))",
+        valid: "const theme = useStorage('theme', 'light')",
       },
     ],
   },
@@ -2005,12 +1915,11 @@ export const ruleDocumentationMetadata = {
     recommendedReplacement: "Use the VueUse-supported use timers pattern instead.",
     examples: [
       {
-        title: "Use use timers",
-        language: "ts",
+        title: "Use VueUse timers",
+        language: "vue",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          '<script setup lang="ts">\nconst timer = setInterval(tick, 1000)\nonBeforeUnmount(() => clearInterval(timer))\n</script>',
+        valid: '<script setup lang="ts">\nuseIntervalFn(tick, 1000)\n</script>',
       },
     ],
   },
@@ -2022,12 +1931,11 @@ export const ruleDocumentationMetadata = {
       "Use VueUse useBreakpoints() for responsive state that stays reactive and testable.",
     examples: [
       {
-        title: "Use useBreakpoints",
+        title: "Use VueUse breakpoints",
         language: "ts",
-        invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
+        invalid: "const isMobile = ref(matchMedia('(max-width: 640px)').matches)",
         valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "const breakpoints = useBreakpoints({ mobile: 640 })\nconst isMobile = breakpoints.smaller('mobile')",
       },
     ],
   },
@@ -2039,12 +1947,11 @@ export const ruleDocumentationMetadata = {
       "Use VueUse useClipboard() instead of wiring navigator.clipboard directly.",
     examples: [
       {
-        title: "Use useClipboard",
+        title: "Use VueUse clipboard",
         language: "ts",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "async function copy(text: string) {\n  await navigator.clipboard.writeText(text)\n}",
+        valid: "const { copy } = useClipboard()",
       },
     ],
   },
@@ -2056,12 +1963,12 @@ export const ruleDocumentationMetadata = {
       "Use VueUse useEventListener() so the listener is removed with the component scope.",
     examples: [
       {
-        title: "Use useEvent listener",
-        language: "ts",
+        title: "Use VueUse event listeners",
+        language: "vue",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
+          "<script setup lang=\"ts\">\nonMounted(() => window.addEventListener('resize', onResize))\nonBeforeUnmount(() => window.removeEventListener('resize', onResize))\n</script>",
         valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "<script setup lang=\"ts\">\nuseEventListener(window, 'resize', onResize)\n</script>",
       },
     ],
   },
@@ -2073,12 +1980,11 @@ export const ruleDocumentationMetadata = {
       "Use VueUse useWindowSize() instead of reading window dimensions by hand.",
     examples: [
       {
-        title: "Use useWindow size",
-        language: "ts",
+        title: "Use VueUse window size",
+        language: "vue",
         invalid:
-          "export default defineNuxtPlugin(() => {\n  const route = useRoute()\n  console.log(route.fullPath)\n})",
-        valid:
-          "export default defineNuxtPlugin(() => {\n  const nuxtApp = useNuxtApp()\n  nuxtApp.hook('page:finish', () => {})\n})",
+          "<script setup lang=\"ts\">\nconst width = ref(window.innerWidth)\nwindow.addEventListener('resize', () => { width.value = window.innerWidth })\n</script>",
+        valid: '<script setup lang="ts">\nconst { width } = useWindowSize()\n</script>',
       },
     ],
   },
