@@ -319,7 +319,7 @@ function toggleTheme() {
               <span class="inline-flex size-2 rounded-full bg-[#ffbd2e]/80" aria-hidden="true" />
               <span class="inline-flex size-2 rounded-full bg-[#28c840]/80" aria-hidden="true" />
               <span class="ml-2 min-w-0 truncate font-mono text-neutral-500">~/your-app</span>
-              <span class="ml-auto hidden font-mono text-neutral-700 sm:inline">nuxt-doctor</span>
+              <span class="ml-auto hidden font-mono text-neutral-700 sm:inline">vite-doctor</span>
             </div>
             <div
               class="space-y-2.5 px-4.5 py-4 font-mono text-[0.75rem]/5 text-neutral-300 sm:space-y-3 sm:px-5 sm:py-5 sm:text-[0.8125rem]/6"
