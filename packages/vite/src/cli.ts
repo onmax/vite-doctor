@@ -8,11 +8,10 @@ import {
   createReport,
   createRulesReport,
   explainRule,
-  runDoctor,
   type DoctorRunOptions,
 } from "@vue-doctor/core";
 import { planCi, type PlannedCommand } from "./index.js";
-import { viteDoctorPlugins, viteDoctorRulePacks } from "./rules.js";
+import { runViteDoctor, shouldFailDoctorRun, viteDoctorRulePacks } from "./doctor.js";
 
 export async function main(args = process.argv.slice(2), cwd = process.cwd()): Promise<number> {
   const dryRun = args.includes("--dry-run");
@@ -52,16 +51,12 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       console.error(`No readable directory found at ${root}`);
       return 1;
     }
-    const result = await runDoctor({
+    const result = await runViteDoctor({
       ...options,
       root,
-      framework: options.framework ?? "auto",
-      plugins: viteDoctorPlugins(),
     });
     process.stdout.write(createReport(result, options.format));
-    if (result.summary.blocker || result.summary.error) return 1;
-    if (options.maxWarnings !== undefined && result.summary.warn > options.maxWarnings) return 1;
-    return 0;
+    return shouldFailDoctorRun(result, options.maxWarnings) ? 1 : 0;
   }
 
   if (command !== "run" && command !== "ci") {

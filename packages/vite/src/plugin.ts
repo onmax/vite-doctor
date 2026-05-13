@@ -1,7 +1,7 @@
 import { resolve } from "pathe";
-import { createReport, runDoctor, type DoctorRunOptions } from "@vue-doctor/core";
+import { createReport } from "@vue-doctor/core";
 import type { Plugin, ResolvedConfig } from "vite";
-import { viteDoctorPlugins } from "./rules.js";
+import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
 
 export interface ViteDoctorPluginOptions {
   enabled?: boolean;
@@ -33,7 +33,7 @@ export function doctor(options: ViteDoctorPluginOptions = {}): Plugin {
       if (!resolved || !shouldRun(options.run ?? "build", resolved.command)) return;
       ran = true;
 
-      const result = await runDoctor({
+      const result = await runViteDoctor({
         root: options.root ? resolve(resolved.root, options.root) : resolved.root,
         framework: options.framework ?? "auto",
         rules: options.rules,
@@ -43,14 +43,10 @@ export function doctor(options: ViteDoctorPluginOptions = {}): Plugin {
         config: options.config ?? false,
         cache: options.cache ?? true,
         format: options.format,
-        plugins: viteDoctorPlugins(),
-      } satisfies DoctorRunOptions);
+      });
 
       const report = createReport(result, options.format ?? "text").trimEnd();
-      const shouldFail =
-        result.summary.blocker > 0 ||
-        result.summary.error > 0 ||
-        (options.maxWarnings !== undefined && result.summary.warn > options.maxWarnings);
+      const shouldFail = shouldFailDoctorRun(result, options.maxWarnings);
 
       if (shouldFail && (options.mode ?? "error") === "error") {
         this.error(report || "Vite Doctor checks failed.");
