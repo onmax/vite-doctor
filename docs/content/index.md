@@ -31,7 +31,7 @@ Static build analysis for framework code. Doctor reads app code, build config, p
 :::code-group{class="hero-code"}
 
 ```bash [Project CLI]
-pnpm dlx vite-doctor .
+pnpm dlx vite-doctor@alpha .
 ```
 
 ```bash [Nuxt]
@@ -40,7 +40,7 @@ pnpm exec nuxt doctor
 ```
 
 ```bash [Vue]
-pnpm dlx vue-doctor
+pnpm dlx vite-doctor@alpha .
 ```
 
 :::

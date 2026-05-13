@@ -54,11 +54,11 @@ Use the project CLI to run the checks configured by the project.
 List Vite rule metadata:
 
 ```bash
-pnpm dlx vite-doctor rules
+pnpm dlx vite-doctor@alpha rules
 ```
 
 Run the scripts already defined by a Vite project:
 
 ```bash
-pnpm dlx vite-doctor
+pnpm dlx vite-doctor@alpha
 ```

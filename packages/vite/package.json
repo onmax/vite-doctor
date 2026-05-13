@@ -38,6 +38,10 @@
     },
     "./package.json": "./package.json"
   },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "scripts": {
     "build": "vp pack src/index.ts src/cli.ts src/nuxt.ts src/plugin.ts",
     "dev": "vp pack src/index.ts src/cli.ts src/nuxt.ts src/plugin.ts --watch",
@@ -45,11 +49,11 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@vue-doctor/core": "workspace:*",
-    "nuxt-doctor": "workspace:*",
     "pathe": "catalog:"
   },
   "devDependencies": {
+    "@vue-doctor/core": "workspace:*",
+    "nuxt-doctor": "workspace:*",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   },

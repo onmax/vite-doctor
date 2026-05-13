@@ -161,6 +161,94 @@ test("CLI accepts a path shorthand for scans", async () => {
   );
 });
 
+test("smart scan applies Vite rules and skips Nuxt-only rules in Vite projects", async () => {
+  await withFixture(viteErrorFixture(), async (root) => {
+    const viteOnly = await runCli([".", "--rules", "vite/define/no-secret-define"], root);
+    expect(viteOnly.code).toBe(1);
+    expect(viteOnly.output).toContain("Detected: Vite");
+    expect(viteOnly.output).toContain("vite/define/no-secret-define");
+
+    const nuxtOnly = await runCli([".", "--rules", "nuxt/**"], root);
+    expect(nuxtOnly.code).toBe(0);
+    expect(nuxtOnly.output).toContain("Detected: Vite");
+    expect(nuxtOnly.output).not.toContain("nuxt/");
+  });
+});
+
+test("smart scan applies Vue rules in Vue projects", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vue: "^3.5.0" } }),
+      "src/App.vue": `<template><div v-html="html" /></template>
+<script setup lang="ts">
+const html = "<strong>unsafe</strong>";
+</script>
+`,
+    },
+    async (root) => {
+      const result = await runCli([".", "--rules", "vue/security/restrict-v-html"], root);
+      expect(result.code).toBe(1);
+      expect(result.output).toContain("Detected: Vue");
+      expect(result.output).toContain("vue/security/restrict-v-html");
+    },
+  );
+});
+
+test("smart scan applies Nuxt and Nitro rules in Nuxt projects", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+      "app/pages/index.vue": `<script setup lang="ts">
+import { useRoute } from "vue-router";
+useRoute();
+</script>
+`,
+      "server/api/user.ts":
+        "export default defineEventHandler((event) => rateLimit(getHeader(event, 'x-forwarded-for')))\n",
+    },
+    async (root) => {
+      const nuxt = await runCli([".", "--rules", "nuxt/routing/prefer-nuxt-useroute"], root);
+      expect(nuxt.code).toBe(1);
+      expect(nuxt.output).toContain("Detected: Nuxt");
+      expect(nuxt.output).toContain("nuxt/routing/prefer-nuxt-useroute");
+
+      const nitro = await runCli(
+        [".", "--rules", "nitro/request/prefer-get-request-ip", "--max-warnings", "0"],
+        root,
+      );
+      expect(nitro.code).toBe(1);
+      expect(nitro.output).toContain("Detected: Nuxt");
+      expect(nitro.output).toContain("nitro/request/prefer-get-request-ip");
+    },
+  );
+});
+
+test("framework override can enable Nuxt rules without Nuxt dependencies", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vue: "^3.5.0" } }),
+      "app/pages/index.vue": `<script setup lang="ts">
+import { useRoute } from "vue-router";
+useRoute();
+</script>
+`,
+    },
+    async (root) => {
+      const automatic = await runCli([".", "--rules", "nuxt/routing/prefer-nuxt-useroute"], root);
+      expect(automatic.code).toBe(0);
+      expect(automatic.output).toContain("Detected: Vue");
+
+      const forced = await runCli(
+        [".", "--framework", "nuxt", "--rules", "nuxt/routing/prefer-nuxt-useroute"],
+        root,
+      );
+      expect(forced.code).toBe(1);
+      expect(forced.output).toContain("Detected: Nuxt");
+      expect(forced.output).toContain("nuxt/routing/prefer-nuxt-useroute");
+    },
+  );
+});
+
 test("CLI scan fails for a missing path", async () => {
   const repoRoot = findRepoRoot();
   const errors: string[] = [];
@@ -253,6 +341,20 @@ async function withFixture(
     await fn(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function runCli(args: string[], root: string) {
+  const writes: string[] = [];
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    return { code: await main(args, root), output: writes.join("") };
+  } finally {
+    process.stdout.write = write;
   }
 }
 

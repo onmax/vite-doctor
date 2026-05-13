@@ -17,6 +17,10 @@
     "test": "vp run -r test",
     "check": "vp check",
     "doctor": "vp exec vite-doctor .",
+    "release:check": "pnpm ready",
+    "release:version": "changeset version && pnpm --dir packages/vite exec npm version 0.0.1-alpha.1 --no-git-tag-version --allow-same-version",
+    "release:pack": "mkdir -p artifacts && pnpm --filter vite-doctor build && pnpm --filter vite-doctor pack --pack-destination artifacts",
+    "release:publish:alpha": "pnpm --dir packages/vite publish --provenance --access public --tag alpha",
     "prepare": "vp config"
   },
   "dependencies": {
@@ -36,6 +40,8 @@
     "vue-eslint-parser": "catalog:"
   },
   "devDependencies": {
+    "@changesets/changelog-git": "catalog:",
+    "@changesets/cli": "catalog:",
     "nuxt-doctor": "workspace:*",
     "vite-doctor": "workspace:*",
     "vite-plus": "catalog:",

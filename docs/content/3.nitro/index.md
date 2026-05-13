@@ -56,11 +56,11 @@ Scan Nitro code through the Vite Doctor CLI.
 List the Nuxt and Nitro rule packs:
 
 ```bash
-pnpm dlx vite-doctor rules
+pnpm dlx vite-doctor@alpha rules
 ```
 
 Scan a Nuxt app, including Nitro server code:
 
 ```bash
-pnpm dlx vite-doctor .
+pnpm dlx vite-doctor@alpha .
 ```

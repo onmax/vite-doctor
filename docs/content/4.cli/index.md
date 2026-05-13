@@ -3,7 +3,7 @@ title: CLI
 description: Run one CLI command for JavaScript, Vue, and Nuxt projects.
 ---
 
-Use `vite-doctor` when you want one CLI command that detects a JavaScript project and runs the checks it already defines.
+Use `vite-doctor` when you want one CLI command that detects a JavaScript project, runs existing project scripts, and scans Vite, Vue, Nuxt, and Nitro code with the relevant rules.
 
 `vite-doctor` does not install dependencies. Install dependencies first, then run the CLI from the project root.
 
@@ -12,19 +12,19 @@ Use `vite-doctor` when you want one CLI command that detects a JavaScript projec
 Run the default project plan:
 
 ```bash
-pnpm dlx vite-doctor
+pnpm dlx vite-doctor@alpha
 ```
 
 Use the explicit command when you want it in scripts:
 
 ```bash
-pnpm dlx vite-doctor run
+pnpm dlx vite-doctor@alpha run
 ```
 
 Preview the detected package manager and scripts without running them:
 
 ```bash
-pnpm dlx vite-doctor --dry-run
+pnpm dlx vite-doctor@alpha --dry-run
 ```
 
 Expected output looks like this:
@@ -55,6 +55,22 @@ It selects scripts in this order:
 3. Available standard scripts: `check`, `lint`, `typecheck` or `type:check`, `test`, `build`
 
 The CLI stops on the first failed command and exits with that command's exit code.
+
+## Run framework scans
+
+Run a smart scan from the project root:
+
+```bash
+pnpm dlx vite-doctor@alpha .
+```
+
+`vite-doctor` defaults to `--framework auto`. It loads the built-in Vite, Vue, and Nuxt rule packs, then filters rules by detected framework, Nuxt modules/packages, rule requirements, optional type analysis, presets, and explicit `--rules`.
+
+Use a framework override only for unusual projects where dependency-based detection is not enough:
+
+```bash
+pnpm dlx vite-doctor@alpha . --framework nuxt
+```
 
 ## Add a script contract
 
@@ -92,16 +108,7 @@ jobs:
           node-version-file: .node-version
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm dlx vite-doctor
-```
-
-## Run framework scans
-
-Use `vite-doctor` for project command orchestration and framework-aware scans:
-
-```bash
-pnpm dlx vue-doctor
-pnpm dlx vite-doctor . --max-warnings 0
+      - run: pnpm dlx vite-doctor@alpha
 ```
 
 Nuxt projects can also add the module and run `nuxt doctor`:

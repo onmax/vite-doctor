@@ -1,9 +1,9 @@
 ---
 title: Overview
-description: Use Vue Doctor to scan Vue 3.5 applications and libraries.
+description: Use Vite Doctor to scan Vue 3.5 applications and libraries.
 ---
 
-Vue Doctor is the core analyzer for Vue 3.5 applications and libraries. It understands Vue SFCs, `<script setup>`, template directives, refs, computed values, watchers, SSR rendering, and safe fixes.
+Vue Doctor is the Vue rule pack inside `vite-doctor`. It understands Vue SFCs, `<script setup>`, template directives, refs, computed values, watchers, SSR rendering, and safe fixes.
 
 ## What it checks
 
@@ -56,17 +56,17 @@ Review the first reactivity, watcher, template, SSR, and security checks.
 Run the default scan:
 
 ```bash
-pnpm dlx vue-doctor
+pnpm dlx vite-doctor@alpha .
 ```
 
 List the Vue rule pack:
 
 ```bash
-pnpm dlx vue-doctor rules
+pnpm dlx vite-doctor@alpha rules
 ```
 
 Clean the local Doctor cache:
 
 ```bash
-pnpm dlx vue-doctor cache clean
+pnpm dlx vite-doctor@alpha cache clean
 ```

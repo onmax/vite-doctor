@@ -76,11 +76,11 @@ pnpm dlx nuxt module add vite-doctor/nuxt
 List the Nuxt and Vue rule packs:
 
 ```bash
-pnpm dlx vite-doctor rules
+pnpm dlx vite-doctor@alpha rules
 ```
 
 Fail on warnings:
 
 ```bash
-pnpm dlx vite-doctor . --max-warnings 0
+pnpm dlx vite-doctor@alpha . --max-warnings 0
 ```

@@ -44,6 +44,8 @@ catalog:
   "@typescript-eslint/parser": ^8.59.2
   zod: ^4.4.3
   wrangler: ^4.90.0
+  "@changesets/cli": ^2.31.0
+  "@changesets/changelog-git": ^0.2.1
 overrides:
   vite: "catalog:"
   vitest: "catalog:"

@@ -35,11 +35,6 @@ export default defineNuxtConfig({
   app: {
     head: {
       link: [{ rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
-      meta: [
-        { name: "twitter:card", content: "summary_large_image" },
-        { property: "og:image", content: "/nuxt-doctor-wordmark.svg" },
-        { name: "twitter:image", content: "/nuxt-doctor-wordmark.svg" },
-      ],
     },
   },
 
