@@ -2,8 +2,13 @@ import { defineNuxtConfig } from "nuxt/config";
 import { join } from "pathe";
 import { env, process } from "std-env";
 import { fileURLToPath } from "node:url";
+import { getRuleDocuments } from "./rules/source.js";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
+const frameworkRoutes = ["/vue", "/nuxt", "/nitro", "/vite"];
+const docsRoutes = ["/", ...frameworkRoutes, "/cli", "/installation", "/motivation"];
+const ruleIndexRoutes = frameworkRoutes.map((route) => `/rules${route}`);
+const ruleDetailRoutes = getRuleDocuments().map((rule) => rule.path);
 
 export default defineNuxtConfig({
   extends: ["docus"],
@@ -43,8 +48,23 @@ export default defineNuxtConfig({
   nitro: {
     preset: "cloudflare_module",
     sourceMap: false,
+    prerender: {
+      routes: [...docsRoutes, ...ruleIndexRoutes, ...ruleDetailRoutes],
+    },
     cloudflare: {
       nodeCompat: true,
+    },
+  },
+
+  routeRules: {
+    ...Object.fromEntries(docsRoutes.map((route) => [route, { prerender: true }])),
+    ...Object.fromEntries(ruleIndexRoutes.map((route) => [route, { prerender: true }])),
+    "/vue/rules": { redirect: { to: "/rules/vue", statusCode: 301 }, prerender: true },
+    "/nuxt/rules": { redirect: { to: "/rules/nuxt", statusCode: 301 }, prerender: true },
+    "/nitro/rules": { redirect: { to: "/rules/nitro", statusCode: 301 }, prerender: true },
+    "/vite/rules": { redirect: { to: "/rules/vite", statusCode: 301 }, prerender: true },
+    "/_nuxt/**": {
+      headers: { "cache-control": "public, max-age=31536000, immutable" },
     },
   },
 
