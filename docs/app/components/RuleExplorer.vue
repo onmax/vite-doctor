@@ -224,6 +224,8 @@ const activeFrameworkLinkClass = computed(
         {{ description }}
       </p>
 
+      <slot name="after-description" />
+
       <nav v-if="frameworkTabsMode === 'links'" class="mt-5 w-full max-w-xl" aria-label="Rule sets">
         <div
           class="relative grid grid-cols-4 gap-1 rounded-full bg-neutral-100/80 p-1 text-sm ring-1 ring-neutral-200/80 dark:bg-neutral-900/80 dark:ring-white/10"

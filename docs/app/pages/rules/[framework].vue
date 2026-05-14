@@ -76,22 +76,6 @@ function toggleTheme() {
           <UIcon name="i-simple-icons-github" class="size-4" />
         </a>
       </div>
-      <section
-        class="mx-auto mt-8 mb-10 max-w-6xl rounded-lg border border-neutral-950/10 bg-neutral-50/70 p-4 sm:p-5 dark:border-white/10 dark:bg-white/[0.03]"
-        aria-label="Installation"
-      >
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div class="min-w-0">
-            <p class="text-xs font-medium text-neutral-500 dark:text-neutral-500">Install</p>
-            <h2
-              class="mt-1 text-lg font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
-            >
-              Run {{ meta.label }} Doctor
-            </h2>
-          </div>
-        </div>
-        <InstallCommands :framework="framework" />
-      </section>
       <RuleExplorer
         :rules="(rules || []) as RawRuleEntry[]"
         :title="`${meta.label} Doctor rules`"
@@ -100,7 +84,11 @@ function toggleTheme() {
         :pack-label="meta.pack"
         framework-tabs-mode="links"
         heading-tag="h1"
-      />
+      >
+        <template #after-description>
+          <InstallCommands class="mt-5" :framework="framework" />
+        </template>
+      </RuleExplorer>
     </main>
   </div>
 </template>

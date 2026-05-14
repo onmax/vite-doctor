@@ -2,8 +2,12 @@
 export default defineAppConfig({
   docus: { locale: "en", assistant: false },
   header: {
-    title: "Vue Doctor",
-    logo: { light: "/vue-doctor-logo.svg", dark: "/vue-doctor-logo.svg" },
+    title: "Nuxt Doctor",
+    logo: {
+      light: "/nuxt-doctor-logo.svg",
+      dark: "/nuxt-doctor-logo.svg",
+      alt: "Nuxt Doctor",
+    },
   },
   navigation: { sub: false },
   github: {
