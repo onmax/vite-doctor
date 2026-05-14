@@ -252,7 +252,7 @@ function toggleTheme() {
           <h1
             class="max-w-[18ch] text-4xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-5xl lg:text-[3.5rem] dark:text-neutral-100"
           >
-            Catch the bugs your agents ship.
+            Catch the AI slop your agents ship.
           </h1>
           <p
             class="mt-6 max-w-[48ch] text-lg text-pretty text-neutral-600 md:max-w-[58ch] dark:text-neutral-400"
