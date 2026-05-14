@@ -50,7 +50,7 @@ const humanCommandSteps = [
     command: "pnpm dlx vite-doctor .",
   },
   {
-    label: "Nuxt evidence",
+    label: "Nuxt module",
     icon: "i-lucide-package",
     command: "pnpm dlx nuxt module add vite-doctor/nuxt",
   },
@@ -58,11 +58,6 @@ const humanCommandSteps = [
     label: "Package script",
     icon: "i-lucide-file-json",
     command: 'pnpm pkg set scripts.doctor="vite-doctor . --max-warnings 0"',
-  },
-  {
-    label: "CI command",
-    icon: "i-lucide-circle-play",
-    command: "pnpm doctor",
   },
 ] as const;
 
