@@ -182,12 +182,12 @@ const activeFrameworkLinkClass = computed(
             class="inline-flex items-center gap-2 rounded-md text-neutral-800 hover:text-neutral-950 dark:text-neutral-100 dark:hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
             aria-label="Doctor home"
           >
-            <span
-              class="inline-flex size-7 items-center justify-center self-center rounded-md bg-primary-600 text-white ring-1 ring-primary-700/20 dark:bg-primary-500"
+            <img
+              src="/doctor-icon.png"
+              alt=""
+              class="size-7 self-center rounded-md"
               aria-hidden="true"
-            >
-              <UIcon name="i-lucide-stethoscope" class="size-4" />
-            </span>
+            />
             <component :is="headingTag" class="text-3xl font-light tracking-tight text-inherit">
               {{ title }}
               <span

@@ -10,11 +10,8 @@ seo:
 ::u-page-hero
 #headline
 ::div{class="hero-eyebrow"}
-:img{src="/vue-doctor-logo.svg" alt="Vue Doctor" class="hero-logo"}
-Vue 3.5
-:span{class="dot"}
-:img{src="/nuxt-doctor-logo.svg" alt="Nuxt Doctor" class="hero-logo"}
-Nuxt 4
+:img{src="/doctor-icon.png" alt="Doctor" class="hero-logo"}
+Vite, Vue, Nuxt, and Nitro
 ::
 
 #title

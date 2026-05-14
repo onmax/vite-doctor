@@ -97,12 +97,7 @@ function toggleTheme() {
         aria-label="Homepage"
         class="inline-flex items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-500"
       >
-        <span
-          class="inline-flex size-7 items-center justify-center rounded-md bg-emerald-600 text-white dark:bg-emerald-500"
-          aria-hidden="true"
-        >
-          <UIcon name="i-lucide-stethoscope" class="size-4" />
-        </span>
+        <img src="/doctor-icon.png" alt="" class="size-7 rounded-md" aria-hidden="true" />
         <span class="text-base font-semibold tracking-tight">Doctor</span>
       </a>
 

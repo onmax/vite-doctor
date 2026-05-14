@@ -4,8 +4,8 @@ export default defineAppConfig({
   header: {
     title: "Nuxt Doctor",
     logo: {
-      light: "/nuxt-doctor-logo.svg",
-      dark: "/nuxt-doctor-logo.svg",
+      light: "/doctor-icon.png",
+      dark: "/doctor-icon.png",
       alt: "Nuxt Doctor",
     },
   },
