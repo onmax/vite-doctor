@@ -6,9 +6,9 @@ import doctorPackage from "../packages/vite/package.json" with { type: "json" };
 import { getRuleDocuments } from "./rules/source.js";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
-const frameworkRoutes = ["/vue", "/nuxt", "/nitro", "/vite"];
-const docsRoutes = ["/", ...frameworkRoutes, "/cli"];
-const ruleIndexRoutes = frameworkRoutes.map((route) => `/rules${route}`);
+const frameworks = ["vue", "nuxt", "nitro", "vite"];
+const docsRoutes = ["/", "/cli"];
+const ruleIndexRoutes = frameworks.map((framework) => `/rules/${framework}`);
 const ruleDetailRoutes = getRuleDocuments().map((rule) => rule.path);
 
 export default defineNuxtConfig({

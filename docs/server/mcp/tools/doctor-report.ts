@@ -16,7 +16,7 @@ export default {
           text: JSON.stringify(
             {
               error:
-                "The public documentation Worker cannot scan an arbitrary project filesystem. Install vite-doctor/nuxt in your Nuxt app and connect your MCP client to that app's /mcp endpoint to receive the full structured doctor_report JSON.",
+                "The public documentation Worker cannot scan an arbitrary project filesystem. Install vite-doctor@alpha/nuxt in your Nuxt app and connect your MCP client to that app's /mcp endpoint to receive the full structured doctor_report JSON.",
             },
             null,
             2,

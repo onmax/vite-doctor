@@ -35,7 +35,7 @@ pnpm dlx vite-doctor@alpha .
 ```
 
 ```bash [Nuxt]
-pnpm dlx nuxt module add vite-doctor/nuxt
+pnpm dlx nuxt module add vite-doctor@alpha/nuxt
 pnpm pkg set scripts.doctor="vite-doctor . --max-warnings 0"
 pnpm doctor
 ```
@@ -102,14 +102,14 @@ Search rule ids, severities, categories, and fix guidance.
 ---
 
 icon: i-lucide-package
-to: /nuxt
+to: /rules/nuxt
 
 ---
 
 #title
-Nuxt
+Nuxt rules
 #description
-Add the Nuxt module and run Doctor in CI/CD.
+Install Doctor and browse Nuxt checks.
 ::::
 :::
 ::

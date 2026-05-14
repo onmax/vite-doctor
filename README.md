@@ -19,7 +19,7 @@ pnpm dlx vite-doctor@alpha .
 For Nuxt projects, `vite-doctor/nuxt` is the Nuxt module export path from the `vite-doctor` package:
 
 ```bash
-pnpm dlx nuxt module add vite-doctor/nuxt
+pnpm dlx nuxt module add vite-doctor@alpha/nuxt
 pnpm pkg set scripts.doctor="vite-doctor . --max-warnings 0"
 pnpm doctor
 ```

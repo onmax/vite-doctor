@@ -199,20 +199,22 @@ const activeFrameworkLinkClass = computed(
           </a>
         </div>
 
-        <p
+        <div
           class="text-xs font-medium text-neutral-500 md:ml-auto md:text-right dark:text-neutral-500"
         >
-          Design inspired by
-          <ULink
-            to="https://github.com/antfu/eslint-config"
-            target="_blank"
-            rel="noopener"
-            class="inline-flex items-center gap-1 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-900 hover:decoration-neutral-900 dark:decoration-neutral-700 dark:hover:text-neutral-100 dark:hover:decoration-neutral-100"
-          >
-            Antfu ESLint Config
-            <UIcon name="i-lucide-arrow-up-right" class="size-3" aria-hidden="true" />
-          </ULink>
-        </p>
+          <p>
+            Design inspired by
+            <ULink
+              to="https://github.com/antfu/eslint-config"
+              target="_blank"
+              rel="noopener"
+              class="inline-flex items-center gap-1 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-900 hover:decoration-neutral-900 dark:decoration-neutral-700 dark:hover:text-neutral-100 dark:hover:decoration-neutral-100"
+            >
+              Antfu ESLint Config
+              <UIcon name="i-lucide-arrow-up-right" class="size-3" aria-hidden="true" />
+            </ULink>
+          </p>
+        </div>
       </div>
 
       <p
@@ -258,8 +260,8 @@ const activeFrameworkLinkClass = computed(
       </nav>
     </header>
 
-    <div class="mt-7 flex flex-wrap items-end gap-2 lg:flex-nowrap">
-      <div class="min-w-72 flex-1 basis-0">
+    <div class="mt-7 flex flex-wrap items-end gap-2 xl:flex-nowrap">
+      <div class="min-w-72 flex-1 basis-96 xl:max-w-lg">
         <UInput
           v-model="search"
           name="rules-search"
@@ -281,28 +283,6 @@ const activeFrameworkLinkClass = computed(
 
       <div class="min-w-0 shrink-0">
         <div class="flex flex-wrap items-end gap-2">
-          <div
-            class="inline-flex h-9 items-center gap-2 rounded-md bg-neutral-100/80 px-3 text-sm text-neutral-700 ring ring-inset ring-neutral-950/10 dark:bg-white/[0.04] dark:text-neutral-300 dark:ring-white/10"
-          >
-            <UIcon
-              name="i-lucide-list-checks"
-              class="size-4 shrink-0 text-neutral-400 dark:text-neutral-600"
-              aria-hidden="true"
-            />
-            <span class="tabular-nums">
-              <span class="font-semibold text-neutral-900 dark:text-neutral-100">{{
-                filteredRules.length
-              }}</span>
-              {{ isFiltered ? "filtered" : "visible" }}
-              <span
-                v-if="filteredRules.length !== frameworkRules.length"
-                class="text-neutral-400 dark:text-neutral-600"
-              >
-                / {{ frameworkRules.length }}
-              </span>
-            </span>
-          </div>
-
           <UFormField
             v-if="frameworkTabsMode === 'filter'"
             label="Framework"
@@ -417,6 +397,24 @@ const activeFrameworkLinkClass = computed(
     </div>
 
     <div class="mt-3">
+      <div
+        class="flex items-center gap-2 px-1 pb-2 text-xs font-medium text-neutral-500 dark:text-neutral-500"
+      >
+        <UIcon name="i-lucide-list-checks" class="size-3.5 shrink-0" aria-hidden="true" />
+        <span class="tabular-nums">
+          <span class="font-semibold text-neutral-700 dark:text-neutral-300">{{
+            filteredRules.length
+          }}</span>
+          {{ isFiltered ? "filtered" : "visible" }}
+          <span
+            v-if="filteredRules.length !== frameworkRules.length"
+            class="text-neutral-400 dark:text-neutral-600"
+          >
+            / {{ frameworkRules.length }}
+          </span>
+        </span>
+      </div>
+
       <p
         v-if="!filteredRules.length"
         class="py-8 text-sm text-neutral-500 italic dark:text-neutral-500"
@@ -424,7 +422,7 @@ const activeFrameworkLinkClass = computed(
         No matched rule items.
       </p>
 
-      <ol v-else role="list" class="grid gap-3 pt-2">
+      <ol v-else role="list" class="grid gap-3">
         <li v-for="(rule, index) in filteredRules" :key="rule.ruleId" class="relative">
           <UCard
             variant="subtle"
