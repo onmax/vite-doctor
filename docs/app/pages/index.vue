@@ -164,22 +164,16 @@ function toggleTheme() {
 
       <nav class="flex items-center gap-0.5 sm:gap-1">
         <a
-          href="/installation"
+          href="/cli"
           class="rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
-          Install
+          CLI
         </a>
         <a
           href="/rules/nuxt"
           class="rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
           Rules
-        </a>
-        <a
-          href="/motivation"
-          class="rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 max-sm:hidden dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-        >
-          Why
         </a>
         <a
           href="https://github.com/onmax/nuxt-doctor"
@@ -315,13 +309,13 @@ function toggleTheme() {
               </span>
             </UButton>
             <UButton
-              to="/installation"
+              to="/cli"
               color="neutral"
               variant="link"
               trailing-icon="i-lucide-arrow-right"
               class="px-2 py-1.5 text-sm font-medium text-neutral-700 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
             >
-              Installation
+              CLI
             </UButton>
             <div
               v-if="activeCommandTab === 'humans'"

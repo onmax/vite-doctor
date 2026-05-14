@@ -24,7 +24,7 @@ Search every Doctor rule.
 Static build analysis for framework code. Doctor reads app code, build config, project metadata, and server handlers to catch framework bugs before review.
 
 #links
-:u-button{to="/installation" size="xl" trailing-icon="i-lucide-arrow-right" label="Install Doctor"}
+:u-button{to="/cli" size="xl" trailing-icon="i-lucide-arrow-right" label="Run Doctor"}
 :u-button{to="/rules/nuxt" size="xl" color="neutral" variant="outline" icon="i-lucide-list-checks" label="Browse rules"}
 
 #body
@@ -71,14 +71,14 @@ Choose the entry point.
 ---
 
 icon: i-lucide-terminal
-to: /installation
+to: /cli
 
 ---
 
 #title
-Installation
+CLI
 #description
-Choose the CLI, Nuxt module, or MCP setup for your workflow.
+Run project checks and framework scans.
 ::::
 
 ::::u-page-card
@@ -100,15 +100,15 @@ Search rule ids, severities, categories, and fix guidance.
 
 ---
 
-icon: i-lucide-book-open
-to: /motivation
+icon: i-lucide-package
+to: /nuxt
 
 ---
 
 #title
-Motivation
+Nuxt
 #description
-Learn why Doctor exists for the Vue ecosystem.
+Add the Nuxt module and run Doctor in CI/CD.
 ::::
 :::
 ::

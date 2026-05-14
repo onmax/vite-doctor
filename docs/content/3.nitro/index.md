@@ -1,66 +1,32 @@
 ---
-title: Overview
-description: Use Nuxt Doctor to scan Nitro server and request-runtime code.
+title: Nitro
+description: Scan Nitro server and request-runtime code.
 ---
 
-Nitro rules focus on server handlers, request validation, runtime config, and framework boundaries inside `server/` and `app/server/` code.
+Nitro rules check server handlers, request validation, runtime config, and server/client boundaries. Run them through Nuxt Doctor or the CLI.
 
-## What it checks
+## Run a scan
 
-Nitro diagnostics cover request-runtime correctness:
-
-- **Request validation** — prefer validated body, query, and route params.
-- **HTTP methods** — assert expected methods inside handlers.
-- **Request metadata** — use Nitro helpers such as `getRequestIP`.
-- **Server boundaries** — avoid Nuxt app composables and client-only APIs in Nitro routes.
-- **Runtime config** — read runtime config with the event in server code.
-
-::u-page-section
-#title
-Start with Nitro rules
-
-#body
-:::u-page-grid{class="!grid-cols-1 sm:!grid-cols-2 !gap-4"}
-::::u-page-card
-
----
-
-icon: i-lucide-list-checks
-to: /rules/nitro
-
----
-
-#title
-Nitro rules
-#description
-Review request, server, and runtime diagnostics.
-::::
-
-::::u-page-card
-
-icon: i-lucide-terminal
-to: /nuxt/getting-started
-
----
-
-#title
-Run Nuxt Doctor
-#description
-Scan Nitro code through the Vite Doctor CLI.
-::::
-:::
-::
-
-## Commands
-
-List the Nuxt and Nitro rule packs:
-
-```bash
-pnpm dlx vite-doctor@alpha rules
-```
-
-Scan a Nuxt app, including Nitro server code:
+From a Nuxt or Nitro project root:
 
 ```bash
 pnpm dlx vite-doctor@alpha .
 ```
+
+Nuxt projects should also add the module when they want stronger server-route and runtime-config evidence:
+
+```bash
+pnpm dlx nuxt module add vite-doctor/nuxt
+```
+
+## What it checks
+
+Nitro rules focus on request-runtime correctness:
+
+- validated body, query, and route params
+- expected HTTP methods
+- request metadata helpers
+- runtime config access with the current event
+- client-only APIs inside server code
+
+Use the [Nitro rules](/rules/nitro) page when you need a rule id or fix guidance.

@@ -5,7 +5,7 @@ export default defineAppConfig({
     title: "Vue Doctor",
     logo: { light: "/vue-doctor-logo.svg", dark: "/vue-doctor-logo.svg" },
   },
-  navigation: { sub: "header" },
+  navigation: { sub: false },
   github: {
     url: "https://github.com/onmax/nuxt-doctor",
     branch: "main",

@@ -1,9 +1,23 @@
 ---
-title: Overview
-description: Use Vite Doctor rules to scan Vite-specific env, asset, worker, plugin, HMR, SSR, and dev server configuration.
+title: Vite
+description: Scan Vite env, asset, worker, plugin, HMR, SSR, and dev-server code.
 ---
 
-Vite rules focus on the compile-time and dev-server surfaces that can behave differently from ordinary JavaScript.
+Vite Doctor checks build-time and dev-server code that behaves differently from ordinary JavaScript.
+
+## Run a scan
+
+From a Vite project root:
+
+```bash
+pnpm dlx vite-doctor@alpha .
+```
+
+Doctor detects the framework automatically. Use an override only for unusual projects:
+
+```bash
+pnpm dlx vite-doctor@alpha . --framework vite
+```
 
 ## What it checks
 
@@ -13,52 +27,4 @@ Vite rules focus on the compile-time and dev-server surfaces that can behave dif
 - **Plugins and HMR** — name local plugins and clean up side effects across hot updates.
 - **SSR and dev server safety** — avoid browser globals in SSR entries and broad filesystem access.
 
-::u-page-section
-#title
-Start with Vite rules
-
-#body
-:::u-page-grid{class="!grid-cols-1 sm:!grid-cols-2 !gap-4"}
-::::u-page-card
-
----
-
-icon: i-lucide-list-checks
-to: /rules/vite
-
----
-
-#title
-Vite rules
-#description
-Review env, define, assets, workers, plugins, HMR, SSR, and server diagnostics.
-::::
-
-::::u-page-card
-
-icon: i-lucide-terminal
-to: /cli
-
----
-
-#title
-Run Vite Doctor
-#description
-Use the project CLI to run the checks configured by the project.
-::::
-:::
-::
-
-## Commands
-
-List Vite rule metadata:
-
-```bash
-pnpm dlx vite-doctor@alpha rules
-```
-
-Run the scripts already defined by a Vite project:
-
-```bash
-pnpm dlx vite-doctor@alpha
-```
+Use the [Vite rules](/rules/vite) page when you need a rule id or CI policy.

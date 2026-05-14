@@ -1,86 +1,36 @@
 ---
-title: Overview
-description: Use Nuxt Doctor to scan Nuxt 4 apps and modules.
+title: Nuxt
+description: Add Nuxt Doctor to a Nuxt 4 project.
 ---
 
-Nuxt Doctor extends Vue Doctor with Nuxt 4 project detection, auto-import awareness, route middleware checks, Nitro/server rules, runtime config checks, hydration diagnostics, module overlays, and the optional `vite-doctor/nuxt` manifest.
+Nuxt Doctor combines the CLI with a Nuxt module. Use both: the module gives Doctor better Nuxt evidence, and the CLI gives CI/CD a single command to run.
 
-## What it checks
+## Add the module
 
-Nuxt Doctor combines Vue rules with Nuxt-specific checks:
-
-- **Imports and composables** — auto-import collisions, explicit `#imports`, and shadowed Nuxt composables.
-- **Fetching** — raw `$fetch` or `fetch` in SSR setup and custom wrappers that await `useFetch` or `useAsyncData`.
-- **Routing and middleware** — incorrect `useRoute`, `navigateTo`, router navigation, and API trust inside route middleware.
-- **Server boundaries** — `useNuxtApp` or `navigateTo` in Nitro/server code.
-- **Runtime and hydration** — public runtime secrets, browser side effects in setup, unstable keys, and non-serializable state.
-- **Module overlays** — Nuxt Content, Nuxt UI, Nuxt Scripts, VueUse, and Better Auth checks when those modules are present.
-
-::u-page-section
-#title
-Start with Nuxt Doctor
-
-#body
-:::u-page-grid{class="!grid-cols-1 sm:!grid-cols-2 !gap-4"}
-::::u-page-card
-
----
-
-icon: i-lucide-terminal
-to: /nuxt/getting-started
-
----
-
-#title
-Install and run
-#description
-Install once, get Nuxt-aware checks.
-::::
-
-::::u-page-card
-
-icon: i-lucide-package
-to: /nuxt/module
-
----
-
-#title
-Add the module
-#description
-Generate `.nuxt/doctor.manifest.json` for faster and more accurate Nuxt diagnostics.
-::::
-
-::::u-page-card
-
-icon: i-lucide-bot
-to: /nuxt/ai
-
----
-
-#title
-AI reports
-#description
-Expose read-only MCP reports and combine them with agent-ready runtime logs.
-::::
-:::
-::
-
-## Commands
-
-Add the Vite Doctor Nuxt module to a Nuxt app:
+Install the module first:
 
 ```bash
 pnpm dlx nuxt module add vite-doctor/nuxt
 ```
 
-List the Nuxt and Vue rule packs:
+Then run the Nuxt command:
 
 ```bash
-pnpm dlx vite-doctor@alpha rules
+pnpm exec nuxt doctor
 ```
 
-Fail on warnings:
+The module writes Nuxt project evidence into the build directory. Doctor uses it for auto-imports, components, layers, aliases, route rules, server handlers, runtime config, and keyed composables.
+
+## Run in CI/CD
+
+Use the CLI from the project root:
 
 ```bash
 pnpm dlx vite-doctor@alpha . --max-warnings 0
 ```
+
+## Browse rules
+
+Use [Nuxt rules](/rules/nuxt) for app, routing, hydration, runtime config, and module checks.
+
+Use [Nitro rules](/rules/nitro) for server handlers and request-runtime checks.

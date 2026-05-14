@@ -26,6 +26,7 @@
   "exports": {
     ".": "./dist/index.mjs",
     "./cli": "./dist/cli.mjs",
+    "./nuxt": "./dist/nuxt.mjs",
     "./plugin": "./dist/plugin.mjs",
     "./package.json": "./package.json"
   },

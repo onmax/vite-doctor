@@ -1,72 +1,34 @@
 ---
-title: Overview
-description: Use Vite Doctor to scan Vue 3.5 applications and libraries.
+title: Vue
+description: Run Vue Doctor in a Vue 3.5 project.
 ---
 
-Vue Doctor is the Vue rule pack inside `vite-doctor`. It understands Vue SFCs, `<script setup>`, template directives, refs, computed values, watchers, SSR rendering, and safe fixes.
+Vue Doctor scans Vue SFCs for framework mistakes that ordinary lint rules miss.
 
-## What it checks
+## Run a scan
 
-Vue Doctor focuses on framework correctness instead of formatting:
-
-- **Reactivity** — prop mutation, refs used without `.value`, and destructured props passed directly to `watch`.
-- **Computed values** — async getters and getters with side effects.
-- **Watchers** — watchers or cleanup handlers registered after `await`.
-- **Templates** — missing `v-for` keys, `v-if` with `v-for`, and template refs that should use `useTemplateRef`.
-- **SSR and security** — browser globals in universal setup code and unsafe `v-html` usage.
-
-::u-page-section
-#title
-Start with Vue Doctor
-
-#body
-:::u-page-grid{class="!grid-cols-1 sm:!grid-cols-2 !gap-4"}
-::::u-page-card
-
----
-
-icon: i-lucide-terminal
-to: /vue/installation
-
----
-
-#title
-Install and run
-#description
-Add the CLI and scan a Vue project.
-::::
-
-::::u-page-card
-
-icon: i-lucide-list-checks
-to: /rules/vue
-
----
-
-#title
-Vue rules
-#description
-Review the first reactivity, watcher, template, SSR, and security checks.
-::::
-:::
-::
-
-## Commands
-
-Run the default scan:
+From a Vue project root:
 
 ```bash
 pnpm dlx vite-doctor@alpha .
 ```
 
-List the Vue rule pack:
+Use the same command in CI when Vue diagnostics should block a pull request:
 
 ```bash
-pnpm dlx vite-doctor@alpha rules
+pnpm dlx vite-doctor@alpha . --max-warnings 0
 ```
 
-Clean the local Doctor cache:
+## What it checks
 
-```bash
-pnpm dlx vite-doctor@alpha cache clean
-```
+Vue Doctor focuses on SFC, reactivity, template, watcher, SSR, and security problems:
+
+- refs used incorrectly
+- watcher cleanup registered too late
+- missing stable template keys
+- unsafe `v-html`
+- browser APIs in universal setup code
+
+## Browse rules
+
+Use the [Vue rules](/rules/vue) page when you need a rule id for `--rules`, CI policy, or a review note.

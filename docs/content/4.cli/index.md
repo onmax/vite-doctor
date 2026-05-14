@@ -1,94 +1,46 @@
 ---
 title: CLI
-description: Run one CLI command for JavaScript, Vue, and Nuxt projects.
+description: Run project checks and framework scans from one command.
 ---
 
-Use `vite-doctor` when you want one CLI command that detects a JavaScript project, runs existing project scripts, and scans Vite, Vue, Nuxt, and Nitro code with the relevant rules.
+Use `vite-doctor` from the project root. It can run existing project scripts or scan Vite, Vue, Nuxt, and Nitro code directly.
 
-`vite-doctor` does not install dependencies. Install dependencies first, then run the CLI from the project root.
+Install dependencies first. The CLI does not run package-manager install commands.
 
-## Run the project checks
+## Run project scripts
 
-Run the default project plan:
+Run the checks already defined in `package.json`:
 
 ```bash
 pnpm dlx vite-doctor@alpha
 ```
 
-Use the explicit command when you want it in scripts:
-
-```bash
-pnpm dlx vite-doctor@alpha run
-```
-
-Preview the detected package manager and scripts without running them:
+Preview what it will run:
 
 ```bash
 pnpm dlx vite-doctor@alpha --dry-run
 ```
 
-Expected output looks like this:
+Doctor picks `ci`, then `ready`, then common scripts such as `check`, `lint`, `typecheck`, `test`, and `build`.
 
-```text
-Package manager: pnpm
-Commands:
-- pnpm run ready
-```
-
-## What the CLI detects
-
-`vite-doctor` reads `package.json` and lockfiles from the current working directory.
-
-It detects the package manager in this order:
-
-1. `packageManager` in `package.json`
-2. `pnpm-lock.yaml`
-3. `bun.lock` or `bun.lockb`
-4. `yarn.lock`
-5. `package-lock.json` or `npm-shrinkwrap.json`
-6. `npm` fallback
-
-It selects scripts in this order:
-
-1. `ci`, unless the script calls `vite-doctor`
-2. `ready`
-3. Available standard scripts: `check`, `lint`, `typecheck` or `type:check`, `test`, `build`
-
-The CLI stops on the first failed command and exits with that command's exit code.
-
-## Run framework scans
-
-Run a smart scan from the project root:
+## Run a framework scan
 
 ```bash
 pnpm dlx vite-doctor@alpha .
 ```
 
-`vite-doctor` defaults to `--framework auto`. It loads the built-in Vite, Vue, and Nuxt rule packs, then filters rules by detected framework, Nuxt modules/packages, rule requirements, optional type analysis, presets, and explicit `--rules`.
-
-Use a framework override only for unusual projects where dependency-based detection is not enough:
+Useful options:
 
 ```bash
-pnpm dlx vite-doctor@alpha . --framework nuxt
+pnpm dlx vite-doctor@alpha . --changed
+pnpm dlx vite-doctor@alpha . --max-warnings 0
+pnpm dlx vite-doctor@alpha . --rules nuxt/fetch/no-raw-fetch-in-setup
+pnpm dlx vite-doctor@alpha . --fix
 ```
 
-## Add a script contract
+## Run in CI/CD
 
-For monorepos, define one root script that runs the workspace checks in the right order:
-
-```json
-{
-  "scripts": {
-    "ready": "pnpm lint && pnpm test && pnpm build"
-  }
-}
-```
-
-If your project already has `ci`, `vite-doctor` runs that first. Use `ready` when you want one aggregate command that works locally and in automation.
-
-## Use in automation
-
-This GitHub Actions example uses pnpm. Keep the install step explicit so dependency setup remains visible in logs.
+This GitHub Actions example installs dependencies, then fails the build on any warning:
 
 ```yaml
 name: Checks
@@ -108,26 +60,15 @@ jobs:
           node-version-file: .node-version
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm dlx vite-doctor@alpha
+      - run: pnpm dlx vite-doctor@alpha . --max-warnings 0
 ```
 
-Nuxt projects can also add the module and run `nuxt doctor`:
+## Nuxt projects
+
+Nuxt projects should use the module and the CLI:
 
 ```bash
 pnpm dlx nuxt module add vite-doctor/nuxt
 pnpm exec nuxt doctor
+pnpm dlx vite-doctor@alpha . --max-warnings 0
 ```
-
-## Troubleshooting
-
-### No package.json found
-
-Run `vite-doctor` from the project root, or change into the package directory before running it.
-
-### No project scripts found
-
-Add one of these scripts to `package.json`: `ci`, `ready`, `check`, `lint`, `typecheck`, `type:check`, `test`, or `build`.
-
-### A dependency command is missing
-
-Install dependencies before running `vite-doctor`. The CLI does not run package-manager install commands.

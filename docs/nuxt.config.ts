@@ -6,7 +6,7 @@ import { getRuleDocuments } from "./rules/source.js";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
 const frameworkRoutes = ["/vue", "/nuxt", "/nitro", "/vite"];
-const docsRoutes = ["/", ...frameworkRoutes, "/cli", "/installation", "/motivation"];
+const docsRoutes = ["/", ...frameworkRoutes, "/cli"];
 const ruleIndexRoutes = frameworkRoutes.map((route) => `/rules${route}`);
 const ruleDetailRoutes = getRuleDocuments().map((rule) => rule.path);
 
