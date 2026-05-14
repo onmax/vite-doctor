@@ -33,40 +33,66 @@ const commandTabs = computed(() => [
     label: "For humans",
     value: "humans",
     icon: "i-lucide-user",
-    command: "pnpm dlx vite-doctor .",
   },
   {
     label: "For agents",
     value: "agents",
     icon: "i-lucide-bot",
-    command: `npx add-mcp ${mcpEndpoint.value}`,
   },
 ]);
 
-const humanCommandSteps = [
+const packageManagers = [
   {
-    label: "One-off scan",
-    icon: "i-lucide-terminal",
-    command: "pnpm dlx vite-doctor .",
+    label: "pnpm",
+    value: "pnpm",
+    icon: "i-simple-icons-pnpm",
+    doctorCommand: "pnpm dlx vite-doctor .",
+    nuxtModuleCommand: "pnpm dlx nuxt module add vite-doctor/nuxt",
   },
   {
-    label: "Nuxt module",
-    icon: "i-lucide-package",
-    command: "pnpm dlx nuxt module add vite-doctor/nuxt",
+    label: "npm",
+    value: "npm",
+    icon: "i-simple-icons-npm",
+    doctorCommand: "npx vite-doctor .",
+    nuxtModuleCommand: "npx nuxt module add vite-doctor/nuxt",
   },
   {
-    label: "Package script",
-    icon: "i-lucide-file-json",
-    command: 'pnpm pkg set scripts.doctor="vite-doctor . --max-warnings 0"',
+    label: "bun",
+    value: "bun",
+    icon: "i-simple-icons-bun",
+    doctorCommand: "bunx vite-doctor .",
+    nuxtModuleCommand: "bunx nuxt module add vite-doctor/nuxt",
+  },
+  {
+    label: "yarn",
+    value: "yarn",
+    icon: "i-simple-icons-yarn",
+    doctorCommand: "yarn dlx vite-doctor .",
+    nuxtModuleCommand: "yarn dlx nuxt module add vite-doctor/nuxt",
   },
 ] as const;
 
 const activeCommandTab = ref<"humans" | "agents">("humans");
+const activePackageManager = ref<(typeof packageManagers)[number]["value"]>("pnpm");
 const commandMeasure = ref<HTMLElement | null>(null);
 const commandWidth = ref<number | null>(null);
-const activeCommand = computed(
-  () => commandTabs.value.find((tab) => tab.value === activeCommandTab.value)?.command ?? "",
+const activePackageManagerIndex = computed(() =>
+  Math.max(
+    0,
+    packageManagers.findIndex((manager) => manager.value === activePackageManager.value),
+  ),
 );
+const selectedPackageManager = computed(
+  () =>
+    packageManagers.find((manager) => manager.value === activePackageManager.value) ??
+    packageManagers[0],
+);
+const activeCommand = computed(() =>
+  activeCommandTab.value === "humans"
+    ? selectedPackageManager.value.doctorCommand
+    : `npx add-mcp ${mcpEndpoint.value}`,
+);
+const nuxtModuleCommand = computed(() => selectedPackageManager.value.nuxtModuleCommand);
 
 const tracks = [
   { id: "nuxt", label: "Nuxt", icon: "i-logos-nuxt-icon", to: "/nuxt" },
@@ -134,6 +160,10 @@ watch(activeCommand, async () => {
   copied.value = null;
   await nextTick();
   updateCommandWidth();
+});
+
+watch(activePackageManager, () => {
+  copied.value = null;
 });
 
 const colorMode = useColorMode();
@@ -234,37 +264,75 @@ function toggleTheme() {
 
           <div class="mt-6 flex flex-col items-start gap-3 sm:mt-7">
             <div
-              class="relative inline-grid grid-cols-2 gap-1 rounded-full bg-neutral-100/80 p-1 text-sm ring-1 ring-neutral-200/80 dark:bg-neutral-900/80 dark:ring-white/10"
-              role="tablist"
-              aria-label="Command audience"
+              class="flex w-full max-w-xl flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between"
             >
-              <span
-                class="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%_-_0.75rem)/2)] rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform duration-[400ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none dark:bg-neutral-800 dark:ring-white/10"
-                :style="{
-                  transform:
-                    activeCommandTab === 'agents'
-                      ? 'translateX(calc(100% + 0.25rem))'
-                      : 'translateX(0)',
-                }"
-                aria-hidden="true"
-              />
-              <button
-                v-for="tab in commandTabs"
-                :key="tab.value"
-                type="button"
-                role="tab"
-                :aria-selected="activeCommandTab === tab.value"
-                class="relative z-10 inline-flex min-w-32 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 font-medium transition-[color,transform] duration-150 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-                :class="
-                  activeCommandTab === tab.value
-                    ? 'text-neutral-950 dark:text-neutral-50'
-                    : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100'
-                "
-                @click="activeCommandTab = tab.value"
+              <div
+                class="relative inline-grid grid-cols-2 gap-1 rounded-full bg-neutral-100/80 p-1 text-sm ring-1 ring-neutral-200/80 dark:bg-neutral-900/80 dark:ring-white/10"
+                role="tablist"
+                aria-label="Command audience"
               >
-                <UIcon :name="tab.icon" class="size-3.5 shrink-0" aria-hidden="true" />
-                <span>{{ tab.label }}</span>
-              </button>
+                <span
+                  class="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%_-_0.75rem)/2)] rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform duration-[400ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none dark:bg-neutral-800 dark:ring-white/10"
+                  :style="{
+                    transform:
+                      activeCommandTab === 'agents'
+                        ? 'translateX(calc(100% + 0.25rem))'
+                        : 'translateX(0)',
+                  }"
+                  aria-hidden="true"
+                />
+                <button
+                  v-for="tab in commandTabs"
+                  :key="tab.value"
+                  type="button"
+                  role="tab"
+                  :aria-selected="activeCommandTab === tab.value"
+                  class="relative z-10 inline-flex min-w-32 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 font-medium transition-[color,transform] duration-150 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                  :class="
+                    activeCommandTab === tab.value
+                      ? 'text-neutral-950 dark:text-neutral-50'
+                      : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100'
+                  "
+                  @click="activeCommandTab = tab.value"
+                >
+                  <UIcon :name="tab.icon" class="size-3.5 shrink-0" aria-hidden="true" />
+                  <span>{{ tab.label }}</span>
+                </button>
+              </div>
+
+              <div
+                class="relative grid grid-cols-4 gap-1 rounded-full bg-neutral-100/80 p-1 text-sm ring-1 ring-neutral-200/80 dark:bg-neutral-900/80 dark:ring-white/10"
+                role="radiogroup"
+                aria-label="Package manager"
+              >
+                <span
+                  class="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%_-_1.25rem)/4)] rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform duration-[400ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none dark:bg-neutral-800 dark:ring-white/10"
+                  :style="{
+                    transform: `translateX(calc(${activePackageManagerIndex} * (100% + 0.25rem)))`,
+                  }"
+                  aria-hidden="true"
+                />
+                <button
+                  v-for="manager in packageManagers"
+                  :key="manager.value"
+                  type="button"
+                  role="radio"
+                  :aria-checked="activePackageManager === manager.value"
+                  :aria-label="manager.label"
+                  class="relative z-10 inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-full px-2 font-medium transition-[color,transform] duration-150 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                  :class="
+                    activePackageManager === manager.value
+                      ? 'text-neutral-950 dark:text-neutral-50'
+                      : 'text-neutral-500 grayscale hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100'
+                  "
+                  @click="activePackageManager = manager.value"
+                >
+                  <UIcon :name="manager.icon" class="size-3.5 shrink-0" aria-hidden="true" />
+                  <span v-if="activePackageManager === manager.value" class="max-sm:hidden">
+                    {{ manager.label }}
+                  </span>
+                </button>
+              </div>
             </div>
 
             <UButton
@@ -310,39 +378,55 @@ function toggleTheme() {
             </UButton>
             <div
               v-if="activeCommandTab === 'humans'"
-              class="mt-1 grid w-full max-w-xl gap-2"
-              aria-label="Human command sequence"
+              class="mt-1 flex w-full max-w-xl flex-col items-start gap-2.5"
+              aria-label="Nuxt module command"
             >
-              <button
-                v-for="item in humanCommandSteps"
-                :key="item.label"
-                type="button"
-                class="group grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-2 text-left transition-colors hover:border-neutral-300 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-white/10 dark:bg-neutral-950 dark:hover:border-white/20 dark:hover:bg-neutral-900"
-                @click="copy(item.command, `command-${item.label}`)"
+              <div
+                class="inline-flex items-center gap-2 text-sm font-semibold text-neutral-900 dark:text-neutral-100"
               >
-                <span
-                  class="inline-flex size-7 items-center justify-center rounded-md bg-neutral-50 text-neutral-700 ring-1 ring-neutral-950/10 dark:bg-white/[0.03] dark:text-neutral-300 dark:ring-white/10"
-                  aria-hidden="true"
-                >
-                  <UIcon :name="item.icon" class="size-3.5" />
-                </span>
-                <span class="min-w-0">
-                  <span class="block text-xs font-semibold text-neutral-900 dark:text-neutral-100">
-                    {{ item.label }}
-                  </span>
-                  <code
-                    class="block truncate font-mono text-[0.75rem] text-neutral-500 dark:text-neutral-400"
-                  >
-                    {{ item.command }}
-                  </code>
-                </span>
                 <UIcon
-                  :name="copied === `command-${item.label}` ? 'i-lucide-check' : 'i-lucide-copy'"
-                  class="size-3.5 shrink-0 text-neutral-400"
-                  :class="copied === `command-${item.label}` ? 'text-emerald-500' : ''"
+                  name="i-simple-icons-nuxtdotjs"
+                  class="size-4 shrink-0 grayscale"
                   aria-hidden="true"
                 />
-              </button>
+                <span>Nuxt</span>
+              </div>
+              <UButton
+                type="button"
+                color="neutral"
+                variant="ghost"
+                :aria-label="
+                  copied === 'nuxt-module'
+                    ? 'Copied Nuxt module command'
+                    : 'Copy Nuxt module command'
+                "
+                class="group inline-flex max-w-full items-center gap-1.5 rounded-full bg-white px-2.5 py-1.5 text-left shadow-sm ring-1 ring-neutral-200 transition-[box-shadow,background-color] duration-200 hover:bg-white hover:ring-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:bg-neutral-950 dark:ring-white/10 dark:hover:bg-neutral-950 dark:hover:ring-white/20"
+                @click="copy(nuxtModuleCommand, 'nuxt-module')"
+              >
+                <span class="font-mono text-base text-neutral-300 select-none" aria-hidden="true"
+                  >$</span
+                >
+                <span class="block min-w-0 overflow-hidden">
+                  <code
+                    class="block max-w-[calc(100vw-7rem)] truncate whitespace-nowrap py-1 font-mono text-[0.9375rem] text-neutral-950 dark:text-neutral-100"
+                  >
+                    {{ nuxtModuleCommand }}
+                  </code>
+                </span>
+                <span
+                  class="relative ml-1 inline-flex size-6 shrink-0 items-center justify-center rounded-full text-neutral-900 transition-colors group-hover:bg-neutral-100 dark:text-neutral-100 dark:group-hover:bg-white/10"
+                >
+                  <Transition name="copy-icon" mode="out-in">
+                    <UIcon
+                      :key="copied === 'nuxt-module' ? 'check' : 'copy'"
+                      :name="copied === 'nuxt-module' ? 'i-lucide-check' : 'i-lucide-copy'"
+                      class="size-3.5"
+                      :class="copied === 'nuxt-module' ? 'text-emerald-500' : ''"
+                      aria-hidden="true"
+                    />
+                  </Transition>
+                </span>
+              </UButton>
             </div>
             <UButton
               to="/cli"
