@@ -5,9 +5,9 @@ import {
   type DoctorRunOptions,
   type DoctorRunResult,
   type RulePack,
-  viteRulePack,
 } from "@vue-doctor/core";
 import { consola } from "consola";
+import { viteRulePack } from "./rules.js";
 
 const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
 
@@ -58,8 +58,13 @@ async function optionalVueRulePacks(): Promise<RulePack[]> {
     const mod = await optionalImport<{ vueRulePack: RulePack }>("vue-doctor/rules");
     return [mod.vueRulePack];
   } catch (error) {
-    reportMissingOptionalPack("vue-doctor", error);
-    return [];
+    try {
+      const mod = await import("../../vue/src/rules.ts");
+      return [mod.vueRulePack];
+    } catch {
+      reportMissingOptionalPack("vue-doctor", error);
+      return [];
+    }
   }
 }
 
@@ -68,8 +73,13 @@ async function optionalNuxtRulePacks(): Promise<RulePack[]> {
     const mod = await optionalImport<{ nuxtRulePacks: () => RulePack[] }>("nuxt-doctor/rules");
     return mod.nuxtRulePacks();
   } catch (error) {
-    reportMissingOptionalPack("nuxt-doctor", error);
-    return [];
+    try {
+      const mod = await import("../../nuxt/src/rules/index.ts");
+      return mod.nuxtRulePacks();
+    } catch {
+      reportMissingOptionalPack("nuxt-doctor", error);
+      return [];
+    }
   }
 }
 
@@ -80,8 +90,13 @@ async function optionalNuxtPlugins(): Promise<DoctorPlugin[]> {
     );
     return mod.nuxtDoctorPlugins();
   } catch (error) {
-    reportMissingOptionalPack("nuxt-doctor", error);
-    return [];
+    try {
+      const mod = await import("../../nuxt/src/rules/index.ts");
+      return mod.nuxtDoctorPlugins();
+    } catch {
+      reportMissingOptionalPack("nuxt-doctor", error);
+      return [];
+    }
   }
 }
 

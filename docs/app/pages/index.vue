@@ -123,7 +123,7 @@ function toggleTheme() {
 
     <main class="mx-auto max-w-6xl px-6 pb-20 sm:px-10">
       <section
-        class="grid items-center gap-7 py-10 sm:gap-9 sm:pt-16 lg:grid-cols-[minmax(0,21fr)_minmax(0,20fr)] lg:gap-16 lg:pt-20"
+        class="grid items-start gap-7 py-10 sm:gap-9 sm:pt-16 lg:grid-cols-[minmax(0,21fr)_minmax(0,20fr)] lg:gap-16 lg:pt-20"
       >
         <div class="min-w-0">
           <div

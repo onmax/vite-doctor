@@ -7,7 +7,7 @@ export default defineConfig({
     onlyBundle: false,
   },
   dts: true,
-  entry: ["src/index.ts", "src/cli.ts", "src/plugin.ts", "src/nuxt.ts"],
+  entry: ["src/index.ts", "src/cli.ts", "src/plugin.ts", "src/nuxt.ts", "src/rules.ts"],
   exports: true,
   format: ["esm"],
 });

@@ -1,12 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
-import { promisify } from "node:util";
 import { dirname, join, resolve } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { createRule, defineDoctorPlugin, runDoctor } from "../../core/src/index.ts";
-import { vueRulePack } from "../../core/src/vue-rules.ts";
+import { vueRulePack } from "../../vue/src/rules.ts";
 import nuxtContentRulePack from "../src/rules/nuxt-content.ts";
 import docusRulePack from "../src/rules/docus.ts";
 import { preferUButton, preferUFormControls } from "../src/rules/nuxt-ui.ts";
@@ -58,23 +56,24 @@ import {
   preferValidatedQuery,
   preferValidatedRouterParams,
   requireEventRuntimeConfigInServer,
-} from "../src/rules/nitro/index.ts";
+} from "../../nitro/src/rules.ts";
 import { runProjectFixture, runRuleFixture } from "../../core/src/testkit.ts";
 import {
   collectNuxtDoctorRulePacks,
   resolveNuxtDoctorMcpOptions,
   writeManifest,
 } from "../src/module.ts";
-import { mcpToolContracts } from "../src/runtime/mcp/contract.ts";
+import { mcpToolContracts } from "../../../docs/server/utils/mcp-contracts.ts";
 import { runNuxtDoctorMcpReport } from "../src/runtime/mcp/doctor.ts";
 import { createRulesReport, createTextReport, explainRule } from "../../core/src/index.ts";
 import { nitroRulePack, nuxtDoctorPlugins, nuxtRulePacks } from "../src/rules/index.ts";
 import { createNuxtRuntimeEvidence } from "../src/rules/nuxt/evidence.ts";
+import { main } from "../src/cli.ts";
 import {
   htmlButtonHasType,
   preferSameNamePropShorthand,
   preferTrueAttributeShorthand,
-} from "../../core/src/rules/vue/index.ts";
+} from "../../vue/src/rules/vue/index.ts";
 import {
   preferUseEventListener,
   preferUseObservers,
@@ -2545,30 +2544,20 @@ test("nuxt-doctor exits 1 for errors and 0 for warnings unless max warnings is z
     },
     {},
     async (root) => {
-      const cli = join(process.cwd(), "dist/bin.mjs");
       expect(
-        (await runCli(cli, [root, "--rules", "nuxt/hydration/no-browser-global-in-universal-code"]))
-          .code,
+        await main([root, "--rules", "nuxt/hydration/no-browser-global-in-universal-code"]),
       ).toBe(1);
       expect(
-        (
-          await runCli(cli, [
-            root,
-            "--rules",
-            "nuxt/hydration/prefer-usecookie-for-initial-client-state",
-          ])
-        ).code,
+        await main([root, "--rules", "nuxt/hydration/prefer-usecookie-for-initial-client-state"]),
       ).toBe(0);
       expect(
-        (
-          await runCli(cli, [
-            root,
-            "--rules",
-            "nuxt/hydration/prefer-usecookie-for-initial-client-state",
-            "--max-warnings",
-            "0",
-          ])
-        ).code,
+        await main([
+          root,
+          "--rules",
+          "nuxt/hydration/prefer-usecookie-for-initial-client-state",
+          "--max-warnings",
+          "0",
+        ]),
       ).toBe(1);
     },
   );
@@ -2630,15 +2619,4 @@ async function writeFileManifest(
       2,
     ),
   );
-}
-
-const execFileAsync = promisify(execFile);
-
-async function runCli(cli: string, args: string[]) {
-  try {
-    await execFileAsync("node", [cli, ...args]);
-    return { code: 0 };
-  } catch (error: any) {
-    return { code: error.code ?? 1 };
-  }
 }

@@ -83,23 +83,34 @@ const activeCommand = computed(() =>
     : selectedPackageManager.value.agentCommand,
 );
 const nuxtModuleCommand = computed(() => selectedPackageManager.value.nuxtModuleCommand);
+const agentPrompt = computed(
+  () => `Add Doctor to this project as an MCP server using: ${selectedPackageManager.value.agentCommand}
+
+Then use Doctor before review to inspect framework issues, explain findings with file paths and rule names, and suggest the smallest safe fixes. Prefer the MCP tools when available; otherwise run vite-doctor locally.`,
+);
 
 async function copy(value: string, key: string) {
+  let didCopy = false;
+
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(value);
-    } else {
-      const textarea = document.createElement("textarea");
-      textarea.value = value;
-      textarea.setAttribute("readonly", "");
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      textarea.remove();
+      didCopy = true;
     }
   } catch {}
+
+  if (!didCopy) {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    didCopy = document.execCommand("copy");
+    textarea.remove();
+  }
+
   copied.value = key;
   setTimeout(() => {
     if (copied.value === key) copied.value = null;
@@ -123,6 +134,10 @@ watch(activeCommand, async () => {
 });
 
 watch(activePackageManager, () => {
+  copied.value = null;
+});
+
+watch(activeCommandTab, () => {
   copied.value = null;
 });
 </script>
@@ -238,7 +253,7 @@ watch(activePackageManager, () => {
 
     <div
       v-if="activeCommandTab === 'humans' && showNuxtModule"
-      class="mt-1 flex w-full max-w-xl flex-col items-start gap-2.5"
+      class="mt-1 flex min-h-[4.75rem] w-full max-w-xl flex-col items-start gap-2.5"
       aria-label="Nuxt module command"
     >
       <div
@@ -283,6 +298,43 @@ watch(activePackageManager, () => {
           </Transition>
         </span>
       </UButton>
+    </div>
+
+    <div
+      v-if="activeCommandTab === 'agents'"
+      class="mt-1 flex w-full max-w-xl flex-col items-stretch gap-2.5"
+      aria-label="Agent prompt"
+    >
+      <div
+        class="ml-8 inline-flex items-center gap-2 text-sm font-semibold text-neutral-900 dark:text-neutral-100"
+      >
+        <span>Prompt</span>
+      </div>
+
+      <div
+        id="agent-prompt-panel"
+        class="relative overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-950 dark:ring-white/10"
+      >
+        <button
+          type="button"
+          :aria-label="copied === 'agent-prompt' ? 'Copied agent prompt' : 'Copy agent prompt'"
+          class="absolute top-2 right-2 inline-flex size-7 items-center justify-center rounded-md text-neutral-700 hover:bg-neutral-100 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-neutral-300 dark:hover:bg-white/10 dark:hover:text-neutral-50"
+          @click="copy(agentPrompt, 'agent-prompt')"
+        >
+          <Transition name="copy-icon" mode="out-in">
+            <UIcon
+              :key="copied === 'agent-prompt' ? 'check-panel' : 'copy-panel'"
+              :name="copied === 'agent-prompt' ? 'i-lucide-check' : 'i-lucide-copy'"
+              class="size-3.5"
+              :class="copied === 'agent-prompt' ? 'text-emerald-500' : ''"
+              aria-hidden="true"
+            />
+          </Transition>
+        </button>
+        <pre
+          class="max-h-64 overflow-auto whitespace-pre-wrap px-3 py-3 pr-11 font-mono text-[0.8125rem]/5 text-neutral-800 dark:text-neutral-200"
+        ><code>{{ agentPrompt }}</code></pre>
+      </div>
     </div>
 
     <UButton

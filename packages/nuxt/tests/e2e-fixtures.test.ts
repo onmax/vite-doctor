@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { relative } from "pathe";
 import { $fetch, setup } from "@nuxt/test-utils/e2e";
 import { defineDoctorPlugin, runDoctor } from "../../core/src/index.ts";
-import { vueRulePack } from "../../core/src/vue-rules.ts";
+import { vueRulePack } from "../../vue/src/rules.ts";
 import { nuxtRulePacks } from "../src/rules/index.ts";
 
 const vueFixture = fileURLToPath(new URL("../fixtures/vue-all-issues", import.meta.url));

@@ -31,8 +31,6 @@
     "./internal/source-inventory": "./dist/internal/source-inventory.mjs",
     "./reports": "./dist/reports.mjs",
     "./testkit": "./dist/testkit.mjs",
-    "./vite-rules": "./dist/vite-rules.mjs",
-    "./vue-rules": "./dist/vue-rules.mjs",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -44,6 +42,8 @@
   "dependencies": {
     "@typescript-eslint/parser": "catalog:",
     "@vue/compiler-sfc": "catalog:",
+    "c12": "catalog:",
+    "defu": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-vue": "catalog:",
     "magic-string": "catalog:",

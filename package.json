@@ -14,7 +14,7 @@
     "build": "vp run -r build",
     "deploy": "pnpm --dir docs exec wrangler deploy --no-bundle",
     "deploy:preview": "pnpm --dir docs exec wrangler versions upload --preview-alias preview --no-bundle",
-    "test": "pnpm --filter @vue-doctor/core test && pnpm --filter vue-doctor test && pnpm --filter nuxt-doctor test && pnpm --filter vite-doctor test",
+    "test": "pnpm --filter @vue-doctor/core test && pnpm --filter vue-doctor test && pnpm --filter nitro-doctor test && pnpm --filter nuxt-doctor test && pnpm --filter vite-doctor test",
     "check": "vp check",
     "doctor": "vp exec vite-doctor .",
     "release:check": "pnpm ready",
@@ -27,6 +27,7 @@
   "devDependencies": {
     "@changesets/changelog-git": "catalog:",
     "@changesets/cli": "catalog:",
+    "nitro-doctor": "workspace:*",
     "nuxt-doctor": "workspace:*",
     "tsdown": "catalog:",
     "vite-doctor": "workspace:*",

@@ -1,7 +1,6 @@
 import { cac } from "cac";
 import { consola } from "consola";
 import { resolve } from "pathe";
-import { loadDoctorConfig } from "@vue-doctor/config";
 import {
   cleanCache,
   createReport,
@@ -16,6 +15,7 @@ import {
   normalizeDoctorCommand,
   parseDoctorArgs,
 } from "@vue-doctor/core/internal/cli";
+import { loadDoctorConfig } from "../../core/src/config.js";
 import { nuxtDoctorPlugins, nuxtRulePacks } from "./rules/index.js";
 
 const commands = new Set(["scan", "check", "rules", "explain", "cache"]);

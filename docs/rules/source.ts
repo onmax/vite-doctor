@@ -99,15 +99,15 @@ export const rulesCollectionSource = {
 };
 
 function collectRuleDocuments() {
-  const vueSources = ruleSourcesFromIndex(join(root, "packages/core/src/rules/vue/index.ts"));
-  const viteSources = readdirSync(join(root, "packages/core/src/rules/vite"))
+  const vueSources = ruleSourcesFromIndex(join(root, "packages/vue/src/rules/vue/index.ts"));
+  const viteSources = readdirSync(join(root, "packages/vite/src/rules/vite"))
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
-    .map((file) => join(root, "packages/core/src/rules/vite", file));
+    .map((file) => join(root, "packages/vite/src/rules/vite", file));
   const nuxtRulesDir = join(root, "packages/nuxt/src/rules");
-  const nitroRulesDir = join(nuxtRulesDir, "nitro");
+  const nitroRulesDir = join(root, "packages/nitro/src/rules");
   const nitroSources = readdirSync(nitroRulesDir)
-    .filter((file) => file.endsWith(".ts") && file !== "index.ts")
+    .filter((file) => file.endsWith(".ts") && !["ast.ts", "index.ts", "shared.ts"].includes(file))
     .sort()
     .map((file) => join(nitroRulesDir, file));
   const nuxtSources = [

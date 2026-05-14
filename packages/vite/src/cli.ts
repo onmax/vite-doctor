@@ -108,7 +108,7 @@ function addScanCommand(
       applyDoctorOptions(parsed.options, options);
       if (options.config || options.trustedConfig) {
         errorHuman(
-          "Executable config loading was removed from vite-doctor. Use vue-doctor, nuxt-doctor, or @vue-doctor/config for trusted config files.",
+          "Executable config loading was removed from vite-doctor. Use vue-doctor, nuxt-doctor, or @vue-doctor/core/config for trusted config files.",
         );
         setExitCode(1);
         return;

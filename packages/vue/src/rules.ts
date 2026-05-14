@@ -1,1 +1,2 @@
-export { vueRulePack } from "@vue-doctor/core/vue-rules";
+export { default as vueRulePack } from "./rules/vue/index.js";
+export * from "./rules/vue/index.js";

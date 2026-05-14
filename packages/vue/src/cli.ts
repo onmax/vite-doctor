@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { cac } from "cac";
 import { consola } from "consola";
 import { resolve } from "pathe";
-import { loadDoctorConfig } from "@vue-doctor/config";
 import {
   cleanCache,
   createReport,
@@ -15,7 +14,8 @@ import {
   type DoctorRunOptions,
 } from "@vue-doctor/core";
 import { applyDoctorOptions, normalizeDoctorCommand } from "@vue-doctor/core/internal/cli";
-import { vueRulePack } from "@vue-doctor/core/vue-rules";
+import { loadDoctorConfig } from "../../core/src/config.js";
+import { vueRulePack } from "./rules.js";
 
 const commands = new Set(["scan", "check", "rules", "explain", "cache"]);
 

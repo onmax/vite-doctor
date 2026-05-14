@@ -1,12 +1,8 @@
-# Vite Doctor
+# Catch the AI slop your agents ship.
 
-Framework-aware diagnostics for Vite, Vue, Nuxt, and Nitro projects.
+Doctor scans Vite, Vue, Nuxt, and Nitro projects before review and flags framework bugs agents often miss.
 
 Docs: [vite-doctor.onmax.me](https://vite-doctor.onmax.me)
-
-## Alpha
-
-The first npm alpha publishes `vite-doctor` only. Use `vite-doctor` as the single smart command for Vite, Vue, Nuxt, and Nitro projects; it detects the project type and enables the relevant built-in rule packs automatically.
 
 ## Usage
 

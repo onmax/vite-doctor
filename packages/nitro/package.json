@@ -1,0 +1,44 @@
+{
+  "name": "nitro-doctor",
+  "version": "0.0.0",
+  "description": "CLI diagnostics rule pack for Nitro projects using Doctor rules.",
+  "keywords": [
+    "doctor",
+    "lint",
+    "nitro",
+    "static-analysis"
+  ],
+  "homepage": "https://github.com/onmax/nuxt-doctor#readme",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onmax/nuxt-doctor.git",
+    "directory": "packages/nitro"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./rules": "./dist/rules.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vp test --passWithNoTests",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@vue-doctor/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsdown": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.20.0"
+  }
+}

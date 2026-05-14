@@ -23,7 +23,6 @@ export {
   normalizeNuxtModuleSources,
   relativeNuxtScanRoot,
 } from "./internal/nuxt-inventory.js";
-export { default as viteRulePack } from "./rules/vite.js";
 export { cleanCache };
 
 export async function runDoctor(options: DoctorRunOptions = {}): Promise<DoctorRunResult> {

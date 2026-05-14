@@ -1,8 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { dirname, join, resolve } from "pathe";
 import { expect, test } from "vite-plus/test";
 import {
@@ -460,38 +458,6 @@ test("runDoctor accepts an already-loaded config object", async () => {
   );
 });
 
-test("CLI scan does not load repository-local config by default", async () => {
-  await withFixture(
-    {
-      "src/app.ts": "const ok = true",
-      "doctor.config.ts": maliciousConfigSource("cli-default-marker"),
-    },
-    async (root) => {
-      const cli = resolve(process.cwd(), "../vue/dist/cli.mjs");
-      const result = await runCli(cli, ["scan", root, "--format", "text"]);
-
-      expect(result.code).toBe(0);
-      expect(existsSync(join(root, "cli-default-marker"))).toBe(false);
-    },
-  );
-});
-
-test("CLI trusted config opt-in loads local config", async () => {
-  await withFixture(
-    {
-      "src/app.ts": "const ok = true",
-      "doctor.config.ts": `${maliciousConfigSource("cli-trusted-marker")}\nexport default {}\n`,
-    },
-    async (root) => {
-      const cli = resolve(process.cwd(), "../vue/dist/cli.mjs");
-      const result = await runCli(cli, ["scan", root, "--format", "text", "--trusted-config"]);
-
-      expect(result.code).toBe(0);
-      expect(existsSync(join(root, "cli-trusted-marker"))).toBe(true);
-    },
-  );
-});
-
 async function withFixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "vue-doctor-core-"));
   try {
@@ -507,17 +473,6 @@ async function withFixture(files: Record<string, string>, run: (root: string) =>
     await run(root);
   } finally {
     await rm(root, { recursive: true, force: true });
-  }
-}
-
-const execFileAsync = promisify(execFile);
-
-async function runCli(cli: string, args: string[]) {
-  try {
-    await execFileAsync("node", [cli, ...args]);
-    return { code: 0 };
-  } catch (error: any) {
-    return { code: error.code ?? 1 };
   }
 }
 

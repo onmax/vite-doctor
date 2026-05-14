@@ -1,4 +1,4 @@
-import { mcpToolContracts } from "../../../../packages/nuxt/src/runtime/mcp/contract.js";
+import { mcpToolContracts } from "../../utils/mcp-contracts.js";
 import { getRuleReports } from "../../../rules/source.js";
 
 const contract = mcpToolContracts.rules;

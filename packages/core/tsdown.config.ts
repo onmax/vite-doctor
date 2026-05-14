@@ -8,8 +8,6 @@ export default defineConfig({
     "src/config.ts",
     "src/reports.ts",
     "src/testkit.ts",
-    "src/vite-rules.ts",
-    "src/vue-rules.ts",
     "src/internal/cli.ts",
     "src/internal/diagnostic-policy.ts",
     "src/internal/nuxt-inventory.ts",

@@ -1,6 +1,6 @@
 import { defineDoctorPlugin, type DoctorPlugin, type RulePack } from "@vue-doctor/core";
-import { vueRulePack } from "@vue-doctor/core/vue-rules";
-import nitroRulePack from "./nitro/index.js";
+import { nitroRulePack } from "../../../nitro/src/rules.ts";
+import { vueRulePack } from "../../../vue/src/rules.ts";
 import nuxtRulePack from "./nuxt.js";
 import nuxtContentRulePack from "./nuxt-content.js";
 import nuxtUiRulePack from "./nuxt-ui.js";
