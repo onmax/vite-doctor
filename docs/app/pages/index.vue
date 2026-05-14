@@ -3,17 +3,43 @@ import type { RawRuleEntry } from "../utils/rule-catalog";
 
 definePageMeta({ header: false, footer: false, layout: false });
 
+const homeTitle = "Catch the AI slop your agents ship.";
+const homeDescription =
+  "Doctor scans your project before review and flags framework bugs agents often miss.";
+
+useSeoMeta({
+  title: homeTitle,
+  description: homeDescription,
+  ogTitle: homeTitle,
+  ogDescription: homeDescription,
+  ogSiteName: "Doctor",
+  ogType: "website",
+  ogUrl: "https://vite-doctor.onmax.me/",
+  twitterCard: "summary_large_image",
+  twitterTitle: homeTitle,
+  twitterDescription: homeDescription,
+});
+
+defineOgImageComponent(
+  "DoctorHome",
+  {
+    title: homeTitle,
+    description: homeDescription,
+  },
+  {
+    width: 1200,
+    height: 630,
+  },
+);
+
 useHead({
-  title: "Vue Doctor & Nuxt Doctor. Framework-aware rule checks.",
+  titleTemplate: "%s",
   meta: [
-    {
-      name: "description",
-      content:
-        "Static build analysis for framework code. Doctor catches reactivity, hydration, runtime config, and server-boundary bugs before review.",
-    },
-    { name: "twitter:card", content: "summary_large_image" },
+    { name: "theme-color", content: "#059669" },
+    { name: "application-name", content: "Doctor" },
   ],
   link: [
+    { rel: "canonical", href: "https://vite-doctor.onmax.me/" },
     { rel: "preconnect", href: "https://fonts.googleapis.com" },
     { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
     {
@@ -142,12 +168,12 @@ function toggleTheme() {
           <h1
             class="max-w-[18ch] text-4xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-5xl lg:text-[3.5rem] dark:text-neutral-100"
           >
-            Catch the AI slop your agents ship.
+            {{ homeTitle }}
           </h1>
           <p
             class="mt-6 max-w-[48ch] text-lg text-pretty text-neutral-600 md:max-w-[58ch] dark:text-neutral-400"
           >
-            Doctor scans your project before review and flags framework bugs agents often miss.
+            {{ homeDescription }}
           </p>
 
           <InstallCommands class="mt-6 sm:mt-7" />
