@@ -47,6 +47,7 @@ const packageManagers = [
     value: "pnpm",
     icon: "i-simple-icons-pnpm",
     doctorCommand: "pnpm dlx vite-doctor .",
+    agentCommand: `pnpm dlx add-mcp ${mcpEndpoint.value}`,
     nuxtModuleCommand: "pnpm dlx nuxt module add vite-doctor/nuxt",
   },
   {
@@ -54,6 +55,7 @@ const packageManagers = [
     value: "npm",
     icon: "i-simple-icons-npm",
     doctorCommand: "npx vite-doctor .",
+    agentCommand: `npx add-mcp ${mcpEndpoint.value}`,
     nuxtModuleCommand: "npx nuxt module add vite-doctor/nuxt",
   },
   {
@@ -61,6 +63,7 @@ const packageManagers = [
     value: "bun",
     icon: "i-simple-icons-bun",
     doctorCommand: "bunx vite-doctor .",
+    agentCommand: `bunx add-mcp ${mcpEndpoint.value}`,
     nuxtModuleCommand: "bunx nuxt module add vite-doctor/nuxt",
   },
   {
@@ -68,6 +71,7 @@ const packageManagers = [
     value: "yarn",
     icon: "i-simple-icons-yarn",
     doctorCommand: "yarn dlx vite-doctor .",
+    agentCommand: `yarn dlx add-mcp ${mcpEndpoint.value}`,
     nuxtModuleCommand: "yarn dlx nuxt module add vite-doctor/nuxt",
   },
 ] as const;
@@ -76,12 +80,6 @@ const activeCommandTab = ref<"humans" | "agents">("humans");
 const activePackageManager = ref<(typeof packageManagers)[number]["value"]>("pnpm");
 const commandMeasure = ref<HTMLElement | null>(null);
 const commandWidth = ref<number | null>(null);
-const activePackageManagerIndex = computed(() =>
-  Math.max(
-    0,
-    packageManagers.findIndex((manager) => manager.value === activePackageManager.value),
-  ),
-);
 const selectedPackageManager = computed(
   () =>
     packageManagers.find((manager) => manager.value === activePackageManager.value) ??
@@ -90,7 +88,7 @@ const selectedPackageManager = computed(
 const activeCommand = computed(() =>
   activeCommandTab.value === "humans"
     ? selectedPackageManager.value.doctorCommand
-    : `npx add-mcp ${mcpEndpoint.value}`,
+    : selectedPackageManager.value.agentCommand,
 );
 const nuxtModuleCommand = computed(() => selectedPackageManager.value.nuxtModuleCommand);
 
@@ -251,11 +249,46 @@ function toggleTheme() {
               <span class="leading-none">{{ track.label }}</span>
             </span>
           </div>
-          <h1
-            class="max-w-[18ch] text-4xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-5xl lg:text-[3.5rem] dark:text-neutral-100"
-          >
-            Catch the bugs your agents ship.
-          </h1>
+          <div class="flex max-w-xl items-start justify-between gap-4">
+            <h1
+              class="max-w-[18ch] text-4xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-5xl lg:text-[3.5rem] dark:text-neutral-100"
+            >
+              Catch the bugs your agents ship.
+            </h1>
+            <div
+              class="mt-1 flex shrink-0 items-center gap-1 rounded-full bg-neutral-100/80 p-1 text-sm ring-1 ring-neutral-200/80 sm:mt-2 lg:mt-3 dark:bg-neutral-900/80 dark:ring-white/10"
+              role="radiogroup"
+              aria-label="Package manager"
+            >
+              <button
+                v-for="manager in packageManagers"
+                :key="manager.value"
+                type="button"
+                role="radio"
+                :aria-checked="activePackageManager === manager.value"
+                :aria-label="manager.label"
+                class="inline-flex h-8 min-w-8 items-center justify-center overflow-hidden rounded-full font-medium transition-[width,color,transform,background-color,box-shadow] duration-[220ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 motion-reduce:transition-none"
+                :class="
+                  activePackageManager === manager.value
+                    ? 'w-22 bg-white px-2.5 text-neutral-950 shadow-sm ring-1 ring-black/5 dark:bg-neutral-800 dark:text-neutral-50 dark:ring-white/10'
+                    : 'w-8 px-0 text-neutral-500 grayscale hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100'
+                "
+                @click="activePackageManager = manager.value"
+              >
+                <UIcon :name="manager.icon" class="size-3.5 shrink-0" aria-hidden="true" />
+                <span
+                  class="overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin-left] duration-[180ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none"
+                  :class="
+                    activePackageManager === manager.value
+                      ? 'ml-1.5 max-w-12 opacity-100'
+                      : 'ml-0 max-w-0 opacity-0'
+                  "
+                >
+                  {{ manager.label }}
+                </span>
+              </button>
+            </div>
+          </div>
           <p
             class="mt-6 max-w-[48ch] text-lg text-pretty text-neutral-600 md:max-w-[58ch] dark:text-neutral-400"
           >
@@ -297,40 +330,6 @@ function toggleTheme() {
                 >
                   <UIcon :name="tab.icon" class="size-3.5 shrink-0" aria-hidden="true" />
                   <span>{{ tab.label }}</span>
-                </button>
-              </div>
-
-              <div
-                class="relative grid grid-cols-4 gap-1 rounded-full bg-neutral-100/80 p-1 text-sm ring-1 ring-neutral-200/80 dark:bg-neutral-900/80 dark:ring-white/10"
-                role="radiogroup"
-                aria-label="Package manager"
-              >
-                <span
-                  class="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%_-_1.25rem)/4)] rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform duration-[400ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none dark:bg-neutral-800 dark:ring-white/10"
-                  :style="{
-                    transform: `translateX(calc(${activePackageManagerIndex} * (100% + 0.25rem)))`,
-                  }"
-                  aria-hidden="true"
-                />
-                <button
-                  v-for="manager in packageManagers"
-                  :key="manager.value"
-                  type="button"
-                  role="radio"
-                  :aria-checked="activePackageManager === manager.value"
-                  :aria-label="manager.label"
-                  class="relative z-10 inline-flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-full px-2 font-medium transition-[color,transform] duration-150 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-                  :class="
-                    activePackageManager === manager.value
-                      ? 'text-neutral-950 dark:text-neutral-50'
-                      : 'text-neutral-500 grayscale hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100'
-                  "
-                  @click="activePackageManager = manager.value"
-                >
-                  <UIcon :name="manager.icon" class="size-3.5 shrink-0" aria-hidden="true" />
-                  <span v-if="activePackageManager === manager.value" class="max-sm:hidden">
-                    {{ manager.label }}
-                  </span>
                 </button>
               </div>
             </div>

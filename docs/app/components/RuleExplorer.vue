@@ -258,8 +258,8 @@ const activeFrameworkLinkClass = computed(
       </nav>
     </header>
 
-    <div class="mt-7 flex flex-col gap-3 xl:flex-row xl:items-end">
-      <div class="min-w-0 flex-1">
+    <div class="mt-7 flex flex-wrap items-end gap-2">
+      <div class="min-w-72 flex-1">
         <UInput
           v-model="search"
           name="rules-search"
@@ -279,8 +279,8 @@ const activeFrameworkLinkClass = computed(
         />
       </div>
 
-      <div class="min-w-0 xl:shrink-0">
-        <div class="flex flex-wrap items-end gap-2 xl:justify-end">
+      <div class="min-w-0 shrink-0">
+        <div class="flex flex-wrap items-end gap-2">
           <div
             class="inline-flex h-9 items-center gap-2 rounded-md bg-neutral-100/80 px-3 text-sm text-neutral-700 ring ring-inset ring-neutral-950/10 dark:bg-white/[0.04] dark:text-neutral-300 dark:ring-white/10"
           >
