@@ -36,7 +36,8 @@ pnpm dlx vite-doctor@alpha .
 
 ```bash [Nuxt]
 pnpm dlx nuxt module add vite-doctor/nuxt
-pnpm exec nuxt doctor
+pnpm pkg set scripts.doctor="vite-doctor . --max-warnings 0"
+pnpm doctor
 ```
 
 ```bash [Vue]

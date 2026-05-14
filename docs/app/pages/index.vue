@@ -43,21 +43,26 @@ const commandTabs = computed(() => [
   },
 ]);
 
-const humanIntegrations = [
+const humanCommandSteps = [
   {
-    label: "CLI",
+    label: "One-off scan",
     icon: "i-lucide-terminal",
     command: "pnpm dlx vite-doctor .",
   },
   {
-    label: "Nuxt module",
+    label: "Nuxt evidence",
     icon: "i-lucide-package",
     command: "pnpm dlx nuxt module add vite-doctor/nuxt",
   },
   {
-    label: "Build plugin",
-    icon: "i-lucide-plug",
-    command: "doctor({ run: 'build' })",
+    label: "Package script",
+    icon: "i-lucide-file-json",
+    command: 'pnpm pkg set scripts.doctor="vite-doctor . --max-warnings 0"',
+  },
+  {
+    label: "CI command",
+    icon: "i-lucide-circle-play",
+    command: "pnpm doctor",
   },
 ] as const;
 
@@ -308,6 +313,42 @@ function toggleTheme() {
                 </Transition>
               </span>
             </UButton>
+            <div
+              v-if="activeCommandTab === 'humans'"
+              class="mt-1 grid w-full max-w-xl gap-2"
+              aria-label="Human command sequence"
+            >
+              <button
+                v-for="item in humanCommandSteps"
+                :key="item.label"
+                type="button"
+                class="group grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-2 text-left transition-colors hover:border-neutral-300 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-white/10 dark:bg-neutral-950 dark:hover:border-white/20 dark:hover:bg-neutral-900"
+                @click="copy(item.command, `command-${item.label}`)"
+              >
+                <span
+                  class="inline-flex size-7 items-center justify-center rounded-md bg-neutral-50 text-neutral-700 ring-1 ring-neutral-950/10 dark:bg-white/[0.03] dark:text-neutral-300 dark:ring-white/10"
+                  aria-hidden="true"
+                >
+                  <UIcon :name="item.icon" class="size-3.5" />
+                </span>
+                <span class="min-w-0">
+                  <span class="block text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                    {{ item.label }}
+                  </span>
+                  <code
+                    class="block truncate font-mono text-[0.75rem] text-neutral-500 dark:text-neutral-400"
+                  >
+                    {{ item.command }}
+                  </code>
+                </span>
+                <UIcon
+                  :name="copied === `command-${item.label}` ? 'i-lucide-check' : 'i-lucide-copy'"
+                  class="size-3.5 shrink-0 text-neutral-400"
+                  :class="copied === `command-${item.label}` ? 'text-emerald-500' : ''"
+                  aria-hidden="true"
+                />
+              </button>
+            </div>
             <UButton
               to="/cli"
               color="neutral"
@@ -317,31 +358,6 @@ function toggleTheme() {
             >
               CLI
             </UButton>
-            <div
-              v-if="activeCommandTab === 'humans'"
-              class="mt-1 grid w-full max-w-xl gap-2 sm:grid-cols-3"
-              aria-label="Human integration choices"
-            >
-              <button
-                v-for="item in humanIntegrations"
-                :key="item.label"
-                type="button"
-                class="group min-w-0 rounded-md border border-neutral-200 bg-white px-3 py-2 text-left transition-colors hover:border-neutral-300 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-white/10 dark:bg-neutral-950 dark:hover:border-white/20 dark:hover:bg-neutral-900"
-                @click="copy(item.command, `integration-${item.label}`)"
-              >
-                <span
-                  class="mb-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-neutral-900 dark:text-neutral-100"
-                >
-                  <UIcon :name="item.icon" class="size-3.5" aria-hidden="true" />
-                  {{ item.label }}
-                </span>
-                <code
-                  class="block truncate font-mono text-[0.75rem] text-neutral-500 dark:text-neutral-400"
-                >
-                  {{ item.command }}
-                </code>
-              </button>
-            </div>
           </div>
         </div>
 

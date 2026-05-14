@@ -2,6 +2,7 @@ import { defineNuxtConfig } from "nuxt/config";
 import { join } from "pathe";
 import { env, process } from "std-env";
 import { fileURLToPath } from "node:url";
+import doctorPackage from "../packages/nuxt/package.json" with { type: "json" };
 import { getRuleDocuments } from "./rules/source.js";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
@@ -16,6 +17,12 @@ export default defineNuxtConfig({
   modules: [["vite-doctor/nuxt", { mcp: false }]],
 
   css: ["~/assets/css/main.css"],
+
+  runtimeConfig: {
+    public: {
+      doctorVersion: doctorPackage.version,
+    },
+  },
 
   vite: {
     resolve: {

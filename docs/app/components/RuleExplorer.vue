@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import doctorPackage from "../../../packages/nuxt/package.json";
 import { useRuleExplorer } from "../composables/useRuleExplorer";
 import type { RawRuleEntry } from "../utils/rule-catalog";
 import {
@@ -35,7 +34,8 @@ const props = withDefaults(
   },
 );
 
-const versionLabel = computed(() => `v${doctorPackage.version}`);
+const runtimeConfig = useRuntimeConfig();
+const versionLabel = computed(() => `v${runtimeConfig.public.doctorVersion}`);
 const filterFieldUi = {
   root: "min-w-0",
   label: "text-xs font-medium text-neutral-500 dark:text-neutral-500",
@@ -258,27 +258,29 @@ const activeFrameworkLinkClass = computed(
       </nav>
     </header>
 
-    <div class="mt-7 grid gap-3">
-      <UInput
-        v-model="search"
-        name="rules-search"
-        :placeholder="`Search ${title} rule IDs, categories, or descriptions...`"
-        icon="i-lucide-search"
-        size="md"
-        variant="outline"
-        class="w-full max-w-3xl"
-        :ui="{
-          base: 'h-9 rounded-md py-0 text-sm',
-          leading: 'ps-2.5',
-          leadingIcon: 'size-4 text-neutral-400 dark:text-neutral-500',
-          trailing: 'pe-2.5',
-          root: 'text-sm',
-          input: 'py-0',
-        }"
-      />
+    <div class="mt-7 flex flex-col gap-3 xl:flex-row xl:items-end">
+      <div class="min-w-0 flex-1">
+        <UInput
+          v-model="search"
+          name="rules-search"
+          :placeholder="`Search ${title} rule IDs, categories, or descriptions...`"
+          icon="i-lucide-search"
+          size="md"
+          variant="outline"
+          class="w-full"
+          :ui="{
+            base: 'h-9 rounded-md py-0 text-sm',
+            leading: 'ps-2.5',
+            leadingIcon: 'size-4 text-neutral-400 dark:text-neutral-500',
+            trailing: 'pe-2.5',
+            root: 'text-sm',
+            input: 'py-0',
+          }"
+        />
+      </div>
 
-      <div>
-        <div class="flex flex-wrap items-end gap-2">
+      <div class="min-w-0 xl:shrink-0">
+        <div class="flex flex-wrap items-end gap-2 xl:justify-end">
           <div
             class="inline-flex h-9 items-center gap-2 rounded-md bg-neutral-100/80 px-3 text-sm text-neutral-700 ring ring-inset ring-neutral-950/10 dark:bg-white/[0.04] dark:text-neutral-300 dark:ring-white/10"
           >
@@ -340,7 +342,7 @@ const activeFrameworkLinkClass = computed(
               color="neutral"
               variant="outline"
               size="sm"
-              class="w-56"
+              class="w-48"
               :ui="filterControlUi"
             />
           </UFormField>
@@ -353,7 +355,7 @@ const activeFrameworkLinkClass = computed(
               color="neutral"
               variant="outline"
               size="sm"
-              class="w-56"
+              class="w-48"
               :ui="filterControlUi"
             >
               <template #default>
@@ -405,7 +407,7 @@ const activeFrameworkLinkClass = computed(
             color="neutral"
             variant="ghost"
             size="sm"
-            class="rounded-md"
+            class="h-9 rounded-md"
             @click="resetFilters"
           >
             Reset
@@ -424,91 +426,103 @@ const activeFrameworkLinkClass = computed(
 
       <ol v-else role="list" class="grid gap-3 pt-2">
         <li v-for="(rule, index) in filteredRules" :key="rule.ruleId" class="relative">
-          <details
-            class="group relative rounded-lg border border-neutral-950/10 bg-neutral-50/70 transition dark:border-white/10 dark:bg-white/[0.03]"
-            :open="isRuleOpen(rule.ruleId)"
-            @toggle="handleToggle(rule.ruleId, $event)"
+          <UCard
+            variant="subtle"
+            class="overflow-hidden"
+            :ui="{ root: 'rounded-lg', body: 'p-0 sm:p-0' }"
           >
-            <summary
-              class="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 font-mono text-sm select-none [&::-webkit-details-marker]:hidden"
+            <details
+              class="group relative"
+              :open="isRuleOpen(rule.ruleId)"
+              @toggle="handleToggle(rule.ruleId, $event)"
             >
-              <div class="flex min-w-0 items-center gap-2">
-                <span
-                  class="font-mono text-neutral-400 tabular-nums sm:hidden dark:text-neutral-600"
-                >
-                  #{{ index + 1 }}
-                </span>
-                <UIcon
-                  name="i-lucide-chevron-right"
-                  class="size-4 shrink-0 text-neutral-400 transition group-open:rotate-90 dark:text-neutral-600"
-                  aria-hidden="true"
-                />
-                <a
-                  :href="rule.docsPath"
-                  class="min-w-0 truncate rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
-                  @click.stop
-                >
+              <summary
+                class="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 font-mono text-sm select-none [&::-webkit-details-marker]:hidden"
+              >
+                <div class="flex min-w-0 items-center gap-2">
                   <span
-                    v-for="(part, partIndex) in ruleNameParts(rule.ruleId)"
-                    :key="`${rule.ruleId}-${partIndex}`"
-                    :class="ruleNamePartClass(part, partIndex, ruleNameParts(rule.ruleId))"
+                    class="font-mono text-neutral-400 tabular-nums sm:hidden dark:text-neutral-600"
                   >
-                    {{ part }}
+                    #{{ index + 1 }}
                   </span>
-                </a>
-              </div>
-
-              <div class="flex items-center gap-3 text-sm">
-                <UTooltip :text="categoryLabel(rule.category)">
-                  <span
-                    class="inline-flex items-center gap-1 text-neutral-300 dark:text-neutral-700"
+                  <UIcon
+                    name="i-lucide-chevron-right"
+                    class="size-4 shrink-0 text-neutral-400 transition group-open:rotate-90 dark:text-neutral-600"
+                    aria-hidden="true"
+                  />
+                  <a
+                    :href="rule.docsPath"
+                    class="min-w-0 truncate rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+                    @click.stop
                   >
-                    <UIcon name="i-lucide-file-search" class="size-4" aria-hidden="true" />
-                  </span>
-                </UTooltip>
-                <UTooltip :text="rule.severity">
-                  <span
-                    class="inline-flex items-center gap-1"
-                    :class="severityClass(rule.severity)"
-                  >
-                    <UIcon :name="severityIcon(rule.severity)" class="size-4" aria-hidden="true" />
-                    <span class="hidden font-mono tabular-nums sm:inline">{{ rule.severity }}</span>
-                  </span>
-                </UTooltip>
-                <UTooltip :text="fixLabel(rule.fix)">
-                  <span class="inline-flex items-center gap-1" :class="fixClass(rule.fix)">
-                    <UIcon :name="fixIcon(rule.fix)" class="size-4" aria-hidden="true" />
-                    <span v-if="rule.fix !== 'no'" class="hidden font-mono tabular-nums sm:inline"
-                      >1</span
+                    <span
+                      v-for="(part, partIndex) in ruleNameParts(rule.ruleId)"
+                      :key="`${rule.ruleId}-${partIndex}`"
+                      :class="ruleNamePartClass(part, partIndex, ruleNameParts(rule.ruleId))"
                     >
-                  </span>
-                </UTooltip>
-                <UTooltip :text="packLabel(rule.pack)">
-                  <span
-                    class="hidden items-center gap-1 text-blue-500 sm:inline-flex dark:text-blue-400"
-                  >
-                    <UIcon name="i-lucide-list" class="size-4" aria-hidden="true" />
-                  </span>
-                </UTooltip>
-              </div>
-            </summary>
+                      {{ part }}
+                    </span>
+                  </a>
+                </div>
 
-            <div class="border-t border-neutral-950/10 px-4 py-4 dark:border-white/10">
-              <RuleExpandedContent v-if="isRuleOpen(rule.ruleId)" :path="rule.docsPath" />
-              <div class="mt-4 flex justify-end">
-                <UButton
-                  :to="rule.docsPath"
-                  color="neutral"
-                  variant="outline"
-                  size="sm"
-                  class="rounded-md"
-                  trailing-icon="i-lucide-arrow-up-right"
-                >
-                  Open full page
-                </UButton>
+                <div class="flex items-center gap-3 text-sm">
+                  <UTooltip :text="categoryLabel(rule.category)">
+                    <span
+                      class="inline-flex items-center gap-1 text-neutral-300 dark:text-neutral-700"
+                    >
+                      <UIcon name="i-lucide-file-search" class="size-4" aria-hidden="true" />
+                    </span>
+                  </UTooltip>
+                  <UTooltip :text="rule.severity">
+                    <span
+                      class="inline-flex items-center gap-1"
+                      :class="severityClass(rule.severity)"
+                    >
+                      <UIcon
+                        :name="severityIcon(rule.severity)"
+                        class="size-4"
+                        aria-hidden="true"
+                      />
+                      <span class="hidden font-mono tabular-nums sm:inline">{{
+                        rule.severity
+                      }}</span>
+                    </span>
+                  </UTooltip>
+                  <UTooltip :text="fixLabel(rule.fix)">
+                    <span class="inline-flex items-center gap-1" :class="fixClass(rule.fix)">
+                      <UIcon :name="fixIcon(rule.fix)" class="size-4" aria-hidden="true" />
+                      <span v-if="rule.fix !== 'no'" class="hidden font-mono tabular-nums sm:inline"
+                        >1</span
+                      >
+                    </span>
+                  </UTooltip>
+                  <UTooltip :text="packLabel(rule.pack)">
+                    <span
+                      class="hidden items-center gap-1 text-blue-500 sm:inline-flex dark:text-blue-400"
+                    >
+                      <UIcon name="i-lucide-list" class="size-4" aria-hidden="true" />
+                    </span>
+                  </UTooltip>
+                </div>
+              </summary>
+
+              <div class="border-t border-neutral-950/10 px-4 py-4 dark:border-white/10">
+                <RuleExpandedContent v-if="isRuleOpen(rule.ruleId)" :path="rule.docsPath" />
+                <div class="mt-4 flex justify-end">
+                  <UButton
+                    :to="rule.docsPath"
+                    color="neutral"
+                    variant="outline"
+                    size="sm"
+                    class="rounded-md"
+                    trailing-icon="i-lucide-arrow-up-right"
+                  >
+                    Open full page
+                  </UButton>
+                </div>
               </div>
-            </div>
-          </details>
+            </details>
+          </UCard>
         </li>
       </ol>
     </div>

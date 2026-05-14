@@ -20,7 +20,8 @@ For Nuxt projects, `vite-doctor/nuxt` is the Nuxt module export path from the `v
 
 ```bash
 pnpm dlx nuxt module add vite-doctor/nuxt
-pnpm exec nuxt doctor
+pnpm pkg set scripts.doctor="vite-doctor . --max-warnings 0"
+pnpm doctor
 ```
 
 Use `--framework vue|nuxt|vite|nitro` only when auto-detection needs an explicit override.
