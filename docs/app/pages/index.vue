@@ -260,8 +260,8 @@ function toggleTheme() {
             Doctor scans your project before review and flags framework bugs agents often miss.
           </p>
 
-          <div class="mt-6 flex flex-col items-start gap-3 sm:mt-7">
-            <div class="flex w-full max-w-xl flex-wrap items-center justify-between gap-3">
+          <div class="mt-6 inline-flex max-w-full flex-col items-stretch gap-3 sm:mt-7">
+            <div class="flex w-full flex-wrap items-center justify-between gap-3">
               <div
                 class="relative inline-grid grid-cols-2 gap-1 rounded-full bg-neutral-100/80 p-1 text-sm ring-1 ring-neutral-200/80 dark:bg-neutral-900/80 dark:ring-white/10"
                 role="tablist"
@@ -335,7 +335,7 @@ function toggleTheme() {
               color="neutral"
               variant="ghost"
               :aria-label="copied === 'cmd' ? 'Copied command' : 'Copy command'"
-              class="group inline-flex max-w-full items-center gap-1.5 rounded-full bg-white px-2.5 py-1.5 text-left shadow-sm ring-1 ring-neutral-200 transition-[box-shadow,background-color] duration-200 hover:bg-white hover:ring-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:bg-neutral-950 dark:ring-white/10 dark:hover:bg-neutral-950 dark:hover:ring-white/20"
+              class="group inline-flex w-full max-w-full items-center gap-1.5 rounded-full bg-white px-2.5 py-1.5 text-left shadow-sm ring-1 ring-neutral-200 transition-[box-shadow,background-color] duration-200 hover:bg-white hover:ring-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:bg-neutral-950 dark:ring-white/10 dark:hover:bg-neutral-950 dark:hover:ring-white/20"
               @click="copy(activeCommand, 'cmd')"
             >
               <span class="font-mono text-base text-neutral-300 select-none" aria-hidden="true"
