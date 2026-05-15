@@ -15,6 +15,7 @@ catalog:
   "@testing-library/vue": ^8.1.0
   "@vue/test-utils": ^2.4.10
   "@vueuse/core": ^14.2.1
+  agents: ^0.12.3
   better-auth: ^1.6.10
   docus: 5.8.1
   happy-dom: ^20.9.0

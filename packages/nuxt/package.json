@@ -51,6 +51,7 @@
     "@nuxt/kit": "catalog:",
     "@nuxtjs/mcp-toolkit": "catalog:",
     "@vue-doctor/core": "workspace:*",
+    "agents": "catalog:",
     "cac": "catalog:",
     "consola": "catalog:",
     "nitro-doctor": "workspace:*",
