@@ -27,12 +27,8 @@
   "devDependencies": {
     "@changesets/changelog-git": "catalog:",
     "@changesets/cli": "catalog:",
-    "nitro-doctor": "workspace:*",
-    "nuxt-doctor": "workspace:*",
-    "tsdown": "catalog:",
     "vite-doctor": "workspace:*",
-    "vite-plus": "catalog:",
-    "vue-doctor": "workspace:*"
+    "vite-plus": "catalog:"
   },
   "engines": {
     "node": ">=22.20.0"
