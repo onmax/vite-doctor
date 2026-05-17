@@ -1,4 +1,4 @@
-import { createRule, type DoctorRule, type RulePack } from "@vue-doctor/core";
+import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
 
 type AnyNode = any;
 
@@ -66,12 +66,12 @@ export const preferCachedEventHandler = createRule({
 
 export const rules: DoctorRule[] = [noPersonalizedCachedHandler, preferCachedEventHandler];
 
-export const nuxtHubRulePack: RulePack = {
+export const nuxtHubRulePack = defineRulePack({
   name: "nuxt-doctor/nuxthub",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["nuxthub"], modules: ["nuxthub"] },
   rules,
   presets: { recommended: rules.map((rule) => rule.meta.id) },
-};
+});
 
 export default nuxtHubRulePack;

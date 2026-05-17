@@ -14,7 +14,7 @@ Docs: [vite-doctor.onmax.me](https://vite-doctor.onmax.me)
 pnpm dlx vite-doctor@alpha .
 ```
 
-`vite-doctor` loads the Vite, Vue, and Nuxt rule packs, then filters rules by detected framework, Nuxt modules and packages, rule requirements, optional type analysis, presets, and explicit `--rules`.
+`vite-doctor` loads Doctor extensions and their rule packs, then composes `recommended` presets with `--extends auto` by default. Use `--extends vite/recommended,vue/recommended` for exact preset composition, and `--rules` for a final rule-id filter.
 
 For Nuxt projects, `vite-doctor/nuxt` is the Nuxt module export path from the `vite-doctor` package:
 

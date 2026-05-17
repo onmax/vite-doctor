@@ -1,4 +1,4 @@
-import { createRule, type DoctorRule, type RulePack } from "@vue-doctor/core";
+import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
 
 type AnyNode = any;
 
@@ -29,12 +29,12 @@ export const noQueryContentLegacyApi = createRule({
 
 export const rules: DoctorRule[] = [noQueryContentLegacyApi];
 
-export const nuxtContentRulePack: RulePack = {
+export const nuxtContentRulePack = defineRulePack({
   name: "nuxt-doctor/nuxt-content",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["@nuxt/content"], modules: ["@nuxt/content"] },
   rules,
   presets: { recommended: rules.map((rule) => rule.meta.id) },
-};
+});
 
 export default nuxtContentRulePack;

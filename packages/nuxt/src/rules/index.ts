@@ -1,4 +1,4 @@
-import { defineDoctorPlugin, type DoctorPlugin, type RulePack } from "@vue-doctor/core";
+import { defineDoctorExtension, type DoctorExtension, type RulePack } from "@vue-doctor/core";
 import { nitroRulePack } from "../../../nitro/src/rules.ts";
 import { vueRulePack } from "../../../vue/src/rules.ts";
 import nuxtRulePack from "./nuxt.js";
@@ -40,10 +40,10 @@ export function nuxtRulePacks(extraRulePacks: RulePack[] = []): RulePack[] {
   ];
 }
 
-export function nuxtDoctorPlugins(extraRulePacks: RulePack[] = []): DoctorPlugin[] {
+export function nuxtDoctorExtensions(extraRulePacks: RulePack[] = []): DoctorExtension[] {
   return [
-    defineDoctorPlugin({ name: "@vue-doctor/builtin-vue", rulePacks: [vueRulePack] }),
-    defineDoctorPlugin({
+    defineDoctorExtension({ name: "@vue-doctor/builtin-vue", rulePacks: [vueRulePack] }),
+    defineDoctorExtension({
       name: "nuxt-doctor/builtin-nuxt",
       rulePacks: nuxtRulePacks(extraRulePacks),
     }),

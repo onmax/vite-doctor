@@ -1,12 +1,12 @@
 import { loadConfig } from "c12";
 import { defu } from "defu";
-import type { DoctorFramework, DoctorPlugin, DoctorSeverity } from "./primitives.js";
+import type { DoctorExtension, DoctorFramework, DoctorSeverity } from "./primitives.js";
 
 export type DoctorRuleConfig = "off" | DoctorSeverity | [DoctorSeverity, unknown];
 
 export interface DoctorConfig {
-  extends?: string[];
-  plugins?: DoctorPlugin[];
+  extends?: "auto" | string[];
+  extensions?: DoctorExtension[];
   include?: string[];
   exclude?: string[];
   rules?: Record<string, DoctorRuleConfig>;
@@ -21,7 +21,7 @@ export interface DoctorRunOptions {
   /** Already-loaded Doctor config. */
   config?: DoctorConfig;
   framework?: "auto" | DoctorFramework;
-  preset?: string;
+  extends?: "auto" | string[];
   changed?: boolean;
   since?: string;
   format?: string;
@@ -44,7 +44,7 @@ export interface DoctorRunOptions {
   unsafeFix?: boolean;
   scoreOnly?: boolean;
   maxWarnings?: number;
-  plugins?: DoctorPlugin[];
+  extensions?: DoctorExtension[];
 }
 
 export function defineDoctorConfig(config: DoctorConfig): DoctorConfig {

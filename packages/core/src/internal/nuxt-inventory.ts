@@ -27,9 +27,10 @@ export function createNuxtProjectInventory(
   root: string,
   manifest: NuxtDoctorManifest | null,
   manifestPath?: string,
+  fallbackImportsDirs: string[] = [],
 ): NuxtProjectInventory {
   return {
-    importsDirs: (manifest?.importsDirs ?? []).map((dir) => resolve(root, dir)),
+    importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
     keyedComposables: (manifest?.keyedComposables ?? []).map(String),
     aliases: manifest?.aliases ?? {},

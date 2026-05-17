@@ -45,7 +45,7 @@ import { preferTypeProps } from "./prefer-type-props.js";
 import { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 import { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
-import type { RulePack } from "@vue-doctor/core";
+import { defineRulePack } from "@vue-doctor/core";
 
 const rules = [
   definePropsWatchGetter,
@@ -74,7 +74,7 @@ const rules = [
   noUntranslatedText,
 ];
 
-const vueRulePack: RulePack = {
+const vueRulePack = defineRulePack({
   name: "vue-doctor/vue",
   version: "0.0.0",
   rules,
@@ -82,6 +82,6 @@ const vueRulePack: RulePack = {
     recommended: rules.map((rule) => rule.meta.id),
     strict: rules.map((rule) => rule.meta.id),
   },
-};
+});
 
 export default vueRulePack;

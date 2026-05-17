@@ -1,12 +1,19 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createResolver, installModule } from "@nuxt/kit";
 import { join, relative, resolve } from "pathe";
-import type { NuxtDoctorManifest, NuxtModuleSource, RulePack } from "@vue-doctor/core";
+import type {
+  DoctorExtension,
+  NuxtDoctorManifest,
+  NuxtModuleSource,
+  RulePack,
+} from "@vue-doctor/core";
 import { parseRunArgs, runNuxtDoctor } from "./cli.js";
 import { setNuxtDoctorMcpContext, type NuxtDoctorMcpContext } from "./runtime/mcp/context.js";
 export type { NuxtDoctorManifest } from "@vue-doctor/core";
 
 export interface NuxtDoctorModuleOptions {
+  extends?: "auto" | string[];
+  extensions?: DoctorExtension[];
   mcp?: boolean | NuxtDoctorMcpOptions;
 }
 
@@ -94,10 +101,17 @@ export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions 
     description: "Run Nuxt Doctor",
     async run(ctx: any) {
       const extraRulePacks = await collectNuxtDoctorRulePacks(nuxt);
+      const extraExtensions = await collectNuxtDoctorExtensions(nuxt);
       const argv = Array.isArray(ctx?.rawArgs) ? ctx.rawArgs : [];
       const { path, options } = parseRunArgs(argv);
       const result = await runNuxtDoctor({
         ...options,
+        extends: options.extends ?? nuxt.options.doctor?.extends,
+        extensions: [
+          ...(nuxt.options.doctor?.extensions ?? []),
+          ...extraExtensions,
+          ...(options.extensions ?? []),
+        ],
         root: path === "." ? (ctx?.cwd ?? nuxt.options.rootDir) : path,
         cwd: ctx?.cwd ?? nuxt.options.rootDir,
         extraRulePacks,
@@ -115,6 +129,12 @@ export async function collectNuxtDoctorRulePacks(nuxt: any): Promise<RulePack[]>
   const extraRulePacks: RulePack[] = [];
   await nuxt.callHook?.("doctor:extendRules", extraRulePacks);
   return extraRulePacks;
+}
+
+export async function collectNuxtDoctorExtensions(nuxt: any): Promise<DoctorExtension[]> {
+  const extensions: DoctorExtension[] = [];
+  await nuxt.callHook?.("doctor:extendExtensions", extensions);
+  return extensions;
 }
 
 export function resolveNuxtDoctorMcpOptions(

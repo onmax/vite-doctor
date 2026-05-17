@@ -66,8 +66,9 @@ export function isNuxtRuntimeFile(ctx: RuleContext) {
 export function isExplicitlyScannedByNuxt(ctx: RuleContext, kind: "imports" | "shared") {
   if (isGeneratedFile(ctx)) return true;
   const manifest = ctx.project.nuxt?.manifest;
-  if (!manifest?.hasManifest) return false;
+  if (!manifest) return false;
   const roots = kind === "imports" ? manifest.importsDirs : manifest.sharedScanRoots;
+  if (!roots.length) return false;
   const relativePath = toPosixPath(relative(ctx.project.root, ctx.file.path));
   return roots
     .map((root) => normalizeScanRoot(ctx, root))
@@ -141,7 +142,10 @@ function normalizeScanRoot(ctx: RuleContext, root: string) {
   if (normalized.startsWith(projectRoot)) normalized = normalized.slice(projectRoot.length);
   else normalized = toPosixPath(relative(ctx.project.root, normalized));
   normalized = normalized.replace(/^~\//, "app/").replace(/^@\//, "app/");
-  return normalized.replace(/^\.\//, "");
+  normalized = normalized.replace(/^\.\//, "");
+  if (normalized.startsWith("composables/") && ctx.file.relativePath.startsWith("app/composables/"))
+    return `app/${normalized}`;
+  return normalized;
 }
 
 function matchesScanRoot(relativePath: string, root: string) {

@@ -15,12 +15,7 @@ export const requirePostFlushForDomWatch = createRule({
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "watch")) return;
         const snippet = ctx.file.text.slice(node.start, node.end);
-        if (
-          !/\b(document|window|getBoundingClientRect|offsetWidth|offsetHeight|clientWidth|clientHeight)\b/.test(
-            snippet,
-          )
-        )
-          return;
+        if (!hasDomRead(snippet)) return;
         if (/flush\s*:\s*['"]post['"]/.test(snippet)) return;
         report(
           ctx,
@@ -35,6 +30,20 @@ export const requirePostFlushForDomWatch = createRule({
     };
   },
 });
+
+function hasDomRead(source: string) {
+  return (
+    /\b(getBoundingClientRect|offset(?:Width|Height|Left|Top)|client(?:Width|Height|Left|Top)|scroll(?:Width|Height|Left|Top))\b/.test(
+      source,
+    ) ||
+    /\bwindow\.(?:innerWidth|innerHeight|outerWidth|outerHeight|getComputedStyle|matchMedia)\b/.test(
+      source,
+    ) ||
+    /\bdocument\.(?:querySelector|querySelectorAll|getElementById|getElementsBy|documentElement|body)\b/.test(
+      source,
+    )
+  );
+}
 
 function isNuxtVueRuntimePath(path: string) {
   if (

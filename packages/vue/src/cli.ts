@@ -8,7 +8,7 @@ import {
   cleanCache,
   createReport,
   createRulesReport,
-  defineDoctorPlugin,
+  defineDoctorExtension,
   explainRule,
   runDoctor,
   type DoctorRunOptions,
@@ -88,7 +88,7 @@ function addScanCommand(
     .option("--max-warnings <count>", "Maximum warnings.")
     .option("--rules <rules>", "Rule selector.")
     .option("--severity <severity>", "Minimum severity.")
-    .option("--preset <preset>", "Rule preset.")
+    .option("--extends <extends>", "Comma-separated rule-pack presets.")
     .option("--since <ref>", "Git base ref.")
     .option("--baseline <file>", "Baseline file.")
     .option("--format <format>", "Output format.")
@@ -109,7 +109,9 @@ async function runVueDoctor(root: string, options: DoctorRunOptions) {
     ...options,
     framework: "vue",
     root,
-    plugins: [defineDoctorPlugin({ name: "vue-doctor/builtin-vue", rulePacks: [vueRulePack] })],
+    extensions: [
+      defineDoctorExtension({ name: "vue-doctor/builtin-vue", rulePacks: [vueRulePack] }),
+    ],
   });
 
   process.stdout.write(createReport(result, options.format));

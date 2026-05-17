@@ -9,6 +9,7 @@ import {
   preferTypeProps,
   noUntranslatedText,
   noUnusedTranslations,
+  requirePostFlushForDomWatch,
 } from "../src/rules/vue/index.ts";
 import { createRule } from "../../core/src/index.ts";
 import {
@@ -218,6 +219,31 @@ const root = document.documentElement
     "vue/ssr/no-browser-api-in-setup",
     "vue/ssr/no-browser-api-in-setup",
   ]);
+});
+
+test("post-flush watcher rule ignores document title writes", async () => {
+  const title = await runRuleFixture({
+    rule: requirePostFlushForDomWatch,
+    framework: "vue",
+    files: {
+      "src/useTitle.ts": `const dynamicTitle = ref("")
+watch(dynamicTitle, (value) => {
+  document.title = value
+})`,
+    },
+  });
+  const layout = await runRuleFixture({
+    rule: requirePostFlushForDomWatch,
+    framework: "vue",
+    files: {
+      "src/useLayout.ts": `watch(width, () => {
+  const box = document.querySelector('#app')?.getBoundingClientRect()
+})`,
+    },
+  });
+
+  expect(title.diagnostics).toHaveLength(0);
+  expect(layout.diagnostics).toHaveLength(1);
 });
 
 test("vue SSR rules are skipped for plain SPA projects", async () => {

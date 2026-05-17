@@ -16,7 +16,7 @@ import {
   parseDoctorArgs,
 } from "@vue-doctor/core/internal/cli";
 import { loadDoctorConfig } from "../../core/src/config.js";
-import { nuxtDoctorPlugins, nuxtRulePacks } from "./rules/index.js";
+import { nuxtDoctorExtensions, nuxtRulePacks } from "./rules/index.js";
 
 const commands = new Set(["scan", "check", "rules", "explain", "cache"]);
 
@@ -30,7 +30,7 @@ export async function runNuxtDoctor(options: RunNuxtDoctorOptions = {}) {
   const result = await runDoctor({
     ...runOptions,
     framework: "nuxt",
-    plugins: [...nuxtDoctorPlugins(extraRulePacks), ...(runOptions.plugins ?? [])],
+    extensions: [...nuxtDoctorExtensions(extraRulePacks), ...(runOptions.extensions ?? [])],
     root: resolve(cwd ?? process.cwd(), runOptions.root ?? "."),
   });
   process.stdout.write(createReport(result, runOptions.format));
@@ -106,7 +106,7 @@ function addScanCommand(
     .option("--max-warnings <count>", "Maximum warnings.")
     .option("--rules <rules>", "Rule selector.")
     .option("--severity <severity>", "Minimum severity.")
-    .option("--preset <preset>", "Rule preset.")
+    .option("--extends <extends>", "Comma-separated rule-pack presets.")
     .option("--since <ref>", "Git base ref.")
     .option("--baseline <file>", "Baseline file.")
     .option("--format <format>", "Output format.")

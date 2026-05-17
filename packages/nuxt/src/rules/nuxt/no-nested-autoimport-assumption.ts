@@ -11,6 +11,7 @@ export const noNestedAutoimportAssumption = createRule({
   },
   create(ctx) {
     if (!/^app\/composables\/[^/]+\/.+\.[cm]?[jt]s$/.test(ctx.file.relativePath)) return;
+    if (!isNestedComposableFile(ctx.file.relativePath, ctx.file.text)) return;
     if (isExplicitlyScannedByNuxt(ctx, "imports")) return;
     let reported = false;
     const reportOnce = () => {
@@ -35,3 +36,11 @@ export const noNestedAutoimportAssumption = createRule({
     };
   },
 });
+
+function isNestedComposableFile(relativePath: string, text: string) {
+  const basename = relativePath.split("/").pop() ?? "";
+  if (/^use[A-Z].*\.[cm]?[jt]s$/.test(basename)) return true;
+  return /\bexport\s+(?:async\s+)?function\s+use[A-Z]\w*\b|\bexport\s+const\s+use[A-Z]\w*\b/.test(
+    text,
+  );
+}

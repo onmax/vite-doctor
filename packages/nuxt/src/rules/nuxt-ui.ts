@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "pathe";
-import { createRule, type DoctorRule, type RulePack } from "@vue-doctor/core";
+import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
 
 type AnyNode = any;
 
@@ -92,13 +92,13 @@ export const preferUFormControls = createRule({
 
 export const rules: DoctorRule[] = [requireUAppRoot, preferUButton, preferUFormControls];
 
-export const nuxtUiRulePack: RulePack = {
+export const nuxtUiRulePack = defineRulePack({
   name: "nuxt-doctor/nuxt-ui",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["@nuxt/ui"], modules: ["@nuxt/ui"] },
   rules,
   presets: { recommended: rules.map((rule) => rule.meta.id) },
-};
+});
 
 export default nuxtUiRulePack;
 

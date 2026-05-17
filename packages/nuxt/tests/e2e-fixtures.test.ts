@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { relative } from "pathe";
 import { $fetch, setup } from "@nuxt/test-utils/e2e";
-import { defineDoctorPlugin, runDoctor } from "../../core/src/index.ts";
+import { defineDoctorExtension, runDoctor } from "../../core/src/index.ts";
 import { vueRulePack } from "../../vue/src/rules.ts";
 import { nuxtRulePacks } from "../src/rules/index.ts";
 
@@ -13,7 +13,7 @@ test("Vue all-issues fixture reports the Vue rule pack", async () => {
   const result = await runDoctor({
     root: vueFixture,
     framework: "vue",
-    plugins: [defineDoctorPlugin({ name: "e2e-vue", rulePacks: [vueRulePack] })],
+    extensions: [defineDoctorExtension({ name: "e2e-vue", rulePacks: [vueRulePack] })],
   });
 
   expect(uniqueDiagnosticIdentities(result)).toHaveLength(result.diagnostics.length);
@@ -31,9 +31,9 @@ test("Nuxt all-issues fixture reports Nuxt and ecosystem rule packs", async () =
   const result = await runDoctor({
     root: nuxtFixture,
     framework: "nuxt",
-    plugins: [
-      defineDoctorPlugin({ name: "e2e-vue", rulePacks: [vueRulePack] }),
-      defineDoctorPlugin({ name: "e2e-nuxt", rulePacks: nuxtRulePacks() }),
+    extensions: [
+      defineDoctorExtension({ name: "e2e-vue", rulePacks: [vueRulePack] }),
+      defineDoctorExtension({ name: "e2e-nuxt", rulePacks: nuxtRulePacks() }),
     ],
   });
 

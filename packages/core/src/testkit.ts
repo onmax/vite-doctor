@@ -3,7 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import {
-  defineDoctorPlugin,
+  defineDoctorExtension,
+  defineRulePack,
   runDoctor,
   type DoctorConfig,
   type DoctorRule,
@@ -24,7 +25,7 @@ export interface ProjectFixtureOptions {
   dependencies?: Record<string, string>;
   rules?: DoctorRule[];
   config?: DoctorConfig;
-  run?: Omit<DoctorRunOptions, "root" | "framework" | "plugins">;
+  run?: Omit<DoctorRunOptions, "root" | "framework" | "extensions">;
 }
 
 export async function runRuleFixture(options: RuleFixtureOptions): Promise<DoctorRunResult> {
@@ -89,10 +90,17 @@ export async function runProjectFixture(options: ProjectFixtureOptions): Promise
       config: options.config ?? options.run?.config,
       root,
       framework: options.framework ?? "vue",
-      plugins: [
-        defineDoctorPlugin({
+      extensions: [
+        defineDoctorExtension({
           name: "fixture",
-          rulePacks: [{ name: "fixture", version: "0.0.0", rules: options.rules ?? [] }],
+          rulePacks: [
+            defineRulePack({
+              name: "fixture",
+              version: "0.0.0",
+              rules: options.rules ?? [],
+              presets: { recommended: (options.rules ?? []).map((rule) => rule.meta.id) },
+            }),
+          ],
         }),
       ],
     });

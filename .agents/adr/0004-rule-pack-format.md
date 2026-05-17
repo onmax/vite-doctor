@@ -1,0 +1,3 @@
+# Rule Pack Format
+
+Rule Pack is the stable library-author consumption format for Doctor rules. Built-in ecosystem rules can stay distributed inside Nuxt Doctor for now, but they should be modeled as independent rule packs with activation and presets so library authors can later publish compatible Doctor extensions without changing the product model. Every Rule Pack defines `recommended` as its required default preset, and Activation auto-runs that preset. Rule Packs can also define optional `strict` presets that enable all rules, including noisy, migration-oriented, or opinionated rules. Doctor Extensions can also contribute project inventory and runtime evidence when a library or host integration needs more than rules.

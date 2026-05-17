@@ -21,7 +21,7 @@ export {
   preferTransformFilter,
 } from "./plugin-hmr.js";
 
-import type { RulePack } from "@vue-doctor/core";
+import { defineRulePack } from "@vue-doctor/core";
 import {
   noRuntimeObjectDefine,
   noSecretDefine,
@@ -85,7 +85,7 @@ const recommended = [
   requireDisposeForSideEffects,
 ].map((rule) => rule.meta.id);
 
-const viteRulePack: RulePack = {
+const viteRulePack = defineRulePack({
   name: "vite-doctor/vite",
   version: "0.0.0",
   rules,
@@ -93,6 +93,6 @@ const viteRulePack: RulePack = {
     recommended,
     strict: rules.map((rule) => rule.meta.id),
   },
-};
+});
 
 export default viteRulePack;

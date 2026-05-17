@@ -30,6 +30,7 @@
     "./internal/rule-runner": "./dist/internal/rule-runner.mjs",
     "./internal/source-inventory": "./dist/internal/source-inventory.mjs",
     "./reports": "./dist/reports.mjs",
+    "./rule-authoring": "./dist/rule-authoring.mjs",
     "./testkit": "./dist/testkit.mjs",
     "./package.json": "./package.json"
   },

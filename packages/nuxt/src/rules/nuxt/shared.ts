@@ -1,5 +1,10 @@
 import { createRule, type RuleContext } from "@vue-doctor/core";
-import { nearestFunctionOrProgram, sourceForNode, walkScriptLocal, type AnyNode } from "./ast.js";
+import {
+  nearestFunctionOrProgram,
+  sourceForNode,
+  walkScriptLocal,
+  type AnyNode,
+} from "../../../../core/src/rule-authoring.js";
 
 export { createRule };
 export {
@@ -8,7 +13,7 @@ export {
   sourceForNode,
   walkScriptLocal,
   type AnyNode,
-} from "./ast.js";
+} from "../../../../core/src/rule-authoring.js";
 export {
   classifyNuxtFile,
   isConfigBuildFile,

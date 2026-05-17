@@ -1,18 +1,21 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
-import type {
-  Diagnostic,
-  FileFacts,
-  DoctorHelpers,
-  DoctorPlugin,
-  DoctorRule,
-  DoctorSeverity,
-  ProjectInfo,
-  RuleCache,
-  RulePack,
-  SourceFileHandle,
-  WorkspaceGraph,
+import {
+  defineRulePack,
+  type Diagnostic,
+  type FileFacts,
+  type DoctorHelpers,
+  type DoctorExtension,
+  type DoctorRule,
+  type DoctorSeverity,
+  type ProjectInventoryContributor,
+  type ProjectInfo,
+  type RuntimeEvidenceContributor,
+  type RuleCache,
+  type RulePack,
+  type SourceFileHandle,
+  type WorkspaceGraph,
 } from "../primitives.js";
 import { detectProject } from "./project.js";
 import { selectScanFiles, type ScanFileEntry } from "./source-inventory.js";
@@ -71,6 +74,8 @@ class PersistentRuleCache extends MemoryRuleCache {
 interface RuleRegistry {
   packs: RulePack[];
   rules: DoctorRule[];
+  inventoryContributors: ProjectInventoryContributor[];
+  runtimeEvidenceContributors: RuntimeEvidenceContributor[];
 }
 
 export interface ScanSession {
@@ -111,8 +116,9 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
 
   started = performance.now();
   const project = await detectProject(root, options.framework ?? "auto");
-  const plugins = [...(config.plugins ?? []), ...(options.plugins ?? [])];
-  const registry = await collectRulePacks(plugins, project);
+  const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
+  const registry = await collectRulePacks(extensions);
+  await applyProjectContributions(project, registry);
   const ruleConfigs = resolveRuleConfigs(config);
   const enabledRules = selectRules(registry, ruleConfigs, options, project);
   markSession(sessionBase, "project", started);
@@ -176,25 +182,55 @@ export function mergeDoctorConfig(defaults: DoctorConfig, config: DoctorConfig =
   };
 }
 
-async function collectRulePacks(
-  plugins: DoctorPlugin[],
-  project: ProjectInfo,
-): Promise<{ packs: RulePack[]; rules: DoctorRule[] }> {
+async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
+  packs: RulePack[];
+  rules: DoctorRule[];
+  inventoryContributors: ProjectInventoryContributor[];
+  runtimeEvidenceContributors: RuntimeEvidenceContributor[];
+}> {
   const registeredPacks: RulePack[] = [];
-  for (const plugin of plugins) {
-    await plugin.setup?.({
+  const inventoryContributors: ProjectInventoryContributor[] = [];
+  const runtimeEvidenceContributors: RuntimeEvidenceContributor[] = [];
+  for (const extension of extensions) {
+    await extension.setup?.({
       registerRulePack(pack) {
         registeredPacks.push(pack);
       },
       registerReporter() {},
       registerProjectDetector() {},
+      registerProjectInventoryContributor(contributor) {
+        inventoryContributors.push(contributor);
+      },
+      registerRuntimeEvidenceContributor(contributor) {
+        runtimeEvidenceContributors.push(contributor);
+      },
       registerNuxtManifestContributor() {},
     });
   }
-  const packs = [...plugins.flatMap((plugin) => plugin.rulePacks ?? []), ...registeredPacks].filter(
-    (pack) => isActivePack(pack, project),
-  );
-  return { packs, rules: packs.flatMap((pack) => pack.rules) };
+  const packs = [
+    ...extensions.flatMap((extension) => extension.rulePacks ?? []),
+    ...registeredPacks,
+  ].map((pack) => defineRulePack(pack));
+  return {
+    packs,
+    rules: packs.flatMap((pack) => pack.rules),
+    inventoryContributors,
+    runtimeEvidenceContributors,
+  };
+}
+
+async function applyProjectContributions(
+  project: ProjectInfo,
+  registry: RuleRegistry,
+): Promise<void> {
+  for (const contributor of registry.inventoryContributors) {
+    const contribution = await contributor.contribute(project);
+    project.inventory = { ...project.inventory, [contributor.name]: contribution };
+  }
+  for (const contributor of registry.runtimeEvidenceContributors) {
+    const contribution = await contributor.contribute(project);
+    project.runtimeEvidence = { ...project.runtimeEvidence, [contributor.name]: contribution };
+  }
 }
 
 function isActivePack(pack: RulePack, project: ProjectInfo): boolean {
@@ -222,20 +258,10 @@ function selectRules(
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const presetRules = new Set<string>();
-  if (options.preset) {
-    for (const pack of registry.packs) {
-      const preset = pack.presets?.[options.preset];
-      if (!preset) {
-        for (const rule of pack.rules) presetRules.add(rule.meta.id);
-        continue;
-      }
-      for (const ruleId of preset) presetRules.add(ruleId);
-    }
-  }
+  const selectedRules = resolveExtends(registry.packs, options, project);
 
   return registry.rules
-    .filter((rule) => !options.preset || presetRules.has(rule.meta.id))
+    .filter((rule) => selectedRules.has(rule.meta.id))
     .filter((rule) => !rule.meta.requires?.nuxt || project.framework === "nuxt")
     .filter(
       (rule) =>
@@ -247,6 +273,38 @@ function selectRules(
       (rule) => !wanted?.length || wanted.some((pattern) => nativeMatch(rule.meta.id, pattern)),
     )
     .filter((rule) => resolvedConfig(ruleConfigs, rule.meta.id).enabled);
+}
+
+function resolveExtends(
+  packs: RulePack[],
+  options: DoctorRunOptions,
+  project: ProjectInfo,
+): Set<string> {
+  const requested = options.extends ?? options.config?.extends ?? "auto";
+  if (requested === "auto") {
+    return new Set(
+      packs
+        .filter((pack) => isActivePack(pack, project))
+        .flatMap((pack) => pack.presets.recommended),
+    );
+  }
+  const selected = new Set<string>();
+  for (const entry of requested) {
+    const slash = entry.lastIndexOf("/");
+    if (slash === -1) throw new Error(`Invalid extends entry "${entry}". Use "pack/preset".`);
+    const packKey = entry.slice(0, slash);
+    const presetName = entry.slice(slash + 1);
+    const pack = packs.find((item) => rulePackKey(item) === packKey || item.name === packKey);
+    if (!pack) throw new Error(`Unknown rule pack in extends entry "${entry}".`);
+    const preset = pack.presets[presetName];
+    if (!preset) throw new Error(`Unknown preset in extends entry "${entry}".`);
+    for (const ruleId of preset) selected.add(ruleId);
+  }
+  return selected;
+}
+
+function rulePackKey(pack: RulePack): string {
+  return pack.name.split("/").at(-1) ?? pack.name;
 }
 
 function resolveRuleConfigs(config: DoctorConfig): Map<string, ResolvedRuleConfig> {
@@ -333,7 +391,7 @@ export function createCacheKey(session: ScanSession, phase: string, input: strin
       phase,
       input,
       config: session.config.rules ?? {},
-      preset: session.options.preset,
+      extends: session.options.extends ?? session.config.extends,
       manifest: session.project.nuxt?.manifestPath,
       tsconfig: session.project.tsconfigPath,
     }),

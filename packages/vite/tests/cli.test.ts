@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { createRule, defineDoctorExtension, defineRulePack } from "@vue-doctor/core";
 import { expect, test } from "vite-plus/test";
 import { main } from "../src/cli.ts";
 import { doctor } from "../src/plugin.ts";
@@ -229,6 +230,53 @@ test("Vite plugin reports but does not fail in warn mode", async () => {
     const plugin = doctor({ mode: "warn", rules: "vite/define/no-secret-define" });
     const logs = await runVitePlugin(plugin, root, "build");
     expect(logs.join("\n")).toContain("vite/define/no-secret-define");
+  });
+});
+
+test("Vite plugin contributes resolved config inventory to Doctor Run", async () => {
+  const surfaceInventoryRule = createRule({
+    meta: {
+      id: "fixture/vite-surface-inventory",
+      title: "Vite surface inventory",
+      category: "inventory",
+      severity: "warn",
+    },
+    create(ctx) {
+      return {
+        onProjectStart(project) {
+          const vite = project.inventory?.vite as { command?: string };
+          if (vite?.command !== "build") return;
+          ctx.report({
+            ruleId: "fixture/vite-surface-inventory",
+            severity: "warn",
+            category: "inventory",
+            file: ctx.file.path,
+            message: "Vite surface inventory is available.",
+          });
+        },
+      };
+    },
+  });
+
+  await withFixture(viteWarningFixture(), async (root) => {
+    const plugin = doctor({
+      mode: "warn",
+      extensions: [
+        defineDoctorExtension({
+          name: "fixture",
+          rulePacks: [
+            defineRulePack({
+              name: "fixture",
+              version: "0.0.0",
+              rules: [surfaceInventoryRule],
+              presets: { recommended: ["fixture/vite-surface-inventory"] },
+            }),
+          ],
+        }),
+      ],
+    });
+    const logs = await runVitePlugin(plugin, root, "build");
+    expect(logs.join("\n")).toContain("fixture/vite-surface-inventory");
   });
 });
 

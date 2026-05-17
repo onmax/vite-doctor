@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "pathe";
-import { createRule, type DoctorRule, type RulePack } from "@vue-doctor/core";
+import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
 
 type AnyNode = any;
 
@@ -117,13 +117,13 @@ export const rules: DoctorRule[] = [
   noUnknownAppConfigKey,
 ];
 
-export const docusRulePack: RulePack = {
+export const docusRulePack = defineRulePack({
   name: "nuxt-doctor/docus",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["docus"], modules: ["docus"] },
   rules,
   presets: { recommended: rules.map((rule) => rule.meta.id) },
-};
+});
 
 export default docusRulePack;
 

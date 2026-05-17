@@ -5,7 +5,7 @@ import {
   sourceForNode,
   walkScriptLocal,
   type AnyNode,
-} from "./ast.js";
+} from "../../../../core/src/rule-authoring.js";
 
 export type NuxtExecutionEvidence =
   | "setup-time"

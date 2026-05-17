@@ -1,6 +1,6 @@
 import type { DoctorRunOptions } from "@vue-doctor/core";
 import { runDoctor } from "@vue-doctor/core";
-import { nuxtDoctorPlugins } from "../../rules/index.js";
+import { nuxtDoctorExtensions } from "../../rules/index.js";
 import type { NuxtDoctorMcpContext } from "./context.js";
 
 export async function runNuxtDoctorMcpReport(
@@ -26,6 +26,6 @@ export async function runNuxtDoctorMcpReport(
     ...options,
     root: context.rootDir,
     framework: "nuxt",
-    plugins: nuxtDoctorPlugins(extraRulePacks),
+    extensions: nuxtDoctorExtensions(extraRulePacks),
   });
 }

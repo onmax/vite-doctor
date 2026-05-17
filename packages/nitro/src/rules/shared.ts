@@ -1,8 +1,13 @@
 import { createRule, type RuleContext } from "@vue-doctor/core";
-import { nearestFunctionOrProgram, sourceForNode, walkScriptLocal, type AnyNode } from "./ast.js";
+import type { AnyNode } from "../../../core/src/rule-authoring.js";
 
 export { createRule };
-export { nearestFunctionOrProgram, sourceForNode, walkScriptLocal, type AnyNode } from "./ast.js";
+export {
+  nearestFunctionOrProgram,
+  sourceForNode,
+  walkScriptLocal,
+  type AnyNode,
+} from "../../../core/src/rule-authoring.js";
 
 export const BROWSER_GLOBALS = new Set([
   "window",

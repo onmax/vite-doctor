@@ -3,14 +3,20 @@ import {
   classifyExecutionEvidence,
   classifyNuxtFile,
   isClientCallableEvidence,
+  isClientOnlyPath,
   isConfigBuildFile,
   isContentDocsFile,
+  isKnownGuardedBrowserGlobal,
   isPayloadSerializedEvidence,
   isReusableDataComposableContext,
   isRuntimeAppFile,
   isServerRuntimeFile,
   isSourceOnlyExecutionEvidence,
   isSsrExecutedEvidence,
+  hasPriorServerReturnGuard,
+  isNuxtRuntimeFile,
+  isObjectPropertyKey,
+  isVueUseBrowserGlobalTarget,
   type AnyNode,
   type NuxtExecutionEvidence,
   type NuxtFileClass,
@@ -28,6 +34,8 @@ export interface NuxtRuntimeEvidence {
   isPayloadSerialized(node: AnyNode): boolean;
   isReusableDataComposable(node: AnyNode): boolean;
   isSourceOnlyExecution(node: AnyNode): boolean;
+  isActionableUniversalBrowserGlobal(node: AnyNode): boolean;
+  universalBrowserGlobalSeverity(node: AnyNode): "error" | "warn";
 }
 
 export function createNuxtRuntimeEvidence(ctx: RuleContext): NuxtRuntimeEvidence {
@@ -63,7 +71,33 @@ export function createNuxtRuntimeEvidence(ctx: RuleContext): NuxtRuntimeEvidence
     isSourceOnlyExecution(node) {
       return isSourceOnlyExecutionEvidence(ctx, node);
     },
+    isActionableUniversalBrowserGlobal(node) {
+      return isActionableUniversalBrowserGlobal(ctx, node);
+    },
+    universalBrowserGlobalSeverity(node) {
+      return isSourceOnlyExecutionEvidence(ctx, node) ? "warn" : "error";
+    },
   };
+}
+
+function isActionableUniversalBrowserGlobal(ctx: RuleContext, node: AnyNode) {
+  if (
+    !isNuxtRuntimeFile(ctx) ||
+    isClientOnlyPath(ctx.file.relativePath) ||
+    ctx.helpers.isNuxtServerFile(ctx.file.relativePath)
+  )
+    return false;
+  return !(
+    isObjectPropertyKey(node) ||
+    ctx.helpers.isTypeOnlyContext(node) ||
+    ctx.helpers.isTypeofOperand(node) ||
+    ctx.helpers.hasLocalBindingBefore(node, ctx.file.text) ||
+    isKnownGuardedBrowserGlobal(ctx.file.text, node.start) ||
+    hasPriorServerReturnGuard(ctx.file.text, node.start) ||
+    isVueUseBrowserGlobalTarget(node) ||
+    isClientCallableEvidence(ctx, node) ||
+    ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)
+  );
 }
 
 export {

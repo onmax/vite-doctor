@@ -1,4 +1,4 @@
-import { createRule, type DoctorRule, type RulePack } from "@vue-doctor/core";
+import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
 
 type AnyNode = any;
 
@@ -97,12 +97,12 @@ export const rules: DoctorRule[] = [
   noThirdPartyConfigScript,
 ];
 
-export const nuxtScriptsRulePack: RulePack = {
+export const nuxtScriptsRulePack = defineRulePack({
   name: "nuxt-doctor/nuxt-scripts",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["@nuxt/scripts"], modules: ["@nuxt/scripts"] },
   rules,
   presets: { recommended: rules.map((rule) => rule.meta.id) },
-};
+});
 
 export default nuxtScriptsRulePack;

@@ -3,7 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "pathe";
 import { expect, test } from "vite-plus/test";
-import { createRule, defineDoctorPlugin, runDoctor } from "../../core/src/index.ts";
+import {
+  createRule,
+  defineDoctorExtension,
+  defineRulePack,
+  runDoctor,
+} from "../../core/src/index.ts";
 import { vueRulePack } from "../../vue/src/rules.ts";
 import nuxtContentRulePack from "../src/rules/nuxt-content.ts";
 import docusRulePack from "../src/rules/docus.ts";
@@ -66,7 +71,7 @@ import {
 import { mcpToolContracts } from "../../../docs/server/utils/mcp-contracts.ts";
 import { runNuxtDoctorMcpReport } from "../src/runtime/mcp/doctor.ts";
 import { createRulesReport, createTextReport, explainRule } from "../../core/src/index.ts";
-import { nitroRulePack, nuxtDoctorPlugins, nuxtRulePacks } from "../src/rules/index.ts";
+import { nitroRulePack, nuxtDoctorExtensions, nuxtRulePacks } from "../src/rules/index.ts";
 import { createNuxtRuntimeEvidence } from "../src/rules/nuxt/evidence.ts";
 import { main } from "../src/cli.ts";
 import {
@@ -1337,7 +1342,7 @@ test("Vue lifecycle evidence skips Nuxt content, server, generated, and client-o
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [defineDoctorPlugin({ name: "vue", rulePacks: [vueRulePack] })],
+        extensions: [defineDoctorExtension({ name: "vue", rulePacks: [vueRulePack] })],
       });
 
       expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
@@ -1807,6 +1812,25 @@ useStorage('theme', localStorage.getItem('theme'))
   expect(storage.diagnostics).toHaveLength(0);
 });
 
+test("VueUse timer preference ignores non-timer prototype methods", async () => {
+  const result = await runRuleFixture({
+    rule: preferUseTimers,
+    framework: "nuxt",
+    files: {
+      "app/utils/colors.ts": `export function toHex(value: number) {
+  return value.toString(16)
+}
+
+export function serialize(value: unknown) {
+  return Object.prototype.toString.call(value)
+}
+`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test("route middleware security rule reports only auth-like middleware without server guards", async () => {
   const redirects = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,
@@ -1866,8 +1890,8 @@ test("module packs activate from dependencies", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [
-          defineDoctorPlugin({
+        extensions: [
+          defineDoctorExtension({
             name: "fixture",
             rulePacks: [nuxtContentRulePack],
           }),
@@ -1891,8 +1915,8 @@ test("module packs stay inactive when dependency is absent", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [
-          defineDoctorPlugin({
+        extensions: [
+          defineDoctorExtension({
             name: "fixture",
             rulePacks: [nuxtContentRulePack],
           }),
@@ -1919,7 +1943,7 @@ test("Docus content links report missing internal to targets", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [defineDoctorPlugin({ name: "fixture", rulePacks: [docusRulePack] })],
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
       expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
@@ -1940,7 +1964,7 @@ test("Docus app.vue shadow rule reports empty local app shell only", async () =>
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [defineDoctorPlugin({ name: "fixture", rulePacks: [docusRulePack] })],
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
       expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
@@ -1958,7 +1982,7 @@ test("Docus app.vue shadow rule reports empty local app shell only", async () =>
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [defineDoctorPlugin({ name: "fixture", rulePacks: [docusRulePack] })],
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
       expect(result.diagnostics).toHaveLength(0);
@@ -1985,7 +2009,7 @@ test("Docus app config rule reports unknown top-level keys", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [defineDoctorPlugin({ name: "fixture", rulePacks: [docusRulePack] })],
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
       expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
@@ -2007,7 +2031,7 @@ test("Docus rule pack activates from static extends and stays inactive without D
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [defineDoctorPlugin({ name: "fixture", rulePacks: [docusRulePack] })],
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
       expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
@@ -2025,7 +2049,7 @@ test("Docus rule pack activates from static extends and stays inactive without D
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [defineDoctorPlugin({ name: "fixture", rulePacks: [docusRulePack] })],
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
       expect(result.diagnostics).toHaveLength(0);
@@ -2045,15 +2069,16 @@ test("NuxtManifest visitors run once per rule", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [
-          defineDoctorPlugin({
+        extensions: [
+          defineDoctorExtension({
             name: "fixture",
             rulePacks: [
-              {
+              defineRulePack({
                 name: "fixture",
                 version: "0.0.0",
                 rules: [noNestedAutoimportAssumption],
-              },
+                presets: { recommended: ["nuxt/composables/no-nested-autoimport-assumption"] },
+              }),
             ],
           }),
         ],
@@ -2077,11 +2102,16 @@ test("manifest import dirs suppress configured nested composable warning", async
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [
-          defineDoctorPlugin({
+        extensions: [
+          defineDoctorExtension({
             name: "fixture",
             rulePacks: [
-              { name: "fixture", version: "0.0.0", rules: [noNestedAutoimportAssumption] },
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules: [noNestedAutoimportAssumption],
+                presets: { recommended: ["nuxt/composables/no-nested-autoimport-assumption"] },
+              }),
             ],
           }),
         ],
@@ -2105,17 +2135,124 @@ test("manifest import globs suppress configured nested composable warning", asyn
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [
-          defineDoctorPlugin({
+        extensions: [
+          defineDoctorExtension({
             name: "fixture",
             rulePacks: [
-              { name: "fixture", version: "0.0.0", rules: [noNestedAutoimportAssumption] },
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules: [noNestedAutoimportAssumption],
+                presets: { recommended: ["nuxt/composables/no-nested-autoimport-assumption"] },
+              }),
             ],
           }),
         ],
       });
 
       expect(result.diagnostics).toHaveLength(0);
+    },
+  );
+});
+
+test("nuxt config import globs suppress nested composable warning without manifest", async () => {
+  await withFixture(
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({
+  imports: {
+    dirs: ["~/composables", "~/composables/*/*.ts"],
+  },
+})`,
+      "app/composables/npm/usePackage.ts": `export function usePackage() { return true }`,
+    },
+    {},
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        extensions: [
+          defineDoctorExtension({
+            name: "fixture",
+            rulePacks: [
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules: [noNestedAutoimportAssumption],
+                presets: { recommended: ["nuxt/composables/no-nested-autoimport-assumption"] },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      expect(result.diagnostics).toHaveLength(0);
+    },
+  );
+});
+
+test("app-relative nuxt config import dirs suppress nested composable warning", async () => {
+  await withFixture(
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({
+  imports: {
+    dirs: ["./composables/masto"],
+  },
+})`,
+      "app/composables/masto/account.ts": `export function useAccount() { return true }`,
+    },
+    {},
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        extensions: [
+          defineDoctorExtension({
+            name: "fixture",
+            rulePacks: [
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules: [noNestedAutoimportAssumption],
+                presets: { recommended: ["nuxt/composables/no-nested-autoimport-assumption"] },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      expect(result.diagnostics).toHaveLength(0);
+    },
+  );
+});
+
+test("nested composable warning ignores helper modules in composables folders", async () => {
+  await withFixture(
+    {
+      "app/composables/tiptap/emoji.ts": `export const TiptapPluginEmoji = Node.create({ name: "emoji" })`,
+      "app/composables/idb/index.ts": `export async function useAsyncIDBKeyval() { return true }`,
+    },
+    {},
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        extensions: [
+          defineDoctorExtension({
+            name: "fixture",
+            rulePacks: [
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules: [noNestedAutoimportAssumption],
+                presets: { recommended: ["nuxt/composables/no-nested-autoimport-assumption"] },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]?.file).toContain("app/composables/idb/index.ts");
     },
   );
 });
@@ -2133,15 +2270,16 @@ test("manifest plugin files suppress configured nested plugin warning", async ()
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [
-          defineDoctorPlugin({
+        extensions: [
+          defineDoctorExtension({
             name: "fixture",
             rulePacks: [
-              {
+              defineRulePack({
                 name: "fixture",
                 version: "0.0.0",
                 rules: [noSubdirPluginAutoRegistrationAssumption],
-              },
+                presets: { recommended: ["nuxt/plugins/no-subdir-auto-registration-assumption"] },
+              }),
             ],
           }),
         ],
@@ -2191,7 +2329,7 @@ test("Nuxt module writes evidence fields and text report shows evidence summary"
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [defineDoctorPlugin({ name: "fixture", rulePacks: [] })],
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [] })],
       });
       const report = createTextReport(result);
 
@@ -2273,13 +2411,20 @@ test("third-party Nuxt rule hook contributions are collected", async () => {
       const rulePacks = await collectNuxtDoctorRulePacks({
         async callHook(name: string, packs: any[]) {
           if (name !== "doctor:extendRules") return;
-          packs.push({ name: "fixture", version: "0.0.0", rules: [hookRule] });
+          packs.push(
+            defineRulePack({
+              name: "fixture",
+              version: "0.0.0",
+              rules: [hookRule],
+              presets: { recommended: ["fixture/nuxt-hook-rule"] },
+            }),
+          );
         },
       });
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [defineDoctorPlugin({ name: "fixture", rulePacks })],
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks })],
       });
 
       expect(result.diagnostics.map((item) => item.ruleId)).toContain("fixture/nuxt-hook-rule");
@@ -2462,10 +2607,17 @@ test("explicit Nuxt module sources are scanned with module metadata", async () =
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [
-          defineDoctorPlugin({
+        extensions: [
+          defineDoctorExtension({
             name: "fixture",
-            rulePacks: [{ name: "fixture", version: "0.0.0", rules: [moduleRule] }],
+            rulePacks: [
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules: [moduleRule],
+                presets: { recommended: ["fixture/module-source"] },
+              }),
+            ],
           }),
         ],
       });
@@ -2490,15 +2642,18 @@ test("default Nuxt scans do not traverse node_modules source", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: [
-          defineDoctorPlugin({
+        extensions: [
+          defineDoctorExtension({
             name: "fixture",
             rulePacks: [
-              {
+              defineRulePack({
                 name: "fixture",
                 version: "0.0.0",
                 rules: [noBrowserGlobalInUniversalCode],
-              },
+                presets: {
+                  recommended: ["nuxt/hydration/no-browser-global-in-universal-code"],
+                },
+              }),
             ],
           }),
         ],
@@ -2528,7 +2683,7 @@ test("built-in Nuxt app rule packs skip explicit module sources", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
-        plugins: nuxtDoctorPlugins(),
+        extensions: nuxtDoctorExtensions(),
       });
 
       expect(result.diagnostics).toHaveLength(0);

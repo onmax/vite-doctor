@@ -55,6 +55,7 @@
     "cac": "catalog:",
     "consola": "catalog:",
     "nitro-doctor": "workspace:*",
+    "oxc-parser": "catalog:",
     "pathe": "catalog:",
     "vue-doctor": "workspace:*",
     "zod": "catalog:"
@@ -95,7 +96,6 @@
     "exsolve": "1.0.8",
     "giget": "3.2.0",
     "jiti": "2.7.0",
-    "oxc-parser": "0.129.0",
     "pkg-types": "2.3.1",
     "rc9": "3.0.1"
   }

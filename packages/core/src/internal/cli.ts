@@ -32,7 +32,7 @@ export function parseDoctorArgs(args: string[]): ParsedDoctorArgs {
       options.framework = args[++index] as DoctorRunOptions["framework"];
     else if (arg === "--rules") options.rules = args[++index];
     else if (arg === "--severity") options.severity = args[++index] as DoctorRunOptions["severity"];
-    else if (arg === "--preset") options.preset = args[++index];
+    else if (arg === "--extends") options.extends = parseExtends(args[++index]);
     else if (arg === "--since") options.since = args[++index];
     else if (arg === "--baseline") options.baseline = args[++index];
     else if (arg === "--format") options.format = args[++index];
@@ -68,10 +68,22 @@ export function applyDoctorOptions(
   options.rules = stringFlag(flags.rules) ?? options.rules;
   options.severity =
     (stringFlag(flags.severity) as DoctorRunOptions["severity"]) ?? options.severity;
-  options.preset = stringFlag(flags.preset) ?? options.preset;
+  options.extends = parseExtendsFlag(flags.extends) ?? options.extends;
   options.since = stringFlag(flags.since) ?? options.since;
   options.baseline = stringFlag(flags.baseline) ?? options.baseline;
   options.format = stringFlag(flags.format) ?? options.format;
+}
+
+function parseExtends(value: string | undefined): DoctorRunOptions["extends"] {
+  if (!value || value === "auto") return "auto";
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseExtendsFlag(value: unknown): DoctorRunOptions["extends"] | undefined {
+  return typeof value === "string" ? parseExtends(value) : undefined;
 }
 
 export function stringFlag(value: unknown): string | undefined {

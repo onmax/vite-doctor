@@ -1,0 +1,3 @@
+# Surface Configuration Extends
+
+Doctor uses `extends` inside surface configuration as the user-facing composition model for presets and rule packs. Entries are rule-pack-qualified preset names, such as `vite/recommended` or `docus/recommended`, so ecosystem rule packs can define their own presets without global name collisions. When `extends` is omitted or set to `auto`, plugin surfaces use their surface defaults plus activated ecosystem default presets. An explicit `extends` array is the escape hatch for exact composition. Vite users configure this through the Vite plugin, Nuxt users configure it through the Nuxt module, and standalone config files remain optional rather than the primary consumption path.

@@ -1,7 +1,7 @@
 import {
-  defineDoctorPlugin,
+  defineDoctorExtension,
   runDoctor,
-  type DoctorPlugin,
+  type DoctorExtension,
   type DoctorRunOptions,
   type DoctorRunResult,
   type RulePack,
@@ -19,29 +19,33 @@ export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
   return packs;
 }
 
-export async function viteDoctorPlugins(options: DoctorRunOptions = {}): Promise<DoctorPlugin[]> {
+export async function viteDoctorExtensions(
+  options: DoctorRunOptions = {},
+): Promise<DoctorExtension[]> {
   const framework = detectRequestedFramework(options);
-  const plugins = [
-    defineDoctorPlugin({ name: "vite-doctor/builtin-vite", rulePacks: [viteRulePack] }),
+  const extensions = [
+    defineDoctorExtension({ name: "vite-doctor/builtin-vite", rulePacks: [viteRulePack] }),
   ];
   const vueRulePacks = framework === "vue" ? await optionalVueRulePacks() : [];
   if (vueRulePacks.length) {
-    plugins.push(defineDoctorPlugin({ name: "vite-doctor/optional-vue", rulePacks: vueRulePacks }));
+    extensions.push(
+      defineDoctorExtension({ name: "vite-doctor/optional-vue", rulePacks: vueRulePacks }),
+    );
   }
-  const nuxtPlugins = framework === "nuxt" ? await optionalNuxtPlugins() : [];
-  if (nuxtPlugins.length) {
-    plugins.push(...nuxtPlugins);
+  const nuxtExtensions = framework === "nuxt" ? await optionalNuxtExtensions() : [];
+  if (nuxtExtensions.length) {
+    extensions.push(...nuxtExtensions);
   }
-  return plugins;
+  return extensions;
 }
 
 export async function runViteDoctor(options: DoctorRunOptions) {
   const framework = detectRequestedFramework(options);
-  const plugins = await viteDoctorPlugins(options);
+  const extensions = await viteDoctorExtensions(options);
   return runDoctor({
     ...options,
     framework,
-    plugins: [...plugins, ...(options.plugins ?? [])],
+    extensions: [...extensions, ...(options.extensions ?? [])],
   });
 }
 
@@ -83,16 +87,16 @@ async function optionalNuxtRulePacks(): Promise<RulePack[]> {
   }
 }
 
-async function optionalNuxtPlugins(): Promise<DoctorPlugin[]> {
+async function optionalNuxtExtensions(): Promise<DoctorExtension[]> {
   try {
-    const mod = await optionalImport<{ nuxtDoctorPlugins: () => DoctorPlugin[] }>(
+    const mod = await optionalImport<{ nuxtDoctorExtensions: () => DoctorExtension[] }>(
       "nuxt-doctor/rules",
     );
-    return mod.nuxtDoctorPlugins();
+    return mod.nuxtDoctorExtensions();
   } catch (error) {
     try {
       const mod = await import("../../nuxt/src/rules/index.ts");
-      return mod.nuxtDoctorPlugins();
+      return mod.nuxtDoctorExtensions();
     } catch {
       reportMissingOptionalPack("nuxt-doctor", error);
       return [];

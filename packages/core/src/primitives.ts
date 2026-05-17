@@ -262,6 +262,8 @@ export interface ProjectInfo {
   packageName?: string;
   tsconfigPath?: string;
   nuxt?: NuxtProjectInfo;
+  inventory?: Record<string, unknown>;
+  runtimeEvidence?: Record<string, unknown>;
 }
 
 export interface ImportFact {
@@ -460,7 +462,7 @@ export interface RulePack {
   name: string;
   version: string;
   rules: DoctorRule[];
-  presets?: Record<string, string[]>;
+  presets: { recommended: string[]; strict?: string[] } & Record<string, string[] | undefined>;
   activation?: {
     packages?: string[];
     modules?: string[];
@@ -501,18 +503,20 @@ export interface Reporter {
   write(result: DoctorRunResult): Promise<void> | void;
 }
 
-export interface DoctorPlugin {
+export interface DoctorExtension {
   name: string;
   version?: string;
   rulePacks?: RulePack[];
   reporters?: Reporter[];
-  setup?(api: DoctorPluginApi): void | Promise<void>;
+  setup?(api: DoctorExtensionApi): void | Promise<void>;
 }
 
-export interface DoctorPluginApi {
+export interface DoctorExtensionApi {
   registerRulePack(pack: RulePack): void;
   registerReporter(reporter: Reporter): void;
   registerProjectDetector(detector: ProjectDetector): void;
+  registerProjectInventoryContributor(contributor: ProjectInventoryContributor): void;
+  registerRuntimeEvidenceContributor(contributor: RuntimeEvidenceContributor): void;
   registerNuxtManifestContributor?(contributor: NuxtManifestContributor): void;
 }
 
@@ -526,10 +530,28 @@ export interface NuxtManifestContributor {
   contribute(project: ProjectInfo): Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
+export interface ProjectInventoryContributor {
+  name: string;
+  contribute(project: ProjectInfo): Promise<Record<string, unknown>> | Record<string, unknown>;
+}
+
+export interface RuntimeEvidenceContributor {
+  name: string;
+  contribute(project: ProjectInfo): Promise<Record<string, unknown>> | Record<string, unknown>;
+}
+
 export function createRule(rule: DoctorRule): DoctorRule {
   return rule;
 }
 
-export function defineDoctorPlugin(plugin: DoctorPlugin): DoctorPlugin {
-  return plugin;
+export function defineRulePack(pack: RulePack): RulePack {
+  if (!pack.presets?.recommended?.length) {
+    throw new Error(`Rule pack "${pack.name}" must define a non-empty recommended preset.`);
+  }
+  return pack;
+}
+
+export function defineDoctorExtension(extension: DoctorExtension): DoctorExtension {
+  for (const pack of extension.rulePacks ?? []) defineRulePack(pack);
+  return extension;
 }

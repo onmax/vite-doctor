@@ -6,6 +6,7 @@ export default defineConfig({
   entry: [
     "src/index.ts",
     "src/config.ts",
+    "src/rule-authoring.ts",
     "src/reports.ts",
     "src/testkit.ts",
     "src/internal/cli.ts",

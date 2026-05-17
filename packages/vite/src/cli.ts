@@ -97,7 +97,7 @@ function addScanCommand(
     .option("--framework <framework>", "Framework override.")
     .option("--rules <rules>", "Rule selector.")
     .option("--severity <severity>", "Minimum severity.")
-    .option("--preset <preset>", "Rule preset.")
+    .option("--extends <extends>", "Comma-separated rule-pack presets.")
     .option("--since <ref>", "Git base ref.")
     .option("--baseline <file>", "Baseline file.")
     .option("--format <format>", "Output format.")

@@ -1,4 +1,4 @@
-import { createRule, type DoctorRule, type RulePack } from "@vue-doctor/core";
+import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
 
 type AnyNode = any;
 
@@ -17,14 +17,14 @@ const VUEUSE_BROWSER_COMPOSABLES = new Set([
   "useWindowSize",
 ]);
 
-const VUEUSE_TIMER_REPLACEMENTS: Record<string, string> = {
+const VUEUSE_TIMER_REPLACEMENTS = {
   setTimeout: "useTimeoutFn",
   "window.setTimeout": "useTimeoutFn",
   setInterval: "useIntervalFn",
   "window.setInterval": "useIntervalFn",
   requestAnimationFrame: "useRafFn",
   "window.requestAnimationFrame": "useRafFn",
-};
+} satisfies Record<string, string>;
 
 const VUEUSE_OBSERVER_REPLACEMENTS: Record<string, string> = {
   IntersectionObserver: "useIntersectionObserver",
@@ -189,7 +189,10 @@ export const preferUseTimers = createRule({
       ScriptNode(node: AnyNode) {
         if (!shouldCheckVueUsePreference(ctx, node)) return;
         const callee = ctx.helpers.getCalleeName(node);
-        const replacement = callee ? VUEUSE_TIMER_REPLACEMENTS[callee] : null;
+        const replacement =
+          callee && Object.hasOwn(VUEUSE_TIMER_REPLACEMENTS, callee)
+            ? VUEUSE_TIMER_REPLACEMENTS[callee as keyof typeof VUEUSE_TIMER_REPLACEMENTS]
+            : null;
         if (!replacement || isWithinVueUseComposable(node)) return;
         ctx.helpers.report(ctx, node, {
           ruleId: "vueuse/prefer-use-timers",
@@ -321,13 +324,13 @@ export const rules: DoctorRule[] = [
   noVueUseNuxtAutoImportCollision,
 ];
 
-export const vueUseRulePack: RulePack = {
+export const vueUseRulePack = defineRulePack({
   name: "nuxt-doctor/vueuse",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["@vueuse/core"] },
   rules,
   presets: { recommended: rules.map((rule) => rule.meta.id) },
-};
+});
 
 export default vueUseRulePack;
 

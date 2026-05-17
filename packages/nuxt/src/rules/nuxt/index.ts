@@ -91,7 +91,7 @@ import { keyedComposableRegistrationRequired } from "./keyed-composable-registra
 import { preferSeoComposables } from "./prefer-seo-composables.js";
 import { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 import { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
-import type { RulePack } from "@vue-doctor/core";
+import { defineRulePack } from "@vue-doctor/core";
 
 const rules = [
   noExplicitAutoImport,
@@ -142,7 +142,7 @@ const rules = [
   preferUseHeadSafeForUntrustedValues,
 ];
 
-const nuxtRulePack: RulePack = {
+const nuxtRulePack = defineRulePack({
   name: "nuxt-doctor/nuxt",
   version: "0.0.0",
   rules,
@@ -150,6 +150,6 @@ const nuxtRulePack: RulePack = {
     recommended: rules.map((rule) => rule.meta.id),
     strict: rules.map((rule) => rule.meta.id),
   },
-};
+});
 
 export default nuxtRulePack;

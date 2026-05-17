@@ -1,5 +1,10 @@
 import type { RuleContext } from "@vue-doctor/core";
-import { findAncestor, sourceForNode, walkScriptLocal, type AnyNode } from "./ast.js";
+import {
+  findAncestor,
+  sourceForNode,
+  walkScriptLocal,
+  type AnyNode,
+} from "../../../../core/src/rule-authoring.js";
 
 export const ASYNC_DATA_COMPOSABLES = new Set([
   "useFetch",

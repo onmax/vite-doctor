@@ -1,4 +1,4 @@
-import type { RulePack } from "@vue-doctor/core";
+import { defineRulePack } from "@vue-doctor/core";
 import { noUseNuxtAppInNitro } from "./no-use-nuxt-app-in-nitro.js";
 import { noNavigateToInNitro } from "./no-navigate-to-in-nitro.js";
 import { preferEventFetch } from "./prefer-event-fetch.js";
@@ -39,7 +39,7 @@ const rules = [
   preferGetRequestIp,
 ];
 
-const nitroRulePack: RulePack = {
+const nitroRulePack = defineRulePack({
   name: "nuxt-doctor/nitro",
   version: "0.0.0",
   rules,
@@ -47,6 +47,6 @@ const nitroRulePack: RulePack = {
     recommended: rules.map((rule) => rule.meta.id),
     strict: rules.map((rule) => rule.meta.id),
   },
-};
+});
 
 export default nitroRulePack;

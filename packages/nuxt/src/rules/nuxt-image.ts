@@ -1,4 +1,4 @@
-import { createRule, type DoctorRule, type RulePack } from "@vue-doctor/core";
+import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
 
 type AnyNode = any;
 
@@ -123,12 +123,12 @@ export const rules: DoctorRule[] = [
   preferNuxtPictureForFormats,
 ];
 
-export const nuxtImageRulePack: RulePack = {
+export const nuxtImageRulePack = defineRulePack({
   name: "nuxt-doctor/nuxt-image",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["@nuxt/image"], modules: ["@nuxt/image"] },
   rules,
   presets: { recommended: rules.map((rule) => rule.meta.id) },
-};
+});
 
 export default nuxtImageRulePack;

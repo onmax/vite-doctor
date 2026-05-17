@@ -1,4 +1,4 @@
-import { createRule, type DoctorRule, type RulePack } from "@vue-doctor/core";
+import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
 
 export const requireStandardAuthHandlerMount = createRule({
   meta: {
@@ -31,7 +31,7 @@ export const requireStandardAuthHandlerMount = createRule({
 
 export const rules: DoctorRule[] = [requireStandardAuthHandlerMount];
 
-export const nuxtBetterAuthRulePack: RulePack = {
+export const nuxtBetterAuthRulePack = defineRulePack({
   name: "nuxt-doctor/nuxt-better-auth",
   version: "0.0.0",
   activation: {
@@ -41,6 +41,6 @@ export const nuxtBetterAuthRulePack: RulePack = {
   },
   rules,
   presets: { recommended: rules.map((rule) => rule.meta.id) },
-};
+});
 
 export default nuxtBetterAuthRulePack;

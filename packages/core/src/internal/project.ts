@@ -121,7 +121,7 @@ async function normalizeNuxtProject(
     manifestPath,
     modules: mergeDetectedModules(manifest?.modules ?? [], deps, root),
     moduleSources: normalizeNuxtModuleSources(manifest?.moduleSources ?? []),
-    manifest: createNuxtProjectInventory(root, manifest, manifestPath),
+    manifest: createNuxtProjectInventory(root, manifest, manifestPath, readNuxtImportsDirs(root)),
   };
 }
 
@@ -149,6 +149,16 @@ function readRouteRules(root: string): Record<string, unknown> {
     readFileSyncIfExists(join(root, "nuxt.config.js"));
   if (!config?.includes("routeRules")) return {};
   return { __staticDetection: true };
+}
+
+function readNuxtImportsDirs(root: string): string[] {
+  const config =
+    readFileSyncIfExists(join(root, "nuxt.config.ts")) ??
+    readFileSyncIfExists(join(root, "nuxt.config.js"));
+  const importsBlock = config?.match(/\bimports\s*:\s*\{[\s\S]*?\n\s*\}/)?.[0];
+  const dirsBlock = importsBlock?.match(/\bdirs\s*:\s*\[([\s\S]*?)\]/)?.[1];
+  if (!dirsBlock) return [];
+  return [...dirsBlock.matchAll(/["'`]([^"'`]+)["'`]/g)].map((match) => match[1]!).filter(Boolean);
 }
 
 async function serverDirs(root: string) {
