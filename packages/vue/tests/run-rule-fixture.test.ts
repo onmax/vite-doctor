@@ -9,6 +9,7 @@ import {
   preferTypeProps,
   noUntranslatedText,
   noUnusedTranslations,
+  requireLifecycleCleanup,
   requirePostFlushForDomWatch,
 } from "../src/rules/vue/index.ts";
 import { createRule } from "../../core/src/index.ts";
@@ -244,6 +245,33 @@ watch(dynamicTitle, (value) => {
 
   expect(title.diagnostics).toHaveLength(0);
   expect(layout.diagnostics).toHaveLength(1);
+});
+
+test("lifecycle cleanup rule allows utilities to return owned resources", async () => {
+  const returned = await runRuleFixture({
+    rule: requireLifecycleCleanup,
+    framework: "vue",
+    files: {
+      "src/useResize.ts": `export function useResize(el, cb) {
+  const observer = new ResizeObserver((entries) => cb(entries[0].contentRect))
+  observer.observe(el)
+  return observer
+}`,
+    },
+  });
+  const retained = await runRuleFixture({
+    rule: requireLifecycleCleanup,
+    framework: "vue",
+    files: {
+      "src/useResize.ts": `export function useResize(el, cb) {
+  const observer = new ResizeObserver((entries) => cb(entries[0].contentRect))
+  observer.observe(el)
+}`,
+    },
+  });
+
+  expect(returned.diagnostics).toHaveLength(0);
+  expect(retained.diagnostics).toHaveLength(1);
 });
 
 test("vue SSR rules are skipped for plain SPA projects", async () => {

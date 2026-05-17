@@ -227,6 +227,7 @@ function mergeDetectedModules(
     if (
       name === "nuxt" ||
       name === "docus" ||
+      name === "shadcn-nuxt" ||
       name === "@vueuse/core" ||
       name.startsWith("@nuxt/") ||
       name.startsWith("@nuxtjs/") ||

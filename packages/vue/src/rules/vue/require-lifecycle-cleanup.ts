@@ -29,7 +29,8 @@ export const requireLifecycleCleanup = createRule({
           return;
         if (
           /(clearInterval|removeEventListener|disconnect|close)\s*\(/.test(ctx.file.text) ||
-          hasCleanup
+          hasCleanup ||
+          returnsLongLivedResource(ctx.file.text)
         )
           return;
         report(
@@ -45,6 +46,12 @@ export const requireLifecycleCleanup = createRule({
     };
   },
 });
+
+function returnsLongLivedResource(source: string) {
+  const resource =
+    /\bconst\s+(\w+)\s*=\s*new\s+(?:ResizeObserver|IntersectionObserver|WebSocket)\b/.exec(source);
+  return Boolean(resource?.[1] && new RegExp(`\\breturn\\s+${resource[1]}\\b`).test(source));
+}
 
 function isNuxtVueRuntimePath(path: string) {
   if (

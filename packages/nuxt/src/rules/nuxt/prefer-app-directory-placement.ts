@@ -11,6 +11,7 @@ export const preferAppDirectoryPlacement = createRule({
   },
   create(ctx) {
     if (nuxtMajor(ctx.project.nuxt?.version ?? ctx.project.nuxtVersion) < 4) return;
+    if (isExternalComponentRoot(ctx.file.relativePath, ctx.project.nuxt?.modules)) return;
     const [first] = ctx.file.relativePath.split("/");
     if (!first || !NUXT_APP_DIRS.has(first)) return;
     let reported = false;
@@ -34,6 +35,14 @@ export const preferAppDirectoryPlacement = createRule({
     };
   },
 });
+
+function isExternalComponentRoot(
+  relativePath: string,
+  modules: Array<{ name: string }> | undefined,
+) {
+  if (!relativePath.startsWith("components/ui/")) return false;
+  return modules?.some((module) => module.name === "shadcn-nuxt") ?? false;
+}
 
 function nuxtMajor(version?: string): number {
   return Number(version?.match(/\d+/)?.[0] ?? 4);

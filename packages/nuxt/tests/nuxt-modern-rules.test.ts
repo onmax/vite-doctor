@@ -771,6 +771,21 @@ test("app directory placement is only reported for Nuxt 4 projects", async () =>
   expect(result.diagnostics).toHaveLength(0);
 });
 
+test("app directory placement ignores shadcn component registry roots", async () => {
+  const result = await runRuleFixture({
+    rule: preferAppDirectoryPlacement,
+    framework: "nuxt",
+    dependencies: { nuxt: "^4.4.5", "shadcn-nuxt": "^2.4.0" },
+    files: {
+      "components/ui/button/index.ts": `export { default as Button } from './Button.vue'`,
+      "components/AppHeader.vue": `<template><header /></template>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.file).toContain("components/AppHeader.vue");
+});
+
 test("prefer NuxtLink reports relative internal anchors", async () => {
   const result = await runRuleFixture({
     rule: preferNuxtLink,
