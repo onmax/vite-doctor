@@ -1,6 +1,8 @@
 import { relative } from "pathe";
 import pc from "picocolors";
+import { formatDiagnostic } from "nostics";
 import type { Diagnostic, DoctorRunResult, RulePack } from "./primitives.js";
+import { allDiagnosticCodesByRuleId } from "./diagnostic-code-map.js";
 
 export function createTextReport(result: DoctorRunResult): string {
   const lines: string[] = [];
@@ -26,10 +28,9 @@ export function createTextReport(result: DoctorRunResult): string {
       const loc = diagnostic.range
         ? `${diagnostic.file}:${diagnostic.range.line}:${diagnostic.range.column}`
         : diagnostic.file;
-      lines.push(`  ${diagnostic.ruleId}`);
-      lines.push(`    ${loc}`);
-      lines.push(`    ${diagnostic.message}`);
-      if (diagnostic.suggestion) lines.push(`    Fix: ${diagnostic.suggestion}`);
+      lines.push(indent(formatDiagnostic(diagnostic.diagnostic), "  "));
+      lines.push(`    rule: ${diagnostic.ruleId}`);
+      lines.push(`    source: ${loc}`);
     }
     lines.push("");
   }
@@ -80,8 +81,8 @@ export function createJsonReport(result: DoctorRunResult): string {
       score: result.score,
       categoryScores: result.categoryScores,
       summary: result.summary,
-      diagnostics: result.diagnostics,
-      suppressedDiagnostics: result.suppressedDiagnostics,
+      diagnostics: result.diagnostics.map(serializeDiagnostic),
+      suppressedDiagnostics: result.suppressedDiagnostics?.map(serializeDiagnostic),
       timings: result.timings,
       phases: result.phases,
       graph: result.graph,
@@ -106,9 +107,10 @@ export function createSarifReport(result: DoctorRunResult): string {
               semanticVersion: result.version,
               rules: [...rules.values()].map((diagnostic) => ({
                 id: diagnostic.ruleId,
-                name: diagnostic.ruleId,
-                shortDescription: { text: diagnostic.ruleId },
+                name: diagnostic.code,
+                shortDescription: { text: diagnostic.code },
                 properties: {
+                  diagnosticCode: diagnostic.code,
                   category: diagnostic.category,
                   confidence: diagnostic.confidence,
                   analysisPhase: diagnostic.analysisPhase,
@@ -118,14 +120,17 @@ export function createSarifReport(result: DoctorRunResult): string {
           },
           results: result.diagnostics.map((diagnostic) => ({
             ruleId: diagnostic.ruleId,
+            rule: { id: diagnostic.ruleId },
             level: sarifLevel(diagnostic.severity),
-            message: { text: diagnostic.message },
+            message: { text: diagnostic.why },
             partialFingerprints: {
               "vue-doctor/v1": diagnostic.fingerprint,
               "vue-doctor/v2": diagnostic.fingerprint,
             },
             properties: {
               confidence: diagnostic.confidence,
+              diagnosticCode: diagnostic.code,
+              docs: diagnostic.docs,
               evidenceKinds: diagnostic.evidence?.map((item) => item.kind),
               analysisPhase: diagnostic.analysisPhase,
             },
@@ -183,7 +188,12 @@ export function createReport(result: DoctorRunResult, format = "text"): string {
 
 export function createRulesReport(packs: RulePack[], format = "text"): string {
   const rules = packs.flatMap((pack) =>
-    pack.rules.map((rule) => ({ pack: pack.name, version: pack.version, ...rule.meta })),
+    pack.rules.map((rule) => ({
+      pack: pack.name,
+      version: pack.version,
+      diagnosticCodes: rule.meta.diagnosticCodes ?? codeListForRule(rule.meta.id),
+      ...rule.meta,
+    })),
   );
   if (format === "json") return `${JSON.stringify({ rules }, null, 2)}\n`;
   const lines: string[] = [];
@@ -197,9 +207,18 @@ export function createRulesReport(packs: RulePack[], format = "text"): string {
 export function explainRule(packs: RulePack[], ruleId: string, format = "text"): string {
   const match = packs
     .flatMap((pack) => pack.rules.map((rule) => ({ pack: pack.name, rule })))
-    .find((item) => item.rule.meta.id === ruleId);
+    .find(
+      (item) =>
+        item.rule.meta.id === ruleId ||
+        item.rule.meta.diagnosticCodes?.includes(ruleId) ||
+        codeListForRule(item.rule.meta.id).includes(ruleId),
+    );
   if (!match) return format === "json" ? `${JSON.stringify({ rule: null }, null, 2)}\n` : "";
-  const payload = { pack: match.pack, ...match.rule.meta };
+  const payload = {
+    pack: match.pack,
+    diagnosticCodes: match.rule.meta.diagnosticCodes ?? codeListForRule(match.rule.meta.id),
+    ...match.rule.meta,
+  };
   if (format === "json") return `${JSON.stringify(payload, null, 2)}\n`;
   const meta = match.rule.meta;
   return (
@@ -210,6 +229,7 @@ export function explainRule(packs: RulePack[], ruleId: string, format = "text"):
       meta.why ? `Why: ${meta.why}` : undefined,
       meta.recommendedReplacement ? `Prefer: ${meta.recommendedReplacement}` : undefined,
       meta.docsUrl ? `Docs: ${meta.docsUrl}` : undefined,
+      `Diagnostics: ${(meta.diagnosticCodes ?? codeListForRule(meta.id)).join(", ")}`,
     ]
       .filter(Boolean)
       .join("\n") + "\n"
@@ -230,4 +250,44 @@ function labelSeverity(severity: string): string {
       : severity === "warn"
         ? "Warnings"
         : "Info";
+}
+
+function codeListForRule(ruleId: string): string[] {
+  const code = allDiagnosticCodesByRuleId[ruleId];
+  return code ? [code] : [];
+}
+
+function indent(value: string, prefix: string): string {
+  return value
+    .split("\n")
+    .map((line) => `${prefix}${line}`)
+    .join("\n");
+}
+
+function serializeDiagnostic(diagnostic: Diagnostic) {
+  return {
+    code: diagnostic.code,
+    name: diagnostic.diagnostic.name,
+    why: diagnostic.why,
+    fix: diagnostic.diagnostic.fix,
+    docs: diagnostic.docs,
+    sources: diagnostic.sources,
+    ruleId: diagnostic.ruleId,
+    severity: diagnostic.severity,
+    category: diagnostic.category,
+    file: diagnostic.file,
+    range: diagnostic.range,
+    suggestion: diagnostic.suggestion,
+    fixPlan: diagnostic.fix,
+    related: diagnostic.related,
+    tags: diagnostic.tags,
+    fingerprint: diagnostic.fingerprint,
+    suppressed: diagnostic.suppressed,
+    suppressionReason: diagnostic.suppressionReason,
+    confidence: diagnostic.confidence,
+    evidence: diagnostic.evidence,
+    fixGroupId: diagnostic.fixGroupId,
+    analysisPhase: diagnostic.analysisPhase,
+    cacheHit: diagnostic.cacheHit,
+  };
 }

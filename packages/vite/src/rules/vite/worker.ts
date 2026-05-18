@@ -1,6 +1,7 @@
 import { dirname, resolve } from "pathe";
 import { createRule, type RuleContext } from "@vue-doctor/core";
 import { memberPath, readProjectSources, staticString, type AnyNode } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const requireWorkerUrlPattern = createRule({
   meta: {
@@ -18,16 +19,19 @@ export const requireWorkerUrlPattern = createRule({
         const first = node.arguments?.[0];
         if (isStaticNewUrlWithImportMeta(first)) return;
         if (!isStaticStringOrNewUrl(first)) return;
-        ctx.report({
-          ruleId: "vite/worker/require-worker-url-pattern",
-          severity: ctx.severity,
-          category: "workers",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message:
-            "Worker paths should use new URL('./worker', import.meta.url) for Vite bundling.",
-          suggestion: "Construct workers with new Worker(new URL('./worker.ts', import.meta.url)).",
-        });
+        ctx.report(
+          diagnostics.VITE0021.report({
+            why: "Worker paths should use new URL('./worker', import.meta.url) for Vite bundling.",
+            fix: "Construct workers with new Worker(new URL('./worker.ts', import.meta.url)).",
+          }),
+          {
+            ruleId: "vite/worker/require-worker-url-pattern",
+            severity: ctx.severity,
+            category: "workers",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },
@@ -49,15 +53,19 @@ export const noDynamicWorkerUrl = createRule({
         if (isFixturePath(ctx.file.relativePath)) return;
         if (first?.type !== "NewExpression" || first.callee?.name !== "URL") return;
         if (staticString(first.arguments?.[0])) return;
-        ctx.report({
-          ruleId: "vite/worker/no-dynamic-worker-url",
-          severity: ctx.severity,
-          category: "workers",
-          file: ctx.file.path,
-          range: ctx.range(first),
-          message: "Dynamic worker URLs cannot be statically bundled by Vite.",
-          suggestion: "Use static worker paths or explicit worker entry imports.",
-        });
+        ctx.report(
+          diagnostics.VITE0019.report({
+            why: "Dynamic worker URLs cannot be statically bundled by Vite.",
+            fix: "Use static worker paths or explicit worker entry imports.",
+          }),
+          {
+            ruleId: "vite/worker/no-dynamic-worker-url",
+            severity: ctx.severity,
+            category: "workers",
+            file: ctx.file.path,
+            range: ctx.range(first),
+          },
+        );
       },
     };
   },
@@ -79,27 +87,35 @@ export const noNodeApiInWorker = createRule({
       ImportDeclaration(node: AnyNode) {
         const source = String(node.source?.value ?? "");
         if (!isNodeModule(source)) return;
-        ctx.report({
-          ruleId: "vite/worker/no-node-api-in-worker",
-          severity: ctx.severity,
-          category: "workers",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: `Browser worker "${ctx.file.relativePath}" imports Node module "${source}".`,
-          suggestion: "Move Node work to server code or replace it with browser-compatible APIs.",
-        });
+        ctx.report(
+          diagnostics.VITE0020.report({
+            why: `Browser worker "${ctx.file.relativePath}" imports Node module "${source}".`,
+            fix: "Move Node work to server code or replace it with browser-compatible APIs.",
+          }),
+          {
+            ruleId: "vite/worker/no-node-api-in-worker",
+            severity: ctx.severity,
+            category: "workers",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
       ScriptNode(node: AnyNode) {
         if (node.type !== "Identifier" || node.name !== "process") return;
-        ctx.report({
-          ruleId: "vite/worker/no-node-api-in-worker",
-          severity: ctx.severity,
-          category: "workers",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: "Browser workers should not rely on process.",
-          suggestion: "Use import.meta.env for compile-time public values.",
-        });
+        ctx.report(
+          diagnostics.VITE0020.report({
+            why: "Browser workers should not rely on process.",
+            fix: "Use import.meta.env for compile-time public values.",
+          }),
+          {
+            ruleId: "vite/worker/no-node-api-in-worker",
+            severity: ctx.severity,
+            category: "workers",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },

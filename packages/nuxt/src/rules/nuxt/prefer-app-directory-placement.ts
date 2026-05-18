@@ -1,4 +1,5 @@
 import { AnyNode, NUXT_APP_DIRS, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const preferAppDirectoryPlacement = createRule({
   meta: {
@@ -18,14 +19,18 @@ export const preferAppDirectoryPlacement = createRule({
     const reportOnce = () => {
       if (reported) return;
       reported = true;
-      ctx.report({
-        ruleId: "nuxt/project/prefer-app-directory-placement",
-        severity: "info",
-        category: "architecture",
-        file: ctx.file.path,
-        message: `Nuxt 4 projects should place ${first}/ under app/${first}/.`,
-        suggestion: `Move ${ctx.file.relativePath} under app/${ctx.file.relativePath}.`,
-      });
+      ctx.report(
+        diagnostics.NUXT0044.report({
+          why: `Nuxt 4 projects should place ${first}/ under app/${first}/.`,
+          fix: `Move ${ctx.file.relativePath} under app/${ctx.file.relativePath}.`,
+        }),
+        {
+          ruleId: "nuxt/project/prefer-app-directory-placement",
+          severity: "info",
+          category: "architecture",
+          file: ctx.file.path,
+        },
+      );
     };
     return {
       SFC: reportOnce,

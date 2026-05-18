@@ -9,11 +9,11 @@
     "static-analysis",
     "vue"
   ],
-  "homepage": "https://github.com/onmax/nuxt-doctor#readme",
+  "homepage": "https://github.com/onmax/vite-doctor#readme",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/onmax/nuxt-doctor.git",
+    "url": "git+https://github.com/onmax/vite-doctor.git",
     "directory": "packages/core"
   },
   "files": [
@@ -48,6 +48,7 @@
     "eslint": "catalog:",
     "eslint-plugin-vue": "catalog:",
     "magic-string": "catalog:",
+    "nostics": "0.1.0",
     "oxc-parser": "catalog:",
     "pathe": "catalog:",
     "picocolors": "catalog:",

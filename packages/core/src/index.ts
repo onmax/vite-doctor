@@ -16,6 +16,9 @@ import { applyPolicyFilters, applyRequestedFixes, createResult } from "./interna
 
 export * from "./primitives.js";
 export * from "./config.js";
+export * from "./diagnostics.js";
+export * from "./diagnostic-registry.js";
+export * from "./diagnostic-code-map.js";
 export * from "./reports.js";
 export {
   createNuxtProjectInventory,

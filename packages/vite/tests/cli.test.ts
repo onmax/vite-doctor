@@ -2,7 +2,12 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createRule, defineDoctorExtension, defineRulePack } from "@vue-doctor/core";
+import {
+  allDiagnostics,
+  createRule,
+  defineDoctorExtension,
+  defineRulePack,
+} from "@vue-doctor/core";
 import { expect, test } from "vite-plus/test";
 import { main } from "../src/cli.ts";
 import { doctor } from "../src/plugin.ts";
@@ -84,7 +89,7 @@ test("smart scan applies Vite rules and skips Nuxt-only rules in Vite projects",
   });
 });
 
-test("smart scan keeps Vue rules out of default Vite install path", async () => {
+test("smart scan activates Vue rules from Vue project signals", async () => {
   await withFixture(
     {
       "package.json": JSON.stringify({ dependencies: { vue: "^3.5.0" } }),
@@ -96,14 +101,14 @@ const html = "<strong>unsafe</strong>";
     },
     async (root) => {
       const result = await runCli([".", "--rules", "vue/security/restrict-v-html"], root);
-      expect(result.code).toBe(0);
-      expect(result.output).toContain("Detected: Vite");
-      expect(result.output).not.toContain("vue/security/restrict-v-html");
+      expect(result.code).toBe(1);
+      expect(result.output).toContain("Detected: Vue");
+      expect(result.output).toContain("vue/security/restrict-v-html");
     },
   );
 });
 
-test("smart scan keeps Nuxt rules out of default Vite install path", async () => {
+test("smart scan activates Nuxt and Nitro rules from Nuxt project signals", async () => {
   await withFixture(
     {
       "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
@@ -117,17 +122,17 @@ useRoute();
     },
     async (root) => {
       const nuxt = await runCli([".", "--rules", "nuxt/routing/prefer-nuxt-useroute"], root);
-      expect(nuxt.code).toBe(0);
-      expect(nuxt.output).toContain("Detected: Vite");
-      expect(nuxt.output).not.toContain("nuxt/routing/prefer-nuxt-useroute");
+      expect(nuxt.code).toBe(1);
+      expect(nuxt.output).toContain("Detected: Nuxt");
+      expect(nuxt.output).toContain("nuxt/routing/prefer-nuxt-useroute");
 
       const nitro = await runCli(
         [".", "--rules", "nitro/request/prefer-get-request-ip", "--max-warnings", "0"],
         root,
       );
-      expect(nitro.code).toBe(0);
-      expect(nitro.output).toContain("Detected: Vite");
-      expect(nitro.output).not.toContain("nitro/request/prefer-get-request-ip");
+      expect(nitro.code).toBe(1);
+      expect(nitro.output).toContain("Detected: Nuxt");
+      expect(nitro.output).toContain("nitro/request/prefer-get-request-ip");
     },
   );
 });
@@ -145,7 +150,7 @@ useRoute();
     async (root) => {
       const automatic = await runCli([".", "--rules", "nuxt/routing/prefer-nuxt-useroute"], root);
       expect(automatic.code).toBe(0);
-      expect(automatic.output).toContain("Detected: Vite");
+      expect(automatic.output).toContain("Detected: Vue");
 
       const forced = await runCli(
         [".", "--framework", "nuxt", "--rules", "nuxt/routing/prefer-nuxt-useroute"],
@@ -246,13 +251,18 @@ test("Vite plugin contributes resolved config inventory to Doctor Run", async ()
         onProjectStart(project) {
           const vite = project.inventory?.vite as { command?: string };
           if (vite?.command !== "build") return;
-          ctx.report({
-            ruleId: "fixture/vite-surface-inventory",
-            severity: "warn",
-            category: "inventory",
-            file: ctx.file.path,
-            message: "Vite surface inventory is available.",
-          });
+          ctx.report(
+            allDiagnostics.DOC9999.report({
+              why: "Vite surface inventory is available.",
+              fix: "Inspect the Vite surface inventory.",
+            }),
+            {
+              ruleId: "fixture/vite-surface-inventory",
+              severity: "warn",
+              category: "inventory",
+              file: ctx.file.path,
+            },
+          );
         },
       };
     },

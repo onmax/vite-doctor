@@ -34,6 +34,23 @@ export interface RuleDocument {
   sourceUrl: string;
 }
 
+export interface DiagnosticDocument {
+  code: string;
+  title: string;
+  description: string;
+  why: string;
+  fix: string;
+  ruleId: string;
+  pack: string;
+  severity: RuleSeverity;
+  category: string;
+  framework: RuleFramework;
+  source: string;
+  sourceUrl: string;
+  path: string;
+  key: string;
+}
+
 export interface RuleCatalogEntry {
   id: string;
   title: string;
@@ -59,6 +76,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(import.meta.url);
 
 let cachedRules: RuleDocument[] | null = null;
+let cachedDiagnostics: DiagnosticDocument[] | null = null;
 let parser: typeof import("oxc-parser") | null = null;
 
 export function getRuleDocuments() {
@@ -87,6 +105,11 @@ export function getRuleReports() {
   ) as unknown as Record<"vue" | "vite" | "nitro" | "nuxt" | "all", RulesReport>;
 }
 
+export function getDiagnosticDocuments() {
+  if (!cachedDiagnostics) cachedDiagnostics = collectDiagnosticDocuments();
+  return cachedDiagnostics;
+}
+
 export const rulesCollectionSource = {
   async getKeys() {
     return getRuleDocuments().map((rule) => rule.key);
@@ -97,6 +120,98 @@ export const rulesCollectionSource = {
     return renderRulePage(rule);
   },
 };
+
+export const diagnosticsCollectionSource = {
+  async getKeys() {
+    return getDiagnosticDocuments().map((diagnostic) => diagnostic.key);
+  },
+  async getItem(key: string) {
+    const diagnostic = getDiagnosticDocuments().find((item) => item.key === key);
+    if (!diagnostic) throw new Error(`Unknown diagnostic content key: ${key}`);
+    return renderDiagnosticPage(diagnostic);
+  },
+};
+
+function collectDiagnosticDocuments(): DiagnosticDocument[] {
+  const maps = readDiagnosticCodeMaps();
+  return getRuleDocuments().flatMap((rule) => {
+    const code = maps.get(rule.id);
+    if (!code) return [];
+    const path = `/diagnostics/${code}`;
+    return [
+      {
+        code,
+        title: `${code}: ${rule.title}`,
+        description: rule.description,
+        why: rule.why,
+        fix: rule.recommendedReplacement,
+        ruleId: rule.id,
+        pack: rule.pack,
+        severity: rule.severity,
+        category: rule.category,
+        framework: rule.framework,
+        source: rule.source,
+        sourceUrl: rule.sourceUrl,
+        path,
+        key: `${path.slice(1)}.md`,
+      },
+    ];
+  });
+}
+
+function readDiagnosticCodeMaps() {
+  const files = [
+    "packages/core/src/diagnostic-registry.ts",
+    "packages/vue/src/diagnostics.ts",
+    "packages/vite/src/diagnostics.ts",
+    "packages/nitro/src/diagnostics.ts",
+    "packages/nuxt/src/diagnostics.ts",
+  ];
+  const map = new Map<string, string>();
+  for (const file of files) {
+    const text = readFileSync(join(root, file), "utf8");
+    for (const match of text.matchAll(/\{ code: "([^"]+)", ruleId: "([^"]+)" \}/g)) {
+      map.set(match[2]!, match[1]!);
+    }
+  }
+  return map;
+}
+
+function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
+  return [
+    "---",
+    `title: ${yamlString(diagnostic.title)}`,
+    `description: ${yamlString(diagnostic.description)}`,
+    `code: ${yamlString(diagnostic.code)}`,
+    `why: ${yamlString(diagnostic.why)}`,
+    `fix: ${yamlString(diagnostic.fix)}`,
+    `ruleId: ${yamlString(diagnostic.ruleId)}`,
+    `pack: ${yamlString(diagnostic.pack)}`,
+    `severity: ${yamlString(diagnostic.severity)}`,
+    `category: ${yamlString(diagnostic.category)}`,
+    `framework: ${yamlString(diagnostic.framework)}`,
+    `source: ${yamlString(diagnostic.source)}`,
+    `sourceUrl: ${yamlString(diagnostic.sourceUrl)}`,
+    "---",
+    "",
+    `\`${diagnostic.code}\``,
+    "",
+    diagnostic.description,
+    "",
+    "## Why it happens",
+    "",
+    diagnostic.why,
+    "",
+    "## Fix",
+    "",
+    diagnostic.fix,
+    "",
+    "## Related rule",
+    "",
+    `- \`${diagnostic.ruleId}\``,
+    "",
+  ].join("\n");
+}
 
 function collectRuleDocuments() {
   const vueSources = ruleSourcesFromIndex(join(root, "packages/vue/src/rules/vue/index.ts"));
@@ -119,10 +234,10 @@ function collectRuleDocuments() {
   ];
 
   return [
-    ...withRulePath(collectRules(vueSources, "vue-doctor/vue", "vue"), "/vue/rules"),
+    ...withRulePath(collectRules(vueSources, "vite-doctor/vue", "vue"), "/vue/rules"),
     ...withRulePath(collectRules(viteSources, "vite-doctor/vite", "vite"), "/vite/rules"),
-    ...withRulePath(collectRules(nitroSources, "nuxt-doctor/nitro", "nitro"), "/nitro/rules"),
-    ...withRulePath(collectRules(nuxtSources, "nuxt-doctor/nuxt", "nuxt"), "/nuxt/rules"),
+    ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
+    ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
   ];
 }
 
@@ -579,7 +694,7 @@ function trimCode(value: unknown) {
 }
 
 function githubSourceUrl(source: string) {
-  return `https://github.com/onmax/nuxt-doctor/blob/main/${source}`;
+  return `https://github.com/onmax/vite-doctor/blob/main/${source}`;
 }
 
 function toCatalogRule(rule: RuleDocument) {

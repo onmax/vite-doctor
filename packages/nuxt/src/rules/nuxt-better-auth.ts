@@ -1,4 +1,5 @@
 import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
+import { diagnostics } from "../diagnostics.js";
 
 export const requireStandardAuthHandlerMount = createRule({
   meta: {
@@ -16,14 +17,18 @@ export const requireStandardAuthHandlerMount = createRule({
           (file) => /server\/api\/auth\/\[\.\.\.all\]\.[cm]?[jt]s$/.test(file),
         );
         if (hasHandler) return;
-        ctx.report({
-          ruleId: "nuxt-better-auth/require-standard-auth-handler-mount",
-          severity: "warn",
-          category: "auth",
-          file: ctx.file.path,
-          message: "Nuxt Better Auth should expose the standard server/api/auth/[...all] handler.",
-          suggestion: "Add server/api/auth/[...all].ts using the Better Auth Nuxt handler.",
-        });
+        ctx.report(
+          diagnostics.NUXT0003.report({
+            why: "Nuxt Better Auth should expose the standard server/api/auth/[...all] handler.",
+            fix: "Add server/api/auth/[...all].ts using the Better Auth Nuxt handler.",
+          }),
+          {
+            ruleId: "nuxt-better-auth/require-standard-auth-handler-mount",
+            severity: "warn",
+            category: "auth",
+            file: ctx.file.path,
+          },
+        );
       },
     };
   },
@@ -32,7 +37,7 @@ export const requireStandardAuthHandlerMount = createRule({
 export const rules: DoctorRule[] = [requireStandardAuthHandlerMount];
 
 export const nuxtBetterAuthRulePack = defineRulePack({
-  name: "nuxt-doctor/nuxt-better-auth",
+  name: "vite-doctor/nuxt-better-auth",
   version: "0.0.0",
   activation: {
     nuxt: ">=4",

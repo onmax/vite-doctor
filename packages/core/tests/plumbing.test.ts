@@ -9,6 +9,7 @@ import {
   createSarifReport,
   createRule,
   createNuxtProjectInventory,
+  allDiagnostics,
   defineDoctorExtension,
   defineRulePack,
   explainRule,
@@ -28,14 +29,19 @@ const reportProgramRule = createRule({
     return {
       ScriptNode(node: any) {
         if (node.type !== "Program") return;
-        ctx.report({
-          ruleId: "test/report-program",
-          severity: "warn",
-          category: "architecture",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: "Program was visited.",
-        });
+        ctx.report(
+          allDiagnostics.DOC9999.report({
+            why: "Program was visited.",
+            fix: "Inspect the test program diagnostic.",
+          }),
+          {
+            ruleId: "test/report-program",
+            severity: "warn",
+            category: "architecture",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },
@@ -53,13 +59,18 @@ const secondRule = createRule({
     return {
       ScriptNode(node: any) {
         if (node.type !== "Program") return;
-        ctx.report({
-          ruleId: "test/second-rule",
-          severity: "warn",
-          category: "architecture",
-          file: ctx.file.path,
-          message: "Second rule was visited.",
-        });
+        ctx.report(
+          allDiagnostics.DOC9999.report({
+            why: "Second rule was visited.",
+            fix: "Inspect the second test diagnostic.",
+          }),
+          {
+            ruleId: "test/second-rule",
+            severity: "warn",
+            category: "architecture",
+            file: ctx.file.path,
+          },
+        );
       },
     };
   },
@@ -78,15 +89,20 @@ const duplicateRule = createRule({
       ScriptNode(node: any) {
         if (node.type !== "Program") return;
         for (let index = 0; index < 2; index++) {
-          ctx.report({
-            ruleId: "test/duplicate-rule",
-            severity: "warn",
-            category: "architecture",
-            file: ctx.file.path,
-            range: ctx.range(node),
-            message: "Duplicate report.",
-            fingerprint: "same-fingerprint",
-          });
+          ctx.report(
+            allDiagnostics.DOC9999.report({
+              why: "Duplicate report.",
+              fix: "Inspect the duplicate test diagnostic.",
+            }),
+            {
+              ruleId: "test/duplicate-rule",
+              severity: "warn",
+              category: "architecture",
+              file: ctx.file.path,
+              range: ctx.range(node),
+              fingerprint: "same-fingerprint",
+            },
+          );
         }
       },
     };
@@ -105,13 +121,18 @@ const optionRule = createRule({
     return {
       ScriptNode(node: any) {
         if (node.type !== "Program") return;
-        ctx.report({
-          ruleId: "test/options-rule",
-          severity: ctx.severity,
-          category: "architecture",
-          file: ctx.file.path,
-          message: `option:${(ctx.options as any)?.mode ?? "missing"}`,
-        });
+        ctx.report(
+          allDiagnostics.DOC9999.report({
+            why: `option:${(ctx.options as any)?.mode ?? "missing"}`,
+            fix: "Inspect the configured test option.",
+          }),
+          {
+            ruleId: "test/options-rule",
+            severity: ctx.severity,
+            category: "architecture",
+            file: ctx.file.path,
+          },
+        );
       },
     };
   },

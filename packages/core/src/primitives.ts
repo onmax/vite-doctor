@@ -1,3 +1,7 @@
+import type { Diagnostic as NosticsDiagnostic } from "nostics";
+
+export const DOCTOR_DIAGNOSTICS_DOCS_BASE = "https://vite-doctor.onmax.me/diagnostics";
+
 export type DoctorSeverity = "blocker" | "error" | "warn" | "info";
 export type FixSafety = "safe" | "unsafe" | "suggestion" | "structural-review";
 export type DoctorFramework = "vue" | "nuxt" | "vite" | "nitro";
@@ -55,6 +59,11 @@ export interface Fix {
 }
 
 export interface Diagnostic {
+  diagnostic: NosticsDiagnostic;
+  code: string;
+  why: string;
+  docs?: string;
+  sources?: string[];
   ruleId: string;
   severity: DoctorSeverity;
   category: string;
@@ -94,6 +103,7 @@ export interface RuleMeta {
   severity: DoctorSeverity;
   fixable?: FixSafety | false;
   docsUrl?: string;
+  diagnosticCodes?: string[];
   version?: string;
   requiresContext?: Array<"manifest" | "types" | "cross-file" | "template" | "script">;
   frameworkVersions?: {
@@ -389,7 +399,8 @@ export interface DoctorHelpers {
   report(
     ctx: RuleContext,
     node: unknown,
-    diagnostic: Omit<Diagnostic, "file" | "range" | "fingerprint"> & {
+    diagnostic: NosticsDiagnostic,
+    metadata: DoctorDiagnosticMetadata & {
       file?: string;
       range?: SourceRange;
     },
@@ -400,6 +411,28 @@ export interface DoctorHelpers {
   isNuxtServerFile(relativePath: string): boolean;
   isLikelyEventHandler(text: string, offset: number): boolean;
 }
+
+export type DoctorDiagnosticInput = Omit<
+  Diagnostic,
+  "diagnostic" | "code" | "why" | "docs" | "sources" | "file" | "range" | "fingerprint"
+> & {
+  diagnostic?: NosticsDiagnostic;
+  code?: string;
+  why?: string;
+  docs?: string;
+  sources?: string[];
+  file?: string;
+  range?: SourceRange;
+  fingerprint?: string;
+};
+
+export type DoctorDiagnosticMetadata = Omit<
+  Diagnostic,
+  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range"
+> & {
+  file?: string;
+  range?: SourceRange;
+};
 
 export interface SourceFileHandle {
   path: string;
@@ -426,7 +459,7 @@ export interface RuleContext {
   types?: TypeGraph;
   severity: DoctorSeverity;
   options: unknown;
-  report(diagnostic: Diagnostic): void;
+  report(diagnostic: NosticsDiagnostic, metadata: DoctorDiagnosticMetadata): void;
   getFileText(file: string): string;
   getJson<T = unknown>(file: string): T | null;
   cache: RuleCache;

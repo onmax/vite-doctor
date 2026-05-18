@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "pathe";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
 import { createNuxtRuntimeEvidence } from "./evidence.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const noRouteMiddlewareApiSecurity = createRule({
   meta: {
@@ -30,15 +31,18 @@ export const noRouteMiddlewareApiSecurity = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
-        ctx.report({
-          ruleId: "nuxt/middleware/no-route-middleware-api-security",
-          severity: "warn",
-          category: "middleware",
-          file: ctx.file.path,
-          message:
-            "Route middleware only protects app navigation. API/server routes need their own server-side auth checks.",
-          suggestion: "Add auth checks inside server/api or server/routes handlers.",
-        });
+        ctx.report(
+          diagnostics.NUXT0037.report({
+            why: "Route middleware only protects app navigation. API/server routes need their own server-side auth checks.",
+            fix: "Add auth checks inside server/api or server/routes handlers.",
+          }),
+          {
+            ruleId: "nuxt/middleware/no-route-middleware-api-security",
+            severity: "warn",
+            category: "middleware",
+            file: ctx.file.path,
+          },
+        );
       },
     };
   },

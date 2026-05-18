@@ -14,6 +14,8 @@ import { applyDiagnosticPolicy } from "./diagnostic-policy.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256 } from "./utils.js";
+import { allDiagnosticCodesByRuleId, allDiagnostics } from "../diagnostic-code-map.js";
+import type { Diagnostic as NosticsDiagnostic } from "nostics";
 
 export function applyRequestedFixes(session: ScanSession): void {
   if (!session.options.fix && !session.options.unsafeFix && !session.options.structuralReview)
@@ -116,8 +118,62 @@ export function createDiagnosticFingerprint(
 ): string {
   const rel = relative(root, diagnostic.file);
   const anchor = nearestAnchor(file.text, diagnostic.range?.start ?? 0);
-  const message = diagnostic.message.replace(/\s+/g, " ").replace(/['"`][^'"`]+['"`]/g, '""');
+  const message = diagnostic.why.replace(/\s+/g, " ").replace(/['"`][^'"`]+['"`]/g, '""');
   return sha256(`${diagnostic.ruleId}:${rel}:${anchor}:${message}`);
+}
+
+export function normalizeDiagnostic(input: DoctorDiagnosticNormalizationInput): Diagnostic {
+  const diagnostic = input.diagnostic;
+  const code = diagnostic.name;
+  if (!code) throw new Error(`Doctor diagnostic is missing a nostics name/code.`);
+  return {
+    ...input,
+    diagnostic,
+    code,
+    why: diagnostic.why,
+    docs: diagnostic.docs,
+    sources: diagnostic.sources,
+    message: diagnostic.why,
+    suggestion: diagnostic.fix,
+  } as Diagnostic;
+}
+
+type DoctorDiagnosticNormalizationInput = Partial<Diagnostic> & {
+  diagnostic: NosticsDiagnostic;
+  ruleId: string;
+  severity: Diagnostic["severity"];
+  category: string;
+  file: string;
+};
+
+export function normalizeDiagnosticFromRuleCode(
+  input: Partial<Diagnostic> & {
+    ruleId: string;
+    severity: Diagnostic["severity"];
+    category: string;
+    message?: string;
+    why?: string;
+    suggestion?: string;
+  },
+): Diagnostic {
+  const code = input.code ?? allDiagnosticCodesByRuleId[input.ruleId] ?? "DOC9999";
+  const why = input.why ?? input.message ?? input.diagnostic?.why ?? "Doctor diagnostic";
+  const fix = input.suggestion ?? input.diagnostic?.fix ?? input.fix?.message ?? why;
+  const diagnostic =
+    input.diagnostic ?? allDiagnostics[code]?.report({ why, fix, sources: input.sources });
+  if (!diagnostic) {
+    throw new Error(`No Doctor diagnostic code registered for ${input.ruleId}.`);
+  }
+  return {
+    ...input,
+    diagnostic,
+    code: diagnostic.name,
+    why: diagnostic.why,
+    docs: diagnostic.docs,
+    sources: diagnostic.sources,
+    message: diagnostic.why,
+    suggestion: diagnostic.fix,
+  } as Diagnostic;
 }
 
 function nearestAnchor(source: string, offset: number): string {
@@ -131,14 +187,26 @@ function nearestAnchor(source: string, offset: number): string {
   return last ? (last[1] ?? last[2] ?? last[3] ?? "file") : "file";
 }
 
-export function pushDiagnostic(session: ScanSession, diagnostic: Diagnostic): void {
+export function pushDiagnostic(
+  session: ScanSession,
+  diagnostic: Partial<Diagnostic> & {
+    ruleId: string;
+    severity: Diagnostic["severity"];
+    category: string;
+    message?: string;
+    why?: string;
+    suggestion?: string;
+    file: string;
+  },
+): void {
+  const normalized = normalizeDiagnosticFromRuleCode(diagnostic);
   session.diagnostics.push({
-    ...diagnostic,
+    ...normalized,
     fingerprint:
-      diagnostic.fingerprint ??
-      createDiagnosticFingerprint(session.root, diagnostic, {
-        path: diagnostic.file,
-        relativePath: relative(session.root, diagnostic.file),
+      normalized.fingerprint ??
+      createDiagnosticFingerprint(session.root, normalized, {
+        path: normalized.file,
+        relativePath: relative(session.root, normalized.file),
         sourceKind: "app",
         text: readFileSyncIfExists(diagnostic.file) ?? "",
         hash: "",

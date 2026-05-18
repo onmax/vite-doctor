@@ -1,4 +1,5 @@
 import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
+import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
 
@@ -15,13 +16,19 @@ export const preferNuxtImg = createRule({
     return {
       TemplateNode(node: AnyNode) {
         if (node.type !== "VElement" || node.rawName !== "img") return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "nuxt-image/prefer-nuxtimg",
-          severity: "info",
-          category: "images",
-          message: "Raw <img> misses Nuxt Image optimization and responsive providers.",
-          suggestion: "Use <NuxtImg> for application images.",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0006.report({
+            why: "Raw <img> misses Nuxt Image optimization and responsive providers.",
+            fix: "Use <NuxtImg> for application images.",
+          }),
+          {
+            ruleId: "nuxt-image/prefer-nuxtimg",
+            severity: "info",
+            category: "images",
+          },
+        );
       },
     };
   },
@@ -46,13 +53,19 @@ export const requireImageAlt = createRule({
           ctx.helpers.hasVueDirective(node, "bind", "alt")
         )
           return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "nuxt-image/require-alt",
-          severity: "error",
-          category: "images",
-          message: "Images need alt text or an explicit empty alt for decorative images.",
-          suggestion: "Add alt text that describes the image.",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0009.report({
+            why: "Images need alt text or an explicit empty alt for decorative images.",
+            fix: "Add alt text that describes the image.",
+          }),
+          {
+            ruleId: "nuxt-image/require-alt",
+            severity: "error",
+            category: "images",
+          },
+        );
       },
     };
   },
@@ -77,13 +90,19 @@ export const preferResponsiveDimensions = createRule({
           ctx.helpers.hasVueAttribute(node, "sizes") ||
           ctx.helpers.hasVueDirective(node, "bind", "sizes");
         if (hasSizing) return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "nuxt-image/prefer-responsive-dimensions",
-          severity: "warn",
-          category: "images",
-          message: "Nuxt images should declare dimensions or responsive sizes.",
-          suggestion: "Add width/height for fixed images or sizes for responsive images.",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0008.report({
+            why: "Nuxt images should declare dimensions or responsive sizes.",
+            fix: "Add width/height for fixed images or sizes for responsive images.",
+          }),
+          {
+            ruleId: "nuxt-image/prefer-responsive-dimensions",
+            severity: "warn",
+            category: "images",
+          },
+        );
       },
     };
   },
@@ -104,13 +123,19 @@ export const preferNuxtPictureForFormats = createRule({
         if (node.type !== "VElement" || node.rawName !== "NuxtImg") return;
         const format = ctx.helpers.getStaticVueAttributeValue(node, "format");
         if (!format || !/(webp|avif)/i.test(format)) return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "nuxt-image/prefer-nuxtpicture-for-formats",
-          severity: "info",
-          category: "images",
-          message: "Format negotiation is clearer with <NuxtPicture>.",
-          suggestion: "Use <NuxtPicture> when serving modern formats with fallbacks.",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0007.report({
+            why: "Format negotiation is clearer with <NuxtPicture>.",
+            fix: "Use <NuxtPicture> when serving modern formats with fallbacks.",
+          }),
+          {
+            ruleId: "nuxt-image/prefer-nuxtpicture-for-formats",
+            severity: "info",
+            category: "images",
+          },
+        );
       },
     };
   },
@@ -124,7 +149,7 @@ export const rules: DoctorRule[] = [
 ];
 
 export const nuxtImageRulePack = defineRulePack({
-  name: "nuxt-doctor/nuxt-image",
+  name: "vite-doctor/nuxt-image",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["@nuxt/image"], modules: ["@nuxt/image"] },
   rules,

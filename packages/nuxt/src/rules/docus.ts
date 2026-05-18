@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "pathe";
 import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
+import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
 
@@ -36,15 +37,19 @@ export const noBrokenInternalToLink = createRule({
           for (const link of findInternalToLinks(text)) {
             const route = normalizeRoute(link.value);
             if (!route || routes.has(route)) continue;
-            ctx.report({
-              ruleId: "nuxt-content/links/no-broken-internal-to-link",
-              severity: "warn",
-              category: "content",
-              file,
-              range: ctx.helpers.rangeFromOffsets(file, text, link.start, link.end),
-              message: `Internal content link "${link.value}" does not resolve to a content route.`,
-              suggestion: "Update the `to` target or add the missing content page.",
-            });
+            ctx.report(
+              diagnostics.NUXT0004.report({
+                why: `Internal content link "${link.value}" does not resolve to a content route.`,
+                fix: "Update the `to` target or add the missing content page.",
+              }),
+              {
+                ruleId: "nuxt-content/links/no-broken-internal-to-link",
+                severity: "warn",
+                category: "content",
+                file,
+                range: ctx.helpers.rangeFromOffsets(file, text, link.start, link.end),
+              },
+            );
           }
         }
       },
@@ -66,16 +71,19 @@ export const noEmptyAppVueShadow = createRule({
     return {
       SFC() {
         if (!isTrivialAppVue(ctx.file.text)) return;
-        ctx.report({
-          ruleId: "docus/layers/no-empty-app-vue-shadow",
-          severity: "error",
-          category: "layers",
-          file: ctx.file.path,
-          range: ctx.range(0, Math.max(1, ctx.file.text.length)),
-          message:
-            "This app/app.vue shadows Docus' app shell but does not preserve its layout, header, footer, navigation, or search wiring.",
-          suggestion: "Remove app/app.vue or port the Docus app shell behavior into the override.",
-        });
+        ctx.report(
+          diagnostics.NUXT0002.report({
+            why: "This app/app.vue shadows Docus' app shell but does not preserve its layout, header, footer, navigation, or search wiring.",
+            fix: "Remove app/app.vue or port the Docus app shell behavior into the override.",
+          }),
+          {
+            ruleId: "docus/layers/no-empty-app-vue-shadow",
+            severity: "error",
+            category: "layers",
+            file: ctx.file.path,
+            range: ctx.range(0, Math.max(1, ctx.file.text.length)),
+          },
+        );
       },
     };
   },
@@ -99,13 +107,19 @@ export const noUnknownAppConfigKey = createRule({
         if (!isTopLevelDefineAppConfigProperty(node)) return;
         const key = staticPropertyKey(node);
         if (!key || ALLOWED_DOCUS_APP_CONFIG_KEYS.has(key)) return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "docus/appconfig/no-unknown-key",
-          severity: "warn",
-          category: "app-config",
-          message: `Docus does not read app.config.${key}.`,
-          suggestion: "Remove this key or move it under a Docus-supported app.config section.",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0001.report({
+            why: `Docus does not read app.config.${key}.`,
+            fix: "Remove this key or move it under a Docus-supported app.config section.",
+          }),
+          {
+            ruleId: "docus/appconfig/no-unknown-key",
+            severity: "warn",
+            category: "app-config",
+          },
+        );
       },
     };
   },
@@ -118,7 +132,7 @@ export const rules: DoctorRule[] = [
 ];
 
 export const docusRulePack = defineRulePack({
-  name: "nuxt-doctor/docus",
+  name: "vite-doctor/docus",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["docus"], modules: ["docus"] },
   rules,

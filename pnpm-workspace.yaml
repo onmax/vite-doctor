@@ -11,11 +11,9 @@ catalog:
   "@nuxt/kit": ^4.4.2
   "@nuxt/scripts": ^1.0.6
   "@nuxt/ui": ^4.6.1
-  "@nuxtjs/mcp-toolkit": ^0.7.0
   "@testing-library/vue": ^8.1.0
   "@vue/test-utils": ^2.4.10
   "@vueuse/core": ^14.2.1
-  agents: ^0.12.3
   better-auth: ^1.6.10
   docus: 5.8.1
   happy-dom: ^20.9.0
@@ -35,6 +33,7 @@ catalog:
   std-env: ^4.1.0
   c12: 4.0.0-beta.5
   magic-string: ^0.30.21
+  nostics: 0.1.0
   defu: ^6.1.7
   tsdown: ^0.22.0
   eslint: ^10.3.0
@@ -44,6 +43,7 @@ catalog:
   wrangler: ^4.90.0
   "@changesets/cli": ^2.31.0
   "@changesets/changelog-git": ^0.2.1
+  agents: ^0.12.4
 overrides:
   vite: "catalog:"
   vitest: "catalog:"

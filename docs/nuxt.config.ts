@@ -3,18 +3,19 @@ import { join } from "pathe";
 import { env, process } from "std-env";
 import { fileURLToPath } from "node:url";
 import doctorPackage from "../packages/vite/package.json" with { type: "json" };
-import { getRuleDocuments } from "./rules/source.js";
+import { getDiagnosticDocuments, getRuleDocuments } from "./rules/source.js";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
 const frameworks = ["vue", "nuxt", "nitro", "vite"];
 const docsRoutes = ["/", "/cli"];
 const ruleIndexRoutes = frameworks.map((framework) => `/rules/${framework}`);
 const ruleDetailRoutes = getRuleDocuments().map((rule) => rule.path);
+const diagnosticRoutes = getDiagnosticDocuments().map((diagnostic) => diagnostic.path);
 
 export default defineNuxtConfig({
   extends: ["docus"],
 
-  modules: [["vite-doctor/nuxt", { mcp: false }]],
+  modules: [["vite-doctor/nuxt"]],
 
   css: ["~/assets/css/main.css"],
 
@@ -53,8 +54,19 @@ export default defineNuxtConfig({
   nitro: {
     preset: "cloudflare_module",
     sourceMap: false,
+    publicAssets: [
+      { dir: fileURLToPath(new URL("./skills", import.meta.url)), baseURL: "/.well-known/skills" },
+      {
+        dir: fileURLToPath(new URL("./skills", import.meta.url)),
+        baseURL: "/skills/.well-known/skills",
+      },
+      {
+        dir: fileURLToPath(new URL("./skills", import.meta.url)),
+        baseURL: "/skills/.well-known/agent-skills",
+      },
+    ],
     prerender: {
-      routes: [...docsRoutes, ...ruleIndexRoutes, ...ruleDetailRoutes],
+      routes: [...docsRoutes, ...ruleIndexRoutes, ...ruleDetailRoutes, ...diagnosticRoutes],
     },
     cloudflare: {
       nodeCompat: true,

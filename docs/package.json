@@ -3,7 +3,7 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/onmax/nuxt-doctor.git",
+    "url": "git+https://github.com/onmax/vite-doctor.git",
     "directory": "docs"
   },
   "type": "module",
@@ -23,6 +23,7 @@
     "@oxc-parser/binding-wasm32-wasi": "^0.129.0",
     "@oxc-project/types": "^0.129.0",
     "@vueuse/core": "catalog:",
+    "agents": "catalog:",
     "docus": "catalog:",
     "h3": "^1.15.11",
     "nuxt": "catalog:",

@@ -1,4 +1,5 @@
 import { AnyNode, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 interface Options {
   allowWithDefaults?: boolean;
@@ -22,15 +23,19 @@ export const preferPropsDestructureDefaults = createRule({
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "withDefaults")) return;
         if (!ctx.helpers.isCall(node.arguments?.[0], "defineProps")) return;
-        ctx.report({
-          ruleId: "vue/style/prefer-props-destructure-defaults",
-          severity: ctx.severity,
-          category: "style",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: "Vue 3.5 supports reactive props destructure with native default values.",
-          suggestion: "Use const { prop = defaultValue } = defineProps<Props>().",
-        });
+        ctx.report(
+          diagnostics.VUE0015.report({
+            why: "Vue 3.5 supports reactive props destructure with native default values.",
+            fix: "Use const { prop = defaultValue } = defineProps<Props>().",
+          }),
+          {
+            ruleId: "vue/style/prefer-props-destructure-defaults",
+            severity: ctx.severity,
+            category: "style",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },

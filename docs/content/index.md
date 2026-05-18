@@ -1,9 +1,9 @@
 ---
-title: Vue Doctor & Nuxt Doctor
+title: Vite Doctor
 description: Static build analysis for framework code.
 navigation: false
 seo:
-  title: Vue Doctor & Nuxt Doctor - framework-aware diagnostics
+  title: Vite Doctor - framework-aware diagnostics
   description: Static build analysis for framework code. Doctor catches reactivity, hydration, runtime config, and server-boundary bugs before review.
 ---
 
@@ -32,9 +32,8 @@ pnpm dlx vite-doctor@alpha .
 ```
 
 ```bash [Nuxt]
-pnpm dlx nuxt module add vite-doctor@alpha/nuxt
-pnpm pkg set scripts.doctor="vite-doctor . --max-warnings 0"
-pnpm doctor
+pnpm add -D vite-doctor@alpha
+pnpm nuxt doctor
 ```
 
 ```bash [Vue]

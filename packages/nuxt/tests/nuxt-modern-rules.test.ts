@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "pathe";
 import { expect, test } from "vite-plus/test";
 import {
+  allDiagnostics,
   createRule,
   defineDoctorExtension,
   defineRulePack,
@@ -63,13 +64,7 @@ import {
   requireEventRuntimeConfigInServer,
 } from "../../nitro/src/rules.ts";
 import { runProjectFixture, runRuleFixture } from "../../core/src/testkit.ts";
-import {
-  collectNuxtDoctorRulePacks,
-  resolveNuxtDoctorMcpOptions,
-  writeManifest,
-} from "../src/module.ts";
-import { mcpToolContracts } from "../../../docs/server/utils/mcp-contracts.ts";
-import { runNuxtDoctorMcpReport } from "../src/runtime/mcp/doctor.ts";
+import { collectNuxtDoctorRulePacks, writeManifest } from "../src/module.ts";
 import { createRulesReport, createTextReport, explainRule } from "../../core/src/index.ts";
 import { nitroRulePack, nuxtDoctorExtensions, nuxtRulePacks } from "../src/rules/index.ts";
 import { createNuxtRuntimeEvidence } from "../src/rules/nuxt/evidence.ts";
@@ -860,9 +855,9 @@ test("Nitro pack is exported and consumed by Nuxt rule packs", () => {
       "nitro/request/prefer-get-request-ip",
     ]),
   );
-  expect(packs.map((pack) => pack.name)).toContain("nuxt-doctor/nitro");
+  expect(packs.map((pack) => pack.name)).toContain("vite-doctor/nitro");
   expect(
-    packs.find((pack) => pack.name === "nuxt-doctor/nuxt")?.rules.map((rule) => rule.meta.id),
+    packs.find((pack) => pack.name === "vite-doctor/nuxt")?.rules.map((rule) => rule.meta.id),
   ).not.toContain("nitro/server/prefer-event-fetch");
 });
 
@@ -2012,7 +2007,7 @@ test("Docus app config rule reports unknown top-level keys", async () => {
   docus: { locale: 'en' },
   header: { title: 'Vue Doctor' },
   navigation: { sub: 'header' },
-  github: { url: 'https://github.com/onmax/nuxt-doctor', branch: 'main', rootDir: 'docs' },
+  github: { url: 'https://github.com/onmax/vite-doctor', branch: 'main', rootDir: 'docs' },
   assistant: { explainWithAi: false },
   toc: { title: 'On This Page' },
   ui: { colors: { primary: 'emerald' } },
@@ -2411,13 +2406,18 @@ test("third-party Nuxt rule hook contributions are collected", async () => {
           return {
             ScriptNode(node: any) {
               if (node.type !== "Program") return;
-              ctx.report({
-                ruleId: "fixture/nuxt-hook-rule",
-                severity: "error",
-                category: "architecture",
-                file: ctx.file.path,
-                message: "Hook rule ran.",
-              });
+              ctx.report(
+                allDiagnostics.DOC9999.report({
+                  why: "Hook rule ran.",
+                  fix: "Inspect the Nuxt hook rule.",
+                }),
+                {
+                  ruleId: "fixture/nuxt-hook-rule",
+                  severity: "error",
+                  category: "architecture",
+                  file: ctx.file.path,
+                },
+              );
             },
           };
         },
@@ -2447,33 +2447,6 @@ test("third-party Nuxt rule hook contributions are collected", async () => {
   );
 });
 
-test("Nuxt Doctor MCP options default on and can be disabled or customized", () => {
-  expect(resolveNuxtDoctorMcpOptions(true)).toMatchObject({
-    route: "/mcp",
-    name: "Nuxt Doctor",
-  });
-  expect(resolveNuxtDoctorMcpOptions(undefined)).toMatchObject({
-    route: "/mcp",
-    name: "Nuxt Doctor",
-  });
-  expect(resolveNuxtDoctorMcpOptions(false)).toBe(false);
-  expect(resolveNuxtDoctorMcpOptions({ route: "/api/mcp", name: "Fixture Doctor" })).toMatchObject({
-    route: "/api/mcp",
-    name: "Fixture Doctor",
-  });
-});
-
-test("Nuxt Doctor MCP tools share stable read-only contracts", () => {
-  expect(mcpToolContracts.report.name).toBe("doctor_report");
-  expect(mcpToolContracts.rules.name).toBe("doctor_rules");
-  expect(mcpToolContracts.explainRule.name).toBe("doctor_explain_rule");
-  expect(mcpToolContracts.report.annotations.readOnlyHint).toBe(true);
-  expect(mcpToolContracts.rules.annotations.readOnlyHint).toBe(true);
-  expect(mcpToolContracts.explainRule.annotations.readOnlyHint).toBe(true);
-  expect(mcpToolContracts.report.inputSchema.rules).toBeTruthy();
-  expect(mcpToolContracts.explainRule.inputSchema.ruleId).toBeTruthy();
-});
-
 test("Nuxt runtime evidence classifies setup, client, server, lifecycle, command, and unknown execution", async () => {
   const evidenceRule = createRule({
     meta: {
@@ -2488,14 +2461,19 @@ test("Nuxt runtime evidence classifies setup, client, server, lifecycle, command
       return {
         ScriptNode(node: any) {
           if (!ctx.helpers.isCall(node, "mark")) return;
-          ctx.report({
-            ruleId: "test/nuxt-runtime-evidence",
-            severity: "info",
-            category: "architecture",
-            file: ctx.file.path,
-            range: ctx.range(node),
-            message: evidence.executionFor(node),
-          });
+          ctx.report(
+            allDiagnostics.DOC9999.report({
+              why: evidence.executionFor(node),
+              fix: "Inspect the Nuxt runtime evidence.",
+            }),
+            {
+              ruleId: "test/nuxt-runtime-evidence",
+              severity: "info",
+              category: "architecture",
+              file: ctx.file.path,
+              range: ctx.range(node),
+            },
+          );
         },
       };
     },
@@ -2530,39 +2508,20 @@ function helper() { mark('unknown') }
   ]);
 });
 
-test("Nuxt Doctor MCP report scans the current project root", async () => {
-  const root = resolve("fixtures/nuxt-all-issues");
-  const result = await runNuxtDoctorMcpReport(
-    {
-      rootDir: root,
-      async getRulePacks() {
-        return [];
-      },
-    },
-    { rules: "nuxt/fetch/no-raw-fetch-in-setup" },
-  );
-
-  expect(result.root).toBe(root);
-  expect(result.summary.error + result.summary.warn + result.summary.blocker).toBeGreaterThan(0);
-  expect(result.diagnostics.map((item) => item.ruleId)).toContain(
-    "nuxt/fetch/no-raw-fetch-in-setup",
-  );
-});
-
-test("Nuxt Doctor MCP rule payloads use JSON report helpers", () => {
+test("Nuxt Doctor rule payloads use JSON report helpers", () => {
   const rules = JSON.parse(createRulesReport(nuxtRulePacks(), "json"));
   expect(rules.rules.map((rule: any) => rule.pack)).toEqual(
     expect.arrayContaining([
-      "nuxt-doctor/nitro",
-      "nuxt-doctor/nuxt",
-      "nuxt-doctor/nuxt-content",
-      "nuxt-doctor/nuxt-ui",
-      "nuxt-doctor/nuxt-scripts",
-      "nuxt-doctor/vueuse",
-      "nuxt-doctor/nuxt-image",
-      "nuxt-doctor/nuxthub",
-      "nuxt-doctor/nuxt-better-auth",
-      "nuxt-doctor/docus",
+      "vite-doctor/nitro",
+      "vite-doctor/nuxt",
+      "vite-doctor/nuxt-content",
+      "vite-doctor/nuxt-ui",
+      "vite-doctor/nuxt-scripts",
+      "vite-doctor/vueuse",
+      "vite-doctor/nuxt-image",
+      "vite-doctor/nuxthub",
+      "vite-doctor/nuxt-better-auth",
+      "vite-doctor/docus",
     ]),
   );
 
@@ -2598,13 +2557,18 @@ test("explicit Nuxt module sources are scanned with module metadata", async () =
           return {
             ScriptNode(node: any) {
               if (node.type !== "Program" || !ctx.file.isModuleSource()) return;
-              ctx.report({
-                ruleId: "fixture/module-source",
-                severity: "error",
-                category: "architecture",
-                file: ctx.file.path,
-                message: `${ctx.file.moduleName}:${ctx.file.relativePath}`,
-              });
+              ctx.report(
+                allDiagnostics.DOC9999.report({
+                  why: `${ctx.file.moduleName}:${ctx.file.relativePath}`,
+                  fix: "Inspect the module source fixture.",
+                }),
+                {
+                  ruleId: "fixture/module-source",
+                  severity: "error",
+                  category: "architecture",
+                  file: ctx.file.path,
+                },
+              );
             },
           };
         },

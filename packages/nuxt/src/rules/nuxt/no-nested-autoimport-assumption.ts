@@ -1,4 +1,5 @@
 import { AnyNode, createRule, isExplicitlyScannedByNuxt } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const noNestedAutoimportAssumption = createRule({
   meta: {
@@ -17,17 +18,20 @@ export const noNestedAutoimportAssumption = createRule({
     const reportOnce = () => {
       if (reported) return;
       reported = true;
-      ctx.report({
-        ruleId: "nuxt/composables/no-nested-autoimport-assumption",
-        severity: "warn",
-        category: "imports",
-        file: ctx.file.path,
-        message: ctx.project.nuxt?.manifest?.hasManifest
-          ? "This nested composable is not included in Nuxt's configured auto-import scan roots."
-          : "Nuxt auto-imports top-level composables by default, not arbitrary nested files.",
-        suggestion:
-          "Move the composable to app/composables/, export it from an index file, or configure imports.dirs explicitly.",
-      });
+      ctx.report(
+        diagnostics.NUXT0019.report({
+          why: ctx.project.nuxt?.manifest?.hasManifest
+            ? "This nested composable is not included in Nuxt's configured auto-import scan roots."
+            : "Nuxt auto-imports top-level composables by default, not arbitrary nested files.",
+          fix: "Move the composable to app/composables/, export it from an index file, or configure imports.dirs explicitly.",
+        }),
+        {
+          ruleId: "nuxt/composables/no-nested-autoimport-assumption",
+          severity: "warn",
+          category: "imports",
+          file: ctx.file.path,
+        },
+      );
     };
     return {
       ScriptNode(node: AnyNode) {

@@ -44,13 +44,13 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
   addScanCommand(cli, "check", cwd, (code) => (exitCode = code));
   cli
     .command("rules", "List Nuxt Doctor rules.")
-    .option("--format <format>", "Output format.")
+    .option("--format <format>", "Machine output: json or sarif.")
     .action((options) => {
       process.stdout.write(createRulesReport(nuxtRulePacks(), options.format));
     });
   cli
     .command("explain <rule>", "Explain a Nuxt Doctor rule.")
-    .option("--format <format>", "Output format.")
+    .option("--format <format>", "Machine output: json or sarif.")
     .action((rule: string, options) => {
       process.stdout.write(explainRule(nuxtRulePacks(), rule, options.format));
     });
@@ -109,7 +109,7 @@ function addScanCommand(
     .option("--extends <extends>", "Comma-separated rule-pack presets.")
     .option("--since <ref>", "Git base ref.")
     .option("--baseline <file>", "Baseline file.")
-    .option("--format <format>", "Output format.")
+    .option("--format <format>", "Machine output: json or sarif.")
     .action(async (path = ".", options) => {
       const runOptions: DoctorRunOptions = {};
       applyDoctorOptions(runOptions, options);

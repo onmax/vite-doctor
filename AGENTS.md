@@ -16,7 +16,7 @@ Code comments: only when necessary; explain _why_, not _what_. If code is self-e
 
 ### Issue tracker
 
-Issues and PRDs live in GitHub Issues for `onmax/nuxt-doctor`; use the `gh` CLI. See `.agents/issue-tracker.md`.
+Issues and PRDs live in GitHub Issues for `onmax/vite-doctor`; use the `gh` CLI. See `.agents/issue-tracker.md`.
 
 ### Triage labels
 

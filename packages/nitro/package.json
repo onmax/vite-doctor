@@ -1,6 +1,7 @@
 {
   "name": "nitro-doctor",
   "version": "0.0.0",
+  "private": true,
   "description": "CLI diagnostics rule pack for Nitro projects using Doctor rules.",
   "keywords": [
     "doctor",
@@ -8,16 +9,13 @@
     "nitro",
     "static-analysis"
   ],
-  "homepage": "https://github.com/onmax/nuxt-doctor#readme",
+  "homepage": "https://github.com/onmax/vite-doctor#readme",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/onmax/nuxt-doctor.git",
+    "url": "git+https://github.com/onmax/vite-doctor.git",
     "directory": "packages/nitro"
   },
-  "files": [
-    "dist"
-  ],
   "type": "module",
   "types": "./dist/index.d.mts",
   "exports": {
@@ -40,5 +38,8 @@
   },
   "engines": {
     "node": ">=22.20.0"
+  },
+  "inlinedDependencies": {
+    "nostics": "0.1.0"
   }
 }

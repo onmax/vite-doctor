@@ -1,4 +1,5 @@
 import { AnyNode, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 interface Options {
   allowDefaultModelValue?: boolean;
@@ -30,15 +31,19 @@ export const preferDefineModel = createRule({
         if (!options.allowDefaultModelValue && prop === "modelValue" && hasDefaultOption(node))
           continue;
         reported.add(prop);
-        ctx.report({
-          ruleId: "vue/style/prefer-define-model",
-          severity: ctx.severity,
-          category: "style",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: `${prop} and update:${prop} can be declared with defineModel().`,
-          suggestion: prop === "modelValue" ? "Use defineModel()." : `Use defineModel('${prop}').`,
-        });
+        ctx.report(
+          diagnostics.VUE0014.report({
+            why: `${prop} and update:${prop} can be declared with defineModel().`,
+            fix: prop === "modelValue" ? "Use defineModel()." : `Use defineModel('${prop}').`,
+          }),
+          {
+            ruleId: "vue/style/prefer-define-model",
+            severity: ctx.severity,
+            category: "style",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       }
     }
 

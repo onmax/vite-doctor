@@ -1,4 +1,5 @@
 import { AnyNode, createRule, walkScriptLocal } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 interface Options {
   allowReactiveObjectReturn?: boolean;
@@ -30,17 +31,19 @@ export const preferComposableRefReturn = createRule({
         const reactiveMembers = returnedReactiveMembers(node.argument, reactiveBindings);
         if (!reactiveMembers.length) return;
 
-        ctx.report({
-          ruleId: "vue/reactivity/prefer-composable-ref-return",
-          severity: ctx.severity,
-          category: "reactivity",
-          file: ctx.file.path,
-          range: ctx.range(node.argument),
-          message:
-            "Reusable composables should return refs or computed refs instead of reactive-derived snapshots.",
-          suggestion:
-            "Return individual ref/computed values or toRefs(state) so callers can destructure safely.",
-        });
+        ctx.report(
+          diagnostics.VUE0008.report({
+            why: "Reusable composables should return refs or computed refs instead of reactive-derived snapshots.",
+            fix: "Return individual ref/computed values or toRefs(state) so callers can destructure safely.",
+          }),
+          {
+            ruleId: "vue/reactivity/prefer-composable-ref-return",
+            severity: ctx.severity,
+            category: "reactivity",
+            file: ctx.file.path,
+            range: ctx.range(node.argument),
+          },
+        );
       },
     };
   },

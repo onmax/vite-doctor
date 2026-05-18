@@ -1,4 +1,5 @@
 import { AnyNode, createRule, getElementName } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "nuxt/routing/prefer-nuxtlink";
 
@@ -21,16 +22,20 @@ export const preferNuxtLink = createRule({
         const hrefValue = href?.value?.value;
         if (typeof hrefValue !== "string" || !isInternalNavigationHref(hrefValue)) return;
 
-        ctx.report({
-          ruleId: RULE_ID,
-          severity: "warn",
-          category: "routing",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: "Raw <a> tags skip NuxtLink routing behavior for internal navigation.",
-          suggestion: "Use <NuxtLink> with a to prop for internal app links.",
-          fix: staticNuxtLinkFix(ctx.file.text, node),
-        });
+        ctx.report(
+          diagnostics.NUXT0050.report({
+            why: "Raw <a> tags skip NuxtLink routing behavior for internal navigation.",
+            fix: "Use <NuxtLink> with a to prop for internal app links.",
+          }),
+          {
+            ruleId: RULE_ID,
+            severity: "warn",
+            category: "routing",
+            file: ctx.file.path,
+            range: ctx.range(node),
+            fix: staticNuxtLinkFix(ctx.file.text, node),
+          },
+        );
       },
     };
   },

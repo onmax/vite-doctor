@@ -12,7 +12,7 @@ import {
   requireLifecycleCleanup,
   requirePostFlushForDomWatch,
 } from "../src/rules/vue/index.ts";
-import { createRule } from "../../core/src/index.ts";
+import { allDiagnostics, createRule } from "../../core/src/index.ts";
 import {
   runNuxtAppRuleFixture,
   runNuxtManifestRuleFixture,
@@ -47,12 +47,19 @@ test("runs a Nuxt rule fixture", async () => {
       return {
         ScriptNode(node) {
           if (!ctx.helpers.isCall(node, "useFetch")) return;
-          ctx.helpers.report(ctx, node, {
-            ruleId: "test/nuxt-rule",
-            severity: "warn",
-            category: "architecture",
-            message: "Nuxt app rule ran.",
-          });
+          ctx.helpers.report(
+            ctx,
+            node,
+            allDiagnostics.DOC9999.report({
+              why: "Nuxt app rule ran.",
+              fix: "Inspect the Nuxt app rule fixture.",
+            }),
+            {
+              ruleId: "test/nuxt-rule",
+              severity: "warn",
+              category: "architecture",
+            },
+          );
         },
       };
     },
@@ -82,12 +89,19 @@ test("runs a Nuxt manifest rule fixture", async () => {
       return {
         NuxtManifest(manifest) {
           if (!manifest.serverDirs.api.length) return;
-          ctx.helpers.report(ctx, ctx.file.scriptAst, {
-            ruleId: "test/nuxt-manifest",
-            severity: "warn",
-            category: "architecture",
-            message: "Nuxt API handlers were detected.",
-          });
+          ctx.helpers.report(
+            ctx,
+            ctx.file.scriptAst,
+            allDiagnostics.DOC9999.report({
+              why: "Nuxt API handlers were detected.",
+              fix: "Inspect the Nuxt manifest fixture.",
+            }),
+            {
+              ruleId: "test/nuxt-manifest",
+              severity: "warn",
+              category: "architecture",
+            },
+          );
         },
       };
     },
@@ -114,21 +128,35 @@ test("rule helpers provide shared AST and template predicates", async () => {
       return {
         ScriptNode(node) {
           if (!ctx.helpers.isCall(node, "watch")) return;
-          ctx.helpers.report(ctx, node, {
-            ruleId: "test/shared-helpers",
-            severity: "warn",
-            category: "architecture",
-            message: ctx.helpers.getCalleeName(node) ?? "unknown",
-          });
+          ctx.helpers.report(
+            ctx,
+            node,
+            allDiagnostics.DOC9999.report({
+              why: ctx.helpers.getCalleeName(node) ?? "unknown",
+              fix: "Inspect the shared helper script diagnostic.",
+            }),
+            {
+              ruleId: "test/shared-helpers",
+              severity: "warn",
+              category: "architecture",
+            },
+          );
         },
         TemplateNode(node) {
           if (!ctx.helpers.hasVueDirective(node, "for")) return;
-          ctx.helpers.report(ctx, node, {
-            ruleId: "test/shared-helpers",
-            severity: "warn",
-            category: "architecture",
-            message: ctx.helpers.getStaticVueAttributeValue(node, "ref") ?? "missing-ref",
-          });
+          ctx.helpers.report(
+            ctx,
+            node,
+            allDiagnostics.DOC9999.report({
+              why: ctx.helpers.getStaticVueAttributeValue(node, "ref") ?? "missing-ref",
+              fix: "Inspect the shared helper template diagnostic.",
+            }),
+            {
+              ruleId: "test/shared-helpers",
+              severity: "warn",
+              category: "architecture",
+            },
+          );
         },
       };
     },

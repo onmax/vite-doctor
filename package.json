@@ -4,7 +4,7 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/onmax/nuxt-doctor.git"
+    "url": "git+https://github.com/onmax/vite-doctor.git"
   },
   "type": "module",
   "scripts": {

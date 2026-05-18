@@ -6,7 +6,7 @@ export type FixKind = "safe" | "suggestion" | "no";
 export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; icon: string }> = {
   vue: {
     label: "Vue",
-    pack: "vue-doctor",
+    pack: "vite-doctor/vue",
     icon: "i-logos-vue",
   },
   vite: {
@@ -16,12 +16,12 @@ export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; ic
   },
   nuxt: {
     label: "Nuxt",
-    pack: "nuxt-doctor",
+    pack: "vite-doctor/nuxt",
     icon: "i-logos-nuxt-icon",
   },
   nitro: {
     label: "Nitro",
-    pack: "nuxt-doctor/nitro",
+    pack: "vite-doctor/nitro",
     icon: "i-unjs-nitro",
   },
 };
@@ -79,13 +79,13 @@ export function categoryLabel(slug: string) {
 }
 
 export function packLabel(pack: string) {
-  return pack.replace(/^(nuxt|vue|vite)-doctor\//, "");
+  return pack.replace(/^vite-doctor\//, "");
 }
 
 export function frameworkOfPack(pack: string): Framework {
-  if (pack === "nuxt-doctor/nitro") return "nitro";
-  if (pack.startsWith("vite-doctor/")) return "vite";
-  if (pack.startsWith("vue-doctor/")) return "vue";
+  if (pack === "vite-doctor/nitro") return "nitro";
+  if (pack === "vite-doctor/vue") return "vue";
+  if (pack === "vite-doctor/vite") return "vite";
   return "nuxt";
 }
 

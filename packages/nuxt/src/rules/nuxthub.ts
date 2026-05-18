@@ -1,4 +1,5 @@
 import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
+import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
 
@@ -20,14 +21,19 @@ export const noPersonalizedCachedHandler = createRule({
         if (!/(getUserSession|getCookie|getHeader|authorization|tenant|user)/i.test(snippet))
           return;
         if (/(varies|headers|group|name|getKey)/i.test(snippet)) return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "nuxthub/no-personalized-cached-handler",
-          severity: "error",
-          category: "cache",
-          message: "This cached handler appears to depend on user, tenant, cookie, or auth state.",
-          suggestion:
-            "Avoid caching personalized responses or include an explicit cache key/vary strategy.",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0062.report({
+            why: "This cached handler appears to depend on user, tenant, cookie, or auth state.",
+            fix: "Avoid caching personalized responses or include an explicit cache key/vary strategy.",
+          }),
+          {
+            ruleId: "nuxthub/no-personalized-cached-handler",
+            severity: "error",
+            category: "cache",
+          },
+        );
       },
     };
   },
@@ -52,13 +58,19 @@ export const preferCachedEventHandler = createRule({
           return;
         if (/(getUserSession|getCookie|getHeader|authorization|tenant|user)/i.test(ctx.file.text))
           return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "nuxthub/prefer-cached-event-handler",
-          severity: "info",
-          category: "cache",
-          message: "This public-looking server handler does expensive work and may be cacheable.",
-          suggestion: "Consider cachedEventHandler() with route rules when the response is public.",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0063.report({
+            why: "This public-looking server handler does expensive work and may be cacheable.",
+            fix: "Consider cachedEventHandler() with route rules when the response is public.",
+          }),
+          {
+            ruleId: "nuxthub/prefer-cached-event-handler",
+            severity: "info",
+            category: "cache",
+          },
+        );
       },
     };
   },
@@ -67,7 +79,7 @@ export const preferCachedEventHandler = createRule({
 export const rules: DoctorRule[] = [noPersonalizedCachedHandler, preferCachedEventHandler];
 
 export const nuxtHubRulePack = defineRulePack({
-  name: "nuxt-doctor/nuxthub",
+  name: "vite-doctor/nuxthub",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["nuxthub"], modules: ["nuxthub"] },
   rules,

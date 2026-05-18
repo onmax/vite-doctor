@@ -143,7 +143,7 @@ const rules = [
 ];
 
 const nuxtRulePack = defineRulePack({
-  name: "nuxt-doctor/nuxt",
+  name: "vite-doctor/nuxt",
   version: "0.0.0",
   rules,
   presets: {

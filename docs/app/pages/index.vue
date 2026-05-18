@@ -58,6 +58,14 @@ const tracks = [
   { id: "vite", label: "Vite", icon: "i-logos-vitejs", to: "/rules/vite" },
 ] as const;
 
+type HomeFeature = {
+  id: string;
+  icon: string;
+  title: string;
+  description: string;
+  href?: string;
+};
+
 const features = [
   {
     id: "static",
@@ -73,12 +81,13 @@ const features = [
     description: "Run the same checks your project already uses, locally or in CI.",
   },
   {
-    id: "agents",
-    icon: "i-lucide-bot",
-    title: "Show agents the real project state",
-    description: "Send rule results, file paths, and framework evidence they can act on.",
+    id: "nostics",
+    icon: "i-lucide-stethoscope",
+    title: "Rendered with nostics",
+    description: "Doctor emits diagnostics with shared why, fix, docs, and source fields.",
+    href: "https://npmx.dev/package/nostics",
   },
-] as const;
+] as const satisfies readonly HomeFeature[];
 
 const colorMode = useColorMode();
 const isDark = computed(() => colorMode.value === "dark");
@@ -115,7 +124,7 @@ function toggleTheme() {
           Rules
         </a>
         <a
-          href="https://github.com/onmax/nuxt-doctor"
+          href="https://github.com/onmax/vite-doctor"
           target="_blank"
           rel="noopener"
           class="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
@@ -266,24 +275,44 @@ function toggleTheme() {
           <div
             v-for="feature in features"
             :key="feature.id"
-            class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-neutral-950/10 py-5 not-first:border-t md:block md:px-6 md:py-6 md:not-first:border-t-0 md:not-first:border-l md:first:pl-0 md:first:pr-6 md:last:pr-0 md:last:pl-6 dark:border-white/10"
+            class="border-neutral-950/10 py-5 not-first:border-t md:px-6 md:py-6 md:not-first:border-t-0 md:not-first:border-l md:first:pl-0 md:first:pr-6 md:last:pr-0 md:last:pl-6 dark:border-white/10"
           >
-            <span
-              class="row-span-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-neutral-50 text-neutral-700 ring-1 ring-neutral-950/10 md:mb-4 dark:bg-white/[0.03] dark:text-neutral-300 dark:ring-white/10"
-              aria-hidden="true"
+            <component
+              :is="feature.href ? 'a' : 'div'"
+              v-bind="
+                feature.href
+                  ? { href: feature.href, target: '_blank', rel: 'noopener noreferrer' }
+                  : {}
+              "
+              class="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-x-3 gap-y-2.5 rounded-md"
+              :class="
+                feature.href
+                  ? '-m-2 p-2 transition-colors hover:bg-neutral-50 dark:hover:bg-white/[0.03] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-500'
+                  : ''
+              "
             >
-              <UIcon :name="feature.icon" class="size-4" />
-            </span>
-            <dt
-              class="self-center text-sm font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
-            >
-              {{ feature.title }}
-            </dt>
-            <dd
-              class="col-start-2 text-sm text-pretty text-neutral-600 md:col-start-auto dark:text-neutral-400"
-            >
-              {{ feature.description }}
-            </dd>
+              <UIcon
+                :name="feature.icon"
+                class="h-lh size-4 shrink-0 text-neutral-500 dark:text-neutral-400"
+                aria-hidden="true"
+              />
+              <dt
+                class="inline-flex min-w-0 items-baseline gap-1.5 text-sm font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
+              >
+                <span class="min-w-0">{{ feature.title }}</span>
+                <UIcon
+                  v-if="feature.href"
+                  name="i-lucide-arrow-up-right"
+                  class="size-3.5 shrink-0 text-neutral-400 dark:text-neutral-500"
+                  aria-hidden="true"
+                />
+              </dt>
+              <dd
+                class="col-start-2 text-sm leading-6 text-pretty text-neutral-600 dark:text-neutral-400"
+              >
+                {{ feature.description }}
+              </dd>
+            </component>
           </div>
         </dl>
       </section>
@@ -299,42 +328,3 @@ function toggleTheme() {
     </main>
   </div>
 </template>
-
-<style scoped>
-.command-swap-enter-active,
-.command-swap-leave-active {
-  transition:
-    opacity 150ms ease,
-    filter 150ms ease;
-}
-
-.command-swap-enter-from,
-.command-swap-leave-to {
-  opacity: 0;
-  filter: blur(1px);
-}
-
-.copy-icon-enter-active,
-.copy-icon-leave-active {
-  transition:
-    opacity 200ms cubic-bezier(0.23, 1, 0.32, 1),
-    filter 200ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.copy-icon-enter-from,
-.copy-icon-leave-to {
-  opacity: 0;
-  filter: blur(1px);
-  transform: scale(0.5);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .command-swap-enter-active,
-  .command-swap-leave-active,
-  .copy-icon-enter-active,
-  .copy-icon-leave-active {
-    transition-duration: 0ms;
-  }
-}
-</style>

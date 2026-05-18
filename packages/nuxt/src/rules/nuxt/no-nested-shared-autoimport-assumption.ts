@@ -1,4 +1,5 @@
 import { AnyNode, createRule, isExplicitlyScannedByNuxt, isGeneratedFile } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const noNestedSharedAutoimportAssumption = createRule({
   meta: {
@@ -17,17 +18,20 @@ export const noNestedSharedAutoimportAssumption = createRule({
     const reportOnce = () => {
       if (reported) return;
       reported = true;
-      ctx.report({
-        ruleId: "nuxt/shared/no-nested-shared-autoimport-assumption",
-        severity: "warn",
-        category: "imports",
-        file: ctx.file.path,
-        message: ctx.project.nuxt?.manifest?.hasManifest
-          ? "This nested shared export is not included in Nuxt's configured shared scan roots."
-          : "Nuxt only auto-imports shared/utils and shared/types entries by default, not arbitrary nested files.",
-        suggestion:
-          "Move the export to a top-level shared/utils or shared/types file, or import it explicitly.",
-      });
+      ctx.report(
+        diagnostics.NUXT0058.report({
+          why: ctx.project.nuxt?.manifest?.hasManifest
+            ? "This nested shared export is not included in Nuxt's configured shared scan roots."
+            : "Nuxt only auto-imports shared/utils and shared/types entries by default, not arbitrary nested files.",
+          fix: "Move the export to a top-level shared/utils or shared/types file, or import it explicitly.",
+        }),
+        {
+          ruleId: "nuxt/shared/no-nested-shared-autoimport-assumption",
+          severity: "warn",
+          category: "imports",
+          file: ctx.file.path,
+        },
+      );
     };
     return {
       ScriptNode(node: AnyNode) {

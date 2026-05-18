@@ -1,4 +1,5 @@
 import { AnyNode, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const preferNuxtUseRoute = createRule({
   meta: {
@@ -15,16 +16,19 @@ export const preferNuxtUseRoute = createRule({
         if (node.source?.value !== "vue-router") return;
         for (const specifier of node.specifiers ?? []) {
           if (specifier.imported?.name === "useRoute") {
-            ctx.report({
-              ruleId: "nuxt/routing/prefer-nuxt-useroute",
-              severity: "error",
-              category: "routing",
-              file: ctx.file.path,
-              range: ctx.range(specifier),
-              message:
-                "Nuxt wraps useRoute() so route state updates after page content changes. Do not import useRoute from vue-router in Nuxt app code.",
-              suggestion: "Use Nuxt's auto-imported useRoute().",
-            });
+            ctx.report(
+              diagnostics.NUXT0049.report({
+                why: "Nuxt wraps useRoute() so route state updates after page content changes. Do not import useRoute from vue-router in Nuxt app code.",
+                fix: "Use Nuxt's auto-imported useRoute().",
+              }),
+              {
+                ruleId: "nuxt/routing/prefer-nuxt-useroute",
+                severity: "error",
+                category: "routing",
+                file: ctx.file.path,
+                range: ctx.range(specifier),
+              },
+            );
           }
         }
       },

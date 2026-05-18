@@ -1,4 +1,5 @@
 import { AnyNode, createRule, isExplicitPlugin } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const noSubdirPluginAutoRegistrationAssumption = createRule({
   meta: {
@@ -17,17 +18,20 @@ export const noSubdirPluginAutoRegistrationAssumption = createRule({
     const reportOnce = () => {
       if (reported) return;
       reported = true;
-      ctx.report({
-        ruleId: "nuxt/plugins/no-subdir-auto-registration-assumption",
-        severity: "warn",
-        category: "plugins",
-        file: ctx.file.path,
-        message: ctx.project.nuxt?.manifest?.hasManifest
-          ? "This nested plugin is not included in Nuxt's configured plugin registration list."
-          : "Nuxt auto-registers top-level plugin files and index files, not arbitrary nested plugin files.",
-        suggestion:
-          "Move this plugin to app/plugins/, rename it to an index file, or register it explicitly.",
-      });
+      ctx.report(
+        diagnostics.NUXT0041.report({
+          why: ctx.project.nuxt?.manifest?.hasManifest
+            ? "This nested plugin is not included in Nuxt's configured plugin registration list."
+            : "Nuxt auto-registers top-level plugin files and index files, not arbitrary nested plugin files.",
+          fix: "Move this plugin to app/plugins/, rename it to an index file, or register it explicitly.",
+        }),
+        {
+          ruleId: "nuxt/plugins/no-subdir-auto-registration-assumption",
+          severity: "warn",
+          category: "plugins",
+          file: ctx.file.path,
+        },
+      );
     };
     return {
       ScriptNode(node: AnyNode) {

@@ -1,4 +1,5 @@
 import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
+import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
 
@@ -15,13 +16,19 @@ export const noQueryContentLegacyApi = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "queryContent")) return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "nuxt-content/no-querycontent-legacy-api",
-          severity: "warn",
-          category: "content",
-          message: "queryContent() is the legacy Nuxt Content API.",
-          suggestion: "Use queryCollection() with a declared collection.",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0005.report({
+            why: "queryContent() is the legacy Nuxt Content API.",
+            fix: "Use queryCollection() with a declared collection.",
+          }),
+          {
+            ruleId: "nuxt-content/no-querycontent-legacy-api",
+            severity: "warn",
+            category: "content",
+          },
+        );
       },
     };
   },
@@ -30,7 +37,7 @@ export const noQueryContentLegacyApi = createRule({
 export const rules: DoctorRule[] = [noQueryContentLegacyApi];
 
 export const nuxtContentRulePack = defineRulePack({
-  name: "nuxt-doctor/nuxt-content",
+  name: "vite-doctor/nuxt-content",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["@nuxt/content"], modules: ["@nuxt/content"] },
   rules,

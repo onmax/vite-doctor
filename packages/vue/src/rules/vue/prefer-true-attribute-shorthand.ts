@@ -1,4 +1,5 @@
 import { AnyNode, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/prefer-true-attribute-shorthand";
 
@@ -69,26 +70,30 @@ export const preferTrueAttributeShorthand = createRule({
           )
             continue;
 
-          ctx.report({
-            ruleId: RULE_ID,
-            severity: "info",
-            category: "template",
-            file: ctx.file.path,
-            range: ctx.range(attribute),
-            message: `Use the native ${argumentName} boolean attribute instead of binding true.`,
-            suggestion: `Use ${argumentName}.`,
-            fix: attribute.range
-              ? {
-                  kind: "suggestion",
-                  edits: [
-                    {
-                      range: { start: attribute.range[0], end: attribute.range[1] },
-                      text: argumentName,
-                    },
-                  ],
-                }
-              : null,
-          });
+          ctx.report(
+            diagnostics.VUE0024.report({
+              why: `Use the native ${argumentName} boolean attribute instead of binding true.`,
+              fix: `Use ${argumentName}.`,
+            }),
+            {
+              ruleId: RULE_ID,
+              severity: "info",
+              category: "template",
+              file: ctx.file.path,
+              range: ctx.range(attribute),
+              fix: attribute.range
+                ? {
+                    kind: "suggestion",
+                    edits: [
+                      {
+                        range: { start: attribute.range[0], end: attribute.range[1] },
+                        text: argumentName,
+                      },
+                    ],
+                  }
+                : null,
+            },
+          );
         }
       },
     };

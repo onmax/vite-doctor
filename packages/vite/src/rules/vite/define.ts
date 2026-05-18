@@ -1,4 +1,5 @@
 import { createRule, type RuleContext, type SourceRange } from "@vue-doctor/core";
+import { diagnostics } from "../../diagnostics.js";
 import {
   isLiteralPrimitive,
   isViteConfigFile,
@@ -28,15 +29,19 @@ export const noUnusedDefine = createRule({
               (source) => source.file !== config.file && source.text.includes(entry.key),
             );
             if (used) continue;
-            ctx.report({
-              ruleId: "vite/define/no-unused-define",
-              severity: ctx.severity,
-              category: "configuration",
-              file: config.file,
-              range: entry.range,
-              message: `Vite define constant "${entry.key}" is configured but never referenced.`,
-              suggestion: "Remove the stale define entry or use it from source code.",
-            });
+            ctx.report(
+              diagnostics.VITE0007.report({
+                why: `Vite define constant "${entry.key}" is configured but never referenced.`,
+                fix: "Remove the stale define entry or use it from source code.",
+              }),
+              {
+                ruleId: "vite/define/no-unused-define",
+                severity: ctx.severity,
+                category: "configuration",
+                file: config.file,
+                range: entry.range,
+              },
+            );
           }
         }
       },
@@ -59,15 +64,19 @@ export const noUntypedDefine = createRule({
         for (const config of await readViteConfigFacts(ctx)) {
           for (const entry of config.define) {
             if (entry.key.includes(".") || hasTypeDeclaration(ctx, entry.key)) continue;
-            ctx.report({
-              ruleId: "vite/define/no-untyped-define",
-              severity: ctx.severity,
-              category: "types",
-              file: config.file,
-              range: entry.range,
-              message: `Vite define global "${entry.key}" is not declared in a project .d.ts file.`,
-              suggestion: `Add declare const ${entry.key}: <type> to vite-env.d.ts or env.d.ts.`,
-            });
+            ctx.report(
+              diagnostics.VITE0006.report({
+                why: `Vite define global "${entry.key}" is not declared in a project .d.ts file.`,
+                fix: `Add declare const ${entry.key}: <type> to vite-env.d.ts or env.d.ts.`,
+              }),
+              {
+                ruleId: "vite/define/no-untyped-define",
+                severity: ctx.severity,
+                category: "types",
+                file: config.file,
+                range: entry.range,
+              },
+            );
           }
         }
       },
@@ -91,16 +100,19 @@ export const noRuntimeObjectDefine = createRule({
         for (const entry of readDefineEntriesFromCurrentFile(ctx)) {
           if (isLiteralPrimitive(entry.rawValue) || entry.rawValue.startsWith("JSON.stringify("))
             continue;
-          ctx.report({
-            ruleId: "vite/define/no-runtime-object-define",
-            severity: ctx.severity,
-            category: "configuration",
-            file: ctx.file.path,
-            range: entry.range,
-            message: `Vite define "${entry.key}" uses a non-primitive replacement value.`,
-            suggestion:
-              "Use stringified primitive define values, or import runtime configuration explicitly.",
-          });
+          ctx.report(
+            diagnostics.VITE0004.report({
+              why: `Vite define "${entry.key}" uses a non-primitive replacement value.`,
+              fix: "Use stringified primitive define values, or import runtime configuration explicitly.",
+            }),
+            {
+              ruleId: "vite/define/no-runtime-object-define",
+              severity: ctx.severity,
+              category: "configuration",
+              file: ctx.file.path,
+              range: entry.range,
+            },
+          );
         }
       },
     };
@@ -122,15 +134,19 @@ export const noSecretDefine = createRule({
         if ((node as { type?: string }).type !== "Program") return;
         for (const entry of readDefineEntriesFromCurrentFile(ctx)) {
           if (!SECRET_NAME_RE.test(entry.key) && !SECRET_NAME_RE.test(entry.rawValue)) continue;
-          ctx.report({
-            ruleId: "vite/define/no-secret-define",
-            severity: ctx.severity,
-            category: "security",
-            file: ctx.file.path,
-            range: entry.range,
-            message: `Vite define "${entry.key}" looks like a secret and will be bundled into client code.`,
-            suggestion: "Keep secrets on the server and expose only deliberate public values.",
-          });
+          ctx.report(
+            diagnostics.VITE0005.report({
+              why: `Vite define "${entry.key}" looks like a secret and will be bundled into client code.`,
+              fix: "Keep secrets on the server and expose only deliberate public values.",
+            }),
+            {
+              ruleId: "vite/define/no-secret-define",
+              severity: ctx.severity,
+              category: "security",
+              file: ctx.file.path,
+              range: entry.range,
+            },
+          );
         }
       },
     };

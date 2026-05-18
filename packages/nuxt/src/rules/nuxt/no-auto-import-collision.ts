@@ -1,4 +1,5 @@
 import { createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const noAutoImportCollision = createRule({
   meta: {
@@ -20,14 +21,18 @@ export const noAutoImportCollision = createRule({
         for (const [name, sources] of names) {
           const unique = [...new Set(sources)];
           if (unique.length > 1) {
-            ctx.report({
-              ruleId: "nuxt/imports/no-auto-import-collision",
-              severity: "warn",
-              category: "imports",
-              file: ctx.file.path,
-              message: `Auto-import '${name}' is provided by multiple sources: ${unique.join(", ")}.`,
-              suggestion: "Alias module or app auto-imports to unique names.",
-            });
+            ctx.report(
+              diagnostics.NUXT0034.report({
+                why: `Auto-import '${name}' is provided by multiple sources: ${unique.join(", ")}.`,
+                fix: "Alias module or app auto-imports to unique names.",
+              }),
+              {
+                ruleId: "nuxt/imports/no-auto-import-collision",
+                severity: "warn",
+                category: "imports",
+                file: ctx.file.path,
+              },
+            );
           }
         }
       },

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "pathe";
 import { AnyNode, createRule } from "./shared.js";
 import { parseScript } from "./script.js";
+import { diagnostics } from "../../diagnostics.js";
 
 interface LocaleMessage {
   key: string;
@@ -34,20 +35,23 @@ export const noUnusedTranslations = createRule({
         for (const message of inventory.messages) {
           if (message.locale !== baseLocale || usedKeys.has(message.key)) continue;
           const text = readFileSync(message.file, "utf8");
-          ctx.report({
-            ruleId: "vue/i18n/no-unused-translations",
-            severity: "warn",
-            category: "i18n",
-            file: message.file,
-            range: ctx.helpers.rangeFromOffsets(
-              message.file,
-              text,
-              message.valueStart ?? findKeyOffset(text, message.key),
-            ),
-            message: `Translation key "${message.key}" is not used by any static Vue i18n call.`,
-            suggestion:
-              "Remove the unused key or add a static t()/$t() reference if it is still needed.",
-          });
+          ctx.report(
+            diagnostics.VUE0002.report({
+              why: `Translation key "${message.key}" is not used by any static Vue i18n call.`,
+              fix: "Remove the unused key or add a static t()/$t() reference if it is still needed.",
+            }),
+            {
+              ruleId: "vue/i18n/no-unused-translations",
+              severity: "warn",
+              category: "i18n",
+              file: message.file,
+              range: ctx.helpers.rangeFromOffsets(
+                message.file,
+                text,
+                message.valueStart ?? findKeyOffset(text, message.key),
+              ),
+            },
+          );
         }
       },
     };
@@ -75,13 +79,19 @@ export const noUntranslatedText = createRule({
         if (node.type === "VText") {
           const value = normalizeVisibleText(node.value ?? "");
           if (!isUserFacingText(value)) return;
-          ctx.helpers.report(ctx, node, {
-            ruleId: "vue/i18n/no-untranslated-text",
-            severity: "warn",
-            category: "i18n",
-            message: `Visible text "${truncate(value)}" should come from Vue i18n.`,
-            suggestion: "Replace the hardcoded text with t(), $t(), or <i18n-t>.",
-          });
+          ctx.helpers.report(
+            ctx,
+            node,
+            diagnostics.VUE0001.report({
+              why: `Visible text "${truncate(value)}" should come from Vue i18n.`,
+              fix: "Replace the hardcoded text with t(), $t(), or <i18n-t>.",
+            }),
+            {
+              ruleId: "vue/i18n/no-untranslated-text",
+              severity: "warn",
+              category: "i18n",
+            },
+          );
         }
 
         if (node.type !== "VAttribute") return;
@@ -89,13 +99,19 @@ export const noUntranslatedText = createRule({
         if (!STATIC_TEXT_ATTRIBUTES.has(name)) return;
         const value = normalizeVisibleText(node.value?.value ?? "");
         if (!isUserFacingText(value)) return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "vue/i18n/no-untranslated-text",
-          severity: "warn",
-          category: "i18n",
-          message: `Attribute "${name}" contains untranslated text "${truncate(value)}".`,
-          suggestion: "Bind the attribute to t() or $t().",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.VUE0001.report({
+            why: `Attribute "${name}" contains untranslated text "${truncate(value)}".`,
+            fix: "Bind the attribute to t() or $t().",
+          }),
+          {
+            ruleId: "vue/i18n/no-untranslated-text",
+            severity: "warn",
+            category: "i18n",
+          },
+        );
       },
     };
   },

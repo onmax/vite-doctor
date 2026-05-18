@@ -2,20 +2,23 @@ import {
   defineDoctorExtension,
   runDoctor,
   type DoctorExtension,
+  type DoctorFramework,
   type DoctorRunOptions,
   type DoctorRunResult,
-  type RulePack,
 } from "@vue-doctor/core";
-import { consola } from "consola";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "pathe";
+import { nitroRulePack } from "nitro-doctor";
+import { nuxtDoctorExtensions, nuxtRulePacks } from "nuxt-doctor/rules";
+import { vueRulePack } from "vue-doctor";
 import { viteRulePack } from "./rules.js";
-
-const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
   const framework = detectRequestedFramework(options);
   const packs = [viteRulePack];
-  if (framework === "vue") packs.push(...(await optionalVueRulePacks()));
-  if (framework === "nuxt") packs.push(...(await optionalNuxtRulePacks()));
+  if (framework === "vue") packs.push(vueRulePack);
+  if (framework === "nitro") packs.push(nitroRulePack);
+  if (framework === "nuxt") packs.push(...nuxtRulePacks());
   return packs;
 }
 
@@ -26,15 +29,18 @@ export async function viteDoctorExtensions(
   const extensions = [
     defineDoctorExtension({ name: "vite-doctor/builtin-vite", rulePacks: [viteRulePack] }),
   ];
-  const vueRulePacks = framework === "vue" ? await optionalVueRulePacks() : [];
-  if (vueRulePacks.length) {
+  if (framework === "vue") {
     extensions.push(
-      defineDoctorExtension({ name: "vite-doctor/optional-vue", rulePacks: vueRulePacks }),
+      defineDoctorExtension({ name: "vite-doctor/builtin-vue", rulePacks: [vueRulePack] }),
     );
   }
-  const nuxtExtensions = framework === "nuxt" ? await optionalNuxtExtensions() : [];
-  if (nuxtExtensions.length) {
-    extensions.push(...nuxtExtensions);
+  if (framework === "nitro") {
+    extensions.push(
+      defineDoctorExtension({ name: "vite-doctor/builtin-nitro", rulePacks: [nitroRulePack] }),
+    );
+  }
+  if (framework === "nuxt") {
+    extensions.push(...nuxtDoctorExtensions());
   }
   return extensions;
 }
@@ -57,69 +63,41 @@ export function shouldFailDoctorRun(result: DoctorRunResult, maxWarnings?: numbe
   );
 }
 
-async function optionalVueRulePacks(): Promise<RulePack[]> {
+function detectRequestedFramework(options: DoctorRunOptions): DoctorFramework {
+  if (
+    options.framework === "vite" ||
+    options.framework === "vue" ||
+    options.framework === "nitro" ||
+    options.framework === "nuxt"
+  ) {
+    return options.framework;
+  }
+  const root = options.root ?? process.cwd();
+  const packageJson = readPackageJson(root);
+  const deps = { ...packageJson?.dependencies, ...packageJson?.devDependencies };
+  if (deps.nuxt || deps["@nuxt/kit"] || hasConfig(root, "nuxt.config")) return "nuxt";
+  if (deps.nitro || deps.nitropack || hasConfig(root, "nitro.config")) return "nitro";
+  if (deps.vue || hasVueFiles(root)) return "vue";
+  return "vite";
+}
+
+function readPackageJson(root: string): {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+} | null {
   try {
-    const mod = await optionalImport<{ vueRulePack: RulePack }>("vue-doctor/rules");
-    return [mod.vueRulePack];
-  } catch (error) {
-    try {
-      const mod = await import("../../vue/src/rules.ts");
-      return [mod.vueRulePack];
-    } catch {
-      reportMissingOptionalPack("vue-doctor", error);
-      return [];
-    }
+    return JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  } catch {
+    return null;
   }
 }
 
-async function optionalNuxtRulePacks(): Promise<RulePack[]> {
-  try {
-    const mod = await optionalImport<{ nuxtRulePacks: () => RulePack[] }>("nuxt-doctor/rules");
-    return mod.nuxtRulePacks();
-  } catch (error) {
-    try {
-      const mod = await import("../../nuxt/src/rules/index.ts");
-      return mod.nuxtRulePacks();
-    } catch {
-      reportMissingOptionalPack("nuxt-doctor", error);
-      return [];
-    }
-  }
-}
-
-async function optionalNuxtExtensions(): Promise<DoctorExtension[]> {
-  try {
-    const mod = await optionalImport<{ nuxtDoctorExtensions: () => DoctorExtension[] }>(
-      "nuxt-doctor/rules",
-    );
-    return mod.nuxtDoctorExtensions();
-  } catch (error) {
-    try {
-      const mod = await import("../../nuxt/src/rules/index.ts");
-      return mod.nuxtDoctorExtensions();
-    } catch {
-      reportMissingOptionalPack("nuxt-doctor", error);
-      return [];
-    }
-  }
-}
-
-function reportMissingOptionalPack(pkg: string, error: unknown) {
-  if (!isModuleNotFound(error)) throw error;
-  consola.warn(`Optional ${pkg} rules are not installed. Install ${pkg} to enable those checks.`);
-}
-
-function isModuleNotFound(error: unknown) {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as Error & { code?: string }).code === "ERR_MODULE_NOT_FOUND"
+function hasConfig(root: string, basename: string) {
+  return [".ts", ".mts", ".js", ".mjs", ".cjs"].some((ext) =>
+    existsSync(join(root, basename + ext)),
   );
 }
 
-function detectRequestedFramework(options: DoctorRunOptions): "vite" | "vue" | "nuxt" {
-  if (options.framework === "vite" || options.framework === "vue" || options.framework === "nuxt") {
-    return options.framework;
-  }
-  return "vite";
+function hasVueFiles(root: string) {
+  return existsSync(join(root, "src/App.vue")) || existsSync(join(root, "app.vue"));
 }

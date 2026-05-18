@@ -1,4 +1,5 @@
 import { AnyNode, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/prefer-same-name-prop-shorthand";
 
@@ -54,19 +55,23 @@ export const preferSameNamePropShorthand = createRule({
         )
           return;
 
-        ctx.report({
-          ruleId: RULE_ID,
-          severity: "info",
-          category: "template",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: `Use Vue's same-name prop shorthand for ${argumentName}.`,
-          suggestion: `Use ${ctx.file.text.slice(node.range[0], keyEnd)}.`,
-          fix: {
-            kind: "suggestion",
-            edits: [{ range: { start: keyEnd, end: attributeEnd }, text: "" }],
+        ctx.report(
+          diagnostics.VUE0023.report({
+            why: `Use Vue's same-name prop shorthand for ${argumentName}.`,
+            fix: `Use ${ctx.file.text.slice(node.range[0], keyEnd)}.`,
+          }),
+          {
+            ruleId: RULE_ID,
+            severity: "info",
+            category: "template",
+            file: ctx.file.path,
+            range: ctx.range(node),
+            fix: {
+              kind: "suggestion",
+              edits: [{ range: { start: keyEnd, end: attributeEnd }, text: "" }],
+            },
           },
-        });
+        );
       },
     };
   },

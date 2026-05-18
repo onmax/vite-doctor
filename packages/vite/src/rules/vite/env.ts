@@ -1,4 +1,5 @@
 import { createRule } from "@vue-doctor/core";
+import { diagnostics } from "../../diagnostics.js";
 import {
   hasTypeDeclaration,
   memberPath,
@@ -21,15 +22,19 @@ export const noUntypedEnv = createRule({
       ScriptNode(node: AnyNode) {
         const name = importMetaEnvKey(node);
         if (!name || builtInEnvKeys.has(name) || hasTypeDeclaration(ctx, name, true)) return;
-        ctx.report({
-          ruleId: "vite/env/no-untyped-env",
-          severity: ctx.severity,
-          category: "types",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: `import.meta.env.${name} is used but not declared on ImportMetaEnv.`,
-          suggestion: `Declare ${name} in vite-env.d.ts or env.d.ts.`,
-        });
+        ctx.report(
+          diagnostics.VITE0011.report({
+            why: `import.meta.env.${name} is used but not declared on ImportMetaEnv.`,
+            fix: `Declare ${name} in vite-env.d.ts or env.d.ts.`,
+          }),
+          {
+            ruleId: "vite/env/no-untyped-env",
+            severity: ctx.severity,
+            category: "types",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },
@@ -48,15 +53,19 @@ export const noClientSecretPattern = createRule({
       ScriptNode(node: AnyNode) {
         const name = importMetaEnvKey(node);
         if (!name || !SECRET_NAME_RE.test(name)) return;
-        ctx.report({
-          ruleId: "vite/env/no-client-secret-pattern",
-          severity: ctx.severity,
-          category: "security",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: `import.meta.env.${name} looks like a secret and may be exposed to the browser.`,
-          suggestion: "Read secrets only in server-only code and expose deliberate public values.",
-        });
+        ctx.report(
+          diagnostics.VITE0009.report({
+            why: `import.meta.env.${name} looks like a secret and may be exposed to the browser.`,
+            fix: "Read secrets only in server-only code and expose deliberate public values.",
+          }),
+          {
+            ruleId: "vite/env/no-client-secret-pattern",
+            severity: ctx.severity,
+            category: "security",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },
@@ -76,15 +85,19 @@ export const preferDirectImportMetaEnvAccess = createRule({
         if (node.type !== "VariableDeclarator") return;
         if (node.id?.type !== "ObjectPattern") return;
         if (memberPath(node.init) !== "import.meta.env") return;
-        ctx.report({
-          ruleId: "vite/env/prefer-direct-import-meta-env-access",
-          severity: ctx.severity,
-          category: "configuration",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: "Destructuring import.meta.env hides individual compile-time env reads.",
-          suggestion: "Read Vite env values directly as import.meta.env.VITE_NAME.",
-        });
+        ctx.report(
+          diagnostics.VITE0012.report({
+            why: "Destructuring import.meta.env hides individual compile-time env reads.",
+            fix: "Read Vite env values directly as import.meta.env.VITE_NAME.",
+          }),
+          {
+            ruleId: "vite/env/prefer-direct-import-meta-env-access",
+            severity: ctx.severity,
+            category: "configuration",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },
@@ -106,15 +119,19 @@ export const noEmptyEnvPrefix = createRule({
         for (const config of await readViteConfigFacts(ctx)) {
           for (const prefix of config.envPrefixes) {
             if (prefix.value !== "") continue;
-            ctx.report({
-              ruleId: "vite/env/no-empty-env-prefix",
-              severity: ctx.severity,
-              category: "security",
-              file: config.file,
-              range: prefix.range,
-              message: 'Vite envPrefix: "" exposes every environment variable to client code.',
-              suggestion: "Use the default VITE_ prefix or a narrow application-specific prefix.",
-            });
+            ctx.report(
+              diagnostics.VITE0010.report({
+                why: 'Vite envPrefix: "" exposes every environment variable to client code.',
+                fix: "Use the default VITE_ prefix or a narrow application-specific prefix.",
+              }),
+              {
+                ruleId: "vite/env/no-empty-env-prefix",
+                severity: ctx.severity,
+                category: "security",
+                file: config.file,
+                range: prefix.range,
+              },
+            );
           }
         }
       },
@@ -138,16 +155,19 @@ export const noBroadEnvPrefix = createRule({
         for (const config of await readViteConfigFacts(ctx)) {
           for (const prefix of config.envPrefixes) {
             if (!isBroadPrefix(prefix.value)) continue;
-            ctx.report({
-              ruleId: "vite/env/no-broad-env-prefix",
-              severity: ctx.severity,
-              category: "security",
-              file: config.file,
-              range: prefix.range,
-              message: `Vite envPrefix "${prefix.value}" is broad enough to expose unrelated variables.`,
-              suggestion:
-                "Use a narrow public prefix and keep secret names outside client env prefixes.",
-            });
+            ctx.report(
+              diagnostics.VITE0008.report({
+                why: `Vite envPrefix "${prefix.value}" is broad enough to expose unrelated variables.`,
+                fix: "Use a narrow public prefix and keep secret names outside client env prefixes.",
+              }),
+              {
+                ruleId: "vite/env/no-broad-env-prefix",
+                severity: ctx.severity,
+                category: "security",
+                file: config.file,
+                range: prefix.range,
+              },
+            );
           }
         }
       },

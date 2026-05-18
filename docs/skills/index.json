@@ -1,0 +1,9 @@
+{
+  "skills": [
+    {
+      "name": "doctor",
+      "description": "Run Doctor diagnostics for Vue, Vite, Nitro, and Nuxt projects and use diagnostic codes to guide fixes.",
+      "files": ["SKILL.md"]
+    }
+  ]
+}

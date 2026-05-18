@@ -1,4 +1,5 @@
 import { AnyNode, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/html-button-has-type";
 
@@ -29,22 +30,26 @@ export const htmlButtonHasType = createRule({
         if (hasAttributeOrBinding(node, "type")) return;
 
         const insertAt = node.startTag?.range?.[0] + "<button".length;
-        ctx.report({
-          ruleId: RULE_ID,
-          severity: "warn",
-          category: "template",
-          file: ctx.file.path,
-          range: ctx.range(node.startTag ?? node),
-          message: 'Native buttons should declare type="button", type="submit", or type="reset".',
-          suggestion: 'Add type="button" unless this button intentionally submits a form.',
-          fix:
-            typeof insertAt === "number"
-              ? {
-                  kind: "suggestion",
-                  edits: [{ range: { start: insertAt, end: insertAt }, text: ' type="button"' }],
-                }
-              : null,
-        });
+        ctx.report(
+          diagnostics.VUE0022.report({
+            why: 'Native buttons should declare type="button", type="submit", or type="reset".',
+            fix: 'Add type="button" unless this button intentionally submits a form.',
+          }),
+          {
+            ruleId: RULE_ID,
+            severity: "warn",
+            category: "template",
+            file: ctx.file.path,
+            range: ctx.range(node.startTag ?? node),
+            fix:
+              typeof insertAt === "number"
+                ? {
+                    kind: "suggestion",
+                    edits: [{ range: { start: insertAt, end: insertAt }, text: ' type="button"' }],
+                  }
+                : null,
+          },
+        );
       },
     };
   },

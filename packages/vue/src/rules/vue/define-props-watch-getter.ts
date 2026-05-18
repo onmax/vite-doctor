@@ -1,4 +1,5 @@
 import { AnyNode, bindingNames, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const definePropsWatchGetter = createRule({
   meta: {
@@ -30,19 +31,23 @@ export const definePropsWatchGetter = createRule({
           destructured.has(node.arguments[0].name)
         ) {
           const id = node.arguments[0];
-          ctx.report({
-            ruleId: "vue/reactivity/defineprops-watch-getter",
-            severity: "error",
-            category: "reactivity",
-            file: ctx.file.path,
-            range: ctx.range(id),
-            message: `watch(${id.name}, ...) passes the current prop value. Use a getter so Vue tracks the destructured prop.`,
-            suggestion: `Use watch(() => ${id.name}, ...).`,
-            fix: {
-              kind: "safe",
-              edits: [{ range: { start: id.start, end: id.end }, text: `() => ${id.name}` }],
+          ctx.report(
+            diagnostics.VUE0005.report({
+              why: `watch(${id.name}, ...) passes the current prop value. Use a getter so Vue tracks the destructured prop.`,
+              fix: `Use watch(() => ${id.name}, ...).`,
+            }),
+            {
+              ruleId: "vue/reactivity/defineprops-watch-getter",
+              severity: "error",
+              category: "reactivity",
+              file: ctx.file.path,
+              range: ctx.range(id),
+              fix: {
+                kind: "safe",
+                edits: [{ range: { start: id.start, end: id.end }, text: `() => ${id.name}` }],
+              },
             },
-          });
+          );
         }
       },
     };

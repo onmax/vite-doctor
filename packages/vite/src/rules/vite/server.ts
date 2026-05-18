@@ -1,5 +1,6 @@
 import { createRule } from "@vue-doctor/core";
 import { isViteConfigFile, type AnyNode } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const noDisabledFsStrict = createRule({
   meta: {
@@ -18,15 +19,19 @@ export const noDisabledFsStrict = createRule({
         const match = /\bfs\s*:\s*\{[\s\S]*?\bstrict\s*:\s*false\b/.exec(ctx.file.text);
         if (!match) return;
         const start = match.index + match[0].lastIndexOf("strict");
-        ctx.report({
-          ruleId: "vite/server/no-disabled-fs-strict",
-          severity: ctx.severity,
-          category: "security",
-          file: ctx.file.path,
-          range: ctx.helpers.rangeFromOffsets(ctx.file.path, ctx.file.text, start, start + 6),
-          message: "Vite dev server filesystem strict mode is disabled.",
-          suggestion: "Keep server.fs.strict enabled and grant only specific paths with fs.allow.",
-        });
+        ctx.report(
+          diagnostics.VITE0017.report({
+            why: "Vite dev server filesystem strict mode is disabled.",
+            fix: "Keep server.fs.strict enabled and grant only specific paths with fs.allow.",
+          }),
+          {
+            ruleId: "vite/server/no-disabled-fs-strict",
+            severity: ctx.severity,
+            category: "security",
+            file: ctx.file.path,
+            range: ctx.helpers.rangeFromOffsets(ctx.file.path, ctx.file.text, start, start + 6),
+          },
+        );
       },
     };
   },
@@ -53,21 +58,24 @@ export const noBroadFsAllow = createRule({
           const value = item[1]!;
           if (!isBroadAllowedPath(value)) continue;
           const start = base + item.index! + item[0].indexOf(value);
-          ctx.report({
-            ruleId: "vite/server/no-broad-fs-allow",
-            severity: ctx.severity,
-            category: "security",
-            file: ctx.file.path,
-            range: ctx.helpers.rangeFromOffsets(
-              ctx.file.path,
-              ctx.file.text,
-              start,
-              start + value.length,
-            ),
-            message: `Vite server.fs.allow entry "${value}" is broader than a project path.`,
-            suggestion:
-              "Allow only the specific workspace/package directories the dev server needs.",
-          });
+          ctx.report(
+            diagnostics.VITE0016.report({
+              why: `Vite server.fs.allow entry "${value}" is broader than a project path.`,
+              fix: "Allow only the specific workspace/package directories the dev server needs.",
+            }),
+            {
+              ruleId: "vite/server/no-broad-fs-allow",
+              severity: ctx.severity,
+              category: "security",
+              file: ctx.file.path,
+              range: ctx.helpers.rangeFromOffsets(
+                ctx.file.path,
+                ctx.file.text,
+                start,
+                start + value.length,
+              ),
+            },
+          );
         }
       },
     };

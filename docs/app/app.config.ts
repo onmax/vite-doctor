@@ -2,16 +2,16 @@
 export default defineAppConfig({
   docus: { locale: "en", assistant: false },
   header: {
-    title: "Nuxt Doctor",
+    title: "Vite Doctor",
     logo: {
       light: "/doctor-icon.png",
       dark: "/doctor-icon.png",
-      alt: "Nuxt Doctor",
+      alt: "Vite Doctor",
     },
   },
   navigation: { sub: false },
   github: {
-    url: "https://github.com/onmax/nuxt-doctor",
+    url: "https://github.com/onmax/vite-doctor",
     branch: "main",
     rootDir: "docs",
   },

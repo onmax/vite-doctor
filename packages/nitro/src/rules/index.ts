@@ -40,7 +40,7 @@ const rules = [
 ];
 
 const nitroRulePack = defineRulePack({
-  name: "nuxt-doctor/nitro",
+  name: "vite-doctor/nitro",
   version: "0.0.0",
   rules,
   presets: {

@@ -1,6 +1,7 @@
 {
   "name": "vue-doctor",
   "version": "0.0.0",
+  "private": true,
   "description": "CLI diagnostics for Vue projects using Vue Doctor rules.",
   "keywords": [
     "doctor",
@@ -8,24 +9,17 @@
     "static-analysis",
     "vue"
   ],
-  "homepage": "https://github.com/onmax/nuxt-doctor#readme",
+  "homepage": "https://github.com/onmax/vite-doctor#readme",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/onmax/nuxt-doctor.git",
+    "url": "git+https://github.com/onmax/vite-doctor.git",
     "directory": "packages/vue"
   },
-  "bin": {
-    "vue-doctor": "./dist/cli.mjs"
-  },
-  "files": [
-    "dist"
-  ],
   "type": "module",
-  "types": "./dist/cli.d.mts",
+  "types": "./dist/rules.d.mts",
   "exports": {
-    "./cli": "./dist/cli.mjs",
-    "./rules": "./dist/rules.mjs",
+    ".": "./dist/rules.mjs",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -53,15 +47,6 @@
     "node": ">=22.20.0"
   },
   "inlinedDependencies": {
-    "c12": "4.0.0-beta.5",
-    "confbox": "0.2.4",
-    "defu": "6.1.7",
-    "destr": "2.0.5",
-    "dotenv": "17.4.2",
-    "exsolve": "1.0.8",
-    "giget": "3.2.0",
-    "jiti": "2.7.0",
-    "pkg-types": "2.3.1",
-    "rc9": "3.0.1"
+    "nostics": "0.1.0"
   }
 }

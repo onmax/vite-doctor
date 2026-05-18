@@ -1,4 +1,5 @@
 import { createRule, type RuleContext } from "@vue-doctor/core";
+import { diagnosticCodesByRuleId, diagnostics } from "../../diagnostics.js";
 import {
   nearestFunctionOrProgram,
   sourceForNode,
@@ -80,12 +81,13 @@ export function report(
   message: string,
   suggestion?: string,
 ) {
-  ctx.helpers.report(ctx, node, {
+  const code = diagnosticCodesByRuleId[ruleId];
+  const diagnostic = diagnostics[code];
+  if (!diagnostic) throw new Error(`Missing Doctor diagnostic code for ${ruleId}`);
+  ctx.helpers.report(ctx, node, diagnostic.report({ why: message, fix: suggestion ?? message }), {
     ruleId,
     severity,
     category,
-    message,
-    suggestion,
   });
 }
 

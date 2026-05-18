@@ -1,4 +1,5 @@
 import { AnyNode, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const noConflictingUseFetchImport = createRule({
   meta: {
@@ -19,26 +20,29 @@ export const noConflictingUseFetchImport = createRule({
             specifier.imported?.name === "useFetch" &&
             specifier.local?.name === "useFetch"
           ) {
-            ctx.report({
-              ruleId: "nuxt/imports/no-conflicting-usefetch-import",
-              severity: "error",
-              category: "imports",
-              file: ctx.file.path,
-              range: ctx.range(specifier),
-              message:
-                "This imports useFetch from a non-Nuxt source and can shadow Nuxt's SSR-aware useFetch(). Rename it or use Nuxt's auto-import.",
-              suggestion: "Rename imported useFetch to useVueUseFetch.",
-              fix: {
-                kind: "safe",
-                message: "Rename imported useFetch to useVueUseFetch.",
-                edits: [
-                  {
-                    range: { start: specifier.local.start, end: specifier.local.end },
-                    text: "useVueUseFetch",
-                  },
-                ],
+            ctx.report(
+              diagnostics.NUXT0035.report({
+                why: "This imports useFetch from a non-Nuxt source and can shadow Nuxt's SSR-aware useFetch(). Rename it or use Nuxt's auto-import.",
+                fix: "Rename imported useFetch to useVueUseFetch.",
+              }),
+              {
+                ruleId: "nuxt/imports/no-conflicting-usefetch-import",
+                severity: "error",
+                category: "imports",
+                file: ctx.file.path,
+                range: ctx.range(specifier),
+                fix: {
+                  kind: "safe",
+                  message: "Rename imported useFetch to useVueUseFetch.",
+                  edits: [
+                    {
+                      range: { start: specifier.local.start, end: specifier.local.end },
+                      text: "useVueUseFetch",
+                    },
+                  ],
+                },
               },
-            });
+            );
           }
         }
       },

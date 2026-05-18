@@ -1,5 +1,6 @@
 import { createRule } from "@vue-doctor/core";
 import { staticString, type AnyNode } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const noPublicSrcImport = createRule({
   meta: {
@@ -14,15 +15,19 @@ export const noPublicSrcImport = createRule({
       ImportDeclaration(node: AnyNode) {
         const source = String(node.source?.value ?? "");
         if (!isPublicImport(source)) return;
-        ctx.report({
-          ruleId: "vite/assets/no-public-src-import",
-          severity: ctx.severity,
-          category: "assets",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: `Files in public should be referenced by URL, not imported: ${source}`,
-          suggestion: "Move the asset into source if it needs bundling, or reference it from /.",
-        });
+        ctx.report(
+          diagnostics.VITE0002.report({
+            why: `Files in public should be referenced by URL, not imported: ${source}`,
+            fix: "Move the asset into source if it needs bundling, or reference it from /.",
+          }),
+          {
+            ruleId: "vite/assets/no-public-src-import",
+            severity: ctx.severity,
+            category: "assets",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },
@@ -40,15 +45,19 @@ export const noSrcAbsolutePublicUrl = createRule({
       TemplateNode(node: AnyNode) {
         const value = node.type === "VAttribute" ? node.value?.value : null;
         if (typeof value !== "string" || !value.startsWith("/src/")) return;
-        ctx.report({
-          ruleId: "vite/assets/no-src-absolute-public-url",
-          severity: ctx.severity,
-          category: "assets",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: `Source asset "${value}" is referenced as a public URL.`,
-          suggestion: "Import source assets or use a relative URL so Vite can transform them.",
-        });
+        ctx.report(
+          diagnostics.VITE0003.report({
+            why: `Source asset "${value}" is referenced as a public URL.`,
+            fix: "Import source assets or use a relative URL so Vite can transform them.",
+          }),
+          {
+            ruleId: "vite/assets/no-src-absolute-public-url",
+            severity: ctx.severity,
+            category: "assets",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },
@@ -73,15 +82,19 @@ export const noDynamicNewUrl = createRule({
           return;
         if (staticString(first)) return;
         if (!isAssetUrlContext(node)) return;
-        ctx.report({
-          ruleId: "vite/assets/no-dynamic-new-url",
-          severity: ctx.severity,
-          category: "assets",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: "Vite cannot reliably include assets from a dynamic new URL() path.",
-          suggestion: "Use a static string path or import.meta.glob for dynamic asset sets.",
-        });
+        ctx.report(
+          diagnostics.VITE0001.report({
+            why: "Vite cannot reliably include assets from a dynamic new URL() path.",
+            fix: "Use a static string path or import.meta.glob for dynamic asset sets.",
+          }),
+          {
+            ruleId: "vite/assets/no-dynamic-new-url",
+            severity: ctx.severity,
+            category: "assets",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },

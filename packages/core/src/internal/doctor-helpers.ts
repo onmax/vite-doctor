@@ -32,11 +32,11 @@ export function createHelpers(): DoctorHelpers {
     isCall(node, name) {
       return (node as any)?.type === "CallExpression" && (!name || getCalleeName(node) === name);
     },
-    report(ctx, node, diagnostic) {
-      ctx.report({
-        ...diagnostic,
-        file: diagnostic.file ?? ctx.file.path,
-        range: diagnostic.range ?? (node ? ctx.range(node) : undefined),
+    report(ctx, node, diagnostic, metadata) {
+      ctx.report(diagnostic, {
+        ...metadata,
+        file: metadata.file ?? ctx.file.path,
+        range: metadata.range ?? (node ? ctx.range(node) : undefined),
       });
     },
     hasVueDirective(node, name, argument) {

@@ -13,6 +13,7 @@ import {
   createDiagnosticFingerprint,
   defaultConfidenceForPhase,
   evidenceKindForPhase,
+  normalizeDiagnostic,
 } from "./diagnostics.js";
 import { markSession, resolvedConfigFor, type ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
@@ -103,24 +104,28 @@ function createRuleContext(
     setFile(nextFile) {
       file = nextFile;
     },
-    report(diagnostic) {
-      const diagnosticConfig = resolvedConfigFor(session, diagnostic.ruleId);
+    report(diagnostic, metadata) {
+      const input = normalizeDiagnostic({
+        ...metadata,
+        diagnostic,
+        file: metadata.file ?? file.path,
+      });
+      const diagnosticConfig = resolvedConfigFor(session, input.ruleId);
       if (diagnosticConfig.enabled === false) return;
       const severity =
         diagnosticConfig.severity ??
         currentRuleConfig.severity ??
-        diagnostic.severity ??
+        input.severity ??
         rule.meta.severity;
       const next = {
-        ...diagnostic,
+        ...input,
         severity,
-        confidence: diagnostic.confidence ?? defaultConfidenceForPhase(phase),
-        evidence: diagnostic.evidence ?? [
+        confidence: input.confidence ?? defaultConfidenceForPhase(phase),
+        evidence: input.evidence ?? [
           { kind: evidenceKindForPhase(phase), summary: `${phase} analysis` },
         ],
-        analysisPhase: diagnostic.analysisPhase ?? phase,
-        fingerprint:
-          diagnostic.fingerprint ?? createDiagnosticFingerprint(session.root, diagnostic, file),
+        analysisPhase: input.analysisPhase ?? phase,
+        fingerprint: input.fingerprint ?? createDiagnosticFingerprint(session.root, input, file),
       };
       session.diagnostics.push(next);
     },

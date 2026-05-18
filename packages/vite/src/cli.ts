@@ -33,7 +33,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
   addScanCommand(cli, "check", cwd, (code) => (exitCode = code));
   cli
     .command("rules", "List available Doctor rules.")
-    .option("--format <format>", "Output format.")
+    .option("--format <format>", "Machine output: json or sarif.")
     .option("--framework <framework>", "Framework override.")
     .action(async (options) => {
       const runOptions: DoctorRunOptions = {};
@@ -44,7 +44,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
     });
   cli
     .command("explain <rule>", "Explain a Doctor rule.")
-    .option("--format <format>", "Output format.")
+    .option("--format <format>", "Machine output: json or sarif.")
     .option("--framework <framework>", "Framework override.")
     .action(async (rule: string, options) => {
       const runOptions: DoctorRunOptions = {};
@@ -100,7 +100,7 @@ function addScanCommand(
     .option("--extends <extends>", "Comma-separated rule-pack presets.")
     .option("--since <ref>", "Git base ref.")
     .option("--baseline <file>", "Baseline file.")
-    .option("--format <format>", "Output format.")
+    .option("--format <format>", "Machine output: json or sarif.")
     .option("--config", "Unsupported in vite-doctor.")
     .option("--trusted-config", "Unsupported in vite-doctor.")
     .action(async (path = ".", options) => {
@@ -108,7 +108,7 @@ function addScanCommand(
       applyDoctorOptions(parsed.options, options);
       if (options.config || options.trustedConfig) {
         errorHuman(
-          "Executable config loading was removed from vite-doctor. Use vue-doctor, nuxt-doctor, or @vue-doctor/core/config for trusted config files.",
+          "Executable config loading was removed from vite-doctor. Use built-in framework auto-activation or @vue-doctor/core/config for trusted config files.",
         );
         setExitCode(1);
         return;

@@ -67,7 +67,7 @@ function toggleTheme() {
           <UIcon :name="isDark ? 'i-lucide-moon-star' : 'i-lucide-sun'" class="size-5" />
         </button>
         <a
-          href="https://github.com/onmax/nuxt-doctor"
+          href="https://github.com/onmax/vite-doctor"
           target="_blank"
           rel="noopener"
           aria-label="Open GitHub repository"
@@ -86,7 +86,7 @@ function toggleTheme() {
         heading-tag="h1"
       >
         <template #after-description>
-          <InstallCommands class="mt-5" :framework="framework" />
+          <InstallCommands class="mt-5" />
         </template>
       </RuleExplorer>
     </main>

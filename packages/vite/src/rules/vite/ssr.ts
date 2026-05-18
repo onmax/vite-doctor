@@ -1,5 +1,6 @@
 import { createRule } from "@vue-doctor/core";
 import { isLikelySsrFile, type AnyNode } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const noBrowserGlobalInSsrEntry = createRule({
   meta: {
@@ -19,16 +20,19 @@ export const noBrowserGlobalInSsrEntry = createRule({
           ctx.helpers.hasLocalBindingBefore(node, ctx.file.text)
         )
           return;
-        ctx.report({
-          ruleId: "vite/ssr/no-browser-global-in-ssr-entry",
-          severity: ctx.severity,
-          category: "ssr",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: `Vite SSR entry "${ctx.file.relativePath}" reads browser global "${node.name}".`,
-          suggestion:
-            "Guard browser-only code behind client execution or move it to the client entry.",
-        });
+        ctx.report(
+          diagnostics.VITE0018.report({
+            why: `Vite SSR entry "${ctx.file.relativePath}" reads browser global "${node.name}".`,
+            fix: "Guard browser-only code behind client execution or move it to the client entry.",
+          }),
+          {
+            ruleId: "vite/ssr/no-browser-global-in-ssr-entry",
+            severity: ctx.severity,
+            category: "ssr",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },

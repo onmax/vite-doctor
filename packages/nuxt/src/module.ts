@@ -1,5 +1,4 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { createResolver, installModule } from "@nuxt/kit";
 import { join, relative, resolve } from "pathe";
 import type {
   DoctorExtension,
@@ -8,20 +7,11 @@ import type {
   RulePack,
 } from "@vue-doctor/core";
 import { parseRunArgs, runNuxtDoctor } from "./cli.js";
-import { setNuxtDoctorMcpContext, type NuxtDoctorMcpContext } from "./runtime/mcp/context.js";
 export type { NuxtDoctorManifest } from "@vue-doctor/core";
 
 export interface NuxtDoctorModuleOptions {
   extends?: "auto" | string[];
   extensions?: DoctorExtension[];
-  mcp?: boolean | NuxtDoctorMcpOptions;
-}
-
-export interface NuxtDoctorMcpOptions {
-  route?: string;
-  name?: string;
-  description?: string;
-  instructions?: string;
 }
 
 type EvidenceBuildManifest = {
@@ -29,20 +19,12 @@ type EvidenceBuildManifest = {
   chunks: Array<{ file?: string; src?: string; isEntry?: boolean; isDynamicEntry?: boolean }>;
 };
 
-const defaultMcpOptions = {
-  route: "/mcp",
-  name: "Nuxt Doctor",
-  description: "Read-only Nuxt Doctor reports and rule metadata for the current Nuxt project.",
-  instructions:
-    "Use doctor_report for project health reports. Use doctor_explain_rule before recommending a remediation for a diagnostic. The exposed tools are read-only.",
-};
-
 export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions = {}, nuxt: any) {
   nuxt.options ??= {};
   nuxt.options.doctor ??= {};
-  nuxt.options.doctor.mcp ??= options.mcp ?? true;
+  nuxt.options.doctor.extends ??= options.extends;
+  nuxt.options.doctor.extensions ??= options.extensions;
 
-  const resolver = createResolver(import.meta.url);
   const evidence = {
     pages: [] as Array<{ path?: string; file?: string; name?: string }>,
     prerenderRoutes: new Set<string>(),
@@ -121,8 +103,6 @@ export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions 
         process.exitCode = 1;
     },
   };
-
-  await setupMcpIntegration(nuxt, resolver.resolve("./runtime/mcp/tools"));
 }
 
 export async function collectNuxtDoctorRulePacks(nuxt: any): Promise<RulePack[]> {
@@ -135,64 +115,6 @@ export async function collectNuxtDoctorExtensions(nuxt: any): Promise<DoctorExte
   const extensions: DoctorExtension[] = [];
   await nuxt.callHook?.("doctor:extendExtensions", extensions);
   return extensions;
-}
-
-export function resolveNuxtDoctorMcpOptions(
-  value: unknown,
-): false | Required<NuxtDoctorMcpOptions> {
-  if (value === false) return false;
-  const overrides = typeof value === "object" && value ? (value as NuxtDoctorMcpOptions) : {};
-  return { ...defaultMcpOptions, ...overrides };
-}
-
-async function setupMcpIntegration(nuxt: any, toolsDir: string): Promise<void> {
-  const mcpOptions = resolveNuxtDoctorMcpOptions(nuxt.options.doctor?.mcp);
-  if (!mcpOptions) return;
-
-  const context: NuxtDoctorMcpContext = {
-    rootDir: resolve(nuxt.options.rootDir ?? process.cwd()),
-    async getRulePacks() {
-      return collectNuxtDoctorRulePacks(nuxt);
-    },
-  };
-  setNuxtDoctorMcpContext(context);
-
-  nuxt.options.runtimeConfig ??= {};
-  nuxt.options.runtimeConfig.doctor ??= {};
-  nuxt.options.runtimeConfig.doctor.rootDir = context.rootDir;
-
-  const generatedToolsDir = resolve(
-    nuxt.options.buildDir ?? join(context.rootDir, ".nuxt"),
-    "nuxt-doctor-mcp-tools",
-  );
-  writeMcpToolProxies(generatedToolsDir, toolsDir);
-
-  nuxt.hook?.("mcp:definitions:paths", (paths: any) => {
-    paths.tools ??= [];
-    if (!paths.tools.includes(generatedToolsDir)) paths.tools.push(generatedToolsDir);
-  });
-
-  await installModule("@nuxtjs/mcp-toolkit", mcpOptions);
-}
-
-function writeMcpToolProxies(targetDir: string, toolsDir: string): void {
-  mkdirSync(targetDir, { recursive: true });
-  for (const name of [
-    "doctor-report",
-    "doctor-rules",
-    "doctor-explain-rule",
-    "doctor-dead-code",
-    "doctor-duplicates",
-    "doctor-health",
-    "doctor-graph",
-    "doctor-refs",
-    "doctor-explain-diagnostic",
-  ]) {
-    writeFileSync(
-      join(targetDir, `${name}.mjs`),
-      `export { default } from ${JSON.stringify(`${toolsDir}/${name}.mjs`)}\n`,
-    );
-  }
 }
 
 export async function writeManifest(

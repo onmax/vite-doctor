@@ -1,4 +1,5 @@
 import { createRule, type DoctorRule, type RuleContext } from "@vue-doctor/core";
+import { diagnosticCodesByRuleId, diagnostics } from "../../diagnostics.js";
 
 export { createRule };
 
@@ -31,12 +32,13 @@ export function report(
   message: string,
   suggestion?: string,
 ) {
-  ctx.helpers.report(ctx, node, {
+  const code = diagnosticCodesByRuleId[ruleId];
+  const diagnostic = diagnostics[code];
+  if (!diagnostic) throw new Error(`Missing Doctor diagnostic code for ${ruleId}`);
+  ctx.helpers.report(ctx, node, diagnostic.report({ why: message, fix: suggestion ?? message }), {
     ruleId,
     severity,
     category,
-    message,
-    suggestion,
   });
 }
 
@@ -132,7 +134,7 @@ export function createEslintVueRule(options: {
             ctx.file.text,
             [
               {
-                name: "vue-doctor/eslint-plugin-vue",
+                name: "vite-doctor/eslint-plugin-vue",
                 files: ["**/*.vue"],
                 languageOptions: {
                   parser: vueParserRuntime as any,
@@ -153,29 +155,37 @@ export function createEslintVueRule(options: {
 
           for (const message of messages) {
             if (message.ruleId !== options.eslintId) continue;
-            ctx.report({
-              ruleId: options.doctorId,
-              severity: options.meta.severity,
-              category: options.meta.category,
-              file: ctx.file.path,
-              range: rangeFromLintMessage(ctx.file.text, message),
-              message: delegatedMessages[options.doctorId] ?? message.message,
-              suggestion: delegatedSuggestions[options.doctorId] ?? message.message,
-              fix: message.fix
-                ? {
-                    kind: "suggestion",
-                    message:
-                      "eslint-plugin-vue can suggest a fix, but Vue Doctor does not classify it as safe.",
-                    edits: [
-                      {
-                        range: { start: message.fix.range[0], end: message.fix.range[1] },
-                        text: message.fix.text,
-                      },
-                    ],
-                  }
-                : null,
-              tags: ["eslint-plugin-vue"],
-            });
+            const code = diagnosticCodesByRuleId[options.doctorId];
+            const diagnostic = diagnostics[code];
+            if (!diagnostic)
+              throw new Error(`Missing Doctor diagnostic code for ${options.doctorId}`);
+            ctx.report(
+              diagnostic.report({
+                why: delegatedMessages[options.doctorId] ?? message.message,
+                fix: delegatedSuggestions[options.doctorId] ?? message.message,
+              }),
+              {
+                ruleId: options.doctorId,
+                severity: options.meta.severity,
+                category: options.meta.category,
+                file: ctx.file.path,
+                range: rangeFromLintMessage(ctx.file.text, message),
+                fix: message.fix
+                  ? {
+                      kind: "suggestion",
+                      message:
+                        "eslint-plugin-vue can suggest a fix, but Vue Doctor does not classify it as safe.",
+                      edits: [
+                        {
+                          range: { start: message.fix.range[0], end: message.fix.range[1] },
+                          text: message.fix.text,
+                        },
+                      ],
+                    }
+                  : null,
+                tags: ["eslint-plugin-vue"],
+              },
+            );
           }
         },
       };

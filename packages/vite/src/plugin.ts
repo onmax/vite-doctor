@@ -9,14 +9,14 @@ export interface ViteDoctorSurfaceOptions {
   run?: "build" | "serve" | "both";
   mode?: "warn" | "error";
   root?: string;
-  framework?: "auto" | "vite" | "vue" | "nuxt";
+  framework?: "auto" | "vite" | "vue" | "nitro" | "nuxt";
   extends?: DoctorRunOptions["extends"];
   extensions?: DoctorExtension[];
   rules?: string;
   severity?: "error" | "warn" | "info";
   maxWarnings?: number;
   cache?: boolean;
-  format?: "text" | "json" | "sarif";
+  format?: "json" | "sarif";
 }
 
 export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
@@ -46,7 +46,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         format: options.format,
       });
 
-      const report = createReport(result, options.format ?? "text").trimEnd();
+      const report = createReport(result, options.format).trimEnd();
       const shouldFail = shouldFailDoctorRun(result, options.maxWarnings);
 
       if (shouldFail && (options.mode ?? "error") === "error") {

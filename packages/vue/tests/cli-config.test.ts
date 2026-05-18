@@ -12,7 +12,7 @@ test("CLI scan does not load repository-local config by default", async () => {
       "doctor.config.ts": maliciousConfigSource("cli-default-marker"),
     },
     async (root) => {
-      const code = await main(["scan", root, "--format", "text"]);
+      const code = await main(["scan", root]);
 
       expect(code).toBe(0);
       expect(existsSync(join(root, "cli-default-marker"))).toBe(false);
@@ -27,7 +27,7 @@ test("CLI trusted config opt-in loads local config", async () => {
       "doctor.config.ts": `${maliciousConfigSource("cli-trusted-marker")}\nexport default {}\n`,
     },
     async (root) => {
-      const code = await main(["scan", root, "--format", "text", "--trusted-config"]);
+      const code = await main(["scan", root, "--trusted-config"]);
 
       expect(code).toBe(0);
       expect(existsSync(join(root, "cli-trusted-marker"))).toBe(true);

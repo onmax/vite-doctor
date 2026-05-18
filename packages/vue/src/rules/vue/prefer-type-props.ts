@@ -1,4 +1,5 @@
 import { AnyNode, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 interface Options {
   allowRuntimeValidators?: boolean;
@@ -45,16 +46,19 @@ const props = defineProps<Props>()
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "defineProps")) return;
         if (!node.arguments?.length || hasTypeParameters(node)) return;
-        ctx.report({
-          ruleId: "vue/style/prefer-type-props",
-          severity: ctx.severity,
-          category: "style",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message:
-            "TypeScript <script setup> components should declare props with a type argument.",
-          suggestion: "Use defineProps<Props>() instead of a runtime props declaration.",
-        });
+        ctx.report(
+          diagnostics.VUE0016.report({
+            why: "TypeScript <script setup> components should declare props with a type argument.",
+            fix: "Use defineProps<Props>() instead of a runtime props declaration.",
+          }),
+          {
+            ruleId: "vue/style/prefer-type-props",
+            severity: ctx.severity,
+            category: "style",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },

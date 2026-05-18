@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "pathe";
 import { createRule, defineRulePack, type DoctorRule } from "@vue-doctor/core";
+import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
 
@@ -22,15 +23,19 @@ export const requireUAppRoot = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
-        ctx.report({
-          ruleId: "nuxt-ui/require-uapp-root",
-          severity: "warn",
-          category: "ui",
-          file: ctx.file.path,
-          range: ctx.range(node),
-          message: "Nuxt UI toast and overlay services require a UApp root provider.",
-          suggestion: "Wrap the app shell with <UApp> before using useToast() or useOverlay().",
-        });
+        ctx.report(
+          diagnostics.NUXT0015.report({
+            why: "Nuxt UI toast and overlay services require a UApp root provider.",
+            fix: "Wrap the app shell with <UApp> before using useToast() or useOverlay().",
+          }),
+          {
+            ruleId: "nuxt-ui/require-uapp-root",
+            severity: "warn",
+            category: "ui",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
       },
     };
   },
@@ -50,14 +55,19 @@ export const preferUButton = createRule({
       TemplateNode(node: AnyNode) {
         if (node.type !== "VElement" || node.rawName !== "button" || hasDoctorIgnore(ctx, node))
           return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "nuxt-ui/prefer-u-button",
-          severity: "info",
-          category: "ui",
-          message: "Native <button> reimplements behavior that Nuxt UI already provides.",
-          suggestion:
-            "Use <UButton> and map styling to Nuxt UI props such as icon, size, color, and variant.",
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0013.report({
+            why: "Native <button> reimplements behavior that Nuxt UI already provides.",
+            fix: "Use <UButton> and map styling to Nuxt UI props such as icon, size, color, and variant.",
+          }),
+          {
+            ruleId: "nuxt-ui/prefer-u-button",
+            severity: "info",
+            category: "ui",
+          },
+        );
       },
     };
   },
@@ -78,13 +88,19 @@ export const preferUFormControls = createRule({
         if (node.type !== "VElement" || hasDoctorIgnore(ctx, node)) return;
         const replacement = formControlReplacement(ctx, node);
         if (!replacement) return;
-        ctx.helpers.report(ctx, node, {
-          ruleId: "nuxt-ui/prefer-u-form-controls",
-          severity: "info",
-          category: "ui",
-          message: `Native <${node.rawName}> reimplements behavior that Nuxt UI already provides.`,
-          suggestion: replacement,
-        });
+        ctx.helpers.report(
+          ctx,
+          node,
+          diagnostics.NUXT0014.report({
+            why: `Native <${node.rawName}> reimplements behavior that Nuxt UI already provides.`,
+            fix: replacement,
+          }),
+          {
+            ruleId: "nuxt-ui/prefer-u-form-controls",
+            severity: "info",
+            category: "ui",
+          },
+        );
       },
     };
   },
@@ -93,7 +109,7 @@ export const preferUFormControls = createRule({
 export const rules: DoctorRule[] = [requireUAppRoot, preferUButton, preferUFormControls];
 
 export const nuxtUiRulePack = defineRulePack({
-  name: "nuxt-doctor/nuxt-ui",
+  name: "vite-doctor/nuxt-ui",
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["@nuxt/ui"], modules: ["@nuxt/ui"] },
   rules,

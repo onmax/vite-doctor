@@ -75,7 +75,7 @@ const rules = [
 ];
 
 const vueRulePack = defineRulePack({
-  name: "vue-doctor/vue",
+  name: "vite-doctor/vue",
   version: "0.0.0",
   rules,
   presets: {

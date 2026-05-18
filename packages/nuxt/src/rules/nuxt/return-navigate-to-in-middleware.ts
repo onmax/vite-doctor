@@ -1,4 +1,5 @@
 import { AnyNode, createRule } from "./shared.js";
+import { diagnostics } from "../../diagnostics.js";
 
 export const returnNavigateToInMiddleware = createRule({
   meta: {
@@ -23,20 +24,23 @@ export const returnNavigateToInMiddleware = createRule({
           node.__doctorParent?.type === "AwaitExpression" ? node.__doctorParent.start : node.start;
         const before = ctx.file.text.slice(Math.max(0, fixStart - 20), fixStart);
         if (!/\breturn\s+$/.test(before)) {
-          ctx.report({
-            ruleId: "nuxt/routing/return-navigateto-in-middleware",
-            severity: "error",
-            category: "routing",
-            file: ctx.file.path,
-            range: ctx.range(node),
-            message:
-              "Route middleware must return navigateTo() so Nuxt can stop or redirect the navigation.",
-            suggestion: "Add return before navigateTo().",
-            fix: {
-              kind: "safe",
-              edits: [{ range: { start: fixStart, end: fixStart }, text: "return " }],
+          ctx.report(
+            diagnostics.NUXT0052.report({
+              why: "Route middleware must return navigateTo() so Nuxt can stop or redirect the navigation.",
+              fix: "Add return before navigateTo().",
+            }),
+            {
+              ruleId: "nuxt/routing/return-navigateto-in-middleware",
+              severity: "error",
+              category: "routing",
+              file: ctx.file.path,
+              range: ctx.range(node),
+              fix: {
+                kind: "safe",
+                edits: [{ range: { start: fixStart, end: fixStart }, text: "return " }],
+              },
             },
-          });
+          );
         }
       },
     };
