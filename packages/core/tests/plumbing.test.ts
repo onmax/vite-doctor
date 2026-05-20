@@ -572,6 +572,25 @@ test("runDoctor accepts an already-loaded config object", async () => {
   );
 });
 
+test("persistent cache defaults to Vite Doctor directory", async () => {
+  await withFixture(
+    {
+      "src/app.ts": "const message = 'hello'\n",
+    },
+    async (root) => {
+      await runDoctor({
+        root,
+        framework: "vue",
+        cache: true,
+        extensions: [pluginWith(reportProgramRule)],
+      });
+
+      expect(existsSync(join(root, ".vite-doctor/cache"))).toBe(true);
+      expect(existsSync(join(root, ".vue-doctor"))).toBe(false);
+    },
+  );
+});
+
 async function withFixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "vue-doctor-core-"));
   try {

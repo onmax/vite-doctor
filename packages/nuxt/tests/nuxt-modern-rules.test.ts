@@ -2697,6 +2697,22 @@ test("nuxt-doctor exits 1 for errors and 0 for warnings unless max warnings is z
   );
 }, 30000);
 
+test("nuxt-doctor stores cache inside Nuxt build directory", async () => {
+  await withFixture(
+    {
+      "app/pages/index.vue": `<script setup>const width = window.innerWidth</script>`,
+    },
+    {},
+    async (root) => {
+      await main([root, "--rules", "nuxt/hydration/no-browser-global-in-universal-code"]);
+
+      expect(existsSync(join(root, ".nuxt/doctor/cache"))).toBe(true);
+      expect(existsSync(join(root, ".vite-doctor"))).toBe(false);
+      expect(existsSync(join(root, ".vue-doctor"))).toBe(false);
+    },
+  );
+}, 30000);
+
 async function withFixture(
   files: Record<string, string>,
   dependencies: Record<string, string>,

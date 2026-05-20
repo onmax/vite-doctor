@@ -27,11 +27,16 @@ export interface RunNuxtDoctorOptions extends DoctorRunOptions {
 
 export async function runNuxtDoctor(options: RunNuxtDoctorOptions = {}) {
   const { cwd, extraRulePacks, ...runOptions } = options;
+  const root = resolve(cwd ?? process.cwd(), runOptions.root ?? ".");
   const result = await runDoctor({
     ...runOptions,
+    config: {
+      ...runOptions.config,
+      cache: { dir: ".nuxt/doctor/cache", ...runOptions.config?.cache },
+    },
     framework: "nuxt",
     extensions: [...nuxtDoctorExtensions(extraRulePacks), ...(runOptions.extensions ?? [])],
-    root: resolve(cwd ?? process.cwd(), runOptions.root ?? "."),
+    root,
   });
   process.stdout.write(createReport(result, runOptions.format));
   return result;

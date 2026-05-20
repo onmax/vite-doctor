@@ -23,7 +23,7 @@ import { createHelpers } from "./doctor-helpers.js";
 import { VERSION, nativeMatch, sha256 } from "./utils.js";
 
 const DEFAULT_CONFIG: DoctorConfig = {
-  cache: { dir: ".vue-doctor/cache" },
+  cache: { dir: ".vite-doctor/cache" },
 };
 
 class MemoryRuleCache implements RuleCache {
@@ -41,7 +41,7 @@ class PersistentRuleCache extends MemoryRuleCache {
 
   constructor(root: string, config: DoctorConfig) {
     super();
-    this.dir = resolve(root, config.cache?.dir ?? ".vue-doctor/cache");
+    this.dir = resolve(root, config.cache?.dir ?? ".vite-doctor/cache");
   }
 
   override get<T = unknown>(key: string): T | undefined {
@@ -164,7 +164,7 @@ export async function runPhase(
 }
 
 export function cleanCache(root = process.cwd(), config?: DoctorConfig): void {
-  const dir = resolve(root, config?.cache?.dir ?? ".vue-doctor/cache");
+  const dir = resolve(root, config?.cache?.dir ?? ".vite-doctor/cache");
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 }
 
