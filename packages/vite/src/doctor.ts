@@ -50,6 +50,13 @@ export async function runViteDoctor(options: DoctorRunOptions) {
   const extensions = await viteDoctorExtensions(options);
   return runDoctor({
     ...options,
+    config: {
+      ...options.config,
+      cache:
+        framework === "nuxt"
+          ? { dir: ".nuxt/doctor/cache", ...options.config?.cache }
+          : options.config?.cache,
+    },
     framework,
     extensions: [...extensions, ...(options.extensions ?? [])],
   });

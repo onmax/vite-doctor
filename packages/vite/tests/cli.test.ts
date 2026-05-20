@@ -137,6 +137,30 @@ useRoute();
   );
 });
 
+test("Nuxt framework scans store cache inside Nuxt build directory", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+      "app/pages/index.vue": `<script setup lang="ts">const width = window.innerWidth</script>`,
+    },
+    async (root) => {
+      await runCli(
+        [
+          ".",
+          "--framework",
+          "nuxt",
+          "--rules",
+          "nuxt/hydration/no-browser-global-in-universal-code",
+        ],
+        root,
+      );
+
+      expect(existsSync(join(root, ".nuxt/doctor/cache"))).toBe(true);
+      expect(existsSync(join(root, ".vite-doctor"))).toBe(false);
+    },
+  );
+});
+
 test("framework override can enable Nuxt rules without Nuxt dependencies", async () => {
   await withFixture(
     {
