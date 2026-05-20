@@ -337,21 +337,12 @@ importers:
 
   packages/vite:
     dependencies:
-      '@vue-doctor/core':
-        specifier: workspace:*
-        version: link:../core
       cac:
         specifier: ^6.7.14
         version: 6.7.14
       consola:
         specifier: ^3.4.2
         version: 3.4.2
-      nitro-doctor:
-        specifier: workspace:*
-        version: link:../nitro
-      nuxt-doctor:
-        specifier: workspace:*
-        version: link:../nuxt
       oxc-parser:
         specifier: 'catalog:'
         version: 0.129.0
@@ -361,16 +352,25 @@ importers:
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@latest
         version: '@voidzero-dev/vite-plus-core@0.1.21(@types/node@25.6.2)(esbuild@0.28.0)(jiti@2.7.0)(terser@5.47.1)(typescript@6.0.3)(yaml@2.8.4)'
-      vue-doctor:
-        specifier: workspace:*
-        version: link:../vue
     devDependencies:
+      '@vue-doctor/core':
+        specifier: workspace:*
+        version: link:../core
+      nitro-doctor:
+        specifier: workspace:*
+        version: link:../nitro
+      nuxt-doctor:
+        specifier: workspace:*
+        version: link:../nuxt
       tsdown:
         specifier: 'catalog:'
         version: 0.22.0(typescript@6.0.3)
       vite-plus:
         specifier: 'catalog:'
         version: 0.1.21(@opentelemetry/api@1.9.0)(@types/node@25.6.2)(@voidzero-dev/vite-plus-core@0.1.21(@types/node@25.6.2)(esbuild@0.28.0)(jiti@2.7.0)(terser@5.47.1)(typescript@6.0.3)(yaml@2.8.4))(esbuild@0.28.0)(happy-dom@20.9.0)(jiti@2.7.0)(terser@5.47.1)(typescript@6.0.3)(yaml@2.8.4)
+      vue-doctor:
+        specifier: workspace:*
+        version: link:../vue
 
   packages/vue:
     dependencies:

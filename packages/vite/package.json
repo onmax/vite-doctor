@@ -42,19 +42,19 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@vue-doctor/core": "workspace:*",
     "cac": "^6.7.14",
     "consola": "^3.4.2",
-    "nitro-doctor": "workspace:*",
-    "nuxt-doctor": "workspace:*",
     "oxc-parser": "catalog:",
-    "pathe": "^2.0.3",
-    "vue-doctor": "workspace:*"
+    "pathe": "^2.0.3"
   },
   "devDependencies": {
+    "@vue-doctor/core": "workspace:*",
+    "nitro-doctor": "workspace:*",
+    "nuxt-doctor": "workspace:*",
     "tsdown": "catalog:",
     "vite": "catalog:",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vue-doctor": "workspace:*"
   },
   "peerDependencies": {
     "vite": "*"
