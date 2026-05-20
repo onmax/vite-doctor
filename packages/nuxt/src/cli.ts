@@ -111,12 +111,9 @@ function addScanCommand(cli: ReturnType<typeof cac>, name: "scan" | "check", cwd
     .option("--baseline <file>", "Baseline file.")
     .option("--format <format>", "Machine output: json or sarif.")
     .action(async (path = ".", options) => {
-      const runOptions: DoctorRunOptions = {};
-      applyDoctorOptions(runOptions, options);
       const root = resolve(cwd, path);
-      if (options.config || options.trustedConfig) {
-        runOptions.config = await loadDoctorConfig({ cwd: root });
-      }
+      const runOptions: DoctorRunOptions = { config: await loadDoctorConfig({ cwd: root }) };
+      applyDoctorOptions(runOptions, options);
       const result = await runNuxtDoctor({ ...runOptions, cwd, root: path });
       return shouldFail(result, runOptions) ? 1 : 0;
     });
