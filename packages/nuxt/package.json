@@ -21,6 +21,7 @@
   "types": "./dist/index.d.mts",
   "exports": {
     ".": "./dist/index.mjs",
+    "./cli": "./dist/cli.mjs",
     "./module": "./dist/module.mjs",
     "./rules": "./dist/rules/index.mjs",
     "./package.json": "./package.json"
@@ -70,7 +71,16 @@
     "node": ">=22.20.0"
   },
   "inlinedDependencies": {
+    "c12": "4.0.0-beta.5",
+    "confbox": "0.2.4",
     "defu": "6.1.7",
-    "nostics": "0.1.0"
+    "destr": "2.0.5",
+    "dotenv": "17.4.2",
+    "exsolve": "1.0.8",
+    "giget": "3.2.0",
+    "jiti": "2.7.0",
+    "nostics": "0.1.0",
+    "pkg-types": "2.3.1",
+    "rc9": "3.0.1"
   }
 }

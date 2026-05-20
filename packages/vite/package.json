@@ -16,6 +16,7 @@
     "directory": "packages/vite"
   },
   "bin": {
+    "nuxt-doctor": "./dist/nuxt-cli.mjs",
     "vite-doctor": "./dist/cli.mjs"
   },
   "files": [
@@ -27,6 +28,7 @@
     ".": "./dist/index.mjs",
     "./cli": "./dist/cli.mjs",
     "./nuxt": "./dist/nuxt.mjs",
+    "./nuxt-cli": "./dist/nuxt-cli.mjs",
     "./plugin": "./dist/plugin.mjs",
     "./rules": "./dist/rules.mjs",
     "./package.json": "./package.json"

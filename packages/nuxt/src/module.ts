@@ -6,7 +6,6 @@ import type {
   NuxtModuleSource,
   RulePack,
 } from "@vue-doctor/core";
-import { parseRunArgs, runNuxtDoctor } from "./cli.js";
 export type { NuxtDoctorManifest } from "@vue-doctor/core";
 
 export interface NuxtDoctorModuleOptions {
@@ -76,33 +75,6 @@ export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions 
   nuxt.hook?.("close", async () => {
     await writeManifest(nuxt, evidence);
   });
-
-  nuxt.options.cli ??= {};
-  nuxt.options.cli.commands ??= {};
-  nuxt.options.cli.commands.doctor = {
-    description: "Run Nuxt Doctor",
-    async run(ctx: any) {
-      const extraRulePacks = await collectNuxtDoctorRulePacks(nuxt);
-      const extraExtensions = await collectNuxtDoctorExtensions(nuxt);
-      const argv = Array.isArray(ctx?.rawArgs) ? ctx.rawArgs : [];
-      const { path, options } = parseRunArgs(argv);
-      const result = await runNuxtDoctor({
-        ...options,
-        extends: options.extends ?? nuxt.options.doctor?.extends,
-        extensions: [
-          ...(nuxt.options.doctor?.extensions ?? []),
-          ...extraExtensions,
-          ...(options.extensions ?? []),
-        ],
-        root: path === "." ? (ctx?.cwd ?? nuxt.options.rootDir) : path,
-        cwd: ctx?.cwd ?? nuxt.options.rootDir,
-        extraRulePacks,
-      });
-      if (result.summary.blocker || result.summary.error) process.exitCode = 1;
-      if (options.maxWarnings !== undefined && result.summary.warn > options.maxWarnings)
-        process.exitCode = 1;
-    },
-  };
 }
 
 export async function collectNuxtDoctorRulePacks(nuxt: any): Promise<RulePack[]> {

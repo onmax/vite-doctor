@@ -45,8 +45,8 @@ export async function runNuxtDoctor(options: RunNuxtDoctorOptions = {}) {
 export async function main(args = process.argv.slice(2), cwd = process.cwd()): Promise<number> {
   let exitCode = 0;
   const cli = cac("nuxt-doctor");
-  addScanCommand(cli, "scan", cwd, (code) => (exitCode = code));
-  addScanCommand(cli, "check", cwd, (code) => (exitCode = code));
+  addScanCommand(cli, "scan", cwd);
+  addScanCommand(cli, "check", cwd);
   cli
     .command("rules", "List Nuxt Doctor rules.")
     .option("--format <format>", "Machine output: json or sarif.")
@@ -81,12 +81,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
   }
 }
 
-function addScanCommand(
-  cli: ReturnType<typeof cac>,
-  name: "scan" | "check",
-  cwd: string,
-  setExitCode: (code: number) => void,
-) {
+function addScanCommand(cli: ReturnType<typeof cac>, name: "scan" | "check", cwd: string) {
   cli
     .command(`${name} [path]`, `Run ${name} diagnostics.`)
     .option("--config", "Load trusted doctor.config.*.")
@@ -123,7 +118,7 @@ function addScanCommand(
         runOptions.config = await loadDoctorConfig({ cwd: root });
       }
       const result = await runNuxtDoctor({ ...runOptions, cwd, root: path });
-      setExitCode(shouldFail(result, runOptions) ? 1 : 0);
+      return shouldFail(result, runOptions) ? 1 : 0;
     });
 }
 
