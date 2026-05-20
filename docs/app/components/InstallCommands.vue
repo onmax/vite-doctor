@@ -52,7 +52,7 @@ const selectedPackageManager = computed(
     packageManagers.value.find((manager) => manager.value === activePackageManager.value) ??
     packageManagers.value[0],
 );
-const skillsCommand = "npx skills add https://vite-doctor.onmax.me/skills";
+const skillsCommand = "npx skills add https://vite-doctor.onmax.me/";
 const activeCommand = computed(() =>
   activeCommandTab.value === "humans" ? selectedPackageManager.value.doctorCommand : skillsCommand,
 );
