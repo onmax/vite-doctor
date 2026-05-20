@@ -1,10 +1,11 @@
 import type { RuleContext } from "@vue-doctor/core";
 import {
   findAncestor,
+  resolveLocalCalleeName,
   sourceForNode,
   walkScriptLocal,
   type AnyNode,
-} from "../../../../core/src/rule-authoring.js";
+} from "./shared.js";
 
 export const ASYNC_DATA_COMPOSABLES = new Set([
   "useFetch",
@@ -60,6 +61,7 @@ export interface SideEffectMatch {
   kind: "mutating-fetch" | "toast" | "navigation" | "refresh" | "store-write" | "analytics";
   confidence: ReplayableFindingConfidence;
   method?: string | null;
+  path?: string | null;
 }
 
 export function asyncDataRuleOptions(ctx: RuleContext): AsyncDataRuleOptions {
@@ -75,7 +77,7 @@ export function replayableSeverity(
 
 export function getAsyncDataCall(ctx: RuleContext, node: AnyNode): AsyncDataCall | null {
   if (!ctx.helpers.isCall(node)) return null;
-  const name = ctx.helpers.getCalleeName(node);
+  const name = resolveLocalCalleeName(ctx, node);
   if (!name || !ASYNC_DATA_COMPOSABLES.has(name)) return null;
   const options = getAsyncDataOptions(name, node);
   return {
@@ -195,7 +197,13 @@ export function collectReplayableSideEffects(ctx: RuleContext, root: AnyNode): S
     if (callee === "$fetch") {
       const method = resolveHttpMethod(getObjectPropertyValue(getFetchOptions(node), "method"));
       if (method && WRITE_METHODS.has(method)) {
-        matches.push({ node, kind: "mutating-fetch", method, confidence: "proven-write" });
+        matches.push({
+          node,
+          kind: "mutating-fetch",
+          method,
+          path: getStaticString(node.arguments?.[0]),
+          confidence: "proven-write",
+        });
       }
       return;
     }

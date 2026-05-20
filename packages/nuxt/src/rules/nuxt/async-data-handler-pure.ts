@@ -1,7 +1,9 @@
 import { AnyNode, createRule, report } from "./shared.js";
 import {
+  asyncDataRuleOptions,
   collectReplayableSideEffects,
   getAsyncDataCall,
+  isReadonlyPath,
   replayableSeverity,
 } from "./async-data.js";
 
@@ -19,8 +21,15 @@ export const asyncDataHandlerPure = createRule({
       ScriptNode(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);
         if (!call?.handler) return;
+        const options = asyncDataRuleOptions(ctx);
         for (const effect of collectReplayableSideEffects(ctx, call.handler)) {
           const isMutatingFetch = effect.kind === "mutating-fetch";
+          if (
+            isMutatingFetch &&
+            effect.method === "POST" &&
+            (call.readonlyMarked || isReadonlyPath(effect.path ?? call.path, options))
+          )
+            continue;
           report(
             ctx,
             effect.node,

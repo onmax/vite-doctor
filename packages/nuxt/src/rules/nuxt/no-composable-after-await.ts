@@ -2,11 +2,14 @@ import {
   AnyNode,
   NUXT_AUTO_IMPORTS,
   createRule,
+  findAncestor,
   hasPriorAwaitInSameExecutionScope,
   isClientOnlyPath,
   isNuxtRuntimeFile,
   isTopLevelVueScriptSetupCall,
+  nearestFunctionOrProgram,
   report,
+  resolveLocalCalleeName,
 } from "./shared.js";
 import { createNuxtRuntimeEvidence } from "./evidence.js";
 
@@ -25,9 +28,13 @@ export const noComposableAfterAwait = createRule({
     const composables = new Set([...NUXT_AUTO_IMPORTS, "useSeoMeta", "useHead", "useHeadSafe"]);
     return {
       ScriptNode(node: AnyNode) {
-        const name = ctx.helpers.getCalleeName(node);
+        const name = resolveLocalCalleeName(ctx, node);
         if (!name || !composables.has(name) || !hasPriorAwaitInSameExecutionScope(node)) return;
         if (isTopLevelVueScriptSetupCall(ctx, node)) return;
+        if (name === "navigateTo" && isReturnedFromRouteMiddleware(ctx.file.relativePath, node))
+          return;
+        if (name === "navigateTo" && isVueComponentFunctionNavigation(ctx.file.relativePath, node))
+          return;
         if (evidence.isClientCallable(node)) return;
         if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
         report(
@@ -43,3 +50,22 @@ export const noComposableAfterAwait = createRule({
     };
   },
 });
+
+function isReturnedFromRouteMiddleware(path: string, node: AnyNode): boolean {
+  if (!/app\/middleware\/.+\.[cm]?[jt]s$/.test(path)) return false;
+  const returned = findAncestor(node, (parent) => parent.type === "ReturnStatement") !== null;
+  if (!returned) return false;
+  return (
+    findAncestor(
+      node,
+      (parent) =>
+        parent.type === "CallExpression" && parent.callee?.name === "defineNuxtRouteMiddleware",
+    ) !== null
+  );
+}
+
+function isVueComponentFunctionNavigation(path: string, node: AnyNode): boolean {
+  if (!path.endsWith(".vue")) return false;
+  const fn = nearestFunctionOrProgram(node);
+  return Boolean(fn && fn.type !== "Program");
+}

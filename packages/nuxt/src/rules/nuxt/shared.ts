@@ -94,16 +94,36 @@ export function report(
 export function hasPriorAwaitInSameExecutionScope(node: AnyNode): boolean {
   const scope = nearestFunctionOrProgram(node);
   if (!scope) return false;
-  let seenTarget = false;
   let seenAwait = false;
+  const targetStart = node.start ?? node.range?.[0] ?? 0;
   walkScriptLocal(scope.body ?? scope, (current) => {
-    if (current === node) {
-      seenTarget = true;
-      return;
-    }
-    if (!seenTarget && current.type === "AwaitExpression") seenAwait = true;
+    if (seenAwait || current.type !== "AwaitExpression") return;
+    const currentStart = current.start ?? current.range?.[0] ?? Number.POSITIVE_INFINITY;
+    if (currentStart >= targetStart) return;
+    if (nearestFunctionOrProgram(current) !== scope) return;
+    seenAwait = true;
   });
   return seenAwait;
+}
+
+export function resolveLocalCalleeName(ctx: RuleContext, node: AnyNode): string | null {
+  const name = ctx.helpers.getCalleeName(node);
+  if (!name) return null;
+  return getLocalAliasMap(ctx).get(name) ?? name;
+}
+
+function getLocalAliasMap(ctx: RuleContext): Map<string, string> {
+  const key = `nuxt:local-callee-aliases:${ctx.file.hash}`;
+  const cached = ctx.cache.get<Map<string, string>>(key);
+  if (cached) return cached;
+  const aliases = new Map<string, string>();
+  walkScriptLocal(ctx.file.scriptAst, (node) => {
+    if (node.type !== "VariableDeclarator" || node.id?.type !== "Identifier") return;
+    const initName = ctx.helpers.getCalleeName({ callee: node.init });
+    if (initName && NUXT_AUTO_IMPORTS.has(initName)) aliases.set(node.id.name, initName);
+  });
+  ctx.cache.set(key, aliases);
+  return aliases;
 }
 
 export function includeTrailingNewline(text: string, end: number) {

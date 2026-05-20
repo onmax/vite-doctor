@@ -672,6 +672,54 @@ useAsyncData('settings', async () => {
   expect(result.diagnostics[0]?.severity).toBe("warn");
 });
 
+test("async data handler purity respects readonly POST markers", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [asyncDataHandlerPure],
+    config: {
+      rules: {
+        "nuxt/async-data-handler-pure": ["warn", { readonlyPaths: ["/api/cube/**"] }],
+      },
+    },
+    files: {
+      "app/pages/search.vue": `<script setup lang="ts">
+useAsyncData('marked', () => $fetch('/api/search', {
+  method: 'POST',
+  body,
+}), {
+  meta: { readonly: true },
+})
+useAsyncData('configured', () => $fetch('/api/cube/query', {
+  method: 'POST',
+  body,
+}))
+useAsyncData('write', () => $fetch('/api/settings', {
+  method: 'POST',
+  body,
+}))
+useAsyncData('delete', () => $fetch('/api/settings', {
+  method: 'DELETE',
+}))
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn"]);
+
+  const deleteResult = await runRuleFixture({
+    rule: asyncDataHandlerPure,
+    framework: "nuxt",
+    files: {
+      "app/pages/settings.vue": `<script setup lang="ts">
+useAsyncData('delete', () => $fetch('/api/settings', {
+  method: 'DELETE',
+}))
+</script>`,
+    },
+  });
+  expect(deleteResult.diagnostics.map((item) => item.severity)).toEqual(["error"]);
+});
+
 test("async data handler purity narrows store assignment evidence to local Pinia stores", async () => {
   const result = await runRuleFixture({
     rule: asyncDataHandlerPure,
@@ -1064,6 +1112,58 @@ test("composables after await in custom async functions still report", async () 
   expect(result.diagnostics[0]?.ruleId).toBe("nuxt/context/no-composable-after-await");
 });
 
+test("composable aliases after await still report", async () => {
+  const result = await runRuleFixture({
+    rule: noComposableAfterAwait,
+    framework: "nuxt",
+    files: {
+      "app/composables/useThing.ts": `export async function useThing() {
+  const loadFetch = useFetch
+  await load()
+  return loadFetch('/api/thing')
+}`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nuxt/context/no-composable-after-await");
+});
+
+test("nested async helpers do not count as prior awaits", async () => {
+  const result = await runRuleFixture({
+    rule: noComposableAfterAwait,
+    framework: "nuxt",
+    files: {
+      "app/composables/useThing.ts": `export function useThing() {
+  async function loadLater() {
+    await load()
+  }
+  const data = useAsyncData('thing', () => $fetch('/api/thing'))
+  return { data, loadLater }
+}`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("route middleware may return navigateTo after awaited session loading", async () => {
+  const result = await runRuleFixture({
+    rule: noComposableAfterAwait,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(async () => {
+  const { loggedIn, fetchSession } = useUserSession()
+  if (!loggedIn.value) {
+    await fetchSession()
+    return navigateTo('/')
+  }
+})`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test("navigateTo after await in client-callable handlers is ignored", async () => {
   const result = await runRuleFixture({
     rule: noComposableAfterAwait,
@@ -1093,6 +1193,30 @@ async function logout() {
   navigateTo('/login')
 }
 const items = [{ label: 'Logout', onClick: logout }]
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("navigateTo after await in component prop handlers is ignored", async () => {
+  const result = await runRuleFixture({
+    rule: noComposableAfterAwait,
+    framework: "nuxt",
+    files: {
+      "app/components/EditForm.vue": `<template>
+<ActionForm :action="save" :on-delete="remove" />
+</template>
+<script setup lang="ts">
+async function save() {
+  await persist()
+  await navigateTo('/items')
+}
+async function remove() {
+  await destroy()
+  navigateTo('/items')
+}
 </script>`,
     },
   });
