@@ -53,28 +53,32 @@ const tracks = [
     label: "Nuxt",
     icon: "i-logos-nuxt-icon",
     to: "/nuxt",
-    description: "Install the Nuxt module and fix app, Vue, Nitro, and Vite diagnostics.",
+    prefix: "NUXT",
+    description: "Install the Nuxt module, run nuxt doctor, and fix app-level diagnostics.",
   },
   {
     id: "vue",
     label: "Vue",
     icon: "i-logos-vue",
     to: "/vue",
-    description: "Catch reactivity, lifecycle, watcher, template, SSR, and security issues.",
+    prefix: "VUE",
+    description: "Add Vue diagnostics for reactivity, lifecycle, watchers, templates, and SSR.",
   },
   {
     id: "vite",
     label: "Vite",
     icon: "i-logos-vitejs",
     to: "/vite",
-    description: "Find env, define, server-only import, SSR, asset, worker, and HMR risks.",
+    prefix: "VITE",
+    description: "Install Vite diagnostics for env, define, asset, worker, SSR, and HMR risks.",
   },
   {
     id: "nitro",
     label: "Nitro",
     icon: "i-unjs-nitro",
     to: "/nitro",
-    description: "Fix request validation, runtime config, and server-boundary diagnostics.",
+    prefix: "NITRO",
+    description: "Add Nitro diagnostics for request validation, runtime config, and server code.",
   },
 ] as const;
 
@@ -169,14 +173,16 @@ function toggleTheme() {
             class="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2"
             aria-label="Supported rule packs"
           >
-            <span
+            <NuxtLink
               v-for="track in tracks"
               :key="track.id"
-              class="inline-flex items-center gap-1.5 text-[0.8125rem] font-medium text-neutral-600 dark:text-neutral-400"
+              :to="track.to"
+              :aria-label="`${track.label} installation`"
+              class="-mx-1 inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-[0.8125rem] font-medium text-neutral-600 transition-colors hover:text-neutral-950 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
             >
               <UIcon :name="track.icon" class="size-4 shrink-0" aria-hidden="true" />
               <span class="leading-none">{{ track.label }}</span>
-            </span>
+            </NuxtLink>
           </div>
           <h1
             class="max-w-[18ch] text-4xl font-semibold tracking-tight text-balance text-neutral-900 sm:text-5xl lg:text-[3.5rem] dark:text-neutral-100"
@@ -326,41 +332,72 @@ function toggleTheme() {
         </dl>
       </section>
 
-      <section id="rules" class="pb-14">
-        <div class="mb-5 max-w-2xl">
-          <p class="text-sm font-medium text-emerald-600 dark:text-emerald-400">
-            Start with your runtime
-          </p>
-          <h2
-            class="mt-2 text-2xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
+      <section id="rules" class="pb-16 sm:pb-20">
+        <div
+          class="mb-7 grid gap-4 border-t border-neutral-950/10 pt-9 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end dark:border-white/10"
+        >
+          <div class="max-w-[60ch]">
+            <p class="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+              Framework installation
+            </p>
+            <h2
+              class="mt-2 max-w-[18ch] text-3xl font-semibold tracking-tight text-balance text-neutral-950 sm:text-4xl dark:text-neutral-50"
+            >
+              Use the docs that match the diagnostic prefix.
+            </h2>
+            <p class="mt-4 text-base/7 text-pretty text-neutral-600 dark:text-neutral-400">
+              Doctor keeps Nuxt, Vue, Vite, and Nitro in separate rule packs. Choose the framework
+              page first, then open the rule page for the exact diagnostic you are fixing.
+            </p>
+          </div>
+
+          <div
+            class="hidden rounded-lg border border-neutral-950/10 px-3 py-2 text-sm text-neutral-500 lg:flex dark:border-white/10 dark:text-neutral-400"
+            aria-hidden="true"
           >
-            Use the docs that match the diagnostic prefix.
-          </h2>
-          <p class="mt-3 text-sm leading-6 text-neutral-600 dark:text-neutral-400">
-            Doctor keeps Nuxt, Vue, Vite, and Nitro in separate rule packs. Choose the framework
-            page first, then open the rule page for the exact diagnostic you are fixing.
-          </p>
+            <span class="font-mono text-neutral-900 dark:text-neutral-100">NUXT0032</span>
+            <span class="mx-2 text-neutral-300 dark:text-neutral-700">-></span>
+            <span>Nuxt installation</span>
+          </div>
         </div>
+
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <NuxtLink
             v-for="track in tracks"
             :key="track.id"
             :to="track.to"
-            class="group rounded-lg border border-neutral-950/10 p-4 transition-colors hover:border-emerald-500/40 hover:bg-emerald-50/40 dark:border-white/10 dark:hover:border-emerald-400/30 dark:hover:bg-emerald-400/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+            :aria-label="`${track.label} installation`"
+            class="group flex min-h-[11.25rem] flex-col rounded-lg border border-neutral-950/10 bg-white p-4.5 hover:border-neutral-950/20 hover:bg-neutral-50/70 dark:border-white/10 dark:bg-neutral-950 dark:hover:border-white/20 dark:hover:bg-white/[0.03] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
           >
-            <span
-              class="flex items-center gap-2 text-sm font-semibold text-neutral-950 dark:text-neutral-50"
-            >
-              <UIcon :name="track.icon" class="size-4 shrink-0" aria-hidden="true" />
-              {{ track.label }}
+            <span class="flex items-start justify-between gap-3">
+              <span class="inline-flex min-w-0 items-center gap-2.5">
+                <span
+                  class="inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-neutral-950/[0.03] ring-1 ring-neutral-950/5 dark:bg-white/[0.04] dark:ring-white/10"
+                >
+                  <UIcon :name="track.icon" class="size-5" aria-hidden="true" />
+                </span>
+                <span
+                  class="text-base font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
+                >
+                  {{ track.label }}
+                </span>
+              </span>
               <UIcon
                 name="i-lucide-arrow-right"
-                class="ml-auto size-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5"
+                class="mt-1 size-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5 dark:text-neutral-500"
                 aria-hidden="true"
               />
             </span>
-            <span class="mt-3 block text-sm leading-6 text-neutral-600 dark:text-neutral-400">
+            <span
+              class="mt-4 block text-base/7 text-pretty text-neutral-600 sm:text-sm/6 dark:text-neutral-400"
+            >
               {{ track.description }}
+            </span>
+            <span class="mt-auto flex items-center justify-between gap-3 pt-5 text-sm">
+              <span class="font-medium text-emerald-700 dark:text-emerald-400">Installation</span>
+              <span class="font-mono text-neutral-400 dark:text-neutral-500">
+                {{ track.prefix }}
+              </span>
             </span>
           </NuxtLink>
         </div>

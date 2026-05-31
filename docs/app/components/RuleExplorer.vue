@@ -264,11 +264,8 @@ const activeFrameworkLinkClass = computed(
       </nav>
     </header>
 
-    <div
-      class="flex flex-wrap items-end gap-2 xl:flex-nowrap"
-      :class="showHeader ? 'mt-7' : 'mt-0'"
-    >
-      <div class="min-w-72 flex-1 basis-96 xl:max-w-lg">
+    <div class="flex flex-wrap items-end gap-3" :class="showHeader ? 'mt-7' : 'mt-0'">
+      <div class="min-w-64 flex-1 basis-80 lg:max-w-lg">
         <UInput
           v-model="search"
           name="rules-search"
@@ -288,8 +285,8 @@ const activeFrameworkLinkClass = computed(
         />
       </div>
 
-      <div class="min-w-0 shrink-0">
-        <div class="flex flex-wrap items-end gap-2">
+      <div class="min-w-0 flex-1 basis-[34rem]">
+        <div class="flex flex-wrap items-end gap-3">
           <UFormField
             v-if="frameworkTabsMode === 'filter'"
             label="Framework"
@@ -304,7 +301,7 @@ const activeFrameworkLinkClass = computed(
               color="neutral"
               variant="outline"
               size="sm"
-              class="w-40"
+              class="w-full min-w-36"
               :ui="filterControlUi"
             >
               <template #leading>
@@ -317,7 +314,13 @@ const activeFrameworkLinkClass = computed(
             </USelect>
           </UFormField>
 
-          <UFormField label="Category" name="rule-category" size="sm" :ui="filterFieldUi">
+          <UFormField
+            label="Category"
+            name="rule-category"
+            size="sm"
+            class="min-w-44 flex-1"
+            :ui="filterFieldUi"
+          >
             <USelectMenu
               v-model="categoryFilter"
               name="rule-category"
@@ -329,12 +332,18 @@ const activeFrameworkLinkClass = computed(
               color="neutral"
               variant="outline"
               size="sm"
-              class="w-48"
+              class="w-full"
               :ui="filterControlUi"
             />
           </UFormField>
 
-          <UFormField label="Severity" name="rule-severity" size="sm" :ui="filterFieldUi">
+          <UFormField
+            label="Severity"
+            name="rule-severity"
+            size="sm"
+            class="min-w-44 flex-1"
+            :ui="filterFieldUi"
+          >
             <USelect
               v-model="severityFilter"
               name="rule-severity"
@@ -342,7 +351,7 @@ const activeFrameworkLinkClass = computed(
               color="neutral"
               variant="outline"
               size="sm"
-              class="w-48"
+              class="w-full"
               :ui="filterControlUi"
             >
               <template #default>
@@ -376,7 +385,13 @@ const activeFrameworkLinkClass = computed(
             </USelect>
           </UFormField>
 
-          <UFormField label="Fix" name="rule-fix" size="sm" :ui="filterFieldUi">
+          <UFormField
+            label="Fix"
+            name="rule-fix"
+            size="sm"
+            class="min-w-36 flex-1"
+            :ui="filterFieldUi"
+          >
             <USelect
               v-model="fixFilter"
               name="rule-fix"
@@ -384,7 +399,7 @@ const activeFrameworkLinkClass = computed(
               color="neutral"
               variant="outline"
               size="sm"
-              class="w-36"
+              class="w-full"
               :ui="filterControlUi"
             />
           </UFormField>

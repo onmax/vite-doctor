@@ -25,13 +25,6 @@ const runCommands: Record<Framework, string> = {
   nitro: "pnpm vite-doctor . --framework nitro --rules nitro",
 };
 
-const relatedFrameworks: Record<Framework, Framework[]> = {
-  nuxt: ["vue", "nitro", "vite"],
-  vue: ["vite"],
-  vite: ["vue", "nitro", "nuxt"],
-  nitro: ["nuxt", "vite"],
-};
-
 const { data: rules } = await useAsyncData(
   () => `${props.framework}-rules-index`,
   () => queryCollection("rules").all(),
@@ -47,7 +40,6 @@ const pageForToc = computed(() => ({
       links: [
         { id: "run-this-pack", depth: 2, text: "Run this pack" },
         { id: "browse-rules", depth: 2, text: "Browse rules" },
-        { id: "related-packs", depth: 2, text: "Related packs" },
       ],
     },
   },
@@ -92,24 +84,6 @@ const tocPage = computed(() => pageForToc.value as any);
           framework-tabs-mode="none"
           :show-header="false"
         />
-      </section>
-
-      <section id="related-packs" class="mt-10">
-        <h2 class="text-xl font-semibold tracking-tight text-highlighted">Related packs</h2>
-        <p class="mt-2 text-muted">
-          Follow the diagnostic prefix. A Nuxt project can emit diagnostics from more than one
-          runtime-owned rule pack.
-        </p>
-        <div class="mt-4 grid gap-3 sm:grid-cols-3">
-          <UPageCard
-            v-for="related in relatedFrameworks[framework]"
-            :key="related"
-            :to="`/${related}/rules`"
-            :icon="FRAMEWORK_META[related].icon"
-            :title="`${FRAMEWORK_META[related].label} rules`"
-            :description="`${FRAMEWORK_META[related].pack} diagnostics`"
-          />
-        </div>
       </section>
     </UPageBody>
 

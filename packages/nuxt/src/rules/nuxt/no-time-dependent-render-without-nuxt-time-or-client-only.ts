@@ -29,6 +29,7 @@ export const noTimeDependentRenderWithoutNuxtTimeOrClientOnly = createRule({
       ScriptNode(node: AnyNode) {
         const name = ctx.helpers.getCalleeName(node);
         if (name !== "Date.now" && name !== "Math.random" && !isNewDate(node)) return;
+        if (isInsideUseStateInitializer(ctx, node)) return;
         if (ctx.helpers.isTypeOnlyContext(node)) return;
         if (!isLikelyRenderedTimeExpression(ctx, node)) return;
         report(
@@ -44,3 +45,18 @@ export const noTimeDependentRenderWithoutNuxtTimeOrClientOnly = createRule({
     };
   },
 });
+
+function isInsideUseStateInitializer(
+  ctx: { helpers: { isCall(node: AnyNode, name: string): boolean } },
+  node: AnyNode,
+): boolean {
+  let parent = node.__doctorParent;
+  while (parent) {
+    if (ctx.helpers.isCall(parent, "useState")) {
+      const initializer = parent.arguments?.[1];
+      return Boolean(initializer && node.start >= initializer.start && node.end <= initializer.end);
+    }
+    parent = parent.__doctorParent;
+  }
+  return false;
+}

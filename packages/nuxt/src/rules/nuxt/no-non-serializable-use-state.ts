@@ -17,8 +17,7 @@ export const noNonSerializableUseState = createRule({
         if (!ctx.helpers.isCall(node, "useState")) return;
         if (!evidence.isPayloadSerialized(node)) return;
         const init = node.arguments?.[1];
-        const text = init ? ctx.file.text.slice(init.start, init.end) : "";
-        if (/new\s+(WebSocket|Map|Set|Date|RegExp)|=>\s*\([^)]*\)\s*=>|function\s*\(/.test(text)) {
+        if (init && hasNonSerializableUseStateValue(init, ctx.file.text)) {
           report(
             ctx,
             node,
@@ -32,3 +31,28 @@ export const noNonSerializableUseState = createRule({
     };
   },
 });
+
+function hasNonSerializableUseStateValue(node: AnyNode, source: string): boolean {
+  if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression") {
+    return initializerReturnsNonSerializableValue(node.body, source);
+  }
+  return expressionTextHasNonSerializableValue(node, source);
+}
+
+function initializerReturnsNonSerializableValue(body: AnyNode, source: string): boolean {
+  if (body.type !== "BlockStatement") return expressionTextHasNonSerializableValue(body, source);
+  return (body.body ?? []).some((statement: AnyNode) => {
+    return (
+      statement.type === "ReturnStatement" &&
+      statement.argument &&
+      expressionTextHasNonSerializableValue(statement.argument, source)
+    );
+  });
+}
+
+function expressionTextHasNonSerializableValue(node: AnyNode, source: string): boolean {
+  const text = source.slice(node.start, node.end);
+  return /new\s+(?:WebSocket|Map|Set|Date|RegExp)\b|function\s*\(|=>\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(
+    text,
+  );
+}

@@ -1322,6 +1322,23 @@ test("direct SSR time output still reports", async () => {
   );
 });
 
+test("useState initializer time values are serialized before hydration", async () => {
+  const result = await runRuleFixture({
+    rule: noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    framework: "nuxt",
+    files: {
+      "app/composables/useDateRange.ts": `export function useDateRange() {
+  return useState('date-range', () => {
+    const end = new Date()
+    return { end: end.toISOString() }
+  })
+}`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test("browser globals after server return guard are ignored", async () => {
   const result = await runRuleFixture({
     rule: noBrowserGlobalInUniversalCode,
@@ -1588,6 +1605,40 @@ test("client-only useState non-serializable values are ignored while SSR state r
 
   expect(client.diagnostics).toHaveLength(0);
   expect(universal.diagnostics[0]?.ruleId).toBe("nuxt/state/no-nonserializable-usestate");
+});
+
+test("useState allows factory-local Date values converted to strings", async () => {
+  const result = await runRuleFixture({
+    rule: noNonSerializableUseState,
+    framework: "nuxt",
+    files: {
+      "app/composables/useDateRange.ts": `export function useDateRange() {
+  return useState('date-range', () => {
+    const end = new Date()
+    return {
+      start: subDays(end, 30).toISOString(),
+      end: end.toISOString()
+    }
+  })
+}`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("useState still reports returned Date instances", async () => {
+  const result = await runRuleFixture({
+    rule: noNonSerializableUseState,
+    framework: "nuxt",
+    files: {
+      "app/composables/useDateRange.ts": `export function useDateRange() {
+  return useState('date-range', () => ({ end: new Date() }))
+}`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nuxt/state/no-nonserializable-usestate");
 });
 
 test("Vue lifecycle evidence skips Nuxt content, server, generated, and client-only files", async () => {
