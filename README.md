@@ -1,12 +1,12 @@
-# Catch the AI slop your agents ship.
-
-<p>
-  <img src="docs/public/doctor-icon.png" alt="Doctor" width="96" height="96">
-</p>
-
-Doctor scans Vite, Vue, Nuxt, and Nitro projects before review and flags framework bugs agents often miss.
-
-Docs: [vite-doctor.onmax.me](https://vite-doctor.onmax.me)
+<div align="center">
+  <h1>
+    <img src="docs/public/doctor-icon.png" alt="" width="42" height="42" align="absmiddle">
+    Doctor
+  </h1>
+  <p><strong>Catch the AI slop your agents ship.</strong></p>
+  <p><code>pnpm dlx vite-doctor .</code></p>
+  <p><a href="https://vite-doctor.onmax.me">Docs</a></p>
+</div>
 
 ## Usage
 
