@@ -63,6 +63,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to npm
-        run: pnpm --dir packages/vite publish --provenance --access public --tag ${{ steps.npm-tag.outputs.tag }}
+        run: pnpm --dir packages/vite publish --provenance --access public --tag ${{ steps.npm-tag.outputs.tag }} --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
