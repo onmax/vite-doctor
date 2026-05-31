@@ -8,7 +8,7 @@ permissions:
   id-token: write
 
 jobs:
-  publish-alpha:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +24,6 @@ jobs:
       - run: pnpm release:check
       - run: pnpm release:version
       - run: pnpm release:pack
-      - run: pnpm release:publish:alpha:provenance
+      - run: pnpm release:publish:provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

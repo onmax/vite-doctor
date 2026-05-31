@@ -8,7 +8,7 @@
   },
   "type": "module",
   "scripts": {
-    "ready": "vp fmt && vp lint && pnpm test && vp run -r build",
+    "ready": "vp fmt && vp run -r build && vp lint && pnpm test",
     "dev": "vp run docs#dev",
     "docs:dev": "vp run docs#dev",
     "build": "vp run -r build",
