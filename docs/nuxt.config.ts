@@ -2,7 +2,7 @@ import { defineNuxtConfig } from "nuxt/config";
 import { join } from "pathe";
 import { env, process } from "std-env";
 import { fileURLToPath } from "node:url";
-import doctorPackage from "../packages/vite/package.json" with { type: "json" };
+import doctorPackage from "../package.json" with { type: "json" };
 import { getDiagnosticDocuments, getRuleDocuments } from "./rules/source.js";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";

@@ -1,34 +1,118 @@
 {
-  "name": "doctor-workspace",
-  "version": "0.0.0",
-  "private": true,
+  "name": "vite-doctor",
+  "version": "0.0.1",
+  "description": "Small Vite Doctor CLI for project diagnostics.",
+  "keywords": [
+    "cli",
+    "doctor",
+    "javascript",
+    "vite"
+  ],
+  "homepage": "https://github.com/onmax/vite-doctor#readme",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/onmax/vite-doctor.git"
   },
+  "bin": {
+    "nuxt-doctor": "./dist/cli.mjs",
+    "vite-doctor": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "type": "module",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./cli": "./dist/cli.mjs",
+    "./config": "./dist/config.mjs",
+    "./nuxt": "./dist/nuxt.mjs",
+    "./plugin": "./dist/plugin.mjs",
+    "./rule-packs/nitro": "./dist/rule-packs/nitro/index.mjs",
+    "./rule-packs/nitro/rules": "./dist/rule-packs/nitro/rules.mjs",
+    "./rule-packs/nuxt": "./dist/rule-packs/nuxt/index.mjs",
+    "./rule-packs/nuxt/module": "./dist/rule-packs/nuxt/module.mjs",
+    "./rule-packs/nuxt/rules": "./dist/rule-packs/nuxt/rules/index.mjs",
+    "./rule-packs/vite": "./dist/rule-packs/vite/index.mjs",
+    "./rule-packs/vite/rules": "./dist/rule-packs/vite/rules/index.mjs",
+    "./rule-packs/vue": "./dist/rule-packs/vue/index.mjs",
+    "./rule-packs/vue/rules": "./dist/rule-packs/vue/rules.mjs",
+    "./rules": "./dist/rules.mjs",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "ready": "vp fmt && vp run -r build && vp lint && pnpm test",
+    "ready": "vp fmt && pnpm build && vp lint && pnpm test",
     "dev": "vp run docs#dev",
     "docs:dev": "vp run docs#dev",
-    "build": "vp run -r build",
+    "build": "tsdown",
     "deploy": "pnpm --dir docs exec wrangler deploy --no-bundle",
     "deploy:preview": "pnpm --dir docs exec wrangler versions upload --preview-alias preview --no-bundle",
-    "test": "pnpm --filter @vue-doctor/core test && pnpm --filter vue-doctor test && pnpm --filter nitro-doctor test && pnpm --filter nuxt-doctor test && pnpm --filter vite-doctor test",
+    "test": "vp test --passWithNoTests",
     "check": "vp check",
     "doctor": "vp exec vite-doctor .",
-    "release": "bumpp packages/vite/package.json --push --no-push-all",
-    "release:check": "vp fmt && pnpm --filter vite-doctor... build && vp lint && pnpm --filter vite-doctor... test",
-    "release:pack": "mkdir -p artifacts && pnpm --filter vite-doctor... build && pnpm --filter vite-doctor pack --pack-destination artifacts",
-    "release:publish": "pnpm --dir packages/vite publish --access public",
-    "release:publish:provenance": "pnpm --dir packages/vite publish --provenance --access public",
+    "release": "bumpp package.json --push --no-push-all",
+    "release:check": "vp fmt && pnpm build && vp lint && pnpm test",
+    "release:pack": "mkdir -p artifacts && pnpm build && pnpm pack --pack-destination artifacts",
+    "release:publish": "npm publish --access public",
+    "release:publish:provenance": "npm publish --provenance --access public",
     "prepare": "vp config"
   },
+  "dependencies": {
+    "@typescript-eslint/parser": "catalog:analysis",
+    "@vue/compiler-sfc": "catalog:analysis",
+    "c12": "catalog:prod",
+    "cac": "catalog:prod",
+    "consola": "catalog:prod",
+    "defu": "catalog:prod",
+    "eslint": "catalog:analysis",
+    "eslint-plugin-vue": "catalog:analysis",
+    "magic-string": "catalog:analysis",
+    "nostics": "catalog:analysis",
+    "oxc-parser": "catalog:analysis",
+    "pathe": "catalog:prod",
+    "picocolors": "catalog:prod",
+    "vue-eslint-parser": "catalog:analysis"
+  },
   "devDependencies": {
+    "@cloudflare/workers-types": "catalog:deploy",
+    "@nuxt/content": "catalog:frontend",
+    "@nuxt/scripts": "catalog:frontend",
+    "@nuxt/test-utils": "catalog:test",
+    "@nuxt/ui": "catalog:frontend",
+    "@testing-library/vue": "catalog:test",
+    "@tiptap/core": "catalog:frontend",
+    "@tiptap/extensions": "catalog:frontend",
+    "@tiptap/pm": "catalog:frontend",
+    "@tiptap/y-tiptap": "catalog:frontend",
+    "@vue/test-utils": "catalog:test",
+    "@vueuse/core": "catalog:frontend",
+    "better-auth": "catalog:frontend",
     "bumpp": "catalog:release",
+    "happy-dom": "catalog:test",
+    "nuxt": "catalog:frontend",
+    "nuxt-better-auth": "catalog:frontend",
     "pkg-pr-new": "catalog:release",
-    "vite-doctor": "workspace:*",
-    "vite-plus": "catalog:build"
+    "tsdown": "catalog:build",
+    "vite": "catalog:build",
+    "vite-plus": "catalog:build",
+    "vitest": "catalog:test"
+  },
+  "peerDependencies": {
+    "nuxt": ">=4",
+    "vite": "*"
+  },
+  "peerDependenciesMeta": {
+    "nuxt": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=22.20.0"

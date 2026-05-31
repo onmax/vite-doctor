@@ -161,11 +161,11 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
 
 function readDiagnosticCodeMaps() {
   const files = [
-    "packages/core/src/diagnostic-registry.ts",
-    "packages/vue/src/diagnostics.ts",
-    "packages/vite/src/diagnostics.ts",
-    "packages/nitro/src/diagnostics.ts",
-    "packages/nuxt/src/diagnostics.ts",
+    "src/core/diagnostic-registry.ts",
+    "src/rule-packs/vue/diagnostics.ts",
+    "src/diagnostics.ts",
+    "src/rule-packs/nitro/diagnostics.ts",
+    "src/rule-packs/nuxt/diagnostics.ts",
   ];
   const map = new Map<string, string>();
   for (const file of files) {
@@ -216,13 +216,14 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
 }
 
 function collectRuleDocuments() {
-  const vueSources = ruleSourcesFromIndex(join(root, "packages/vue/src/rules/vue/index.ts"));
-  const viteSources = readdirSync(join(root, "packages/vite/src/rules/vite"))
+  const vueSources = ruleSourcesFromIndex(join(root, "src/rule-packs/vue/rules/vue/index.ts"));
+  const viteRulesDir = join(root, "src/rule-packs/vite/rules");
+  const viteSources = readdirSync(viteRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
-    .map((file) => join(root, "packages/vite/src/rules/vite", file));
-  const nuxtRulesDir = join(root, "packages/nuxt/src/rules");
-  const nitroRulesDir = join(root, "packages/nitro/src/rules");
+    .map((file) => join(viteRulesDir, file));
+  const nuxtRulesDir = join(root, "src/rule-packs/nuxt/rules");
+  const nitroRulesDir = join(root, "src/rule-packs/nitro/rules");
   const nitroSources = readdirSync(nitroRulesDir)
     .filter((file) => file.endsWith(".ts") && !["ast.ts", "index.ts", "shared.ts"].includes(file))
     .sort()

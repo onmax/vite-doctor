@@ -15,7 +15,7 @@ export default defineConfig({
       "docs/app/**",
       "docs/server/**",
       "docs/examples/**",
-      "packages/nuxt/fixtures/**",
+      "tests/fixtures/**",
     ],
     options: { typeAware: true, typeCheck: true },
   },

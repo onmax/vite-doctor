@@ -64,4 +64,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to npm
-        run: npm publish ./artifacts/*.tgz --access public --tag ${{ steps.npm-tag.outputs.tag }}
+        run: npm publish ./artifacts/*.tgz --provenance --access public --tag ${{ steps.npm-tag.outputs.tag }}

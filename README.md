@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/public/og/doctor-lifeline-bg.png" alt="Vite Doctor" width="100%">
+  <img src="https://vite-doctor.onmax.me/og/doctor-lifeline-bg.png" alt="Vite Doctor" width="100%">
 </p>
 
-<h1 align="center"><img src="docs/public/doctor-icon.png" alt="" width="32" height="32" style="vertical-align: middle;"> Vite Doctor</h1>
+<h1 align="center"><img src="https://vite-doctor.onmax.me/doctor-icon.png" alt="" width="32" height="32" style="vertical-align: middle;"> Vite Doctor</h1>
 
 <p align="center">Catch framework bugs AI agents miss. Diagnostics for Nuxt, Vue, Nitro and Vite.</p>
 
@@ -47,7 +47,7 @@ Standalone trusted config files can use the full Doctor config shape:
 
 ```ts
 // doctor.config.ts
-import { defineDoctorConfig } from "@vue-doctor/core";
+import { defineDoctorConfig } from "vite-doctor/config";
 
 export default defineDoctorConfig({
   rules: {
