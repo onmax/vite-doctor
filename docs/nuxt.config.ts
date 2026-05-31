@@ -68,17 +68,6 @@ export default defineNuxtConfig({
   nitro: {
     preset: "cloudflare_module",
     sourceMap: false,
-    publicAssets: [
-      { dir: fileURLToPath(new URL("./skills", import.meta.url)), baseURL: "/.well-known/skills" },
-      {
-        dir: fileURLToPath(new URL("./skills", import.meta.url)),
-        baseURL: "/skills/.well-known/skills",
-      },
-      {
-        dir: fileURLToPath(new URL("./skills", import.meta.url)),
-        baseURL: "/skills/.well-known/agent-skills",
-      },
-    ],
     prerender: {
       concurrency: 1,
       routes: [
