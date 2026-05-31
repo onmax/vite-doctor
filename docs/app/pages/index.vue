@@ -217,7 +217,7 @@ function toggleTheme() {
               <p class="flex items-start gap-2">
                 <span class="select-none text-emerald-400/90" aria-hidden="true">$</span>
                 <span class="min-w-0 break-words text-neutral-100/95">
-                  pnpm dlx vite-doctor@alpha . --rules nuxt/hydration
+                  pnpm dlx vite-doctor . --rules nuxt/hydration
                 </span>
               </p>
               <div class="space-y-1">

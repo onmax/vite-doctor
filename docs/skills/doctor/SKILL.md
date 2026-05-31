@@ -10,13 +10,13 @@ description: "Run Vite Doctor diagnostics for Vite, Vue, Nitro, and Nuxt project
 Run Doctor from the target project root:
 
 ```bash
-pnpm dlx vite-doctor@alpha . # or npx/bunx/yarn dlx
+pnpm dlx vite-doctor . # or npx/bunx/yarn dlx
 ```
 
 For Nuxt projects, the recommended workflow is:
 
 ```bash
-pnpm add -D vite-doctor@alpha
+pnpm add -D vite-doctor
 ```
 
 ```ts

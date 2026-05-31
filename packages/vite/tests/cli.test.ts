@@ -17,6 +17,23 @@ test("CLI rejects removed run command", async () => {
   await expect(main(["run", "--dry-run"], repoRoot)).resolves.toBe(1);
 });
 
+test("CLI prints the public package version", async () => {
+  const repoRoot = findRepoRoot();
+  const writes: string[] = [];
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    await expect(main(["--version"], repoRoot)).resolves.toBe(0);
+  } finally {
+    process.stdout.write = write;
+  }
+
+  expect(writes.join("")).toBe("0.0.1\n");
+});
+
 test("CLI prints Vite rule metadata", async () => {
   const repoRoot = findRepoRoot();
   const writes: string[] = [];
@@ -32,6 +49,24 @@ test("CLI prints Vite rule metadata", async () => {
   }
 
   expect(writes.join("")).toContain("vite/define/no-secret-define");
+});
+
+test("CLI rules report uses the public package version", async () => {
+  const repoRoot = findRepoRoot();
+  const writes: string[] = [];
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    await expect(main(["rules", "--format", "json"], repoRoot)).resolves.toBe(0);
+  } finally {
+    process.stdout.write = write;
+  }
+
+  const report = JSON.parse(writes.join(""));
+  expect(report.rules[0].version).toBe("0.0.1");
 });
 
 test("CLI lists only Vite rule metadata by default", async () => {
@@ -52,7 +87,7 @@ test("CLI lists only Vite rule metadata by default", async () => {
   expect(writes.join("")).not.toContain("nuxt/hydration/no-client-conditional-in-template");
 });
 
-test("Nuxt CLI entry is import-safe", async () => {
+test("Nuxt host command shim is import-safe", async () => {
   const writes: string[] = [];
   const write = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk: string | Uint8Array) => {
@@ -67,6 +102,35 @@ test("Nuxt CLI entry is import-safe", async () => {
   }
 
   expect(writes).toEqual([]);
+});
+
+test("Nuxt host command shim returns diagnostic exit codes without throwing", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+      "app/pages/index.vue": `<script setup lang="ts">const width = window.innerWidth</script>`,
+    },
+    async (root) => {
+      const mod = await import("../src/nuxt-cli.ts");
+      const result = await runWithCapturedStdout(() =>
+        mod.main(
+          [
+            "--rules",
+            "nuxt/hydration/no-browser-global-in-universal-code",
+            "--format",
+            "json",
+            "--no-cache",
+          ],
+          root,
+        ),
+      );
+      expect(result.code).toBe(1);
+      const report = JSON.parse(result.output);
+      expect(report.version).toBe("0.0.1");
+      expect(report.framework).toBe("nuxt");
+      expect(report.summary.error).toBe(1);
+    },
+  );
 });
 
 test("CLI accepts a path shorthand for scans", async () => {
@@ -189,6 +253,20 @@ test("Nuxt framework scans store cache inside Nuxt build directory", async () =>
 
       expect(existsSync(join(root, ".nuxt/doctor/cache"))).toBe(true);
       expect(existsSync(join(root, ".vite-doctor"))).toBe(false);
+    },
+  );
+});
+
+test("JSON reports use the public package version", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "src/main.ts": "console.log('ok')\n",
+    },
+    async (root) => {
+      const result = await runCli([".", "--format", "json"], root);
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.output).version).toBe("0.0.1");
     },
   );
 });
@@ -422,6 +500,10 @@ async function withFixture(
 }
 
 async function runCli(args: string[], root: string) {
+  return runWithCapturedStdout(() => main(args, root));
+}
+
+async function runWithCapturedStdout(fn: () => Promise<number>) {
   const writes: string[] = [];
   const write = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk: string | Uint8Array) => {
@@ -429,7 +511,7 @@ async function runCli(args: string[], root: string) {
     return true;
   }) as typeof process.stdout.write;
   try {
-    return { code: await main(args, root), output: writes.join("") };
+    return { code: await fn(), output: writes.join("") };
   } finally {
     process.stdout.write = write;
   }

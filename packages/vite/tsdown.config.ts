@@ -15,6 +15,11 @@ export default defineConfig({
     "src/nuxt.ts",
     "src/rules.ts",
   ],
-  exports: true,
+  exports: {
+    bin: {
+      "nuxt-doctor": "src/nuxt-cli.ts",
+      "vite-doctor": "src/cli.ts",
+    },
+  },
   format: ["esm"],
 });

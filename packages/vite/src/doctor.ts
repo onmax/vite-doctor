@@ -12,6 +12,7 @@ import { nitroRulePack } from "nitro-doctor";
 import { nuxtDoctorExtensions, nuxtRulePacks } from "nuxt-doctor/rules";
 import { vueRulePack } from "vue-doctor";
 import { viteRulePack } from "./rules.js";
+import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
   const framework = detectRequestedFramework(options);
@@ -19,7 +20,7 @@ export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
   if (framework === "vue") packs.push(vueRulePack);
   if (framework === "nitro") packs.push(nitroRulePack);
   if (framework === "nuxt") packs.push(...nuxtRulePacks());
-  return packs;
+  return packs.map(withDistributionVersion);
 }
 
 export async function viteDoctorExtensions(
@@ -42,13 +43,17 @@ export async function viteDoctorExtensions(
   if (framework === "nuxt") {
     extensions.push(...nuxtDoctorExtensions());
   }
-  return extensions;
+  return extensions.map((extension) => ({
+    ...extension,
+    version: extension.version ?? viteDoctorVersion,
+    rulePacks: extension.rulePacks?.map(withDistributionVersion),
+  }));
 }
 
 export async function runViteDoctor(options: DoctorRunOptions) {
   const framework = detectRequestedFramework(options);
   const extensions = await viteDoctorExtensions(options);
-  return runDoctor({
+  const result = await runDoctor({
     ...options,
     config: {
       ...options.config,
@@ -60,6 +65,7 @@ export async function runViteDoctor(options: DoctorRunOptions) {
     framework,
     extensions: [...extensions, ...(options.extensions ?? [])],
   });
+  return { ...result, version: viteDoctorVersion };
 }
 
 export function shouldFailDoctorRun(result: DoctorRunResult, maxWarnings?: number) {
@@ -86,6 +92,10 @@ function detectRequestedFramework(options: DoctorRunOptions): DoctorFramework {
   if (deps.nitro || deps.nitropack || hasConfig(root, "nitro.config")) return "nitro";
   if (deps.vue || hasVueFiles(root)) return "vue";
   return "vite";
+}
+
+function withDistributionVersion<T extends { version: string }>(item: T): T {
+  return { ...item, version: viteDoctorVersion };
 }
 
 function readPackageJson(root: string): {
