@@ -118,6 +118,7 @@ async function normalizeNuxtProject(
     routeRules: manifest?.routeRules ?? readRouteRules(root),
     runtimeConfig: manifest?.runtimeConfig,
     serverDirs: await serverDirs(root),
+    doctorConfig: manifest?.doctorConfig,
     manifestPath,
     modules: mergeDetectedModules(manifest?.modules ?? [], deps, root),
     moduleSources: normalizeNuxtModuleSources(manifest?.moduleSources ?? []),

@@ -3,6 +3,7 @@ import { expect, test } from "vite-plus/test";
 import { getRuleDocuments, getRuleReports, rulesCollectionSource } from "../../rules/source.js";
 import { useRuleExplorer } from "../composables/useRuleExplorer.js";
 import { normalizeCatalogRules, type RawRuleEntry } from "./rule-catalog.js";
+import { appendRulesNavigation, createRulesNavigation } from "./rules-navigation.js";
 
 const sampleRules: RawRuleEntry[] = [
   {
@@ -104,6 +105,38 @@ test("rule source emits complete documentation for every rule", async () => {
     expect(markdown).toContain("## Example");
     expect(markdown).not.toContain("## Metadata");
   }
+});
+
+test("rules navigation keeps framework overview pages above rule links", () => {
+  const navigation = createRulesNavigation(sampleRules, [
+    { code: "VUE0001", ruleId: "vue/reactivity/no-ref-as-operand" },
+    { code: "NUXT0001", ruleId: "nuxt/fetch/no-raw-fetch-in-setup" },
+    { code: "VITE0001", ruleId: "vite/env/no-secret-prefix" },
+  ]);
+
+  expect(navigation.children?.map((item) => item.title)).toEqual([
+    "Nuxt rules",
+    "NUXT0001",
+    "Vue rules",
+    "VUE0001",
+    "Nitro rules",
+    "Vite rules",
+    "VITE0001",
+  ]);
+
+  expect(navigation.children?.map((item) => item.path)).toEqual([
+    "/rules/nuxt",
+    "/nuxt/rules/fetch/no-raw-fetch-in-setup",
+    "/rules/vue",
+    "/vue/rules/reactivity/no-ref-as-operand",
+    "/rules/nitro",
+    "/rules/vite",
+    "/vite/rules/env/no-secret-prefix",
+  ]);
+
+  expect(
+    appendRulesNavigation([{ title: "CLI", path: "/cli" }], navigation).map((item) => item.title),
+  ).toEqual(["CLI", "Rules"]);
 });
 
 test("rule examples do not reuse generic placeholders", () => {

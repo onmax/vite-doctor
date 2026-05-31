@@ -1,5 +1,5 @@
-import { visitorKeys } from "oxc-parser";
 import type { DoctorHelpers } from "../primitives.js";
+import { getNodeVisitorKeys } from "./visitor-keys.js";
 
 export function createHelpers(): DoctorHelpers {
   return {
@@ -412,7 +412,7 @@ function walkAst(node: unknown, visit: (node: unknown) => void) {
     const typed = current as any;
     if (!typed.type) continue;
     visit(typed);
-    const keys = visitorKeys[typed.type] ?? [];
+    const keys = getNodeVisitorKeys(typed);
     for (let keyIndex = keys.length - 1; keyIndex >= 0; keyIndex--) {
       const value = typed[keys[keyIndex]];
       if (Array.isArray(value)) {

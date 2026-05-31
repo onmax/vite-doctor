@@ -11,7 +11,7 @@ export const noBrowserApiInServer = createRule({
     category: "server",
     severity: "error",
     fixable: "suggestion",
-    requires: { script: true, nuxt: true },
+    requires: { script: true, nitro: true },
   },
   create(ctx) {
     if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;

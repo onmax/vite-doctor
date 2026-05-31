@@ -110,12 +110,23 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   const phases: Record<string, number> = {};
 
   let started = performance.now();
-  const config = mergeDoctorConfig(DEFAULT_CONFIG, options.config);
+  let config = mergeDoctorConfig(DEFAULT_CONFIG, options.config);
   const sessionBase = { root, options, config, timings };
   markSession(sessionBase, "config", started);
 
   started = performance.now();
   const project = await detectProject(root, options.framework ?? "auto");
+  const projectDefaults =
+    project.framework === "nuxt"
+      ? mergeDoctorConfig(DEFAULT_CONFIG, { cache: { dir: ".nuxt/doctor/cache" } })
+      : DEFAULT_CONFIG;
+  if (projectDefaults !== DEFAULT_CONFIG || project.nuxt?.doctorConfig) {
+    config = mergeDoctorConfig(
+      mergeDoctorConfig(projectDefaults, project.nuxt?.doctorConfig),
+      options.config,
+    );
+    sessionBase.config = config;
+  }
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
@@ -263,6 +274,10 @@ function selectRules(
   return registry.rules
     .filter((rule) => selectedRules.has(rule.meta.id))
     .filter((rule) => !rule.meta.requires?.nuxt || project.framework === "nuxt")
+    .filter(
+      (rule) =>
+        !rule.meta.requires?.nitro || project.framework === "nitro" || project.framework === "nuxt",
+    )
     .filter(
       (rule) =>
         !rule.meta.requires?.vue || project.framework === "vue" || project.framework === "nuxt",

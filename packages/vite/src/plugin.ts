@@ -1,6 +1,6 @@
 import { resolve } from "pathe";
 import { createReport, defineDoctorExtension } from "@vue-doctor/core";
-import type { DoctorExtension, DoctorRunOptions } from "@vue-doctor/core";
+import type { DoctorConfig, DoctorExtension, DoctorRunOptions } from "@vue-doctor/core";
 import type { Plugin, ResolvedConfig } from "vite";
 import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
 
@@ -10,6 +10,7 @@ export interface ViteDoctorSurfaceOptions {
   mode?: "warn" | "error";
   root?: string;
   framework?: "auto" | "vite" | "vue" | "nitro" | "nuxt";
+  config?: DoctorConfig;
   extends?: DoctorRunOptions["extends"];
   extensions?: DoctorExtension[];
   rules?: string;
@@ -37,6 +38,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       const result = await runViteDoctor({
         root: options.root ? resolve(resolved.root, options.root) : resolved.root,
         framework: options.framework ?? "auto",
+        config: options.config,
         extends: options.extends,
         extensions: [viteSurfaceExtension(resolved), ...(options.extensions ?? [])],
         rules: options.rules,

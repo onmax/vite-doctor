@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "pathe";
 import type {
+  DoctorConfig,
   DoctorExtension,
   NuxtDoctorManifest,
   NuxtModuleSource,
@@ -9,6 +10,7 @@ import type {
 export type { NuxtDoctorManifest } from "@vue-doctor/core";
 
 export interface NuxtDoctorModuleOptions {
+  config?: DoctorConfig;
   extends?: "auto" | string[];
   extensions?: DoctorExtension[];
 }
@@ -21,6 +23,7 @@ type EvidenceBuildManifest = {
 export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions = {}, nuxt: any) {
   nuxt.options ??= {};
   nuxt.options.doctor ??= {};
+  nuxt.options.doctor.config ??= options.config;
   nuxt.options.doctor.extends ??= options.extends;
   nuxt.options.doctor.extensions ??= options.extensions;
 
@@ -146,6 +149,7 @@ export async function writeManifest(
     buildManifest: evidence?.buildManifest ?? { hasBuildManifest: false, chunks: [] },
     modules,
     moduleSources: moduleSources.map(normalizeModuleSource),
+    doctorConfig: serializableDoctorConfig(nuxt.options.doctor),
     runtimeConfig: redactRuntimeConfig(nuxt.options.runtimeConfig),
     keyedComposables: toArray(nuxt.options.optimization?.keyedComposables).map(String),
     importsDirs: normalizeDirs(rootDir, [
@@ -202,6 +206,26 @@ function normalizeModuleSource(source: NuxtModuleSource): NuxtModuleSource {
     runtimeDirs: source.runtimeDirs?.map((dir) => resolve(dir)),
     appDirs: source.appDirs?.map((dir) => resolve(dir)),
   };
+}
+
+function serializableDoctorConfig(
+  doctor: {
+    config?: DoctorConfig;
+    extends?: "auto" | string[];
+  } = {},
+): DoctorConfig | undefined {
+  const config = { ...doctor.config } as DoctorConfig;
+  config.extends ??= doctor.extends;
+  const payload: DoctorConfig = {};
+  if (config.extends !== undefined) payload.extends = config.extends;
+  if (config.include !== undefined) payload.include = config.include;
+  if (config.exclude !== undefined) payload.exclude = config.exclude;
+  if (config.rules !== undefined) payload.rules = config.rules;
+  if (config.suppressions !== undefined) payload.suppressions = config.suppressions;
+  if (config.typeAware !== undefined) payload.typeAware = config.typeAware;
+  if (config.cache !== undefined) payload.cache = config.cache;
+  if (config.score !== undefined) payload.score = config.score;
+  return Object.keys(payload).length ? payload : undefined;
 }
 
 function redactRuntimeConfig(config: unknown): unknown {

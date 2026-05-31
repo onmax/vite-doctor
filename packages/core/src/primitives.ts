@@ -3,6 +3,17 @@ import type { Diagnostic as NosticsDiagnostic } from "nostics";
 export const DOCTOR_DIAGNOSTICS_DOCS_BASE = "https://vite-doctor.onmax.me/diagnostics";
 
 export type DoctorSeverity = "blocker" | "error" | "warn" | "info";
+export type DoctorRuleConfig = "off" | DoctorSeverity | [DoctorSeverity, unknown];
+export interface DoctorSerializableConfig {
+  extends?: "auto" | string[];
+  include?: string[];
+  exclude?: string[];
+  rules?: Record<string, DoctorRuleConfig>;
+  suppressions?: Array<{ ruleId?: string; fingerprint?: string; file?: string; reason: string }>;
+  typeAware?: boolean;
+  cache?: { dir?: string; strategy?: "content-hash" };
+  score?: { weights?: Partial<Record<"blocker" | "error" | "warn" | "info", number>> };
+}
 export type FixSafety = "safe" | "unsafe" | "suggestion" | "structural-review";
 export type DoctorFramework = "vue" | "nuxt" | "vite" | "nitro";
 export type ExecutionKind =
@@ -117,6 +128,7 @@ export interface RuleMeta {
     script?: boolean;
     types?: boolean;
     vue?: boolean;
+    nitro?: boolean;
     nuxt?: boolean;
     crossFile?: boolean;
   };
@@ -197,6 +209,7 @@ export interface NuxtProjectInfo {
     middleware: string[];
     plugins: string[];
   };
+  doctorConfig?: DoctorSerializableConfig;
   manifestPath?: string;
   modules?: Array<{ name: string; version?: string; doctorPlugin?: string }>;
   moduleSources?: NuxtModuleSource[];
@@ -254,6 +267,7 @@ export interface NuxtDoctorManifest {
   };
   modules: Array<{ name: string; version?: string; doctorPlugin?: string }>;
   moduleSources?: NuxtModuleSource[];
+  doctorConfig?: DoctorSerializableConfig;
   runtimeConfig?: unknown;
   keyedComposables?: unknown[];
   importsDirs?: string[];

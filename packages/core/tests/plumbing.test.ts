@@ -16,6 +16,7 @@ import {
   runDoctor,
 } from "../src/index.ts";
 import { scoreDiagnostics } from "../src/internal/scoring.ts";
+import { getNodeVisitorKeys } from "../src/internal/visitor-keys.ts";
 
 const reportProgramRule = createRule({
   meta: {
@@ -45,6 +46,18 @@ const reportProgramRule = createRule({
       },
     };
   },
+});
+
+test("visitor keys fall back to node-shaped children", () => {
+  expect(
+    getNodeVisitorKeys({
+      type: "FixtureNode",
+      child: { type: "ChildNode" },
+      children: [{ type: "NestedNode" }],
+      start: 0,
+      end: 1,
+    }),
+  ).toEqual(["child", "children"]);
 });
 
 const secondRule = createRule({

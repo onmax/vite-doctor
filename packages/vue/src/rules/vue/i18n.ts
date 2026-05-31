@@ -33,7 +33,12 @@ export const noUnusedTranslations = createRule({
         const usedKeys = collectUsedTranslationKeys(ctx.project.root);
         const baseLocale = selectBaseLocale(inventory.messages);
         for (const message of inventory.messages) {
-          if (message.locale !== baseLocale || usedKeys.has(message.key)) continue;
+          if (
+            message.locale !== baseLocale ||
+            usedKeys.has(message.key) ||
+            isLocaleMetadataKey(message.key)
+          )
+            continue;
           const text = readFileSync(message.file, "utf8");
           ctx.report(
             diagnostics.VUE0002.report({
@@ -76,6 +81,8 @@ export const noUntranslatedText = createRule({
     if (!hasI18n) return;
     return {
       TemplateNode(node: AnyNode) {
+        if (isInsideI18nTranslation(node)) return;
+
         if (node.type === "VText") {
           const value = normalizeVisibleText(node.value ?? "");
           if (!isUserFacingText(value)) return;
@@ -357,8 +364,26 @@ function isUserFacingText(value: string): boolean {
   if (value.length < 2) return false;
   if (/^[\d\s.,:;!?()[\]{}'"`/\\|+*=<>_-]+$/.test(value)) return false;
   if (/^(https?:|\/|#|[\w-]+\/[\w-]+)/.test(value)) return false;
+  if (/^["'`]?[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(value)) return false;
+  if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?\($/.test(value)) return false;
   if (/^[a-z0-9_.:-]+$/.test(value) && !/\s/.test(value)) return false;
   return /[A-Za-zÀ-ÖØ-öø-ÿ]/.test(value);
+}
+
+function isInsideI18nTranslation(node: AnyNode): boolean {
+  let current = node.parent ?? node.__doctorParent;
+  while (current) {
+    if (current.type === "VElement") {
+      const name = String(current.rawName ?? current.name ?? "");
+      if (name === "i18n-t" || name === "I18nT") return true;
+    }
+    current = current.parent ?? current.__doctorParent;
+  }
+  return false;
+}
+
+function isLocaleMetadataKey(key: string): boolean {
+  return key.split(".").some((part) => part.startsWith("$"));
 }
 
 function truncate(value: string): string {

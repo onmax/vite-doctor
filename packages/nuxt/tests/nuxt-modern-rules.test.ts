@@ -64,7 +64,7 @@ import {
   requireEventRuntimeConfigInServer,
 } from "../../nitro/src/rules.ts";
 import { runProjectFixture, runRuleFixture } from "../../core/src/testkit.ts";
-import { collectNuxtDoctorRulePacks, writeManifest } from "../src/module.ts";
+import nuxtDoctorModule, { collectNuxtDoctorRulePacks, writeManifest } from "../src/module.ts";
 import { createRulesReport, createTextReport, explainRule } from "../../core/src/index.ts";
 import { nitroRulePack, nuxtDoctorExtensions, nuxtRulePacks } from "../src/rules/index.ts";
 import { createNuxtRuntimeEvidence } from "../src/rules/nuxt/evidence.ts";
@@ -318,6 +318,57 @@ for (const item of cases) {
     expect(result.diagnostics[0]?.ruleId).toBe(item.id);
   });
 }
+
+test("unsafe useHead script ignores style innerHTML", async () => {
+  const result = await runRuleFixture({
+    rule: noUnsafeUseHeadScript,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<script setup lang="ts">
+useHead({
+  style: [{ innerHTML: ':root { color-scheme: dark; }' }],
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("unsafe useHead script ignores JSON-LD data scripts", async () => {
+  const result = await runRuleFixture({
+    rule: noUnsafeUseHeadScript,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<script setup lang="ts">
+useHead({
+  script: [{ type: 'application/ld+json', innerHTML: JSON.stringify(schema) }],
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("unsafe useHead script ignores mapped JSON-LD data scripts", async () => {
+  const result = await runRuleFixture({
+    rule: noUnsafeUseHeadScript,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": `<script setup lang="ts">
+useHead({
+  script: schemas.map((schema) => ({
+    type: 'application/ld+json',
+    innerHTML: JSON.stringify(schema),
+  })),
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toEqual([]);
+});
 
 test("same-name prop shorthand reports matching prop bindings", async () => {
   const result = await runRuleFixture({
@@ -607,6 +658,24 @@ refreshNuxtData()
   });
 
   expect(result.diagnostics).toHaveLength(1);
+});
+
+test("global refresh rule accepts nearby natural-language justification", async () => {
+  const result = await runRuleFixture({
+    rule: noGlobalRefreshWithoutJustification,
+    framework: "nuxt",
+    files: {
+      "app/plugins/fix.client.ts": `export default defineNuxtPlugin((nuxtApp) => {
+  // When an empty payload skips refetching during hydration, refresh all async data
+  // so package analysis and README data are loaded after suspense resolves.
+  nuxtApp.hooks.hookOnce('app:suspense:resolve', () => {
+    refreshNuxtData()
+  })
+})`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
 });
 
 test("refreshable async data key rule accepts explicit keys", async () => {
@@ -1268,6 +1337,39 @@ test("browser globals after server return guard are ignored", async () => {
   expect(result.diagnostics).toHaveLength(0);
 });
 
+test("browser globals after typeof undefined return guard are ignored", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/composables/useHost.ts": `export function useHost() {
+  if (typeof window === 'undefined') return ''
+  return window.location.hostname
+}`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("browser globals in typeof undefined short-circuit guards are ignored", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/components/Canvas.vue": `<script setup lang="ts">
+const circlePath = computed(() => {
+  if (typeof window === 'undefined' || !window.Path2D)
+    return null
+  return new Path2D()
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test("VueUse wrappers may receive browser global targets", async () => {
   const result = await runRuleFixture({
     rule: noBrowserGlobalInUniversalCode,
@@ -1318,6 +1420,32 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter') focusFirst()
 }
 useEventListener('keydown', onKeydown)
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("functions called from client lifecycle callbacks suppress browser globals", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/components/AnimatedPanel.vue": `<script setup lang="ts">
+function startTimeout() {
+  window.setTimeout(() => {}, 100)
+}
+
+function cleanup() {
+  window.removeEventListener('resize', cleanup)
+}
+
+onMounted(() => {
+  startTimeout()
+})
+
+onBeforeUnmount(cleanup)
 </script>`,
     },
   });
@@ -2441,6 +2569,49 @@ test("Nuxt module writes manifest and accepts context hook contributions", async
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     expect(manifest.modules.some((module: any) => module.name === "fixture-module")).toBe(true);
   });
+});
+
+test("Nuxt module writes Doctor config and Doctor Run applies it", async () => {
+  await withFixture(
+    {
+      "app/pages/index.vue": `<script setup lang="ts">
+import { useRoute } from "vue-router";
+useRoute();
+</script>`,
+    },
+    {},
+    async (root) => {
+      const nuxt = {
+        options: { rootDir: root, buildDir: ".nuxt", modules: [] },
+      };
+
+      await nuxtDoctorModule(
+        {
+          config: {
+            rules: { "nuxt/routing/prefer-nuxt-useroute": "off" },
+          },
+        },
+        nuxt,
+      );
+      await writeManifest(nuxt);
+
+      const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+      expect(manifest.doctorConfig).toEqual({
+        rules: { "nuxt/routing/prefer-nuxt-useroute": "off" },
+      });
+
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        extensions: nuxtDoctorExtensions(),
+      });
+      expect(result.diagnostics.map((item) => item.ruleId)).not.toContain(
+        "nuxt/routing/prefer-nuxt-useroute",
+      );
+      expect(existsSync(join(root, ".nuxt/doctor/cache"))).toBe(true);
+      expect(existsSync(join(root, ".vite-doctor"))).toBe(false);
+    },
+  );
 });
 
 test("Nuxt module writes evidence fields and text report shows evidence summary", async () => {

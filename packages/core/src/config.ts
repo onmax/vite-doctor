@@ -1,19 +1,10 @@
 import { loadConfig } from "c12";
 import { defu } from "defu";
-import type { DoctorExtension, DoctorFramework, DoctorSeverity } from "./primitives.js";
+import type { DoctorExtension, DoctorFramework, DoctorSerializableConfig } from "./primitives.js";
+export type { DoctorRuleConfig, DoctorSerializableConfig } from "./primitives.js";
 
-export type DoctorRuleConfig = "off" | DoctorSeverity | [DoctorSeverity, unknown];
-
-export interface DoctorConfig {
-  extends?: "auto" | string[];
+export interface DoctorConfig extends DoctorSerializableConfig {
   extensions?: DoctorExtension[];
-  include?: string[];
-  exclude?: string[];
-  rules?: Record<string, DoctorRuleConfig>;
-  suppressions?: Array<{ ruleId?: string; fingerprint?: string; file?: string; reason: string }>;
-  typeAware?: boolean;
-  cache?: { dir?: string; strategy?: "content-hash" };
-  score?: { weights?: Partial<Record<"blocker" | "error" | "warn" | "info", number>> };
 }
 
 export interface DoctorRunOptions {

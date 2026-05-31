@@ -1,41 +1,49 @@
 ---
 name: doctor
-description: "Run Doctor diagnostics for Vue, Vite, Nitro, and Nuxt projects and use diagnostic codes to guide fixes. Use before review, when framework-specific issues are suspected, or when the user asks for Doctor, Vite Doctor, Vue Doctor, Nitro Doctor, Nuxt Doctor, or diagnostics."
+description: "Run Vite Doctor diagnostics for Vite, Vue, Nitro, and Nuxt projects and use stable diagnostic codes to guide fixes. Use before review on framework projects, when Doctor/Vite Doctor/Nuxt Doctor/diagnostics are requested, or when framework-specific runtime issues are suspected."
 ---
 
 # Doctor
 
 ## Quick Start
 
-Run Doctor from the project root before review:
+Run Doctor from the target project root:
 
 ```bash
-pnpm dlx vite-doctor@alpha .
+pnpm dlx vite-doctor@alpha . # or npx/bunx/yarn dlx
 ```
 
-Use package-manager equivalents when needed:
+For Nuxt projects, the recommended workflow is:
 
 ```bash
-npx vite-doctor@alpha .
-bunx vite-doctor@alpha .
-yarn dlx vite-doctor@alpha .
+pnpm add -D vite-doctor@alpha
 ```
 
-For Nuxt projects, start with the same CLI command. Doctor will surface Nuxt-specific
-warnings and setup guidance when the project needs it.
+```ts
+export default defineNuxtConfig({
+  modules: ["vite-doctor/nuxt"],
+});
+```
+
+```bash
+pnpm nuxt doctor
+```
+
+The standalone CLI also works for Nuxt one-off runs, CI fallback, or monorepo scans.
 
 ## Workflow
 
-1. Run Doctor against the target project or package.
-2. Read each diagnostic code, why, fix, docs URL, and source location.
-3. Open the diagnostic docs at `/diagnostics/CODE` before recommending a remediation.
-4. Prefer the smallest fix that addresses the diagnostic and preserves project conventions.
-5. Use `--format json` only when structured machine output is needed for automation.
+1. Run Doctor against the target project or package; install dependencies first if needed.
+2. Read each Diagnostic Code, `why`, `fix`, docs URL, severity, confidence, and source location.
+3. Open `https://vite-doctor.onmax.me/diagnostics/CODE` before recommending remediation.
+4. Prefer the smallest fix that addresses the Diagnostic and preserves project conventions.
+5. Run the narrowest relevant verification after editing.
+6. Use `--format json` or `--format sarif` only when structured output is needed.
 
 ## Rules
 
-- Agent Consumers run Doctor and consume Diagnostics.
-- Use the CLI and structured diagnostic output as the integration path.
-- Treat rule IDs as execution/filtering selectors.
-- Treat diagnostic codes as the stable remediation identity.
-- When editing code, keep fixes scoped to reported diagnostics unless the user asks for broader cleanup.
+- Use `vite-doctor` for Vite, Vue, Nitro, and Nuxt projects; do not invent framework-specific packages or binaries.
+- Treat Rule IDs as execution/filtering selectors.
+- Treat Diagnostic Codes as the stable remediation identity for docs, fixes, and user-facing explanations.
+- Use Doctor terms consistently: Doctor, Rule, Rule Pack, Diagnostic Code, and Diagnostic.
+- Keep code edits scoped to reported Diagnostics unless the user asks for broader cleanup.

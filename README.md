@@ -26,6 +26,71 @@ pnpm doctor
 
 Use `--framework vue|nuxt|vite|nitro` only when auto-detection needs an explicit override.
 
+## Configuration
+
+Standalone trusted config files can use the full Doctor config shape:
+
+```ts
+// doctor.config.ts
+import { defineDoctorConfig } from "@vue-doctor/core";
+
+export default defineDoctorConfig({
+  rules: {
+    "vite/define/no-secret-define": "error",
+  },
+});
+```
+
+Plugin surfaces accept the same policy through host config:
+
+```ts
+// vite.config.ts
+import { doctor } from "vite-doctor";
+
+export default {
+  plugins: [
+    doctor({
+      config: {
+        rules: {
+          "vite/define/no-secret-define": "error",
+        },
+      },
+    }),
+  ],
+};
+```
+
+For Nitro-backed Vite apps, including Vue, React, or any other Vite frontend, use the same plugin and let Doctor detect Nitro from project signals:
+
+```ts
+// vite.config.ts
+import { doctor } from "vite-doctor";
+
+export default {
+  plugins: [doctor()],
+};
+```
+
+Set `framework: "nitro"` only when auto-detection needs an explicit override.
+
+```ts
+// nuxt.config.ts
+export default defineNuxtConfig({
+  modules: [
+    [
+      "vite-doctor/nuxt",
+      {
+        config: {
+          rules: {
+            "nuxt/routing/prefer-nuxt-useroute": "error",
+          },
+        },
+      },
+    ],
+  ],
+});
+```
+
 ## Development
 
 ```bash

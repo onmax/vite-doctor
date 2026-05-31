@@ -1,5 +1,5 @@
-import { visitorKeys } from "oxc-parser";
 import type { RuleVisitor, SourceFileHandle } from "../primitives.js";
+import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 
 export async function runVisitor(visitor: RuleVisitor, file: SourceFileHandle) {
   if (file.sfc) await visitor.SFC?.(file.sfc);
@@ -17,8 +17,7 @@ function walkScript(node: unknown, visit: (node: unknown) => void, parent?: unkn
   if (!typed.type) return;
   if (parent) setDoctorParent(typed, parent);
   visit(typed);
-  const keys = typed.type ? visitorKeys[typed.type] : undefined;
-  for (const key of keys ?? []) {
+  for (const key of getNodeVisitorKeys(typed as Record<string, unknown>)) {
     const value = (typed as Record<string, unknown>)[key];
     if (Array.isArray(value)) {
       for (const child of value) walkScript(child, visit, typed);
@@ -45,35 +44,12 @@ function walkTemplate(node: unknown, visit: (node: unknown) => void) {
   const typed = node as { type?: string };
   if (!typed.type) return;
   visit(typed);
-  for (const key of getTemplateVisitorKeys(typed.type)) {
+  for (const key of getTemplateVisitorKeys(typed as Record<string, unknown>)) {
     const value = (typed as Record<string, unknown>)[key];
     if (Array.isArray(value)) {
       for (const child of value) walkTemplate(child, visit);
     } else if (value && typeof value === "object" && typeof (value as any).type === "string") {
       walkTemplate(value, visit);
     }
-  }
-}
-
-function getTemplateVisitorKeys(type: string): string[] {
-  if (visitorKeys[type]) return visitorKeys[type];
-  switch (type) {
-    case "Program":
-      return ["body", "templateBody"];
-    case "VDocumentFragment":
-    case "VElement":
-      return ["children", "startTag", "endTag"];
-    case "VStartTag":
-      return ["attributes"];
-    case "VAttribute":
-      return ["key", "value"];
-    case "VDirective":
-      return ["key", "value"];
-    case "VExpressionContainer":
-      return ["expression", "references"];
-    case "VForExpression":
-      return ["left", "right"];
-    default:
-      return [];
   }
 }

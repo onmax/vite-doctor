@@ -140,7 +140,10 @@ export function isFalseLiteral(node: AnyNode): boolean {
 }
 
 export function hasGlobalRefreshIntentionalMarker(ctx: RuleContext, node: AnyNode): boolean {
-  return hasNearbyMarker(ctx, node, "nuxt-doctor: global-refresh-intentional");
+  return (
+    hasNearbyMarker(ctx, node, "nuxt-doctor: global-refresh-intentional") ||
+    hasNearbyGlobalRefreshJustification(ctx, node)
+  );
 }
 
 export function getDestructuredAsyncDataCommands(call: AnyNode): Set<string> {
@@ -287,6 +290,18 @@ function hasNearbyMarker(ctx: RuleContext, node: AnyNode, marker: string): boole
   const previousLineStart = ctx.file.text.lastIndexOf("\n", Math.max(0, start - 2)) + 1;
   const before = ctx.file.text.slice(previousLineStart, start);
   return before.includes(marker);
+}
+
+function hasNearbyGlobalRefreshJustification(ctx: RuleContext, node: AnyNode): boolean {
+  const start = node.start ?? node.range?.[0] ?? 0;
+  const nearbyLines = ctx.file.text.slice(0, start).split(/\r?\n/).slice(-12);
+  const comments = nearbyLines
+    .map((line) => line.match(/^\s*\/\/\s?(.*)$/)?.[1] ?? "")
+    .filter(Boolean)
+    .join(" ");
+  return /(?:refresh|refetch)\s+(?:all|every|global)[\w\s-]{0,80}(?:async[-\s]?data|data)|(?:global|all|every)[\w\s-]{0,80}(?:async[-\s]?data|data)[\w\s-]{0,80}(?:refresh|refetch)/i.test(
+    comments,
+  );
 }
 
 function objectExpression(node: AnyNode): AnyNode {

@@ -52,6 +52,23 @@ test("CLI lists only Vite rule metadata by default", async () => {
   expect(writes.join("")).not.toContain("nuxt/hydration/no-client-conditional-in-template");
 });
 
+test("Nuxt CLI entry is import-safe", async () => {
+  const writes: string[] = [];
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const mod = await import("../src/nuxt-cli.ts");
+    expect(typeof mod.main).toBe("function");
+  } finally {
+    process.stdout.write = write;
+  }
+
+  expect(writes).toEqual([]);
+});
+
 test("CLI accepts a path shorthand for scans", async () => {
   await withFixture(
     {
@@ -133,6 +150,21 @@ useRoute();
       expect(nitro.code).toBe(1);
       expect(nitro.output).toContain("Detected: Nuxt");
       expect(nitro.output).toContain("nitro/request/prefer-get-request-ip");
+    },
+  );
+});
+
+test("smart scan activates Nitro rules from Nitro project signals", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { nitropack: "^3.0.0" } }),
+      "server/api/user.ts": "export default defineEventHandler(() => window.location.href)\n",
+    },
+    async (root) => {
+      const result = await runCli([".", "--rules", "nitro/server/no-browser-api"], root);
+      expect(result.code).toBe(1);
+      expect(result.output).toContain("Detected: Nitro");
+      expect(result.output).toContain("nitro/server/no-browser-api");
     },
   );
 });
@@ -338,6 +370,36 @@ test("Vite plugin keeps executable config disabled by default", async () => {
       await expect(runVitePlugin(plugin, root, "build")).rejects.toThrow(
         /vite\/define\/no-secret-define/,
       );
+    },
+  );
+});
+
+test("Vite plugin accepts full Doctor config options", async () => {
+  await withFixture(viteErrorFixture(), async (root) => {
+    const plugin = doctor({
+      rules: "vite/define/no-secret-define",
+      config: {
+        rules: { "vite/define/no-secret-define": "off" },
+      },
+    });
+    const logs = await runVitePlugin(plugin, root, "build");
+    expect(logs.join("\n")).not.toContain("vite/define/no-secret-define");
+  });
+});
+
+test("Vite plugin runs Nitro rules in Nitro-backed Vite apps", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({
+        dependencies: { vite: "^7.0.0", nitropack: "^3.0.0", react: "^19.0.0" },
+      }),
+      "server/api/user.ts": "export default defineEventHandler(() => window.location.href)\n",
+    },
+    async (root) => {
+      const plugin = doctor({ mode: "warn", rules: "nitro/server/no-browser-api" });
+      const logs = await runVitePlugin(plugin, root, "build");
+      expect(logs.join("\n")).toContain("Detected: Nitro");
+      expect(logs.join("\n")).toContain("nitro/server/no-browser-api");
     },
   );
 });

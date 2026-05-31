@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { relative } from "pathe";
-import { visitorKeys } from "oxc-parser";
 import type {
   DoctorHelpers,
   DynamicImportFact,
@@ -16,6 +15,7 @@ import { parseTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
 import { createCacheKey, markSession, type ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
+import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
@@ -251,7 +251,7 @@ function walkAstFacts(node: unknown, visit: (node: unknown) => void) {
   const typed = node as { type?: string };
   if (!typed.type) return;
   visit(typed);
-  for (const key of visitorKeys[typed.type] ?? []) {
+  for (const key of getNodeVisitorKeys(typed as Record<string, unknown>)) {
     const value = (typed as Record<string, unknown>)[key];
     if (Array.isArray(value)) {
       for (const child of value) walkAstFacts(child, visit);
@@ -266,33 +266,13 @@ function walkTemplateFacts(node: unknown, visit: (node: unknown) => void) {
   const typed = node as { type?: string };
   if (!typed.type) return;
   visit(typed);
-  for (const key of templateFactKeys(typed.type)) {
+  for (const key of getTemplateVisitorKeys(typed as Record<string, unknown>)) {
     const value = (typed as Record<string, unknown>)[key];
     if (Array.isArray(value)) {
       for (const child of value) walkTemplateFacts(child, visit);
     } else if (value && typeof value === "object") {
       walkTemplateFacts(value, visit);
     }
-  }
-}
-
-function templateFactKeys(type: string): string[] {
-  if (visitorKeys[type]) return visitorKeys[type];
-  switch (type) {
-    case "Program":
-      return ["body", "templateBody"];
-    case "VDocumentFragment":
-    case "VElement":
-      return ["children", "startTag", "endTag"];
-    case "VStartTag":
-      return ["attributes"];
-    case "VAttribute":
-    case "VDirective":
-      return ["key", "value"];
-    case "VExpressionContainer":
-      return ["expression", "references"];
-    default:
-      return [];
   }
 }
 

@@ -525,6 +525,25 @@ test("i18n unused translations accepts $t and dynamic keys stay unresolved", asy
   ]);
 });
 
+test("i18n unused translations ignores locale metadata keys", async () => {
+  const result = await runRuleFixture({
+    rule: noUnusedTranslations,
+    framework: "vue",
+    dependencies: { "vue-i18n": "^11.0.0" },
+    files: {
+      "src/App.vue": `<template>{{ t('home.title') }}</template>`,
+      "locales/en.json": JSON.stringify({
+        $schema: "https://example.com/schema.json",
+        home: { title: "Home", subtitle: "Welcome" },
+      }),
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.message)).toEqual([
+    'Translation key "home.subtitle" is not used by any static Vue i18n call.',
+  ]);
+});
+
 test("i18n untranslated text reports visible template text and static attributes", async () => {
   const result = await runRuleFixture({
     rule: noUntranslatedText,
@@ -542,6 +561,46 @@ test("i18n untranslated text reports visible template text and static attributes
   expect(result.diagnostics.map((item) => item.message)).toEqual([
     'Visible text "Email" should come from Vue i18n.',
     'Attribute "placeholder" contains untranslated text "Email address".',
+  ]);
+});
+
+test("i18n untranslated text ignores literal URLs and domains", async () => {
+  const result = await runRuleFixture({
+    rule: noUntranslatedText,
+    framework: "vue",
+    dependencies: { "vue-i18n": "^11.0.0" },
+    files: {
+      "src/App.vue": `<template>
+  <p>github.com/nodejs/node-v0.x-archive/releases/tag/v0.0.1</p>
+  <p>https://example.com/docs</p>
+  <label>Email</label>
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.message)).toEqual([
+    'Visible text "Email" should come from Vue i18n.',
+  ]);
+});
+
+test("i18n untranslated text ignores i18n-t slot content and code fragments", async () => {
+  const result = await runRuleFixture({
+    rule: noUntranslatedText,
+    framework: "vue",
+    dependencies: { "vue-i18n": "^11.0.0" },
+    files: {
+      "src/App.vue": `<template>
+  <i18n-t keypath="auth.explanation">
+    <template #protocol><span>AT Protocol</span></template>
+  </i18n-t>
+  <span>console</span>.<span>log(</span>
+  <label>Email</label>
+</template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.message)).toEqual([
+    'Visible text "Email" should come from Vue i18n.',
   ]);
 });
 

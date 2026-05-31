@@ -146,14 +146,24 @@ export function isObjectPropertyKey(node: AnyNode) {
 
 export function isKnownGuardedBrowserGlobal(text: string, offset: number) {
   const before = text.slice(Math.max(0, offset - 80), offset);
-  return /import\.meta\.client|process\.client|typeof\s+(window|document|localStorage|sessionStorage|navigator)\s*!==?\s*["']undefined["']/.test(
-    before,
+  return (
+    /import\.meta\.client|process\.client|typeof\s+(window|document|localStorage|sessionStorage|navigator)\s*!==?\s*["']undefined["']/.test(
+      before,
+    ) ||
+    /if\s*\([^)\n]*typeof\s+(window|document|localStorage|sessionStorage|navigator)\s*={2,3}\s*["']undefined["'][^)\n]*$/.test(
+      before,
+    )
   );
 }
 
 export function hasPriorServerReturnGuard(text: string, offset: number) {
   const before = text.slice(Math.max(0, offset - 500), offset);
-  return /if\s*\(\s*import\.meta\.server\s*\)\s*(?:\{\s*)?return\b/s.test(before);
+  return (
+    /if\s*\(\s*import\.meta\.server\s*\)\s*(?:\{\s*)?return\b/s.test(before) ||
+    /if\s*\([^)]*typeof\s+(?:window|document|localStorage|sessionStorage|navigator)\s*={2,3}\s*["']undefined["'][^)]*\)\s*(?:\{\s*)?return\b/s.test(
+      before,
+    )
+  );
 }
 
 export function isVueUseBrowserGlobalTarget(node: AnyNode) {

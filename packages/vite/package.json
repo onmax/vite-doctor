@@ -44,10 +44,15 @@
     "check": "vp check"
   },
   "dependencies": {
+    "@typescript-eslint/parser": "catalog:",
+    "@vue/compiler-sfc": "catalog:",
     "cac": "^6.7.14",
     "consola": "^3.4.2",
+    "eslint": "catalog:",
+    "eslint-plugin-vue": "catalog:",
     "oxc-parser": "catalog:",
-    "pathe": "^2.0.3"
+    "pathe": "^2.0.3",
+    "vue-eslint-parser": "catalog:"
   },
   "devDependencies": {
     "@vue-doctor/core": "workspace:*",

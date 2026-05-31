@@ -22,8 +22,9 @@ const TEMPLATE_EVENT_RE_G = /@\w+(?:\.[\w.]+)?\s*=\s*["']([^"']+)["']/g;
 const IDENT_RE_G = /\b[A-Za-z_$][\w$]*\b/g;
 const CLIENT_CALLBACK_RE =
   /^(useEventListener|addEventListener|onKeyDown|onKeyUp|onKeyStroke|onClickOutside|onLongPress|usePointerSwipe|useSwipe|useIntersectionObserver|useResizeObserver|useMutationObserver|defineShortcuts)$/;
+const CLIENT_LIFECYCLE_RE = /^(onMounted|onBeforeMount|onBeforeUnmount|onUnmounted)$/;
 const LIFECYCLE_RE =
-  /^(onMounted|onBeforeMount|onUnmounted|watch|watchEffect|watchPostEffect|nextTick)$/;
+  /^(onMounted|onBeforeMount|onBeforeUnmount|onUnmounted|watch|watchEffect|watchPostEffect|nextTick)$/;
 const COMMAND_LIKE_RE =
   /^(on[A-Z]|handle|handler|callback|execute|run|open|close|toggle|submit|select|copy|download|navigate|scroll)/;
 
@@ -178,6 +179,11 @@ function buildCallFlowEvidence(ctx: RuleContext) {
     if (declared) functions.set(declared.name, declared.node);
   });
 
+  for (const [name, node] of functions) {
+    const directCalls = collectDirectCalledFunctionNames(node, functions);
+    if (directCalls.size) calls.set(name, directCalls);
+  }
+
   for (const match of getTemplateSource(ctx).matchAll(TEMPLATE_EVENT_RE_G)) {
     const name = match[1]?.match(IDENT_RE_G)?.[0];
     if (name && functions.has(name)) clientCallable.add(name);
@@ -199,6 +205,15 @@ function buildCallFlowEvidence(ctx: RuleContext) {
         for (const arg of node.arguments ?? []) {
           const name = callbackArgumentName(arg);
           if (name && functions.has(name)) clientCallable.add(name);
+        }
+      }
+      if (callee && CLIENT_LIFECYCLE_RE.test(callee)) {
+        for (const arg of node.arguments ?? []) {
+          const name = callbackArgumentName(arg);
+          if (name && functions.has(name)) clientCallable.add(name);
+          for (const called of collectDirectCalledFunctionNames(arg, functions)) {
+            clientCallable.add(called);
+          }
         }
       }
       return;
@@ -256,6 +271,37 @@ function calledFunctionName(node: AnyNode) {
 
 function callbackArgumentName(node: AnyNode) {
   return node.type === "Identifier" ? node.name : null;
+}
+
+function collectDirectCalledFunctionNames(
+  node: AnyNode,
+  functions: Map<string, AnyNode>,
+): Set<string> {
+  const called = new Set<string>();
+  const visit = (current: AnyNode, isRoot = false) => {
+    if (!current || typeof current !== "object") return;
+    if (Array.isArray(current)) {
+      for (const child of current) visit(child);
+      return;
+    }
+    if (
+      !isRoot &&
+      (current.type === "FunctionDeclaration" ||
+        current.type === "FunctionExpression" ||
+        current.type === "ArrowFunctionExpression")
+    )
+      return;
+    if (current.type === "CallExpression") {
+      const name = calledFunctionName(current);
+      if (name && functions.has(name)) called.add(name);
+    }
+    for (const [key, value] of Object.entries(current)) {
+      if (key === "__doctorParent" || key === "parent") continue;
+      visit(value);
+    }
+  };
+  visit(node, true);
+  return called;
 }
 
 function collectReturnedCommandNames(
