@@ -170,7 +170,9 @@ function readDiagnosticCodeMaps() {
   const map = new Map<string, string>();
   for (const file of files) {
     const text = readFileSync(join(root, file), "utf8");
-    for (const match of text.matchAll(/\{ code: "([^"]+)", ruleId: "([^"]+)" \}/g)) {
+    for (const match of text.matchAll(
+      /\{\s*code:\s*"([^"]+)"\s*,\s*ruleId:\s*"([^"]+)"\s*,?\s*\}/g,
+    )) {
       map.set(match[2]!, match[1]!);
     }
   }
@@ -375,6 +377,7 @@ function renderRulePage(rule: RuleDocument) {
 
   if (rule.description) lines.push(escapeMarkdownText(rule.description), "");
   lines.push(renderBadgeRow(rule), "");
+  lines.push("## Run this rule", "", "```bash", renderRuleCommand(rule), "```", "");
   if (rule.why) lines.push("## Why it matters", "", escapeMarkdownText(rule.why), "");
   if (rule.recommendedReplacement) {
     lines.push("## Recommended fix", "", escapeMarkdownText(rule.recommendedReplacement), "");
@@ -409,7 +412,7 @@ function renderMdcComponent(name: string, props: Record<string, string>) {
 function renderExample(example: RuleExample, index: number) {
   const language = example.language || "ts";
   const lines = [];
-  if (index > 0) lines.push(`### Alternative ${index + 1}`, "");
+  lines.push(`### ${example.title || `Alternative ${index + 1}`}`, "");
   if (example.invalid) {
     lines.push("Before", "");
     lines.push(`\`\`\`${language}`, trimCode(example.invalid), "```", "");
@@ -464,6 +467,11 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
 
   if (rule.id.includes("usefetch") || rule.id.includes("use-fetch")) {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");
+  }
+
+  if (rule.id === "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly") {
+    add("NuxtTime", "https://nuxt.com/docs/4.x/api/components/nuxt-time");
+    add("ClientOnly", "https://nuxt.com/docs/4.x/api/components/client-only");
   }
 
   if (rule.id.includes("asyncdata") || rule.id.includes("async-data")) {
@@ -660,6 +668,11 @@ function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {
       ? parts.slice(1)
       : [rule.category || rule.pack.split("/").at(-1) || "rules", parts.at(-1) || rule.id];
   return pathParts.map(slugSegment).join("/");
+}
+
+function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
+  if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
+  return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;
 }
 
 function slugSegment(value: string) {

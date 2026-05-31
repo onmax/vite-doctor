@@ -36,7 +36,8 @@ export default function extend(...args: unknown[]): MergeTarget {
     index = 1;
   }
 
-  const target = isMergeTarget(args[index]) ? args[index] : {};
+  const maybeTarget = args[index];
+  const target: MergeTarget = isMergeTarget(maybeTarget) ? maybeTarget : {};
 
   for (const source of args.slice(index + 1)) {
     mergeInto(target, source, deep);

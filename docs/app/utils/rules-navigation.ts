@@ -15,50 +15,64 @@ type DiagnosticNavigationEntry = {
   ruleId: string;
 };
 
-const frameworkNavigationOrder = ["nuxt", "vue", "nitro", "vite"] as const satisfies Framework[];
+const frameworkNavigationOrder = ["nuxt", "vue", "vite", "nitro"] as const satisfies Framework[];
 
 export function createRulesNavigation(
   rules: RuleNavigationEntry[],
   diagnostics: DiagnosticNavigationEntry[] = [],
-): ContentNavigationItem {
+): ContentNavigationItem[] {
   const diagnosticCodeByRuleId = new Map(
     diagnostics.map((diagnostic) => [diagnostic.ruleId, diagnostic.code]),
   );
-  const children = frameworkNavigationOrder.flatMap((framework) => {
+  return frameworkNavigationOrder.map((framework) => {
     const meta = FRAMEWORK_META[framework];
     const frameworkRules = rules
       .filter((rule) => ruleFramework(rule) === framework)
       .toSorted(compareRules);
 
-    return [
-      {
-        title: `${meta.label} rules`,
-        path: `/rules/${framework}`,
-        icon: meta.icon,
-        badge: frameworkRules.length,
-      },
-      ...frameworkRules.map((rule) => ({
-        title: diagnosticCodeByRuleId.get(rule.ruleId) || rule.ruleId,
-        path: rule.path,
-        ruleId: rule.ruleId,
-      })),
-    ];
+    return {
+      title: meta.label,
+      path: `/${framework}`,
+      icon: meta.icon,
+      children: [
+        {
+          title: "Installation",
+          path: `/${framework}`,
+          icon: "i-lucide-book-open",
+        },
+        {
+          title: `${meta.label} rules`,
+          path: `/${framework}/rules`,
+          icon: "i-lucide-list-checks",
+          badge: frameworkRules.length,
+        },
+        ...frameworkRules.map((rule) => ({
+          title: diagnosticCodeByRuleId.get(rule.ruleId) || rule.ruleId,
+          path: rule.path,
+          ruleId: rule.ruleId,
+        })),
+      ],
+    };
   });
-
-  return {
-    title: "Rules",
-    path: "/rules/nuxt",
-    icon: "i-lucide-list-checks",
-    children,
-  };
 }
 
 export function appendRulesNavigation(
   navigation: ContentNavigationItem[],
-  rulesNavigation: ContentNavigationItem,
+  rulesNavigation: ContentNavigationItem[],
 ): ContentNavigationItem[] {
-  if (navigation.some((item) => item.path === rulesNavigation.path)) return navigation;
-  return [...navigation, rulesNavigation];
+  const existingPaths = new Set(navigation.map((item) => item.path));
+  const rulesByPath = new Map(rulesNavigation.map((item) => [item.path, item]));
+  const merged = navigation.map((item) => {
+    const rulesItem = item.path ? rulesByPath.get(item.path) : undefined;
+    if (!rulesItem) return item;
+    return {
+      ...rulesItem,
+      ...item,
+      icon: item.icon ?? rulesItem.icon,
+      children: mergeChildren(item.children ?? [], rulesItem.children ?? []),
+    };
+  });
+  return [...merged, ...rulesNavigation.filter((item) => !existingPaths.has(item.path))];
 }
 
 function compareRules(left: RuleNavigationEntry, right: RuleNavigationEntry) {
@@ -71,4 +85,12 @@ function compareRules(left: RuleNavigationEntry, right: RuleNavigationEntry) {
 
 function ruleFramework(rule: RuleNavigationEntry): Framework {
   return rule.framework ?? frameworkOfPack(rule.pack ?? "");
+}
+
+function mergeChildren(
+  existing: ContentNavigationItem[],
+  generated: ContentNavigationItem[],
+): ContentNavigationItem[] {
+  const existingPaths = new Set(existing.map((item) => item.path));
+  return [...existing, ...generated.filter((item) => !existingPaths.has(item.path))];
 }

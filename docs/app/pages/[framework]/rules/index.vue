@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FRAMEWORK_META, type Framework } from "../../utils/rule-metadata";
+import { FRAMEWORK_META, type Framework } from "../../../utils/rule-metadata";
 
 definePageMeta({
   layout: "docs",

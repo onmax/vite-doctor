@@ -22,8 +22,9 @@ const props = withDefaults(
     description?: string;
     currentFramework?: FrameworkFilter;
     packLabel?: string;
-    frameworkTabsMode?: "filter" | "links";
+    frameworkTabsMode?: "filter" | "links" | "none";
     headingTag?: "h1" | "h2";
+    showHeader?: boolean;
   }>(),
   {
     description: "",
@@ -31,6 +32,7 @@ const props = withDefaults(
     packLabel: "",
     frameworkTabsMode: "filter",
     headingTag: "h2",
+    showHeader: true,
   },
 );
 
@@ -137,7 +139,7 @@ const categoryItems = computed(() => [
     description: `${frameworkRules.value.filter((rule) => rule.category === category.value).length} rules`,
   })),
 ]);
-const frameworkLinkOrder = ["nuxt", "vue", "nitro", "vite"] as const;
+const frameworkLinkOrder = ["nuxt", "vue", "vite", "nitro"] as const;
 const frameworkLinkTabs = computed(() =>
   frameworkLinkOrder.map((framework) => ({
     id: framework,
@@ -174,7 +176,7 @@ const activeFrameworkLinkClass = computed(
 
 <template>
   <section class="rule-explorer w-full">
-    <header class="py-2">
+    <header v-if="showHeader" class="py-2">
       <div class="flex flex-col gap-2 md:flex-row md:items-baseline md:justify-between">
         <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <a
@@ -243,7 +245,7 @@ const activeFrameworkLinkClass = computed(
           <NuxtLink
             v-for="tab in frameworkLinkTabs"
             :key="tab.id"
-            :to="`/rules/${tab.id}`"
+            :to="`/${tab.id}/rules`"
             prefetch
             role="tab"
             :aria-selected="activeFrameworkLinkId === tab.id"
@@ -262,7 +264,10 @@ const activeFrameworkLinkClass = computed(
       </nav>
     </header>
 
-    <div class="mt-7 flex flex-wrap items-end gap-2 xl:flex-nowrap">
+    <div
+      class="flex flex-wrap items-end gap-2 xl:flex-nowrap"
+      :class="showHeader ? 'mt-7' : 'mt-0'"
+    >
       <div class="min-w-72 flex-1 basis-96 xl:max-w-lg">
         <UInput
           v-model="search"

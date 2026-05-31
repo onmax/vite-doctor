@@ -135,13 +135,13 @@ export function severityClass(severity: Severity) {
   }[severity];
 }
 
-export function severityBadgeColor(severity: Severity | string) {
+export function severityBadgeColor(severity: string) {
   if (severity === "error") return "error";
   if (severity === "warn") return "warning";
   return "info";
 }
 
-export function fixLabel(fix: FixKind | string | undefined) {
+export function fixLabel(fix: string | undefined) {
   if (fix === "safe") return "Auto-fix";
   if (fix === "suggestion") return "Suggestion";
   return "No fix";
@@ -159,7 +159,7 @@ export function fixClass(fix: FixKind) {
   return "text-neutral-300 dark:text-neutral-700";
 }
 
-export function fixBadgeColor(fix: FixKind | string | undefined) {
+export function fixBadgeColor(fix: string | undefined) {
   if (fix === "safe") return "success";
   if (fix === "suggestion") return "primary";
   return "neutral";

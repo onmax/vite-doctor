@@ -1,4 +1,7 @@
-import type { MaybeRefOrGetter } from "vue";
+import { computed, toValue, type MaybeRefOrGetter } from "vue";
+
+declare const useAsyncData: (...args: any[]) => any;
+declare const queryCollection: (collection: "rules") => any;
 
 export function useRuleContent(path: MaybeRefOrGetter<string>) {
   const rulePath = computed(() => toValue(path));

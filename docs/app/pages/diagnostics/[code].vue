@@ -28,7 +28,7 @@ useHead(() => ({
   <main class="mx-auto max-w-4xl px-6 py-10 sm:px-10">
     <div class="mb-8">
       <UButton
-        to="/rules/vite"
+        to="/vite/rules"
         color="neutral"
         variant="link"
         icon="i-lucide-arrow-left"

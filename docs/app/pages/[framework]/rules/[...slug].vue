@@ -2,6 +2,7 @@
 import { FRAMEWORK_META, type Framework } from "../../../utils/rule-metadata";
 
 definePageMeta({
+  layout: "docs",
   validate: (route) => ["vue", "vite", "nuxt", "nitro"].includes(String(route.params.framework)),
 });
 
@@ -9,6 +10,7 @@ const route = useRoute();
 const path = computed(() => route.path);
 const framework = computed(() => String(route.params.framework) as Framework);
 const meta = computed(() => FRAMEWORK_META[framework.value]);
+const tocPage = computed(() => rule.value as any);
 
 const { data: rule } = await useRuleContent(path);
 
@@ -28,25 +30,31 @@ useHead(() => ({
 </script>
 
 <template>
-  <main class="mx-auto max-w-4xl px-6 py-10 sm:px-10">
-    <div class="mb-8">
-      <UButton
-        :to="`/rules/${framework}`"
-        color="neutral"
-        variant="link"
-        icon="i-lucide-arrow-left"
-        class="px-0"
-      >
-        {{ meta.label }} rules
-      </UButton>
-      <h1 class="mt-3 text-3xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-100">
-        {{ rule?.title }}
-      </h1>
-      <p class="mt-3 text-base text-neutral-600 dark:text-neutral-400">
-        {{ rule?.description }}
-      </p>
-    </div>
+  <UPage v-if="rule">
+    <UPageHeader
+      :title="rule.title"
+      :description="rule.description"
+      :headline="meta.label"
+      :ui="{ wrapper: 'flex-row items-center flex-wrap justify-between' }"
+    >
+      <template #links>
+        <UButton
+          :to="`/${framework}/rules`"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-arrow-left"
+        >
+          {{ meta.label }} rules
+        </UButton>
+      </template>
+    </UPageHeader>
 
-    <RuleContent :rule="rule" />
-  </main>
+    <UPageBody>
+      <RuleContent :rule="rule" />
+    </UPageBody>
+
+    <template #right>
+      <DocsAsideRight :page="tocPage" />
+    </template>
+  </UPage>
 </template>

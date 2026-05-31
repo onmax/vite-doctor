@@ -22,7 +22,7 @@ Static build analysis for framework code. Doctor reads app code, build config, p
 
 #links
 :u-button{to="/cli" size="xl" trailing-icon="i-lucide-arrow-right" label="Run Doctor"}
-:u-button{to="/rules/nuxt" size="xl" color="neutral" variant="outline" icon="i-lucide-list-checks" label="Browse rules"}
+:u-button{to="/nuxt" size="xl" color="neutral" variant="outline" icon="i-lucide-list-checks" label="Browse frameworks"}
 
 #body
 :::code-group{class="hero-code"}
@@ -83,14 +83,14 @@ Run project checks and framework scans.
 ---
 
 icon: i-lucide-list-checks
-to: /rules/nuxt
+to: /nuxt
 
 ---
 
 #title
-Rules
+Frameworks
 #description
-Search rule ids, severities, categories, and fix guidance.
+Choose the Nuxt, Vue, Vite, or Nitro guide before opening a rule.
 ::::
 
 ::::u-page-card
@@ -98,7 +98,7 @@ Search rule ids, severities, categories, and fix guidance.
 ---
 
 icon: i-lucide-package
-to: /rules/nuxt
+to: /nuxt/rules
 
 ---
 

@@ -6,9 +6,11 @@ import doctorPackage from "../packages/vite/package.json" with { type: "json" };
 import { getDiagnosticDocuments, getRuleDocuments } from "./rules/source.js";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
-const frameworks = ["vue", "nuxt", "nitro", "vite"];
+const frameworks = ["nuxt", "vue", "vite", "nitro"];
 const docsRoutes = ["/", "/cli"];
-const ruleIndexRoutes = frameworks.map((framework) => `/rules/${framework}`);
+const frameworkRoutes = frameworks.map((framework) => `/${framework}`);
+const ruleIndexRoutes = frameworks.map((framework) => `/${framework}/rules`);
+const legacyRuleIndexRoutes = frameworks.map((framework) => `/rules/${framework}`);
 const ruleDetailRoutes = getRuleDocuments().map((rule) => rule.path);
 const diagnosticRoutes = getDiagnosticDocuments().map((diagnostic) => diagnostic.path);
 
@@ -66,7 +68,14 @@ export default defineNuxtConfig({
       },
     ],
     prerender: {
-      routes: [...docsRoutes, ...ruleIndexRoutes, ...ruleDetailRoutes, ...diagnosticRoutes],
+      routes: [
+        ...docsRoutes,
+        ...frameworkRoutes,
+        ...ruleIndexRoutes,
+        ...legacyRuleIndexRoutes,
+        ...ruleDetailRoutes,
+        ...diagnosticRoutes,
+      ],
     },
     cloudflare: {
       nodeCompat: true,
@@ -75,7 +84,9 @@ export default defineNuxtConfig({
 
   routeRules: {
     ...Object.fromEntries(docsRoutes.map((route) => [route, { prerender: true }])),
+    ...Object.fromEntries(frameworkRoutes.map((route) => [route, { prerender: true }])),
     ...Object.fromEntries(ruleIndexRoutes.map((route) => [route, { prerender: true }])),
+    ...Object.fromEntries(legacyRuleIndexRoutes.map((route) => [route, { prerender: true }])),
     "/_nuxt/**": {
       headers: { "cache-control": "public, max-age=31536000, immutable" },
     },

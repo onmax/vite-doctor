@@ -16,7 +16,7 @@ import {
 export function useRuleExplorer(options: {
   rules: MaybeRefOrGetter<RawRuleEntry[]>;
   currentFramework: MaybeRefOrGetter<FrameworkFilter>;
-  frameworkTabsMode: MaybeRefOrGetter<"filter" | "links">;
+  frameworkTabsMode: MaybeRefOrGetter<"filter" | "links" | "none">;
 }) {
   const search = ref("");
   const frameworkFilter = ref<FrameworkFilter>(toValue(options.currentFramework));
@@ -63,7 +63,7 @@ export function useRuleExplorer(options: {
   });
 
   const frameworkRules = computed(() => {
-    if (toValue(options.frameworkTabsMode) === "links") return rules.value;
+    if (toValue(options.frameworkTabsMode) !== "filter") return rules.value;
     if (frameworkFilter.value === "all") return rules.value;
     return rules.value.filter((rule) => rule.framework === frameworkFilter.value);
   });

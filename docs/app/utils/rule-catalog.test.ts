@@ -1,6 +1,11 @@
 import { nextTick, ref } from "vue";
 import { expect, test } from "vite-plus/test";
-import { getRuleDocuments, getRuleReports, rulesCollectionSource } from "../../rules/source.js";
+import {
+  getDiagnosticDocuments,
+  getRuleDocuments,
+  getRuleReports,
+  rulesCollectionSource,
+} from "../../rules/source.js";
 import { useRuleExplorer } from "../composables/useRuleExplorer.js";
 import { normalizeCatalogRules, type RawRuleEntry } from "./rule-catalog.js";
 import { appendRulesNavigation, createRulesNavigation } from "./rules-navigation.js";
@@ -73,6 +78,7 @@ test("rule source emits markdown with frontmatter and body sections", async () =
   expect(markdown).toContain("---");
   expect(markdown).toContain(`ruleId: ${JSON.stringify(rule!.id)}`);
   expect(markdown).toContain("::rule-badges");
+  expect(markdown).toContain("## Run this rule");
   expect(markdown).toContain("## Why it matters");
   expect(markdown).toContain("## Recommended fix");
   expect(markdown).toContain("## Example");
@@ -100,11 +106,44 @@ test("rule source emits complete documentation for every rule", async () => {
   expect(incompleteRules).toEqual([]);
   for (const rule of docs) {
     const markdown = await rulesCollectionSource.getItem(rule.key);
+    expect(markdown).toContain("## Run this rule");
     expect(markdown).toContain("## Why it matters");
     expect(markdown).toContain("## Recommended fix");
     expect(markdown).toContain("## Example");
     expect(markdown).not.toContain("## Metadata");
   }
+});
+
+test("rules navigation uses diagnostic codes for multi-line registry entries", () => {
+  const diagnostics = getDiagnosticDocuments();
+  const navigation = createRulesNavigation(
+    getRuleDocuments().map((rule) => ({
+      path: rule.path,
+      title: rule.title,
+      ruleId: rule.id,
+      category: rule.category,
+      framework: rule.framework,
+      pack: rule.pack,
+    })),
+    diagnostics,
+  );
+
+  expect(
+    diagnostics.find(
+      (diagnostic) =>
+        diagnostic.ruleId ===
+        "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
+    )?.code,
+  ).toBe("NUXT0032");
+  expect(
+    navigation
+      .find((item) => item.path === "/nuxt")
+      ?.children?.find(
+        (child) =>
+          child.path ===
+          "/nuxt/rules/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
+      )?.title,
+  ).toBe("NUXT0032");
 });
 
 test("rules navigation keeps framework overview pages above rule links", () => {
@@ -114,29 +153,39 @@ test("rules navigation keeps framework overview pages above rule links", () => {
     { code: "VITE0001", ruleId: "vite/env/no-secret-prefix" },
   ]);
 
-  expect(navigation.children?.map((item) => item.title)).toEqual([
+  expect(navigation.map((item) => item.title)).toEqual(["Nuxt", "Vue", "Vite", "Nitro"]);
+
+  expect(navigation.flatMap((item) => item.children?.map((child) => child.title) ?? [])).toEqual([
+    "Installation",
     "Nuxt rules",
     "NUXT0001",
+    "Installation",
     "Vue rules",
     "VUE0001",
-    "Nitro rules",
+    "Installation",
     "Vite rules",
     "VITE0001",
+    "Installation",
+    "Nitro rules",
   ]);
 
-  expect(navigation.children?.map((item) => item.path)).toEqual([
-    "/rules/nuxt",
+  expect(navigation.flatMap((item) => item.children?.map((child) => child.path) ?? [])).toEqual([
+    "/nuxt",
+    "/nuxt/rules",
     "/nuxt/rules/fetch/no-raw-fetch-in-setup",
-    "/rules/vue",
+    "/vue",
+    "/vue/rules",
     "/vue/rules/reactivity/no-ref-as-operand",
-    "/rules/nitro",
-    "/rules/vite",
+    "/vite",
+    "/vite/rules",
     "/vite/rules/env/no-secret-prefix",
+    "/nitro",
+    "/nitro/rules",
   ]);
 
   expect(
     appendRulesNavigation([{ title: "CLI", path: "/cli" }], navigation).map((item) => item.title),
-  ).toEqual(["CLI", "Rules"]);
+  ).toEqual(["CLI", "Nuxt", "Vue", "Vite", "Nitro"]);
 });
 
 test("rule examples do not reuse generic placeholders", () => {

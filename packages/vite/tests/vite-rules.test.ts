@@ -166,6 +166,20 @@ console.log(path.sep)`,
     ]);
   });
 
+  test("allows public json imports used as static data", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noPublicSrcImport],
+      files: {
+        "src/main.ts": `import data from '/public/agent-results.json'
+console.log(data)`,
+        "public/agent-results.json": `{"ok":true}`,
+      },
+    });
+
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
   test("reports env prefix and dev server filesystem risks", async () => {
     const result = await runProjectFixture({
       framework: "vite",

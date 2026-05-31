@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import type { RawRuleEntry } from "../utils/rule-catalog";
-
 definePageMeta({ header: false, footer: false, layout: false });
 
 const homeTitle = "Catch the AI slop your agents ship.";
@@ -49,13 +47,35 @@ useHead({
   ],
 });
 
-const { data: allRules } = await useAsyncData("home-rules", () => queryCollection("rules").all());
-
 const tracks = [
-  { id: "nuxt", label: "Nuxt", icon: "i-logos-nuxt-icon", to: "/rules/nuxt" },
-  { id: "vue", label: "Vue", icon: "i-logos-vue", to: "/rules/vue" },
-  { id: "nitro", label: "Nitro", icon: "i-unjs-nitro", to: "/rules/nitro" },
-  { id: "vite", label: "Vite", icon: "i-logos-vitejs", to: "/rules/vite" },
+  {
+    id: "nuxt",
+    label: "Nuxt",
+    icon: "i-logos-nuxt-icon",
+    to: "/nuxt",
+    description: "Install the Nuxt module and fix app, Vue, Nitro, and Vite diagnostics.",
+  },
+  {
+    id: "vue",
+    label: "Vue",
+    icon: "i-logos-vue",
+    to: "/vue",
+    description: "Catch reactivity, lifecycle, watcher, template, SSR, and security issues.",
+  },
+  {
+    id: "vite",
+    label: "Vite",
+    icon: "i-logos-vitejs",
+    to: "/vite",
+    description: "Find env, define, server-only import, SSR, asset, worker, and HMR risks.",
+  },
+  {
+    id: "nitro",
+    label: "Nitro",
+    icon: "i-unjs-nitro",
+    to: "/nitro",
+    description: "Fix request validation, runtime config, and server-boundary diagnostics.",
+  },
 ] as const;
 
 type HomeFeature = {
@@ -118,23 +138,12 @@ function toggleTheme() {
           CLI
         </a>
         <a
-          href="/rules/nuxt"
+          v-for="track in tracks"
+          :key="track.id"
+          :href="track.to"
           class="rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
-          Rules
-        </a>
-        <a
-          href="https://github.com/onmax/vite-doctor"
-          target="_blank"
-          rel="noopener"
-          class="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-        >
-          GitHub
-          <UIcon
-            name="i-lucide-arrow-up-right"
-            class="size-3.5 shrink-0 max-sm:hidden"
-            aria-hidden="true"
-          />
+          {{ track.label }}
         </a>
         <button
           type="button"
@@ -318,12 +327,43 @@ function toggleTheme() {
       </section>
 
       <section id="rules" class="pb-14">
-        <RuleExplorer
-          :rules="(allRules || []) as RawRuleEntry[]"
-          title="Doctor rules"
-          current-framework="all"
-          framework-tabs-mode="filter"
-        />
+        <div class="mb-5 max-w-2xl">
+          <p class="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+            Start with your runtime
+          </p>
+          <h2
+            class="mt-2 text-2xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
+          >
+            Use the docs that match the diagnostic prefix.
+          </h2>
+          <p class="mt-3 text-sm leading-6 text-neutral-600 dark:text-neutral-400">
+            Doctor keeps Nuxt, Vue, Vite, and Nitro in separate rule packs. Choose the framework
+            page first, then open the rule page for the exact diagnostic you are fixing.
+          </p>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <NuxtLink
+            v-for="track in tracks"
+            :key="track.id"
+            :to="track.to"
+            class="group rounded-lg border border-neutral-950/10 p-4 transition-colors hover:border-emerald-500/40 hover:bg-emerald-50/40 dark:border-white/10 dark:hover:border-emerald-400/30 dark:hover:bg-emerald-400/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          >
+            <span
+              class="flex items-center gap-2 text-sm font-semibold text-neutral-950 dark:text-neutral-50"
+            >
+              <UIcon :name="track.icon" class="size-4 shrink-0" aria-hidden="true" />
+              {{ track.label }}
+              <UIcon
+                name="i-lucide-arrow-right"
+                class="ml-auto size-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5"
+                aria-hidden="true"
+              />
+            </span>
+            <span class="mt-3 block text-sm leading-6 text-neutral-600 dark:text-neutral-400">
+              {{ track.description }}
+            </span>
+          </NuxtLink>
+        </div>
       </section>
     </main>
   </div>

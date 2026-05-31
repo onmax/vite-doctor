@@ -101,6 +101,7 @@ export const noDynamicNewUrl = createRule({
 });
 
 function isPublicImport(source: string): boolean {
+  if (/\.(?:json|json5)$/i.test(source)) return false;
   return (
     source.startsWith("/public/") || source.startsWith("public/") || source.includes("/public/")
   );
