@@ -22,7 +22,7 @@ Run Vite Doctor from the project root:
 pnpm dlx vite-doctor .
 ```
 
-Vite Doctor reads project signals, activates the right Rule Packs, and applies each Recommended Preset. You get framework-specific diagnostics without choosing presets first.
+Vite Doctor reads app code, build config, project metadata, and server handlers to catch framework bugs before review. It picks the Nuxt, Vue, Nitro, or Vite diagnostics that fit your project.
 
 Need a narrower Doctor Run? Select exact presets, one Rule, or a framework override:
 
@@ -39,7 +39,7 @@ pnpm add -D vite-doctor
 pnpm nuxt doctor
 ```
 
-Use `--framework` only when project signals are missing or ambiguous.
+Use `--framework` only when Doctor cannot identify the framework automatically.
 
 ## Configuration
 
@@ -75,7 +75,7 @@ export default {
 };
 ```
 
-In Vite config, the same plugin covers Vite, Vue, and Nitro projects. Doctor activates Rule Packs from project signals:
+In Vite config, the same plugin covers Vite, Vue, and Nitro projects. Doctor picks the matching diagnostics automatically:
 
 ```ts
 // vite.config.ts
@@ -86,7 +86,7 @@ export default {
 };
 ```
 
-Set `framework: "nitro"` only when project signals are missing or ambiguous:
+Set `framework: "nitro"` only when Doctor cannot identify the framework automatically:
 
 ```ts
 // vite.config.ts
