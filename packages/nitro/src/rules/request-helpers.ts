@@ -23,6 +23,7 @@ export interface ValidatedInputRuleOptions {
   validatedUtility: string;
   message: string;
   suggestion: string;
+  docsUrl?: string;
 }
 
 export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
@@ -35,6 +36,7 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
       category: "request",
       severity: "warn",
       fixable: "suggestion",
+      docsUrl: opts.docsUrl,
       requires: { script: true, nitro: true },
     },
     create(ctx) {

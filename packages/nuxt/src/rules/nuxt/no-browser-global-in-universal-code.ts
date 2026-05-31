@@ -14,6 +14,8 @@ export const noBrowserGlobalInUniversalCode = createRule({
     category: "hydration",
     severity: "error",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/guide/best-practices/hydration#browser-only-apis-in-server-context",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

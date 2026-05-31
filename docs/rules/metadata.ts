@@ -1136,10 +1136,10 @@ export const ruleDocumentationMetadata = {
   },
   "vite/assets/no-public-src-import": {
     description:
-      "Flags public asset imports in Vite code before they bypass the intended public URL contract.",
-    why: "Files in public are copied as-is and served from the root URL. Import image, font, and media assets from source when they need bundling, or reference public assets by URL when they should stay static.",
+      "Flags public media and font imports in Vite code before they bypass the intended public URL contract.",
+    why: "Files in public are copied as-is and served from the root URL. Import image, font, and media assets from source when they need bundling, or reference public assets by URL when they should stay static. Static JSON data imports are allowed because SSR pages may need build-time data instead of a runtime fetch.",
     recommendedReplacement:
-      "Reference public assets by root-relative URL, or move bundled assets into source.",
+      "Reference public media and font assets by root-relative URL, or move bundled assets into source.",
     examples: [
       {
         title: "Reference public assets by URL",

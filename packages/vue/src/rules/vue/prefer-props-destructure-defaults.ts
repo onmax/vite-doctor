@@ -12,6 +12,7 @@ export const preferPropsDestructureDefaults = createRule({
     category: "style",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/api/sfc-script-setup.html#reactive-props-destructure",
     requires: { sfc: true, script: true, vue: true },
     frameworkVersions: { vue: ">=3.5" },
   },
@@ -24,7 +25,7 @@ export const preferPropsDestructureDefaults = createRule({
         if (!ctx.helpers.isCall(node, "withDefaults")) return;
         if (!ctx.helpers.isCall(node.arguments?.[0], "defineProps")) return;
         ctx.report(
-          diagnostics.VUE0015.report({
+          diagnostics.VUE0015({
             why: "Vue 3.5 supports reactive props destructure with native default values.",
             fix: "Use const { prop = defaultValue } = defineProps<Props>().",
           }),

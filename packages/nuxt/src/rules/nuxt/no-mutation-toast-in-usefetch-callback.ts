@@ -18,6 +18,7 @@ export const noMutationToastInUseFetchCallback = createRule({
     category: "fetching",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-fetch#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

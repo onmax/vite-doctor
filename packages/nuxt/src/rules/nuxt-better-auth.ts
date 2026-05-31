@@ -18,7 +18,7 @@ export const requireStandardAuthHandlerMount = createRule({
         );
         if (hasHandler) return;
         ctx.report(
-          diagnostics.NUXT0003.report({
+          diagnostics.NUXT0003({
             why: "Nuxt Better Auth should expose the standard server/api/auth/[...all] handler.",
             fix: "Add server/api/auth/[...all].ts using the Better Auth Nuxt handler.",
           }),

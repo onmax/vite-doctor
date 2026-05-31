@@ -12,6 +12,7 @@ export const preferAssertMethod = createRule({
     category: "request",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://h3.dev/utils/request#assertmethodevent-expected-allowhead",
     requires: { script: true, nitro: true },
   },
   create(ctx) {

@@ -14,6 +14,7 @@ export const requireUAppRoot = createRule({
     category: "ui",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://ui.nuxt.com/docs/components/app#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -24,7 +25,7 @@ export const requireUAppRoot = createRule({
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
         ctx.report(
-          diagnostics.NUXT0015.report({
+          diagnostics.NUXT0015({
             why: "Nuxt UI toast and overlay services require a UApp root provider.",
             fix: "Wrap the app shell with <UApp> before using useToast() or useOverlay().",
           }),
@@ -48,6 +49,7 @@ export const preferUButton = createRule({
     category: "ui",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://ui.nuxt.com/docs/components/button#usage",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
@@ -58,7 +60,7 @@ export const preferUButton = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0013.report({
+          diagnostics.NUXT0013({
             why: "Native <button> reimplements behavior that Nuxt UI already provides.",
             fix: "Use <UButton> and map styling to Nuxt UI props such as icon, size, color, and variant.",
           }),
@@ -80,6 +82,7 @@ export const preferUFormControls = createRule({
     category: "ui",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://ui.nuxt.com/docs/components/form#usage",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
@@ -91,7 +94,7 @@ export const preferUFormControls = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0014.report({
+          diagnostics.NUXT0014({
             why: `Native <${node.rawName}> reimplements behavior that Nuxt UI already provides.`,
             fix: replacement,
           }),

@@ -8,6 +8,7 @@ export const definePropsWatchGetter = createRule({
     category: "reactivity",
     severity: "error",
     fixable: "safe",
+    docsUrl: "https://vuejs.org/api/sfc-script-setup.html#reactive-props-destructure",
     requires: { script: true, vue: true },
   },
   create(ctx) {
@@ -32,7 +33,7 @@ export const definePropsWatchGetter = createRule({
         ) {
           const id = node.arguments[0];
           ctx.report(
-            diagnostics.VUE0005.report({
+            diagnostics.VUE0005({
               why: `watch(${id.name}, ...) passes the current prop value. Use a getter so Vue tracks the destructured prop.`,
               fix: `Use watch(() => ${id.name}, ...).`,
             }),

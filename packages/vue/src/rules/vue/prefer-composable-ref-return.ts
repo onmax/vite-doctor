@@ -12,6 +12,7 @@ export const preferComposableRefReturn = createRule({
     category: "reactivity",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/guide/reusability/composables.html#return-values",
     requires: { script: true, vue: true },
   },
   create(ctx) {
@@ -32,7 +33,7 @@ export const preferComposableRefReturn = createRule({
         if (!reactiveMembers.length) return;
 
         ctx.report(
-          diagnostics.VUE0008.report({
+          diagnostics.VUE0008({
             why: "Reusable composables should return refs or computed refs instead of reactive-derived snapshots.",
             fix: "Return individual ref/computed values or toRefs(state) so callers can destructure safely.",
           }),

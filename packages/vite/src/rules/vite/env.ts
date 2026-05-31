@@ -15,6 +15,7 @@ export const noUntypedEnv = createRule({
     title: "Type Vite environment variables",
     category: "types",
     severity: "warn",
+    docsUrl: "https://vite.dev/guide/env-and-mode#intellisense-for-typescript",
     requires: { script: true },
   },
   create(ctx) {
@@ -23,7 +24,7 @@ export const noUntypedEnv = createRule({
         const name = importMetaEnvKey(node);
         if (!name || builtInEnvKeys.has(name) || hasTypeDeclaration(ctx, name, true)) return;
         ctx.report(
-          diagnostics.VITE0011.report({
+          diagnostics.VITE0011({
             why: `import.meta.env.${name} is used but not declared on ImportMetaEnv.`,
             fix: `Declare ${name} in vite-env.d.ts or env.d.ts.`,
           }),
@@ -46,6 +47,7 @@ export const noClientSecretPattern = createRule({
     title: "Do not read secret-looking env vars in client code",
     category: "security",
     severity: "error",
+    docsUrl: "https://vite.dev/guide/env-and-mode#env-variables",
     requires: { script: true },
   },
   create(ctx) {
@@ -54,7 +56,7 @@ export const noClientSecretPattern = createRule({
         const name = importMetaEnvKey(node);
         if (!name || !SECRET_NAME_RE.test(name)) return;
         ctx.report(
-          diagnostics.VITE0009.report({
+          diagnostics.VITE0009({
             why: `import.meta.env.${name} looks like a secret and may be exposed to the browser.`,
             fix: "Read secrets only in server-only code and expose deliberate public values.",
           }),
@@ -77,6 +79,7 @@ export const preferDirectImportMetaEnvAccess = createRule({
     title: "Prefer direct import.meta.env access",
     category: "configuration",
     severity: "info",
+    docsUrl: "https://vite.dev/guide/env-and-mode#env-variables",
     requires: { script: true },
   },
   create(ctx) {
@@ -86,7 +89,7 @@ export const preferDirectImportMetaEnvAccess = createRule({
         if (node.id?.type !== "ObjectPattern") return;
         if (memberPath(node.init) !== "import.meta.env") return;
         ctx.report(
-          diagnostics.VITE0012.report({
+          diagnostics.VITE0012({
             why: "Destructuring import.meta.env hides individual compile-time env reads.",
             fix: "Read Vite env values directly as import.meta.env.VITE_NAME.",
           }),
@@ -111,6 +114,7 @@ export const noEmptyEnvPrefix = createRule({
     category: "security",
     severity: "error",
     execution: "workspace",
+    docsUrl: "https://vite.dev/config/shared-options.html#envprefix",
     requires: { crossFile: true },
   },
   async create(ctx) {
@@ -120,7 +124,7 @@ export const noEmptyEnvPrefix = createRule({
           for (const prefix of config.envPrefixes) {
             if (prefix.value !== "") continue;
             ctx.report(
-              diagnostics.VITE0010.report({
+              diagnostics.VITE0010({
                 why: 'Vite envPrefix: "" exposes every environment variable to client code.',
                 fix: "Use the default VITE_ prefix or a narrow application-specific prefix.",
               }),
@@ -147,6 +151,7 @@ export const noBroadEnvPrefix = createRule({
     category: "security",
     severity: "warn",
     execution: "workspace",
+    docsUrl: "https://vite.dev/config/shared-options.html#envprefix",
     requires: { crossFile: true },
   },
   async create(ctx) {
@@ -156,7 +161,7 @@ export const noBroadEnvPrefix = createRule({
           for (const prefix of config.envPrefixes) {
             if (!isBroadPrefix(prefix.value)) continue;
             ctx.report(
-              diagnostics.VITE0008.report({
+              diagnostics.VITE0008({
                 why: `Vite envPrefix "${prefix.value}" is broad enough to expose unrelated variables.`,
                 fix: "Use a narrow public prefix and keep secret names outside client env prefixes.",
               }),

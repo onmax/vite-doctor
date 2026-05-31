@@ -4,9 +4,9 @@ Doctor uses `nostics` as the internal diagnostic primitive. Rules emit real `nos
 
 Doctor exposes a diagnostics host shaped like the Vite DevTools diagnostics host: package authors define diagnostics, register them into a shared code registry, and can look up handles by code. Doctor keeps the Doctor report boundary separate because file ranges, runtime evidence, confidence, suppressions, and rule IDs are Doctor metadata rather than `nostics` fields.
 
-Built-in Doctor rules emit diagnostics through typed package handles and pass Doctor metadata at the report boundary: `ctx.report(diagnostics.NUXT0001.report(params), metadata)`. The legacy single-object `ctx.report({ message, suggestion, ... })` shape is removed rather than kept as a compatibility layer.
+Built-in Doctor rules emit diagnostics through typed package handles and pass Doctor metadata at the report boundary: `ctx.report(diagnostics.NUXT0001(params), metadata)`. The legacy single-object `ctx.report({ message, suggestion, ... })` shape is removed rather than kept as a compatibility layer.
 
-The diagnostics host exposes `nostics` handles, including `.report()` and `.throw()`. Doctor rules use `.report()` for project findings. `.throw()` is reserved for Doctor authoring failures, invalid extension registration, and internal invariants where continuing would make the run unreliable.
+The diagnostics host exposes callable `nostics` handles. Doctor rules call a handle to create project findings, and Doctor authoring failures, invalid extension registration, and internal invariants use `throw diagnostics.CODE(params)` when continuing would make the run unreliable.
 
 Doctor does not add a separate messages API. Free-form run information such as summaries, missing evidence notes, and timing data remains Doctor Run metadata. Project findings must be coded diagnostics.
 

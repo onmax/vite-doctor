@@ -20,6 +20,8 @@ export const noComposableAfterAwait = createRule({
     category: "context",
     severity: "error",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/api/composables/use-nuxt-app#a-deeper-explanation-of-context",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

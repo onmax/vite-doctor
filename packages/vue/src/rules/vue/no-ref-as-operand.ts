@@ -9,6 +9,7 @@ export const noRefAsOperand = createEslintVueRule({
     category: "reactivity",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/api/reactivity-core.html#ref",
     requires: { script: true, vue: true },
   },
 });

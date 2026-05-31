@@ -40,6 +40,7 @@ export const preferUseWindowSize = createRule({
     category: "hydration",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://vueuse.org/core/useWindowSize/#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -52,7 +53,7 @@ export const preferUseWindowSize = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0072.report({
+          diagnostics.NUXT0072({
             why: "Raw window size reads are not reactive and are browser-only.",
             fix: "Use VueUse useWindowSize() when @vueuse/core is installed.",
           }),
@@ -74,6 +75,7 @@ export const preferUseBreakpoints = createRule({
     category: "hydration",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://vueuse.org/core/useBreakpoints/#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -84,7 +86,7 @@ export const preferUseBreakpoints = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0069.report({
+          diagnostics.NUXT0069({
             why: "Raw media query reads are browser-only and not semantic app state.",
             fix: "Use VueUse useBreakpoints() for responsive state.",
           }),
@@ -106,6 +108,7 @@ export const preferUseClipboard = createRule({
     category: "browser-api",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://vueuse.org/core/useClipboard/#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -115,7 +118,7 @@ export const preferUseClipboard = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0070.report({
+          diagnostics.NUXT0070({
             why: "Raw clipboard access is easier to model through a composable.",
             fix: "Use VueUse useClipboard() in event-driven client code.",
           }),
@@ -137,6 +140,7 @@ export const preferUseEventListener = createRule({
     category: "browser-api",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://vueuse.org/core/useEventListener/#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -156,7 +160,7 @@ export const preferUseEventListener = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0071.report({
+          diagnostics.NUXT0071({
             why: `${callee || name} requires manual lifecycle cleanup.`,
             fix: "Use VueUse useEventListener() to bind and clean up DOM events.",
           }),
@@ -178,6 +182,7 @@ export const preferUseObservers = createRule({
     category: "browser-api",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://vueuse.org/core/useIntersectionObserver/#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -191,7 +196,7 @@ export const preferUseObservers = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0065.report({
+          diagnostics.NUXT0065({
             why: `${observer} requires manual lifecycle cleanup.`,
             fix: `Use VueUse ${replacement}() for reactive observer cleanup.`,
           }),
@@ -213,6 +218,7 @@ export const preferUseTimers = createRule({
     category: "lifecycle",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://vueuse.org/shared/usetimeoutfn/#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -228,7 +234,7 @@ export const preferUseTimers = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0068.report({
+          diagnostics.NUXT0068({
             why: `${callee} is easier to clean up through a composable.`,
             fix: `Use VueUse ${replacement}() for lifecycle-aware timing.`,
           }),
@@ -250,6 +256,7 @@ export const preferUseStorage = createRule({
     category: "browser-api",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://vueuse.org/core/useStorage/#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -263,7 +270,7 @@ export const preferUseStorage = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0067.report({
+          diagnostics.NUXT0067({
             why: `${name} is browser-only and imperative.`,
             fix: `Use VueUse ${replacement}() for reactive client storage state.`,
           }),
@@ -285,6 +292,7 @@ export const preferUseScrollAndElement = createRule({
     category: "browser-api",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://vueuse.org/core/useScroll/#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -316,7 +324,7 @@ export const preferUseScrollAndElement = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0066.report({
+          diagnostics.NUXT0066({
             why: `${callee || name} is browser-only and imperative.`,
             fix: `Use VueUse ${replacement}() for reactive browser state.`,
           }),
@@ -338,6 +346,8 @@ export const noVueUseNuxtAutoImportCollision = createRule({
     category: "imports",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/guide/concepts/auto-imports#auto-import-from-third-party-packages",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -351,7 +361,7 @@ export const noVueUseNuxtAutoImportCollision = createRule({
           ctx.helpers.report(
             ctx,
             specifier,
-            diagnostics.NUXT0064.report({
+            diagnostics.NUXT0064({
               why: `${name} collides with a Nuxt built-in name.`,
               fix: `Alias the VueUse import, or prefer Nuxt's ${name} when you need Nuxt runtime semantics.`,
             }),

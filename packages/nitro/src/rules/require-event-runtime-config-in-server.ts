@@ -10,6 +10,7 @@ export const requireEventRuntimeConfigInServer = createRule({
     category: "runtime-config",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nitro.build/guide/configuration#runtime-configuration",
     requires: { script: true, nitro: true },
   },
   create(ctx) {

@@ -10,6 +10,7 @@ export const noRawThirdPartyScriptTag = createRule({
     category: "scripts",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://scripts.nuxt.com/docs/getting-started#nuxt-script-features",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
@@ -23,7 +24,7 @@ export const noRawThirdPartyScriptTag = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0010.report({
+          diagnostics.NUXT0010({
             why: "Raw third-party script tags bypass Nuxt Scripts loading, consent, and trigger controls.",
             fix: "Load third-party scripts through Nuxt Scripts with an explicit trigger and consent policy.",
           }),
@@ -45,6 +46,7 @@ export const noThirdPartyUseHeadScript = createRule({
     category: "scripts",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://scripts.nuxt.com/docs/guides/script-triggers#how-triggers-work",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -56,7 +58,7 @@ export const noThirdPartyUseHeadScript = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0012.report({
+          diagnostics.NUXT0012({
             why: "Third-party scripts loaded through useHead bypass Nuxt Scripts controls.",
             fix: "Use Nuxt Scripts with an explicit trigger and consent policy.",
           }),
@@ -78,6 +80,7 @@ export const noThirdPartyConfigScript = createRule({
     category: "scripts",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://scripts.nuxt.com/docs/guides/script-triggers#how-triggers-work",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -92,7 +95,7 @@ export const noThirdPartyConfigScript = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0011.report({
+          diagnostics.NUXT0011({
             why: "Third-party scripts configured in app.head bypass Nuxt Scripts loading controls.",
             fix: "Move this script to Nuxt Scripts configuration or a registry script.",
           }),

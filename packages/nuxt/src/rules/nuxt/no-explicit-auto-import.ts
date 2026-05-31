@@ -8,6 +8,7 @@ export const noExplicitAutoImport = createRule({
     category: "imports",
     severity: "info",
     fixable: "safe",
+    docsUrl: "https://nuxt.com/docs/4.x/guide/concepts/auto-imports#explicit-imports",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -21,7 +22,7 @@ export const noExplicitAutoImport = createRule({
         if (!specifiers.length) return;
         const all = specifiers.length === node.specifiers.length;
         ctx.report(
-          diagnostics.NUXT0036.report({
+          diagnostics.NUXT0036({
             why: "This imports symbols that Nuxt already auto-imports. Keeping code auto-imported is the Nuxt default; configure this rule off if your team prefers explicit #imports.",
             fix: "Remove the explicit #imports import when all specifiers are auto-imported.",
           }),

@@ -4,54 +4,85 @@ packages:
 
 catalogMode: prefer
 
-catalog:
-  "@nuxt/test-utils": ^4.0.3
-  "@nuxt/content": ^3.12.0
-  "@nuxt/fonts": ^0.14.0
-  "@nuxt/kit": ^4.4.2
-  "@nuxt/scripts": ^1.0.6
-  "@nuxt/ui": ^4.6.1
-  "@testing-library/vue": ^8.1.0
-  "@vue/test-utils": ^2.4.10
-  "@vueuse/core": ^14.2.1
-  better-auth: ^1.6.10
-  docus: 5.8.1
-  happy-dom: ^20.9.0
-  nuxt: ^4.4.2
-  nuxt-better-auth: ^0.6.0
-  tailwindcss: ^4.2.2
-  vite: npm:@voidzero-dev/vite-plus-core@latest
-  vitest: npm:@voidzero-dev/vite-plus-test@latest
-  vite-plus: latest
-  "@vue/compiler-sfc": ^3.5.34
-  vue-eslint-parser: ^10.4.0
-  oxc-parser: ^0.129.0
-  cac: ^6.7.14
-  consola: ^3.4.2
-  picocolors: ^1.1.1
-  pathe: ^2.0.3
-  std-env: ^4.1.0
-  c12: 4.0.0-beta.5
-  magic-string: ^0.30.21
-  nostics: 0.1.0
-  defu: ^6.1.7
-  tsdown: ^0.22.0
-  eslint: ^10.3.0
-  eslint-plugin-vue: ^10.9.1
-  "@typescript-eslint/parser": ^8.59.2
-  zod: ^4.4.3
-  wrangler: ^4.90.0
-  "@changesets/cli": ^2.31.0
-  "@changesets/changelog-git": ^0.2.1
-  agents: ^0.12.4
+catalogs:
+  analysis:
+    "@oxc-parser/binding-wasm32-wasi": ^0.133.0
+    "@oxc-project/types": ^0.133.0
+    "@typescript-eslint/parser": ^8.60.0
+    "@vue/compiler-sfc": ^3.5.35
+    eslint: ^10.4.1
+    eslint-plugin-vue: ^10.9.1
+    magic-string: ^0.30.21
+    nostics: 0.3.0
+    oxc-parser: ^0.133.0
+    vue-eslint-parser: ^10.4.0
+  build:
+    esbuild: ^0.28.0
+    tsdown: ^0.22.1
+    vite: npm:@voidzero-dev/vite-plus-core@latest
+    vite-plus: latest
+  deploy:
+    "@cloudflare/workers-types": ^4.20260531.1
+    agents: ^0.13.3
+    wrangler: ^4.95.0
+  frontend:
+    "@nuxt/content": ^3.14.0
+    "@nuxt/fonts": ^0.14.0
+    "@nuxt/kit": ^4.4.6
+    "@nuxt/scripts": ^1.1.1
+    "@nuxt/ui": ^4.8.1
+    "@resvg/resvg-js": ^2.6.2
+    "@tiptap/core": ^3.24.0
+    "@tiptap/extensions": ^3.24.0
+    "@tiptap/pm": ^3.24.0
+    "@tiptap/y-tiptap": ^3.0.4
+    "@vue/server-renderer": ^3.5.35
+    "@vueuse/core": ^14.3.0
+    better-auth: ^1.6.12
+    docus: 5.11.0
+    nuxt: ^4.4.6
+    nuxt-better-auth: ^0.6.0
+    satori: ^0.26.0
+    tailwindcss: ^4.3.0
+    vue: ^3.5.35
+  prod:
+    c12: 4.0.0-beta.5
+    cac: ^7.0.0
+    consola: ^3.4.2
+    defu: ^6.1.7
+    pathe: ^2.0.3
+    picocolors: ^1.1.1
+    std-env: ^4.1.0
+    zod: ^4.4.3
+    zod-to-json-schema: ^3.25.2
+  release:
+    "@changesets/changelog-git": ^0.2.1
+    "@changesets/cli": ^2.31.0
+    pkg-pr-new: ^0.0.75
+  test:
+    "@nuxt/test-utils": ^4.0.3
+    "@testing-library/vue": ^8.1.0
+    "@vue/test-utils": ^2.4.10
+    happy-dom: ^20.9.0
+    vitest: npm:@voidzero-dev/vite-plus-test@latest
 overrides:
-  vite: "catalog:"
-  vitest: "catalog:"
+  "@cloudflare/workers-types": "catalog:deploy"
+  "@nuxt/content": "catalog:frontend"
+  "@nuxt/ui": "catalog:frontend"
+  "@tiptap/extensions": "catalog:frontend"
+  "@tiptap/y-tiptap": "catalog:frontend"
+  "@vue/server-renderer": "catalog:frontend"
+  cac: "catalog:prod"
+  h3: 1.15.11
+  vite: "catalog:build"
+  vitest: "catalog:test"
+  vue: "catalog:frontend"
 peerDependencyRules:
   allowAny:
     - vite
     - vitest
   allowedVersions:
+    cac: "^6.7.14 || ^7.0.0"
     vite: "*"
     vitest: "*"
 allowBuilds:
@@ -62,3 +93,5 @@ allowBuilds:
   sharp: true
   vue-demi: true
   workerd: true
+minimumReleaseAgeExclude:
+  - "@cloudflare/workers-types@4.20260531.1"

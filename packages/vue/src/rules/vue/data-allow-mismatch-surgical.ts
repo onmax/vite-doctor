@@ -7,6 +7,7 @@ export const dataAllowMismatchSurgical = createRule({
     category: "ssr",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/guide/scaling-up/ssr.html#suppressing-hydration-mismatches",
     requires: { template: true, vue: true },
   },
   create(ctx) {

@@ -7,6 +7,8 @@ export const noUseRouteInMiddleware = createRule({
     category: "routing",
     severity: "error",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/guide/directory-structure/app/middleware#accessing-route-in-middleware",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

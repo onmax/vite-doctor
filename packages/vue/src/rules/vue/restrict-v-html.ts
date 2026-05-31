@@ -7,6 +7,7 @@ export const restrictVHtml = createRule({
     category: "security",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/guide/best-practices/security.html#html-injection",
     requires: { template: true, vue: true },
   },
   create(ctx) {

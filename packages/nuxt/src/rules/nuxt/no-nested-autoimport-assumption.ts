@@ -8,6 +8,8 @@ export const noNestedAutoimportAssumption = createRule({
     category: "imports",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/guide/directory-structure/app/composables#how-files-are-scanned",
     requires: { nuxt: true },
   },
   create(ctx) {
@@ -19,7 +21,7 @@ export const noNestedAutoimportAssumption = createRule({
       if (reported) return;
       reported = true;
       ctx.report(
-        diagnostics.NUXT0019.report({
+        diagnostics.NUXT0019({
           why: ctx.project.nuxt?.manifest?.hasManifest
             ? "This nested composable is not included in Nuxt's configured auto-import scan roots."
             : "Nuxt auto-imports top-level composables by default, not arbitrary nested files.",

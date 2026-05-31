@@ -41,7 +41,7 @@ export const noUnusedTranslations = createRule({
             continue;
           const text = readFileSync(message.file, "utf8");
           ctx.report(
-            diagnostics.VUE0002.report({
+            diagnostics.VUE0002({
               why: `Translation key "${message.key}" is not used by any static Vue i18n call.`,
               fix: "Remove the unused key or add a static t()/$t() reference if it is still needed.",
             }),
@@ -89,7 +89,7 @@ export const noUntranslatedText = createRule({
           ctx.helpers.report(
             ctx,
             node,
-            diagnostics.VUE0001.report({
+            diagnostics.VUE0001({
               why: `Visible text "${truncate(value)}" should come from Vue i18n.`,
               fix: "Replace the hardcoded text with t(), $t(), or <i18n-t>.",
             }),
@@ -109,7 +109,7 @@ export const noUntranslatedText = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.VUE0001.report({
+          diagnostics.VUE0001({
             why: `Attribute "${name}" contains untranslated text "${truncate(value)}".`,
             fix: "Bind the attribute to t() or $t().",
           }),

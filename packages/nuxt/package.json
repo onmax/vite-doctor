@@ -33,31 +33,36 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@nuxt/kit": "catalog:",
+    "@nuxt/kit": "catalog:frontend",
     "@vue-doctor/core": "workspace:*",
-    "cac": "catalog:",
-    "consola": "catalog:",
+    "cac": "catalog:prod",
+    "consola": "catalog:prod",
     "nitro-doctor": "workspace:*",
-    "oxc-parser": "catalog:",
-    "pathe": "catalog:",
+    "oxc-parser": "catalog:analysis",
+    "pathe": "catalog:prod",
     "vue-doctor": "workspace:*",
-    "zod": "catalog:"
+    "zod": "catalog:prod"
   },
   "devDependencies": {
-    "@nuxt/content": "catalog:",
-    "@nuxt/scripts": "catalog:",
-    "@nuxt/test-utils": "catalog:",
-    "@nuxt/ui": "catalog:",
-    "@testing-library/vue": "catalog:",
-    "@vue/test-utils": "catalog:",
-    "@vueuse/core": "catalog:",
-    "better-auth": "catalog:",
-    "happy-dom": "catalog:",
-    "nuxt": "catalog:",
-    "nuxt-better-auth": "catalog:",
-    "tsdown": "catalog:",
-    "vite-plus": "catalog:",
-    "vitest": "catalog:"
+    "@cloudflare/workers-types": "catalog:deploy",
+    "@nuxt/content": "catalog:frontend",
+    "@nuxt/scripts": "catalog:frontend",
+    "@nuxt/test-utils": "catalog:test",
+    "@nuxt/ui": "catalog:frontend",
+    "@testing-library/vue": "catalog:test",
+    "@tiptap/core": "catalog:frontend",
+    "@tiptap/extensions": "catalog:frontend",
+    "@tiptap/pm": "catalog:frontend",
+    "@tiptap/y-tiptap": "catalog:frontend",
+    "@vue/test-utils": "catalog:test",
+    "@vueuse/core": "catalog:frontend",
+    "better-auth": "catalog:frontend",
+    "happy-dom": "catalog:test",
+    "nuxt": "catalog:frontend",
+    "nuxt-better-auth": "catalog:frontend",
+    "tsdown": "catalog:build",
+    "vite-plus": "catalog:build",
+    "vitest": "catalog:test"
   },
   "peerDependencies": {
     "nuxt": ">=4"
@@ -79,7 +84,7 @@
     "exsolve": "1.0.8",
     "giget": "3.2.0",
     "jiti": "2.7.0",
-    "nostics": "0.1.0",
+    "nostics": "0.3.0",
     "pkg-types": "2.3.1",
     "rc9": "3.0.1"
   }

@@ -25,14 +25,14 @@
     "prepare": "vp config"
   },
   "devDependencies": {
-    "@changesets/changelog-git": "catalog:",
-    "@changesets/cli": "catalog:",
-    "pkg-pr-new": "^0.0.75",
+    "@changesets/changelog-git": "catalog:release",
+    "@changesets/cli": "catalog:release",
+    "pkg-pr-new": "catalog:release",
     "vite-doctor": "workspace:*",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:build"
   },
   "engines": {
     "node": ">=22.20.0"
   },
-  "packageManager": "pnpm@11.0.9"
+  "packageManager": "pnpm@11.5.0"
 }

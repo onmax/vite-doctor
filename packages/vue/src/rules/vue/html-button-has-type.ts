@@ -21,6 +21,7 @@ export const htmlButtonHasType = createRule({
     category: "template",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/button#type",
     requires: { template: true, vue: true },
   },
   create(ctx) {
@@ -31,7 +32,7 @@ export const htmlButtonHasType = createRule({
 
         const insertAt = node.startTag?.range?.[0] + "<button".length;
         ctx.report(
-          diagnostics.VUE0022.report({
+          diagnostics.VUE0022({
             why: 'Native buttons should declare type="button", type="submit", or type="reset".',
             fix: 'Add type="button" unless this button intentionally submits a form.',
           }),

@@ -36,6 +36,7 @@ const props = defineProps<Props>()
     category: "style",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/api/sfc-script-setup.html#type-only-props-emit-declarations",
     requires: { sfc: true, script: true, vue: true },
   },
   create(ctx) {
@@ -47,7 +48,7 @@ const props = defineProps<Props>()
         if (!ctx.helpers.isCall(node, "defineProps")) return;
         if (!node.arguments?.length || hasTypeParameters(node)) return;
         ctx.report(
-          diagnostics.VUE0016.report({
+          diagnostics.VUE0016({
             why: "TypeScript <script setup> components should declare props with a type argument.",
             fix: "Use defineProps<Props>() instead of a runtime props declaration.",
           }),

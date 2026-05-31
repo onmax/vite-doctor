@@ -50,7 +50,7 @@ test("runs a Nuxt rule fixture", async () => {
           ctx.helpers.report(
             ctx,
             node,
-            allDiagnostics.DOC9999.report({
+            allDiagnostics.DOC9999({
               why: "Nuxt app rule ran.",
               fix: "Inspect the Nuxt app rule fixture.",
             }),
@@ -92,7 +92,7 @@ test("runs a Nuxt manifest rule fixture", async () => {
           ctx.helpers.report(
             ctx,
             ctx.file.scriptAst,
-            allDiagnostics.DOC9999.report({
+            allDiagnostics.DOC9999({
               why: "Nuxt API handlers were detected.",
               fix: "Inspect the Nuxt manifest fixture.",
             }),
@@ -131,7 +131,7 @@ test("rule helpers provide shared AST and template predicates", async () => {
           ctx.helpers.report(
             ctx,
             node,
-            allDiagnostics.DOC9999.report({
+            allDiagnostics.DOC9999({
               why: ctx.helpers.getCalleeName(node) ?? "unknown",
               fix: "Inspect the shared helper script diagnostic.",
             }),
@@ -147,7 +147,7 @@ test("rule helpers provide shared AST and template predicates", async () => {
           ctx.helpers.report(
             ctx,
             node,
-            allDiagnostics.DOC9999.report({
+            allDiagnostics.DOC9999({
               why: ctx.helpers.getStaticVueAttributeValue(node, "ref") ?? "missing-ref",
               fix: "Inspect the shared helper template diagnostic.",
             }),

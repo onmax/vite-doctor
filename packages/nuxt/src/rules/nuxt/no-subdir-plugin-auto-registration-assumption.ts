@@ -8,6 +8,7 @@ export const noSubdirPluginAutoRegistrationAssumption = createRule({
     category: "plugins",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/guide/directory-structure/app/plugins#registered-plugins",
     requires: { nuxt: true },
   },
   create(ctx) {
@@ -19,7 +20,7 @@ export const noSubdirPluginAutoRegistrationAssumption = createRule({
       if (reported) return;
       reported = true;
       ctx.report(
-        diagnostics.NUXT0041.report({
+        diagnostics.NUXT0041({
           why: ctx.project.nuxt?.manifest?.hasManifest
             ? "This nested plugin is not included in Nuxt's configured plugin registration list."
             : "Nuxt auto-registers top-level plugin files and index files, not arbitrary nested plugin files.",

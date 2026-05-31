@@ -33,13 +33,13 @@
     "@vue-doctor/core": "workspace:*"
   },
   "devDependencies": {
-    "tsdown": "catalog:",
-    "vite-plus": "catalog:"
+    "tsdown": "catalog:build",
+    "vite-plus": "catalog:build"
   },
   "engines": {
     "node": ">=22.20.0"
   },
   "inlinedDependencies": {
-    "nostics": "0.1.0"
+    "nostics": "0.3.0"
   }
 }

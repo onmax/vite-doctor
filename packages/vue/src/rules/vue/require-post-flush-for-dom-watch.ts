@@ -7,6 +7,7 @@ export const requirePostFlushForDomWatch = createRule({
     category: "watchers",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/guide/essentials/watchers.html#post-watchers",
     requires: { script: true, vue: true },
   },
   create(ctx) {

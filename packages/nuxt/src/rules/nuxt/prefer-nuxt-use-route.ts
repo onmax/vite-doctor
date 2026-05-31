@@ -8,6 +8,7 @@ export const preferNuxtUseRoute = createRule({
     category: "routing",
     severity: "error",
     fixable: "safe",
+    docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-route#route-synchronization-issues",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -17,7 +18,7 @@ export const preferNuxtUseRoute = createRule({
         for (const specifier of node.specifiers ?? []) {
           if (specifier.imported?.name === "useRoute") {
             ctx.report(
-              diagnostics.NUXT0049.report({
+              diagnostics.NUXT0049({
                 why: "Nuxt wraps useRoute() so route state updates after page content changes. Do not import useRoute from vue-router in Nuxt app code.",
                 fix: "Use Nuxt's auto-imported useRoute().",
               }),

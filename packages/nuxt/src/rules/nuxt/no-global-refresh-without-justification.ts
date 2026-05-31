@@ -8,6 +8,7 @@ export const noGlobalRefreshWithoutJustification = createRule({
     category: "fetching",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/api/utils/refresh-nuxt-data#refresh-all-data",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

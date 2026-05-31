@@ -8,6 +8,7 @@ export const noConflictingUseFetchImport = createRule({
     category: "imports",
     severity: "error",
     fixable: "safe",
+    docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-fetch#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -21,7 +22,7 @@ export const noConflictingUseFetchImport = createRule({
             specifier.local?.name === "useFetch"
           ) {
             ctx.report(
-              diagnostics.NUXT0035.report({
+              diagnostics.NUXT0035({
                 why: "This imports useFetch from a non-Nuxt source and can shadow Nuxt's SSR-aware useFetch(). Rename it or use Nuxt's auto-import.",
                 fix: "Rename imported useFetch to useVueUseFetch.",
               }),

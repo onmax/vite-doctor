@@ -8,6 +8,7 @@ export const preferAppDirectoryPlacement = createRule({
     category: "architecture",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/guide/directory-structure/app",
     requires: { nuxt: true },
   },
   create(ctx) {
@@ -20,7 +21,7 @@ export const preferAppDirectoryPlacement = createRule({
       if (reported) return;
       reported = true;
       ctx.report(
-        diagnostics.NUXT0044.report({
+        diagnostics.NUXT0044({
           why: `Nuxt 4 projects should place ${first}/ under app/${first}/.`,
           fix: `Move ${ctx.file.relativePath} under app/${ctx.file.relativePath}.`,
         }),

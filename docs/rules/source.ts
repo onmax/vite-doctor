@@ -284,7 +284,7 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
       category: "request",
       severity: "warn" as const,
       fixable: "suggestion" as const,
-      docsUrl: "",
+      docsUrl: readString(opts, "docsUrl"),
       sourceUrl: githubSourceUrl(source),
     }));
     return [...metaRules, ...helperRules].filter((rule) => rule.id);
@@ -391,11 +391,14 @@ function renderRulePage(rule: RuleDocument) {
 }
 
 function renderBadgeRow(rule: RuleDocument) {
-  return renderMdcComponent("rule-badges", {
+  return renderMdcComponent("rule-metadata", {
     pack: rule.pack,
     category: rule.category,
     severity: rule.severity,
     fix: rule.fixable || "",
+    source: rule.source,
+    sourceUrl: rule.sourceUrl,
+    docsUrl: rule.docsUrl || "",
   });
 }
 

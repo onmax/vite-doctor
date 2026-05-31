@@ -10,6 +10,7 @@ export const noClientComposablesInServer = createRule({
     category: "server",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://nitro.build/guide/routing#request-handler",
     requires: { script: true, nitro: true },
   },
   create(ctx) {

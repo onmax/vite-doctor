@@ -84,7 +84,7 @@ export function report(
   const code = diagnosticCodesByRuleId[ruleId];
   const diagnostic = diagnostics[code];
   if (!diagnostic) throw new Error(`Missing Doctor diagnostic code for ${ruleId}`);
-  ctx.helpers.report(ctx, node, diagnostic.report({ why: message, fix: suggestion ?? message }), {
+  ctx.helpers.report(ctx, node, diagnostic({ why: message, fix: suggestion ?? message }), {
     ruleId,
     severity,
     category,

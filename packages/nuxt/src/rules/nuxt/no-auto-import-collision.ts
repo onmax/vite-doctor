@@ -8,6 +8,7 @@ export const noAutoImportCollision = createRule({
     category: "imports",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/guide/concepts/auto-imports#directory-based-auto-imports",
     requires: { nuxt: true, crossFile: true },
   },
   create(ctx) {
@@ -22,7 +23,7 @@ export const noAutoImportCollision = createRule({
           const unique = [...new Set(sources)];
           if (unique.length > 1) {
             ctx.report(
-              diagnostics.NUXT0034.report({
+              diagnostics.NUXT0034({
                 why: `Auto-import '${name}' is provided by multiple sources: ${unique.join(", ")}.`,
                 fix: "Alias module or app auto-imports to unique names.",
               }),

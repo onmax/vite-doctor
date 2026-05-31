@@ -160,7 +160,7 @@ export function normalizeDiagnosticFromRuleCode(
   const why = input.why ?? input.message ?? input.diagnostic?.why ?? "Doctor diagnostic";
   const fix = input.suggestion ?? input.diagnostic?.fix ?? input.fix?.message ?? why;
   const diagnostic =
-    input.diagnostic ?? allDiagnostics[code]?.report({ why, fix, sources: input.sources });
+    input.diagnostic ?? allDiagnostics[code]?.({ why, fix, sources: input.sources });
   if (!diagnostic) {
     throw new Error(`No Doctor diagnostic code registered for ${input.ruleId}.`);
   }

@@ -7,6 +7,8 @@ export const forwardAuthHeadersSsr = createRule({
     category: "fetching",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/getting-started/data-fetching#pass-client-headers-to-the-api",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

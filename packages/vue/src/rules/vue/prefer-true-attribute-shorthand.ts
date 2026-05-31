@@ -71,7 +71,7 @@ export const preferTrueAttributeShorthand = createRule({
             continue;
 
           ctx.report(
-            diagnostics.VUE0024.report({
+            diagnostics.VUE0024({
               why: `Use the native ${argumentName} boolean attribute instead of binding true.`,
               fix: `Use ${argumentName}.`,
             }),

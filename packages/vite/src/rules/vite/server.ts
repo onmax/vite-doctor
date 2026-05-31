@@ -9,6 +9,7 @@ export const noDisabledFsStrict = createRule({
     description: "Avoid disabling Vite dev server filesystem strict mode.",
     category: "security",
     severity: "error",
+    docsUrl: "https://vite.dev/config/server-options.html#server-fs-strict",
     requires: { script: true },
   },
   create(ctx) {
@@ -20,7 +21,7 @@ export const noDisabledFsStrict = createRule({
         if (!match) return;
         const start = match.index + match[0].lastIndexOf("strict");
         ctx.report(
-          diagnostics.VITE0017.report({
+          diagnostics.VITE0017({
             why: "Vite dev server filesystem strict mode is disabled.",
             fix: "Keep server.fs.strict enabled and grant only specific paths with fs.allow.",
           }),
@@ -44,6 +45,7 @@ export const noBroadFsAllow = createRule({
     description: "Keep Vite dev server filesystem allow lists scoped to project paths.",
     category: "security",
     severity: "warn",
+    docsUrl: "https://vite.dev/config/server-options.html#server-fs-allow",
     requires: { script: true },
   },
   create(ctx) {
@@ -59,7 +61,7 @@ export const noBroadFsAllow = createRule({
           if (!isBroadAllowedPath(value)) continue;
           const start = base + item.index! + item[0].indexOf(value);
           ctx.report(
-            diagnostics.VITE0016.report({
+            diagnostics.VITE0016({
               why: `Vite server.fs.allow entry "${value}" is broader than a project path.`,
               fix: "Allow only the specific workspace/package directories the dev server needs.",
             }),

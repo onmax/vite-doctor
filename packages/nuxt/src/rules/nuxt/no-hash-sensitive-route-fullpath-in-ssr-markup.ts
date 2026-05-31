@@ -14,6 +14,8 @@ export const noHashSensitiveRouteFullpathInSsrMarkup = createRule({
     category: "routing",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/api/composables/use-route#hydration-issues-with-routefullpath",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {

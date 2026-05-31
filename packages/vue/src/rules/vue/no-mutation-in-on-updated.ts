@@ -7,6 +7,7 @@ export const noMutationInOnUpdated = createRule({
     category: "lifecycle",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/api/composition-api-lifecycle.html#onupdated",
     requires: { script: true, vue: true },
   },
   create(ctx) {

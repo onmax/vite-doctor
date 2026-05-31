@@ -38,7 +38,7 @@ export const noBrokenInternalToLink = createRule({
             const route = normalizeRoute(link.value);
             if (!route || routes.has(route)) continue;
             ctx.report(
-              diagnostics.NUXT0004.report({
+              diagnostics.NUXT0004({
                 why: `Internal content link "${link.value}" does not resolve to a content route.`,
                 fix: "Update the `to` target or add the missing content page.",
               }),
@@ -72,7 +72,7 @@ export const noEmptyAppVueShadow = createRule({
       SFC() {
         if (!isTrivialAppVue(ctx.file.text)) return;
         ctx.report(
-          diagnostics.NUXT0002.report({
+          diagnostics.NUXT0002({
             why: "This app/app.vue shadows Docus' app shell but does not preserve its layout, header, footer, navigation, or search wiring.",
             fix: "Remove app/app.vue or port the Docus app shell behavior into the override.",
           }),
@@ -110,7 +110,7 @@ export const noUnknownAppConfigKey = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0001.report({
+          diagnostics.NUXT0001({
             why: `Docus does not read app.config.${key}.`,
             fix: "Remove this key or move it under a Docus-supported app.config section.",
           }),

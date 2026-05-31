@@ -12,6 +12,7 @@ export const preferDefineModel = createRule({
     category: "style",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/api/sfc-script-setup.html#definemodel",
     requires: { sfc: true, script: true, vue: true },
     frameworkVersions: { vue: ">=3.4" },
   },
@@ -32,7 +33,7 @@ export const preferDefineModel = createRule({
           continue;
         reported.add(prop);
         ctx.report(
-          diagnostics.VUE0014.report({
+          diagnostics.VUE0014({
             why: `${prop} and update:${prop} can be declared with defineModel().`,
             fix: prop === "modelValue" ? "Use defineModel()." : `Use defineModel('${prop}').`,
           }),

@@ -7,6 +7,7 @@ export const createUseFetchMustBeExportedInScannedDir = createRule({
     category: "fetching",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/api/composables/create-use-fetch#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

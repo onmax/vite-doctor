@@ -7,6 +7,8 @@ export const noClientConditionalInTemplate = createRule({
     category: "hydration",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/guide/best-practices/hydration#conditional-rendering-based-on-client-state",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {

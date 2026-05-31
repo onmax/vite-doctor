@@ -10,6 +10,7 @@ export const noPersonalizedCachedHandler = createRule({
     category: "cache",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://hub.nuxt.com/docs/features/cache#when-to-use-cache",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -24,7 +25,7 @@ export const noPersonalizedCachedHandler = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0062.report({
+          diagnostics.NUXT0062({
             why: "This cached handler appears to depend on user, tenant, cookie, or auth state.",
             fix: "Avoid caching personalized responses or include an explicit cache key/vary strategy.",
           }),
@@ -46,6 +47,7 @@ export const preferCachedEventHandler = createRule({
     category: "cache",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://hub.nuxt.com/docs/features/cache#when-to-use-cache",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -61,7 +63,7 @@ export const preferCachedEventHandler = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0063.report({
+          diagnostics.NUXT0063({
             why: "This public-looking server handler does expensive work and may be cacheable.",
             fix: "Consider cachedEventHandler() with route rules when the response is public.",
           }),

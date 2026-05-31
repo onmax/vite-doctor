@@ -7,6 +7,8 @@ export const noBrowserSideEffectsInSetup = createRule({
     category: "hydration",
     severity: "error",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/guide/best-practices/hydration#third-party-libraries-with-side-effects",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

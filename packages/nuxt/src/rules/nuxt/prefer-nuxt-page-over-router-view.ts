@@ -8,6 +8,7 @@ export const preferNuxtPageOverRouterView = createRule({
     category: "routing",
     severity: "error",
     fixable: "safe",
+    docsUrl: "https://nuxt.com/docs/4.x/api/components/nuxt-page#props",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
@@ -15,7 +16,7 @@ export const preferNuxtPageOverRouterView = createRule({
       TemplateNode(node: AnyNode) {
         if (node.type !== "VElement" || getElementName(node) !== "RouterView") return;
         ctx.report(
-          diagnostics.NUXT0051.report({
+          diagnostics.NUXT0051({
             why: "<RouterView> bypasses NuxtPage behavior. Use <NuxtPage> in Nuxt app shells.",
             fix: "Replace <RouterView> with <NuxtPage>.",
           }),

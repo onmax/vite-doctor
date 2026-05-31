@@ -18,7 +18,7 @@ useSeoMeta({
   twitterDescription: homeDescription,
 });
 
-defineOgImageComponent(
+defineOgImage(
   "DoctorHome",
   {
     title: homeTitle,

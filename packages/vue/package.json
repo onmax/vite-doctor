@@ -29,24 +29,24 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@typescript-eslint/parser": "catalog:",
+    "@typescript-eslint/parser": "catalog:analysis",
     "@vue-doctor/core": "workspace:*",
-    "cac": "catalog:",
-    "consola": "catalog:",
-    "eslint": "catalog:",
-    "eslint-plugin-vue": "catalog:",
-    "oxc-parser": "catalog:",
-    "pathe": "catalog:",
-    "vue-eslint-parser": "catalog:"
+    "cac": "catalog:prod",
+    "consola": "catalog:prod",
+    "eslint": "catalog:analysis",
+    "eslint-plugin-vue": "catalog:analysis",
+    "oxc-parser": "catalog:analysis",
+    "pathe": "catalog:prod",
+    "vue-eslint-parser": "catalog:analysis"
   },
   "devDependencies": {
-    "tsdown": "catalog:",
-    "vite-plus": "catalog:"
+    "tsdown": "catalog:build",
+    "vite-plus": "catalog:build"
   },
   "engines": {
     "node": ">=22.20.0"
   },
   "inlinedDependencies": {
-    "nostics": "0.1.0"
+    "nostics": "0.3.0"
   }
 }

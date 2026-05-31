@@ -9,6 +9,7 @@ export const requireWorkerUrlPattern = createRule({
     title: "Use Vite's static worker URL pattern",
     category: "workers",
     severity: "warn",
+    docsUrl: "https://vite.dev/guide/features.html#web-workers",
     requires: { script: true },
   },
   create(ctx) {
@@ -20,7 +21,7 @@ export const requireWorkerUrlPattern = createRule({
         if (isStaticNewUrlWithImportMeta(first)) return;
         if (!isStaticStringOrNewUrl(first)) return;
         ctx.report(
-          diagnostics.VITE0021.report({
+          diagnostics.VITE0021({
             why: "Worker paths should use new URL('./worker', import.meta.url) for Vite bundling.",
             fix: "Construct workers with new Worker(new URL('./worker.ts', import.meta.url)).",
           }),
@@ -43,6 +44,7 @@ export const noDynamicWorkerUrl = createRule({
     title: "Keep Vite worker URLs static",
     category: "workers",
     severity: "warn",
+    docsUrl: "https://vite.dev/guide/features.html#web-workers",
     requires: { script: true },
   },
   create(ctx) {
@@ -54,7 +56,7 @@ export const noDynamicWorkerUrl = createRule({
         if (first?.type !== "NewExpression" || first.callee?.name !== "URL") return;
         if (staticString(first.arguments?.[0])) return;
         ctx.report(
-          diagnostics.VITE0019.report({
+          diagnostics.VITE0019({
             why: "Dynamic worker URLs cannot be statically bundled by Vite.",
             fix: "Use static worker paths or explicit worker entry imports.",
           }),
@@ -77,6 +79,7 @@ export const noNodeApiInWorker = createRule({
     title: "Do not use Node APIs in browser workers",
     category: "workers",
     severity: "error",
+    docsUrl: "https://vite.dev/guide/features.html#web-workers",
     requires: { script: true },
   },
   async create(ctx) {
@@ -88,7 +91,7 @@ export const noNodeApiInWorker = createRule({
         const source = String(node.source?.value ?? "");
         if (!isNodeModule(source)) return;
         ctx.report(
-          diagnostics.VITE0020.report({
+          diagnostics.VITE0020({
             why: `Browser worker "${ctx.file.relativePath}" imports Node module "${source}".`,
             fix: "Move Node work to server code or replace it with browser-compatible APIs.",
           }),
@@ -104,7 +107,7 @@ export const noNodeApiInWorker = createRule({
       ScriptNode(node: AnyNode) {
         if (node.type !== "Identifier" || node.name !== "process") return;
         ctx.report(
-          diagnostics.VITE0020.report({
+          diagnostics.VITE0020({
             why: "Browser workers should not rely on process.",
             fix: "Use import.meta.env for compile-time public values.",
           }),

@@ -8,6 +8,7 @@ export const noPlainEnvInAppCode = createRule({
     category: "runtime-config",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/guide/going-further/runtime-config#environment-variables",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

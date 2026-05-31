@@ -12,6 +12,7 @@ export const preferGetRequestIp = createRule({
     category: "request",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://h3.dev/utils/request#getrequestipevent",
     requires: { script: true, nitro: true },
   },
   create(ctx) {

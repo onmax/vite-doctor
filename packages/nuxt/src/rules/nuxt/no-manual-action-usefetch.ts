@@ -14,6 +14,7 @@ export const noManualActionUseFetch = createRule({
     category: "fetching",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/getting-started/data-fetching#refresh-and-execute",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

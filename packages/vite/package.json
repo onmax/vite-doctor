@@ -44,23 +44,23 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@typescript-eslint/parser": "catalog:",
-    "@vue/compiler-sfc": "catalog:",
-    "cac": "^6.7.14",
-    "consola": "^3.4.2",
-    "eslint": "catalog:",
-    "eslint-plugin-vue": "catalog:",
-    "oxc-parser": "catalog:",
-    "pathe": "^2.0.3",
-    "vue-eslint-parser": "catalog:"
+    "@typescript-eslint/parser": "catalog:analysis",
+    "@vue/compiler-sfc": "catalog:analysis",
+    "cac": "catalog:prod",
+    "consola": "catalog:prod",
+    "eslint": "catalog:analysis",
+    "eslint-plugin-vue": "catalog:analysis",
+    "oxc-parser": "catalog:analysis",
+    "pathe": "catalog:prod",
+    "vue-eslint-parser": "catalog:analysis"
   },
   "devDependencies": {
     "@vue-doctor/core": "workspace:*",
     "nitro-doctor": "workspace:*",
     "nuxt-doctor": "workspace:*",
-    "tsdown": "catalog:",
-    "vite": "catalog:",
-    "vite-plus": "catalog:",
+    "tsdown": "catalog:build",
+    "vite": "catalog:build",
+    "vite-plus": "catalog:build",
     "vue-doctor": "workspace:*"
   },
   "peerDependencies": {
@@ -78,7 +78,7 @@
     "@jridgewell/sourcemap-codec": "1.5.5",
     "defu": "6.1.7",
     "magic-string": "0.30.21",
-    "nostics": "0.1.0",
+    "nostics": "0.3.0",
     "picocolors": "1.1.1"
   }
 }

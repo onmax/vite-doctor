@@ -56,7 +56,7 @@ export const preferSameNamePropShorthand = createRule({
           return;
 
         ctx.report(
-          diagnostics.VUE0023.report({
+          diagnostics.VUE0023({
             why: `Use Vue's same-name prop shorthand for ${argumentName}.`,
             fix: `Use ${ctx.file.text.slice(node.range[0], keyEnd)}.`,
           }),

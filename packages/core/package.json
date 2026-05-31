@@ -41,22 +41,22 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@typescript-eslint/parser": "catalog:",
-    "@vue/compiler-sfc": "catalog:",
-    "c12": "catalog:",
-    "defu": "catalog:",
-    "eslint": "catalog:",
-    "eslint-plugin-vue": "catalog:",
-    "magic-string": "catalog:",
-    "nostics": "0.1.0",
-    "oxc-parser": "catalog:",
-    "pathe": "catalog:",
-    "picocolors": "catalog:",
-    "vue-eslint-parser": "catalog:"
+    "@typescript-eslint/parser": "catalog:analysis",
+    "@vue/compiler-sfc": "catalog:analysis",
+    "c12": "catalog:prod",
+    "defu": "catalog:prod",
+    "eslint": "catalog:analysis",
+    "eslint-plugin-vue": "catalog:analysis",
+    "magic-string": "catalog:analysis",
+    "nostics": "catalog:analysis",
+    "oxc-parser": "catalog:analysis",
+    "pathe": "catalog:prod",
+    "picocolors": "catalog:prod",
+    "vue-eslint-parser": "catalog:analysis"
   },
   "devDependencies": {
-    "tsdown": "catalog:",
-    "vite-plus": "catalog:"
+    "tsdown": "catalog:build",
+    "vite-plus": "catalog:build"
   },
   "engines": {
     "node": ">=22.20.0"

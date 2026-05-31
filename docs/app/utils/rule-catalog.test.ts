@@ -69,6 +69,22 @@ test("rule source exposes canonical docs paths and framework counts", () => {
   );
 });
 
+test("selected rules expose official upstream documentation anchors", () => {
+  const docsById = new Map(getRuleDocuments().map((rule) => [rule.id, rule.docsUrl]));
+
+  expect(Object.fromEntries(docsById)).toMatchObject({
+    "nuxt/fetch/no-raw-fetch-in-setup":
+      "https://nuxt.com/docs/4.x/getting-started/data-fetching#the-need-for-usefetch-and-useasyncdata",
+    "nuxt-image/require-alt": "https://image.nuxt.com/usage/nuxt-img#alt",
+    "vite/assets/no-public-src-import": "https://vite.dev/guide/assets.html#the-public-directory",
+    "vue/reactivity/no-ref-as-operand": "https://vuejs.org/api/reactivity-core.html#ref",
+    "nitro/request/prefer-assert-method":
+      "https://h3.dev/utils/request#assertmethodevent-expected-allowhead",
+    "nitro/request/prefer-validated-body":
+      "https://h3.dev/utils/request#readvalidatedbodyevent-validate",
+  });
+});
+
 test("rule source emits markdown with frontmatter and body sections", async () => {
   const docs = getRuleDocuments();
   const rule = docs.find((item) => item.examples.length || item.why || item.recommendedReplacement);
@@ -77,7 +93,9 @@ test("rule source emits markdown with frontmatter and body sections", async () =
   const markdown = await rulesCollectionSource.getItem(rule!.key);
   expect(markdown).toContain("---");
   expect(markdown).toContain(`ruleId: ${JSON.stringify(rule!.id)}`);
-  expect(markdown).toContain("::rule-badges");
+  expect(markdown).toContain("::rule-metadata");
+  expect(markdown).toContain("sourceUrl:");
+  expect(markdown).toContain("docsUrl:");
   expect(markdown).toContain("## Run this rule");
   expect(markdown).toContain("## Why it matters");
   expect(markdown).toContain("## Recommended fix");

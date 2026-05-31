@@ -10,6 +10,7 @@ export const noQueryContentLegacyApi = createRule({
     category: "content",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://content.nuxt.com/docs/utils/query-collection#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -19,7 +20,7 @@ export const noQueryContentLegacyApi = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0005.report({
+          diagnostics.NUXT0005({
             why: "queryContent() is the legacy Nuxt Content API.",
             fix: "Use queryCollection() with a declared collection.",
           }),

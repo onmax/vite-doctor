@@ -8,6 +8,7 @@ export const returnNavigateToInMiddleware = createRule({
     category: "routing",
     severity: "error",
     fixable: "safe",
+    docsUrl: "https://nuxt.com/docs/4.x/api/utils/navigate-to#within-route-middleware",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -25,7 +26,7 @@ export const returnNavigateToInMiddleware = createRule({
         const before = ctx.file.text.slice(Math.max(0, fixStart - 20), fixStart);
         if (!/\breturn\s+$/.test(before)) {
           ctx.report(
-            diagnostics.NUXT0052.report({
+            diagnostics.NUXT0052({
               why: "Route middleware must return navigateTo() so Nuxt can stop or redirect the navigation.",
               fix: "Add return before navigateTo().",
             }),

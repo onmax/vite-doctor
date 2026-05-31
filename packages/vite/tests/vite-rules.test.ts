@@ -166,18 +166,37 @@ console.log(path.sep)`,
     ]);
   });
 
-  test("allows public json imports used as static data", async () => {
+  test("allows public JSON imports used as static SSR data", async () => {
     const result = await runProjectFixture({
       framework: "vite",
       rules: [noPublicSrcImport],
       files: {
         "src/main.ts": `import data from '/public/agent-results.json'
-console.log(data)`,
+import nuxtData from '~~/public/agent-results.json'
+import rawData from '../public/results.json?raw'
+console.log(data, nuxtData, rawData)`,
         "public/agent-results.json": `{"ok":true}`,
+        "public/results.json": `{"ok":true}`,
       },
     });
 
     expect(result.diagnostics).toHaveLength(0);
+  });
+
+  test("still reports public media imports", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noPublicSrcImport],
+      files: {
+        "src/main.ts": `import logo from '~~/public/logo.svg'
+console.log(logo)`,
+        "public/logo.svg": `<svg />`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+      "vite/assets/no-public-src-import",
+    ]);
   });
 
   test("reports env prefix and dev server filesystem risks", async () => {

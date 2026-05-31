@@ -11,6 +11,7 @@ export const noSetupPropsDestructure = createRule({
     category: "reactivity",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/api/sfc-script-setup.html#reactive-props-destructure",
     requires: { script: true, vue: true },
   },
   create(ctx) {

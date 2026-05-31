@@ -16,6 +16,7 @@ export const noUnusedDefine = createRule({
     category: "configuration",
     severity: "info",
     execution: "workspace",
+    docsUrl: "https://vite.dev/config/shared-options.html#define",
     requires: { crossFile: true },
   },
   async create(ctx) {
@@ -30,7 +31,7 @@ export const noUnusedDefine = createRule({
             );
             if (used) continue;
             ctx.report(
-              diagnostics.VITE0007.report({
+              diagnostics.VITE0007({
                 why: `Vite define constant "${entry.key}" is configured but never referenced.`,
                 fix: "Remove the stale define entry or use it from source code.",
               }),
@@ -56,6 +57,7 @@ export const noUntypedDefine = createRule({
     category: "types",
     severity: "warn",
     execution: "workspace",
+    docsUrl: "https://vite.dev/config/shared-options.html#define",
     requires: { crossFile: true },
   },
   async create(ctx) {
@@ -65,7 +67,7 @@ export const noUntypedDefine = createRule({
           for (const entry of config.define) {
             if (entry.key.includes(".") || hasTypeDeclaration(ctx, entry.key)) continue;
             ctx.report(
-              diagnostics.VITE0006.report({
+              diagnostics.VITE0006({
                 why: `Vite define global "${entry.key}" is not declared in a project .d.ts file.`,
                 fix: `Add declare const ${entry.key}: <type> to vite-env.d.ts or env.d.ts.`,
               }),
@@ -90,6 +92,7 @@ export const noRuntimeObjectDefine = createRule({
     title: "Avoid object values in Vite define",
     category: "configuration",
     severity: "warn",
+    docsUrl: "https://vite.dev/config/shared-options.html#define",
     requires: { script: true },
   },
   create(ctx) {
@@ -101,7 +104,7 @@ export const noRuntimeObjectDefine = createRule({
           if (isLiteralPrimitive(entry.rawValue) || entry.rawValue.startsWith("JSON.stringify("))
             continue;
           ctx.report(
-            diagnostics.VITE0004.report({
+            diagnostics.VITE0004({
               why: `Vite define "${entry.key}" uses a non-primitive replacement value.`,
               fix: "Use stringified primitive define values, or import runtime configuration explicitly.",
             }),
@@ -125,6 +128,7 @@ export const noSecretDefine = createRule({
     title: "Do not expose secrets through Vite define",
     category: "security",
     severity: "error",
+    docsUrl: "https://vite.dev/config/shared-options.html#define",
     requires: { script: true },
   },
   create(ctx) {
@@ -135,7 +139,7 @@ export const noSecretDefine = createRule({
         for (const entry of readDefineEntriesFromCurrentFile(ctx)) {
           if (!SECRET_NAME_RE.test(entry.key) && !SECRET_NAME_RE.test(entry.rawValue)) continue;
           ctx.report(
-            diagnostics.VITE0005.report({
+            diagnostics.VITE0005({
               why: `Vite define "${entry.key}" looks like a secret and will be bundled into client code.`,
               fix: "Keep secrets on the server and expose only deliberate public values.",
             }),

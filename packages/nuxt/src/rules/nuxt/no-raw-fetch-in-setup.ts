@@ -7,6 +7,8 @@ export const noRawFetchInSetup = createRule({
     category: "fetching",
     severity: "warn",
     fixable: false,
+    docsUrl:
+      "https://nuxt.com/docs/4.x/getting-started/data-fetching#the-need-for-usefetch-and-useasyncdata",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

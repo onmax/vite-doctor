@@ -7,6 +7,7 @@ export const noVueOrNitroContextInShared = createRule({
     category: "architecture",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/directory-structure/shared#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

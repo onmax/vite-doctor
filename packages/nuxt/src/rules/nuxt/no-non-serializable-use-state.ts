@@ -8,6 +8,7 @@ export const noNonSerializableUseState = createRule({
     category: "hydration",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-state#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

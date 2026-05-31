@@ -8,6 +8,7 @@ export const noBrowserGlobalInSsrEntry = createRule({
     title: "Avoid browser globals in Vite SSR entries",
     category: "ssr",
     severity: "error",
+    docsUrl: "https://vite.dev/guide/ssr.html#conditional-logic",
     requires: { script: true },
   },
   create(ctx) {
@@ -21,7 +22,7 @@ export const noBrowserGlobalInSsrEntry = createRule({
         )
           return;
         ctx.report(
-          diagnostics.VITE0018.report({
+          diagnostics.VITE0018({
             why: `Vite SSR entry "${ctx.file.relativePath}" reads browser global "${node.name}".`,
             fix: "Guard browser-only code behind client execution or move it to the client entry.",
           }),

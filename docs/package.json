@@ -16,27 +16,34 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@nuxt/content": "catalog:",
-    "@nuxt/fonts": "catalog:",
-    "@nuxt/kit": "catalog:",
-    "@nuxt/ui": "catalog:",
-    "@oxc-parser/binding-wasm32-wasi": "^0.129.0",
-    "@oxc-project/types": "^0.129.0",
-    "@vueuse/core": "catalog:",
-    "agents": "catalog:",
-    "docus": "catalog:",
-    "h3": "^1.15.11",
-    "nuxt": "catalog:",
-    "pathe": "catalog:",
-    "std-env": "catalog:",
-    "tailwindcss": "catalog:",
+    "@nuxt/content": "catalog:frontend",
+    "@nuxt/fonts": "catalog:frontend",
+    "@nuxt/kit": "catalog:frontend",
+    "@nuxt/ui": "catalog:frontend",
+    "@oxc-parser/binding-wasm32-wasi": "catalog:analysis",
+    "@oxc-project/types": "catalog:analysis",
+    "@resvg/resvg-js": "catalog:frontend",
+    "@tiptap/core": "catalog:frontend",
+    "@tiptap/extensions": "catalog:frontend",
+    "@tiptap/pm": "catalog:frontend",
+    "@tiptap/y-tiptap": "catalog:frontend",
+    "@vueuse/core": "catalog:frontend",
+    "agents": "catalog:deploy",
+    "docus": "catalog:frontend",
+    "nuxt": "catalog:frontend",
+    "pathe": "catalog:prod",
+    "satori": "catalog:frontend",
+    "std-env": "catalog:prod",
+    "tailwindcss": "catalog:frontend",
     "vite-doctor": "workspace:*",
-    "vue": "^3.5.34",
-    "zod": "catalog:"
+    "vue": "catalog:frontend",
+    "zod": "catalog:prod",
+    "zod-to-json-schema": "catalog:prod"
   },
   "devDependencies": {
-    "esbuild": "^0.28.0",
-    "oxc-parser": "catalog:",
-    "wrangler": "catalog:"
+    "@cloudflare/workers-types": "catalog:deploy",
+    "esbuild": "catalog:build",
+    "oxc-parser": "catalog:analysis",
+    "wrangler": "catalog:deploy"
   }
 }

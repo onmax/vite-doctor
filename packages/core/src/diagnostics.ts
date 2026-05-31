@@ -4,6 +4,7 @@ import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./primitives.js";
 export interface DoctorDiagnosticCodeEntry {
   code: string;
   ruleId: string;
+  docs?: string | false;
 }
 
 export interface DoctorDiagnosticParams {
@@ -50,6 +51,7 @@ export function defineDoctorDiagnostics(
       {
         why: (params: DoctorDiagnosticParams) => params.why,
         fix: (params: DoctorDiagnosticParams) => params.fix,
+        ...(entry.docs === undefined ? {} : { docs: entry.docs }),
       },
     ]),
   );

@@ -7,6 +7,7 @@ export const preferUseIdForStableIds = createRule({
     category: "ssr",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/api/composition-api-helpers.html#useid",
     requires: { script: true, vue: true },
   },
   create(ctx) {

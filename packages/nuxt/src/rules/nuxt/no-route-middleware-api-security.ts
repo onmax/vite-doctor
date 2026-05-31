@@ -11,6 +11,8 @@ export const noRouteMiddlewareApiSecurity = createRule({
     category: "middleware",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/guide/directory-structure/app/middleware#when-middleware-runs",
     requires: { nuxt: true, crossFile: true },
   },
   create(ctx) {
@@ -32,7 +34,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
         ctx.report(
-          diagnostics.NUXT0037.report({
+          diagnostics.NUXT0037({
             why: "Route middleware only protects app navigation. API/server routes need their own server-side auth checks.",
             fix: "Add auth checks inside server/api or server/routes handlers.",
           }),

@@ -7,6 +7,7 @@ export const preferValidatedBody = createValidatedInputRule({
     "When a Nitro handler validates a request body, read and validate it through the H3 utility.",
   rawUtilities: ["readBody"],
   validatedUtility: "readValidatedBody",
+  docsUrl: "https://h3.dev/utils/request#readvalidatedbodyevent-validate",
   message: "This request body is read raw and validated separately.",
   suggestion:
     "Use readValidatedBody(event, validator) so input parsing and validation stay coupled.",

@@ -7,6 +7,7 @@ export const noBrowserApiInSetup = createRule({
     category: "ssr",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://vuejs.org/guide/scaling-up/ssr.html#writing-ssr-friendly-code",
     requires: { script: true, vue: true },
   },
   create(ctx) {

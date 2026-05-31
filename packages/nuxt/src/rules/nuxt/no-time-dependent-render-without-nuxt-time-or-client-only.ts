@@ -15,6 +15,8 @@ export const noTimeDependentRenderWithoutNuxtTimeOrClientOnly = createRule({
     category: "hydration",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/guide/best-practices/hydration#dynamic-content-based-on-time",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

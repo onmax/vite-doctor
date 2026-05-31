@@ -14,6 +14,7 @@ export const requireStableAsyncDataKey = createRule({
     category: "fetching",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-async-data#params",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

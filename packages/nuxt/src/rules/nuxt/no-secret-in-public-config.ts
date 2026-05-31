@@ -7,6 +7,7 @@ export const noSecretInPublicConfig = createRule({
     category: "runtime-config",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/guide/going-further/runtime-config#exposing",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

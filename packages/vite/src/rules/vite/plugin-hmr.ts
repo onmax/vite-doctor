@@ -8,6 +8,7 @@ export const requirePluginName = createRule({
     title: "Name Vite plugins",
     category: "plugins",
     severity: "warn",
+    docsUrl: "https://vite.dev/guide/api-plugin.html#authoring-a-plugin",
     requires: { script: true },
   },
   create(ctx) {
@@ -20,7 +21,7 @@ export const requirePluginName = createRule({
         );
         if (hasName) return;
         ctx.report(
-          diagnostics.VITE0015.report({
+          diagnostics.VITE0015({
             why: "Inline Vite plugin objects should declare a stable name.",
             fix: "Add a name property so Vite logs, ordering, and diagnostics are traceable.",
           }),
@@ -43,6 +44,7 @@ export const preferTransformFilter = createRule({
     title: "Filter broad Vite plugin transforms",
     category: "plugins",
     severity: "info",
+    docsUrl: "https://vite.dev/guide/api-plugin.html#hook-filters",
     requires: { script: true },
   },
   create(ctx) {
@@ -54,7 +56,7 @@ export const preferTransformFilter = createRule({
         const source = ctx.file.text.slice(node.start ?? 0, node.end ?? 0);
         if (value?.params?.length >= 2 || /\bfilter\s*:/.test(source)) return;
         ctx.report(
-          diagnostics.VITE0014.report({
+          diagnostics.VITE0014({
             why: "Vite plugin transform hooks should filter by module id.",
             fix: "Accept the id parameter and skip files this plugin does not transform.",
           }),
@@ -77,6 +79,7 @@ export const requireDisposeForSideEffects = createRule({
     title: "Dispose HMR side effects",
     category: "hmr",
     severity: "warn",
+    docsUrl: "https://vite.dev/guide/api-hmr.html#hot-dispose-cb",
     requires: { script: true },
   },
   create(ctx) {
@@ -94,7 +97,7 @@ export const requireDisposeForSideEffects = createRule({
         )
           return;
         ctx.report(
-          diagnostics.VITE0013.report({
+          diagnostics.VITE0013({
             why: "This HMR-accepting module creates side effects without a hot dispose handler.",
             fix: "Clean up listeners, timers, and sockets in import.meta.hot.dispose().",
           }),

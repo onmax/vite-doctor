@@ -1320,6 +1320,12 @@ test("direct SSR time output still reports", async () => {
   expect(result.diagnostics[0]?.ruleId).toBe(
     "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
   );
+  expect(result.diagnostics[0]?.sources).toContain(
+    "https://nuxt.com/docs/4.x/guide/best-practices/hydration#dynamic-content-based-on-time",
+  );
+  expect(createTextReport(result)).toContain(
+    "sources: https://nuxt.com/docs/4.x/guide/best-practices/hydration#dynamic-content-based-on-time",
+  );
 });
 
 test("useState initializer time values are serialized before hydration", async () => {
@@ -1639,6 +1645,12 @@ test("useState still reports returned Date instances", async () => {
   });
 
   expect(result.diagnostics[0]?.ruleId).toBe("nuxt/state/no-nonserializable-usestate");
+  expect(result.diagnostics[0]?.sources).toContain(
+    "https://nuxt.com/docs/4.x/api/composables/use-state#usage",
+  );
+  expect(createTextReport(result)).toContain(
+    "sources: https://nuxt.com/docs/4.x/api/composables/use-state#usage",
+  );
 });
 
 test("Vue lifecycle evidence skips Nuxt content, server, generated, and client-only files", async () => {
@@ -2753,7 +2765,7 @@ test("third-party Nuxt rule hook contributions are collected", async () => {
             ScriptNode(node: any) {
               if (node.type !== "Program") return;
               ctx.report(
-                allDiagnostics.DOC9999.report({
+                allDiagnostics.DOC9999({
                   why: "Hook rule ran.",
                   fix: "Inspect the Nuxt hook rule.",
                 }),
@@ -2808,7 +2820,7 @@ test("Nuxt runtime evidence classifies setup, client, server, lifecycle, command
         ScriptNode(node: any) {
           if (!ctx.helpers.isCall(node, "mark")) return;
           ctx.report(
-            allDiagnostics.DOC9999.report({
+            allDiagnostics.DOC9999({
               why: evidence.executionFor(node),
               fix: "Inspect the Nuxt runtime evidence.",
             }),
@@ -2904,7 +2916,7 @@ test("explicit Nuxt module sources are scanned with module metadata", async () =
             ScriptNode(node: any) {
               if (node.type !== "Program" || !ctx.file.isModuleSource()) return;
               ctx.report(
-                allDiagnostics.DOC9999.report({
+                allDiagnostics.DOC9999({
                   why: `${ctx.file.moduleName}:${ctx.file.relativePath}`,
                   fix: "Inspect the module source fixture.",
                 }),

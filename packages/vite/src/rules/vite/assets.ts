@@ -5,9 +5,10 @@ import { diagnostics } from "../../diagnostics.js";
 export const noPublicSrcImport = createRule({
   meta: {
     id: "vite/assets/no-public-src-import",
-    title: "Do not import files from public",
+    title: "Do not import public media assets",
     category: "assets",
     severity: "warn",
+    docsUrl: "https://vite.dev/guide/assets.html#the-public-directory",
     requires: { script: true },
   },
   create(ctx) {
@@ -16,9 +17,9 @@ export const noPublicSrcImport = createRule({
         const source = String(node.source?.value ?? "");
         if (!isPublicImport(source)) return;
         ctx.report(
-          diagnostics.VITE0002.report({
-            why: `Files in public should be referenced by URL, not imported: ${source}`,
-            fix: "Move the asset into source if it needs bundling, or reference it from /.",
+          diagnostics.VITE0002({
+            why: `Public media and font assets should be referenced by URL, not imported: ${source}`,
+            fix: "Move bundled assets into source, or reference public assets from /. Static JSON data imports are allowed.",
           }),
           {
             ruleId: "vite/assets/no-public-src-import",
@@ -39,6 +40,7 @@ export const noSrcAbsolutePublicUrl = createRule({
     title: "Do not URL-reference source files as public assets",
     category: "assets",
     severity: "warn",
+    docsUrl: "https://vite.dev/guide/assets.html#static-asset-handling",
   },
   create(ctx) {
     return {
@@ -46,7 +48,7 @@ export const noSrcAbsolutePublicUrl = createRule({
         const value = node.type === "VAttribute" ? node.value?.value : null;
         if (typeof value !== "string" || !value.startsWith("/src/")) return;
         ctx.report(
-          diagnostics.VITE0003.report({
+          diagnostics.VITE0003({
             why: `Source asset "${value}" is referenced as a public URL.`,
             fix: "Import source assets or use a relative URL so Vite can transform them.",
           }),
@@ -69,6 +71,7 @@ export const noDynamicNewUrl = createRule({
     title: "Keep new URL asset paths static",
     category: "assets",
     severity: "warn",
+    docsUrl: "https://vite.dev/guide/assets.html#new-url-url-import-meta-url",
     requires: { script: true },
   },
   create(ctx) {
@@ -83,7 +86,7 @@ export const noDynamicNewUrl = createRule({
         if (staticString(first)) return;
         if (!isAssetUrlContext(node)) return;
         ctx.report(
-          diagnostics.VITE0001.report({
+          diagnostics.VITE0001({
             why: "Vite cannot reliably include assets from a dynamic new URL() path.",
             fix: "Use a static string path or import.meta.glob for dynamic asset sets.",
           }),
@@ -101,10 +104,14 @@ export const noDynamicNewUrl = createRule({
 });
 
 function isPublicImport(source: string): boolean {
-  if (/\.(?:json|json5)$/i.test(source)) return false;
+  if (isStaticDataImport(source)) return false;
   return (
     source.startsWith("/public/") || source.startsWith("public/") || source.includes("/public/")
   );
+}
+
+function isStaticDataImport(source: string): boolean {
+  return /\.(?:json|json5)(?:\?.*)?$/i.test(source);
 }
 
 function isAssetUrlContext(node: AnyNode): boolean {

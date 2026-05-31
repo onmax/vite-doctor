@@ -8,6 +8,8 @@ export const asyncDataNoMutationMethods = createRule({
     category: "fetching",
     severity: "error",
     fixable: "suggestion",
+    docsUrl:
+      "https://nuxt.com/docs/4.x/getting-started/data-fetching#the-need-for-usefetch-and-useasyncdata",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

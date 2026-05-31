@@ -8,6 +8,7 @@ export const noRouterNavigationInSetup = createRule({
     category: "routing",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/api/utils/navigate-to#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

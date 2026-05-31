@@ -10,6 +10,7 @@ export const preferNuxtLink = createRule({
     category: "routing",
     severity: "warn",
     fixable: "safe",
+    docsUrl: "https://nuxt.com/docs/4.x/api/components/nuxt-link#nuxtlink",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
@@ -23,7 +24,7 @@ export const preferNuxtLink = createRule({
         if (typeof hrefValue !== "string" || !isInternalNavigationHref(hrefValue)) return;
 
         ctx.report(
-          diagnostics.NUXT0050.report({
+          diagnostics.NUXT0050({
             why: "Raw <a> tags skip NuxtLink routing behavior for internal navigation.",
             fix: "Use <NuxtLink> with a to prop for internal app links.",
           }),

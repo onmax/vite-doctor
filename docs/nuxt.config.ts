@@ -6,6 +6,8 @@ import doctorPackage from "../packages/vite/package.json" with { type: "json" };
 import { getDiagnosticDocuments, getRuleDocuments } from "./rules/source.js";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
+const contentDatabasePath = join(tempDir, `nuxt-doctor-content-${process.pid}.sqlite`);
+const contentLocalDatabasePath = join(tempDir, `nuxt-doctor-content-local-${process.pid}.sqlite`);
 const frameworks = ["nuxt", "vue", "vite", "nitro"];
 const docsRoutes = ["/", "/cli"];
 const frameworkRoutes = frameworks.map((framework) => `/${framework}`);
@@ -13,6 +15,12 @@ const ruleIndexRoutes = frameworks.map((framework) => `/${framework}/rules`);
 const legacyRuleIndexRoutes = frameworks.map((framework) => `/rules/${framework}`);
 const ruleDetailRoutes = getRuleDocuments().map((rule) => rule.path);
 const diagnosticRoutes = getDiagnosticDocuments().map((diagnostic) => diagnostic.path);
+const contentDumpRoutes = [
+  "/__nuxt_content/diagnostics/sql_dump.txt",
+  "/__nuxt_content/docs/sql_dump.txt",
+  "/__nuxt_content/landing/sql_dump.txt",
+  "/__nuxt_content/rules/sql_dump.txt",
+];
 
 export default defineNuxtConfig({
   extends: ["docus"],
@@ -38,7 +46,11 @@ export default defineNuxtConfig({
   content: {
     database: {
       type: "sqlite",
-      filename: join(tempDir, `nuxt-doctor-content-${process.pid}.sqlite`),
+      filename: contentDatabasePath,
+    },
+    _localDatabase: {
+      type: "sqlite",
+      filename: contentLocalDatabasePath,
     },
   },
 
@@ -68,7 +80,9 @@ export default defineNuxtConfig({
       },
     ],
     prerender: {
+      concurrency: 1,
       routes: [
+        ...contentDumpRoutes,
         ...docsRoutes,
         ...frameworkRoutes,
         ...ruleIndexRoutes,

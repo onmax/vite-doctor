@@ -308,7 +308,7 @@ test("Vite plugin contributes resolved config inventory to Doctor Run", async ()
           const vite = project.inventory?.vite as { command?: string };
           if (vite?.command !== "build") return;
           ctx.report(
-            allDiagnostics.DOC9999.report({
+            allDiagnostics.DOC9999({
               why: "Vite surface inventory is available.",
               fix: "Inspect the Vite surface inventory.",
             }),

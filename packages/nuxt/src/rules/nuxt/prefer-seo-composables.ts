@@ -12,6 +12,7 @@ export const preferSeoComposables = createRule({
     category: "seo",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-seo-meta#usage",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {

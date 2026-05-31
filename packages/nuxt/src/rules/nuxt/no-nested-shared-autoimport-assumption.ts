@@ -8,6 +8,7 @@ export const noNestedSharedAutoimportAssumption = createRule({
     category: "imports",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://nuxt.com/docs/4.x/directory-structure/shared#usage",
     requires: { nuxt: true },
   },
   create(ctx) {
@@ -19,7 +20,7 @@ export const noNestedSharedAutoimportAssumption = createRule({
       if (reported) return;
       reported = true;
       ctx.report(
-        diagnostics.NUXT0058.report({
+        diagnostics.NUXT0058({
           why: ctx.project.nuxt?.manifest?.hasManifest
             ? "This nested shared export is not included in Nuxt's configured shared scan roots."
             : "Nuxt only auto-imports shared/utils and shared/types entries by default, not arbitrary nested files.",

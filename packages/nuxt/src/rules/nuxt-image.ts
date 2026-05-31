@@ -10,6 +10,7 @@ export const preferNuxtImg = createRule({
     category: "images",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://image.nuxt.com/usage/nuxt-img#usage",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
@@ -19,7 +20,7 @@ export const preferNuxtImg = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0006.report({
+          diagnostics.NUXT0006({
             why: "Raw <img> misses Nuxt Image optimization and responsive providers.",
             fix: "Use <NuxtImg> for application images.",
           }),
@@ -41,6 +42,7 @@ export const requireImageAlt = createRule({
     category: "images",
     severity: "error",
     fixable: "suggestion",
+    docsUrl: "https://image.nuxt.com/usage/nuxt-img#alt",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
@@ -56,7 +58,7 @@ export const requireImageAlt = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0009.report({
+          diagnostics.NUXT0009({
             why: "Images need alt text or an explicit empty alt for decorative images.",
             fix: "Add alt text that describes the image.",
           }),
@@ -78,6 +80,7 @@ export const preferResponsiveDimensions = createRule({
     category: "images",
     severity: "warn",
     fixable: "suggestion",
+    docsUrl: "https://image.nuxt.com/usage/nuxt-img#width-height",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
@@ -93,7 +96,7 @@ export const preferResponsiveDimensions = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0008.report({
+          diagnostics.NUXT0008({
             why: "Nuxt images should declare dimensions or responsive sizes.",
             fix: "Add width/height for fixed images or sizes for responsive images.",
           }),
@@ -115,6 +118,7 @@ export const preferNuxtPictureForFormats = createRule({
     category: "images",
     severity: "info",
     fixable: "suggestion",
+    docsUrl: "https://image.nuxt.com/usage/nuxt-picture#format",
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
@@ -126,7 +130,7 @@ export const preferNuxtPictureForFormats = createRule({
         ctx.helpers.report(
           ctx,
           node,
-          diagnostics.NUXT0007.report({
+          diagnostics.NUXT0007({
             why: "Format negotiation is clearer with <NuxtPicture>.",
             fix: "Use <NuxtPicture> when serving modern formats with fallbacks.",
           }),

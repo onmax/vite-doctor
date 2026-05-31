@@ -31,7 +31,7 @@ const reportProgramRule = createRule({
       ScriptNode(node: any) {
         if (node.type !== "Program") return;
         ctx.report(
-          allDiagnostics.DOC9999.report({
+          allDiagnostics.DOC9999({
             why: "Program was visited.",
             fix: "Inspect the test program diagnostic.",
           }),
@@ -73,7 +73,7 @@ const secondRule = createRule({
       ScriptNode(node: any) {
         if (node.type !== "Program") return;
         ctx.report(
-          allDiagnostics.DOC9999.report({
+          allDiagnostics.DOC9999({
             why: "Second rule was visited.",
             fix: "Inspect the second test diagnostic.",
           }),
@@ -103,7 +103,7 @@ const duplicateRule = createRule({
         if (node.type !== "Program") return;
         for (let index = 0; index < 2; index++) {
           ctx.report(
-            allDiagnostics.DOC9999.report({
+            allDiagnostics.DOC9999({
               why: "Duplicate report.",
               fix: "Inspect the duplicate test diagnostic.",
             }),
@@ -135,7 +135,7 @@ const optionRule = createRule({
       ScriptNode(node: any) {
         if (node.type !== "Program") return;
         ctx.report(
-          allDiagnostics.DOC9999.report({
+          allDiagnostics.DOC9999({
             why: `option:${(ctx.options as any)?.mode ?? "missing"}`,
             fix: "Inspect the configured test option.",
           }),
