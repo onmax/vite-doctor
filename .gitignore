@@ -18,6 +18,7 @@ artifacts
 **/.vue-doctor
 .vite-doctor
 **/.vite-doctor
+.vite-hooks
 docs/.nuxt
 docs/.output
 docs/.data

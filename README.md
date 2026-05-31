@@ -1,29 +1,45 @@
-<div align="center">
-  <h1>
-    <img src="docs/public/doctor-icon.png" alt="" width="42" height="42" align="absmiddle">
-    Doctor
-  </h1>
-  <p><strong>Catch the AI slop your agents ship.</strong></p>
-  <p><code>pnpm dlx vite-doctor .</code></p>
-  <p><a href="https://vite-doctor.onmax.me">Docs</a></p>
-</div>
+<p align="center">
+  <img src="docs/public/og/doctor-lifeline-bg.png" alt="Vite Doctor" width="100%">
+</p>
+
+<h1 align="center"><img src="docs/public/doctor-icon.png" alt="" width="32" height="32" style="vertical-align: middle;"> Vite Doctor</h1>
+
+<p align="center">Catch framework bugs AI agents miss. Diagnostics for Nuxt, Vue, Nitro and Vite.</p>
+
+<p align="center">
+  <code>pnpm dlx vite-doctor .</code>
+</p>
+
+<p align="center">
+  <a href="https://vite-doctor.onmax.me">Docs</a>
+</p>
 
 ## Usage
+
+Run Vite Doctor from the project root:
 
 ```bash
 pnpm dlx vite-doctor .
 ```
 
-`vite-doctor` loads Doctor extensions and their rule packs, then composes `recommended` presets with `--extends auto` by default. Use `--extends vite/recommended,vue/recommended` for exact preset composition, and `--rules` for a final rule-id filter.
+Vite Doctor reads project signals, activates the right Rule Packs, and applies each Recommended Preset. You get framework-specific diagnostics without choosing presets first.
 
-For Nuxt projects, `vite-doctor/nuxt` is the Nuxt module export path from the `vite-doctor` package:
+Need a narrower Doctor Run? Select exact presets, one Rule, or a framework override:
+
+```bash
+pnpm dlx vite-doctor . --extends vite/recommended,vue/recommended
+pnpm dlx vite-doctor . --rules nuxt/fetch/no-raw-fetch-in-setup
+pnpm dlx vite-doctor . --framework nitro
+```
+
+For Nuxt projects, install Vite Doctor and run it through Nuxt:
 
 ```bash
 pnpm add -D vite-doctor
 pnpm nuxt doctor
 ```
 
-Use `--framework vue|nuxt|vite|nitro` only when auto-detection needs an explicit override.
+Use `--framework` only when project signals are missing or ambiguous.
 
 ## Configuration
 
@@ -59,7 +75,7 @@ export default {
 };
 ```
 
-For Nitro-backed Vite apps, including Vue, React, or any other Vite frontend, use the same plugin and let Doctor detect Nitro from project signals:
+In Vite config, the same plugin covers Vite, Vue, and Nitro projects. Doctor activates Rule Packs from project signals:
 
 ```ts
 // vite.config.ts
@@ -70,7 +86,18 @@ export default {
 };
 ```
 
-Set `framework: "nitro"` only when auto-detection needs an explicit override.
+Set `framework: "nitro"` only when project signals are missing or ambiguous:
+
+```ts
+// vite.config.ts
+import { doctor } from "vite-doctor";
+
+export default {
+  plugins: [doctor({ framework: "nitro" })],
+};
+```
+
+Use the Nuxt module surface for Nuxt-specific configuration:
 
 ```ts
 // nuxt.config.ts

@@ -75,7 +75,7 @@ to: /cli
 #title
 CLI
 #description
-Run project checks and framework scans.
+Run framework diagnostics from one command.
 ::::
 
 ::::u-page-card

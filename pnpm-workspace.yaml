@@ -56,8 +56,7 @@ catalogs:
     zod: ^4.4.3
     zod-to-json-schema: ^3.25.2
   release:
-    "@changesets/changelog-git": ^0.2.1
-    "@changesets/cli": ^2.31.0
+    bumpp: ^11.0.0
     pkg-pr-new: ^0.0.75
   test:
     "@nuxt/test-utils": ^4.0.3

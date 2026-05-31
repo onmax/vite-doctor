@@ -17,16 +17,15 @@
     "test": "pnpm --filter @vue-doctor/core test && pnpm --filter vue-doctor test && pnpm --filter nitro-doctor test && pnpm --filter nuxt-doctor test && pnpm --filter vite-doctor test",
     "check": "vp check",
     "doctor": "vp exec vite-doctor .",
-    "release:check": "pnpm ready",
-    "release:version": "changeset version && pnpm --dir packages/vite exec npm version 0.0.1 --no-git-tag-version --allow-same-version",
+    "release": "bumpp packages/vite/package.json --push --no-push-all",
+    "release:check": "vp fmt && pnpm --filter vite-doctor... build && vp lint && pnpm --filter vite-doctor... test",
     "release:pack": "mkdir -p artifacts && pnpm --filter vite-doctor... build && pnpm --filter vite-doctor pack --pack-destination artifacts",
     "release:publish": "pnpm --dir packages/vite publish --access public",
     "release:publish:provenance": "pnpm --dir packages/vite publish --provenance --access public",
     "prepare": "vp config"
   },
   "devDependencies": {
-    "@changesets/changelog-git": "catalog:release",
-    "@changesets/cli": "catalog:release",
+    "bumpp": "catalog:release",
     "pkg-pr-new": "catalog:release",
     "vite-doctor": "workspace:*",
     "vite-plus": "catalog:build"
