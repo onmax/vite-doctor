@@ -309,12 +309,49 @@ test("lifecycle cleanup rule allows utilities to return owned resources", async 
   expect(retained.diagnostics).toHaveLength(1);
 });
 
-test("event listener rule prefers VueUse for watcher-scoped listener cleanup", async () => {
-  const result = await runRuleFixture({
-    rule: preferUseEventListener,
-    framework: "vue",
-    dependencies: { "@vueuse/core": "^14.0.0" },
-    files: {
+const EVENT_LISTENER_RULE_ID = "vue/lifecycle/prefer-use-event-listener";
+const VUEUSE_DEPENDENCIES = { "@vueuse/core": "^14.0.0" };
+
+function expectEventListenerDiagnostics(
+  result: Awaited<ReturnType<typeof runRuleFixture>>,
+  count = 1,
+) {
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual(
+    Array.from({ length: count }, () => EVENT_LISTENER_RULE_ID),
+  );
+}
+
+function scriptSetupManualListener(eventName: string) {
+  const handler = `on${eventName[0]!.toUpperCase()}${eventName.slice(1)}`;
+  return `<script setup lang="ts">
+const ${handler} = () => {}
+
+onMounted(() => {
+  window.addEventListener('${eventName}', ${handler})
+})
+
+onUnmounted(() => {
+  window.removeEventListener('${eventName}', ${handler})
+})
+</script>`;
+}
+
+function nuxtPluginManualListener(eventName: string) {
+  const handler = `on${eventName[0]!.toUpperCase()}${eventName.slice(1)}`;
+  return `export default defineNuxtPlugin(() => {
+  const ${handler} = () => {}
+
+  window.addEventListener('${eventName}', ${handler})
+
+  onScopeDispose(() => {
+    window.removeEventListener('${eventName}', ${handler})
+  })
+})`;
+}
+
+test("event listener rule reports Vue-owned cleanup patterns", async () => {
+  const cases: Array<Record<string, string>> = [
+    {
       "src/useAnimation.ts": `watch(active, (_value, _oldValue, onCleanup) => {
   const el = document.querySelector('.target')
   if (!el)
@@ -329,45 +366,7 @@ test("event listener rule prefers VueUse for watcher-scoped listener cleanup", a
   })
 }, { flush: 'post' })`,
     },
-  });
-
-  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
-  expect(result.diagnostics[0]?.code).toBe("VUE0025");
-});
-
-test("event listener rule detects lifecycle-scoped listener cleanup outside watchers", async () => {
-  const result = await runRuleFixture({
-    rule: preferUseEventListener,
-    framework: "vue",
-    dependencies: { "@vueuse/core": "^14.0.0" },
-    files: {
-      "src/useViewport.ts": `export function useViewport() {
-  const onResize = () => {}
-
-  onMounted(() => {
-    window.addEventListener('resize', onResize)
-  })
-
-  onScopeDispose(() => {
-    window.removeEventListener('resize', onResize)
-  })
-}`,
-    },
-  });
-
-  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
-});
-
-test("event listener rule resolves cleanup callbacks passed by reference", async () => {
-  const lifecycleCleanup = await runRuleFixture({
-    rule: preferUseEventListener,
-    framework: "vue",
-    dependencies: { "@vueuse/core": "^14.0.0" },
-    files: {
+    {
       "src/useViewport.ts": `export function useViewport() {
   const onResize = () => {}
 
@@ -382,12 +381,7 @@ test("event listener rule resolves cleanup callbacks passed by reference", async
   onUnmounted(cleanupResize)
 }`,
     },
-  });
-  const watcherCleanup = await runRuleFixture({
-    rule: preferUseEventListener,
-    framework: "vue",
-    dependencies: { "@vueuse/core": "^14.0.0" },
-    files: {
+    {
       "src/useAnimation.ts": `watch(active, (_value, _oldValue, onCleanup) => {
   const el = document.querySelector('.target')
   if (!el)
@@ -402,120 +396,39 @@ test("event listener rule resolves cleanup callbacks passed by reference", async
   onCleanup(cleanupAnimation)
 })`,
     },
-  });
+  ];
+  const results = await Promise.all(
+    cases.map((files) =>
+      runRuleFixture({
+        rule: preferUseEventListener,
+        framework: "vue",
+        dependencies: VUEUSE_DEPENDENCIES,
+        files,
+      }),
+    ),
+  );
 
-  expect(lifecycleCleanup.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
-  expect(watcherCleanup.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
+  for (const result of results) expectEventListenerDiagnostics(result);
+  expect(results[0]?.diagnostics[0]?.code).toBe("VUE0025");
 });
 
-test("event listener rule includes Nuxt client runtime files", async () => {
+test("event listener rule honors Nuxt runtime roots", async () => {
   const result = await runRuleFixture({
     rule: preferUseEventListener,
     framework: "nuxt",
-    dependencies: { "@vueuse/core": "^14.0.0" },
+    dependencies: VUEUSE_DEPENDENCIES,
     files: {
-      "app/plugins/resize.client.ts": `export default defineNuxtPlugin(() => {
-  const onResize = () => {}
-
-  window.addEventListener('resize', onResize)
-
-  onScopeDispose(() => {
-    window.removeEventListener('resize', onResize)
-  })
-})`,
-    },
-  });
-
-  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
-});
-
-test("event listener rule includes Nuxt app root components", async () => {
-  const rootApp = await runRuleFixture({
-    rule: preferUseEventListener,
-    framework: "nuxt",
-    dependencies: { "@vueuse/core": "^14.0.0" },
-    files: {
-      "app.vue": `<script setup lang="ts">
-const onResize = () => {}
-
-onMounted(() => {
-  window.addEventListener('resize', onResize)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', onResize)
-})
-</script>`,
-    },
-  });
-  const nuxt4App = await runRuleFixture({
-    rule: preferUseEventListener,
-    framework: "nuxt",
-    dependencies: { "@vueuse/core": "^14.0.0" },
-    files: {
-      "app/app.vue": `<script setup lang="ts">
-const onScroll = () => {}
-
-onMounted(() => {
-  window.addEventListener('scroll', onScroll)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('scroll', onScroll)
-})
-</script>`,
-    },
-  });
-
-  expect(rootApp.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
-  expect(nuxt4App.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
-});
-
-test("event listener rule honors Nuxt app roots for srcDir and layers", async () => {
-  const result = await runRuleFixture({
-    rule: preferUseEventListener,
-    framework: "nuxt",
-    dependencies: { "@vueuse/core": "^14.0.0" },
-    files: {
+      "app/plugins/resize.client.ts": nuxtPluginManualListener("resize"),
+      "app.vue": scriptSetupManualListener("resize"),
+      "app/app.vue": scriptSetupManualListener("scroll"),
       "src/nuxt.config.ts": `export default defineNuxtConfig({})`,
-      "src/app/plugins/resize.client.ts": `export default defineNuxtPlugin(() => {
-  const onResize = () => {}
-
-  window.addEventListener('resize', onResize)
-
-  onScopeDispose(() => {
-    window.removeEventListener('resize', onResize)
-  })
-})`,
+      "src/app/plugins/focus.client.ts": nuxtPluginManualListener("focus"),
       "layers/admin/nuxt.config.ts": `export default defineNuxtConfig({})`,
-      "layers/admin/app/components/AdminWidget.vue": `<script setup lang="ts">
-const onScroll = () => {}
-
-onMounted(() => {
-  window.addEventListener('scroll', onScroll)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('scroll', onScroll)
-})
-</script>`,
+      "layers/admin/app/components/AdminWidget.vue": scriptSetupManualListener("keyup"),
     },
   });
 
-  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
+  expectEventListenerDiagnostics(result, 5);
 });
 
 test("event listener rule requires VueUse and existing manual cleanup evidence", async () => {
@@ -532,7 +445,7 @@ test("event listener rule requires VueUse and existing manual cleanup evidence",
   const withoutCleanup = await runRuleFixture({
     rule: preferUseEventListener,
     framework: "vue",
-    dependencies: { "@vueuse/core": "^14.0.0" },
+    dependencies: VUEUSE_DEPENDENCIES,
     files: {
       "src/useViewport.ts": `export function useViewport() {
   onMounted(() => window.addEventListener('resize', onResize))
@@ -542,7 +455,7 @@ test("event listener rule requires VueUse and existing manual cleanup evidence",
   const unrelatedCleanup = await runRuleFixture({
     rule: preferUseEventListener,
     framework: "vue",
-    dependencies: { "@vueuse/core": "^14.0.0" },
+    dependencies: VUEUSE_DEPENDENCIES,
     files: {
       "src/useViewport.ts": `export function useViewport() {
   onMounted(() => window.addEventListener('resize', onResize))
@@ -561,30 +474,10 @@ test("event listener rule requires VueUse and existing manual cleanup evidence",
 });
 
 test("event listener rule does not suppress manual cleanup when useEventListener is present", async () => {
-  const staleImport = await runRuleFixture({
+  const result = await runRuleFixture({
     rule: preferUseEventListener,
     framework: "vue",
-    dependencies: { "@vueuse/core": "^14.0.0" },
-    files: {
-      "src/App.vue": `<script setup lang="ts">
-import { useEventListener } from '@vueuse/core'
-
-const onScroll = () => {}
-
-onMounted(() => {
-  window.addEventListener('scroll', onScroll)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('scroll', onScroll)
-})
-</script>`,
-    },
-  });
-  const mixedMigration = await runRuleFixture({
-    rule: preferUseEventListener,
-    framework: "vue",
-    dependencies: { "@vueuse/core": "^14.0.0" },
+    dependencies: VUEUSE_DEPENDENCIES,
     files: {
       "src/App.vue": `<script setup lang="ts">
 import { useEventListener } from '@vueuse/core'
@@ -605,12 +498,7 @@ onUnmounted(() => {
     },
   });
 
-  expect(staleImport.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
-  expect(mixedMigration.diagnostics.map((item) => item.ruleId)).toEqual([
-    "vue/lifecycle/prefer-use-event-listener",
-  ]);
+  expectEventListenerDiagnostics(result);
 });
 
 test("event listener rule is visible through global diagnostic reports", () => {
