@@ -481,6 +481,43 @@ onUnmounted(() => {
   ]);
 });
 
+test("event listener rule honors Nuxt app roots for srcDir and layers", async () => {
+  const result = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "nuxt",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "src/nuxt.config.ts": `export default defineNuxtConfig({})`,
+      "src/app/plugins/resize.client.ts": `export default defineNuxtPlugin(() => {
+  const onResize = () => {}
+
+  window.addEventListener('resize', onResize)
+
+  onScopeDispose(() => {
+    window.removeEventListener('resize', onResize)
+  })
+})`,
+      "layers/admin/nuxt.config.ts": `export default defineNuxtConfig({})`,
+      "layers/admin/app/components/AdminWidget.vue": `<script setup lang="ts">
+const onScroll = () => {}
+
+onMounted(() => {
+  window.addEventListener('scroll', onScroll)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', onScroll)
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
+});
+
 test("event listener rule requires VueUse and existing manual cleanup evidence", async () => {
   const withoutVueUse = await runRuleFixture({
     rule: preferUseEventListener,

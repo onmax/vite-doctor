@@ -1,3 +1,4 @@
+import { relative } from "pathe";
 import { AnyNode, bindingNames, createRule, report } from "./shared.js";
 import type { RuleContext } from "../../../../core/index.js";
 
@@ -22,7 +23,7 @@ export const preferUseEventListener = createRule({
   },
   create(ctx) {
     if (!projectHasVueUse(ctx)) return;
-    if (ctx.project.framework === "nuxt" && !isNuxtVueRuntimePath(ctx.file.relativePath)) return;
+    if (ctx.project.framework === "nuxt" && !isNuxtVueRuntimePath(ctx)) return;
 
     return {
       ScriptNode(node: AnyNode) {
@@ -200,7 +201,45 @@ function walkScope(node: AnyNode, visit: (node: AnyNode) => void, root = node) {
   }
 }
 
-function isNuxtVueRuntimePath(path: string) {
+function isNuxtVueRuntimePath(ctx: RuleContext) {
+  for (const candidate of nuxtRuntimePathCandidates(ctx)) {
+    if (isNuxtVueRuntimeCandidate(candidate)) return true;
+  }
+  return false;
+}
+
+function nuxtRuntimePathCandidates(ctx: RuleContext) {
+  const path = toPosixPath(ctx.file.relativePath);
+  const candidates = new Set([path]);
+  for (const root of nuxtRuntimeRoots(ctx)) {
+    const relativeRoot = relativeProjectPath(ctx, root);
+    if (!relativeRoot || relativeRoot === ".") continue;
+    if (path === relativeRoot) candidates.add("");
+    else if (path.startsWith(`${relativeRoot}/`)) {
+      candidates.add(path.slice(relativeRoot.length + 1));
+    }
+  }
+  return candidates;
+}
+
+function nuxtRuntimeRoots(ctx: RuleContext) {
+  const nuxt = ctx.project.nuxt;
+  return [nuxt?.appDir, ...(nuxt?.appRoots ?? []), ...(nuxt?.manifest?.appScanRoots ?? [])].filter(
+    (root): root is string => Boolean(root),
+  );
+}
+
+function relativeProjectPath(ctx: RuleContext, root: string) {
+  const projectRoot = toPosixPath(ctx.project.root);
+  let normalized = toPosixPath(root);
+  if (normalized === projectRoot) return ".";
+  const projectPrefix = `${projectRoot}/`;
+  if (normalized.startsWith(projectPrefix)) normalized = normalized.slice(projectPrefix.length);
+  else normalized = toPosixPath(relative(ctx.project.root, normalized));
+  return normalized.replace(/^~\//, "app/").replace(/^@\//, "app/").replace(/^\.\//, "");
+}
+
+function isNuxtVueRuntimeCandidate(path: string) {
   if (
     /\.(md|mdc|markdown)$/.test(path) ||
     /^(content|server|app\/server|shared\/types|generated|app\/generated)\//.test(path)
@@ -208,4 +247,8 @@ function isNuxtVueRuntimePath(path: string) {
     return false;
   if (path === "app.vue" || path === "app/app.vue") return true;
   return /^(app\/)?(components|composables|layouts|middleware|pages|plugins|utils)\//.test(path);
+}
+
+function toPosixPath(path: string) {
+  return path.replace(/\\/g, "/");
 }
