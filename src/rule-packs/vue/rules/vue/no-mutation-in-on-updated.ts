@@ -23,7 +23,7 @@ export const noMutationInOnUpdated = createRule({
           "error",
           "lifecycle",
           "Mutating reactive state in onUpdated can create update loops.",
-          "Move the mutation to the event or watcher that caused the update.",
+          "Move the reactive mutation to the event or state transition that owns it, or keep update bookkeeping in a non-reactive local.",
         );
       },
     };
