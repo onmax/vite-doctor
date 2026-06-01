@@ -169,5 +169,6 @@ function isNuxtVueRuntimePath(path: string) {
     /^(content|server|app\/server|shared\/types|generated|app\/generated)\//.test(path)
   )
     return false;
+  if (path === "app.vue" || path === "app/app.vue") return true;
   return /^(app\/)?(components|composables|layouts|middleware|pages|plugins|utils)\//.test(path);
 }

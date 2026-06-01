@@ -385,6 +385,52 @@ test("event listener rule includes Nuxt client runtime files", async () => {
   ]);
 });
 
+test("event listener rule includes Nuxt app root components", async () => {
+  const rootApp = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "nuxt",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "app.vue": `<script setup lang="ts">
+const onResize = () => {}
+
+onMounted(() => {
+  window.addEventListener('resize', onResize)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
+})
+</script>`,
+    },
+  });
+  const nuxt4App = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "nuxt",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "app/app.vue": `<script setup lang="ts">
+const onScroll = () => {}
+
+onMounted(() => {
+  window.addEventListener('scroll', onScroll)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', onScroll)
+})
+</script>`,
+    },
+  });
+
+  expect(rootApp.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
+  expect(nuxt4App.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
+});
+
 test("event listener rule requires VueUse and existing manual cleanup evidence", async () => {
   const withoutVueUse = await runRuleFixture({
     rule: preferUseEventListener,
