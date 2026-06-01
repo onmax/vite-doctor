@@ -1504,6 +1504,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/lifecycle/prefer-use-event-listener": {
+    description:
+      "Finds Vue scopes that manually pair DOM event listener setup and cleanup when VueUse is already available.",
+    why: "DOM listeners are lifecycle resources. Keeping setup and disposal behind a composable makes repeated watcher runs, component unmounts, and composable scope disposal harder to drift apart.",
+    recommendedReplacement:
+      "Use VueUse useEventListener() for DOM listeners. In watcher callbacks, keep the returned stop handle in watcher cleanup when each watcher run owns a fresh listener.",
+    examples: [
+      {
+        title: "Use VueUse for watcher-owned listeners",
+        language: "ts",
+        invalid:
+          "watch(active, (_value, _oldValue, onCleanup) => {\n  const el = document.querySelector('.target')\n  if (!el) return\n  const onEnd = () => el.classList.remove('active')\n  el.addEventListener('animationend', onEnd, { once: true })\n  onCleanup(() => el.removeEventListener('animationend', onEnd))\n})",
+        valid:
+          "watch(active, (_value, _oldValue, onCleanup) => {\n  const el = document.querySelector('.target')\n  if (!el) return\n  const stop = useEventListener(el, 'animationend', () => {\n    el.classList.remove('active')\n  }, { once: true })\n  onCleanup(stop)\n})",
+      },
+    ],
+  },
   "vue/reactivity/defineprops-watch-getter": {
     description:
       "Finds Vue reactivity code that can be written with a clearer framework-supported pattern.",

@@ -514,7 +514,10 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("VueUse useStorage", "https://vueuse.org/core/useStorage/");
   }
 
-  if (rule.id.includes("prefer-useevent-listener")) {
+  if (
+    rule.id.includes("prefer-useevent-listener") ||
+    rule.id.includes("prefer-use-event-listener")
+  ) {
     add("VueUse useEventListener", "https://vueuse.org/core/useeventlistener/");
   }
 

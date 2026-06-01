@@ -25,6 +25,7 @@ export const vueDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0022", ruleId: "vue/template/html-button-has-type" },
   { code: "VUE0023", ruleId: "vue/template/prefer-same-name-prop-shorthand" },
   { code: "VUE0024", ruleId: "vue/template/prefer-true-attribute-shorthand" },
+  { code: "VUE0025", ruleId: "vue/lifecycle/prefer-use-event-listener" },
 ]);
 
 export const diagnostics = vueDiagnosticRegistry.diagnostics;

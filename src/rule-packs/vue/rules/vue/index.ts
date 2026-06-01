@@ -10,6 +10,7 @@ export { noSetupPropsDestructure } from "./no-setup-props-destructure.js";
 export { noAsyncWatchEffectAfterAwaitRead } from "./no-async-watch-effect-after-await-read.js";
 export { requireWatcherCleanup } from "./require-watcher-cleanup.js";
 export { requirePostFlushForDomWatch } from "./require-post-flush-for-dom-watch.js";
+export { preferUseEventListener } from "./prefer-use-event-listener.js";
 export { noMutationInOnUpdated } from "./no-mutation-in-on-updated.js";
 export { requireLifecycleCleanup } from "./require-lifecycle-cleanup.js";
 export { preferUseIdForStableIds } from "./prefer-use-id-for-stable-ids.js";
@@ -34,6 +35,7 @@ import { noSetupPropsDestructure } from "./no-setup-props-destructure.js";
 import { noAsyncWatchEffectAfterAwaitRead } from "./no-async-watch-effect-after-await-read.js";
 import { requireWatcherCleanup } from "./require-watcher-cleanup.js";
 import { requirePostFlushForDomWatch } from "./require-post-flush-for-dom-watch.js";
+import { preferUseEventListener } from "./prefer-use-event-listener.js";
 import { noMutationInOnUpdated } from "./no-mutation-in-on-updated.js";
 import { requireLifecycleCleanup } from "./require-lifecycle-cleanup.js";
 import { preferUseIdForStableIds } from "./prefer-use-id-for-stable-ids.js";
@@ -60,6 +62,7 @@ const rules = [
   noAsyncWatchEffectAfterAwaitRead,
   requireWatcherCleanup,
   requirePostFlushForDomWatch,
+  preferUseEventListener,
   noMutationInOnUpdated,
   requireLifecycleCleanup,
   preferUseIdForStableIds,
