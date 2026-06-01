@@ -3,7 +3,9 @@ import {
   asyncDataRuleOptions,
   collectReplayableSideEffects,
   getAsyncDataCall,
+  isQueryLikePath,
   isReadonlyPath,
+  isWriteLikePath,
   replayableSeverity,
 } from "./async-data.js";
 
@@ -25,10 +27,13 @@ export const asyncDataHandlerPure = createRule({
         const options = asyncDataRuleOptions(ctx);
         for (const effect of collectReplayableSideEffects(ctx, call.handler)) {
           const isMutatingFetch = effect.kind === "mutating-fetch";
+          const effectPath = effect.path ?? call.path;
           if (
             isMutatingFetch &&
             effect.method === "POST" &&
-            (call.readonlyMarked || isReadonlyPath(effect.path ?? call.path, options))
+            (call.readonlyMarked ||
+              isReadonlyPath(effectPath, options) ||
+              (isQueryLikePath(effectPath) && !isWriteLikePath(effectPath, options)))
           )
             continue;
           report(

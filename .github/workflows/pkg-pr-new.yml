@@ -26,4 +26,4 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm release:check
-      - run: pnpm exec pkg-pr-new publish . --bin --packageManager=pnpm
+      - run: pnpm exec pkg-pr-new publish . --pnpm --bin --packageManager=pnpm
