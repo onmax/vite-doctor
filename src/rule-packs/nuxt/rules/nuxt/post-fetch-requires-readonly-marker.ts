@@ -11,7 +11,7 @@ import {
 export const postFetchRequiresReadonlyMarker = createRule({
   meta: {
     id: "nuxt/post-fetch-requires-readonly-marker",
-    title: "Mark POST async data requests as readonly",
+    title: "Do not register write-like POST requests as async data",
     category: "fetching",
     severity: "warn",
     fixable: "suggestion",
@@ -28,14 +28,15 @@ export const postFetchRequiresReadonlyMarker = createRule({
           return;
         const queryLike = isQueryLikePath(call.path);
         const writeLike = isWriteLikePath(call.path, options);
+        if (queryLike || !writeLike) return;
         report(
           ctx,
           node,
           "nuxt/post-fetch-requires-readonly-marker",
-          writeLike && !queryLike ? "error" : "warn",
+          "error",
           "fetching",
-          `${call.name}() registers a POST request to ${call.path ?? "an unknown endpoint"} as replayable Nuxt async data without a readonly marker.`,
-          "Add meta: { readonly: true } or a nuxt-doctor: async-data-readonly comment for read-like POST queries. Use $fetch() for writes.",
+          `${call.name}() registers a write-like POST request to ${call.path ?? "an unknown endpoint"} as replayable Nuxt async data.`,
+          "Use $fetch() for writes. If this endpoint is read-only despite the write-like path, configure readonlyPaths for the Nuxt Doctor module.",
         );
       },
     };

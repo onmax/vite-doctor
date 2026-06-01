@@ -219,8 +219,8 @@ const cases = [
   {
     rule: postFetchRequiresReadonlyMarker,
     id: "nuxt/post-fetch-requires-readonly-marker",
-    file: "app/pages/search.vue",
-    source: `<script setup lang="ts">useFetch('/api/search', { method: 'POST', body })</script>`,
+    file: "app/pages/settings.vue",
+    source: `<script setup lang="ts">useFetch('/api/settings/update', { method: 'POST', body })</script>`,
   },
   {
     rule: noMutationToastInUseFetchCallback,
@@ -498,7 +498,7 @@ useLazyFetch('/api/b', { method: HttpMethod.DELETE })
   expect(result.diagnostics.map((item) => item.severity)).toEqual(["error", "error"]);
 });
 
-test("POST async data requires explicit readonly intent", async () => {
+test("POST async data reports write-like paths but ignores read-like POST queries", async () => {
   const result = await runRuleFixture({
     rule: postFetchRequiresReadonlyMarker,
     framework: "nuxt",
@@ -506,7 +506,6 @@ test("POST async data requires explicit readonly intent", async () => {
       "app/pages/search.vue": `<script setup lang="ts">
 useFetch('/api/rules/query', {
   method: 'POST',
-  // nuxt-doctor: async-data-readonly
   body,
 })
 useFetch('/api/search', {
@@ -523,7 +522,7 @@ useFetch('/api/settings', { method: 'POST', body })
   expect(result.diagnostics[0]?.severity).toBe("error");
 });
 
-test("POST async data warns for unmarked query-like paths and errors for write-like paths", async () => {
+test("POST async data ignores query-like paths and errors for write-like paths", async () => {
   const result = await runRuleFixture({
     rule: postFetchRequiresReadonlyMarker,
     framework: "nuxt",
@@ -535,7 +534,7 @@ useFetch('/api/jobs/trigger', { method: 'POST', body })
     },
   });
 
-  expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn", "error"]);
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["error"]);
 });
 
 test("POST async data supports readonly path and write-like segment options", async () => {
@@ -563,6 +562,36 @@ useFetch('/api/foo/mutate', { method: 'POST', body })
 
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.severity).toBe("error");
+});
+
+test("POST async data readonly paths match dynamic request patterns", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [postFetchRequiresReadonlyMarker],
+    config: {
+      rules: {
+        "nuxt/post-fetch-requires-readonly-marker": [
+          "error",
+          {
+            readonlyPaths: ["/api/npi/launches/**", "/api/product/chart/**"],
+          },
+        ],
+      },
+    },
+    files: {
+      "app/pages/search.vue": `<script setup lang="ts">
+const launchId = 'launch-1'
+const drilldownDate = ref('2026-01-01')
+useFetch(\`/api/npi/launches/\${launchId}/chartdata\`, { method: 'POST', body })
+useLazyFetch(() => \`/api/product/chart/forecast/drilldown/\${drilldownDate.value}\`, { method: 'POST', body })
+useFetch(\`/api/jobs/\${launchId}/trigger\`, { method: 'POST', body })
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.severity).toBe("error");
+  expect(result.diagnostics[0]?.message).toContain("/api/jobs/*/trigger");
 });
 
 test("manual action useFetch warns for manual refresh and errors for mutating methods", async () => {
@@ -794,6 +823,31 @@ useAsyncData('delete', () => $fetch('/api/settings', {
     },
   });
   expect(deleteResult.diagnostics.map((item) => item.severity)).toEqual(["error"]);
+});
+
+test("async data handler purity readonly paths match dynamic fetch patterns", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [asyncDataHandlerPure],
+    config: {
+      rules: {
+        "nuxt/async-data-handler-pure": ["error", { readonlyPaths: ["/api/npi/launches/**"] }],
+      },
+    },
+    files: {
+      "app/pages/search.vue": `<script setup lang="ts">
+const launchId = 'launch-1'
+useAsyncData('notice', () => $fetch(\`/api/npi/launches/\${launchId}/chartdata\`, {
+  method: 'POST',
+}))
+useAsyncData('write', () => $fetch(\`/api/jobs/\${launchId}/trigger\`, {
+  method: 'POST',
+}))
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["error"]);
 });
 
 test("async data handler purity narrows store assignment evidence to local Pinia stores", async () => {

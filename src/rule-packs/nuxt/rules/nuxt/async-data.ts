@@ -86,7 +86,7 @@ export function getAsyncDataCall(ctx: RuleContext, node: AnyNode): AsyncDataCall
     options,
     handler: getAsyncDataHandler(name, node),
     method: resolveHttpMethod(getObjectPropertyValue(options, "method")),
-    path: getStaticString(node.arguments?.[0]),
+    path: getStaticRequestPath(node.arguments?.[0]),
     hasImmediateFalse: isFalseLiteral(getObjectPropertyValue(options, "immediate")),
     hasExplicitKey: hasExplicitAsyncDataKey(name, node, options),
     readonlyMarked: hasReadonlyMarker(ctx, node, options),
@@ -116,6 +116,15 @@ export function getStaticString(node: AnyNode): string | null {
   }
   if (isMemberExpression(unwrapped)) return staticMemberPropertyName(unwrapped);
   return null;
+}
+
+export function getStaticRequestPath(node: AnyNode): string | null {
+  const unwrapped = unwrapExpression(node);
+  if (!unwrapped) return null;
+  if (isFunctionNode(unwrapped)) return getReturnedStaticRequestPath(unwrapped);
+  if (unwrapped.type === "TemplateLiteral" && (unwrapped.expressions?.length ?? 0) > 0)
+    return templateLiteralPattern(unwrapped);
+  return getStaticString(unwrapped);
 }
 
 export function getObjectPropertyValue(objectNode: AnyNode, key: string): AnyNode {
@@ -204,7 +213,7 @@ export function collectReplayableSideEffects(ctx: RuleContext, root: AnyNode): S
           node,
           kind: "mutating-fetch",
           method,
-          path: getStaticString(node.arguments?.[0]),
+          path: getStaticRequestPath(node.arguments?.[0]),
           confidence: "proven-write",
         });
       }
@@ -350,6 +359,27 @@ function isFunctionNode(node: AnyNode): boolean {
     node?.type === "FunctionExpression" ||
     node?.type === "FunctionDeclaration"
   );
+}
+
+function getReturnedStaticRequestPath(node: AnyNode): string | null {
+  const body = unwrapExpression(node.body);
+  if (!body) return null;
+  if (body.type !== "BlockStatement") return getStaticRequestPath(body);
+  const returns = (body.body ?? []).filter((item: AnyNode) => item.type === "ReturnStatement");
+  if (returns.length !== 1) return null;
+  return getStaticRequestPath(returns[0]?.argument);
+}
+
+function templateLiteralPattern(node: AnyNode): string | null {
+  const quasis = node.quasis ?? [];
+  if (!quasis.length) return null;
+  let pattern = "";
+  for (let index = 0; index < quasis.length; index += 1) {
+    const quasi = quasis[index];
+    pattern += quasi?.value?.cooked ?? quasi?.value?.raw ?? "";
+    if (index < (node.expressions?.length ?? 0)) pattern += "*";
+  }
+  return pattern || null;
 }
 
 function isTrueLiteral(node: AnyNode): boolean {

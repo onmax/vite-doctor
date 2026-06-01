@@ -780,19 +780,18 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "nuxt/post-fetch-requires-readonly-marker": {
-    description:
-      "Finds Nuxt project code that can be written with a clearer framework-supported pattern.",
-    why: "Nuxt data fetching relies on stable keys, payload serialization, and request context. Bypassing those contracts can duplicate requests or lose SSR data.",
+    description: "Finds write-like POST Nuxt async-data requests that can replay.",
+    why: "Nuxt async data can be replayed by refreshes, hydration, and watch sources. Write-like POST endpoints should not be registered as replayable data.",
     recommendedReplacement:
-      "Use the Nuxt-supported post fetch requires readonly marker pattern instead.",
+      "Move writes to $fetch() event handlers. Read-like POST query endpoints are ignored by default; configure readonlyPaths for read-only endpoints that look write-like.",
     examples: [
       {
-        title: "Mark read-only POST async data",
+        title: "Move write-like POST work out of async data",
         language: "ts",
         invalid:
-          "const { data } = await useFetch('/api/search', {\n  method: 'POST',\n  body: { q },\n})",
+          "const { data } = await useFetch('/api/jobs/trigger', {\n  method: 'POST',\n  body,\n})",
         valid:
-          "const { data } = await useFetch('/api/search', {\n  method: 'POST',\n  body: { q },\n  meta: { readonly: true },\n})",
+          "async function triggerJob() {\n  await $fetch('/api/jobs/trigger', {\n    method: 'POST',\n    body,\n  })\n}",
       },
     ],
   },
