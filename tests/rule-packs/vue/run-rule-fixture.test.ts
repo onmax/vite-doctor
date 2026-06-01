@@ -482,7 +482,7 @@ test("event listener rule requires VueUse and existing manual cleanup evidence",
   })
 
   onUnmounted(() => {
-    window.removeEventListener('resize', onResize)
+    window.removeEventListener("resize", onResize)
   })
 }`,
     },

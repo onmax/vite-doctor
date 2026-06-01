@@ -204,7 +204,7 @@ function sameListener(a: ListenerKey, b: ListenerKey) {
 
 function expressionKey(node: AnyNode, source: string) {
   if (!node) return "";
-  if (node.type === "Literal") return JSON.stringify(node.value);
+  if (node.type === "Literal" || node.type === "StringLiteral") return JSON.stringify(node.value);
   return nodeSource(node, source).replace(/\s+/g, " ").trim();
 }
 
