@@ -29,7 +29,6 @@ export const preferUseEventListener = createRule({
         if (!isAddEventListenerCall(node, ctx.helpers.getCalleeName(node))) return;
         const owner = manualListenerOwner(node, ctx.file.text);
         if (!owner) return;
-        if (nodeSource(owner, ctx.file.text).includes("useEventListener")) return;
 
         report(
           ctx,

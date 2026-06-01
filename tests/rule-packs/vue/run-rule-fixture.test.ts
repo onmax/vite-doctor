@@ -473,21 +473,57 @@ test("event listener rule requires VueUse and existing manual cleanup evidence",
   expect(unrelatedCleanup.diagnostics).toHaveLength(0);
 });
 
-test("event listener rule ignores scopes already using useEventListener", async () => {
-  const result = await runRuleFixture({
+test("event listener rule does not suppress manual cleanup when useEventListener is present", async () => {
+  const staleImport = await runRuleFixture({
     rule: preferUseEventListener,
     framework: "vue",
     dependencies: { "@vueuse/core": "^14.0.0" },
     files: {
-      "src/useViewport.ts": `export function useViewport() {
-  useEventListener(window, 'resize', onResize)
-  onMounted(() => window.addEventListener('scroll', onScroll))
-  onUnmounted(() => window.removeEventListener('scroll', onScroll))
-}`,
+      "src/App.vue": `<script setup lang="ts">
+import { useEventListener } from '@vueuse/core'
+
+const onScroll = () => {}
+
+onMounted(() => {
+  window.addEventListener('scroll', onScroll)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', onScroll)
+})
+</script>`,
+    },
+  });
+  const mixedMigration = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "src/App.vue": `<script setup lang="ts">
+import { useEventListener } from '@vueuse/core'
+
+const onResize = () => {}
+const onScroll = () => {}
+
+useEventListener(window, 'resize', onResize)
+
+onMounted(() => {
+  window.addEventListener('scroll', onScroll)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', onScroll)
+})
+</script>`,
     },
   });
 
-  expect(result.diagnostics).toHaveLength(0);
+  expect(staleImport.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
+  expect(mixedMigration.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
 });
 
 test("event listener rule is visible through global diagnostic reports", () => {
