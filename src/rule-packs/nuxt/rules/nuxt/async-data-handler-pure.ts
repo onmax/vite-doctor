@@ -5,6 +5,7 @@ import {
   getAsyncDataCall,
   isQueryLikePath,
   isReadonlyPath,
+  isWriteLikePath,
   replayableSeverity,
 } from "./async-data.js";
 
@@ -32,7 +33,7 @@ export const asyncDataHandlerPure = createRule({
             effect.method === "POST" &&
             (call.readonlyMarked ||
               isReadonlyPath(effectPath, options) ||
-              isQueryLikePath(effectPath))
+              (isQueryLikePath(effectPath) && !isWriteLikePath(effectPath, options)))
           )
             continue;
           report(

@@ -522,19 +522,21 @@ useFetch('/api/settings', { method: 'POST', body })
   expect(result.diagnostics[0]?.severity).toBe("error");
 });
 
-test("POST async data ignores query-like paths and errors for write-like paths", async () => {
+test("POST async data ignores query-like paths unless they contain write-like segments", async () => {
   const result = await runRuleFixture({
     rule: postFetchRequiresReadonlyMarker,
     framework: "nuxt",
     files: {
       "app/pages/search.vue": `<script setup lang="ts">
 useFetch('/api/rules/query', { method: 'POST', body })
+useFetch('/api/search/delete', { method: 'POST', body })
+useFetch('/api/rules/query/update', { method: 'POST', body })
 useFetch('/api/jobs/trigger', { method: 'POST', body })
 </script>`,
     },
   });
 
-  expect(result.diagnostics.map((item) => item.severity)).toEqual(["error"]);
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["error", "error", "error"]);
 });
 
 test("POST async data supports readonly path and write-like segment options", async () => {
@@ -841,6 +843,25 @@ useAsyncData('notice', () => $fetch(\`/api/npi/launches/\${launchId}/chartdata\`
   method: 'POST',
 }))
 useAsyncData('write', () => $fetch(\`/api/jobs/\${launchId}/trigger\`, {
+  method: 'POST',
+}))
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["error"]);
+});
+
+test("async data handler purity reports write-like POST paths inside query-like endpoints", async () => {
+  const result = await runRuleFixture({
+    rule: asyncDataHandlerPure,
+    framework: "nuxt",
+    files: {
+      "app/pages/search.vue": `<script setup lang="ts">
+useAsyncData('query', () => $fetch('/api/rules/query', {
+  method: 'POST',
+}))
+useAsyncData('write', () => $fetch('/api/search/delete', {
   method: 'POST',
 }))
 </script>`,

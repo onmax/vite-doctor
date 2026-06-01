@@ -3,7 +3,6 @@ import {
   FETCH_ASYNC_DATA_COMPOSABLES,
   asyncDataRuleOptions,
   getAsyncDataCall,
-  isQueryLikePath,
   isReadonlyPath,
   isWriteLikePath,
 } from "./async-data.js";
@@ -26,9 +25,8 @@ export const postFetchRequiresReadonlyMarker = createRule({
         if (!call || !FETCH_ASYNC_DATA_COMPOSABLES.has(call.name)) return;
         if (call.method !== "POST" || call.readonlyMarked || isReadonlyPath(call.path, options))
           return;
-        const queryLike = isQueryLikePath(call.path);
         const writeLike = isWriteLikePath(call.path, options);
-        if (queryLike || !writeLike) return;
+        if (!writeLike) return;
         report(
           ctx,
           node,
