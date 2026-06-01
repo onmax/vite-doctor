@@ -50,7 +50,7 @@
     "dev": "vp run docs#dev",
     "docs:dev": "vp run docs#dev",
     "build": "tsdown",
-    "docs:build": "pnpm --dir docs build",
+    "docs:build": "NODE_OPTIONS=--max-old-space-size=4096 pnpm --dir docs build",
     "deploy": "pnpm run docs:build && pnpm --dir docs exec wrangler deploy --no-bundle",
     "deploy:preview": "pnpm run docs:build && pnpm --dir docs exec wrangler versions upload --preview-alias preview --no-bundle",
     "test": "vp test --passWithNoTests",
