@@ -10,6 +10,9 @@ export default defineAppConfig({
     },
   },
   navigation: { sub: false },
+  socials: {
+    x: "https://x.com/_onmax",
+  },
   github: {
     url: "https://github.com/onmax/vite-doctor",
     branch: "main",

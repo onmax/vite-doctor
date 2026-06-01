@@ -113,6 +113,34 @@ const features = [
   },
 ] as const satisfies readonly HomeFeature[];
 
+const externalNavLinks = [
+  {
+    id: "x",
+    label: "X",
+    href: "https://x.com/_onmax",
+    icon: "i-simple-icons-x",
+    ariaLabel: "Onmax on X",
+  },
+  {
+    id: "github",
+    label: "GitHub",
+    href: "https://github.com/onmax/vite-doctor",
+    icon: "i-simple-icons-github",
+    ariaLabel: "GitHub repository",
+  },
+] as const;
+
+const footerLinks = [
+  ...externalNavLinks,
+  {
+    id: "nuxt-skill",
+    label: "Nuxt Skill",
+    href: "https://nuxt-skill.onmax.me",
+    icon: "i-logos-nuxt-icon",
+    ariaLabel: "Nuxt Skill",
+  },
+] as const;
+
 const colorMode = useColorMode();
 const isDark = computed(() => colorMode.value === "dark");
 function toggleTheme() {
@@ -124,7 +152,9 @@ function toggleTheme() {
   <div
     class="relative min-h-dvh w-full antialiased isolate overflow-hidden bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:text-emerald-50"
   >
-    <header class="mx-auto flex max-w-6xl items-center justify-between px-6 pt-6 sm:px-10 sm:pt-7">
+    <header
+      class="mx-auto flex max-w-6xl items-start justify-between gap-4 px-6 pt-6 sm:items-center sm:px-10 sm:pt-7"
+    >
       <a
         href="/"
         aria-label="Homepage"
@@ -134,10 +164,10 @@ function toggleTheme() {
         <span class="text-base font-semibold tracking-tight">Doctor</span>
       </a>
 
-      <nav class="flex items-center gap-0.5 sm:gap-1">
+      <nav class="flex min-w-0 flex-wrap items-center justify-end gap-0.5 sm:gap-1">
         <a
           href="/cli"
-          class="rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          class="rounded-md px-2 py-1.5 text-sm font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
           CLI
         </a>
@@ -145,9 +175,20 @@ function toggleTheme() {
           v-for="track in tracks"
           :key="track.id"
           :href="track.to"
-          class="rounded-md px-2.5 py-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          class="rounded-md px-2 py-1.5 text-sm font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
           {{ track.label }}
+        </a>
+        <a
+          v-for="link in externalNavLinks"
+          :key="link.id"
+          :href="link.href"
+          :aria-label="link.ariaLabel"
+          class="relative ml-0.5 inline-flex size-8 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <UIcon :name="link.icon" class="size-4" aria-hidden="true" />
         </a>
         <button
           type="button"
@@ -403,5 +444,26 @@ function toggleTheme() {
         </div>
       </section>
     </main>
+
+    <footer
+      class="mx-auto flex max-w-6xl flex-col gap-4 border-t border-neutral-950/10 px-6 py-7 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-10 dark:border-white/10"
+    >
+      <p class="text-neutral-500 dark:text-neutral-400">Doctor diagnostics for framework code.</p>
+
+      <nav class="flex flex-wrap items-center gap-1" aria-label="External links">
+        <a
+          v-for="link in footerLinks"
+          :key="link.id"
+          :href="link.href"
+          :aria-label="link.ariaLabel"
+          class="inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <UIcon :name="link.icon" class="size-4 shrink-0" aria-hidden="true" />
+          <span>{{ link.label }}</span>
+        </a>
+      </nav>
+    </footer>
   </div>
 </template>
