@@ -9,6 +9,7 @@ import {
   preferTypeProps,
   noUntranslatedText,
   noUnusedTranslations,
+  preferUseEventListener,
   requireLifecycleCleanup,
   requirePostFlushForDomWatch,
 } from "../../../src/rule-packs/vue/rules/vue/index.ts";
@@ -300,6 +301,102 @@ test("lifecycle cleanup rule allows utilities to return owned resources", async 
 
   expect(returned.diagnostics).toHaveLength(0);
   expect(retained.diagnostics).toHaveLength(1);
+});
+
+test("event listener rule prefers VueUse for watcher-scoped listener cleanup", async () => {
+  const result = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "src/useAnimation.ts": `watch(active, (_value, _oldValue, onCleanup) => {
+  const el = document.querySelector('.target')
+  if (!el)
+    return
+
+  const onAnimationEnd = () => el.classList.remove('active')
+  el.addEventListener('animationend', onAnimationEnd, { once: true })
+
+  onCleanup(() => {
+    el.removeEventListener('animationend', onAnimationEnd)
+    el.classList.remove('active')
+  })
+}, { flush: 'post' })`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
+  expect(result.diagnostics[0]?.code).toBe("VUE0025");
+});
+
+test("event listener rule detects lifecycle-scoped listener cleanup outside watchers", async () => {
+  const result = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "src/useViewport.ts": `export function useViewport() {
+  const onResize = () => {}
+
+  onMounted(() => {
+    window.addEventListener('resize', onResize)
+  })
+
+  onScopeDispose(() => {
+    window.removeEventListener('resize', onResize)
+  })
+}`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
+});
+
+test("event listener rule requires VueUse and existing manual cleanup evidence", async () => {
+  const withoutVueUse = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    files: {
+      "src/useViewport.ts": `export function useViewport() {
+  onMounted(() => window.addEventListener('resize', onResize))
+  onUnmounted(() => window.removeEventListener('resize', onResize))
+}`,
+    },
+  });
+  const withoutCleanup = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "src/useViewport.ts": `export function useViewport() {
+  onMounted(() => window.addEventListener('resize', onResize))
+}`,
+    },
+  });
+
+  expect(withoutVueUse.diagnostics).toHaveLength(0);
+  expect(withoutCleanup.diagnostics).toHaveLength(0);
+});
+
+test("event listener rule ignores scopes already using useEventListener", async () => {
+  const result = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "src/useViewport.ts": `export function useViewport() {
+  useEventListener(window, 'resize', onResize)
+  onMounted(() => window.addEventListener('scroll', onScroll))
+  onUnmounted(() => window.removeEventListener('scroll', onScroll))
+}`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
 });
 
 test("vue SSR rules are skipped for plain SPA projects", async () => {
