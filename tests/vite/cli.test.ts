@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,6 +11,10 @@ import {
 import { expect, test } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
 import { doctor } from "../../src/plugin.ts";
+
+const publicPackageVersion = JSON.parse(
+  readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+).version as string;
 
 test("CLI rejects removed run command", async () => {
   const repoRoot = findRepoRoot();
@@ -31,7 +35,7 @@ test("CLI prints the public package version", async () => {
     process.stdout.write = write;
   }
 
-  expect(writes.join("")).toBe("0.0.1\n");
+  expect(writes.join("")).toBe(`${publicPackageVersion}\n`);
 });
 
 test("CLI prints Vite rule metadata", async () => {
@@ -66,7 +70,7 @@ test("CLI rules report uses the public package version", async () => {
   }
 
   const report = JSON.parse(writes.join(""));
-  expect(report.rules[0].version).toBe("0.0.1");
+  expect(report.rules[0].version).toBe(publicPackageVersion);
 });
 
 test("CLI lists only Vite rule metadata by default", async () => {
@@ -105,7 +109,7 @@ test("CLI returns Nuxt diagnostic exit codes without throwing", async () => {
       );
       expect(result.code).toBe(1);
       const report = JSON.parse(result.output);
-      expect(report.version).toBe("0.0.1");
+      expect(report.version).toBe(publicPackageVersion);
       expect(report.framework).toBe("nuxt");
       expect(report.summary.error).toBe(1);
     },
@@ -245,7 +249,7 @@ test("JSON reports use the public package version", async () => {
     async (root) => {
       const result = await runCli([".", "--format", "json"], root);
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.output).version).toBe("0.0.1");
+      expect(JSON.parse(result.output).version).toBe(publicPackageVersion);
     },
   );
 });

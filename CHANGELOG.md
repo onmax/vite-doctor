@@ -1,5 +1,13 @@
 # vite-doctor
 
+## 0.0.2
+
+### Patch Changes
+
+- Publish Vite Doctor from the root package so release artifacts match the public package identity.
+- Reduce noisy async data readonly marker diagnostics.
+- Add the VueUse event listener cleanup recommendation.
+
 ## 0.0.1
 
 ### Patch Changes
