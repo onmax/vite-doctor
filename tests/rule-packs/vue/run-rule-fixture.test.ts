@@ -418,10 +418,10 @@ test("event listener rule honors Nuxt runtime roots", async () => {
     framework: "nuxt",
     dependencies: VUEUSE_DEPENDENCIES,
     files: {
+      "nuxt.config.ts": `export default defineNuxtConfig({ srcDir: 'src' })`,
       "app/plugins/resize.client.ts": nuxtPluginManualListener("resize"),
       "app.vue": scriptSetupManualListener("resize"),
       "app/app.vue": scriptSetupManualListener("scroll"),
-      "src/nuxt.config.ts": `export default defineNuxtConfig({})`,
       "src/app/plugins/focus.client.ts": nuxtPluginManualListener("focus"),
       "layers/admin/nuxt.config.ts": `export default defineNuxtConfig({})`,
       "layers/admin/app/components/AdminWidget.vue": scriptSetupManualListener("keyup"),
@@ -467,10 +467,31 @@ test("event listener rule requires VueUse and existing manual cleanup evidence",
 }`,
     },
   });
+  const partialCleanup = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    dependencies: VUEUSE_DEPENDENCIES,
+    files: {
+      "src/useViewport.ts": `export function useViewport() {
+  const onOffline = () => {}
+  const onResize = () => {}
+
+  onMounted(() => {
+    window.addEventListener('offline', onOffline, { once: true })
+    window.addEventListener('resize', onResize)
+  })
+
+  onUnmounted(() => {
+    window.removeEventListener('resize', onResize)
+  })
+}`,
+    },
+  });
 
   expect(withoutVueUse.diagnostics).toHaveLength(0);
   expect(withoutCleanup.diagnostics).toHaveLength(0);
   expect(unrelatedCleanup.diagnostics).toHaveLength(0);
+  expectEventListenerDiagnostics(partialCleanup);
 });
 
 test("event listener rule does not suppress manual cleanup when useEventListener is present", async () => {

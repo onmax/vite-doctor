@@ -1,4 +1,4 @@
-import { relative } from "pathe";
+import { relative, resolve } from "pathe";
 import { AnyNode, bindingNames, createRule, report } from "./shared.js";
 import type { RuleContext } from "../../../../core/index.js";
 
@@ -10,6 +10,12 @@ const WATCH_EFFECT_CALLBACK_CALLEES = new Set([
   "watchSyncEffect",
 ]);
 const LIFECYCLE_CLEANUP_CALLEES = new Set(["onBeforeUnmount", "onScopeDispose", "onUnmounted"]);
+const NUXT_CONFIG_FILES = [
+  "nuxt.config.ts",
+  "nuxt.config.js",
+  "nuxt.config.mjs",
+  "nuxt.config.mts",
+];
 
 export const preferUseEventListener = createRule({
   meta: {
@@ -60,16 +66,19 @@ function projectHasVueUse(ctx: RuleContext) {
 }
 
 function manualListenerOwner(addCall: AnyNode, source: string) {
+  const listener = listenerKey(addCall, "addEventListener", source);
+  if (!listener) return null;
+
   for (let current = addCall.__doctorParent; current; current = current.__doctorParent) {
     if (!isFunctionLike(current) && current.type !== "Program") continue;
 
     if (isFunctionLike(current)) {
       const watcherCleanupNames = watcherCleanupCallees(current);
-      if (watcherCleanupNames && hasListenerCleanup(current, watcherCleanupNames, source))
+      if (watcherCleanupNames && hasListenerCleanup(current, watcherCleanupNames, source, listener))
         return current;
     }
 
-    if (hasListenerCleanup(current, LIFECYCLE_CLEANUP_CALLEES, source)) return current;
+    if (hasListenerCleanup(current, LIFECYCLE_CLEANUP_CALLEES, source, listener)) return current;
   }
 
   return null;
@@ -92,22 +101,40 @@ function watcherCleanupCallees(functionNode: AnyNode): Set<string> | null {
   return null;
 }
 
-function hasListenerCleanup(scope: AnyNode, cleanupCallees: Set<string>, source: string) {
+function hasListenerCleanup(
+  scope: AnyNode,
+  cleanupCallees: Set<string>,
+  source: string,
+  listener: ListenerKey,
+) {
   if (!cleanupCallees.size) return false;
   let found = false;
   walkScope(scope, (node) => {
     if (found || node.type !== "CallExpression") return;
     const name = calleeName(node);
     if (!name || !matchesCallee(name, cleanupCallees)) return;
-    found = hasListenerCleanupArgument(scope, node.arguments?.[0], source);
+    found = hasListenerCleanupArgument(scope, node.arguments?.[0], source, listener);
   });
   return found;
 }
 
-function hasListenerCleanupArgument(scope: AnyNode, argument: AnyNode, source: string) {
-  if (nodeSource(argument, source).includes("removeEventListener")) return true;
+interface ListenerKey {
+  target: string;
+  event: string;
+  handler: string;
+}
+
+function hasListenerCleanupArgument(
+  scope: AnyNode,
+  argument: AnyNode,
+  source: string,
+  listener: ListenerKey,
+) {
+  if (hasRemoveEventListenerCall(argument, source, listener)) return true;
   const referencedCleanup = referencedFunction(scope, argument);
-  return referencedCleanup ? hasRemoveEventListenerCall(referencedCleanup) : false;
+  return referencedCleanup
+    ? hasRemoveEventListenerCall(referencedCleanup, source, listener)
+    : false;
 }
 
 function referencedFunction(scope: AnyNode, argument: AnyNode) {
@@ -132,14 +159,53 @@ function referencedFunction(scope: AnyNode, argument: AnyNode) {
   return found;
 }
 
-function hasRemoveEventListenerCall(scope: AnyNode) {
+function hasRemoveEventListenerCall(scope: AnyNode, source: string, listener: ListenerKey) {
   let found = false;
   walkScope(scope, (node) => {
     if (found || node.type !== "CallExpression") return;
-    const name = calleeName(node);
-    found = !!name && matchesCallee(name, new Set(["removeEventListener"]));
+    const cleanup = listenerKey(node, "removeEventListener", source);
+    found = !!cleanup && sameListener(cleanup, listener);
   });
   return found;
+}
+
+function listenerKey(
+  call: AnyNode,
+  method: "addEventListener" | "removeEventListener",
+  source: string,
+) {
+  const name = calleeName(call);
+  if (!name || !matchesCallee(name, new Set([method]))) return null;
+
+  const args = call.arguments ?? [];
+  const event = expressionKey(args[0], source);
+  const handler = expressionKey(args[1], source);
+  if (!event || !handler) return null;
+
+  return {
+    target: listenerTargetKey(call, method, source),
+    event,
+    handler,
+  };
+}
+
+function listenerTargetKey(call: AnyNode, method: string, source: string) {
+  const callee = call.callee;
+  if (callee?.type === "StaticMemberExpression" || callee?.type === "MemberExpression") {
+    const property = nodeName(callee.property);
+    if (property === method) return expressionKey(callee.object, source);
+  }
+  return "globalThis";
+}
+
+function sameListener(a: ListenerKey, b: ListenerKey) {
+  return a.target === b.target && a.event === b.event && a.handler === b.handler;
+}
+
+function expressionKey(node: AnyNode, source: string) {
+  if (!node) return "";
+  if (node.type === "Literal") return JSON.stringify(node.value);
+  return nodeSource(node, source).replace(/\s+/g, " ").trim();
 }
 
 function isAddEventListenerCall(node: AnyNode, name: string | null) {
@@ -224,9 +290,32 @@ function nuxtRuntimePathCandidates(ctx: RuleContext) {
 
 function nuxtRuntimeRoots(ctx: RuleContext) {
   const nuxt = ctx.project.nuxt;
-  return [nuxt?.appDir, ...(nuxt?.appRoots ?? []), ...(nuxt?.manifest?.appScanRoots ?? [])].filter(
-    (root): root is string => Boolean(root),
-  );
+  return [
+    nuxt?.appDir,
+    ...configuredNuxtSrcDirs(ctx),
+    ...(nuxt?.appRoots ?? []),
+    ...(nuxt?.manifest?.appScanRoots ?? []),
+  ].filter((root): root is string => Boolean(root));
+}
+
+function configuredNuxtSrcDirs(ctx: RuleContext) {
+  const dirs = new Set<string>();
+  for (const file of NUXT_CONFIG_FILES) {
+    const srcDir = readNuxtSrcDir(ctx, file);
+    if (srcDir) dirs.add(resolve(ctx.project.root, srcDir));
+  }
+  return dirs;
+}
+
+function readNuxtSrcDir(ctx: RuleContext, file: string) {
+  let text = "";
+  try {
+    text = ctx.getFileText(file);
+  } catch {
+    return null;
+  }
+  const match = text.match(/\bsrcDir\s*:\s*(['"`])([^'"`]+)\1/);
+  return match?.[2]?.replace(/\\/g, "/").replace(/\/$/, "") || null;
 }
 
 function relativeProjectPath(ctx: RuleContext, root: string) {
