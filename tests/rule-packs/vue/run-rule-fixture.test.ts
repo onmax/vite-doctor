@@ -362,6 +362,56 @@ test("event listener rule detects lifecycle-scoped listener cleanup outside watc
   ]);
 });
 
+test("event listener rule resolves cleanup callbacks passed by reference", async () => {
+  const lifecycleCleanup = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "src/useViewport.ts": `export function useViewport() {
+  const onResize = () => {}
+
+  function cleanupResize() {
+    window.removeEventListener('resize', onResize)
+  }
+
+  onMounted(() => {
+    window.addEventListener('resize', onResize)
+  })
+
+  onUnmounted(cleanupResize)
+}`,
+    },
+  });
+  const watcherCleanup = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "src/useAnimation.ts": `watch(active, (_value, _oldValue, onCleanup) => {
+  const el = document.querySelector('.target')
+  if (!el)
+    return
+
+  const onAnimationEnd = () => el.classList.remove('active')
+  const cleanupAnimation = () => {
+    el.removeEventListener('animationend', onAnimationEnd)
+  }
+
+  el.addEventListener('animationend', onAnimationEnd, { once: true })
+  onCleanup(cleanupAnimation)
+})`,
+    },
+  });
+
+  expect(lifecycleCleanup.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
+  expect(watcherCleanup.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
+});
+
 test("event listener rule includes Nuxt client runtime files", async () => {
   const result = await runRuleFixture({
     rule: preferUseEventListener,

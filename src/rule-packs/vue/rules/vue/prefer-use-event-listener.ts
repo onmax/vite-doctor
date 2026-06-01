@@ -98,7 +98,45 @@ function hasListenerCleanup(scope: AnyNode, cleanupCallees: Set<string>, source:
     if (found || node.type !== "CallExpression") return;
     const name = calleeName(node);
     if (!name || !matchesCallee(name, cleanupCallees)) return;
-    found = nodeSource(node.arguments?.[0], source).includes("removeEventListener");
+    found = hasListenerCleanupArgument(scope, node.arguments?.[0], source);
+  });
+  return found;
+}
+
+function hasListenerCleanupArgument(scope: AnyNode, argument: AnyNode, source: string) {
+  if (nodeSource(argument, source).includes("removeEventListener")) return true;
+  const referencedCleanup = referencedFunction(scope, argument);
+  return referencedCleanup ? hasRemoveEventListenerCall(referencedCleanup) : false;
+}
+
+function referencedFunction(scope: AnyNode, argument: AnyNode) {
+  const name = argument?.type === "Identifier" ? argument.name : null;
+  if (!name) return null;
+
+  let found: AnyNode = null;
+  walkScope(scope, (node) => {
+    if (found) return;
+    if (node.type === "FunctionDeclaration" && node.id?.name === name) {
+      found = node;
+      return;
+    }
+    if (
+      node.type === "VariableDeclarator" &&
+      node.id?.type === "Identifier" &&
+      node.id.name === name
+    ) {
+      found = isFunctionLike(node.init) ? node.init : null;
+    }
+  });
+  return found;
+}
+
+function hasRemoveEventListenerCall(scope: AnyNode) {
+  let found = false;
+  walkScope(scope, (node) => {
+    if (found || node.type !== "CallExpression") return;
+    const name = calleeName(node);
+    found = !!name && matchesCallee(name, new Set(["removeEventListener"]));
   });
   return found;
 }
@@ -150,8 +188,8 @@ function walkScope(node: AnyNode, visit: (node: AnyNode) => void, root = node) {
     for (const child of node) walkScope(child, visit, root);
     return;
   }
-  if (node !== root && isFunctionLike(node)) return;
   if (typeof node.type === "string") visit(node);
+  if (node !== root && isFunctionLike(node)) return;
   for (const [key, value] of Object.entries(node)) {
     if (key === "__doctorParent") continue;
     if (Array.isArray(value)) {
