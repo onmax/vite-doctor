@@ -1,4 +1,5 @@
 import { expect, test } from "vite-plus/test";
+import { vueRulePack } from "../../../src/rule-packs/vue/index.ts";
 import {
   definePropsWatchGetter,
   noRefAsOperand,
@@ -13,7 +14,12 @@ import {
   requireLifecycleCleanup,
   requirePostFlushForDomWatch,
 } from "../../../src/rule-packs/vue/rules/vue/index.ts";
-import { allDiagnostics, createRule } from "../../../src/core/index.ts";
+import {
+  allDiagnostics,
+  createRule,
+  createRulesReport,
+  explainRule,
+} from "../../../src/core/index.ts";
 import {
   runNuxtAppRuleFixture,
   runNuxtManifestRuleFixture,
@@ -356,6 +362,29 @@ test("event listener rule detects lifecycle-scoped listener cleanup outside watc
   ]);
 });
 
+test("event listener rule includes Nuxt client runtime files", async () => {
+  const result = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "nuxt",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "app/plugins/resize.client.ts": `export default defineNuxtPlugin(() => {
+  const onResize = () => {}
+
+  window.addEventListener('resize', onResize)
+
+  onScopeDispose(() => {
+    window.removeEventListener('resize', onResize)
+  })
+})`,
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "vue/lifecycle/prefer-use-event-listener",
+  ]);
+});
+
 test("event listener rule requires VueUse and existing manual cleanup evidence", async () => {
   const withoutVueUse = await runRuleFixture({
     rule: preferUseEventListener,
@@ -377,9 +406,25 @@ test("event listener rule requires VueUse and existing manual cleanup evidence",
 }`,
     },
   });
+  const unrelatedCleanup = await runRuleFixture({
+    rule: preferUseEventListener,
+    framework: "vue",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "src/useViewport.ts": `export function useViewport() {
+  onMounted(() => window.addEventListener('resize', onResize))
+  onUnmounted(noop)
+
+  function cleanupScroll() {
+    window.removeEventListener('scroll', onScroll)
+  }
+}`,
+    },
+  });
 
   expect(withoutVueUse.diagnostics).toHaveLength(0);
   expect(withoutCleanup.diagnostics).toHaveLength(0);
+  expect(unrelatedCleanup.diagnostics).toHaveLength(0);
 });
 
 test("event listener rule ignores scopes already using useEventListener", async () => {
@@ -397,6 +442,17 @@ test("event listener rule ignores scopes already using useEventListener", async 
   });
 
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test("event listener rule is visible through global diagnostic reports", () => {
+  const rules = JSON.parse(createRulesReport([vueRulePack], "json"));
+  const rule = rules.rules.find(
+    (item: any) => item.id === "vue/lifecycle/prefer-use-event-listener",
+  );
+  const explanation = JSON.parse(explainRule([vueRulePack], "VUE0025", "json"));
+
+  expect(rule?.diagnosticCodes).toEqual(["VUE0025"]);
+  expect(explanation.id).toBe("vue/lifecycle/prefer-use-event-listener");
 });
 
 test("vue SSR rules are skipped for plain SPA projects", async () => {

@@ -1,4 +1,4 @@
-import { AnyNode, bindingNames, createRule, report, walkScriptLocal } from "./shared.js";
+import { AnyNode, bindingNames, createRule, report } from "./shared.js";
 import type { RuleContext } from "../../../../core/index.js";
 
 const RULE_ID = "vue/lifecycle/prefer-use-event-listener";
@@ -95,14 +95,11 @@ function watcherCleanupCallees(functionNode: AnyNode): Set<string> | null {
 function hasListenerCleanup(scope: AnyNode, cleanupCallees: Set<string>, source: string) {
   if (!cleanupCallees.size) return false;
   let found = false;
-  walkScriptLocal(scope, (node) => {
+  walkScope(scope, (node) => {
     if (found || node.type !== "CallExpression") return;
     const name = calleeName(node);
     if (!name || !matchesCallee(name, cleanupCallees)) return;
-    const cleanupSource = nodeSource(node.arguments?.[0] ?? node, source);
-    found =
-      cleanupSource.includes("removeEventListener") ||
-      nodeSource(scope, source).includes("removeEventListener");
+    found = nodeSource(node.arguments?.[0], source).includes("removeEventListener");
   });
   return found;
 }
@@ -148,9 +145,26 @@ function isFunctionLike(node: AnyNode) {
   );
 }
 
+function walkScope(node: AnyNode, visit: (node: AnyNode) => void, root = node) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const child of node) walkScope(child, visit, root);
+    return;
+  }
+  if (node !== root && isFunctionLike(node)) return;
+  if (typeof node.type === "string") visit(node);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "__doctorParent") continue;
+    if (Array.isArray(value)) {
+      for (const child of value) walkScope(child, visit, root);
+    } else if (value && typeof value === "object") {
+      walkScope(value, visit, root);
+    }
+  }
+}
+
 function isNuxtVueRuntimePath(path: string) {
   if (
-    path.includes(".client.") ||
     /\.(md|mdc|markdown)$/.test(path) ||
     /^(content|server|app\/server|shared\/types|generated|app\/generated)\//.test(path)
   )
