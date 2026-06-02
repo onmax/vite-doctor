@@ -4,6 +4,7 @@ import {
   definePropsWatchGetter,
   noRefAsOperand,
   noBrowserApiInSetup,
+  noMutationInOnUpdated,
   preferComposableRefReturn,
   preferDefineModel,
   preferPropsDestructureDefaults,
@@ -197,6 +198,26 @@ function exportImage() {
   );
 
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test("no mutation in onUpdated suggests owned state transitions or local bookkeeping", async () => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+const count = ref(0)
+onUpdated(() => {
+  count.value++
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.suggestion).toBe(
+    "Move the reactive mutation to the event or state transition that owns it, or keep update bookkeeping in a non-reactive local.",
+  );
 });
 
 test("vue browser API rule terminates on recursive client-only call chains", async () => {

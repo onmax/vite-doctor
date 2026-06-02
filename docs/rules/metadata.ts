@@ -1473,17 +1473,25 @@ export const ruleDocumentationMetadata = {
   "vue/lifecycle/no-mutation-in-onupdated": {
     description:
       "Flags mutation in onupdated in Vue lifecycle code before it leaks into runtime behavior.",
-    why: "Effects that outlive their component create leaks and stale updates. Register cleanup where Vue or VueUse can dispose it automatically.",
+    why: "onUpdated runs after any DOM update caused by reactive state. Mutating reactive component state there can schedule another update and create an update loop.",
     recommendedReplacement:
-      "Remove mutation in onupdated, or move it to the Vue runtime/API that owns that behavior.",
+      "Do not write to reactive values in onUpdated. Move the state change to the event or state transition that owns it, or use non-reactive local state for bookkeeping that does not drive rendering.",
     examples: [
       {
-        title: "Avoid state mutation in onUpdated",
+        title: "Use non-reactive bookkeeping",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nconst updateCount = ref(0)\nonUpdated(() => {\n  updateCount.value++\n})\n</script>',
+        valid:
+          '<script setup lang="ts">\nlet updateCount = 0\nonUpdated(() => {\n  updateCount++\n})\n</script>',
+      },
+      {
+        title: "Move reactive writes to the owner",
         language: "vue",
         invalid:
           '<script setup lang="ts">\nconst count = ref(0)\nonUpdated(() => {\n  count.value++\n})\n</script>',
         valid:
-          '<script setup lang="ts">\nconst count = ref(0)\nwatchEffect(() => {\n  console.log(count.value)\n})\n</script>',
+          '<script setup lang="ts">\nconst count = ref(0)\n\nfunction increment() {\n  count.value++\n}\n</script>\n\n<template>\n  <button type="button" @click="increment">{{ count }}</button>\n</template>',
       },
     ],
   },
