@@ -40,6 +40,7 @@ export interface DiagnosticDocument {
   description: string;
   why: string;
   fix: string;
+  docsUrl: string;
   ruleId: string;
   pack: string;
   severity: RuleSeverity;
@@ -145,6 +146,7 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
         description: rule.description,
         why: rule.why,
         fix: rule.recommendedReplacement,
+        docsUrl: rule.docsUrl,
         ruleId: rule.id,
         pack: rule.pack,
         severity: rule.severity,
@@ -187,6 +189,7 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
     `code: ${yamlString(diagnostic.code)}`,
     `why: ${yamlString(diagnostic.why)}`,
     `fix: ${yamlString(diagnostic.fix)}`,
+    `docsUrl: ${yamlString(diagnostic.docsUrl || "")}`,
     `ruleId: ${yamlString(diagnostic.ruleId)}`,
     `pack: ${yamlString(diagnostic.pack)}`,
     `severity: ${yamlString(diagnostic.severity)}`,
@@ -208,6 +211,9 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
     "",
     diagnostic.fix,
     "",
+    ...(diagnostic.docsUrl
+      ? ["## Useful links", "", `- [Upstream docs](${diagnostic.docsUrl})`, ""]
+      : []),
     "## Related rule",
     "",
     `- \`${diagnostic.ruleId}\``,

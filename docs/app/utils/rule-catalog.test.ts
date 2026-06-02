@@ -4,6 +4,7 @@ import {
   getDiagnosticDocuments,
   getRuleDocuments,
   getRuleReports,
+  diagnosticsCollectionSource,
   rulesCollectionSource,
 } from "../../rules/source.js";
 import { useRuleExplorer } from "../composables/useRuleExplorer.js";
@@ -101,6 +102,24 @@ test("rule source emits markdown with frontmatter and body sections", async () =
   expect(markdown).toContain("## Recommended fix");
   expect(markdown).toContain("## Example");
   expect(markdown).not.toContain("## Metadata");
+});
+
+test("diagnostic source carries upstream docs as reference links", async () => {
+  const diagnostic = getDiagnosticDocuments().find(
+    (item) =>
+      item.ruleId === "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
+  );
+
+  expect(diagnostic?.docsUrl).toBe(
+    "https://nuxt.com/docs/4.x/guide/best-practices/hydration#dynamic-content-based-on-time",
+  );
+
+  const markdown = await diagnosticsCollectionSource.getItem(diagnostic!.key);
+  expect(markdown).toContain("docsUrl:");
+  expect(markdown).toContain("## Useful links");
+  expect(markdown).toContain(
+    "[Upstream docs](https://nuxt.com/docs/4.x/guide/best-practices/hydration#dynamic-content-based-on-time)",
+  );
 });
 
 test("rule source emits complete documentation for every rule", async () => {

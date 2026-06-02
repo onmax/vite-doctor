@@ -105,14 +105,6 @@ function createRuleContext(
       file = nextFile;
     },
     report(diagnostic, metadata) {
-      const sources = diagnostic.sources
-        ? [...diagnostic.sources]
-        : rule.meta.docsUrl
-          ? [rule.meta.docsUrl]
-          : undefined;
-      if (rule.meta.docsUrl && sources && !sources.includes(rule.meta.docsUrl))
-        sources.push(rule.meta.docsUrl);
-      if (sources?.length) diagnostic.sources = sources;
       const input = normalizeDiagnostic({
         ...metadata,
         diagnostic,
