@@ -40,6 +40,7 @@ export default defineContentConfig({
         code: z.string(),
         why: z.string(),
         fix: z.string(),
+        docsUrl: z.string().optional(),
         ruleId: z.string(),
         pack: z.string(),
         severity: z.enum(["error", "warn", "info"]),

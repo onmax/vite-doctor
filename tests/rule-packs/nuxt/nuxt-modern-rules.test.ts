@@ -1402,10 +1402,9 @@ test("direct SSR time output still reports", async () => {
   expect(result.diagnostics[0]?.ruleId).toBe(
     "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
   );
-  expect(result.diagnostics[0]?.sources).toContain(
-    "https://nuxt.com/docs/4.x/guide/best-practices/hydration#dynamic-content-based-on-time",
-  );
-  expect(createTextReport(result)).toContain(
+  expect(result.diagnostics[0]?.sources).toBeUndefined();
+  expect(result.diagnostics[0]?.docs).toBe("https://vite-doctor.onmax.me/diagnostics/NUXT0032");
+  expect(createTextReport(result)).not.toContain(
     "sources: https://nuxt.com/docs/4.x/guide/best-practices/hydration#dynamic-content-based-on-time",
   );
 });
@@ -1727,12 +1726,8 @@ test("useState still reports returned Date instances", async () => {
   });
 
   expect(result.diagnostics[0]?.ruleId).toBe("nuxt/state/no-nonserializable-usestate");
-  expect(result.diagnostics[0]?.sources).toContain(
-    "https://nuxt.com/docs/4.x/api/composables/use-state#usage",
-  );
-  expect(createTextReport(result)).toContain(
-    "sources: https://nuxt.com/docs/4.x/api/composables/use-state#usage",
-  );
+  expect(result.diagnostics[0]?.sources).toBeUndefined();
+  expect(createTextReport(result)).not.toContain("sources: https://nuxt.com/docs");
 });
 
 test("Vue lifecycle evidence skips Nuxt content, server, generated, and client-only files", async () => {
