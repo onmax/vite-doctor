@@ -1,5 +1,5 @@
 import { type AnyNode, createRule, report } from "./shared.js";
-import { isSingleMethodCheck } from "./request-helpers.js";
+import { isNitroRouteFile, isSingleMethodCheck } from "./request-helpers.js";
 
 export const preferAssertMethod = createRule({
   meta: {
@@ -17,6 +17,7 @@ export const preferAssertMethod = createRule({
   },
   create(ctx) {
     if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    if (isNitroRouteFile(ctx.file.relativePath)) return;
     return {
       ScriptNode(node: AnyNode) {
         const method = isSingleMethodCheck(node, ctx.file.text);
