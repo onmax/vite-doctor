@@ -28,8 +28,8 @@ catalogs:
       specifier: ^0.30.21
       version: 0.30.21
     nostics:
-      specifier: 0.3.0
-      version: 0.3.0
+      specifier: 0.5.0
+      version: 0.5.0
     oxc-parser:
       specifier: ^0.133.0
       version: 0.133.0
@@ -185,7 +185,7 @@ importers:
         version: 0.30.21
       nostics:
         specifier: catalog:analysis
-        version: 0.3.0
+        version: 0.5.0
       oxc-parser:
         specifier: catalog:analysis
         version: 0.133.0
@@ -7136,8 +7136,8 @@ packages:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
     engines: {node: '>=0.10.0'}
 
-  nostics@0.3.0:
-    resolution: {integrity: sha512-tP0hvxK4n2hZO9kK5Az7dLXIFukANDpcdtMae3tvtyRQun48gZIBVyXCJc8zk+qsdOpY7ngashH0ivQGOGzmeg==}
+  nostics@0.5.0:
+    resolution: {integrity: sha512-FHWQm0hZ33n0MbyPVeE3wfYywdrFDc6gZhar4oTBF7Z5IQomsuQKhdtPC0NgjC9+w8WXw8LELeQUZYgKyCnFtA==}
 
   npm-run-path@5.3.0:
     resolution: {integrity: sha512-ppwTtiJZq0O/ai0z7yfudtBpWIoxM8yE6nHi1X47eFR2EWORqfbu6CnPlNsjeN683eT0qG6H/Pyf9fCcvjnnnQ==}
@@ -16034,11 +16034,7 @@ snapshots:
 
   normalize-path@3.0.0: {}
 
-  nostics@0.3.0:
-    dependencies:
-      magic-string: 0.30.21
-      oxc-parser: 0.132.0
-      unplugin: 3.0.0
+  nostics@0.5.0: {}
 
   npm-run-path@5.3.0:
     dependencies:
