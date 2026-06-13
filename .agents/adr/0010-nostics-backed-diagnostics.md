@@ -24,7 +24,7 @@ This is a breaking migration with no legacy compatibility layer. Doctor keeps ru
 
 Every emitted Doctor rule diagnostic must include a `fix` string, even though `nostics` and Vite DevTools allow fixes to be optional. Doctor is optimized for agent consumers and CI remediation, so a reported rule diagnostic must always provide next-step guidance. Structured edit plans remain optional Doctor metadata, while `nostics.fix` is the human and agent remediation guidance.
 
-Diagnostic documentation lives at `https://vite-doctor.onmax.me/diagnostics/CODE`. Every user-facing project diagnostic code must have a generated documentation page before shipping. Internal authoring and invariant diagnostics may opt out of docs links when the actionable fix is fully contained in the diagnostic. Rule catalog pages remain separate from diagnostic pages because one rule can emit multiple diagnostic codes.
+Diagnostic documentation lives at `https://vite-doctor.onmax.me/diagnostics/CODE`. Every user-facing project diagnostic code that reports an issue in analyzed project code must have a generated documentation page before shipping. Internal authoring failures, invariant diagnostics, and run-stopping Surface Configuration validation diagnostics may opt out of docs links when the actionable fix is fully contained in the diagnostic. Rule catalog pages remain separate from diagnostic pages because one rule can emit multiple diagnostic codes.
 
 Doctor no longer owns a custom human formatter model. The default human output uses `nostics` rendering. Machine-readable JSON and SARIF encodings remain for automation and code-scanning integrations.
 
