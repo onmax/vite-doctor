@@ -291,7 +291,7 @@ test("malformed rule config fails predictably", async () => {
           framework: "vue",
           extensions: [pluginWith(reportProgramRule)],
         }),
-      ).rejects.toThrow(/Invalid severity/);
+      ).rejects.toMatchObject({ name: "DOC0019" });
     },
   );
 });
@@ -332,14 +332,20 @@ test("extends selection runs configured pack rules and config overrides extends"
 });
 
 test("defineRulePack requires a recommended preset", () => {
-  expect(() =>
+  let thrown: unknown;
+  try {
     defineRulePack({
       name: "broken",
       version: "0.0.0",
       rules: [reportProgramRule],
       presets: {} as any,
-    }),
-  ).toThrow(/recommended preset/);
+    });
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toMatchObject({ name: "DOC0015" });
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toMatch(/recommended preset/);
 });
 
 test("auto extends selects active recommended presets only", async () => {

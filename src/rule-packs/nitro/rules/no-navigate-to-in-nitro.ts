@@ -25,6 +25,7 @@ export const noNavigateToInNitro = createRule({
             "error",
             "server",
             "navigateTo() is for Nuxt app navigation. Use sendRedirect(event, path) in Nitro handlers.",
+            "Use sendRedirect(event, path) from the Nitro request handler.",
           );
       },
     };

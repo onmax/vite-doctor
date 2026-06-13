@@ -21,6 +21,7 @@ import { detectProject } from "./project.js";
 import { selectScanFiles, type ScanFileEntry } from "./source-inventory.js";
 import { createHelpers } from "./doctor-helpers.js";
 import { VERSION, nativeMatch, sha256 } from "./utils.js";
+import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 
 const DEFAULT_CONFIG: DoctorConfig = {
   cache: { dir: ".vite-doctor/cache" },
@@ -306,13 +307,18 @@ function resolveExtends(
   const selected = new Set<string>();
   for (const entry of requested) {
     const slash = entry.lastIndexOf("/");
-    if (slash === -1) throw new Error(`Invalid extends entry "${entry}". Use "pack/preset".`);
+    if (slash === -1) throw doctorInternalDiagnostics.DOC0016({ entry });
     const packKey = entry.slice(0, slash);
     const presetName = entry.slice(slash + 1);
     const pack = packs.find((item) => rulePackKey(item) === packKey || item.name === packKey);
-    if (!pack) throw new Error(`Unknown rule pack in extends entry "${entry}".`);
+    if (!pack) throw doctorInternalDiagnostics.DOC0017({ entry, pack: packKey });
     const preset = pack.presets[presetName];
-    if (!preset) throw new Error(`Unknown preset in extends entry "${entry}".`);
+    if (!preset)
+      throw doctorInternalDiagnostics.DOC0018({
+        entry,
+        pack: pack.name,
+        preset: presetName,
+      });
     for (const ruleId of preset) selected.add(ruleId);
   }
   return selected;
@@ -336,11 +342,11 @@ function resolveRuleConfigs(config: DoctorConfig): Map<string, ResolvedRuleConfi
     if (Array.isArray(value)) {
       const [severity, options] = value;
       if (!isSeverity(severity))
-        throw new Error(`Invalid severity for rule "${ruleId}": ${String(severity)}`);
+        throw doctorInternalDiagnostics.DOC0019({ ruleId, severity: String(severity) });
       resolved.set(ruleId, { enabled: true, severity, options });
       continue;
     }
-    throw new Error(`Invalid config for rule "${ruleId}".`);
+    throw doctorInternalDiagnostics.DOC0020({ ruleId });
   }
   return resolved;
 }

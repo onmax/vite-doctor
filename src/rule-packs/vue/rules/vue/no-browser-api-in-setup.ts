@@ -31,6 +31,7 @@ export const noBrowserApiInSetup = createRule({
             "error",
             "ssr",
             `${node.name} is a browser-only API. Access it inside onMounted(), a client-only plugin, or a guarded client branch.`,
+            `Move ${node.name} access into onMounted(), a client-only plugin, or a guarded client branch.`,
           );
         }
       },

@@ -3,6 +3,7 @@ import pc from "picocolors";
 import { formatDiagnostic } from "nostics";
 import type { Diagnostic, DoctorRunResult, RulePack } from "./primitives.js";
 import { allDiagnosticCodesByRuleId } from "./diagnostic-code-map.js";
+import { codeForRuleId } from "./diagnostics.js";
 
 export function createTextReport(result: DoctorRunResult): string {
   const lines: string[] = [];
@@ -253,7 +254,7 @@ function labelSeverity(severity: string): string {
 }
 
 function codeListForRule(ruleId: string): string[] {
-  const code = allDiagnosticCodesByRuleId[ruleId];
+  const code = codeForRuleId(allDiagnosticCodesByRuleId, ruleId);
   return code ? [code] : [];
 }
 

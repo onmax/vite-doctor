@@ -26,6 +26,7 @@ export const noAwaitInsideCustomWrapper = createRule({
               "error",
               "fetching",
               "Custom wrappers around useFetch/useAsyncData should return the composable directly. Awaiting inside the wrapper can break Nuxt async context behavior.",
+              "Return the useFetch/useAsyncData promise directly from the custom wrapper.",
             );
           }
         }

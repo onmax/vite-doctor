@@ -1,4 +1,10 @@
-import { createRule, type RuleContext } from "../../../../core/index.js";
+import {
+  codeForRuleId,
+  createRule,
+  diagnosticForCode,
+  type RuleContext,
+} from "../../../../core/index.js";
+import { doctorInternalDiagnostics } from "../../../../core/internal-diagnostic-handles.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../../diagnostics.js";
 import {
   nearestFunctionOrProgram,
@@ -79,12 +85,13 @@ export function report(
   severity: any,
   category: string,
   message: string,
-  suggestion?: string,
+  suggestion: string,
 ) {
-  const code = diagnosticCodesByRuleId[ruleId];
-  const diagnostic = diagnostics[code];
-  if (!diagnostic) throw new Error(`Missing Doctor diagnostic code for ${ruleId}`);
-  ctx.helpers.report(ctx, node, diagnostic({ why: message, fix: suggestion ?? message }), {
+  const code = codeForRuleId(diagnosticCodesByRuleId, ruleId);
+  if (!code) throw doctorInternalDiagnostics.DOC0013({ ruleId });
+  const diagnostic = diagnosticForCode(diagnostics, code);
+  if (!diagnostic) throw doctorInternalDiagnostics.DOC0013({ ruleId, code });
+  ctx.helpers.report(ctx, node, diagnostic({ why: message, fix: suggestion }), {
     ruleId,
     severity,
     category,
