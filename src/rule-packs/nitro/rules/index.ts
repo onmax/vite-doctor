@@ -9,6 +9,7 @@ import { preferValidatedBody } from "./prefer-validated-body.js";
 import { preferValidatedQuery } from "./prefer-validated-query.js";
 import { preferValidatedRouterParams } from "./prefer-validated-router-params.js";
 import { preferAssertMethod } from "./prefer-assert-method.js";
+import { preferRouteMethodSuffix } from "./prefer-route-method-suffix.js";
 import { preferGetRequestIp } from "./prefer-get-request-ip.js";
 
 export {
@@ -22,6 +23,7 @@ export {
   preferValidatedQuery,
   preferValidatedRouterParams,
   preferAssertMethod,
+  preferRouteMethodSuffix,
   preferGetRequestIp,
 };
 
@@ -36,6 +38,7 @@ const rules = [
   preferValidatedQuery,
   preferValidatedRouterParams,
   preferAssertMethod,
+  preferRouteMethodSuffix,
   preferGetRequestIp,
 ];
 

@@ -57,6 +57,7 @@ import {
   noClientComposablesInServer,
   preferEventFetch,
   preferAssertMethod,
+  preferRouteMethodSuffix,
   preferGetRequestIp,
   preferValidatedBody,
   preferValidatedQuery,
@@ -275,6 +276,15 @@ const cases = [
     id: "nitro/server/no-browser-api",
     file: "server/api/user.ts",
     source: `export default defineEventHandler(() => window.location.href)`,
+  },
+  {
+    rule: preferRouteMethodSuffix,
+    id: "nitro/request/prefer-route-method-suffix",
+    file: "server/api/user.ts",
+    source: `export default defineEventHandler((event) => {
+  if (getMethod(event) !== 'POST') throw createError({ statusCode: 405 })
+  return {}
+})`,
   },
   {
     rule: preferCreateUseFetch,
@@ -1051,6 +1061,7 @@ test("Nitro pack is exported and consumed by Nuxt rule packs", () => {
       "nitro/request/prefer-validated-query",
       "nitro/request/prefer-validated-router-params",
       "nitro/request/prefer-assert-method",
+      "nitro/request/prefer-route-method-suffix",
       "nitro/request/prefer-get-request-ip",
     ]),
   );
@@ -1134,7 +1145,124 @@ test("Nitro validation rules ignore validated utilities and unrelated validation
   expect(unrelated.diagnostics).toHaveLength(0);
 });
 
-test("Nitro request rules prefer assertMethod for single-method checks", async () => {
+test("Nitro request rules prefer route method suffixes for file-routed method gates", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/routes/tasks/[...asset].ts": `export default defineEventHandler((event) => {
+  const request = event.req
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return Response.json({ error: 'Method not allowed.' }, { status: 405 })
+  }
+  return {}
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
+  expect(result.diagnostics[0]?.suggestion).toContain("server/routes/tasks/[...asset].get.ts");
+  expect(result.diagnostics[0]?.suggestion).toContain("server/routes/tasks/[...asset].head.ts");
+});
+
+test("Nitro route method suffix rule reports redundant guards in suffixed route files", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.post.ts": `export default defineEventHandler((event) => {
+  if (event.req.method !== 'POST') throw createError({ statusCode: 405 })
+  return {}
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.suggestion).toContain(".post.ts already constrains this route");
+});
+
+test("Nitro route method suffix rule does not treat mismatched suffixed route guards as redundant", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.get.ts": `export default defineEventHandler((event) => {
+  if (event.req.method !== 'POST') throw createError({ statusCode: 405 })
+  return {}
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.suggestion).toContain("server/api/user.post.ts");
+  expect(result.diagnostics[0]?.suggestion).not.toContain("already constrains this route");
+});
+
+test("Nitro route method suffix rule does not suggest moving whole handlers for positive dispatch", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/users.ts": `export default defineEventHandler((event) => {
+  if (event.req.method === 'POST') return createUser(event)
+  return listUsers(event)
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.suggestion).toContain("POST-specific branch");
+  expect(result.diagnostics[0]?.suggestion).not.toContain("Move this handler");
+});
+
+test("Nitro route method suffix rule reports non-if method gates in file-routed handlers", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  return event.req.method !== 'POST' ? Response.json({}, { status: 405 }) : updateUser(event)
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
+  expect(result.diagnostics[0]?.suggestion).toContain("POST-specific branch");
+});
+
+test("Nitro route method suffix rule ignores request aliases from unrelated nested scopes", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  function readNestedRequest() {
+    const request = event.req
+    return request.method
+  }
+  const request = { method: 'POST' }
+  if (request.method !== 'POST') return readNestedRequest()
+  return {}
+})`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("Nitro request rules prefer assertMethod for non-file-routed single-method checks", async () => {
+  const result = await runRuleFixture({
+    rule: preferAssertMethod,
+    framework: "nuxt",
+    files: {
+      "server/middleware/api-auth.ts": `export default defineEventHandler((event) => {
+  if (getMethod(event) !== 'POST') throw createError({ statusCode: 405 })
+  return {}
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-assert-method");
+});
+
+test("Nitro assertMethod rule ignores file-routed method gates", async () => {
   const result = await runRuleFixture({
     rule: preferAssertMethod,
     framework: "nuxt",
@@ -1146,7 +1274,7 @@ test("Nitro request rules prefer assertMethod for single-method checks", async (
     },
   });
 
-  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-assert-method");
+  expect(result.diagnostics).toHaveLength(0);
 });
 
 test("Nitro request IP rule reports only request-sensitive raw header reads", async () => {
