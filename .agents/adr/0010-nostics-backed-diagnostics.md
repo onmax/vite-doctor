@@ -8,6 +8,8 @@ Built-in Doctor rules emit diagnostics through typed package handles and pass Do
 
 The diagnostics host exposes callable `nostics` handles. Doctor rules call a handle to create project findings, and Doctor authoring failures, invalid extension registration, and internal invariants use `throw diagnostics.CODE(params)` when continuing would make the run unreliable.
 
+`nostics.sources` is reserved for concrete source locations that caused the diagnostic, such as `file:line:column` entries from user code or generated evidence that points back to user code. It must not be used as a general reference-link bucket. Upstream documentation, rule documentation, framework references, and explanatory material remain in `docs`, the Diagnostic Reference, or Doctor evidence/reference metadata so agents can distinguish "where the problem is" from "where to learn more."
+
 Doctor does not add a separate messages API. Free-form run information such as summaries, missing evidence notes, and timing data remains Doctor Run metadata. Project findings must be coded diagnostics.
 
 The diagnostics model must not make the Nuxt 4 integration path permanent. Nuxt 4-specific inventory and runtime evidence belong behind the Nuxt 4 Bridge, a transitional plugin-surface boundary that can be removed when Nuxt support can run only through the Vite Plugin Surface. Nuxt rule packs and diagnostic codes are separate from that bridge and can continue if the rules remain relevant.
@@ -22,7 +24,7 @@ This is a breaking migration with no legacy compatibility layer. Doctor keeps ru
 
 Every emitted Doctor rule diagnostic must include a `fix` string, even though `nostics` and Vite DevTools allow fixes to be optional. Doctor is optimized for agent consumers and CI remediation, so a reported rule diagnostic must always provide next-step guidance. Structured edit plans remain optional Doctor metadata, while `nostics.fix` is the human and agent remediation guidance.
 
-Diagnostic documentation lives at `https://vite-doctor.onmax.me/diagnostics/CODE`. Every diagnostic code must have a generated documentation page before shipping. Rule catalog pages remain separate from diagnostic pages because one rule can emit multiple diagnostic codes.
+Diagnostic documentation lives at `https://vite-doctor.onmax.me/diagnostics/CODE`. Every user-facing project diagnostic code that reports an issue in analyzed project code must have a generated documentation page before shipping. Internal authoring failures, invariant diagnostics, and run-stopping Surface Configuration validation diagnostics may opt out of docs links when the actionable fix is fully contained in the diagnostic. Rule catalog pages remain separate from diagnostic pages because one rule can emit multiple diagnostic codes.
 
 Doctor no longer owns a custom human formatter model. The default human output uses `nostics` rendering. Machine-readable JSON and SARIF encodings remain for automation and code-scanning integrations.
 

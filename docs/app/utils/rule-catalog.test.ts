@@ -10,6 +10,20 @@ import {
 import { useRuleExplorer } from "../composables/useRuleExplorer.js";
 import { normalizeCatalogRules, type RawRuleEntry } from "./rule-catalog.js";
 import { appendRulesNavigation, createRulesNavigation } from "./rules-navigation.js";
+import { allDiagnostics } from "../../../src/core/index.ts";
+
+const internalDiagnosticCodes = [
+  "DOC0012",
+  "DOC0013",
+  "DOC0014",
+  "DOC0015",
+  "DOC0016",
+  "DOC0017",
+  "DOC0018",
+  "DOC0019",
+  "DOC0020",
+  "DOC0021",
+] as const;
 
 const sampleRules: RawRuleEntry[] = [
   {
@@ -120,6 +134,22 @@ test("diagnostic source carries upstream docs as reference links", async () => {
   expect(markdown).toContain(
     "[Upstream docs](https://nuxt.com/docs/4.x/guide/best-practices/hydration#dynamic-content-based-on-time)",
   );
+});
+
+test("internal diagnostics stay out of generated diagnostic references", async () => {
+  const publicCodes = new Set(getDiagnosticDocuments().map((diagnostic) => diagnostic.code));
+  const generatedKeys = await diagnosticsCollectionSource.getKeys();
+
+  for (const code of internalDiagnosticCodes) {
+    expect(publicCodes.has(code)).toBe(false);
+    expect(generatedKeys).not.toContain(`diagnostics/${code}.md`);
+    expect(
+      allDiagnostics[code]({
+        why: `${code} is internal.`,
+        fix: "Keep the actionable fix in the diagnostic itself.",
+      }).docs,
+    ).toBeUndefined();
+  }
 });
 
 test("rule source emits complete documentation for every rule", async () => {

@@ -1,6 +1,6 @@
 import type { Diagnostic as NosticsDiagnostic } from "nostics";
-
-export const DOCTOR_DIAGNOSTICS_DOCS_BASE = "https://vite-doctor.onmax.me/diagnostics";
+import { doctorInternalDiagnostics } from "./internal-diagnostic-handles.js";
+export { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
 
 export type DoctorSeverity = "blocker" | "error" | "warn" | "info";
 export type DoctorRuleConfig = "off" | DoctorSeverity | [DoctorSeverity, unknown];
@@ -593,7 +593,7 @@ export function createRule(rule: DoctorRule): DoctorRule {
 
 export function defineRulePack(pack: RulePack): RulePack {
   if (!pack.presets?.recommended?.length) {
-    throw new Error(`Rule pack "${pack.name}" must define a non-empty recommended preset.`);
+    throw doctorInternalDiagnostics.DOC0015({ pack: pack.name });
   }
   return pack;
 }

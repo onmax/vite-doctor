@@ -25,6 +25,7 @@ export const noUseNuxtAppInNitro = createRule({
             "error",
             "server",
             "useNuxtApp() is an app runtime composable and is not available in Nitro handlers. Use event-aware server utilities instead.",
+            "Replace useNuxtApp() with event-aware Nitro, h3, or server utilities.",
           );
       },
     };

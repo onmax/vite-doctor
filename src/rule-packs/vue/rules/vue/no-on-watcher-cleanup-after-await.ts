@@ -21,6 +21,7 @@ export const noOnWatcherCleanupAfterAwait = createRule({
             "error",
             "watchers",
             "onWatcherCleanup() must be called synchronously before the first await in the watcher callback.",
+            "Move onWatcherCleanup() before the first await in the watcher callback.",
           );
         }
       },

@@ -28,6 +28,7 @@ export const noUseRouteInMiddleware = createRule({
             "error",
             "routing",
             "Route middleware receives to/from route arguments. useRoute() can point at the previous route in this context.",
+            "Read route data from the to/from middleware arguments instead of useRoute().",
           );
         }
       },

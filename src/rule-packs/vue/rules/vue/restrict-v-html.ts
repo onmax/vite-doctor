@@ -21,6 +21,7 @@ export const restrictVHtml = createRule({
             "error",
             "security",
             "v-html can execute untrusted markup. Only render sanitized or trusted HTML here.",
+            "Remove v-html or sanitize the HTML before rendering it.",
           );
         }
       },

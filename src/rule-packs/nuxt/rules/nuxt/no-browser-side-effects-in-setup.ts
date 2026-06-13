@@ -26,6 +26,7 @@ export const noBrowserSideEffectsInSetup = createRule({
             "error",
             "hydration",
             `${name} is a browser-only side effect in universal code. Move it to onMounted() or a client-only plugin.`,
+            `Move ${name} into onMounted(), a client-only plugin, or a client-only execution branch.`,
           );
         }
       },

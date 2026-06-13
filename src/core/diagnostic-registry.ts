@@ -13,6 +13,16 @@ export const coreDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0009", ruleId: "workspace/duplication/exact-clone" },
   { code: "DOC0010", ruleId: "workspace/health/high-cyclomatic-complexity" },
   { code: "DOC0011", ruleId: "workspace/health/high-fan-out" },
+  { code: "DOC0012", ruleId: "doctor/internal/duplicate-diagnostic-code", docs: false },
+  { code: "DOC0013", ruleId: "doctor/internal/missing-diagnostic-code", docs: false },
+  { code: "DOC0014", ruleId: "doctor/internal/missing-diagnostic-name", docs: false },
+  { code: "DOC0015", ruleId: "doctor/rule-pack/missing-recommended-preset", docs: false },
+  { code: "DOC0016", ruleId: "doctor/config/invalid-extends-entry", docs: false },
+  { code: "DOC0017", ruleId: "doctor/config/unknown-rule-pack", docs: false },
+  { code: "DOC0018", ruleId: "doctor/config/unknown-preset", docs: false },
+  { code: "DOC0019", ruleId: "doctor/config/invalid-rule-severity", docs: false },
+  { code: "DOC0020", ruleId: "doctor/config/invalid-rule-config", docs: false },
+  { code: "DOC0021", ruleId: "doctor/internal/missing-diagnostic-fix", docs: false },
 ]);
 
 export const diagnostics = coreDiagnosticRegistry.diagnostics;

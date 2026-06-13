@@ -10,11 +10,17 @@ import {
   createRule,
   createNuxtProjectInventory,
   allDiagnostics,
+  createDoctorDiagnosticsHost,
+  defineDoctorDiagnostics,
   defineDoctorExtension,
   defineRulePack,
   explainRule,
   runDoctor,
 } from "../../src/core/index.ts";
+import {
+  normalizeDiagnostic,
+  normalizeDiagnosticFromRuleCode,
+} from "../../src/core/internal/diagnostics.ts";
 import { scoreDiagnostics } from "../../src/core/internal/scoring.ts";
 import { getNodeVisitorKeys } from "../../src/core/internal/visitor-keys.ts";
 
@@ -146,6 +152,29 @@ const optionRule = createRule({
             file: ctx.file.path,
           },
         );
+      },
+    };
+  },
+});
+
+const missingFixRule = createRule({
+  meta: {
+    id: "test/missing-fix-rule",
+    title: "Missing fix rule",
+    category: "architecture",
+    severity: "warn",
+    requires: { script: true },
+  },
+  create(ctx) {
+    return {
+      ScriptNode(node: any) {
+        if (node.type !== "Program") return;
+        ctx.report((allDiagnostics.DOC9999 as any)({ why: "Missing fix." }), {
+          ruleId: "test/missing-fix-rule",
+          severity: "warn",
+          category: "architecture",
+          file: ctx.file.path,
+        });
       },
     };
   },
@@ -291,9 +320,107 @@ test("malformed rule config fails predictably", async () => {
           framework: "vue",
           extensions: [pluginWith(reportProgramRule)],
         }),
-      ).rejects.toThrow(/Invalid severity/);
+      ).rejects.toMatchObject({ name: "DOC0019" });
     },
   );
+});
+
+test("internal diagnostic guards use stable codes", async () => {
+  const registry = defineDoctorDiagnostics([
+    { code: "DOC9001", ruleId: "test/duplicate-a" },
+    { code: "DOC9001", ruleId: "test/duplicate-b" },
+  ]);
+  const host = createDoctorDiagnosticsHost();
+  host.register(registry);
+  expect(thrownBy(() => host.register(registry))).toMatchObject({ name: "DOC0012" });
+
+  expect(
+    thrownBy(() =>
+      normalizeDiagnosticFromRuleCode({
+        ruleId: "test/missing-code",
+        code: "DOC4040",
+        severity: "warn",
+        category: "architecture",
+        file: "src/app.ts",
+        suggestion: "Register the missing diagnostic code.",
+      }),
+    ),
+  ).toMatchObject({ name: "DOC0013" });
+
+  expect(
+    thrownBy(() =>
+      normalizeDiagnostic({
+        diagnostic: { why: "Missing nostics code.", fix: "Use a registered handle." } as any,
+        ruleId: "test/missing-name",
+        severity: "warn",
+        category: "architecture",
+        file: "src/app.ts",
+      }),
+    ),
+  ).toMatchObject({ name: "DOC0014" });
+});
+
+test("configuration validation failures use stable diagnostic codes", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const extension = pluginWith(reportProgramRule);
+
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
+        extends: ["broken"],
+        extensions: [extension],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0016" });
+
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
+        extends: ["missing/recommended"],
+        extensions: [extension],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0017" });
+
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
+        extends: ["test/missing"],
+        extensions: [extension],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0018" });
+
+    await expect(
+      runDoctor({
+        root,
+        config: { rules: { "test/report-program": ["fatal" as any, {}] } },
+        framework: "vue",
+        extensions: [extension],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0019" });
+
+    await expect(
+      runDoctor({
+        root,
+        config: { rules: { "test/report-program": { severity: "warn" } as any } },
+        framework: "vue",
+        extensions: [extension],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0020" });
+  });
+});
+
+test("rule diagnostics must include actionable fix text", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
+        extensions: [pluginWith(missingFixRule)],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0021" });
+  });
 });
 
 test("extends selection runs configured pack rules and config overrides extends", async () => {
@@ -332,14 +459,20 @@ test("extends selection runs configured pack rules and config overrides extends"
 });
 
 test("defineRulePack requires a recommended preset", () => {
-  expect(() =>
+  let thrown: unknown;
+  try {
     defineRulePack({
       name: "broken",
       version: "0.0.0",
       rules: [reportProgramRule],
       presets: {} as any,
-    }),
-  ).toThrow(/recommended preset/);
+    });
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toMatchObject({ name: "DOC0015" });
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toMatch(/recommended preset/);
 });
 
 test("auto extends selects active recommended presets only", async () => {
@@ -603,6 +736,15 @@ test("persistent cache defaults to Vite Doctor directory", async () => {
     },
   );
 });
+
+function thrownBy(run: () => unknown) {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected function to throw.");
+}
 
 async function withFixture(files: Record<string, string>, run: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "vue-doctor-core-"));

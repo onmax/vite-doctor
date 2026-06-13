@@ -26,6 +26,7 @@ export const noSecretInPublicConfig = createRule({
               "error",
               "runtime-config",
               `runtimeConfig.public.${key} looks sensitive and will be exposed to the client. Move it to private runtimeConfig.`,
+              `Move runtimeConfig.public.${key} to private runtimeConfig or remove the secret.`,
             );
           }
         }

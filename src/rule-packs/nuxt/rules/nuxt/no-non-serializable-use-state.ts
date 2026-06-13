@@ -26,6 +26,7 @@ export const noNonSerializableUseState = createRule({
             "error",
             "hydration",
             "useState() is serialized between server and client. Do not store functions, sockets, classes, Map/Set, or other non-serializable values.",
+            "Store only JSON-serializable values in useState(), or keep live objects outside payload state.",
           );
         }
       },

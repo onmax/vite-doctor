@@ -28,6 +28,7 @@ export const noRouterNavigationInSetup = createRule({
             "warn",
             "routing",
             `${ctx.helpers.getCalleeName(node)}() appears to run during setup. Trigger navigation from a client event/lifecycle guard, route middleware, or use navigateTo() in universal contexts.`,
+            "Move navigation into a client event, lifecycle guard, route middleware, or navigateTo().",
           );
         }
       },

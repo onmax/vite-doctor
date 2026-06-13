@@ -15,6 +15,8 @@ import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256 } from "./utils.js";
 import { allDiagnosticCodesByRuleId, allDiagnostics } from "../diagnostic-code-map.js";
+import { codeForRuleId, diagnosticForCode } from "../diagnostics.js";
+import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import type { Diagnostic as NosticsDiagnostic } from "nostics";
 
 export function applyRequestedFixes(session: ScanSession): void {
@@ -125,7 +127,8 @@ export function createDiagnosticFingerprint(
 export function normalizeDiagnostic(input: DoctorDiagnosticNormalizationInput): Diagnostic {
   const diagnostic = input.diagnostic;
   const code = diagnostic.name;
-  if (!code) throw new Error(`Doctor diagnostic is missing a nostics name/code.`);
+  if (!code) throw doctorInternalDiagnostics.DOC0014({ ruleId: input.ruleId });
+  if (!diagnostic.fix) throw doctorInternalDiagnostics.DOC0021({ ruleId: input.ruleId, code });
   return {
     ...input,
     diagnostic,
@@ -156,13 +159,15 @@ export function normalizeDiagnosticFromRuleCode(
     suggestion?: string;
   },
 ): Diagnostic {
-  const code = input.code ?? allDiagnosticCodesByRuleId[input.ruleId] ?? "DOC9999";
+  const code = input.code ?? codeForRuleId(allDiagnosticCodesByRuleId, input.ruleId) ?? "DOC9999";
   const why = input.why ?? input.message ?? input.diagnostic?.why ?? "Doctor diagnostic";
-  const fix = input.suggestion ?? input.diagnostic?.fix ?? input.fix?.message ?? why;
+  const fix = input.suggestion ?? input.diagnostic?.fix ?? input.fix?.message;
+  if (!fix) throw doctorInternalDiagnostics.DOC0021({ ruleId: input.ruleId, code });
   const diagnostic =
-    input.diagnostic ?? allDiagnostics[code]?.({ why, fix, sources: input.sources });
+    input.diagnostic ??
+    diagnosticForCode(allDiagnostics, code)?.({ why, fix, sources: input.sources });
   if (!diagnostic) {
-    throw new Error(`No Doctor diagnostic code registered for ${input.ruleId}.`);
+    throw doctorInternalDiagnostics.DOC0013({ ruleId: input.ruleId, code });
   }
   return {
     ...input,
@@ -195,7 +200,7 @@ export function pushDiagnostic(
     category: string;
     message?: string;
     why?: string;
-    suggestion?: string;
+    suggestion: string;
     file: string;
   },
 ): void {

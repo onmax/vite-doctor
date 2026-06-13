@@ -1,4 +1,11 @@
-import { createRule, type DoctorRule, type RuleContext } from "../../../../core/index.js";
+import {
+  codeForRuleId,
+  createRule,
+  diagnosticForCode,
+  type DoctorRule,
+  type RuleContext,
+} from "../../../../core/index.js";
+import { doctorInternalDiagnostics } from "../../../../core/internal-diagnostic-handles.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../../diagnostics.js";
 
 export { createRule };
@@ -30,12 +37,13 @@ export function report(
   severity: any,
   category: string,
   message: string,
-  suggestion?: string,
+  suggestion: string,
 ) {
-  const code = diagnosticCodesByRuleId[ruleId];
-  const diagnostic = diagnostics[code];
-  if (!diagnostic) throw new Error(`Missing Doctor diagnostic code for ${ruleId}`);
-  ctx.helpers.report(ctx, node, diagnostic({ why: message, fix: suggestion ?? message }), {
+  const code = codeForRuleId(diagnosticCodesByRuleId, ruleId);
+  if (!code) throw doctorInternalDiagnostics.DOC0013({ ruleId });
+  const diagnostic = diagnosticForCode(diagnostics, code);
+  if (!diagnostic) throw doctorInternalDiagnostics.DOC0013({ ruleId, code });
+  ctx.helpers.report(ctx, node, diagnostic({ why: message, fix: suggestion }), {
     ruleId,
     severity,
     category,
@@ -155,10 +163,11 @@ export function createEslintVueRule(options: {
 
           for (const message of messages) {
             if (message.ruleId !== options.eslintId) continue;
-            const code = diagnosticCodesByRuleId[options.doctorId];
-            const diagnostic = diagnostics[code];
+            const code = codeForRuleId(diagnosticCodesByRuleId, options.doctorId);
+            if (!code) throw doctorInternalDiagnostics.DOC0013({ ruleId: options.doctorId });
+            const diagnostic = diagnosticForCode(diagnostics, code);
             if (!diagnostic)
-              throw new Error(`Missing Doctor diagnostic code for ${options.doctorId}`);
+              throw doctorInternalDiagnostics.DOC0013({ ruleId: options.doctorId, code });
             ctx.report(
               diagnostic({
                 why: delegatedMessages[options.doctorId] ?? message.message,

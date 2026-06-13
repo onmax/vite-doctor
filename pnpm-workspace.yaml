@@ -12,7 +12,7 @@ catalogs:
     eslint: ^10.4.1
     eslint-plugin-vue: ^10.9.1
     magic-string: ^0.30.21
-    nostics: 0.3.0
+    nostics: 0.5.0
     oxc-parser: ^0.133.0
     vue-eslint-parser: ^10.4.0
   build:
@@ -93,3 +93,4 @@ allowBuilds:
   workerd: true
 minimumReleaseAgeExclude:
   - "@cloudflare/workers-types@4.20260531.1"
+  - nostics@0.5.0
