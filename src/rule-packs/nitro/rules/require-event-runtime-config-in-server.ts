@@ -12,6 +12,7 @@ export const requireEventRuntimeConfigInServer = createRule({
     fixable: "suggestion",
     docsUrl: "https://nitro.build/guide/configuration#runtime-configuration",
     requires: { script: true, nitro: true },
+    applicability: { runtimes: { nitro: ">=2 <3" } },
   },
   create(ctx) {
     if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;

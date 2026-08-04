@@ -23,6 +23,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0019", ruleId: "doctor/config/invalid-rule-severity", docs: false },
   { code: "DOC0020", ruleId: "doctor/config/invalid-rule-config", docs: false },
   { code: "DOC0021", ruleId: "doctor/internal/missing-diagnostic-fix", docs: false },
+  { code: "DOC0022", ruleId: "doctor/inventory/unresolved-runtime" },
   { code: "VUE0001", ruleId: "vue/i18n/no-untranslated-text" },
   { code: "VUE0002", ruleId: "vue/i18n/no-unused-translations" },
   { code: "VUE0003", ruleId: "vue/lifecycle/no-mutation-in-onupdated" },
@@ -81,6 +82,11 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0010", ruleId: "nitro/server/no-client-composables" },
   { code: "NITRO0011", ruleId: "nitro/server/prefer-event-fetch" },
   { code: "NITRO0012", ruleId: "nitro/request/prefer-route-method-suffix" },
+  { code: "NITRO0013", ruleId: "nitro/runtime/no-event-runtime-config-in-server" },
+  { code: "NITRO0014", ruleId: "nitro/migration/no-v2-imports" },
+  { code: "NITRO0015", ruleId: "nitro/h3/no-removed-send" },
+  { code: "NITRO0016", ruleId: "nitro/h3/prefer-redirect-response" },
+  { code: "NITRO0017", ruleId: "nitro/h3/prefer-with-base" },
   { code: "NUXT0001", ruleId: "docus/appconfig/no-unknown-key" },
   { code: "NUXT0002", ruleId: "docus/layers/no-empty-app-vue-shadow" },
   { code: "NUXT0003", ruleId: "nuxt-better-auth/require-standard-auth-handler-mount" },
@@ -156,6 +162,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0070", ruleId: "vueuse/prefer-useclipboard" },
   { code: "NUXT0071", ruleId: "vueuse/prefer-useevent-listener" },
   { code: "NUXT0072", ruleId: "vueuse/prefer-usewindow-size" },
+  { code: "NUXT0073", ruleId: "nuxt/config/no-ignored-compatibility-config" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;

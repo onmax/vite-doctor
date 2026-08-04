@@ -55,5 +55,10 @@ export const doctorInternalDiagnostics = defineDiagnostics({
           : `Rule "${params.ruleId}" reported a diagnostic without a fix.`,
       fix: "Provide actionable nostics fix text for every Doctor diagnostic.",
     },
+    DOC0022: {
+      why: (params: { details: string }) =>
+        `Doctor could not resolve the governing runtime graph: ${params.details}`,
+      fix: "Install project dependencies and run Doctor from the target project package. For computed Nuxt config, make future.compatibilityVersion statically provable or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.",
+    },
   },
 });

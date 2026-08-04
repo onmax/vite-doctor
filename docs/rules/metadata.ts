@@ -40,18 +40,16 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "nitro/context/no-navigateto-in-nitro": {
-    description:
-      "Flags navigateto in nitro in Nitro context code before it leaks into runtime behavior.",
-    why: "Navigation helpers only work correctly in the runtime they were designed for. Returning the navigation result keeps redirects and aborts observable to Nuxt.",
+    description: "Flags the Nuxt-only navigateTo() helper in Nitro server handlers.",
+    why: "navigateTo() belongs to the Nuxt app runtime and is unavailable in Nitro handlers, so the redirect must use the installed H3 generation's response API.",
     recommendedReplacement:
-      "Remove navigateto in nitro, or move it to the Nitro runtime/API that owns that behavior.",
+      "Use sendRedirect(event, location) with H3 v1, or return redirect(location) with H3 v2.",
     examples: [
       {
         title: "Avoid navigateTo in Nitro",
         language: "ts",
         invalid: "export default defineEventHandler(() => {\n  return navigateTo('/login')\n})",
-        valid:
-          "export default defineEventHandler((event) => {\n  return sendRedirect(event, '/login')\n})",
+        valid: "export default defineHandler(() => {\n  return redirect('/login')\n})",
       },
     ],
   },
@@ -105,9 +103,8 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "nitro/runtime/require-event-runtime-config-in-server": {
-    description:
-      "Checks that Nitro runtime code includes the event runtime config in server needed for predictable behavior.",
-    why: "Runtime configuration has different server and client visibility. Using the framework API keeps environment data typed and scoped.",
+    description: "Checks that Nitro 2 server code passes the request event to useRuntimeConfig().",
+    why: "Nitro 2 resolves event-scoped runtime configuration through the handler event, so omitting it can lose request-specific overrides.",
     recommendedReplacement: "Pass the event to useRuntimeConfig(event) in Nitro server handlers.",
     examples: [
       {
@@ -117,6 +114,77 @@ export const ruleDocumentationMetadata = {
           "export default defineEventHandler(() => {\n  return useRuntimeConfig().apiSecret\n})",
         valid:
           "export default defineEventHandler((event) => {\n  return useRuntimeConfig(event).apiSecret\n})",
+      },
+    ],
+  },
+  "nitro/runtime/no-event-runtime-config-in-server": {
+    description: "Checks that Nitro 3 server code calls useRuntimeConfig() without an event.",
+    why: "Nitro 3 removed the event-aware signature, so passing the request event keeps code tied to the Nitro 2 API.",
+    recommendedReplacement: "Remove the event argument and call useRuntimeConfig().",
+    examples: [
+      {
+        title: "Use the Nitro 3 runtime config signature",
+        language: "ts",
+        invalid:
+          "export default defineHandler((event) => {\n  return useRuntimeConfig(event).apiSecret\n})",
+        valid: "export default defineHandler(() => {\n  return useRuntimeConfig().apiSecret\n})",
+      },
+    ],
+  },
+  "nitro/migration/no-v2-imports": {
+    description: "Flags Nitro 2 package names and public subpaths that Nitro 3 removed.",
+    why: "Nitro 3 publishes the nitro package with a smaller export map, so old package names and subpaths fail after the upgrade.",
+    recommendedReplacement:
+      "Import from nitro and its documented public subpaths. Use nitro/builder for former builder entry points.",
+    examples: [
+      {
+        title: "Use the Nitro 3 package name",
+        language: "ts",
+        invalid: 'import { defineNitroConfig } from "nitropack/config"',
+        valid: 'import { defineConfig } from "nitro"',
+      },
+    ],
+  },
+  "nitro/h3/no-removed-send": {
+    description: "Flags send() and sendError(), which H3 v2 removes.",
+    why: "H3 v2 handlers return Web API response values and throw HTTPError instances instead of using imperative send helpers.",
+    recommendedReplacement:
+      "Return the response value from the handler, or throw an HTTPError for an error response.",
+    examples: [
+      {
+        title: "Return the response body",
+        language: "ts",
+        invalid: 'export default defineHandler((event) => {\n  return send(event, "ready")\n})',
+        valid: 'export default defineHandler(() => {\n  return "ready"\n})',
+      },
+    ],
+  },
+  "nitro/h3/prefer-redirect-response": {
+    description: "Flags the H3 v2 sendRedirect compatibility utility.",
+    why: "H3 v2 models redirects as returned Web API response values, while sendRedirect remains a compatibility wrapper around the older event-first API.",
+    recommendedReplacement:
+      "Import redirect and return redirect(location, status) from the handler.",
+    examples: [
+      {
+        title: "Return an H3 v2 redirect",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  return sendRedirect(event, "/login")\n})',
+        valid: 'export default defineHandler(() => {\n  return redirect("/login")\n})',
+      },
+    ],
+  },
+  "nitro/h3/prefer-with-base": {
+    description: "Flags the H3 v2 useBase compatibility alias.",
+    why: "H3 v2 renamed the path-prefix handler wrapper to withBase, so using the current name keeps source aligned with the documented API.",
+    recommendedReplacement:
+      "Import withBase and replace useBase(base, handler) with withBase(base, handler).",
+    examples: [
+      {
+        title: "Use the H3 v2 path-prefix wrapper",
+        language: "ts",
+        invalid: 'const handler = useBase("/api", app.handler)',
+        valid: 'const handler = withBase("/api", app.handler)',
       },
     ],
   },
@@ -148,23 +216,6 @@ export const ruleDocumentationMetadata = {
         invalid: "export default defineEventHandler(() => {\n  return useRoute().path\n})",
         valid:
           "export default defineEventHandler((event) => {\n  return getRequestURL(event).pathname\n})",
-      },
-    ],
-  },
-  "nitro/server/prefer-event-fetch": {
-    description:
-      "Finds Nitro server code that should use the supported event fetch pattern instead.",
-    why: "Nuxt data fetching relies on stable keys, payload serialization, and request context. Bypassing those contracts can duplicate requests or lose SSR data.",
-    recommendedReplacement:
-      "Use event.$fetch() for internal server calls that need request context.",
-    examples: [
-      {
-        title: "Use event fetch",
-        language: "ts",
-        invalid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  return $fetch('/api/internal', { method: 'POST', body })\n})",
-        valid:
-          "export default defineEventHandler(async (event) => {\n  const body = await readValidatedBody(event, schema.parse)\n  return event.$fetch('/api/internal', { method: 'POST', body })\n})",
       },
     ],
   },
@@ -441,17 +492,30 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "nuxt/context/no-legacy-process-client-server": {
-    description:
-      "Flags legacy process client server in Nuxt context code before it leaks into runtime behavior.",
-    why: "Nuxt gives this pattern a specific contract. Staying inside that contract makes the code easier to test, refactor, and run across server and client runtimes.",
-    recommendedReplacement:
-      "Remove legacy process client server, or move it to the Nuxt runtime/API that owns that behavior.",
+    description: "Flags process.client and process.server under Nuxt compatibility 5.",
+    why: "Nuxt compatibility 5 removes the Nuxt type augmentation for process flags, while import.meta.client and import.meta.server remain typed runtime constants.",
+    recommendedReplacement: "Use import.meta.client or import.meta.server.",
     examples: [
       {
         title: "Use import.meta client flags",
         language: "ts",
         invalid: "if (process.client) {\n  hydrateChart()\n}",
         valid: "if (import.meta.client) {\n  hydrateChart()\n}",
+      },
+    ],
+  },
+  "nuxt/config/no-ignored-compatibility-config": {
+    description: "Flags legacy Nuxt settings that compatibility 5 ignores.",
+    why: "Nuxt compatibility 5 forces the current head and error-data behavior, so these opt-outs no longer change the runtime.",
+    recommendedReplacement:
+      "Remove unhead.legacy and experimental.parseErrorData, then update code for the compatibility 5 behavior.",
+    examples: [
+      {
+        title: "Remove ignored compatibility settings",
+        language: "ts",
+        invalid:
+          "export default defineNuxtConfig({\n  unhead: { legacy: true },\n  experimental: { parseErrorData: false },\n})",
+        valid: "export default defineNuxtConfig({})",
       },
     ],
   },

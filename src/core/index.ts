@@ -12,7 +12,12 @@ import {
   runTypeRules,
 } from "./internal/rule-execution.js";
 import { cleanCache, createScanSession, markSession, runPhase } from "./internal/scan-session.js";
-import { applyPolicyFilters, applyRequestedFixes, createResult } from "./internal/diagnostics.js";
+import {
+  applyPolicyFilters,
+  applyRequestedFixes,
+  createResult,
+  reportRuntimeInventoryUnknown,
+} from "./internal/diagnostics.js";
 
 export * from "./primitives.js";
 export * from "./config.js";
@@ -27,9 +32,12 @@ export {
   relativeNuxtScanRoot,
 } from "./internal/nuxt-inventory.js";
 export { cleanCache };
+export { evaluatePackActivation, evaluateRuleApplicability } from "./internal/applicability.js";
+export { detectProject } from "./internal/project.js";
 
 export async function runDoctor(options: DoctorRunOptions = {}): Promise<DoctorRunResult> {
   const session = await createScanSession(options);
+  reportRuntimeInventoryUnknown(session);
   await runPhase(session, "parseFileFacts", () => parseSourceFiles(session));
   await runPhase(session, "fileRules", () => runFileRules(session));
   await runPhase(session, "manifestRules", () => runManifestRules(session));

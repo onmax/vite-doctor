@@ -1,6 +1,11 @@
 import { loadConfig } from "c12";
 import { defu } from "defu";
-import type { DoctorExtension, DoctorFramework, DoctorSerializableConfig } from "./primitives.js";
+import type {
+  DoctorExtension,
+  DoctorFramework,
+  DoctorSerializableConfig,
+  RuntimeTarget,
+} from "./primitives.js";
 export type { DoctorRuleConfig, DoctorSerializableConfig } from "./primitives.js";
 
 export interface DoctorConfig extends DoctorSerializableConfig {
@@ -36,6 +41,7 @@ export interface DoctorRunOptions {
   scoreOnly?: boolean;
   maxWarnings?: number;
   extensions?: DoctorExtension[];
+  runtimeTarget?: RuntimeTarget;
 }
 
 export function defineDoctorConfig(config: DoctorConfig): DoctorConfig {

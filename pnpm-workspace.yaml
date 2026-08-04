@@ -8,6 +8,7 @@ catalogs:
     "@oxc-parser/binding-wasm32-wasi": ^0.133.0
     "@oxc-project/types": ^0.133.0
     "@typescript-eslint/parser": ^8.60.0
+    "@types/semver": ^7.7.1
     "@vue/compiler-sfc": ^3.5.35
     eslint: ^10.4.1
     eslint-plugin-vue: ^10.9.1
@@ -51,6 +52,7 @@ catalogs:
     defu: ^6.1.7
     pathe: ^2.0.3
     picocolors: ^1.1.1
+    semver: ^7.8.1
     std-env: ^4.1.0
     zod: ^4.4.3
     zod-to-json-schema: ^3.25.2

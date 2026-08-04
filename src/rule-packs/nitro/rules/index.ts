@@ -1,8 +1,12 @@
 import { defineRulePack } from "../../../core/index.js";
 import { noUseNuxtAppInNitro } from "./no-use-nuxt-app-in-nitro.js";
 import { noNavigateToInNitro } from "./no-navigate-to-in-nitro.js";
-import { preferEventFetch } from "./prefer-event-fetch.js";
 import { requireEventRuntimeConfigInServer } from "./require-event-runtime-config-in-server.js";
+import { noEventRuntimeConfigInServer } from "./no-event-runtime-config-in-server.js";
+import { noV2Imports } from "./no-v2-imports.js";
+import { noRemovedH3Send } from "./no-removed-h3-send.js";
+import { preferH3RedirectResponse } from "./prefer-h3-redirect-response.js";
+import { preferH3WithBase } from "./prefer-h3-with-base.js";
 import { noClientComposablesInServer } from "./no-client-composables-in-server.js";
 import { noBrowserApiInServer } from "./no-browser-api-in-server.js";
 import { preferValidatedBody } from "./prefer-validated-body.js";
@@ -15,8 +19,12 @@ import { preferGetRequestIp } from "./prefer-get-request-ip.js";
 export {
   noUseNuxtAppInNitro,
   noNavigateToInNitro,
-  preferEventFetch,
   requireEventRuntimeConfigInServer,
+  noEventRuntimeConfigInServer,
+  noV2Imports,
+  noRemovedH3Send,
+  preferH3RedirectResponse,
+  preferH3WithBase,
   noClientComposablesInServer,
   noBrowserApiInServer,
   preferValidatedBody,
@@ -30,8 +38,12 @@ export {
 const rules = [
   noUseNuxtAppInNitro,
   noNavigateToInNitro,
-  preferEventFetch,
   requireEventRuntimeConfigInServer,
+  noEventRuntimeConfigInServer,
+  noV2Imports,
+  noRemovedH3Send,
+  preferH3RedirectResponse,
+  preferH3WithBase,
   noClientComposablesInServer,
   noBrowserApiInServer,
   preferValidatedBody,

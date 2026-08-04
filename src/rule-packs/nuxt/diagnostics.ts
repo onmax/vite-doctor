@@ -76,6 +76,7 @@ export const nuxtDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0070", ruleId: "vueuse/prefer-useclipboard" },
   { code: "NUXT0071", ruleId: "vueuse/prefer-useevent-listener" },
   { code: "NUXT0072", ruleId: "vueuse/prefer-usewindow-size" },
+  { code: "NUXT0073", ruleId: "nuxt/config/no-ignored-compatibility-config" },
 ]);
 
 export const diagnostics = nuxtDiagnosticRegistry.diagnostics;

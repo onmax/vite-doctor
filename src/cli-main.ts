@@ -16,8 +16,9 @@ import {
 } from "./core/internal/cli.js";
 import { runViteDoctor, shouldFailDoctorRun, viteDoctorRulePacks } from "./doctor.js";
 import { viteDoctorVersion } from "./version.js";
+import { createMigrationReport, formatMigrationReport } from "./migration.js";
 
-const commands = new Set(["scan", "check", "rules", "explain", "cache"]);
+const commands = new Set(["scan", "check", "migrate", "rules", "explain", "cache"]);
 const removedCommands = new Set(["run", "ci"]);
 
 export async function main(args = process.argv.slice(2), cwd = process.cwd()): Promise<number> {
@@ -35,6 +36,22 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
   const cli = cac("vite-doctor");
   addScanCommand(cli, "scan", cwd, (code) => (exitCode = code));
   addScanCommand(cli, "check", cwd, (code) => (exitCode = code));
+  cli
+    .command("migrate [path]", "Evaluate current source against a future runtime graph.")
+    .option("--to <target>", "Explicit target such as nuxt@5 or nitro@3.")
+    .option("--format <format>", "Machine output: json.")
+    .action(async (path = ".", options) => {
+      const root = resolve(cwd, path);
+      const stat = statSync(root, { throwIfNoEntry: false });
+      if (!stat?.isDirectory()) {
+        errorHuman(`No readable directory found at ${root}`);
+        exitCode = 1;
+        return;
+      }
+      const report = await createMigrationReport(root, options.to ? [options.to] : []);
+      process.stdout.write(formatMigrationReport(report, options.format));
+      exitCode = report.summary.errors > 0 ? 1 : 0;
+    });
   cli
     .command("rules", "List available Doctor rules.")
     .option("--format <format>", "Machine output: json or sarif.")

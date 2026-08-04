@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "pathe";
 import type {
   DoctorConfig,
@@ -114,8 +114,10 @@ export async function writeManifest(
     doctorPlugin: entry?.doctor?.plugin,
   }));
   const manifest = {
+    nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
     nuxtVersion: nuxt._version ?? nuxt.version ?? "4",
     vueVersion: nuxt.options.vue?.version ?? "3.5",
+    compatibilityVersion: nuxt.options.future?.compatibilityVersion,
     rootDir,
     srcDir: resolve(rootDir, nuxt.options.srcDir ?? "."),
     appDir,
@@ -162,17 +164,37 @@ export async function writeManifest(
   } as NuxtDoctorManifest;
   await nuxt.callHook?.("doctor:context", { nuxt, manifest });
   const manifestPath = join(buildDir, "doctor.manifest.json");
-  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
-  if (lastManifestWrite.path !== manifestPath || lastManifestWrite.content !== serialized) {
+  const signature = JSON.stringify(manifest);
+  if (
+    !existsSync(manifestPath) ||
+    lastManifestWrite.path !== manifestPath ||
+    lastManifestWrite.signature !== signature
+  ) {
+    manifest.generatedAt = new Date().toISOString();
+    const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
     mkdirSync(buildDir, { recursive: true });
     writeFileSync(manifestPath, serialized);
     lastManifestWrite.path = manifestPath;
-    lastManifestWrite.content = serialized;
+    lastManifestWrite.signature = signature;
+    lastManifestWrite.generatedAt = manifest.generatedAt;
+  } else {
+    manifest.generatedAt = lastManifestWrite.generatedAt;
   }
   return manifest;
 }
 
-const lastManifestWrite: { path: string; content: string } = { path: "", content: "" };
+const lastManifestWrite: { path: string; signature: string; generatedAt?: string } = {
+  path: "",
+  signature: "",
+};
+
+function nuxtConfigModifiedAt(root: string): number | undefined {
+  for (const extension of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
+    const file = join(root, `nuxt.config.${extension}`);
+    if (existsSync(file)) return statSync(file).mtimeMs;
+  }
+  return undefined;
+}
 
 function flattenPages(pages: any[]): any[] {
   return toArray(pages).flatMap((page: any) => [page, ...flattenPages(page.children)]);
