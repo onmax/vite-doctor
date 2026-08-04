@@ -255,6 +255,7 @@ export interface NuxtModuleSource {
 
 export interface NuxtDoctorManifest {
   generatedAt?: string;
+  nuxtConfigMtimeMs?: number;
   nuxtVersion: string;
   vueVersion: string;
   compatibilityVersion?: number;

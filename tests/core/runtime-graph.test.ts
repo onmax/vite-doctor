@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -111,6 +111,40 @@ test("ignores an unsupported compatibility version from the generated manifest",
         state: "resolved",
         version: 5,
         provenance: "config",
+      });
+    },
+  );
+});
+
+test("accepts fresh manifest evidence generated in the same millisecond as Nuxt config", async () => {
+  await withRuntimeGraph(
+    {
+      ...nuxtGraph({
+        nuxt: "4.4.6",
+        nitroName: "nitropack",
+        nitro: "2.13.4",
+        h3: "1.15.11",
+      }),
+      "nuxt.config.ts": `const config = { future: { compatibilityVersion: 5 } }
+export default defineNuxtConfig(config)
+`,
+    },
+    async (root) => {
+      const configMtimeMs = statSync(join(root, "nuxt.config.ts")).mtimeMs;
+      mkdirSync(join(root, ".nuxt"), { recursive: true });
+      writeFileSync(
+        join(root, ".nuxt/doctor.manifest.json"),
+        JSON.stringify({
+          generatedAt: new Date(Math.floor(configMtimeMs)).toISOString(),
+          nuxtConfigMtimeMs: configMtimeMs,
+          compatibilityVersion: 5,
+        }),
+      );
+
+      expect((await detectProject(root)).nuxtCompatibility).toMatchObject({
+        state: "resolved",
+        version: 5,
+        provenance: "manifest",
       });
     },
   );

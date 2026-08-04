@@ -72,10 +72,15 @@ export function resolveNuxtCompatibility(
   const config = readNuxtConfig(root);
   const manifestGeneratedAt = manifest?.generatedAt ? Date.parse(manifest.generatedAt) : Number.NaN;
   const configModifiedAt = config ? configModifiedTime(config.file) : undefined;
+  const manifestMatchesConfig =
+    configModifiedAt === undefined ||
+    (Number.isFinite(manifest?.nuxtConfigMtimeMs)
+      ? manifest?.nuxtConfigMtimeMs === configModifiedAt
+      : manifestGeneratedAt >= configModifiedAt);
   if (
     Number.isFinite(manifestGeneratedAt) &&
     isSupportedNuxtCompatibility(manifest?.compatibilityVersion) &&
-    (configModifiedAt === undefined || manifestGeneratedAt >= configModifiedAt)
+    manifestMatchesConfig
   ) {
     return {
       state: "resolved",
