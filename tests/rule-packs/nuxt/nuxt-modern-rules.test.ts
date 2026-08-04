@@ -2831,6 +2831,35 @@ test("Nuxt module writes manifest and accepts context hook contributions", async
   });
 });
 
+test("Nuxt module timestamps changed evidence without rewriting identical manifests", async () => {
+  await withFixture({}, {}, async (root) => {
+    const nuxt = {
+      options: {
+        rootDir: root,
+        buildDir: ".nuxt",
+        modules: [],
+        future: { compatibilityVersion: 4 },
+      },
+    };
+
+    const first = await writeManifest(nuxt);
+    const unchanged = await writeManifest(nuxt);
+    expect(unchanged.generatedAt).toBe(first.generatedAt);
+
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    nuxt.options.future.compatibilityVersion = 5;
+    const changed = await writeManifest(nuxt);
+
+    expect(changed.generatedAt! > first.generatedAt!).toBe(true);
+    expect(
+      JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8")),
+    ).toMatchObject({
+      generatedAt: changed.generatedAt,
+      compatibilityVersion: 5,
+    });
+  });
+});
+
 test("Nuxt module writes Doctor config and Doctor Run applies it", async () => {
   await withFixture(
     {
