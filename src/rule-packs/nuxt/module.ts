@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "pathe";
 import type {
   DoctorConfig,
@@ -164,7 +164,11 @@ export async function writeManifest(
   await nuxt.callHook?.("doctor:context", { nuxt, manifest });
   const manifestPath = join(buildDir, "doctor.manifest.json");
   const signature = JSON.stringify(manifest);
-  if (lastManifestWrite.path !== manifestPath || lastManifestWrite.signature !== signature) {
+  if (
+    !existsSync(manifestPath) ||
+    lastManifestWrite.path !== manifestPath ||
+    lastManifestWrite.signature !== signature
+  ) {
     manifest.generatedAt = new Date().toISOString();
     const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
     mkdirSync(buildDir, { recursive: true });

@@ -2860,6 +2860,23 @@ test("Nuxt module timestamps changed evidence without rewriting identical manife
   });
 });
 
+test("Nuxt module recreates an unchanged manifest after the build directory is cleaned", async () => {
+  await withFixture({}, {}, async (root) => {
+    const nuxt = {
+      options: { rootDir: root, buildDir: ".nuxt", modules: [] },
+    };
+
+    const first = await writeManifest(nuxt);
+    const manifestPath = join(root, ".nuxt/doctor.manifest.json");
+    await rm(join(root, ".nuxt"), { recursive: true, force: true });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const recreated = await writeManifest(nuxt);
+
+    expect(existsSync(manifestPath)).toBe(true);
+    expect(recreated.generatedAt).not.toBe(first.generatedAt);
+  });
+});
+
 test("Nuxt module writes Doctor config and Doctor Run applies it", async () => {
   await withFixture(
     {
