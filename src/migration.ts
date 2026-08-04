@@ -77,6 +77,7 @@ export async function createMigrationReport(
   const targetSpec = requestedTargets.length
     ? parseExplicitTargets(requestedTargets)
     : inferTarget(current);
+  validateTargetFramework(current.framework, targetSpec.requested);
   const targetProject = await detectProject(root, current.framework, targetSpec.runtime);
   const packs = await viteDoctorRulePacks({ root, framework: current.framework });
   const activated: string[] = [];
@@ -235,6 +236,18 @@ function parseExplicitTargets(targets: string[]): MigrationReport["target"] {
       .filter(Boolean),
     "explicit",
   );
+}
+
+function validateTargetFramework(framework: DoctorFramework, targets: string[]): void {
+  for (const target of targets) {
+    const supported =
+      target === "nuxt@5"
+        ? framework === "nuxt"
+        : target === "nitro@3" && (framework === "nuxt" || framework === "nitro");
+    if (!supported) {
+      throw new Error(`Migration target ${target} is not supported for ${framework} projects.`);
+    }
+  }
 }
 
 function targetFromRequested(

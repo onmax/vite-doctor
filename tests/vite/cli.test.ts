@@ -692,6 +692,35 @@ test("migrate accepts an explicit standalone Nitro target", async () => {
   );
 });
 
+test("migrate rejects Nuxt targets outside Nuxt projects", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vue: "3.5.18" } }),
+      "src/App.vue": "<template><div /></template>\n",
+    },
+    async (root) => {
+      const result = await runCli(["migrate", ".", "--to", "nuxt@5", "--format", "json"], root);
+
+      expect(result.code).toBe(1);
+      expect(result.output).toBe("");
+    },
+  );
+});
+
+test("migrate rejects Nitro targets outside Nuxt and Nitro projects", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "7.0.0" } }),
+    },
+    async (root) => {
+      const result = await runCli(["migrate", ".", "--to", "nitro@3", "--format", "json"], root);
+
+      expect(result.code).toBe(1);
+      expect(result.output).toBe("");
+    },
+  );
+});
+
 async function withFixture(
   files: Record<string, string>,
   fn: (root: string) => void | Promise<void>,
