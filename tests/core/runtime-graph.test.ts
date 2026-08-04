@@ -90,6 +90,32 @@ test("ignores a stale compatibility manifest when Nuxt config is newer", async (
   );
 });
 
+test("ignores an unsupported compatibility version from the generated manifest", async () => {
+  await withRuntimeGraph(
+    {
+      ...nuxtGraph({
+        nuxt: "4.4.6",
+        nitroName: "nitropack",
+        nitro: "2.13.4",
+        h3: "1.15.11",
+      }),
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2999-01-01T00:00:00.000Z",
+        compatibilityVersion: 6,
+      }),
+      "nuxt.config.ts":
+        "export default defineNuxtConfig({ future: { compatibilityVersion: 5 } })\n",
+    },
+    async (root) => {
+      expect((await detectProject(root)).nuxtCompatibility).toMatchObject({
+        state: "resolved",
+        version: 5,
+        provenance: "config",
+      });
+    },
+  );
+});
+
 test("ignores compatibilityVersion keys outside exported future config", async () => {
   await withRuntimeGraph(
     {

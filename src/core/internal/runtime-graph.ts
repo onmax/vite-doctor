@@ -74,7 +74,7 @@ export function resolveNuxtCompatibility(
   const configModifiedAt = config ? configModifiedTime(config.file) : undefined;
   if (
     Number.isFinite(manifestGeneratedAt) &&
-    Number.isFinite(manifest?.compatibilityVersion) &&
+    isSupportedNuxtCompatibility(manifest?.compatibilityVersion) &&
     (configModifiedAt === undefined || manifestGeneratedAt >= configModifiedAt)
   ) {
     return {
@@ -111,6 +111,10 @@ export function resolveNuxtCompatibility(
     version: Number(nuxt.version.split(".")[0]) >= 5 ? 5 : 4,
     provenance: "default",
   };
+}
+
+function isSupportedNuxtCompatibility(value: unknown): value is 4 | 5 {
+  return value === 4 || value === 5;
 }
 
 export function applyRuntimeTarget(
