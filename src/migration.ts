@@ -205,7 +205,7 @@ export function formatMigrationReport(report: MigrationReport, format = "text"):
     lines.push("");
   }
   lines.push(
-    `Summary: ${report.summary.diagnostics} source diagnostics, ${report.summary.dependencyChanges} dependency/config changes`,
+    `Summary: ${report.summary.diagnostics} diagnostics, ${report.summary.dependencyChanges} dependency/config changes`,
   );
   return `${lines.join("\n")}\n`;
 }

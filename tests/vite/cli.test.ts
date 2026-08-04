@@ -663,6 +663,11 @@ export default defineEventHandler((event) => {
           expect.objectContaining({ to: "future.compatibilityVersion: 5" }),
         ]),
       );
+      const textResult = await runCli(["migrate", "."], root);
+      expect(textResult.output).toContain(
+        `Summary: ${report.summary.diagnostics} diagnostics, ${report.summary.dependencyChanges} dependency/config changes`,
+      );
+      expect(textResult.output).not.toContain("source diagnostics");
       expect(readFileSync(join(root, "server/api/config.ts"), "utf8")).toBe(source);
     },
   );
