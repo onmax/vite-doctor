@@ -13,6 +13,10 @@ export const nitroDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0010", ruleId: "nitro/server/no-client-composables" },
   { code: "NITRO0011", ruleId: "nitro/server/prefer-event-fetch" },
   { code: "NITRO0012", ruleId: "nitro/request/prefer-route-method-suffix" },
+  { code: "NITRO0013", ruleId: "nitro/runtime/no-event-runtime-config-in-server" },
+  { code: "NITRO0014", ruleId: "nitro/migration/no-v2-imports" },
+  { code: "NITRO0015", ruleId: "nitro/h3/no-removed-send" },
+  { code: "NITRO0016", ruleId: "nitro/h3/prefer-redirect-response" },
 ]);
 
 export const diagnostics = nitroDiagnosticRegistry.diagnostics;

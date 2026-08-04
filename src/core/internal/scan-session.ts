@@ -22,6 +22,7 @@ import { selectScanFiles, type ScanFileEntry } from "./source-inventory.js";
 import { createHelpers } from "./doctor-helpers.js";
 import { VERSION, nativeMatch, sha256 } from "./utils.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
+import { evaluatePackActivation, evaluateRuleApplicability } from "./applicability.js";
 
 const DEFAULT_CONFIG: DoctorConfig = {
   cache: { dir: ".vite-doctor/cache" },
@@ -116,7 +117,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   markSession(sessionBase, "config", started);
 
   started = performance.now();
-  const project = await detectProject(root, options.framework ?? "auto");
+  const project = await detectProject(root, options.framework ?? "auto", options.runtimeTarget);
   const projectDefaults =
     project.framework === "nuxt"
       ? mergeDoctorConfig(DEFAULT_CONFIG, { cache: { dir: ".nuxt/doctor/cache" } })
@@ -245,20 +246,6 @@ async function applyProjectContributions(
   }
 }
 
-function isActivePack(pack: RulePack, project: ProjectInfo): boolean {
-  if (!pack.activation) return true;
-  if (pack.activation.nuxt && project.framework !== "nuxt") return false;
-  const hasPackageOrModuleConstraints = Boolean(
-    pack.activation.packages?.length || pack.activation.modules?.length,
-  );
-  if (!hasPackageOrModuleConstraints) return true;
-  const moduleNames = new Set((project.nuxt?.modules ?? []).map((module) => module.name));
-  return Boolean(
-    pack.activation.packages?.some((name) => moduleNames.has(name)) ||
-    pack.activation.modules?.some((name) => moduleNames.has(name)),
-  );
-}
-
 function selectRules(
   registry: RuleRegistry,
   ruleConfigs: Map<string, ResolvedRuleConfig>,
@@ -272,7 +259,7 @@ function selectRules(
 
   const selectedRules = resolveExtends(registry.packs, options, project);
 
-  return registry.rules
+  const candidates = registry.rules
     .filter((rule) => selectedRules.has(rule.meta.id))
     .filter((rule) => !rule.meta.requires?.nuxt || project.framework === "nuxt")
     .filter(
@@ -284,11 +271,15 @@ function selectRules(
         !rule.meta.requires?.vue || project.framework === "vue" || project.framework === "nuxt",
     )
     .filter((rule) => !rule.meta.requires?.types || options.types)
-    .filter((rule) => supportsFrameworkVersion(rule, project))
     .filter(
       (rule) => !wanted?.length || wanted.some((pattern) => nativeMatch(rule.meta.id, pattern)),
     )
     .filter((rule) => resolvedConfig(ruleConfigs, rule.meta.id).enabled);
+  const evaluated = candidates.map((rule) => ({
+    rule,
+    applicability: evaluateRuleApplicability(rule, project),
+  }));
+  return evaluated.filter((item) => item.applicability.state === "active").map((item) => item.rule);
 }
 
 function resolveExtends(
@@ -300,7 +291,7 @@ function resolveExtends(
   if (requested === "auto") {
     return new Set(
       packs
-        .filter((pack) => isActivePack(pack, project))
+        .filter((pack) => evaluatePackActivation(pack, project).state === "active")
         .flatMap((pack) => pack.presets.recommended),
     );
   }
@@ -364,45 +355,6 @@ function resolvedConfig(
 
 function isSeverity(value: unknown): value is DoctorSeverity {
   return value === "blocker" || value === "error" || value === "warn" || value === "info";
-}
-
-function supportsFrameworkVersion(rule: DoctorRule, project: ProjectInfo): boolean {
-  const vue = rule.meta.frameworkVersions?.vue;
-  if (vue && !satisfiesVersion(project.vueVersion, vue)) return false;
-  const nuxt = rule.meta.frameworkVersions?.nuxt;
-  if (nuxt && !project.nuxtVersion) return false;
-  if (nuxt && project.nuxtVersion && !satisfiesVersion(project.nuxtVersion, nuxt)) return false;
-  return true;
-}
-
-function satisfiesVersion(version: string, range: string): boolean {
-  const match = range.trim().match(/^(>=|>|<=|<|=)?\s*(\d+(?:\.\d+){0,2})/);
-  if (!match) return true;
-  const operator = match[1] ?? "=";
-  const comparison = compareVersions(version, match[2]);
-  if (operator === ">=") return comparison >= 0;
-  if (operator === ">") return comparison > 0;
-  if (operator === "<=") return comparison <= 0;
-  if (operator === "<") return comparison < 0;
-  return comparison === 0;
-}
-
-function compareVersions(left: string, right: string): number {
-  const leftParts = numericVersionParts(left);
-  const rightParts = numericVersionParts(right);
-  for (let index = 0; index < 3; index++) {
-    const diff = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
-    if (diff) return diff;
-  }
-  return 0;
-}
-
-function numericVersionParts(version: string): number[] {
-  return version
-    .replace(/^[^\d]*/, "")
-    .split(/[.-]/)
-    .slice(0, 3)
-    .map((part) => Number.parseInt(part, 10) || 0);
 }
 
 export function createCacheKey(session: ScanSession, phase: string, input: string): string {

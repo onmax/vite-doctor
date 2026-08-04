@@ -9,10 +9,17 @@ import type {
   ProjectInfo,
 } from "../primitives.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
+import type { RuntimeTarget } from "../primitives.js";
+import {
+  applyRuntimeTarget,
+  resolveNuxtCompatibility,
+  resolveRuntimeGraph,
+} from "./runtime-graph.js";
 
 export async function detectProject(
   root: string,
   requested: "auto" | DoctorFramework = "auto",
+  runtimeTarget?: RuntimeTarget,
 ): Promise<ProjectInfo> {
   const packageJson = readJson<{
     name?: string;
@@ -43,16 +50,32 @@ export async function detectProject(
     existsSync(join(root, "pnpm-workspace.yaml")) || existsSync(join(root, "turbo.json"));
   const nuxt =
     framework === "nuxt" ? await detectNuxt(root, nuxtVersion ?? ">=4", deps) : undefined;
+  const detectedGraph = resolveRuntimeGraph(root, framework);
+  const manifest =
+    framework === "nuxt"
+      ? readJson<NuxtDoctorManifest>(join(root, ".nuxt/doctor.manifest.json"))
+      : null;
+  const targeted = applyRuntimeTarget(
+    detectedGraph,
+    framework === "nuxt" ? resolveNuxtCompatibility(root, detectedGraph, manifest) : undefined,
+    runtimeTarget,
+  );
+  const resolvedNuxtVersion = targeted.graph.packages.nuxt?.version;
+  const resolvedVueVersion = targeted.graph.packages.vue?.version;
   return {
     root: resolve(root),
     framework,
     ssr,
-    vueVersion: cleanVersion(vueVersion),
-    nuxtVersion: nuxt ? cleanVersion(nuxtVersion ?? nuxt.version) : undefined,
+    vueVersion: resolvedVueVersion ?? cleanVersion(vueVersion),
+    nuxtVersion: nuxt
+      ? (resolvedNuxtVersion ?? cleanVersion(nuxtVersion ?? nuxt.version))
+      : undefined,
     isMonorepo,
     packageName: packageJson?.name,
     tsconfigPath: existsSync(join(root, "tsconfig.json")) ? join(root, "tsconfig.json") : undefined,
     nuxt,
+    runtimeGraph: targeted.graph,
+    nuxtCompatibility: targeted.compatibility,
   };
 }
 

@@ -9,6 +9,19 @@ export function createTextReport(result: DoctorRunResult): string {
   const lines: string[] = [];
   lines.push(`Detected: ${frameworkLabel(result)}`);
   lines.push(`Workspace: ${result.root}`);
+  for (const edge of result.project.runtimeGraph?.edges ?? []) {
+    const runtime = result.project.runtimeGraph?.packages[edge.to];
+    const identity =
+      runtime?.state === "resolved"
+        ? `${runtime.name}@${runtime.version}${runtime.packageJsonPath ? ` (${runtime.packageJsonPath})` : ""}`
+        : `unknown${runtime?.reason ? ` (${runtime.reason})` : ""}`;
+    lines.push(`Runtime: ${edge.from} -> ${edge.to} ${identity}`);
+  }
+  if (result.project.nuxtCompatibility) {
+    lines.push(
+      `Nuxt compatibility: ${result.project.nuxtCompatibility.state === "resolved" ? result.project.nuxtCompatibility.version : "unknown"} (${result.project.nuxtCompatibility.provenance})`,
+    );
+  }
   lines.push(`Health score: ${result.score}/100`);
   if (result.project.nuxt?.manifest) {
     const evidence = result.project.nuxt.manifest.evidence;
@@ -87,6 +100,8 @@ export function createJsonReport(result: DoctorRunResult): string {
       timings: result.timings,
       phases: result.phases,
       graph: result.graph,
+      runtimeGraph: result.project.runtimeGraph,
+      nuxtCompatibility: result.project.nuxtCompatibility,
     },
     null,
     2,

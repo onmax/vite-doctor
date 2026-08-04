@@ -114,8 +114,10 @@ export async function writeManifest(
     doctorPlugin: entry?.doctor?.plugin,
   }));
   const manifest = {
+    generatedAt: manifestGeneratedAt,
     nuxtVersion: nuxt._version ?? nuxt.version ?? "4",
     vueVersion: nuxt.options.vue?.version ?? "3.5",
+    compatibilityVersion: nuxt.options.future?.compatibilityVersion,
     rootDir,
     srcDir: resolve(rootDir, nuxt.options.srcDir ?? "."),
     appDir,
@@ -173,6 +175,7 @@ export async function writeManifest(
 }
 
 const lastManifestWrite: { path: string; content: string } = { path: "", content: "" };
+const manifestGeneratedAt = new Date().toISOString();
 
 function flattenPages(pages: any[]): any[] {
   return toArray(pages).flatMap((page: any) => [page, ...flattenPages(page.children)]);

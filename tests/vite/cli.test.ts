@@ -472,13 +472,233 @@ test("Vite plugin runs Nitro rules in Nitro-backed Vite apps", async () => {
   );
 });
 
+test("installed Nitro 2 and H3 v1 activate only their generation of runtime config advice", async () => {
+  await withFixture(
+    {
+      ...nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" }),
+      "server/api/config.ts":
+        'import { defineConfig } from "nitropack"\nexport default defineEventHandler(() => useRuntimeConfig())\n',
+    },
+    async (root) => {
+      const result = await runCli(
+        [
+          ".",
+          "--rules",
+          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports",
+          "--format",
+          "json",
+          "--no-cache",
+        ],
+        root,
+      );
+      const codes = JSON.parse(result.output).diagnostics.map(
+        (item: { code: string }) => item.code,
+      );
+
+      expect(codes).toContain("NITRO0008");
+      expect(codes).not.toContain("NITRO0013");
+      expect(codes).not.toContain("NITRO0014");
+    },
+  );
+});
+
+test("Nuxt compatibility 5 stays independent from the installed Nitro and H3 generations", async () => {
+  await withFixture(
+    {
+      ...nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" }),
+      "nuxt.config.ts":
+        "export default defineNuxtConfig({ future: { compatibilityVersion: 5 } })\n",
+      "app/app.ts": "if (process.server) console.log('server')\n",
+      "server/api/config.ts": 'import { defineConfig } from "nitropack"\n',
+    },
+    async (root) => {
+      const result = await runCli(
+        [
+          ".",
+          "--rules",
+          "nuxt/context/no-legacy-process-client-server,nitro/migration/no-v2-imports",
+          "--format",
+          "json",
+          "--no-cache",
+        ],
+        root,
+      );
+      const codes = JSON.parse(result.output).diagnostics.map(
+        (item: { code: string }) => item.code,
+      );
+
+      expect(codes).toContain("NUXT0021");
+      expect(codes).not.toContain("NITRO0014");
+    },
+  );
+});
+
+test("Nuxt 5 prereleases activate Nitro 3 and H3 v2 migration diagnostics", async () => {
+  await withFixture(
+    {
+      ...nuxtRuntimeFixture({
+        nuxt: "5.0.0-beta.2",
+        nitroName: "nitro",
+        nitro: "3.0.0-beta.4",
+        h3: "2.0.0-rc.26",
+      }),
+      "server/api/config.ts": `import { defineConfig } from "nitropack"
+import { send, sendRedirect } from "h3"
+export default defineHandler((event) => {
+  useRuntimeConfig(event)
+  send(event, "ok")
+  return sendRedirect(event, "/next")
+})
+`,
+    },
+    async (root) => {
+      const result = await runCli(
+        [
+          ".",
+          "--rules",
+          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,nitro/h3/no-removed-send,nitro/h3/prefer-redirect-response",
+          "--format",
+          "json",
+          "--no-cache",
+        ],
+        root,
+      );
+      const codes = JSON.parse(result.output).diagnostics.map(
+        (item: { code: string }) => item.code,
+      );
+
+      expect(codes).toEqual(
+        expect.arrayContaining(["NITRO0013", "NITRO0014", "NITRO0015", "NITRO0016"]),
+      );
+      expect(codes).not.toContain("NITRO0008");
+    },
+  );
+});
+
+test("unresolved runtime identity suppresses version-specific advice and reports inventory once", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "npm:custom-nuxt@5.0.0" } }),
+      "node_modules/nuxt/package.json": JSON.stringify({
+        name: "custom-nuxt",
+        version: "5.0.0",
+        dependencies: { nitro: "3.0.0" },
+      }),
+      "server/api/config.ts":
+        'import { defineConfig } from "nitropack"\nexport default defineEventHandler((event) => useRuntimeConfig(event))\n',
+    },
+    async (root) => {
+      const result = await runCli(
+        [
+          ".",
+          "--framework",
+          "nuxt",
+          "--rules",
+          "nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports",
+          "--format",
+          "json",
+          "--no-cache",
+        ],
+        root,
+      );
+      const codes = JSON.parse(result.output).diagnostics.map(
+        (item: { code: string }) => item.code,
+      );
+
+      expect(codes.filter((code: string) => code === "DOC0022")).toHaveLength(1);
+      expect(codes).not.toContain("NITRO0013");
+      expect(codes).not.toContain("NITRO0014");
+    },
+  );
+});
+
+test("migrate infers Nuxt 5 and emits stable staged JSON without rewriting files", async () => {
+  const source = `import { defineConfig } from "nitropack"
+import { send } from "h3"
+export default defineEventHandler((event) => {
+  useRuntimeConfig(event)
+  return send(event, "ok")
+})
+`;
+  await withFixture(
+    {
+      ...nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" }),
+      "nuxt.config.ts": `export default defineNuxtConfig({
+  unhead: { legacy: true },
+  experimental: { parseErrorData: false },
+})
+`,
+      "app/app.ts": "if (process.client) console.log('client')\n",
+      "server/api/config.ts": source,
+    },
+    async (root) => {
+      const result = await runCli(["migrate", ".", "--format", "json"], root);
+      const report = JSON.parse(result.output);
+
+      expect(result.code).toBe(1);
+      expect(report.reportVersion).toBe(1);
+      expect(report.command).toBe("migrate");
+      expect(report.target).toMatchObject({
+        source: "inferred",
+        requested: ["nuxt@5"],
+        runtime: {
+          nuxt: "5.0.0-0",
+          nitro: "3.0.0-0",
+          h3: "2.0.0-0",
+          nuxtCompatibility: 5,
+        },
+      });
+      expect(report.stages.map((stage: { id: string }) => stage.id)).toEqual([
+        "source",
+        "dependencies",
+        "deferred",
+      ]);
+      expect(report.stages[0].diagnostics).toEqual([]);
+      expect(report.stages[1].diagnostics.map((item: { code: string }) => item.code)).toEqual(
+        expect.arrayContaining(["NITRO0013", "NITRO0014", "NITRO0015", "NUXT0021", "NUXT0073"]),
+      );
+      expect(report.stages[1].changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ to: "nuxt@5" }),
+          expect.objectContaining({ to: "future.compatibilityVersion: 5" }),
+        ]),
+      );
+      expect(readFileSync(join(root, "server/api/config.ts"), "utf8")).toBe(source);
+    },
+  );
+});
+
+test("migrate accepts an explicit standalone Nitro target", async () => {
+  await withFixture(
+    {
+      ...nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" }),
+      "server/api/config.ts": 'import { defineNitroConfig } from "nitropack/config"\n',
+    },
+    async (root) => {
+      const result = await runCli(["migrate", ".", "--to", "nitro@3", "--format", "json"], root);
+      const report = JSON.parse(result.output);
+
+      expect(report.framework).toBe("nitro");
+      expect(report.target.source).toBe("explicit");
+      expect(report.target.requested).toEqual(["nitro@3"]);
+      expect(report.stages[1].diagnostics.map((item: { code: string }) => item.code)).toContain(
+        "NITRO0014",
+      );
+      expect(
+        report.stages[1].diagnostics.find((item: { code: string }) => item.code === "NITRO0014")
+          .fix,
+      ).toContain("Replace defineNitroConfig with defineConfig");
+    },
+  );
+});
+
 async function withFixture(
   files: Record<string, string>,
   fn: (root: string) => void | Promise<void>,
 ) {
   const root = await mkdtemp(join(tmpdir(), "vite-doctor-"));
   try {
-    for (const [file, contents] of Object.entries(files)) {
+    for (const [file, contents] of Object.entries(withResolvedRuntimePackages(files))) {
       const target = join(root, file);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, contents);
@@ -487,6 +707,40 @@ async function withFixture(
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+function withResolvedRuntimePackages(files: Record<string, string>): Record<string, string> {
+  const packageJson = JSON.parse(files["package.json"] ?? "{}") as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const dependencies = { ...packageJson.devDependencies, ...packageJson.dependencies };
+  const generated: Record<string, string> = {};
+  if (dependencies.nuxt && !files["node_modules/nuxt/package.json"]) {
+    Object.assign(generated, nuxtRuntimeFixture({ nuxt: "4.0.0", nitro: "2.12.0", h3: "1.15.4" }));
+    delete generated["package.json"];
+  } else if (
+    (dependencies.nitro || dependencies.nitropack) &&
+    !files[`node_modules/${dependencies.nitro ? "nitro" : "nitropack"}/package.json`]
+  ) {
+    const nitroName = dependencies.nitro ? "nitro" : "nitropack";
+    generated[`node_modules/${nitroName}/package.json`] = JSON.stringify({
+      name: nitroName,
+      version: "2.12.0",
+      dependencies: { h3: "1.15.4" },
+    });
+    generated[`node_modules/${nitroName}/node_modules/h3/package.json`] = JSON.stringify({
+      name: "h3",
+      version: "1.15.4",
+    });
+  }
+  if (dependencies.vue && !files["node_modules/vue/package.json"]) {
+    generated["node_modules/vue/package.json"] = JSON.stringify({
+      name: "vue",
+      version: "3.5.18",
+    });
+  }
+  return { ...generated, ...files };
 }
 
 async function runCli(args: string[], root: string) {
@@ -519,6 +773,52 @@ function viteWarningFixture() {
   return {
     "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
     "vite.config.ts": "export default { envPrefix: ['APP_'] }\n",
+  };
+}
+
+function nuxtRuntimeFixture({
+  nuxt,
+  nitro,
+  h3,
+  nitroName = "nitropack",
+}: {
+  nuxt: string;
+  nitro: string;
+  h3: string;
+  nitroName?: "nitro" | "nitropack";
+}) {
+  return {
+    "package.json": JSON.stringify({ dependencies: { nuxt, vue: "3.5.18" } }),
+    "node_modules/nuxt/package.json": JSON.stringify({
+      name: "nuxt",
+      version: nuxt,
+      dependencies: { [nitroName]: nitro, vue: "3.5.18" },
+    }),
+    [`node_modules/nuxt/node_modules/${nitroName}/package.json`]: JSON.stringify({
+      name: nitroName,
+      version: nitro,
+      dependencies: { h3 },
+    }),
+    [`node_modules/nuxt/node_modules/${nitroName}/node_modules/h3/package.json`]: JSON.stringify({
+      name: "h3",
+      version: h3,
+    }),
+    "node_modules/vue/package.json": JSON.stringify({ name: "vue", version: "3.5.18" }),
+  };
+}
+
+function nitroRuntimeFixture({ nitro, h3 }: { nitro: string; h3: string }) {
+  return {
+    "package.json": JSON.stringify({ dependencies: { nitropack: nitro } }),
+    "node_modules/nitropack/package.json": JSON.stringify({
+      name: "nitropack",
+      version: nitro,
+      dependencies: { h3 },
+    }),
+    "node_modules/nitropack/node_modules/h3/package.json": JSON.stringify({
+      name: "h3",
+      version: h3,
+    }),
   };
 }
 

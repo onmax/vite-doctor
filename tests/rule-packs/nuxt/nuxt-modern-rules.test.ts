@@ -55,7 +55,6 @@ import {
 import {
   noBrowserApiInServer,
   noClientComposablesInServer,
-  preferEventFetch,
   preferAssertMethod,
   preferRouteMethodSuffix,
   preferGetRequestIp,
@@ -138,12 +137,6 @@ const cases = [
     id: "nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup",
     file: "app/pages/index.vue",
     source: `<template><p>{{ route.fullPath }}</p></template>`,
-  },
-  {
-    rule: noLegacyProcessClientServer,
-    id: "nuxt/context/no-legacy-process-client-server",
-    file: "app/plugins/demo.ts",
-    source: `if (process.client) console.log('client')`,
   },
   {
     rule: preferAppDirectoryPlacement,
@@ -242,12 +235,6 @@ const cases = [
     source: `<script setup lang="ts">async function load() { await foo(); useRuntimeConfig() }</script>`,
   },
   {
-    rule: preferEventFetch,
-    id: "nitro/server/prefer-event-fetch",
-    file: "server/api/user.ts",
-    source: `export default defineEventHandler((event) => $fetch('/api/team'))`,
-  },
-  {
     rule: forwardAuthHeadersSsr,
     id: "nuxt/fetch/forward-auth-headers-ssr",
     file: "app/pages/index.vue",
@@ -335,6 +322,27 @@ for (const item of cases) {
     expect(result.diagnostics[0]?.ruleId).toBe(item.id);
   });
 }
+
+test("nuxt/context/no-legacy-process-client-server activates for compatibility 5", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [noLegacyProcessClientServer],
+    run: {
+      runtimeTarget: {
+        nuxt: "4.2.0",
+        nitro: "2.12.0",
+        h3: "1.15.4",
+        vue: "3.5.0",
+        nuxtCompatibility: 5,
+      },
+    },
+    files: { "app/plugins/demo.ts": `if (process.client) console.log('client')` },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "nuxt/context/no-legacy-process-client-server",
+  ]);
+});
 
 test("unsafe useHead script ignores style innerHTML", async () => {
   const result = await runRuleFixture({
@@ -1055,7 +1063,7 @@ test("Nitro pack is exported and consumed by Nuxt rule packs", () => {
   const packs = nuxtRulePacks();
   expect(nitroRulePack.rules.map((rule) => rule.meta.id)).toEqual(
     expect.arrayContaining([
-      "nitro/server/prefer-event-fetch",
+      "nitro/migration/no-v2-imports",
       "nitro/runtime/require-event-runtime-config-in-server",
       "nitro/request/prefer-validated-body",
       "nitro/request/prefer-validated-query",
@@ -1068,7 +1076,7 @@ test("Nitro pack is exported and consumed by Nuxt rule packs", () => {
   expect(packs.map((pack) => pack.name)).toContain("vite-doctor/nitro");
   expect(
     packs.find((pack) => pack.name === "vite-doctor/nuxt")?.rules.map((rule) => rule.meta.id),
-  ).not.toContain("nitro/server/prefer-event-fetch");
+  ).not.toContain("nitro/migration/no-v2-imports");
 });
 
 test("Nitro request rules prefer validated H3 utilities", async () => {
@@ -1713,30 +1721,6 @@ test("unknown browser globals downgrade to warnings without build evidence", asy
   });
 
   expect(result.diagnostics[0]?.severity).toBe("warn");
-});
-
-test("server fetch public internal routes do not require event context", async () => {
-  const result = await runRuleFixture({
-    rule: preferEventFetch,
-    framework: "nuxt",
-    files: {
-      "server/api/search.ts": `export default defineEventHandler(() => $fetch('/api/registry/search'))`,
-    },
-  });
-
-  expect(result.diagnostics).toHaveLength(0);
-});
-
-test("server fetch request-sensitive internal routes require event context", async () => {
-  const result = await runRuleFixture({
-    rule: preferEventFetch,
-    framework: "nuxt",
-    files: {
-      "server/api/user.ts": `export default defineEventHandler(() => $fetch('/api/user'))`,
-    },
-  });
-
-  expect(result.diagnostics[0]?.ruleId).toBe("nitro/server/prefer-event-fetch");
 });
 
 test("server browser API rule ignores browser-global property names", async () => {
@@ -2420,6 +2404,7 @@ test("module packs activate from dependencies", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: { nuxt: "4.0.0" },
         extensions: [
           defineDoctorExtension({
             name: "fixture",
@@ -2445,6 +2430,7 @@ test("module packs stay inactive when dependency is absent", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: { nuxt: "4.0.0" },
         extensions: [
           defineDoctorExtension({
             name: "fixture",
@@ -2473,6 +2459,7 @@ test("Docus content links report missing internal to targets", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: { nuxt: "4.0.0" },
         extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
@@ -2494,6 +2481,7 @@ test("Docus app.vue shadow rule reports empty local app shell only", async () =>
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: { nuxt: "4.0.0" },
         extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
@@ -2512,6 +2500,7 @@ test("Docus app.vue shadow rule reports empty local app shell only", async () =>
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: { nuxt: "4.0.0" },
         extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
@@ -2539,6 +2528,7 @@ test("Docus app config rule reports unknown top-level keys", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: { nuxt: "4.0.0" },
         extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
@@ -2561,6 +2551,7 @@ test("Docus rule pack activates from static extends and stays inactive without D
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: { nuxt: "4.0.0" },
         extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
@@ -2579,6 +2570,7 @@ test("Docus rule pack activates from static extends and stays inactive without D
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: { nuxt: "4.0.0" },
         extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [docusRulePack] })],
       });
 
@@ -2871,6 +2863,13 @@ useRoute();
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: {
+          nuxt: "4.0.0",
+          nitro: "2.0.0",
+          h3: "1.0.0",
+          vue: "3.5.0",
+          nuxtCompatibility: 4,
+        },
         extensions: nuxtDoctorExtensions(),
       });
       expect(result.diagnostics.map((item) => item.ruleId)).not.toContain(
@@ -3225,6 +3224,13 @@ test("built-in Nuxt app rule packs skip explicit module sources", async () => {
       const result = await runDoctor({
         root,
         framework: "nuxt",
+        runtimeTarget: {
+          nuxt: "4.0.0",
+          nitro: "2.0.0",
+          h3: "1.0.0",
+          vue: "3.5.0",
+          nuxtCompatibility: 4,
+        },
         extensions: nuxtDoctorExtensions(),
       });
 
@@ -3290,6 +3296,28 @@ async function withFixture(
         dependencies: { vue: "^3.5.0", nuxt: "^4.0.0", ...dependencies },
       }),
     );
+    const runtimePackages = {
+      "node_modules/nuxt/package.json": JSON.stringify({
+        name: "nuxt",
+        version: "4.0.0",
+        dependencies: { nitropack: "2.12.0" },
+      }),
+      "node_modules/nuxt/node_modules/nitropack/package.json": JSON.stringify({
+        name: "nitropack",
+        version: "2.12.0",
+        dependencies: { h3: "1.15.4" },
+      }),
+      "node_modules/nuxt/node_modules/nitropack/node_modules/h3/package.json": JSON.stringify({
+        name: "h3",
+        version: "1.15.4",
+      }),
+      "node_modules/vue/package.json": JSON.stringify({ name: "vue", version: "3.5.18" }),
+    };
+    for (const [file, text] of Object.entries(runtimePackages)) {
+      const absolute = join(root, file);
+      mkdirSync(dirname(absolute), { recursive: true });
+      writeFileSync(absolute, text);
+    }
     for (const [file, text] of Object.entries(files)) {
       const absolute = join(root, file);
       mkdirSync(dirname(absolute), { recursive: true });

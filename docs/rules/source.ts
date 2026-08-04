@@ -135,7 +135,7 @@ export const diagnosticsCollectionSource = {
 
 function collectDiagnosticDocuments(): DiagnosticDocument[] {
   const maps = readDiagnosticCodeMaps();
-  return getRuleDocuments().flatMap((rule) => {
+  const ruleDiagnostics = getRuleDocuments().flatMap((rule) => {
     const code = maps.get(rule.id);
     if (!code) return [];
     const path = `/diagnostics/${code}`;
@@ -159,6 +159,28 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       },
     ];
   });
+  const source = "src/core/internal/diagnostics.ts";
+  return [
+    ...ruleDiagnostics,
+    {
+      code: "DOC0022",
+      title: "DOC0022: Resolve the runtime graph",
+      description:
+        "Doctor could not identify an exact Nuxt, Nitro, H3, or Vue runtime package that governs this project.",
+      why: "Version-specific advice is safe only when Doctor can prove which runtime instance the framework owns. Doctor suppresses those diagnostics when package identity, version, or ownership is unresolved.",
+      fix: "Install the project dependencies and run Doctor through the project package manager. Yarn PnP projects must run Doctor through Yarn so its loader can resolve the owned package graph.",
+      docsUrl: "https://vite-doctor.onmax.me/cli",
+      ruleId: "doctor/inventory/unresolved-runtime",
+      pack: "vite-doctor/core",
+      severity: "warn",
+      category: "inventory",
+      framework: "nuxt",
+      source,
+      sourceUrl: githubSourceUrl(source),
+      path: "/diagnostics/DOC0022",
+      key: "diagnostics/DOC0022.md",
+    },
+  ];
 }
 
 function readDiagnosticCodeMaps() {

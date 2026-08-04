@@ -12,6 +12,9 @@ catalogs:
     '@oxc-project/types':
       specifier: ^0.133.0
       version: 0.133.0
+    '@types/semver':
+      specifier: ^7.7.1
+      version: 7.8.0
     '@typescript-eslint/parser':
       specifier: ^8.60.0
       version: 8.60.0
@@ -109,6 +112,9 @@ catalogs:
     picocolors:
       specifier: ^1.1.1
       version: 1.1.1
+    semver:
+      specifier: ^7.8.1
+      version: 7.8.1
     std-env:
       specifier: ^4.1.0
       version: 4.1.0
@@ -195,6 +201,9 @@ importers:
       picocolors:
         specifier: catalog:prod
         version: 1.1.1
+      semver:
+        specifier: catalog:prod
+        version: 7.8.1
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@latest
         version: '@voidzero-dev/vite-plus-core@0.1.23(@types/node@25.6.2)(esbuild@0.28.0)(jiti@2.7.0)(terser@5.47.1)(typescript@6.0.3)(yaml@2.9.0)'
@@ -232,6 +241,9 @@ importers:
       '@tiptap/y-tiptap':
         specifier: ^3.0.4
         version: 3.0.4(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.8)(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30)
+      '@types/semver':
+        specifier: catalog:analysis
+        version: 7.8.0
       '@vue/test-utils':
         specifier: catalog:test
         version: 2.4.10(@vue/compiler-dom@3.5.35)(@vue/server-renderer@3.5.35(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
@@ -4340,6 +4352,9 @@ packages:
 
   '@types/resolve@1.20.2':
     resolution: {integrity: sha512-60BCwRFOZCQhDncwQdxxeOEEkbc5dIMccYLwbxsS4TUNeVECQ/pBJ0j09mrHOl/JJvpRPGwO9SvE4nR2Nb/a4Q==}
+
+  '@types/semver@7.8.0':
+    resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
 
   '@types/unist@2.0.11':
     resolution: {integrity: sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==}
@@ -12622,6 +12637,8 @@ snapshots:
       parse-path: 7.1.0
 
   '@types/resolve@1.20.2': {}
+
+  '@types/semver@7.8.0': {}
 
   '@types/unist@2.0.11': {}
 

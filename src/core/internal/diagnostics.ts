@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, relative } from "pathe";
+import { dirname, relative, resolve } from "pathe";
 import MagicString from "magic-string";
 import type { DoctorConfig } from "../config.js";
 import type {
@@ -221,6 +221,59 @@ export function pushDiagnostic(
         inAppDir: () => false,
         isModuleSource: () => false,
       }),
+  });
+}
+
+export function reportRuntimeInventoryUnknown(session: ScanSession): void {
+  const expected =
+    session.project.framework === "nuxt"
+      ? ["nuxt", "nitro", "h3"]
+      : session.project.framework === "nitro"
+        ? ["nitro", "h3"]
+        : session.project.framework === "vue"
+          ? ["vue"]
+          : [];
+  const unresolved = expected
+    .map(
+      (runtime) =>
+        session.project.runtimeGraph?.packages[runtime as "nuxt" | "nitro" | "h3" | "vue"],
+    )
+    .filter((item) => item?.state === "unknown");
+  const details = [
+    ...unresolved.map(
+      (item) => `${item?.owner} -> ${item?.runtime}: ${item?.reason ?? "unresolved"}`,
+    ),
+    ...(session.project.nuxtCompatibility?.state === "unknown"
+      ? [`Nuxt compatibility: ${session.project.nuxtCompatibility.reason ?? "unresolved"}`]
+      : []),
+  ];
+  if (!details.length) return;
+  pushDiagnostic(session, {
+    ruleId: "doctor/inventory/unresolved-runtime",
+    severity: "warn",
+    category: "inventory",
+    file: resolve(session.root, "package.json"),
+    why: `Doctor could not resolve the governing runtime graph: ${details.join("; ")}`,
+    suggestion:
+      "Install project dependencies and run Doctor from the target project package. If the project uses Yarn PnP, run Doctor through Yarn so its loader is active.",
+    evidence: [
+      ...unresolved.map((item) => ({
+        kind: "manifest" as const,
+        summary: `${item?.owner} -> ${item?.runtime} is unresolved.`,
+        file: item?.packageJsonPath,
+      })),
+      ...(session.project.nuxtCompatibility?.state === "unknown"
+        ? [
+            {
+              kind: "manifest" as const,
+              summary: "Nuxt compatibility behavior is unresolved.",
+              file: session.project.nuxt?.manifestPath,
+            },
+          ]
+        : []),
+    ],
+    confidence: "manifest-backed",
+    analysisPhase: "manifest",
   });
 }
 

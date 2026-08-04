@@ -16,6 +16,8 @@ export interface DoctorSerializableConfig {
 }
 export type FixSafety = "safe" | "unsafe" | "suggestion" | "structural-review";
 export type DoctorFramework = "vue" | "nuxt" | "vite" | "nitro";
+export type RuntimePackageName = "nuxt" | "nitro" | "h3" | "vue";
+export type ApplicabilityState = "active" | "inactive" | "unknown";
 export type ExecutionKind =
   | "file"
   | "manifest"
@@ -120,6 +122,11 @@ export interface RuleMeta {
   frameworkVersions?: {
     vue?: string;
     nuxt?: string;
+  };
+  applicability?: {
+    runtimes?: Partial<Record<RuntimePackageName, string>>;
+    nuxtCompatibility?: string;
+    includePrerelease?: boolean;
   };
   aiGeneratedCodeRisk?: "low" | "medium" | "high";
   requires?: {
@@ -247,8 +254,10 @@ export interface NuxtModuleSource {
 }
 
 export interface NuxtDoctorManifest {
+  generatedAt?: string;
   nuxtVersion: string;
   vueVersion: string;
+  compatibilityVersion?: number;
   rootDir: string;
   srcDir: string;
   appDir: string;
@@ -286,8 +295,51 @@ export interface ProjectInfo {
   packageName?: string;
   tsconfigPath?: string;
   nuxt?: NuxtProjectInfo;
+  runtimeGraph?: RuntimeGraph;
+  nuxtCompatibility?: NuxtCompatibilityInfo;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
+}
+
+export interface RuntimePackageInstance {
+  runtime: RuntimePackageName;
+  state: "resolved" | "unknown";
+  requestedName: string;
+  name?: string;
+  version?: string;
+  packageJsonPath?: string;
+  resolvedPath?: string;
+  owner: "project" | RuntimePackageName;
+  provenance: "node-resolve" | "target";
+  declaration?: string;
+  identity?: "exact" | "alias" | "unknown";
+  reason?: string;
+}
+
+export interface RuntimeGraphEdge {
+  from: "project" | RuntimePackageName;
+  to: RuntimePackageName;
+  state: "resolved" | "unknown";
+}
+
+export interface RuntimeGraph {
+  packages: Partial<Record<RuntimePackageName, RuntimePackageInstance>>;
+  edges: RuntimeGraphEdge[];
+}
+
+export interface NuxtCompatibilityInfo {
+  state: "resolved" | "unknown";
+  version?: number;
+  provenance: "manifest" | "config" | "default" | "target";
+  reason?: string;
+}
+
+export interface RuntimeTarget {
+  nuxt?: string;
+  nitro?: string;
+  h3?: string;
+  vue?: string;
+  nuxtCompatibility?: number;
 }
 
 export interface ImportFact {

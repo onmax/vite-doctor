@@ -77,6 +77,7 @@
     "oxc-parser": "catalog:analysis",
     "pathe": "catalog:prod",
     "picocolors": "catalog:prod",
+    "semver": "catalog:prod",
     "vue-eslint-parser": "catalog:analysis"
   },
   "devDependencies": {
@@ -90,6 +91,7 @@
     "@tiptap/extensions": "catalog:frontend",
     "@tiptap/pm": "catalog:frontend",
     "@tiptap/y-tiptap": "catalog:frontend",
+    "@types/semver": "catalog:analysis",
     "@vue/test-utils": "catalog:test",
     "@vueuse/core": "catalog:frontend",
     "better-auth": "catalog:frontend",

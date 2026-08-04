@@ -23,6 +23,7 @@ export const coreDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0019", ruleId: "doctor/config/invalid-rule-severity", docs: false },
   { code: "DOC0020", ruleId: "doctor/config/invalid-rule-config", docs: false },
   { code: "DOC0021", ruleId: "doctor/internal/missing-diagnostic-fix", docs: false },
+  { code: "DOC0022", ruleId: "doctor/inventory/unresolved-runtime" },
 ]);
 
 export const diagnostics = coreDiagnosticRegistry.diagnostics;

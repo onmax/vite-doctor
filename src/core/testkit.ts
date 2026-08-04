@@ -90,6 +90,7 @@ export async function runProjectFixture(options: ProjectFixtureOptions): Promise
       config: options.config ?? options.run?.config,
       root,
       framework: options.framework ?? "vue",
+      runtimeTarget: options.run?.runtimeTarget ?? fixtureRuntimeTarget(options),
       extensions: [
         defineDoctorExtension({
           name: "fixture",
@@ -107,4 +108,31 @@ export async function runProjectFixture(options: ProjectFixtureOptions): Promise
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+function fixtureRuntimeTarget(options: ProjectFixtureOptions) {
+  const framework = options.framework ?? "vue";
+  const dependency = (name: string, fallback: string) =>
+    exactFixtureVersion(options.dependencies?.[name] ?? fallback);
+  if (framework === "nuxt") {
+    return {
+      nuxt: dependency("nuxt", "4.0.0"),
+      nitro: dependency("nitro", dependency("nitropack", "2.0.0")),
+      h3: dependency("h3", "1.0.0"),
+      vue: dependency("vue", "3.5.0"),
+      nuxtCompatibility: 4,
+    };
+  }
+  if (framework === "nitro") {
+    return {
+      nitro: dependency("nitro", dependency("nitropack", "2.0.0")),
+      h3: dependency("h3", "1.0.0"),
+    };
+  }
+  if (framework === "vue") return { vue: dependency("vue", "3.5.0") };
+  return undefined;
+}
+
+function exactFixtureVersion(version: string): string {
+  return version.match(/\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?/)?.[0] ?? version;
 }

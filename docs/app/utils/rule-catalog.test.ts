@@ -136,6 +136,15 @@ test("diagnostic source carries upstream docs as reference links", async () => {
   );
 });
 
+test("unresolved runtime inventory has a public diagnostic reference", async () => {
+  const diagnostic = getDiagnosticDocuments().find((item) => item.code === "DOC0022");
+
+  expect(diagnostic?.ruleId).toBe("doctor/inventory/unresolved-runtime");
+  expect(await diagnosticsCollectionSource.getItem(diagnostic!.key)).toContain(
+    "Doctor suppresses those diagnostics",
+  );
+});
+
 test("internal diagnostics stay out of generated diagnostic references", async () => {
   const publicCodes = new Set(getDiagnosticDocuments().map((diagnostic) => diagnostic.code));
   const generatedKeys = await diagnosticsCollectionSource.getKeys();

@@ -10,6 +10,7 @@ export const noLegacyProcessClientServer = createRule({
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/advanced/import-meta#runtime-app-properties",
     requires: { script: true, nuxt: true },
+    applicability: { nuxtCompatibility: ">=5" },
   },
   create(ctx) {
     return {
@@ -19,7 +20,7 @@ export const noLegacyProcessClientServer = createRule({
         const replacement = name === "process.client" ? "import.meta.client" : "import.meta.server";
         ctx.report(
           diagnostics.NUXT0021({
-            why: `${name} is a legacy Nuxt runtime flag in Nuxt 4 code.`,
+            why: `${name} loses its Nuxt type augmentation under Nuxt compatibility 5.`,
             fix: `Use ${replacement}.`,
           }),
           {

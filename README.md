@@ -22,7 +22,7 @@ Run Vite Doctor from the project root:
 pnpm dlx vite-doctor .
 ```
 
-Vite Doctor reads app code, build config, project metadata, and server handlers to catch framework bugs before review. It picks the Nuxt, Vue, Nitro, or Vite diagnostics that fit your project.
+Vite Doctor reads app code, build config, project metadata, and server handlers to catch framework bugs before review. It resolves the installed Nuxt, Nitro, and H3 runtime graph and picks diagnostics that match the versions the framework actually loads.
 
 Need a narrower Doctor Run? Select exact presets, one Rule, or a framework override:
 
@@ -40,6 +40,16 @@ pnpm nuxt doctor
 ```
 
 Use `--framework` only when Doctor cannot identify the framework automatically.
+
+Check a migration before changing dependencies:
+
+```bash
+pnpm dlx vite-doctor migrate .
+pnpm dlx vite-doctor migrate . --to nuxt@5 --format json
+pnpm dlx vite-doctor migrate . --to nitro@3
+```
+
+The migration report stages source changes that are safe on the installed runtime, then dependency, configuration, and source changes that must land together, followed by checks that require the target runtime. It does not rewrite the project.
 
 ## Configuration
 
