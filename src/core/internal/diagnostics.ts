@@ -248,14 +248,26 @@ export function reportRuntimeInventoryUnknown(session: ScanSession): void {
       : []),
   ];
   if (!details.length) return;
+  const runtimeFix =
+    "Install project dependencies and run Doctor from the target project package. If the project uses Yarn PnP, run Doctor through Yarn so its loader is active.";
+  const compatibilityFix =
+    "Make the effective future.compatibilityVersion statically provable in nuxt.config, or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.";
+  const compatibilityUnknown = session.project.nuxtCompatibility?.state === "unknown";
   pushDiagnostic(session, {
     ruleId: "doctor/inventory/unresolved-runtime",
     severity: "warn",
     category: "inventory",
-    file: resolve(session.root, "package.json"),
+    file:
+      unresolved.length || !compatibilityUnknown
+        ? resolve(session.root, "package.json")
+        : (session.project.nuxtCompatibility?.file ?? resolve(session.root, "package.json")),
     why: `Doctor could not resolve the governing runtime graph: ${details.join("; ")}`,
-    suggestion:
-      "Install project dependencies and run Doctor from the target project package. If the project uses Yarn PnP, run Doctor through Yarn so its loader is active.",
+    suggestion: [
+      unresolved.length ? runtimeFix : undefined,
+      compatibilityUnknown ? compatibilityFix : undefined,
+    ]
+      .filter(Boolean)
+      .join(" "),
     evidence: [
       ...unresolved.map((item) => ({
         kind: "manifest" as const,
@@ -267,7 +279,7 @@ export function reportRuntimeInventoryUnknown(session: ScanSession): void {
             {
               kind: "manifest" as const,
               summary: "Nuxt compatibility behavior is unresolved.",
-              file: session.project.nuxt?.manifestPath,
+              file: session.project.nuxtCompatibility?.file ?? session.project.nuxt?.manifestPath,
             },
           ]
         : []),

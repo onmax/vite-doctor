@@ -92,13 +92,19 @@ export function resolveNuxtCompatibility(
   if (config) {
     const configured = readExportedCompatibilityVersion(config.file, config.text);
     if (configured.state === "resolved") {
-      return { state: "resolved", version: configured.version, provenance: "config" };
+      return {
+        state: "resolved",
+        version: configured.version,
+        provenance: "config",
+        file: config.file,
+      };
     }
     if (configured.state === "unknown") {
       return {
         state: "unknown",
         provenance: "config",
-        reason: `Nuxt future.compatibilityVersion in ${config.file} is not a static 4 or 5 literal.`,
+        reason: configured.reason,
+        file: config.file,
       };
     }
   }
@@ -345,13 +351,16 @@ function configModifiedTime(file: string): number | undefined {
 type CompatibilityValue =
   | { state: "absent" }
   | { state: "resolved"; version: number }
-  | { state: "unknown" };
+  | { state: "unknown"; reason: string };
 
 function readExportedCompatibilityVersion(file: string, text: string): CompatibilityValue {
   const program = parseScript(file, text) as { body?: AnyRuntimeNode[] } | null;
   if (!program) {
     return /\bfuture\s*:[\s\S]{0,200}\bcompatibilityVersion\s*:/.test(text)
-      ? { state: "unknown" }
+      ? {
+          state: "unknown",
+          reason: `Doctor found future.compatibilityVersion in ${file} but could not parse the exported Nuxt config safely.`,
+        }
       : { state: "absent" };
   }
   const exported = program.body?.find((node) => node.type === "ExportDefaultDeclaration");
@@ -360,18 +369,43 @@ function readExportedCompatibilityVersion(file: string, text: string): Compatibi
   if (config?.type === "CallExpression" && config.callee?.name === "defineNuxtConfig") {
     config = unwrapExpression(config.arguments?.[0]);
   }
-  if (config?.type !== "ObjectExpression") return { state: "unknown" };
+  if (config?.type !== "ObjectExpression") {
+    return {
+      state: "unknown",
+      reason: `The exported Nuxt config in ${file} is computed, so Doctor cannot prove the effective future.compatibilityVersion.`,
+    };
+  }
 
   const future = objectProperty(config, "future");
-  if (future.state !== "resolved") return future;
+  if (future.state === "absent") return future;
+  if (future.state === "unknown") {
+    return {
+      state: "unknown",
+      reason: `A spread in the exported Nuxt config at ${file} may define or override future.compatibilityVersion.`,
+    };
+  }
   const futureObject = unwrapExpression(future.value);
-  if (futureObject?.type !== "ObjectExpression") return { state: "unknown" };
+  if (futureObject?.type !== "ObjectExpression") {
+    return {
+      state: "unknown",
+      reason: `Nuxt future in ${file} is computed, so Doctor cannot prove the effective compatibilityVersion.`,
+    };
+  }
   const compatibility = objectProperty(futureObject, "compatibilityVersion");
-  if (compatibility.state !== "resolved") return compatibility;
+  if (compatibility.state === "absent") return compatibility;
+  if (compatibility.state === "unknown") {
+    return {
+      state: "unknown",
+      reason: `A spread in Nuxt future at ${file} may define or override compatibilityVersion.`,
+    };
+  }
   const value = unwrapExpression(compatibility.value);
   return value?.type === "Literal" && (value.value === 4 || value.value === 5)
     ? { state: "resolved", version: value.value }
-    : { state: "unknown" };
+    : {
+        state: "unknown",
+        reason: `Nuxt future.compatibilityVersion in ${file} is not a static 4 or 5 literal.`,
+      };
 }
 
 type AnyRuntimeNode = Record<string, any>;
@@ -390,10 +424,11 @@ function unwrapExpression(node: AnyRuntimeNode | undefined): AnyRuntimeNode | un
 function objectProperty(
   object: AnyRuntimeNode,
   name: string,
-): { state: "absent" | "unknown" } | { state: "resolved"; value: AnyRuntimeNode } {
-  let result: { state: "absent" | "unknown" } | { state: "resolved"; value: AnyRuntimeNode } = {
-    state: "absent",
-  };
+): { state: "absent" } | { state: "unknown" } | { state: "resolved"; value: AnyRuntimeNode } {
+  let result:
+    | { state: "absent" }
+    | { state: "unknown" }
+    | { state: "resolved"; value: AnyRuntimeNode } = { state: "absent" };
   for (const property of object.properties ?? []) {
     if (property.type === "SpreadElement") {
       result = { state: "unknown" };

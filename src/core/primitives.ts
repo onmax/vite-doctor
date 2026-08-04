@@ -333,6 +333,7 @@ export interface NuxtCompatibilityInfo {
   version?: number;
   provenance: "manifest" | "config" | "default" | "target";
   reason?: string;
+  file?: string;
 }
 
 export interface RuntimeTarget {

@@ -40,7 +40,7 @@ export const noV2Imports = createRule({
 });
 
 function v3Replacement(source: string, node: AnyNode): string | null {
-  if (source === "nitropack") return 'Import from "nitro".';
+  if (source === "nitropack") return rootPackageReplacement(node);
   if (source === "nitropack/config") {
     const importsDefineNitroConfig = node.specifiers?.some(
       (specifier: AnyNode) => specifier.imported?.name === "defineNitroConfig",
@@ -63,4 +63,21 @@ function v3Replacement(source: string, node: AnyNode): string | null {
     return "Import the dependency directly; Nitro 3 removed nitro/deps subpaths.";
   }
   return null;
+}
+
+function rootPackageReplacement(node: AnyNode): string {
+  const typeOnlyDeclaration = node.importKind === "type";
+  const typeImports =
+    typeOnlyDeclaration ||
+    node.specifiers?.some((specifier: AnyNode) => specifier.importKind === "type");
+  const valueImports =
+    !typeOnlyDeclaration &&
+    (node.specifiers?.length === 0 ||
+      node.specifiers?.some((specifier: AnyNode) => specifier.importKind !== "type"));
+
+  if (typeImports && valueImports) {
+    return 'Import runtime values from "nitro" and types from "nitro/types".';
+  }
+  if (typeImports) return 'Import types from "nitro/types".';
+  return 'Import from "nitro".';
 }

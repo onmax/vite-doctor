@@ -477,14 +477,14 @@ test("installed Nitro 2 and H3 v1 activate only their generation of runtime conf
     {
       ...nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" }),
       "server/api/config.ts":
-        'import { defineConfig } from "nitropack"\nexport default defineEventHandler(() => useRuntimeConfig())\n',
+        'import { defineConfig } from "nitropack"\nimport { useBase } from "h3"\nexport default defineEventHandler(() => useRuntimeConfig())\n',
     },
     async (root) => {
       const result = await runCli(
         [
           ".",
           "--rules",
-          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports",
+          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,nitro/h3/prefer-with-base",
           "--format",
           "json",
           "--no-cache",
@@ -498,6 +498,7 @@ test("installed Nitro 2 and H3 v1 activate only their generation of runtime conf
       expect(codes).toContain("NITRO0008");
       expect(codes).not.toContain("NITRO0013");
       expect(codes).not.toContain("NITRO0014");
+      expect(codes).not.toContain("NITRO0017");
     },
   );
 });
@@ -542,8 +543,8 @@ test("Nuxt 5 prereleases activate Nitro 3 and H3 v2 migration diagnostics", asyn
         nitro: "3.0.0-beta.4",
         h3: "2.0.0-rc.26",
       }),
-      "server/api/config.ts": `import { defineConfig } from "nitropack"
-import { send, sendRedirect } from "h3"
+      "server/api/config.ts": `import type { NitroConfig } from "nitropack"
+import { send, sendRedirect, useBase } from "h3"
 export default defineHandler((event) => {
   useRuntimeConfig(event)
   send(event, "ok")
@@ -556,7 +557,7 @@ export default defineHandler((event) => {
         [
           ".",
           "--rules",
-          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,nitro/h3/no-removed-send,nitro/h3/prefer-redirect-response",
+          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,nitro/h3/no-removed-send,nitro/h3/prefer-redirect-response,nitro/h3/prefer-with-base",
           "--format",
           "json",
           "--no-cache",
@@ -568,8 +569,13 @@ export default defineHandler((event) => {
       );
 
       expect(codes).toEqual(
-        expect.arrayContaining(["NITRO0013", "NITRO0014", "NITRO0015", "NITRO0016"]),
+        expect.arrayContaining(["NITRO0013", "NITRO0014", "NITRO0015", "NITRO0016", "NITRO0017"]),
       );
+      expect(
+        JSON.parse(result.output).diagnostics.find(
+          (item: { code: string }) => item.code === "NITRO0014",
+        ).suggestion,
+      ).toBe('Import types from "nitro/types".');
       expect(codes).not.toContain("NITRO0008");
     },
   );
@@ -614,7 +620,7 @@ test("unresolved runtime identity suppresses version-specific advice and reports
 
 test("migrate infers Nuxt 5 and emits stable staged JSON without rewriting files", async () => {
   const source = `import { defineConfig } from "nitropack"
-import { send } from "h3"
+import { send, useBase } from "h3"
 export default defineEventHandler((event) => {
   useRuntimeConfig(event)
   return send(event, "ok")
@@ -655,7 +661,14 @@ export default defineEventHandler((event) => {
       ]);
       expect(report.stages[0].diagnostics).toEqual([]);
       expect(report.stages[1].diagnostics.map((item: { code: string }) => item.code)).toEqual(
-        expect.arrayContaining(["NITRO0013", "NITRO0014", "NITRO0015", "NUXT0021", "NUXT0073"]),
+        expect.arrayContaining([
+          "NITRO0013",
+          "NITRO0014",
+          "NITRO0015",
+          "NITRO0017",
+          "NUXT0021",
+          "NUXT0073",
+        ]),
       );
       expect(report.stages[1].changes).toEqual(
         expect.arrayContaining([
@@ -669,6 +682,33 @@ export default defineEventHandler((event) => {
       );
       expect(textResult.output).not.toContain("source diagnostics");
       expect(readFileSync(join(root, "server/api/config.ts"), "utf8")).toBe(source);
+    },
+  );
+});
+
+test("migrate asks users to verify composed compatibility config instead of adding it again", async () => {
+  await withFixture(
+    {
+      ...nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" }),
+      "nuxt.config.ts": `const overrides = {}
+export default defineNuxtConfig({
+  future: { compatibilityVersion: 5 },
+  ...overrides,
+})
+`,
+    },
+    async (root) => {
+      const result = await runCli(["migrate", ".", "--format", "json"], root);
+      const report = JSON.parse(result.output);
+      const configChange = report.stages[1].changes.find(
+        (change: { kind: string }) => change.kind === "config",
+      );
+
+      expect(configChange).toMatchObject({
+        to: "future.compatibilityVersion: 5",
+        instruction:
+          "Verify that the effective future.compatibilityVersion resolves to 5; Doctor could not prove it from the composed Nuxt config.",
+      });
     },
   );
 });

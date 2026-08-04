@@ -195,6 +195,41 @@ export default defineNuxtConfig(config)
   );
 });
 
+test("explains when a later config spread can override Nuxt compatibility", async () => {
+  await withRuntimeGraph(
+    {
+      ...nuxtGraph({
+        nuxt: "4.4.6",
+        nitroName: "nitropack",
+        nitro: "2.13.4",
+        h3: "1.15.11",
+      }),
+      "nuxt.config.ts": `const overrides = {}
+export default defineNuxtConfig({
+  future: { compatibilityVersion: 5 },
+  ...overrides,
+})
+`,
+    },
+    async (root) => {
+      const result = await runViteDoctor({ root, cache: false });
+      const compatibility = result.project.nuxtCompatibility;
+      const diagnostic = result.diagnostics.find((item) => item.code === "DOC0022");
+
+      expect(compatibility).toMatchObject({
+        state: "unknown",
+        provenance: "config",
+        file: join(root, "nuxt.config.ts"),
+      });
+      expect(compatibility?.reason).toContain("may define or override");
+      expect(diagnostic?.file).toBe(join(root, "nuxt.config.ts"));
+      expect(diagnostic?.why).toContain("may define or override");
+      expect(diagnostic?.suggestion).toContain("pnpm nuxt doctor");
+      expect(diagnostic?.suggestion).not.toContain("Install project dependencies");
+    },
+  );
+});
+
 test("does not report ignored root config inside module options", async () => {
   await withRuntimeGraph(
     {

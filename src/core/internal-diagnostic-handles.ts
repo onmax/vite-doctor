@@ -58,7 +58,7 @@ export const doctorInternalDiagnostics = defineDiagnostics({
     DOC0022: {
       why: (params: { details: string }) =>
         `Doctor could not resolve the governing runtime graph: ${params.details}`,
-      fix: "Install project dependencies and run Doctor from the target project package. If the project uses Yarn PnP, run Doctor through Yarn so its loader is active.",
+      fix: "Install project dependencies and run Doctor from the target project package. For computed Nuxt config, make future.compatibilityVersion statically provable or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.",
     },
   },
 });

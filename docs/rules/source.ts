@@ -168,7 +168,7 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       description:
         "Doctor could not identify an exact Nuxt, Nitro, H3, or Vue runtime package that governs this project.",
       why: "Version-specific advice is safe only when Doctor can prove which runtime instance the framework owns. Doctor suppresses those diagnostics when package identity, version, or ownership is unresolved.",
-      fix: "Install the project dependencies and run Doctor through the project package manager. Yarn PnP projects must run Doctor through Yarn so its loader can resolve the owned package graph.",
+      fix: "Install the project dependencies and run Doctor through the project package manager. For computed Nuxt config, make future.compatibilityVersion statically provable or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.",
       docsUrl: "https://vite-doctor.onmax.me/cli",
       ruleId: "doctor/inventory/unresolved-runtime",
       pack: "vite-doctor/core",

@@ -174,6 +174,20 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/h3/prefer-with-base": {
+    description: "Flags the H3 v2 useBase compatibility alias.",
+    why: "H3 v2 renamed the path-prefix handler wrapper to withBase, so using the current name keeps source aligned with the documented API.",
+    recommendedReplacement:
+      "Import withBase and replace useBase(base, handler) with withBase(base, handler).",
+    examples: [
+      {
+        title: "Use the H3 v2 path-prefix wrapper",
+        language: "ts",
+        invalid: 'const handler = useBase("/api", app.handler)',
+        valid: 'const handler = withBase("/api", app.handler)',
+      },
+    ],
+  },
   "nitro/server/no-browser-api": {
     description: "Flags browser API in Nitro server code before it leaks into runtime behavior.",
     why: "Nitro gives this pattern a specific contract. Staying inside that contract makes the code easier to test, refactor, and run across server and client runtimes.",

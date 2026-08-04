@@ -294,11 +294,13 @@ function dependencyChanges(
     });
   }
   if (runtime.nuxtCompatibility === 5 && project.nuxtCompatibility?.version !== 5) {
+    const unknownCompatibility = project.nuxtCompatibility?.state === "unknown";
     changes.push({
       kind: "config",
       to: "future.compatibilityVersion: 5",
-      instruction:
-        "Set future.compatibilityVersion to 5 while preparing the Nuxt upgrade, then resolve the reported compatibility diagnostics.",
+      instruction: unknownCompatibility
+        ? "Verify that the effective future.compatibilityVersion resolves to 5; Doctor could not prove it from the composed Nuxt config."
+        : "Set future.compatibilityVersion to 5 while preparing the Nuxt upgrade, then resolve the reported compatibility diagnostics.",
     });
   }
   return changes;

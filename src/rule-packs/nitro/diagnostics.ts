@@ -17,6 +17,7 @@ export const nitroDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0014", ruleId: "nitro/migration/no-v2-imports" },
   { code: "NITRO0015", ruleId: "nitro/h3/no-removed-send" },
   { code: "NITRO0016", ruleId: "nitro/h3/prefer-redirect-response" },
+  { code: "NITRO0017", ruleId: "nitro/h3/prefer-with-base" },
 ]);
 
 export const diagnostics = nitroDiagnosticRegistry.diagnostics;
