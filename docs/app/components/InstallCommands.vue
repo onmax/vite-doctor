@@ -1,4 +1,15 @@
 <script setup lang="ts">
+const props = withDefaults(
+  defineProps<{
+    command?: string;
+    showControls?: boolean;
+  }>(),
+  {
+    command: undefined,
+    showControls: true,
+  },
+);
+
 const commandTabs = [
   {
     label: "For humans",
@@ -53,8 +64,12 @@ const selectedPackageManager = computed(
     packageManagers.value[0],
 );
 const skillsCommand = "npx skills add https://vite-doctor.onmax.me/";
-const activeCommand = computed(() =>
-  activeCommandTab.value === "humans" ? selectedPackageManager.value.doctorCommand : skillsCommand,
+const activeCommand = computed(
+  () =>
+    props.command ??
+    (activeCommandTab.value === "humans"
+      ? selectedPackageManager.value.doctorCommand
+      : skillsCommand),
 );
 const activeCopyKey = computed(() => (activeCommandTab.value === "humans" ? "cmd" : "skills"));
 const copyLabel = computed(() =>
@@ -102,7 +117,7 @@ watch([activePackageManager, activeCommandTab], () => {
 
 <template>
   <div class="flex w-full max-w-full flex-col items-stretch gap-3">
-    <div class="flex w-full flex-wrap items-center justify-between gap-3">
+    <div v-if="showControls" class="flex w-full flex-wrap items-center justify-between gap-3">
       <div
         class="relative inline-grid grid-cols-2 gap-1 rounded-full bg-neutral-100/80 p-1 text-sm ring-1 ring-neutral-200/80 dark:bg-neutral-900/80 dark:ring-white/10"
         role="tablist"

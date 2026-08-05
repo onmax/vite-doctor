@@ -253,7 +253,7 @@ function toggleTheme() {
               <span class="ml-auto hidden font-mono text-neutral-500 sm:inline">vite-doctor</span>
             </div>
             <div
-              class="space-y-2.5 px-4.5 py-4 font-mono text-[0.75rem]/5 text-neutral-300 sm:space-y-3 sm:px-5 sm:py-5 sm:text-[0.8125rem]/6"
+              class="space-y-3 px-4.5 py-4 font-mono text-[0.75rem]/5 text-neutral-300 sm:px-5 sm:py-5 sm:text-[0.8125rem]/6"
             >
               <p class="flex items-start gap-2">
                 <span class="select-none text-emerald-400/90" aria-hidden="true">$</span>
@@ -261,65 +261,48 @@ function toggleTheme() {
                   pnpm dlx vite-doctor . --rules nuxt/hydration
                 </span>
               </p>
-              <div class="space-y-1">
-                <p class="flex items-start gap-2">
-                  <UIcon
-                    name="i-lucide-check"
-                    class="mt-1 size-3.5 shrink-0 text-emerald-400/90"
-                    aria-hidden="true"
-                  />
-                  <span class="min-w-0">Detected Nuxt 4 app with Vue, Nitro, and Vite rules</span>
+              <div class="space-y-0.5 text-neutral-400">
+                <p>
+                  <span class="text-neutral-500">Detected:</span>
+                  <span class="text-neutral-200"> Nuxt 4.4.6 + Vue 3.5.35</span>
                 </p>
-                <p class="flex items-start gap-2">
-                  <UIcon
-                    name="i-lucide-search"
-                    class="mt-1 size-3.5 shrink-0 text-neutral-500"
-                    aria-hidden="true"
-                  />
-                  <span class="min-w-0 text-neutral-400"
-                    >Scanned 42 files, 11 server handlers, 8 route entries</span
-                  >
+                <p>
+                  <span class="text-neutral-500">Runtime:</span>
+                  Nuxt 4.4.6 → Nitro 2.13.4 → H3 1.15.11
+                </p>
+                <p>
+                  <span class="text-neutral-500">Health score:</span>
+                  <span class="text-neutral-200">62/100</span>
                 </p>
               </div>
-              <div class="space-y-2.5 border-t border-white/[0.08] pt-2.5 sm:pt-3">
-                <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5">
-                  <UIcon
-                    name="i-lucide-triangle-alert"
-                    class="mt-1 size-3.5 text-amber-300/90"
-                    aria-hidden="true"
-                  />
+              <div class="space-y-3 border-t border-white/[0.08] pt-3">
+                <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5">
+                  <span class="font-medium text-rose-300/90">NUXT0029</span>
                   <div class="min-w-0">
-                    <p class="break-words font-medium text-neutral-100">
-                      nuxt/hydration/no-client-conditional-in-template
+                    <p class="break-words text-neutral-100">
+                      window is browser-only and this file can run during SSR.
                     </p>
-                    <p class="break-words text-neutral-600">app/components/UserMenu.vue:18:5</p>
+                    <p class="break-words text-neutral-600">app/components/IssuePanel.vue:14:15</p>
                   </div>
                 </div>
-                <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5">
-                  <UIcon
-                    name="i-lucide-circle-alert"
-                    class="mt-1 size-3.5 text-rose-300/90"
-                    aria-hidden="true"
-                  />
+                <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5">
+                  <span class="font-medium text-amber-300/90">NUXT0031</span>
                   <div class="min-w-0">
-                    <p class="break-words font-medium text-neutral-100">
-                      nuxt/runtime/no-secret-in-public-config
+                    <p class="break-words text-neutral-100">
+                      This template branches on client-only state during SSR.
                     </p>
-                    <p class="break-words text-neutral-600">nuxt.config.ts:42:13</p>
+                    <p class="break-words text-neutral-600">app/components/IssuePanel.vue:3:5</p>
                   </div>
                 </div>
               </div>
               <div
-                class="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-white/[0.08] pt-2.5 text-neutral-500 sm:pt-3"
+                class="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-white/[0.08] pt-3 text-neutral-500"
               >
-                <span class="font-medium text-neutral-200">2 high</span>
+                <span class="font-medium text-rose-300/90">4 errors</span>
                 <span class="text-neutral-700" aria-hidden="true">/</span>
-                <span>13 warnings</span>
+                <span class="text-amber-300/90">2 warnings</span>
                 <span class="text-neutral-700" aria-hidden="true">/</span>
-                <span class="inline-flex items-center gap-1 text-emerald-300/90">
-                  <UIcon name="i-lucide-file-search" class="size-3.5" aria-hidden="true" />
-                  report ready
-                </span>
+                <span>0 safe fixes available</span>
               </div>
             </div>
           </div>
@@ -371,6 +354,41 @@ function toggleTheme() {
             </component>
           </div>
         </dl>
+      </section>
+
+      <section
+        aria-labelledby="nuxt-5-migration-title"
+        class="grid items-center gap-8 border-t border-neutral-950/10 py-14 sm:py-16 lg:grid-cols-[minmax(0,4fr)_minmax(0,6fr)] lg:gap-14 dark:border-white/10"
+      >
+        <div class="max-w-[31rem]">
+          <p class="text-sm font-medium text-emerald-600 dark:text-emerald-400">Nuxt 5 migration</p>
+          <h2
+            id="nuxt-5-migration-title"
+            class="mt-2 text-3xl font-semibold tracking-tight text-balance text-neutral-950 sm:text-4xl dark:text-neutral-50"
+          >
+            Plan the Nuxt 5 migration before the version bump.
+          </h2>
+          <p class="mt-4 text-base/7 text-pretty text-neutral-600 dark:text-neutral-400">
+            Vite Doctor checks your current app against Nuxt 5, Nitro 3, and H3 v2, separating what
+            you can fix now from what must land with the upgrade.
+          </p>
+          <InstallCommands
+            command="pnpm dlx vite-doctor migrate . --to nuxt@5"
+            :show-controls="false"
+            class="mt-6"
+          />
+        </div>
+
+        <div
+          class="overflow-hidden rounded-lg bg-[#0a0a0a] shadow-lg shadow-neutral-950/15 ring-1 ring-neutral-950/90 dark:shadow-black/30 dark:ring-white/10"
+        >
+          <img
+            src="https://drop.vitehub.dev/i/403daee7-8a77-4cfa-8fbd-1ebf6c2ce67f.png"
+            alt="Vite Doctor migration report for a Nuxt 5 upgrade, including the command and the source, dependency, and configuration changes that need to land together."
+            class="block h-auto w-full"
+            loading="lazy"
+          />
+        </div>
       </section>
 
       <section id="rules" class="pb-16 sm:pb-20">
