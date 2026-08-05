@@ -102,8 +102,7 @@
     "pkg-pr-new": "catalog:release",
     "tsdown": "catalog:build",
     "vite": "catalog:build",
-    "vite-plus": "catalog:build",
-    "vitest": "catalog:test"
+    "vite-plus": "catalog:build"
   },
   "peerDependencies": {
     "nuxt": ">=4",
@@ -120,5 +119,5 @@
   "engines": {
     "node": ">=22.20.0"
   },
-  "packageManager": "pnpm@11.5.0"
+  "packageManager": "pnpm@11.20.0"
 }
