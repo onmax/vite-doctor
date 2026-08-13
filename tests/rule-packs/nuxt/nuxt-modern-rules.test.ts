@@ -2873,7 +2873,7 @@ test("explicit auto-import rule follows the resolved Nuxt registry and configura
   expect(portalImport).toHaveLength(1);
   expect(portalImport[0]).toMatchObject({
     ruleId: "nuxt/imports/no-explicit-auto-import",
-    severity: "info",
+    severity: "warn",
   });
   expect(portalImport[0]?.fix?.kind).toBe("safe");
 

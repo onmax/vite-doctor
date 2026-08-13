@@ -14,7 +14,7 @@ export const noExplicitAutoImport = createRule({
     id: "nuxt/imports/no-explicit-auto-import",
     title: "Use configured Nuxt auto-imports directly",
     category: "imports",
-    severity: "info",
+    severity: "warn",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/guide/concepts/auto-imports#explicit-imports",
     requires: { script: true, nuxt: true },
