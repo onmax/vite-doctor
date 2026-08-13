@@ -62,7 +62,6 @@ test("Nuxt all-issues fixture reports Nuxt and ecosystem rule packs", async () =
     "nuxt/hydration/no-client-conditional-in-template:app/components/IssuePanel.vue",
     "nuxt/hydration/prefer-usecookie-for-initial-client-state:app/components/IssuePanel.vue",
     "nuxt/imports/no-conflicting-usefetch-import:app/components/IssuePanel.vue",
-    "nuxt/imports/no-explicit-auto-import:app/components/IssuePanel.vue",
     "nuxt/middleware/no-route-middleware-api-security:app/middleware/auth.ts",
     "nuxt/plugins/no-subdir-auto-registration-assumption:app/plugins/nested/analytics.ts",
     "nuxt/project/prefer-app-directory-placement:pages/legacy.vue",

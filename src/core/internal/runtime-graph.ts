@@ -71,16 +71,10 @@ export function resolveNuxtCompatibility(
   if (!graph.packages.nuxt) return undefined;
   const config = readNuxtConfig(root);
   const manifestGeneratedAt = manifest?.generatedAt ? Date.parse(manifest.generatedAt) : Number.NaN;
-  const configModifiedAt = config ? configModifiedTime(config.file) : undefined;
-  const manifestMatchesConfig =
-    configModifiedAt === undefined ||
-    (Number.isFinite(manifest?.nuxtConfigMtimeMs)
-      ? manifest?.nuxtConfigMtimeMs === configModifiedAt
-      : manifestGeneratedAt >= configModifiedAt);
   if (
     Number.isFinite(manifestGeneratedAt) &&
     isSupportedNuxtCompatibility(manifest?.compatibilityVersion) &&
-    manifestMatchesConfig
+    isNuxtManifestCurrent(root, manifest)
   ) {
     return {
       state: "resolved",
@@ -122,6 +116,16 @@ export function resolveNuxtCompatibility(
     version: Number(nuxt.version.split(".")[0]) >= 5 ? 5 : 4,
     provenance: "default",
   };
+}
+
+export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest | null) {
+  if (!manifest?.generatedAt || !Number.isFinite(Date.parse(manifest.generatedAt))) return false;
+  const config = readNuxtConfig(root);
+  const configModifiedAt = config ? configModifiedTime(config.file) : undefined;
+  if (configModifiedAt === undefined) return true;
+  return Number.isFinite(manifest.nuxtConfigMtimeMs)
+    ? manifest.nuxtConfigMtimeMs === configModifiedAt
+    : Date.parse(manifest.generatedAt) >= configModifiedAt;
 }
 
 function isSupportedNuxtCompatibility(value: unknown): value is 4 | 5 {

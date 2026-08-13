@@ -76,16 +76,19 @@ test("ignores a stale compatibility manifest when Nuxt config is newer", async (
       ".nuxt/doctor.manifest.json": JSON.stringify({
         generatedAt: "2000-01-01T00:00:00.000Z",
         compatibilityVersion: 4,
+        autoImportEnabled: true,
       }),
       "nuxt.config.ts":
         "export default defineNuxtConfig({ future: { compatibilityVersion: 5 } })\n",
     },
     async (root) => {
-      expect((await detectProject(root)).nuxtCompatibility).toMatchObject({
+      const project = await detectProject(root);
+      expect(project.nuxtCompatibility).toMatchObject({
         state: "resolved",
         version: 5,
         provenance: "config",
       });
+      expect(project.nuxt?.autoImportsAuthoritative).toBe(false);
     },
   );
 });
@@ -138,14 +141,17 @@ export default defineNuxtConfig(config)
           generatedAt: new Date(Math.floor(configMtimeMs)).toISOString(),
           nuxtConfigMtimeMs: configMtimeMs,
           compatibilityVersion: 5,
+          autoImportEnabled: true,
         }),
       );
 
-      expect((await detectProject(root)).nuxtCompatibility).toMatchObject({
+      const project = await detectProject(root);
+      expect(project.nuxtCompatibility).toMatchObject({
         state: "resolved",
         version: 5,
         provenance: "manifest",
       });
+      expect(project.nuxt?.autoImportsAuthoritative).toBe(true);
     },
   );
 });

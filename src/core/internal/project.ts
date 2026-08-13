@@ -12,6 +12,7 @@ import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-i
 import type { RuntimeTarget } from "../primitives.js";
 import {
   applyRuntimeTarget,
+  isNuxtManifestCurrent,
   resolveNuxtCompatibility,
   resolveRuntimeGraph,
 } from "./runtime-graph.js";
@@ -128,6 +129,9 @@ async function normalizeNuxtProject(
     appRoots: manifest?.layers?.length
       ? manifest.layers.map((layer) => resolve(root, layer.root)).sort()
       : await detectNuxtAppRoots(root),
+    autoImportEnabled: manifest ? manifest.autoImportEnabled === true : true,
+    autoImportsAuthoritative:
+      manifest?.autoImportEnabled !== undefined && isNuxtManifestCurrent(root, manifest),
     autoImports: new Map(
       (manifest?.autoImports ?? coreAutoImports()).map((entry: any) => [
         entry.as ?? entry.name,

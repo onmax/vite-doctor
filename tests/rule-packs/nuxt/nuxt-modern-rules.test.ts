@@ -51,6 +51,7 @@ import {
   asyncDataExplicitKeyForRefreshable,
   postFetchRequiresReadonlyMarker,
   noMutationToastInUseFetchCallback,
+  noExplicitAutoImport,
 } from "../../../src/rule-packs/nuxt/rules/nuxt.ts";
 import {
   noBrowserApiInServer,
@@ -2812,6 +2813,119 @@ test("manifest plugin files suppress configured nested plugin warning", async ()
   );
 });
 
+test("explicit auto-import rule follows the resolved Nuxt registry and configuration", async () => {
+  async function runCase(
+    source: string,
+    manifest: Record<string, unknown> = {},
+    file = "app/components/Alerts/Shared/ListMessage.vue",
+    severity?: "error",
+  ) {
+    let diagnostics: Awaited<ReturnType<typeof runDoctor>>["diagnostics"] = [];
+    await withFixture(
+      {
+        [file]: `<script setup lang="ts">${source}</script>`,
+        "app/utils/alerts.ts": `export function getAlertListValue() { return '' }`,
+      },
+      {},
+      async (root) => {
+        await writeFileManifest(root, [], {
+          generatedAt: new Date().toISOString(),
+          autoImportEnabled: true,
+          autoImports: [
+            {
+              name: "getAlertListValue",
+              as: "getAlertListValue",
+              from: join(root, "app/utils/alerts.ts"),
+            },
+          ],
+          ...manifest,
+        });
+        const result = await runDoctor({
+          root,
+          framework: "nuxt",
+          config: severity
+            ? { rules: { "nuxt/imports/no-explicit-auto-import": severity } }
+            : undefined,
+          runtimeTarget: { nuxt: "4.0.0" },
+          extensions: [
+            defineDoctorExtension({
+              name: "fixture",
+              rulePacks: [
+                defineRulePack({
+                  name: "fixture",
+                  version: "0.0.0",
+                  rules: [noExplicitAutoImport],
+                  presets: { recommended: ["nuxt/imports/no-explicit-auto-import"] },
+                }),
+              ],
+            }),
+          ],
+        });
+        diagnostics = result.diagnostics;
+      },
+    );
+    return diagnostics;
+  }
+
+  const portalImport = await runCase(
+    `import { getAlertListValue } from '~/utils/alerts'\ngetAlertListValue()`,
+  );
+  expect(portalImport).toHaveLength(1);
+  expect(portalImport[0]).toMatchObject({
+    ruleId: "nuxt/imports/no-explicit-auto-import",
+    severity: "info",
+  });
+  expect(portalImport[0]?.fix?.kind).toBe("safe");
+
+  const blockingPortalImport = await runCase(
+    `import { getAlertListValue } from '#imports'\ngetAlertListValue()`,
+    {},
+    "app/components/Alerts/Shared/ListMessage.vue",
+    "error",
+  );
+  expect(blockingPortalImport[0]?.severity).toBe("error");
+
+  expect(
+    await runCase(`import { getAlertListValue } from 'other-package'\ngetAlertListValue()`),
+  ).toHaveLength(0);
+  expect(
+    await runCase(`import type { getAlertListValue } from '~/utils/alerts'`, {}, "app/types.ts"),
+  ).toHaveLength(0);
+  expect(
+    await runCase(`import { getAlertListValue as localValue } from '~/utils/alerts'\nlocalValue()`),
+  ).toHaveLength(0);
+  expect(
+    await runCase(
+      `import { getAlertListValue } from '~/utils/alerts'\ngetAlertListValue()`,
+      {},
+      "server/api/alerts.ts",
+    ),
+  ).toHaveLength(0);
+  expect(
+    await runCase(`import { getAlertListValue } from '~/utils/alerts'`, {
+      autoImportEnabled: false,
+    }),
+  ).toHaveLength(0);
+  expect(
+    await runCase(`import { getAlertListValue } from '~/utils/alerts'`, {
+      generatedAt: "invalid",
+    }),
+  ).toHaveLength(0);
+  expect(
+    await runCase(`import { getAlertListValue } from '~/utils/alerts'`, {
+      autoImportEnabled: undefined,
+    }),
+  ).toHaveLength(0);
+  expect(
+    await runCase(`import { getAlertListValue } from '~/utils/alerts'`, {
+      autoImportTransform: {
+        include: [],
+        exclude: [{ source: "ListMessage\\.vue$", flags: "" }],
+      },
+    }),
+  ).toHaveLength(0);
+});
+
 test("Nuxt module writes manifest and accepts context hook contributions", async () => {
   await withFixture({}, {}, async (root) => {
     const nuxt = {
@@ -2828,6 +2942,59 @@ test("Nuxt module writes manifest and accepts context hook contributions", async
     expect(existsSync(manifestPath)).toBe(true);
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     expect(manifest.modules.some((module: any) => module.name === "fixture-module")).toBe(true);
+  });
+});
+
+test("Nuxt module records the resolved auto-import registry", async () => {
+  await withFixture({}, {}, async (root) => {
+    const hooks = new Map<string, Array<(payload: any) => unknown>>();
+    const nuxt = {
+      options: {
+        rootDir: root,
+        srcDir: "app",
+        buildDir: ".nuxt",
+        modules: [],
+        imports: {
+          autoImport: true,
+          imports: [],
+          transform: { exclude: [/generated/] },
+        },
+      },
+      hook(name: string, callback: (payload: any) => unknown) {
+        hooks.set(name, [...(hooks.get(name) ?? []), callback]);
+      },
+      async callHook() {},
+    };
+
+    await nuxtDoctorModule({}, nuxt);
+    for (const hook of hooks.get("imports:context") ?? [])
+      await hook({
+        getImports: async () => [
+          {
+            name: "getAlertListValue",
+            as: "getAlertListValue",
+            from: join(root, "app/utils/alerts.ts"),
+          },
+        ],
+      });
+    for (const hook of hooks.get("prepare:types") ?? []) await hook(undefined);
+
+    expect(
+      JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8")),
+    ).toMatchObject({
+      appDir: join(root, "app"),
+      autoImportEnabled: true,
+      autoImportTransform: {
+        exclude: [{ source: "generated", flags: "" }],
+      },
+      autoImports: [
+        {
+          name: "getAlertListValue",
+          as: "getAlertListValue",
+          from: join(root, "app/utils/alerts.ts"),
+        },
+      ],
+    });
   });
 });
 
