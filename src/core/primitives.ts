@@ -196,12 +196,15 @@ export interface AutoImportEntry {
   from: string;
   kind: "nuxt" | "vue" | "module" | "app" | "layer";
   sourceLayer?: string;
+  type?: boolean;
 }
 
 export interface NuxtProjectInfo {
   version: string;
   appDir: string;
   appRoots: string[];
+  autoImportEnabled: boolean;
+  autoImportsAuthoritative: boolean;
   autoImports: Map<string, AutoImportEntry>;
   components: Map<
     string,
@@ -225,6 +228,10 @@ export interface NuxtProjectInfo {
     pluginFiles: string[];
     keyedComposables: string[];
     aliases: Record<string, string>;
+    autoImportTransform?: {
+      include: Array<{ source: string; flags: string }>;
+      exclude: Array<{ source: string; flags: string }>;
+    };
     appScanRoots: string[];
     sharedScanRoots: string[];
     hasManifest: boolean;
@@ -263,6 +270,11 @@ export interface NuxtDoctorManifest {
   srcDir: string;
   appDir: string;
   buildDir: string;
+  autoImportEnabled?: boolean;
+  autoImportTransform?: {
+    include: Array<{ source: string; flags: string }>;
+    exclude: Array<{ source: string; flags: string }>;
+  };
   autoImports: unknown[];
   components: unknown[];
   layers: Array<{ root: string; name?: string; priority: number }>;

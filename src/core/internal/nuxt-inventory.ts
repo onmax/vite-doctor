@@ -6,6 +6,10 @@ export interface NuxtProjectInventory {
   pluginFiles: string[];
   keyedComposables: string[];
   aliases: Record<string, string>;
+  autoImportTransform?: {
+    include: Array<{ source: string; flags: string }>;
+    exclude: Array<{ source: string; flags: string }>;
+  };
   appScanRoots: string[];
   sharedScanRoots: string[];
   hasManifest: boolean;
@@ -34,6 +38,7 @@ export function createNuxtProjectInventory(
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
     keyedComposables: (manifest?.keyedComposables ?? []).map(String),
     aliases: manifest?.aliases ?? {},
+    autoImportTransform: manifest?.autoImportTransform,
     appScanRoots: (manifest?.appScanRoots ?? [manifest?.appDir ?? "app"]).map((dir) =>
       resolve(root, dir),
     ),

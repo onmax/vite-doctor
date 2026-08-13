@@ -748,16 +748,16 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/imports/no-explicit-auto-import": {
     description:
-      "Flags explicit auto import in Nuxt imports code before it leaks into runtime behavior.",
-    why: "Auto-imports are global within a project. Explicit names and imports prevent local code from shadowing framework composables.",
+      "Flags value imports that duplicate the auto-imports enabled for the current Nuxt project and file.",
+    why: "Nuxt's resolved import registry already accounts for framework APIs, modules, aliases, and scanned app directories. Reusing that registry keeps imports consistent with the project's active configuration.",
     recommendedReplacement:
-      "Remove explicit auto import, or move it to the Nuxt runtime/API that owns that behavior.",
+      "Remove the redundant value import. Keep explicit imports when Nuxt auto-importing is disabled or the file is excluded from transformation.",
     examples: [
       {
-        title: "Use Nuxt auto-imports directly",
+        title: "Use configured app utility auto-imports directly",
         language: "ts",
-        invalid: "import { useRoute } from '#imports'\n\nconst route = useRoute()",
-        valid: "const route = useRoute()",
+        invalid: "import { formatPrice } from '~/utils/format'\n\nconst label = formatPrice(total)",
+        valid: "const label = formatPrice(total)",
       },
     ],
   },

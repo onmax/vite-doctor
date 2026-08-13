@@ -20,6 +20,19 @@ type EvidenceBuildManifest = {
   chunks: Array<{ file?: string; src?: string; isEntry?: boolean; isDynamicEntry?: boolean }>;
 };
 
+type NuxtAutoImportContext = {
+  getImports?: () => Promise<unknown[]> | unknown[];
+};
+
+type NuxtDoctorEvidence = {
+  pages?: Array<{ path?: string; file?: string; name?: string }>;
+  prerenderRoutes?: Set<string>;
+  buildManifest?: EvidenceBuildManifest;
+  componentDirs?: unknown[];
+  importDirs?: unknown[];
+  autoImportContext?: NuxtAutoImportContext;
+};
+
 export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions = {}, nuxt: any) {
   nuxt.options ??= {};
   nuxt.options.doctor ??= {};
@@ -33,7 +46,12 @@ export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions 
     buildManifest: undefined as EvidenceBuildManifest | undefined,
     componentDirs: [] as unknown[],
     importDirs: [] as unknown[],
+    autoImportContext: undefined as NuxtAutoImportContext | undefined,
   };
+
+  nuxt.hook?.("imports:context", (context: NuxtAutoImportContext) => {
+    evidence.autoImportContext = context;
+  });
 
   nuxt.hook?.("pages:resolved", (pages: any[]) => {
     evidence.pages = flattenPages(pages).map((page: any) => ({
@@ -94,17 +112,12 @@ export async function collectNuxtDoctorExtensions(nuxt: any): Promise<DoctorExte
 
 export async function writeManifest(
   nuxt: any,
-  evidence?: {
-    pages?: Array<{ path?: string; file?: string; name?: string }>;
-    prerenderRoutes?: Set<string>;
-    buildManifest?: EvidenceBuildManifest;
-    componentDirs?: unknown[];
-    importDirs?: unknown[];
-  },
+  evidence?: NuxtDoctorEvidence,
 ): Promise<NuxtDoctorManifest> {
   const rootDir = resolve(nuxt.options.rootDir ?? process.cwd());
   const buildDir = resolve(rootDir, nuxt.options.buildDir ?? ".nuxt");
-  const appDir = resolve(rootDir, nuxt.options.appDir ?? "app");
+  const srcDir = resolve(rootDir, nuxt.options.srcDir ?? ".");
+  const appDir = srcDir;
   const moduleSources: NuxtModuleSource[] = [];
   await nuxt.callHook?.("doctor:extendSources", moduleSources);
   const modules = toArray(nuxt.options.modules).map((entry: any) => ({
@@ -113,16 +126,21 @@ export async function writeManifest(
     version: entry?.meta?.version,
     doctorPlugin: entry?.doctor?.plugin,
   }));
+  const resolvedAutoImports = evidence?.autoImportContext?.getImports
+    ? await evidence.autoImportContext.getImports()
+    : toArray(nuxt.options.imports?.imports);
   const manifest = {
     nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
     nuxtVersion: nuxt._version ?? nuxt.version ?? "4",
     vueVersion: nuxt.options.vue?.version ?? "3.5",
     compatibilityVersion: nuxt.options.future?.compatibilityVersion,
     rootDir,
-    srcDir: resolve(rootDir, nuxt.options.srcDir ?? "."),
+    srcDir,
     appDir,
     buildDir,
-    autoImports: toArray(nuxt.options.imports?.imports ?? nuxt._imports?.imports),
+    autoImportEnabled: nuxt.options.imports?.autoImport !== false,
+    autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
+    autoImports: normalizeAutoImports(resolvedAutoImports),
     components: toArray(nuxt.options.components ?? nuxt._components),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({
@@ -211,6 +229,28 @@ function normalizeDirs(rootDir: string, dirs: unknown[]): string[] {
     .map((dir: any) => (typeof dir === "string" ? dir : dir?.path))
     .filter(Boolean)
     .map((dir: string) => resolve(rootDir, dir));
+}
+
+function normalizeAutoImports(imports: unknown[]) {
+  return imports
+    .map((entry: any) => ({
+      name: entry?.name,
+      as: entry?.as,
+      from: entry?.from,
+      type: entry?.type === true || undefined,
+    }))
+    .filter((entry) => entry.name && entry.from);
+}
+
+function serializeImportTransform(transform: any) {
+  const serialize = (patterns: unknown[]) =>
+    patterns
+      .filter((pattern): pattern is RegExp => pattern instanceof RegExp)
+      .map(({ source, flags }) => ({ source, flags }));
+  return {
+    include: serialize(toArray(transform?.include)),
+    exclude: serialize(toArray(transform?.exclude)),
+  };
 }
 
 function normalizePluginFiles(rootDir: string, plugins: unknown[]): string[] {
