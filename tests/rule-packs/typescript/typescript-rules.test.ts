@@ -57,6 +57,7 @@ console.log(save, parse, claimed, user)`,
 
     expect(result.diagnostics.map((item) => item.ruleId).sort()).toEqual([
       "typescript/boundaries/no-unvalidated-deserialization",
+      "typescript/boundaries/no-unvalidated-deserialization",
       "typescript/evidence/no-caller-chosen-result-type",
       "typescript/evidence/no-chained-type-assertions",
       "typescript/evidence/no-object-parameters",
@@ -78,11 +79,38 @@ function parse<T>(text: string, schema: { parse(value: unknown): T }): T {
 }
 const raw: unknown = JSON.parse(text)
 const user = UserSchema.parse(raw)
-console.log(save, parse, user)`,
+const typed: User = codec.json()
+function parseUnknown(text: string): unknown { return JSON.parse(text) }
+async function parseUnknownAsync(text: string): Promise<unknown> { return JSON.parse(text) }
+function parseLocal(JSON: { parse(text: string): User }, text: string): User {
+  return JSON.parse(text)
+}
+const localStorage = { getItem(): User { return user } }
+const cached: User = localStorage.getItem()
+console.log(save, parse, user, typed, parseUnknown, parseUnknownAsync, parseLocal, cached)`,
       },
     });
 
     expect(result.diagnostics).toHaveLength(0);
+  });
+
+  test("reports deserialization returned under an explicit type", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `function parseUser(text: string): User {
+  return JSON.parse(text)
+}
+const parseAccount = (text: string): Account => JSON.parse(text)
+console.log(parseUser, parseAccount)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+      "typescript/boundaries/no-unvalidated-deserialization",
+      "typescript/boundaries/no-unvalidated-deserialization",
+    ]);
   });
 
   test("keeps opinionated checks in the strict preset", async () => {
@@ -126,6 +154,35 @@ console.log(options, userId, safeUserId)`,
     );
   });
 
+  test.each(["mts", "cts"])(
+    "scans TypeScript .%s files after automatic activation",
+    async (ext) => {
+      const result = await runBuiltinFixture({
+        [`src/index.${ext}`]: "export function save(value: object) { return value }",
+      });
+
+      expect(result.diagnostics.map((item) => item.ruleId)).toContain(
+        "typescript/evidence/no-object-parameters",
+      );
+    },
+  );
+
+  test("activates for TypeScript in a Vue SFC without a root tsconfig", async () => {
+    const result = await runBuiltinFixture(
+      {
+        "app.vue": `<script setup lang="ts">
+function save(value: object) { return value }
+</script>`,
+      },
+      undefined,
+      "vue",
+    );
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toContain(
+      "typescript/evidence/no-object-parameters",
+    );
+  });
+
   test("lets explicit presets compose with automatic activation", async () => {
     const result = await runBuiltinFixture(
       {
@@ -140,18 +197,25 @@ console.log(options, userId, safeUserId)`,
   });
 });
 
-async function runBuiltinFixture(files: Record<string, string>, extend?: string[]) {
+async function runBuiltinFixture(
+  files: Record<string, string>,
+  extend?: string[],
+  framework: "vite" | "vue" = "vite",
+) {
   const root = await mkdtemp(join(tmpdir(), "vite-doctor-typescript-"));
   try {
     await writeFile(
       join(root, "package.json"),
-      JSON.stringify({ type: "module", devDependencies: { vite: "^8.0.0" } }),
+      JSON.stringify({
+        type: "module",
+        devDependencies: framework === "vue" ? { vue: "^3.5.0" } : { vite: "^8.0.0" },
+      }),
     );
     for (const [file, source] of Object.entries(files)) {
       await mkdir(dirname(join(root, file)), { recursive: true });
       await writeFile(join(root, file), source);
     }
-    return await runViteDoctor({ root, cache: false, framework: "vite", extends: extend });
+    return await runViteDoctor({ root, cache: false, framework, extends: extend });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

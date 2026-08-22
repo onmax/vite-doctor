@@ -91,7 +91,7 @@ async function detectProjectLanguages(
 ): Promise<ProjectLanguage[]> {
   let hasTypeScript = hasTsconfig;
   let hasJavaScript = false;
-  for await (const entry of glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", {
+  for await (const entry of glob("**/*.{vue,ts,tsx,mts,cts,js,jsx,mjs,cjs}", {
     cwd: root,
     exclude: [
       "**/node_modules/**",
@@ -106,12 +106,37 @@ async function detectProjectLanguages(
     if (typeof entry !== "string") continue;
     if (/\.(?:ts|tsx|mts|cts)$/.test(entry)) hasTypeScript = true;
     if (/\.(?:js|jsx|mjs|cjs)$/.test(entry)) hasJavaScript = true;
+    if (entry.endsWith(".vue")) {
+      const languages = detectVueScriptLanguages(root, entry);
+      hasTypeScript ||= languages.includes("typescript");
+      hasJavaScript ||= languages.includes("javascript");
+    }
     if (hasTypeScript && hasJavaScript) break;
   }
   return [
     ...(hasTypeScript ? (["typescript"] as const) : []),
     ...(hasJavaScript ? (["javascript"] as const) : []),
   ];
+}
+
+function detectVueScriptLanguages(root: string, file: string): ProjectLanguage[] {
+  try {
+    let hasTypeScript = false;
+    let hasJavaScript = false;
+    const source = readFileSync(join(root, file), "utf8");
+    for (const match of source.matchAll(/<script\b([^>]*)>/gi)) {
+      const langMatch = match[1]?.match(/\blang\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/i);
+      const lang = (langMatch?.[1] ?? langMatch?.[2] ?? langMatch?.[3] ?? "js").toLowerCase();
+      if (lang === "ts" || lang === "tsx") hasTypeScript = true;
+      if (lang === "js" || lang === "jsx") hasJavaScript = true;
+    }
+    return [
+      ...(hasTypeScript ? (["typescript"] as const) : []),
+      ...(hasJavaScript ? (["javascript"] as const) : []),
+    ];
+  } catch {
+    return [];
+  }
 }
 
 function hasVueSsrEvidence(

@@ -23,7 +23,10 @@ export function langFromFile(file: string): ScriptParseLang {
     ? "tsx"
     : file.endsWith(".jsx")
       ? "jsx"
-      : file.endsWith(".ts") || file.endsWith(".vue")
+      : file.endsWith(".ts") ||
+          file.endsWith(".mts") ||
+          file.endsWith(".cts") ||
+          file.endsWith(".vue")
         ? "ts"
         : "js";
 }

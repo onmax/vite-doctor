@@ -7,7 +7,7 @@ import type { DoctorRunOptions } from "../config.js";
 import type { ProjectInfo, SourceFileHandle } from "../primitives.js";
 
 const DEFAULT_INCLUDE = [
-  "**/*.{vue,ts,tsx,js,mjs,cjs}",
+  "**/*.{vue,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
   "vite.config.{ts,js,mjs,cjs,mts,cts}",
   "vitest.config.{ts,js,mjs,cjs,mts,cts}",
 ];
@@ -21,9 +21,9 @@ const DEFAULT_EXCLUDE = [
   "**/coverage/**",
   "**/public/**",
   "**/generated/**",
-  "**/*.min.{js,mjs,cjs}",
+  "**/*.min.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
   "**/{test,tests,__tests__,fixtures}/**",
-  "**/*.{test,spec}.{ts,tsx,js,mjs,cjs,vue}",
+  "**/*.{test,spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs,vue}",
   "doctor.config.*",
 ];
 

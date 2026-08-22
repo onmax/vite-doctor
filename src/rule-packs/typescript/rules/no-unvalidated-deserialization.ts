@@ -1,4 +1,4 @@
-import { createRule } from "../../../core/index.js";
+import { createRule, type RuleContext } from "../../../core/index.js";
 import {
   isOutermostTypeAssertion,
   isTypeAssertion,
@@ -14,8 +14,8 @@ export const noUnvalidatedDeserialization = createRule({
     id: "typescript/boundaries/no-unvalidated-deserialization",
     title: "Validate deserialized values before typing them",
     description:
-      "Reject direct type claims on values returned by common deserialization boundaries.",
-    why: "JSON, response bodies, and browser storage contain runtime data. A TypeScript annotation or assertion does not validate that data, so malformed values can enter the program under a trusted domain type.",
+      "Reject direct type claims on values returned by JSON parsing and browser storage.",
+    why: "JSON and browser storage contain runtime data. A TypeScript annotation or assertion does not validate that data, so malformed values can enter the program under a trusted domain type.",
     recommendedReplacement:
       "Deserialize to unknown and validate with the domain parser before using the value.",
     examples: [
@@ -37,9 +37,29 @@ export const noUnvalidatedDeserialization = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (isTypeAssertion(node) && isOutermostTypeAssertion(node)) {
-          if (isUntrustedDeserialization(node.expression) && !isUnknownType(node.typeAnnotation)) {
+          if (
+            isUntrustedDeserialization(ctx, node.expression) &&
+            !isUnknownType(node.typeAnnotation)
+          ) {
             reportBoundary(ctx, node);
           }
+          return;
+        }
+        if (node.type === "ReturnStatement" && node.argument && !isTypeAssertion(node.argument)) {
+          const owner = containingFunction(node);
+          if (hasConcreteReturnType(owner) && isUntrustedDeserialization(ctx, node.argument)) {
+            reportBoundary(ctx, node.argument);
+          }
+          return;
+        }
+        if (
+          node.type === "ArrowFunctionExpression" &&
+          node.body?.type !== "BlockStatement" &&
+          !isTypeAssertion(node.body) &&
+          hasConcreteReturnType(node) &&
+          isUntrustedDeserialization(ctx, node.body)
+        ) {
+          reportBoundary(ctx, node.body);
           return;
         }
         if (node.type !== "VariableDeclarator" || !node.init || node.id?.type !== "Identifier") {
@@ -50,7 +70,7 @@ export const noUnvalidatedDeserialization = createRule({
           annotation &&
           !isUnknownType(annotation) &&
           !isAnyType(annotation) &&
-          isUntrustedDeserialization(node.init)
+          isUntrustedDeserialization(ctx, node.init)
         ) {
           reportBoundary(ctx, node.init);
         }
@@ -69,7 +89,7 @@ function reportBoundary(ctx: Parameters<typeof report>[0], node: AnyNode) {
   );
 }
 
-function isUntrustedDeserialization(expression: AnyNode): boolean {
+function isUntrustedDeserialization(ctx: RuleContext, expression: AnyNode): boolean {
   const node = unwrapExpression(expression);
   if (node?.type !== "CallExpression") return false;
   const callee = node.callee;
@@ -78,11 +98,46 @@ function isUntrustedDeserialization(expression: AnyNode): boolean {
   }
   const objectName = callee.object?.name;
   const propertyName = callee.computed ? callee.property?.value : callee.property?.name;
+  if (
+    typeof objectName === "string" &&
+    ctx.helpers.hasLocalBindingBefore(callee.object, ctx.file.text)
+  ) {
+    return false;
+  }
   if (objectName === "JSON" && propertyName === "parse") return true;
   if (["localStorage", "sessionStorage"].includes(objectName) && propertyName === "getItem") {
     return true;
   }
-  return propertyName === "json";
+  return false;
+}
+
+function containingFunction(node: AnyNode): AnyNode {
+  let current = node?.__doctorParent ?? node?.parent;
+  while (current) {
+    if (
+      current.type === "ArrowFunctionExpression" ||
+      current.type === "FunctionDeclaration" ||
+      current.type === "FunctionExpression"
+    ) {
+      return current;
+    }
+    current = current.__doctorParent ?? current.parent;
+  }
+  return null;
+}
+
+function hasConcreteReturnType(node: AnyNode): boolean {
+  let annotation = node?.returnType?.typeAnnotation;
+  if (
+    node?.async &&
+    annotation?.type === "TSTypeReference" &&
+    annotation.typeName?.type === "Identifier" &&
+    annotation.typeName.name === "Promise" &&
+    annotation.typeArguments?.params?.length === 1
+  ) {
+    annotation = annotation.typeArguments.params[0];
+  }
+  return Boolean(annotation && !isUnknownType(annotation) && !isAnyType(annotation));
 }
 
 function isUnknownType(node: AnyNode): boolean {

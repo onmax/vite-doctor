@@ -230,6 +230,9 @@ test("native glob selection excludes generated folders", async () => {
       "node_modules/pkg/index.ts": "const ignored = true",
       "public/browser.js": "window.alert('ignored')",
       "src/vendor.min.js": "window.alert('ignored')",
+      "src/vendor.min.jsx": "window.alert('ignored')",
+      "src/example.test.mts": "const ignored: object = {}",
+      "src/example.spec.cts": "const ignored: object = {}",
     },
     async (root) => {
       const result = await runDoctor({
@@ -240,6 +243,36 @@ test("native glob selection excludes generated folders", async () => {
 
       expect(result.diagnostics).toHaveLength(1);
       expect(result.diagnostics[0]!.file).toContain("src/app.ts");
+    },
+  );
+});
+
+test("language activation recognizes JavaScript in Vue SFCs", async () => {
+  await withFixture(
+    {
+      "app.vue": "<script setup>const ok = true</script>",
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        extensions: [
+          defineDoctorExtension({
+            name: "test",
+            rulePacks: [
+              defineRulePack({
+                name: "test/javascript",
+                version: "0.0.0",
+                activation: { languages: ["javascript"] },
+                rules: [reportProgramRule],
+                presets: { recommended: [reportProgramRule.meta.id] },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      expect(result.diagnostics.map((item) => item.ruleId)).toEqual(["test/report-program"]);
     },
   );
 });
