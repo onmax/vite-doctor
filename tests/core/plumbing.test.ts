@@ -222,13 +222,15 @@ test("Nuxt project inventory normalizes manifest scan roots", () => {
   });
 });
 
-test("native glob selection excludes generated folders", async () => {
+test("native glob selection excludes generated files and folders", async () => {
   await withFixture(
     {
       "src/app.ts": "const ok = true",
       "dist/app.ts": "const ignored = true",
       "node_modules/pkg/index.ts": "const ignored = true",
       "public/browser.js": "window.alert('ignored')",
+      "src/api.generated.ts": "const ignored = true",
+      "src/api-generated.ts": "const included = true",
       "src/vendor.min.js": "window.alert('ignored')",
       "src/vendor.min.jsx": "window.alert('ignored')",
       "src/example.test.mts": "const ignored: object = {}",
@@ -241,8 +243,9 @@ test("native glob selection excludes generated folders", async () => {
         extensions: [pluginWith(reportProgramRule)],
       });
 
-      expect(result.diagnostics).toHaveLength(1);
-      expect(result.diagnostics[0]!.file).toContain("src/app.ts");
+      expect(result.diagnostics.map((item) => item.file).sort()).toEqual(
+        [join(root, "src/api-generated.ts"), join(root, "src/app.ts")].sort(),
+      );
     },
   );
 });

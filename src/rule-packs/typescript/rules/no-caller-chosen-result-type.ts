@@ -50,7 +50,7 @@ export const noCallerChosenResultType = createRule({
         if (!typeParameters.length || !returnType) return;
         const inputTypes = new Set<string>();
         for (const parameter of node.params ?? []) {
-          collectTypeIdentifiers(parameter, inputTypes);
+          collectInputEvidenceIdentifiers(parameter, inputTypes);
         }
         expandInputEvidence(inputTypes, typeParameters);
         const resultTypes = collectUnprovenResultTypeIdentifiers(returnType);
@@ -69,6 +69,36 @@ export const noCallerChosenResultType = createRule({
     };
   },
 });
+
+function collectInputEvidenceIdentifiers(
+  node: AnyNode,
+  names = new Set<string>(),
+  polarity = 1,
+): Set<string> {
+  if (!node || typeof node !== "object") return names;
+  if (Array.isArray(node)) {
+    for (const child of node) collectInputEvidenceIdentifiers(child, names, polarity);
+    return names;
+  }
+  if (functionTypes.has(node.type)) {
+    for (const parameter of node.params ?? []) {
+      collectInputEvidenceIdentifiers(parameter, names, -polarity);
+    }
+    collectInputEvidenceIdentifiers(node.returnType?.typeAnnotation, names, polarity);
+    return names;
+  }
+  if (polarity > 0 && node.type === "TSTypeReference" && node.typeName?.type === "Identifier") {
+    names.add(node.typeName.name);
+  }
+  if (polarity > 0 && node.type === "Identifier" && parentOf(node)?.type === "TSTypeQuery") {
+    names.add(node.name);
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "__doctorParent" || key === "parent") continue;
+    collectInputEvidenceIdentifiers(value, names, polarity);
+  }
+  return names;
+}
 
 function collectUnprovenResultTypeIdentifiers(
   node: AnyNode,

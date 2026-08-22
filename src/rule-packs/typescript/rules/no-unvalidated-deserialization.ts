@@ -64,6 +64,18 @@ export const noUnvalidatedDeserialization = createRule({
           reportBoundary(ctx, node.body);
           return;
         }
+        if (node.type === "PropertyDefinition" && node.value) {
+          const annotation = node.typeAnnotation?.typeAnnotation;
+          if (
+            annotation &&
+            !isUnknownType(annotation) &&
+            !isAnyType(annotation) &&
+            isUntrustedDeserialization(ctx, node.value)
+          ) {
+            reportBoundary(ctx, node.value);
+          }
+          return;
+        }
         if (node.type !== "VariableDeclarator" || !node.init || node.id?.type !== "Identifier") {
           return;
         }
@@ -100,7 +112,9 @@ function isUntrustedDeserialization(ctx: RuleContext, expression: AnyNode): bool
   }
   const objectName = deserializerObjectName(ctx, callee.object);
   const propertyName = memberPropertyName(callee);
-  if (objectName === "JSON" && propertyName === "parse") return true;
+  if (objectName === "JSON" && propertyName === "parse") {
+    return !isJsonStringifyCall(ctx, node.arguments?.[0]);
+  }
   if (
     objectName &&
     ["localStorage", "sessionStorage"].includes(objectName) &&
@@ -109,6 +123,19 @@ function isUntrustedDeserialization(ctx: RuleContext, expression: AnyNode): bool
     return true;
   }
   return false;
+}
+
+function isJsonStringifyCall(ctx: RuleContext, expression: AnyNode): boolean {
+  const node = unwrapExpression(expression);
+  if (node?.type !== "CallExpression") return false;
+  const callee = node.callee;
+  if (callee?.type !== "MemberExpression" && callee?.type !== "StaticMemberExpression") {
+    return false;
+  }
+  return (
+    deserializerObjectName(ctx, callee.object) === "JSON" &&
+    memberPropertyName(callee) === "stringify"
+  );
 }
 
 function deserializerObjectName(ctx: RuleContext, node: AnyNode): string | null {

@@ -139,6 +139,23 @@ console.log(singleton, factory, callbackFactory, objectFactory)`,
     ]);
   });
 
+  test("distinguishes callback producers from callback consumers", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noCallerChosenResultType],
+      files: {
+        "src/index.ts": `declare function consume<T>(callback: (value: T) => void): T
+declare function produce<T>(factory: () => T): T
+declare function parse<T>(text: string, schema: { parse(value: unknown): T }): T
+console.log(consume, produce, parse)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => [item.ruleId, item.range?.line])).toEqual([
+      ["typescript/evidence/no-caller-chosen-result-type", 1],
+    ]);
+  });
+
   test("reports deserialization returned under an explicit type", async () => {
     const result = await runProjectFixture({
       framework: "vite",
@@ -154,6 +171,45 @@ console.log(parseUser, parseAccount)`,
 
     expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
       "typescript/boundaries/no-unvalidated-deserialization",
+      "typescript/boundaries/no-unvalidated-deserialization",
+    ]);
+  });
+
+  test("reports deserialization assigned to an explicitly typed class property", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `class SessionCache {
+  user: User = JSON.parse("{}")
+}
+console.log(SessionCache)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+      "typescript/boundaries/no-unvalidated-deserialization",
+    ]);
+  });
+
+  test("ignores owned JSON serialization round trips", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `interface Snapshot { id: string }
+function clone(value: Snapshot): Snapshot {
+  return JSON.parse(JSON.stringify(value))
+}
+const qualified: Snapshot = globalThis.JSON.parse(globalThis.JSON.stringify(value))
+function parse(text: string): Snapshot {
+  return JSON.parse(text)
+}
+console.log(clone, qualified, parse)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
       "typescript/boundaries/no-unvalidated-deserialization",
     ]);
   });

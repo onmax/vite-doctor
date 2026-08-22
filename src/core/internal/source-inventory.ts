@@ -21,6 +21,7 @@ const DEFAULT_EXCLUDE = [
   "**/coverage/**",
   "**/public/**",
   "**/generated/**",
+  "**/*.generated.{ts,tsx,mts,cts,js,jsx,mjs,cjs,vue}",
   "**/*.min.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
   "**/{test,tests,__tests__,fixtures,test-d,typetest,dts-test,dtslint}/**",
   "**/*.{test,spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs,vue}",
