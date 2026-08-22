@@ -16,6 +16,7 @@ export interface DoctorSerializableConfig {
 }
 export type FixSafety = "safe" | "unsafe" | "suggestion" | "structural-review";
 export type DoctorFramework = "vue" | "nuxt" | "vite" | "nitro";
+export type ProjectLanguage = "typescript" | "javascript";
 export type RuntimePackageName = "nuxt" | "nitro" | "h3" | "vue";
 export type ApplicabilityState = "active" | "inactive" | "unknown";
 export type ExecutionKind =
@@ -307,6 +308,7 @@ export interface ProjectInfo {
   isMonorepo: boolean;
   packageName?: string;
   tsconfigPath?: string;
+  languages?: ProjectLanguage[];
   nuxt?: NuxtProjectInfo;
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
@@ -577,6 +579,7 @@ export interface RulePack {
   rules: DoctorRule[];
   presets: { recommended: string[]; strict?: string[] } & Record<string, string[] | undefined>;
   activation?: {
+    languages?: ProjectLanguage[];
     packages?: string[];
     modules?: string[];
     nuxt?: string;

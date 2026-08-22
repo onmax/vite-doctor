@@ -77,6 +77,7 @@ test("rule source exposes canonical docs paths and framework counts", () => {
   expect(reports.all.catalogVersion).toBe(1);
   expect(reports.all.rules.length).toBeGreaterThan(0);
   expect(reports.all.rules.every((rule) => rule.docsPath?.startsWith("/"))).toBe(true);
+  expect(reports.typescript.rules).toHaveLength(8);
   expect(reports.nuxt.rules.length).toBe(
     reports.vue.rules.length +
       reports.nitro.rules.length +
@@ -229,9 +230,17 @@ test("rules navigation keeps framework overview pages above rule links", () => {
     { code: "VITE0001", ruleId: "vite/env/no-secret-prefix" },
   ]);
 
-  expect(navigation.map((item) => item.title)).toEqual(["Nuxt", "Vue", "Vite", "Nitro"]);
+  expect(navigation.map((item) => item.title)).toEqual([
+    "TypeScript",
+    "Nuxt",
+    "Vue",
+    "Vite",
+    "Nitro",
+  ]);
 
   expect(navigation.flatMap((item) => item.children?.map((child) => child.title) ?? [])).toEqual([
+    "Installation",
+    "TypeScript rules",
     "Installation",
     "Nuxt rules",
     "NUXT0001",
@@ -246,6 +255,8 @@ test("rules navigation keeps framework overview pages above rule links", () => {
   ]);
 
   expect(navigation.flatMap((item) => item.children?.map((child) => child.path) ?? [])).toEqual([
+    "/typescript",
+    "/typescript/rules",
     "/nuxt",
     "/nuxt/rules",
     "/nuxt/rules/fetch/no-raw-fetch-in-setup",
@@ -261,7 +272,7 @@ test("rules navigation keeps framework overview pages above rule links", () => {
 
   expect(
     appendRulesNavigation([{ title: "CLI", path: "/cli" }], navigation).map((item) => item.title),
-  ).toEqual(["CLI", "Nuxt", "Vue", "Vite", "Nitro"]);
+  ).toEqual(["CLI", "TypeScript", "Nuxt", "Vue", "Vite", "Nitro"]);
 });
 
 test("rule examples do not reuse generic placeholders", () => {

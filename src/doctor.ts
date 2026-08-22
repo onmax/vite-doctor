@@ -12,11 +12,12 @@ import { nitroRulePack } from "./rule-packs/nitro/index.js";
 import { nuxtDoctorExtensions, nuxtRulePacks } from "./rule-packs/nuxt/rules/index.js";
 import { vueRulePack } from "./rule-packs/vue/rules.js";
 import { viteRulePack } from "./rules.js";
+import { typescriptRulePack } from "./rule-packs/typescript/index.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
   const framework = detectRequestedFramework(options);
-  const packs = [viteRulePack];
+  const packs = [viteRulePack, typescriptRulePack];
   if (framework === "vue") packs.push(vueRulePack);
   if (framework === "nitro") packs.push(nitroRulePack);
   if (framework === "nuxt") packs.push(...nuxtRulePacks());
@@ -29,6 +30,10 @@ export async function viteDoctorExtensions(
   const framework = detectRequestedFramework(options);
   const extensions = [
     defineDoctorExtension({ name: "vite-doctor/builtin-vite", rulePacks: [viteRulePack] }),
+    defineDoctorExtension({
+      name: "vite-doctor/builtin-typescript",
+      rulePacks: [typescriptRulePack],
+    }),
   ];
   if (framework === "vue") {
     extensions.push(

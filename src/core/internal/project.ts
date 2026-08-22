@@ -7,6 +7,7 @@ import type {
   NuxtDoctorManifest,
   NuxtProjectInfo,
   ProjectInfo,
+  ProjectLanguage,
 } from "../primitives.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
@@ -63,6 +64,9 @@ export async function detectProject(
   );
   const resolvedNuxtVersion = targeted.graph.packages.nuxt?.version;
   const resolvedVueVersion = targeted.graph.packages.vue?.version;
+  const tsconfigPath = existsSync(join(root, "tsconfig.json"))
+    ? join(root, "tsconfig.json")
+    : undefined;
   return {
     root: resolve(root),
     framework,
@@ -73,11 +77,66 @@ export async function detectProject(
       : undefined,
     isMonorepo,
     packageName: packageJson?.name,
-    tsconfigPath: existsSync(join(root, "tsconfig.json")) ? join(root, "tsconfig.json") : undefined,
+    tsconfigPath,
+    languages: await detectProjectLanguages(root, Boolean(tsconfigPath)),
     nuxt,
     runtimeGraph: targeted.graph,
     nuxtCompatibility: targeted.compatibility,
   };
+}
+
+async function detectProjectLanguages(
+  root: string,
+  hasTsconfig: boolean,
+): Promise<ProjectLanguage[]> {
+  let hasTypeScript = hasTsconfig;
+  let hasJavaScript = false;
+  for await (const entry of glob("**/*.{vue,ts,tsx,mts,cts,js,jsx,mjs,cjs}", {
+    cwd: root,
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/.nuxt/**",
+      "**/.next/**",
+      "**/.output/**",
+      "**/coverage/**",
+      "**/generated/**",
+    ],
+  })) {
+    if (typeof entry !== "string") continue;
+    if (/\.(?:ts|tsx|mts|cts)$/.test(entry)) hasTypeScript = true;
+    if (/\.(?:js|jsx|mjs|cjs)$/.test(entry)) hasJavaScript = true;
+    if (entry.endsWith(".vue")) {
+      const languages = detectVueScriptLanguages(root, entry);
+      hasTypeScript ||= languages.includes("typescript");
+      hasJavaScript ||= languages.includes("javascript");
+    }
+    if (hasTypeScript && hasJavaScript) break;
+  }
+  return [
+    ...(hasTypeScript ? (["typescript"] as const) : []),
+    ...(hasJavaScript ? (["javascript"] as const) : []),
+  ];
+}
+
+function detectVueScriptLanguages(root: string, file: string): ProjectLanguage[] {
+  try {
+    let hasTypeScript = false;
+    let hasJavaScript = false;
+    const source = readFileSync(join(root, file), "utf8");
+    for (const match of source.matchAll(/<script\b([^>]*)>/gi)) {
+      const langMatch = match[1]?.match(/\blang\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/i);
+      const lang = (langMatch?.[1] ?? langMatch?.[2] ?? langMatch?.[3] ?? "js").toLowerCase();
+      if (lang === "ts" || lang === "tsx") hasTypeScript = true;
+      if (lang === "js" || lang === "jsx") hasJavaScript = true;
+    }
+    return [
+      ...(hasTypeScript ? (["typescript"] as const) : []),
+      ...(hasJavaScript ? (["javascript"] as const) : []),
+    ];
+  } catch {
+    return [];
+  }
 }
 
 function hasVueSsrEvidence(

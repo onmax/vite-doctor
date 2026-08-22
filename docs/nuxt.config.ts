@@ -8,7 +8,7 @@ import { getDiagnosticDocuments, getRuleDocuments } from "./rules/source.js";
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
 const contentDatabasePath = join(tempDir, `nuxt-doctor-content-${process.pid}.sqlite`);
 const contentLocalDatabasePath = join(tempDir, `nuxt-doctor-content-local-${process.pid}.sqlite`);
-const frameworks = ["nuxt", "vue", "vite", "nitro"];
+const frameworks = ["typescript", "nuxt", "vue", "vite", "nitro"];
 const docsRoutes = ["/", "/cli"];
 const frameworkRoutes = frameworks.map((framework) => `/${framework}`);
 const ruleIndexRoutes = frameworks.map((framework) => `/${framework}/rules`);

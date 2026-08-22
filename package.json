@@ -35,6 +35,8 @@
     "./rule-packs/nuxt": "./dist/rule-packs/nuxt/index.mjs",
     "./rule-packs/nuxt/module": "./dist/rule-packs/nuxt/module.mjs",
     "./rule-packs/nuxt/rules": "./dist/rule-packs/nuxt/rules/index.mjs",
+    "./rule-packs/typescript": "./dist/rule-packs/typescript/index.mjs",
+    "./rule-packs/typescript/rules": "./dist/rule-packs/typescript/rules/index.mjs",
     "./rule-packs/vite": "./dist/rule-packs/vite/index.mjs",
     "./rule-packs/vite/rules": "./dist/rule-packs/vite/rules/index.mjs",
     "./rule-packs/vue": "./dist/rule-packs/vue/index.mjs",
@@ -78,6 +80,7 @@
     "pathe": "catalog:prod",
     "picocolors": "catalog:prod",
     "semver": "catalog:prod",
+    "typescript": "catalog:analysis",
     "vue-eslint-parser": "catalog:analysis"
   },
   "devDependencies": {

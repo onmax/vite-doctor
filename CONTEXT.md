@@ -16,6 +16,10 @@ _Avoid_: Check, inspection
 A stable library-author format for a named collection of rules owned by a runtime, framework, or ecosystem library.
 _Avoid_: Plugin, preset
 
+**TypeScript Rule Pack**:
+The built-in language-owned Rule Pack that activates its Recommended Preset when Project Inventory proves that a project contains TypeScript. It composes with framework Rule Packs instead of belonging to any framework preset.
+_Avoid_: Vite TypeScript rules, Vue TypeScript rules
+
 **Preset**:
 A named selection of rules inside a rule pack.
 _Avoid_: Group, ruleset
@@ -120,6 +124,7 @@ _Avoid_: Agent surface
 - A **Rule Pack** can define a **Strict Preset**.
 - A **Rule Pack** can define **Activation** conditions.
 - **Vite Doctor** activates built-in **Rule Packs** for detected project frameworks.
+- **Vite Doctor** activates the **TypeScript Rule Pack** independently for TypeScript projects.
 - A **Plugin Surface** receives **Surface Configuration** from its host system.
 - **Surface Configuration** can include **Config Extends**.
 - A **Rule** produces zero or more **Diagnostics**.

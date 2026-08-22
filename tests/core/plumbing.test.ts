@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -221,14 +222,22 @@ test("Nuxt project inventory normalizes manifest scan roots", () => {
   });
 });
 
-test("native glob selection excludes generated folders", async () => {
+test("native glob selection excludes generated files and folders", async () => {
   await withFixture(
     {
       "src/app.ts": "const ok = true",
       "dist/app.ts": "const ignored = true",
       "node_modules/pkg/index.ts": "const ignored = true",
       "public/browser.js": "window.alert('ignored')",
+      "src/api.generated.ts": "const ignored = true",
+      "src/api-generated.ts": "const included = true",
+      "src/generated-header.ts":
+        "// This file is auto-generated. Do not edit.\nconst ignored = true",
+      "src/generation-helper.ts": "const generatedOutput = true",
       "src/vendor.min.js": "window.alert('ignored')",
+      "src/vendor.min.jsx": "window.alert('ignored')",
+      "src/example.test.mts": "const ignored: object = {}",
+      "src/example.spec.cts": "const ignored: object = {}",
     },
     async (root) => {
       const result = await runDoctor({
@@ -237,10 +246,148 @@ test("native glob selection excludes generated folders", async () => {
         extensions: [pluginWith(reportProgramRule)],
       });
 
-      expect(result.diagnostics).toHaveLength(1);
-      expect(result.diagnostics[0]!.file).toContain("src/app.ts");
+      expect(result.diagnostics.map((item) => item.file).sort()).toEqual(
+        [
+          join(root, "src/api-generated.ts"),
+          join(root, "src/app.ts"),
+          join(root, "src/generation-helper.ts"),
+        ].sort(),
+      );
     },
   );
+});
+
+test("native glob selection excludes exact type-test directory names", async () => {
+  await withFixture(
+    {
+      "node_modules/vue/package.json": JSON.stringify({ name: "vue", version: "3.5.0" }),
+      "src/app.ts": "const app = true",
+      "src/snapshot-helper.ts": "const helper = true",
+      "src/test-d-helper.ts": "const helper = true",
+      "src/type-tests-helper.ts": "const helper = true",
+      "src/typetest-helper.ts": "const helper = true",
+      "src/dts-test-helper.ts": "const helper = true",
+      "src/dtslint-helper.ts": "const helper = true",
+      "__snapshots__/assertions.ts": "const ignored: object = {}",
+      "test-d/assertions.ts": "const ignored: object = {}",
+      "type-tests/assertions.ts": "const ignored: object = {}",
+      "typetest/assertions.ts": "const ignored: object = {}",
+      "__typetest__/assertions.ts": "const ignored: object = {}",
+      "dts-test/assertions.ts": "const ignored: object = {}",
+      "dtslint/assertions.ts": "const ignored: object = {}",
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        extensions: [pluginWith(reportProgramRule)],
+      });
+
+      expect(result.diagnostics.map((item) => item.file).sort()).toEqual(
+        [
+          join(root, "src/app.ts"),
+          join(root, "src/dts-test-helper.ts"),
+          join(root, "src/dtslint-helper.ts"),
+          join(root, "src/snapshot-helper.ts"),
+          join(root, "src/test-d-helper.ts"),
+          join(root, "src/type-tests-helper.ts"),
+          join(root, "src/typetest-helper.ts"),
+        ].sort(),
+      );
+    },
+  );
+});
+
+test("language activation recognizes JavaScript in Vue SFCs", async () => {
+  await withFixture(
+    {
+      "app.vue": "<script setup>const ok = true</script>",
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        extensions: [
+          defineDoctorExtension({
+            name: "test",
+            rulePacks: [
+              defineRulePack({
+                name: "test/javascript",
+                version: "0.0.0",
+                activation: { languages: ["javascript"] },
+                rules: [reportProgramRule],
+                presets: { recommended: [reportProgramRule.meta.id] },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      expect(result.diagnostics.map((item) => item.ruleId)).toEqual(["test/report-program"]);
+    },
+  );
+});
+
+test("since scans only files changed from the requested Git ref", async () => {
+  await withFixture(
+    {
+      "src/changed.ts": "const changed = true",
+      "src/generated.ts": "// @generated\nconst generated = true",
+      "src/unchanged.ts": "const unchanged = true",
+    },
+    async (root) => {
+      git(root, "init");
+      git(root, "add", ".");
+      git(
+        root,
+        "-c",
+        "user.name=Doctor",
+        "-c",
+        "user.email=doctor@example.com",
+        "commit",
+        "-m",
+        "fixture",
+      );
+      writeFileSync(join(root, "src/changed.ts"), "const changed = false");
+      writeFileSync(join(root, "src/generated.ts"), "// @generated\nconst generated = false");
+
+      const result = await runDoctor({
+        root,
+        since: "HEAD",
+        framework: "vue",
+        extensions: [pluginWith(reportProgramRule)],
+      });
+
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]!.file).toContain("src/changed.ts");
+    },
+  );
+});
+
+test("since scans no files when the requested Git diff is empty", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    git(root, "init");
+    git(root, "add", ".");
+    git(
+      root,
+      "-c",
+      "user.name=Doctor",
+      "-c",
+      "user.email=doctor@example.com",
+      "commit",
+      "-m",
+      "fixture",
+    );
+
+    const result = await runDoctor({
+      root,
+      since: "HEAD",
+      framework: "vue",
+      extensions: [pluginWith(reportProgramRule)],
+    });
+
+    expect(result.diagnostics).toHaveLength(0);
+  });
 });
 
 test("native rule glob matching filters enabled rules", async () => {
@@ -791,4 +938,8 @@ function pluginWith(...rules: any[]) {
       }),
     ],
   });
+}
+
+function git(root: string, ...args: string[]) {
+  execFileSync("git", args, { cwd: root, stdio: "ignore" });
 }

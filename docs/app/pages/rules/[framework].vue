@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { FRAMEWORK_META, type Framework } from "../../utils/rule-metadata";
+import { FRAMEWORK_META, FRAMEWORKS, type Framework } from "../../utils/rule-metadata";
 
 definePageMeta({
   layout: "docs",
-  validate: (route) => ["vue", "vite", "nuxt", "nitro"].includes(String(route.params.framework)),
+  validate: (route) => FRAMEWORKS.includes(String(route.params.framework) as Framework),
 });
 
 const route = useRoute();
