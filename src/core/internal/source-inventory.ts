@@ -42,17 +42,15 @@ export async function selectScanFiles(
 ): Promise<ScanFileEntry[]> {
   if (options.changed || options.since) {
     const changed = await gitChangedFiles(root, options.since);
-    if (changed.length) {
-      const includeContent = hasContentFiles(project);
-      return changed
-        .filter((file) =>
-          includeContent
-            ? /\.(vue|[cm]?[jt]sx?|mdc?)$/.test(file)
-            : /\.(vue|[cm]?[jt]sx?)$/.test(file),
-        )
-        .filter((file) => statSync(resolve(root, file), { throwIfNoEntry: false })?.isFile())
-        .map((file) => createAppFileEntry(root, file));
-    }
+    const includeContent = hasContentFiles(project);
+    return changed
+      .filter((file) =>
+        includeContent
+          ? /\.(vue|[cm]?[jt]sx?|mdc?)$/.test(file)
+          : /\.(vue|[cm]?[jt]sx?)$/.test(file),
+      )
+      .filter((file) => statSync(resolve(root, file), { throwIfNoEntry: false })?.isFile())
+      .map((file) => createAppFileEntry(root, file));
   }
 
   const files = new Map<string, ScanFileEntry>();
@@ -113,15 +111,11 @@ function detectAppSourceKind(root: string, file: string): SourceFileHandle["sour
 }
 
 async function gitChangedFiles(root: string, since?: string): Promise<string[]> {
-  try {
-    const args = since
-      ? ["diff", "--name-only", "--diff-filter=ACMR", since, "--"]
-      : ["diff", "--name-only", "--diff-filter=ACMR", "--cached", "--"];
-    const stdout = await execFileText("git", args, root);
-    return stdout.split(/\r?\n/).filter(Boolean);
-  } catch {
-    return [];
-  }
+  const args = since
+    ? ["diff", "--name-only", "--diff-filter=ACMR", since, "--"]
+    : ["diff", "--name-only", "--diff-filter=ACMR", "--cached", "--"];
+  const stdout = await execFileText("git", args, root);
+  return stdout.split(/\r?\n/).filter(Boolean);
 }
 
 function execFileText(command: string, args: string[], cwd: string): Promise<string> {

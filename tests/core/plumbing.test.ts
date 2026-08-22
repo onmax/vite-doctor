@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -241,6 +242,66 @@ test("native glob selection excludes generated folders", async () => {
       expect(result.diagnostics[0]!.file).toContain("src/app.ts");
     },
   );
+});
+
+test("since scans only files changed from the requested Git ref", async () => {
+  await withFixture(
+    {
+      "src/changed.ts": "const changed = true",
+      "src/unchanged.ts": "const unchanged = true",
+    },
+    async (root) => {
+      git(root, "init");
+      git(root, "add", ".");
+      git(
+        root,
+        "-c",
+        "user.name=Doctor",
+        "-c",
+        "user.email=doctor@example.com",
+        "commit",
+        "-m",
+        "fixture",
+      );
+      writeFileSync(join(root, "src/changed.ts"), "const changed = false");
+
+      const result = await runDoctor({
+        root,
+        since: "HEAD",
+        framework: "vue",
+        extensions: [pluginWith(reportProgramRule)],
+      });
+
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]!.file).toContain("src/changed.ts");
+    },
+  );
+});
+
+test("since scans no files when the requested Git diff is empty", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    git(root, "init");
+    git(root, "add", ".");
+    git(
+      root,
+      "-c",
+      "user.name=Doctor",
+      "-c",
+      "user.email=doctor@example.com",
+      "commit",
+      "-m",
+      "fixture",
+    );
+
+    const result = await runDoctor({
+      root,
+      since: "HEAD",
+      framework: "vue",
+      extensions: [pluginWith(reportProgramRule)],
+    });
+
+    expect(result.diagnostics).toHaveLength(0);
+  });
 });
 
 test("native rule glob matching filters enabled rules", async () => {
@@ -791,4 +852,8 @@ function pluginWith(...rules: any[]) {
       }),
     ],
   });
+}
+
+function git(root: string, ...args: string[]) {
+  execFileSync("git", args, { cwd: root, stdio: "ignore" });
 }
