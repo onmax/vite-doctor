@@ -1,5 +1,5 @@
 import { createRule } from "../../../core/index.js";
-import { collectTypeIdentifiers, parameterType, report, type AnyNode } from "./shared.js";
+import { collectTypeIdentifiers, parentOf, report, type AnyNode } from "./shared.js";
 
 const ruleId = "typescript/evidence/no-caller-chosen-result-type";
 const functionTypes = new Set([
@@ -44,13 +44,15 @@ export const noCallerChosenResultType = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (!functionTypes.has(node.type)) return;
+        if (node.type === "TSFunctionType" && isConditionalTypeOperand(node)) return;
         const typeParameters = node.typeParameters?.params ?? [];
         const returnType = node.returnType?.typeAnnotation;
         if (!typeParameters.length || !returnType) return;
         const inputTypes = new Set<string>();
         for (const parameter of node.params ?? []) {
-          collectTypeIdentifiers(parameterType(parameter), inputTypes);
+          collectTypeIdentifiers(parameter, inputTypes);
         }
+        expandInputEvidence(inputTypes, typeParameters);
         const resultTypes = collectTypeIdentifiers(returnType);
         for (const parameter of typeParameters) {
           const name = parameter.name?.name ?? parameter.name;
@@ -67,3 +69,37 @@ export const noCallerChosenResultType = createRule({
     };
   },
 });
+
+function isConditionalTypeOperand(node: AnyNode): boolean {
+  let current = node;
+  let parent = parentOf(current);
+  while (parent?.type === "TSParenthesizedType") {
+    current = parent;
+    parent = parentOf(current);
+  }
+  return (
+    parent?.type === "TSConditionalType" &&
+    (parent.checkType === current || parent.extendsType === current)
+  );
+}
+
+function expandInputEvidence(inputTypes: Set<string>, typeParameters: AnyNode[]): void {
+  const parametersByName = new Map<string, AnyNode>();
+  for (const parameter of typeParameters) {
+    const name = parameter.name?.name ?? parameter.name;
+    if (typeof name === "string") parametersByName.set(name, parameter);
+  }
+
+  const pending = [...inputTypes];
+  while (pending.length) {
+    const name = pending.pop();
+    if (!name) continue;
+    const constraint = parametersByName.get(name)?.constraint;
+    if (!constraint) continue;
+    for (const dependency of collectTypeIdentifiers(constraint)) {
+      if (!parametersByName.has(dependency) || inputTypes.has(dependency)) continue;
+      inputTypes.add(dependency);
+      pending.push(dependency);
+    }
+  }
+}

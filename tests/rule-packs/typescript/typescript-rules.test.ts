@@ -94,6 +94,31 @@ console.log(save, parse, user, typed, parseUnknown, parseUnknownAsync, parseLoca
     expect(result.diagnostics).toHaveLength(0);
   });
 
+  test("recognizes indirect generic input evidence without flagging type comparisons", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noCallerChosenResultType],
+      files: {
+        "src/index.ts": `type IfEquals<X, Y, A = true, B = false> =
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? A : B
+declare function map<Keys extends string, KeyArr extends Keys[]>(
+  keys: KeyArr
+): Record<Keys, string>
+function read<E extends "utf8" | false = "utf8">(
+  encoding = "utf8" as E
+): E extends false ? Uint8Array : string {
+  return encoding as E extends false ? Uint8Array : string
+}
+type UnsafeParser = <T>(text: string) => T
+console.log(map, read)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+      "typescript/evidence/no-caller-chosen-result-type",
+    ]);
+  });
+
   test("reports deserialization returned under an explicit type", async () => {
     const result = await runProjectFixture({
       framework: "vite",
