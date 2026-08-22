@@ -80,6 +80,7 @@
     "pathe": "catalog:prod",
     "picocolors": "catalog:prod",
     "semver": "catalog:prod",
+    "typescript": "catalog:analysis",
     "vue-eslint-parser": "catalog:analysis"
   },
   "devDependencies": {

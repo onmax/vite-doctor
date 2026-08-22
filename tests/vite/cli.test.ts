@@ -12,9 +12,18 @@ import { expect, test } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
 import { doctor } from "../../src/plugin.ts";
 
-const publicPackageVersion = JSON.parse(
+const publicPackageJson = JSON.parse(
   readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
-).version as string;
+) as {
+  version: string;
+  dependencies?: Record<string, string>;
+};
+const publicPackageVersion = publicPackageJson.version;
+
+test("package installs the TypeScript runtime required by its parsers", () => {
+  expect(publicPackageJson.dependencies?.["@typescript-eslint/parser"]).toBeTruthy();
+  expect(publicPackageJson.dependencies?.typescript).toBeTruthy();
+});
 
 test("CLI rejects removed run command", async () => {
   const repoRoot = findRepoRoot();
