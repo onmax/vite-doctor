@@ -119,6 +119,26 @@ console.log(map, read)`,
     ]);
   });
 
+  test("uses returned callable parameters as evidence without trusting their return values", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noCallerChosenResultType],
+      files: {
+        "src/index.ts": `type Constructor<T> = new (...args: never[]) => T
+declare function singleton<T>(): (target: Constructor<T>) => void
+declare function factory<T>(): () => T
+declare function callbackFactory<T>(): { run(fn: () => Promise<T>): Promise<T> }
+declare function objectFactory<T>(): { consume(value: T): void; value: T }
+console.log(singleton, factory, callbackFactory, objectFactory)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => [item.ruleId, item.range?.line])).toEqual([
+      ["typescript/evidence/no-caller-chosen-result-type", 3],
+      ["typescript/evidence/no-caller-chosen-result-type", 5],
+    ]);
+  });
+
   test("reports deserialization returned under an explicit type", async () => {
     const result = await runProjectFixture({
       framework: "vite",
@@ -133,6 +153,33 @@ console.log(parseUser, parseAccount)`,
     });
 
     expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+      "typescript/boundaries/no-unvalidated-deserialization",
+      "typescript/boundaries/no-unvalidated-deserialization",
+    ]);
+  });
+
+  test("recognizes qualified global deserializers without flagging shadowed roots", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `const cached = window.localStorage.getItem("user") as User
+const parsed: User = globalThis.JSON.parse(text)
+function readSession(): User {
+  return globalThis.sessionStorage.getItem("user") as User
+}
+function readLocal(window: { localStorage: { getItem(key: string): User } }): User {
+  return window.localStorage.getItem("user") as User
+}
+function parseLocal(globalThis: { JSON: { parse(text: string): User } }): User {
+  return globalThis.JSON.parse(text) as User
+}
+console.log(cached, parsed, readSession, readLocal, parseLocal)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+      "typescript/boundaries/no-unvalidated-deserialization",
       "typescript/boundaries/no-unvalidated-deserialization",
       "typescript/boundaries/no-unvalidated-deserialization",
     ]);

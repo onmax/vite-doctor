@@ -8,6 +8,8 @@ import {
 } from "./shared.js";
 
 const ruleId = "typescript/boundaries/no-unvalidated-deserialization";
+const globalObjectNames = new Set(["globalThis", "window"]);
+const deserializerObjectNames = new Set(["JSON", "localStorage", "sessionStorage"]);
 
 export const noUnvalidatedDeserialization = createRule({
   meta: {
@@ -96,19 +98,34 @@ function isUntrustedDeserialization(ctx: RuleContext, expression: AnyNode): bool
   if (callee?.type !== "MemberExpression" && callee?.type !== "StaticMemberExpression") {
     return false;
   }
-  const objectName = callee.object?.name;
-  const propertyName = callee.computed ? callee.property?.value : callee.property?.name;
-  if (
-    typeof objectName === "string" &&
-    ctx.helpers.hasLocalBindingBefore(callee.object, ctx.file.text)
-  ) {
-    return false;
-  }
+  const objectName = deserializerObjectName(ctx, callee.object);
+  const propertyName = memberPropertyName(callee);
   if (objectName === "JSON" && propertyName === "parse") return true;
-  if (["localStorage", "sessionStorage"].includes(objectName) && propertyName === "getItem") {
+  if (
+    objectName &&
+    ["localStorage", "sessionStorage"].includes(objectName) &&
+    propertyName === "getItem"
+  ) {
     return true;
   }
   return false;
+}
+
+function deserializerObjectName(ctx: RuleContext, node: AnyNode): string | null {
+  if (node?.type === "Identifier") {
+    if (!deserializerObjectNames.has(node.name)) return null;
+    return ctx.helpers.hasLocalBindingBefore(node, ctx.file.text) ? null : node.name;
+  }
+  if (node?.type !== "MemberExpression" && node?.type !== "StaticMemberExpression") return null;
+  if (node.object?.type !== "Identifier" || !globalObjectNames.has(node.object.name)) return null;
+  if (ctx.helpers.hasLocalBindingBefore(node.object, ctx.file.text)) return null;
+  const propertyName = memberPropertyName(node);
+  return propertyName && deserializerObjectNames.has(propertyName) ? propertyName : null;
+}
+
+function memberPropertyName(node: AnyNode): string | null {
+  const name = node.computed ? node.property?.value : node.property?.name;
+  return typeof name === "string" ? name : null;
 }
 
 function containingFunction(node: AnyNode): AnyNode {

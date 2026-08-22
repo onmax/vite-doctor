@@ -53,7 +53,7 @@ export const noCallerChosenResultType = createRule({
           collectTypeIdentifiers(parameter, inputTypes);
         }
         expandInputEvidence(inputTypes, typeParameters);
-        const resultTypes = collectTypeIdentifiers(returnType);
+        const resultTypes = collectUnprovenResultTypeIdentifiers(returnType);
         for (const parameter of typeParameters) {
           const name = parameter.name?.name ?? parameter.name;
           if (typeof name !== "string" || !resultTypes.has(name) || inputTypes.has(name)) continue;
@@ -69,6 +69,37 @@ export const noCallerChosenResultType = createRule({
     };
   },
 });
+
+function collectUnprovenResultTypeIdentifiers(
+  node: AnyNode,
+  names = new Set<string>(),
+): Set<string> {
+  if (!node || typeof node !== "object") return names;
+  if (Array.isArray(node)) {
+    for (const child of node) collectUnprovenResultTypeIdentifiers(child, names);
+    return names;
+  }
+  if (functionTypes.has(node.type)) {
+    const callableResults = collectUnprovenResultTypeIdentifiers(node.returnType?.typeAnnotation);
+    const callableInputs = new Set<string>();
+    for (const parameter of node.params ?? []) collectTypeIdentifiers(parameter, callableInputs);
+    for (const name of callableResults) {
+      if (!callableInputs.has(name)) names.add(name);
+    }
+    return names;
+  }
+  if (node.type === "TSTypeReference" && node.typeName?.type === "Identifier") {
+    names.add(node.typeName.name);
+  }
+  if (node.type === "Identifier" && parentOf(node)?.type === "TSTypeQuery") {
+    names.add(node.name);
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "__doctorParent" || key === "parent") continue;
+    collectUnprovenResultTypeIdentifiers(value, names);
+  }
+  return names;
+}
 
 function isConditionalTypeOperand(node: AnyNode): boolean {
   let current = node;

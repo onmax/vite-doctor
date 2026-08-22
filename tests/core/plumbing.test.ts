@@ -247,6 +247,39 @@ test("native glob selection excludes generated folders", async () => {
   );
 });
 
+test("native glob selection excludes exact type-test directory names", async () => {
+  await withFixture(
+    {
+      "src/app.ts": "const app = true",
+      "src/test-d-helper.ts": "const helper = true",
+      "src/typetest-helper.ts": "const helper = true",
+      "src/dts-test-helper.ts": "const helper = true",
+      "src/dtslint-helper.ts": "const helper = true",
+      "test-d/assertions.ts": "const ignored: object = {}",
+      "typetest/assertions.ts": "const ignored: object = {}",
+      "dts-test/assertions.ts": "const ignored: object = {}",
+      "dtslint/assertions.ts": "const ignored: object = {}",
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        extensions: [pluginWith(reportProgramRule)],
+      });
+
+      expect(result.diagnostics.map((item) => item.file).sort()).toEqual(
+        [
+          join(root, "src/app.ts"),
+          join(root, "src/dts-test-helper.ts"),
+          join(root, "src/dtslint-helper.ts"),
+          join(root, "src/test-d-helper.ts"),
+          join(root, "src/typetest-helper.ts"),
+        ].sort(),
+      );
+    },
+  );
+});
+
 test("language activation recognizes JavaScript in Vue SFCs", async () => {
   await withFixture(
     {

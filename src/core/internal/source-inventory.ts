@@ -22,7 +22,7 @@ const DEFAULT_EXCLUDE = [
   "**/public/**",
   "**/generated/**",
   "**/*.min.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
-  "**/{test,tests,__tests__,fixtures}/**",
+  "**/{test,tests,__tests__,fixtures,test-d,typetest,dts-test,dtslint}/**",
   "**/*.{test,spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs,vue}",
   "doctor.config.*",
 ];
