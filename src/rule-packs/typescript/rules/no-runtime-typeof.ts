@@ -1,5 +1,5 @@
 import { createRule } from "../../../core/index.js";
-import { report, type AnyNode } from "./shared.js";
+import { isTypeScriptSource, report, type AnyNode } from "./shared.js";
 
 const ruleId = "typescript/strict/no-runtime-typeof";
 
@@ -27,6 +27,7 @@ export const noRuntimeTypeof = createRule({
     aiGeneratedCodeRisk: "medium",
   },
   create(ctx) {
+    if (!isTypeScriptSource(ctx)) return {};
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "UnaryExpression" || node.operator !== "typeof") return;

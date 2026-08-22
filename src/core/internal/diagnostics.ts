@@ -185,11 +185,11 @@ function nearestAnchor(source: string, offset: number): string {
   const before = source.slice(0, offset);
   const matches = [
     ...before.matchAll(
-      /\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)|<([A-Z][\w.-]*)\b/g,
+      /\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|\b(?:const|let|var)\s+(?:([A-Za-z_$][\w$]*)|(\{[^}\n]*\}|\[[^\]\n]*\]))|<([A-Z][\w.-]*)\b/g,
     ),
   ];
   const last = matches.at(-1);
-  return last ? (last[1] ?? last[2] ?? last[3] ?? "file") : "file";
+  return last ? (last[1] ?? last[2] ?? last[3] ?? last[4] ?? "file") : "file";
 }
 
 export function pushDiagnostic(

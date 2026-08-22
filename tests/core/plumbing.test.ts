@@ -231,6 +231,9 @@ test("native glob selection excludes generated files and folders", async () => {
       "public/browser.js": "window.alert('ignored')",
       "src/api.generated.ts": "const ignored = true",
       "src/api-generated.ts": "const included = true",
+      "src/generated-header.ts":
+        "// This file is auto-generated. Do not edit.\nconst ignored = true",
+      "src/generation-helper.ts": "const generatedOutput = true",
       "src/vendor.min.js": "window.alert('ignored')",
       "src/vendor.min.jsx": "window.alert('ignored')",
       "src/example.test.mts": "const ignored: object = {}",
@@ -244,7 +247,11 @@ test("native glob selection excludes generated files and folders", async () => {
       });
 
       expect(result.diagnostics.map((item) => item.file).sort()).toEqual(
-        [join(root, "src/api-generated.ts"), join(root, "src/app.ts")].sort(),
+        [
+          join(root, "src/api-generated.ts"),
+          join(root, "src/app.ts"),
+          join(root, "src/generation-helper.ts"),
+        ].sort(),
       );
     },
   );
@@ -253,13 +260,19 @@ test("native glob selection excludes generated files and folders", async () => {
 test("native glob selection excludes exact type-test directory names", async () => {
   await withFixture(
     {
+      "node_modules/vue/package.json": JSON.stringify({ name: "vue", version: "3.5.0" }),
       "src/app.ts": "const app = true",
+      "src/snapshot-helper.ts": "const helper = true",
       "src/test-d-helper.ts": "const helper = true",
+      "src/type-tests-helper.ts": "const helper = true",
       "src/typetest-helper.ts": "const helper = true",
       "src/dts-test-helper.ts": "const helper = true",
       "src/dtslint-helper.ts": "const helper = true",
+      "__snapshots__/assertions.ts": "const ignored: object = {}",
       "test-d/assertions.ts": "const ignored: object = {}",
+      "type-tests/assertions.ts": "const ignored: object = {}",
       "typetest/assertions.ts": "const ignored: object = {}",
+      "__typetest__/assertions.ts": "const ignored: object = {}",
       "dts-test/assertions.ts": "const ignored: object = {}",
       "dtslint/assertions.ts": "const ignored: object = {}",
     },
@@ -275,7 +288,9 @@ test("native glob selection excludes exact type-test directory names", async () 
           join(root, "src/app.ts"),
           join(root, "src/dts-test-helper.ts"),
           join(root, "src/dtslint-helper.ts"),
+          join(root, "src/snapshot-helper.ts"),
           join(root, "src/test-d-helper.ts"),
+          join(root, "src/type-tests-helper.ts"),
           join(root, "src/typetest-helper.ts"),
         ].sort(),
       );
@@ -317,6 +332,7 @@ test("since scans only files changed from the requested Git ref", async () => {
   await withFixture(
     {
       "src/changed.ts": "const changed = true",
+      "src/generated.ts": "// @generated\nconst generated = true",
       "src/unchanged.ts": "const unchanged = true",
     },
     async (root) => {
@@ -333,6 +349,7 @@ test("since scans only files changed from the requested Git ref", async () => {
         "fixture",
       );
       writeFileSync(join(root, "src/changed.ts"), "const changed = false");
+      writeFileSync(join(root, "src/generated.ts"), "// @generated\nconst generated = false");
 
       const result = await runDoctor({
         root,

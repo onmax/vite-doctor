@@ -76,9 +76,7 @@ export const noUnvalidatedDeserialization = createRule({
           }
           return;
         }
-        if (node.type !== "VariableDeclarator" || !node.init || node.id?.type !== "Identifier") {
-          return;
-        }
+        if (node.type !== "VariableDeclarator" || !node.init) return;
         const annotation = node.id.typeAnnotation?.typeAnnotation;
         if (
           annotation &&

@@ -4,6 +4,17 @@ import { diagnosticCodesByRuleId, diagnostics } from "../diagnostics.js";
 
 export type AnyNode = any;
 
+export function isTypeScriptSource(ctx: RuleContext): boolean {
+  if (/\.(?:[cm]?ts|tsx)$/i.test(ctx.file.relativePath)) return true;
+  if (!ctx.file.isVueSfc) return false;
+  const descriptor = (ctx.sfc ?? ctx.file.sfc)?.descriptor as
+    | { script?: { lang?: string }; scriptSetup?: { lang?: string } }
+    | undefined;
+  return [descriptor?.script, descriptor?.scriptSetup].some((block) =>
+    /^(?:ts|tsx)$/i.test(block?.lang ?? ""),
+  );
+}
+
 export function report(ctx: RuleContext, node: AnyNode, ruleId: string, why: string, fix: string) {
   const code = codeForRuleId(diagnosticCodesByRuleId, ruleId);
   if (!code) throw doctorInternalDiagnostics.DOC0013({ ruleId });

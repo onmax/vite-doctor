@@ -192,6 +192,23 @@ console.log(SessionCache)`,
     ]);
   });
 
+  test("reports deserialization assigned through an explicitly typed pattern", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `const { id }: User = JSON.parse(text)
+const [first]: [User] = JSON.parse(text)
+console.log(id, first)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => [item.ruleId, item.range?.line])).toEqual([
+      ["typescript/boundaries/no-unvalidated-deserialization", 1],
+      ["typescript/boundaries/no-unvalidated-deserialization", 2],
+    ]);
+  });
+
   test("ignores owned JSON serialization round trips", async () => {
     const result = await runProjectFixture({
       framework: "vite",
@@ -263,6 +280,34 @@ console.log(options, userId, safeUserId)`,
       "typescript/strict/no-runtime-typeof",
       "typescript/strict/require-safety-comment-for-type-assertion",
       "typescript/style/no-conditional-empty-object-spread",
+    ]);
+  });
+
+  test("runs syntax-generic strict rules only in TypeScript sources", async () => {
+    const result = await runProjectFixture({
+      framework: "vue",
+      rules: [noConditionalEmptyObjectSpread, noRuntimeTypeof],
+      files: {
+        "src/index.js": `const options = { ...(timeout ? { timeout } : {}) }
+if (typeof input === "string") console.log(options, input)`,
+        "src/index.ts": `const options = { ...(timeout ? { timeout } : {}) }
+if (typeof input === "string") console.log(options, input)`,
+        "javascript.vue": `<script setup>
+const options = { ...(timeout ? { timeout } : {}) }
+if (typeof input === "string") console.log(options, input)
+</script>`,
+        "typescript.vue": `<script setup lang="ts">
+const options = { ...(timeout ? { timeout } : {}) }
+if (typeof input === "string") console.log(options, input)
+</script>`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => [item.ruleId, item.file.split("/").at(-1)])).toEqual([
+      ["typescript/style/no-conditional-empty-object-spread", "index.ts"],
+      ["typescript/style/no-conditional-empty-object-spread", "typescript.vue"],
+      ["typescript/strict/no-runtime-typeof", "index.ts"],
+      ["typescript/strict/no-runtime-typeof", "typescript.vue"],
     ]);
   });
 

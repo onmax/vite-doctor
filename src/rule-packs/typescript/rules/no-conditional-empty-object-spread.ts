@@ -1,5 +1,5 @@
 import { createRule } from "../../../core/index.js";
-import { report, unwrapExpression, type AnyNode } from "./shared.js";
+import { isTypeScriptSource, report, unwrapExpression, type AnyNode } from "./shared.js";
 
 const ruleId = "typescript/style/no-conditional-empty-object-spread";
 
@@ -27,6 +27,7 @@ export const noConditionalEmptyObjectSpread = createRule({
     aiGeneratedCodeRisk: "medium",
   },
   create(ctx) {
+    if (!isTypeScriptSource(ctx)) return {};
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "SpreadElement") return;
