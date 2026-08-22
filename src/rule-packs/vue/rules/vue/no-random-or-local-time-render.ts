@@ -8,7 +8,7 @@ export const noRandomOrLocalTimeRender = createRule({
     severity: "warn",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/scaling-up/ssr.html#hydration-mismatch",
-    requires: { script: true, vue: true },
+    requires: { sfc: true, script: true, vue: true },
   },
   create(ctx) {
     if (ctx.project.framework === "nuxt") return;

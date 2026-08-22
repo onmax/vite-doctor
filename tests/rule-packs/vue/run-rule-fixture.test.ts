@@ -5,6 +5,7 @@ import {
   noRefAsOperand,
   noBrowserApiInSetup,
   noMutationInOnUpdated,
+  noRandomOrLocalTimeRender,
   preferComposableRefReturn,
   preferDefineModel,
   preferPropsDestructureDefaults,
@@ -276,6 +277,27 @@ const root = document.documentElement
     "vue/ssr/no-browser-api-in-setup",
     "vue/ssr/no-browser-api-in-setup",
   ]);
+});
+
+test("random SSR render rule runs only for Vue SFC render owners", async () => {
+  const result = await runRuleFixture({
+    rule: noRandomOrLocalTimeRender,
+    framework: "vue",
+    dependencies: { "@vue/server-renderer": "^3.5.0" },
+    files: {
+      "src/random.ts": "export const random = Math.random()",
+      "vitest.config.ts": "export const startedAt = Date.now()",
+      "app.vue": `<script setup lang="ts">
+const random = Math.random()
+const startedAt = Date.now()
+const localDate = new Date()
+</script>
+<template>{{ random }} {{ startedAt }} {{ localDate }}</template>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(3);
+  expect(result.diagnostics.every((item) => item.file.endsWith("app.vue"))).toBe(true);
 });
 
 test("post-flush watcher rule ignores document title writes", async () => {
