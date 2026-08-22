@@ -20,7 +20,7 @@ Nuxt projects install the `vite-doctor` package and configure the Nuxt module su
 
 Framework-specific workspace packages may remain temporarily as private internal organization boundaries. They are not public install targets, do not expose framework-specific binaries, and can be folded into the Vite Doctor package later if the extra workspace boundaries stop paying for themselves.
 
-This is a breaking migration with no legacy compatibility layer. Doctor keeps rule IDs for rule-pack organization and CLI selection, but emitted conditions receive stable short diagnostic codes. Codes use package-owned uppercase prefixes followed by four digits: `DOC`, `VUE`, `VITE`, `NITRO`, and `NUXT`. Codes are assigned sequentially per package and are not reused.
+This is a breaking migration with no legacy compatibility layer. Doctor keeps rule IDs for rule-pack organization and CLI selection, but emitted conditions receive stable short diagnostic codes. Codes use package-owned uppercase prefixes followed by four digits: `DOC`, `VUE`, `VITE`, `TS`, `NITRO`, and `NUXT`. Codes are assigned sequentially per package and are not reused.
 
 Every emitted Doctor rule diagnostic must include a `fix` string, even though `nostics` and Vite DevTools allow fixes to be optional. Doctor is optimized for agent consumers and CI remediation, so a reported rule diagnostic must always provide next-step guidance. Structured edit plans remain optional Doctor metadata, while `nostics.fix` is the human and agent remediation guidance.
 

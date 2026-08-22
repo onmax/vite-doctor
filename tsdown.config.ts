@@ -19,6 +19,8 @@ export default defineConfig({
     "src/rule-packs/nuxt/index.ts",
     "src/rule-packs/nuxt/module.ts",
     "src/rule-packs/nuxt/rules/index.ts",
+    "src/rule-packs/typescript/index.ts",
+    "src/rule-packs/typescript/rules/index.ts",
   ],
   exports: {
     bin: {

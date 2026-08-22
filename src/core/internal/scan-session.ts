@@ -297,6 +297,14 @@ function resolveExtends(
   }
   const selected = new Set<string>();
   for (const entry of requested) {
+    if (entry === "auto") {
+      for (const ruleId of packs
+        .filter((pack) => evaluatePackActivation(pack, project).state === "active")
+        .flatMap((pack) => pack.presets.recommended)) {
+        selected.add(ruleId);
+      }
+      continue;
+    }
     const slash = entry.lastIndexOf("/");
     if (slash === -1) throw doctorInternalDiagnostics.DOC0016({ entry });
     const packKey = entry.slice(0, slash);

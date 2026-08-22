@@ -46,6 +46,14 @@ export function evaluatePackActivation(pack: RulePack, project: ProjectInfo): Ap
     results.push(evaluateRuntimeRange(project, "nuxt", pack.activation.nuxt));
   }
 
+  if (pack.activation.languages?.length) {
+    const languages = new Set(project.languages ?? []);
+    const matched = pack.activation.languages.some((language) => languages.has(language));
+    results.push(
+      matched ? active() : inactive(`Rule Pack ${pack.name} language activation did not match.`),
+    );
+  }
+
   const hasPackageOrModuleConstraints = Boolean(
     pack.activation.packages?.length || pack.activation.modules?.length,
   );

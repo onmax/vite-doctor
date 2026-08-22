@@ -15,7 +15,13 @@ type DiagnosticNavigationEntry = {
   ruleId: string;
 };
 
-const frameworkNavigationOrder = ["nuxt", "vue", "vite", "nitro"] as const satisfies Framework[];
+const frameworkNavigationOrder = [
+  "typescript",
+  "nuxt",
+  "vue",
+  "vite",
+  "nitro",
+] as const satisfies Framework[];
 
 export function createRulesNavigation(
   rules: RuleNavigationEntry[],

@@ -1,4 +1,4 @@
-export type Framework = "vue" | "vite" | "nuxt" | "nitro";
+export type Framework = "vue" | "vite" | "nuxt" | "nitro" | "typescript";
 export type FrameworkFilter = Framework | "all";
 export type Severity = "error" | "warn" | "info";
 export type FixKind = "safe" | "suggestion" | "no";
@@ -23,6 +23,11 @@ export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; ic
     label: "Nitro",
     pack: "vite-doctor/nitro",
     icon: "i-unjs-nitro",
+  },
+  typescript: {
+    label: "TypeScript",
+    pack: "vite-doctor/typescript",
+    icon: "i-vscode-icons-file-type-typescript",
   },
 };
 
@@ -83,6 +88,7 @@ export function packLabel(pack: string) {
 }
 
 export function frameworkOfPack(pack: string): Framework {
+  if (pack === "vite-doctor/typescript") return "typescript";
   if (pack === "vite-doctor/nitro") return "nitro";
   if (pack === "vite-doctor/vue") return "vue";
   if (pack === "vite-doctor/vite") return "vite";

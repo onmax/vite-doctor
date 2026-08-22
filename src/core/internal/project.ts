@@ -7,6 +7,7 @@ import type {
   NuxtDoctorManifest,
   NuxtProjectInfo,
   ProjectInfo,
+  ProjectLanguage,
 } from "../primitives.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
@@ -63,6 +64,9 @@ export async function detectProject(
   );
   const resolvedNuxtVersion = targeted.graph.packages.nuxt?.version;
   const resolvedVueVersion = targeted.graph.packages.vue?.version;
+  const tsconfigPath = existsSync(join(root, "tsconfig.json"))
+    ? join(root, "tsconfig.json")
+    : undefined;
   return {
     root: resolve(root),
     framework,
@@ -73,11 +77,41 @@ export async function detectProject(
       : undefined,
     isMonorepo,
     packageName: packageJson?.name,
-    tsconfigPath: existsSync(join(root, "tsconfig.json")) ? join(root, "tsconfig.json") : undefined,
+    tsconfigPath,
+    languages: await detectProjectLanguages(root, Boolean(tsconfigPath)),
     nuxt,
     runtimeGraph: targeted.graph,
     nuxtCompatibility: targeted.compatibility,
   };
+}
+
+async function detectProjectLanguages(
+  root: string,
+  hasTsconfig: boolean,
+): Promise<ProjectLanguage[]> {
+  let hasTypeScript = hasTsconfig;
+  let hasJavaScript = false;
+  for await (const entry of glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", {
+    cwd: root,
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/.nuxt/**",
+      "**/.next/**",
+      "**/.output/**",
+      "**/coverage/**",
+      "**/generated/**",
+    ],
+  })) {
+    if (typeof entry !== "string") continue;
+    if (/\.(?:ts|tsx|mts|cts)$/.test(entry)) hasTypeScript = true;
+    if (/\.(?:js|jsx|mjs|cjs)$/.test(entry)) hasJavaScript = true;
+    if (hasTypeScript && hasJavaScript) break;
+  }
+  return [
+    ...(hasTypeScript ? (["typescript"] as const) : []),
+    ...(hasJavaScript ? (["javascript"] as const) : []),
+  ];
 }
 
 function hasVueSsrEvidence(
