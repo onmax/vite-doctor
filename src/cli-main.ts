@@ -19,9 +19,29 @@ import { runViteDoctor, shouldFailDoctorRun, viteDoctorRulePacks } from "./docto
 import { viteDoctorVersion } from "./version.js";
 import { createMigrationReport, formatMigrationReport } from "./migration.js";
 
+type MetadataReportFormat = Exclude<DoctorReportFormat, "sarif">;
+
 const removedCommands = new Set(["run", "ci", "scan", "check"]);
 const reportFormats = new Set<DoctorReportFormat>(["text", "json", "sarif", "agent"]);
-const metadataFormats = new Set<DoctorReportFormat>(["text", "json", "agent"]);
+const metadataFormats = new Set<MetadataReportFormat>(["text", "json", "agent"]);
+const frameworks = new Set<NonNullable<DoctorRunOptions["framework"]>>([
+  "auto",
+  "vite",
+  "vue",
+  "nitro",
+  "nuxt",
+]);
+const severities = new Set<NonNullable<DoctorRunOptions["severity"]>>(["error", "warn", "info"]);
+const analyses = new Set(["dead-code", "graph", "dupes", "health"]);
+
+class CliConfigError extends Error {
+  constructor(
+    readonly file: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 export async function main(args = process.argv.slice(2), cwd = process.cwd()): Promise<number> {
   if (args.includes("--version") || args.includes("-v")) {
@@ -69,6 +89,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       const format = await presentationFormat(options.format, metadataFormats);
       const runOptions: DoctorRunOptions = { root: cwd, format };
       applyDoctorOptions(runOptions, options);
+      validateCliRunOptions(runOptions);
       process.stdout.write(createRulesReport(await viteDoctorRulePacks(runOptions), format));
     });
   cli
@@ -79,6 +100,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       const format = await presentationFormat(options.format, metadataFormats);
       const runOptions: DoctorRunOptions = { root: cwd, format };
       applyDoctorOptions(runOptions, options);
+      validateCliRunOptions(runOptions);
       const report = explainRule(await viteDoctorRulePacks(runOptions), diagnostic, format);
       if (!report) {
         await writeCliError(`Unknown Diagnostic Code or Rule: ${diagnostic}`, format);
@@ -104,7 +126,10 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
     return exitCode;
   } catch (error) {
     const format = await requestedPresentation(args);
-    await writeCliError(error instanceof Error ? error.message : String(error), format);
+    await writeCliError(error instanceof Error ? error.message : String(error), format, {
+      kind: error instanceof CliConfigError ? "config" : "invocation",
+      file: error instanceof CliConfigError ? error.file : undefined,
+    });
     return 2;
   }
 }
@@ -118,8 +143,10 @@ function addDoctorRunCommand(
     .command("[path]", "Run Doctor diagnostics.")
     .option("--changed", "Report diagnostics on changed lines.")
     .option("--types", "Enable type-aware rules.")
-    .option("--threads <threads>", "Thread count.")
-    .option("--analyses <analyses>", "Analyses to run.")
+    .option(
+      "--analyses <analyses>",
+      "Comma-separated analyses: dead-code, graph, dupes, or health.",
+    )
     .option("--profile", "Include timings.")
     .option("--new-only", "Only report diagnostics absent from the baseline.")
     .option("--cache", "Use the analysis cache.")
@@ -145,8 +172,18 @@ function addDoctorRunCommand(
       }
       const runOptions: DoctorRunOptions = { root, format };
       applyDoctorOptions(runOptions, options);
-      runOptions.config = await loadCliConfig(root, stringFlag(options.config));
-      setExitCode(await runDoctorCommand(runOptions, format));
+      validateCliRunOptions(runOptions);
+      const explicitConfig = stringFlag(options.config);
+      const configFile = cliConfigFile(root, explicitConfig);
+      runOptions.config = await loadCliConfig(root, explicitConfig);
+      try {
+        setExitCode(await runDoctorCommand(runOptions, format));
+      } catch (error) {
+        if (configFile && isLoadedConfigValidationError(error, runOptions)) {
+          throw createCliConfigError(configFile, error);
+        }
+        throw error;
+      }
     });
 }
 
@@ -165,33 +202,43 @@ async function loadCliConfig(
   explicitConfig?: string,
 ): Promise<DoctorConfig | undefined> {
   if (explicitConfig) {
-    return loadDoctorConfig({ cwd: root, configFile: resolve(root, explicitConfig) });
+    const configFile = resolve(root, explicitConfig);
+    try {
+      return await loadDoctorConfig({ cwd: root, configFile });
+    } catch (error) {
+      throw createCliConfigError(configFile, error);
+    }
   }
   const declarativeConfig = resolve(root, "doctor.config.json");
   if (!existsSync(declarativeConfig)) return undefined;
-  const value = JSON.parse(readFileSync(declarativeConfig, "utf8")) as unknown;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("doctor.config.json must contain a JSON object.");
+  try {
+    const value = JSON.parse(readFileSync(declarativeConfig, "utf8")) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("doctor.config.json must contain a JSON object.");
+    }
+    return value as DoctorConfig;
+  } catch (error) {
+    throw createCliConfigError(declarativeConfig, error);
   }
-  return value as DoctorConfig;
 }
 
-async function presentationFormat(
+async function presentationFormat<Format extends DoctorReportFormat>(
   value: unknown,
-  supported: Set<DoctorReportFormat>,
-): Promise<DoctorReportFormat> {
+  supported: ReadonlySet<Format>,
+): Promise<Format> {
   const explicit = stringFlag(value);
   if (explicit && !reportFormats.has(explicit as DoctorReportFormat)) {
     throw new Error(
       `Unknown report format ${JSON.stringify(explicit)}. Expected ${[...supported].join(", ")}.`,
     );
   }
-  if (explicit && !supported.has(explicit as DoctorReportFormat)) {
+  if (explicit && !supported.has(explicit as Format)) {
     throw new Error(
       `Report format ${JSON.stringify(explicit)} is not available here. Expected ${[...supported].join(", ")}.`,
     );
   }
-  return (await selectDoctorPresentation(explicit as DoctorReportFormat | undefined)).format;
+  return (await selectDoctorPresentation(explicit as DoctorReportFormat | undefined))
+    .format as Format;
 }
 
 async function requestedPresentation(args: string[]): Promise<DoctorReportFormat> {
@@ -207,7 +254,11 @@ async function requestedPresentation(args: string[]): Promise<DoctorReportFormat
   return (await selectDoctorPresentation()).format;
 }
 
-async function writeCliError(message: string, format: DoctorReportFormat): Promise<void> {
+async function writeCliError(
+  message: string,
+  format: DoctorReportFormat,
+  failure: { kind: "invocation" | "config"; file?: string } = { kind: "invocation" },
+): Promise<void> {
   if (format === "json" || format === "agent") {
     const indentation = format === "agent" ? undefined : 2;
     process.stdout.write(
@@ -215,8 +266,11 @@ async function writeCliError(message: string, format: DoctorReportFormat): Promi
         {
           schema: format === "agent" ? "vite-doctor.agent/v1" : "vite-doctor.report/v3",
           status: "failed",
-          error: { kind: "invocation", message },
-          next: { action: "correct-invocation", command: "vite-doctor --help" },
+          error: { kind: failure.kind, message, file: failure.file },
+          next:
+            failure.kind === "config"
+              ? { action: "fix-config", file: failure.file }
+              : { action: "correct-invocation", command: "vite-doctor --help" },
         },
         null,
         indentation,
@@ -249,4 +303,56 @@ async function writeCliError(message: string, format: DoctorReportFormat): Promi
 
 function isDirectory(path: string): boolean {
   return Boolean(statSync(path, { throwIfNoEntry: false })?.isDirectory());
+}
+
+function validateCliRunOptions(options: DoctorRunOptions): void {
+  if (options.framework && !frameworks.has(options.framework)) {
+    throw new Error(
+      `Unknown framework ${JSON.stringify(options.framework)}. Expected ${[...frameworks].join(", ")}.`,
+    );
+  }
+  if (options.severity && !severities.has(options.severity)) {
+    throw new Error(
+      `Unknown severity ${JSON.stringify(options.severity)}. Expected ${[...severities].join(", ")}.`,
+    );
+  }
+  if (
+    options.maxWarnings !== undefined &&
+    (!Number.isInteger(options.maxWarnings) || options.maxWarnings < 0)
+  ) {
+    throw new Error("--max-warnings must be a non-negative integer.");
+  }
+  const requestedAnalyses = options.analyses
+    ?.split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (options.analyses !== undefined && !requestedAnalyses?.length) {
+    throw new Error("--analyses must select at least one analysis.");
+  }
+  const unknownAnalyses = requestedAnalyses?.filter((item) => !analyses.has(item));
+  if (unknownAnalyses?.length) {
+    throw new Error(
+      `Unknown analysis ${JSON.stringify(unknownAnalyses[0])}. Expected ${[...analyses].join(", ")}.`,
+    );
+  }
+}
+
+function createCliConfigError(file: string, error: unknown): CliConfigError {
+  const reason = error instanceof Error ? error.message : String(error);
+  return new CliConfigError(file, `Could not load Doctor config at ${file}: ${reason}`);
+}
+
+function cliConfigFile(root: string, explicitConfig?: string): string | undefined {
+  if (explicitConfig) return resolve(root, explicitConfig);
+  const declarativeConfig = resolve(root, "doctor.config.json");
+  return existsSync(declarativeConfig) ? declarativeConfig : undefined;
+}
+
+function isLoadedConfigValidationError(error: unknown, options: DoctorRunOptions): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "DOC0019" || error.name === "DOC0020") return true;
+  return (
+    options.extends === undefined &&
+    (error.name === "DOC0016" || error.name === "DOC0017" || error.name === "DOC0018")
+  );
 }

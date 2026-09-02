@@ -492,6 +492,14 @@ test("changed scope reports diagnostics whose source ranges overlap changed line
         expect.objectContaining({ ruleId: "test/report-program" }),
       ]),
     );
+    const agent = JSON.parse(createAgentReport(result));
+    expect(agent.commands).toEqual({
+      explain: "vite-doctor explain <code> --framework vue --format agent",
+      verify: `vite-doctor . --framework vue --since ${result.scope.base} --rules <rule> --format agent`,
+      rerun: `vite-doctor . --framework vue --since ${result.scope.base} --format agent`,
+    });
+    expect(agent.next).not.toHaveProperty("cwd");
+    expect(agent.next).not.toHaveProperty("rerun");
   });
 });
 
@@ -844,6 +852,13 @@ test("agent reporter is compact and includes a complete remediation path", async
       framework: "vue",
       extensions: [pluginWith(reportProgramRule)],
     });
+    result.diagnostics[0]!.related = [
+      {
+        file: join(root, "src/other.ts"),
+        range: { start: 0, end: 1, line: 3, column: 2 },
+        message: "Related cycle member.",
+      },
+    ];
     const report = createAgentReport(result);
     const agent = JSON.parse(report);
 
@@ -852,12 +867,22 @@ test("agent reporter is compact and includes a complete remediation path", async
       rule: "test/report-program",
       location: { path: "src/app.ts" },
       remediation: "Inspect the test program diagnostic.",
+      related: [
+        {
+          path: "src/other.ts",
+          line: 3,
+          column: 2,
+          message: "Related cycle member.",
+        },
+      ],
     });
     expect(agent.commands).toEqual({
-      explain: "vite-doctor explain <code> --format agent",
-      verify: "vite-doctor . --rules <rule> --format agent",
-      rerun: "vite-doctor . --format agent",
+      explain: "vite-doctor explain <code> --framework vue --format agent",
+      verify: "vite-doctor . --framework vue --rules <rule> --format agent",
+      rerun: "vite-doctor . --framework vue --format agent",
     });
+    expect(agent.next).not.toHaveProperty("cwd");
+    expect(agent.next).not.toHaveProperty("rerun");
     expect(report).not.toContain(join(root, "src/app.ts"));
   });
 });

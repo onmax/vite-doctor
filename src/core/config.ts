@@ -27,7 +27,6 @@ export interface DoctorRunOptions {
   severity?: "error" | "warn" | "info";
   rules?: string;
   types?: boolean;
-  threads?: number;
   coverage?: string;
   runtimeEvidence?: string;
   analyses?: string;

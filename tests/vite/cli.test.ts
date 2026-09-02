@@ -374,6 +374,93 @@ export default { rules: { "vite/define/no-secret-define": "off" } }
   );
 });
 
+test("CLI identifies config loading failures and points to the config file", async () => {
+  await withFixture(
+    { "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }) },
+    async (root) => {
+      const missing = await runCli(
+        [".", "--config", "missing.config.ts", "--format", "agent"],
+        root,
+      );
+      expect(missing.code).toBe(2);
+      expect(JSON.parse(missing.output)).toMatchObject({
+        status: "failed",
+        error: { kind: "config", file: join(root, "missing.config.ts") },
+        next: { action: "fix-config", file: join(root, "missing.config.ts") },
+      });
+    },
+  );
+
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "doctor.config.json": "{not-json",
+    },
+    async (root) => {
+      const malformed = await runCli([".", "--format", "agent"], root);
+      expect(malformed.code).toBe(2);
+      expect(JSON.parse(malformed.output)).toMatchObject({
+        error: { kind: "config", file: join(root, "doctor.config.json") },
+        next: { action: "fix-config", file: join(root, "doctor.config.json") },
+      });
+    },
+  );
+
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "doctor.config.json": JSON.stringify({
+        rules: { "vite/define/no-secret-define": "fatal" },
+      }),
+    },
+    async (root) => {
+      const invalid = await runCli([".", "--format", "agent"], root);
+      expect(invalid.code).toBe(2);
+      expect(JSON.parse(invalid.output)).toMatchObject({
+        error: { kind: "config", file: join(root, "doctor.config.json") },
+        next: { action: "fix-config", file: join(root, "doctor.config.json") },
+      });
+    },
+  );
+
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "doctor.config.json": "{}",
+    },
+    async (root) => {
+      const invalidFlag = await runCli([".", "--extends", "broken", "--format", "agent"], root);
+      expect(invalidFlag.code).toBe(2);
+      expect(JSON.parse(invalidFlag.output)).toMatchObject({
+        error: { kind: "invocation" },
+        next: { action: "correct-invocation" },
+      });
+    },
+  );
+});
+
+test("CLI rejects invalid run options before starting a Doctor Run", async () => {
+  const root = findRepoRoot();
+  const cases: Array<[string[], string]> = [
+    [["--framework", "banana"], "Unknown framework"],
+    [["--severity", "banana"], "Unknown severity"],
+    [["--max-warnings=-1"], "non-negative integer"],
+    [["--max-warnings", "1.5"], "non-negative integer"],
+    [["--analyses", "banana"], "Unknown analysis"],
+    [["--analyses", ","], "at least one analysis"],
+  ];
+
+  for (const [options, message] of cases) {
+    const result = await runCli([".", ...options, "--format", "agent"], root);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.output)).toMatchObject({
+      status: "failed",
+      error: { kind: "invocation", message: expect.stringContaining(message) },
+      next: { action: "correct-invocation" },
+    });
+  }
+});
+
 test("CLI returns structured failures for unknown Diagnostic Codes", async () => {
   const result = await runWithCapturedStdout(() =>
     main(["explain", "DOES_NOT_EXIST", "--format", "agent"], findRepoRoot()),

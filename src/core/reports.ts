@@ -135,6 +135,7 @@ export function createJsonReport(result: DoctorRunResult): string {
 
 export function createAgentReport(result: DoctorRunResult): string {
   const status = reportStatus(result);
+  const rerun = agentRunCommand(result);
   return `${JSON.stringify({
     schema: "vite-doctor.agent/v1",
     status,
@@ -149,9 +150,9 @@ export function createAgentReport(result: DoctorRunResult): string {
     ),
     fixes: result.fixes,
     commands: {
-      explain: "vite-doctor explain <code> --format agent",
-      verify: "vite-doctor . --rules <rule> --format agent",
-      rerun: "vite-doctor . --format agent",
+      explain: `vite-doctor explain <code> --framework ${result.framework} --format agent`,
+      verify: agentRunCommand(result, true),
+      rerun,
     },
     next:
       status === "clean"
@@ -161,15 +162,11 @@ export function createAgentReport(result: DoctorRunResult): string {
               action: "restore-evidence",
               instruction:
                 "Install project dependencies and run Doctor from the target package before relying on version-specific results.",
-              cwd: result.root,
-              rerun: "vite-doctor . --format agent",
             }
           : {
               action: "remediate",
               instruction:
                 "Apply the smallest remediation that resolves each owned diagnostic, run its focused verification, then rerun Doctor.",
-              cwd: result.root,
-              rerun: "vite-doctor . --format agent",
             },
   })}\n`;
 }
@@ -254,7 +251,10 @@ export function createReport(result: DoctorRunResult, format: DoctorReportFormat
   return `${createTextReport(result)}\n`;
 }
 
-export function createRulesReport(packs: RulePack[], format: DoctorReportFormat = "text"): string {
+export function createRulesReport(
+  packs: RulePack[],
+  format: Exclude<DoctorReportFormat, "sarif"> = "text",
+): string {
   const rules = packs.flatMap((pack) =>
     pack.rules.map((rule) => ({
       pack: pack.name,
@@ -278,7 +278,7 @@ export function createRulesReport(packs: RulePack[], format: DoctorReportFormat 
 export function explainRule(
   packs: RulePack[],
   ruleId: string,
-  format: DoctorReportFormat = "text",
+  format: Exclude<DoctorReportFormat, "sarif"> = "text",
 ): string {
   const match = packs
     .flatMap((pack) => pack.rules.map((rule) => ({ pack: pack.name, rule })))
@@ -402,7 +402,24 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
     docs: diagnosticReferenceUrl(diagnostic.code),
     evidence: evidence?.length ? evidence : undefined,
     editPlan: diagnostic.fix,
+    related: diagnostic.related?.map((item) => ({
+      path: relative(result.root, item.file),
+      line: item.range?.line,
+      column: item.range?.column,
+      message: item.message,
+    })),
   };
+}
+
+function agentRunCommand(result: DoctorRunResult, focused = false): string {
+  const args = ["vite-doctor", ".", "--framework", result.framework];
+  if (result.scope.mode === "changed") {
+    if (result.scope.base) args.push("--since", result.scope.base);
+    else args.push("--changed");
+  }
+  if (focused) args.push("--rules", "<rule>");
+  args.push("--format", "agent");
+  return args.join(" ");
 }
 
 function diagnosticReferenceUrl(code: string) {

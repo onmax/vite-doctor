@@ -2,6 +2,7 @@ import { relative } from "pathe";
 import type {
   Diagnostic,
   DoctorFramework,
+  DoctorReportFormat,
   ProjectInfo,
   RuntimePackageName,
   RuntimeTarget,
@@ -167,7 +168,10 @@ export async function createMigrationReport(
   };
 }
 
-export function formatMigrationReport(report: MigrationReport, format = "text"): string {
+export function formatMigrationReport(
+  report: MigrationReport,
+  format: Exclude<DoctorReportFormat, "sarif"> = "text",
+): string {
   if (format === "json") return `${JSON.stringify(report, null, 2)}\n`;
   if (format === "agent") {
     return `${JSON.stringify({
