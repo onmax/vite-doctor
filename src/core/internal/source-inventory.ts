@@ -1,10 +1,17 @@
-import { execFile } from "node:child_process";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
+import { matchesGlob } from "node:path";
 import { relative, resolve } from "pathe";
 import type { DoctorConfig } from "../config.js";
 import type { DoctorRunOptions } from "../config.js";
 import type { ProjectInfo, SourceFileHandle } from "../primitives.js";
+import {
+  collectGitChangeInventory,
+  type AvailableGitChangeInventory,
+  type ChangedLineRange,
+  type GitChangeInventory,
+  type UnavailableGitChangeInventory,
+} from "./git-change-ranges.js";
 
 const DEFAULT_INCLUDE = [
   "**/*.{vue,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
@@ -35,6 +42,48 @@ export interface ScanFileEntry {
   displayPath: string;
   sourceKind: SourceFileHandle["sourceKind"];
   moduleName?: string;
+  reportEligibility?: {
+    kind: "changed-lines";
+    ranges: ChangedLineRange[];
+  };
+}
+
+export interface SourceInventorySelection {
+  files: ScanFileEntry[];
+  git?: GitChangeInventory;
+}
+
+export class GitChangeUnavailableError extends Error {
+  readonly inventory: UnavailableGitChangeInventory;
+
+  constructor(inventory: UnavailableGitChangeInventory) {
+    super(inventory.message);
+    this.name = "GitChangeUnavailableError";
+    this.inventory = inventory;
+  }
+}
+
+export async function selectSourceInventory(
+  root: string,
+  config: DoctorConfig,
+  options: DoctorRunOptions,
+  project: ProjectInfo,
+): Promise<SourceInventorySelection> {
+  if (options.changed || options.since) {
+    const include = config.include ?? defaultIncludeForProject(project);
+    const exclude = [...DEFAULT_EXCLUDE, ...(config.exclude ?? [])];
+    const git = await collectGitChangeInventory(
+      root,
+      options.since,
+      (path) =>
+        include.some((pattern) => matchesGlob(path, pattern)) &&
+        !exclude.some((pattern) => matchesGlob(path, pattern)),
+    );
+    if (git.status === "unavailable") return { files: [], git };
+    return { files: selectChangedFiles(root, config, project, git), git };
+  }
+
+  return { files: await selectAllFiles(root, config, project) };
 }
 
 export async function selectScanFiles(
@@ -43,19 +92,18 @@ export async function selectScanFiles(
   options: DoctorRunOptions,
   project: ProjectInfo,
 ): Promise<ScanFileEntry[]> {
-  if (options.changed || options.since) {
-    const changed = await gitChangedFiles(root, options.since);
-    const includeContent = hasContentFiles(project);
-    return changed
-      .filter((file) =>
-        includeContent
-          ? /\.(vue|[cm]?[jt]sx?|mdc?)$/.test(file)
-          : /\.(vue|[cm]?[jt]sx?)$/.test(file),
-      )
-      .filter((file) => isScannableFile(resolve(root, file)))
-      .map((file) => createAppFileEntry(root, file));
+  const selection = await selectSourceInventory(root, config, options, project);
+  if (selection.git?.status === "unavailable") {
+    throw new GitChangeUnavailableError(selection.git);
   }
+  return selection.files;
+}
 
+async function selectAllFiles(
+  root: string,
+  config: DoctorConfig,
+  project: ProjectInfo,
+): Promise<ScanFileEntry[]> {
   const files = new Map<string, ScanFileEntry>();
   const exclude = [...DEFAULT_EXCLUDE, ...(config.exclude ?? [])];
   const include = config.include ?? defaultIncludeForProject(project);
@@ -86,6 +134,32 @@ export async function selectScanFiles(
   }
 
   return [...files.values()].sort((a, b) => a.displayPath.localeCompare(b.displayPath));
+}
+
+function selectChangedFiles(
+  root: string,
+  config: DoctorConfig,
+  project: ProjectInfo,
+  git: AvailableGitChangeInventory,
+): ScanFileEntry[] {
+  const include = config.include ?? defaultIncludeForProject(project);
+  const exclude = [...DEFAULT_EXCLUDE, ...(config.exclude ?? [])];
+  return git.files
+    .filter((change) => change.path)
+    .filter(
+      (change) =>
+        include.some((pattern) => matchesGlob(change.path!, pattern)) &&
+        !exclude.some((pattern) => matchesGlob(change.path!, pattern)),
+    )
+    .filter((change) => isScannableFile(resolve(root, change.path!)))
+    .map((change) => ({
+      ...createAppFileEntry(root, change.path!),
+      reportEligibility: {
+        kind: "changed-lines" as const,
+        ranges: change.reportRanges,
+      },
+    }))
+    .sort((left, right) => left.displayPath.localeCompare(right.displayPath));
 }
 
 function isScannableFile(file: string): boolean {
@@ -125,21 +199,4 @@ function createAppFileEntry(root: string, file: string): ScanFileEntry {
 function detectAppSourceKind(root: string, file: string): SourceFileHandle["sourceKind"] {
   const relativePath = relative(root, file);
   return relativePath.startsWith("layers/") ? "layer" : "app";
-}
-
-async function gitChangedFiles(root: string, since?: string): Promise<string[]> {
-  const args = since
-    ? ["diff", "--name-only", "--diff-filter=ACMR", since, "--"]
-    : ["diff", "--name-only", "--diff-filter=ACMR", "--cached", "--"];
-  const stdout = await execFileText("git", args, root);
-  return stdout.split(/\r?\n/).filter(Boolean);
-}
-
-function execFileText(command: string, args: string[], cwd: string): Promise<string> {
-  return new Promise((resolvePromise, reject) => {
-    execFile(command, args, { cwd, encoding: "utf8" }, (error, stdout) => {
-      if (error) reject(error);
-      else resolvePromise(stdout);
-    });
-  });
 }

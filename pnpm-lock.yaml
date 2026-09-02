@@ -106,6 +106,9 @@ catalogs:
     consola:
       specifier: ^3.4.2
       version: 3.4.2
+    detect-agent:
+      specifier: ^1.2.0
+      version: 1.2.0
     defu:
       specifier: ^6.1.7
       version: 6.1.7
@@ -179,6 +182,9 @@ importers:
       consola:
         specifier: catalog:prod
         version: 3.4.2
+      detect-agent:
+        specifier: catalog:prod
+        version: 1.2.0
       defu:
         specifier: catalog:prod
         version: 6.1.7
@@ -206,6 +212,9 @@ importers:
       semver:
         specifier: catalog:prod
         version: 7.8.5
+      std-env:
+        specifier: catalog:prod
+        version: 4.2.0
       typescript:
         specifier: catalog:analysis
         version: 6.0.3
@@ -5817,6 +5826,10 @@ packages:
 
   defu@6.1.7:
     resolution: {integrity: sha512-7z22QmUWiQ/2d0KkdYmANbRUVABpZ9SNYyH5vx6PZ+nE5bcC0l7uFvEfHlyld/HcGBFTL536ClDt3DEcSlEJAQ==}
+
+  detect-agent@1.2.0:
+    resolution: {integrity: sha512-fW/515FHIogLopGDTSMc4XXkJV6mkVC10gVPoenb7cgY7PZAF/jakLDdDUBQ9QpJEA9AYgEg3/B9WqLTUtz3Ag==}
+    engines: {node: '>=20'}
 
   denque@2.1.0:
     resolution: {integrity: sha512-HVQE3AAb/pxF8fQAoiqpvg9i3evqug3hoiwakOyZAwJm+6vZehbkYXZ0l4JxS+I3QxM97v5aaRNhj8v5oBhekw==}
@@ -15073,6 +15086,8 @@ snapshots:
       object-keys: 1.1.1
 
   defu@6.1.7: {}
+
+  detect-agent@1.2.0: {}
 
   denque@2.1.0: {}
 
