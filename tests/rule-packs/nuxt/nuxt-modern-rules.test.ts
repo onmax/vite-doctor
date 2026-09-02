@@ -2945,10 +2945,20 @@ test("Nuxt module writes manifest and accepts context hook contributions", async
   });
 });
 
+test("Nuxt module exposes native Doctor config", async () => {
+  expect(await nuxtDoctorModule.getMeta?.()).toEqual({
+    name: "vite-doctor",
+    configKey: "doctor",
+    compatibility: { nuxt: ">=4" },
+    docs: "https://vite-doctor.onmax.me/nuxt",
+  });
+});
+
 test("Nuxt module records the resolved auto-import registry", async () => {
   await withFixture({}, {}, async (root) => {
     const hooks = new Map<string, Array<(payload: any) => unknown>>();
     const nuxt = {
+      _version: "4.5.1",
       options: {
         rootDir: root,
         srcDir: "app",
@@ -2966,7 +2976,7 @@ test("Nuxt module records the resolved auto-import registry", async () => {
       async callHook() {},
     };
 
-    await nuxtDoctorModule({}, nuxt);
+    await nuxtDoctorModule({}, nuxt as any);
     for (const hook of hooks.get("imports:context") ?? [])
       await hook({
         getImports: async () => [
@@ -3055,16 +3065,16 @@ useRoute();
     {},
     async (root) => {
       const nuxt = {
+        _version: "4.5.1",
         options: { rootDir: root, buildDir: ".nuxt", modules: [] },
+        async callHook() {},
       };
 
       await nuxtDoctorModule(
         {
-          config: {
-            rules: { "nuxt/routing/prefer-nuxt-useroute": "off" },
-          },
+          rules: { "nuxt/routing/prefer-nuxt-useroute": "off" },
         },
-        nuxt,
+        nuxt as any,
       );
       await writeManifest(nuxt);
 

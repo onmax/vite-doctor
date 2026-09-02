@@ -144,18 +144,12 @@ Use the Nuxt module surface for Nuxt-specific configuration:
 ```ts
 // nuxt.config.ts
 export default defineNuxtConfig({
-  modules: [
-    [
-      "vite-doctor/nuxt",
-      {
-        config: {
-          rules: {
-            "nuxt/routing/prefer-nuxt-useroute": "error",
-          },
-        },
-      },
-    ],
-  ],
+  modules: ["vite-doctor/nuxt"],
+  doctor: {
+    rules: {
+      "nuxt/routing/prefer-nuxt-useroute": "error",
+    },
+  },
 });
 ```
 

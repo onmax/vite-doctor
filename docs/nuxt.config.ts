@@ -25,7 +25,7 @@ const contentDumpRoutes = [
 export default defineNuxtConfig({
   extends: ["docus"],
 
-  modules: [["vite-doctor/nuxt"]],
+  modules: ["vite-doctor/nuxt"],
 
   css: ["~/assets/css/main.css"],
 

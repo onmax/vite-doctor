@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vite-plus/test";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { relative } from "pathe";
-import { $fetch, setup } from "@nuxt/test-utils/e2e";
+import { join, relative } from "pathe";
+import { $fetch, setup, useTestContext } from "@nuxt/test-utils/e2e";
 import { defineDoctorExtension, runDoctor } from "../../../src/core/index.ts";
 import { vueRulePack } from "../../../src/rule-packs/vue/rules.ts";
 import { nuxtRulePacks } from "../../../src/rule-packs/nuxt/rules/index.ts";
@@ -92,6 +93,20 @@ describe("Nuxt all-issues fixture app", async () => {
   test("boots with Nuxt test utils", async () => {
     const html = await $fetch("/smoke");
     expect(html).toContain("Nuxt all issues fixture");
+  });
+
+  test("loads flat Doctor config through the Nuxt module", () => {
+    const buildDir = useTestContext().nuxt!.options.buildDir;
+    const manifest = JSON.parse(readFileSync(join(buildDir, "doctor.manifest.json"), "utf8"));
+    expect(manifest.doctorConfig).toEqual({
+      rules: {
+        "nuxt/imports/no-explicit-auto-import": "off",
+      },
+    });
+
+    const moduleTypes = readFileSync(join(buildDir, "types/modules.d.ts"), "utf8");
+    expect(moduleTypes).toContain('["doctor"]?:');
+    expect(moduleTypes).toContain("https://vite-doctor.onmax.me/nuxt");
   });
 });
 

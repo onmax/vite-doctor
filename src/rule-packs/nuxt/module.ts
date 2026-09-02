@@ -1,4 +1,6 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { defineNuxtModule } from "nuxt/kit";
+import type { NuxtModule } from "nuxt/schema";
 import { join, relative, resolve } from "pathe";
 import type {
   DoctorConfig,
@@ -9,11 +11,7 @@ import type {
 } from "../../core/index.js";
 export type { NuxtDoctorManifest } from "../../core/index.js";
 
-export interface NuxtDoctorModuleOptions {
-  config?: DoctorConfig;
-  extends?: "auto" | string[];
-  extensions?: DoctorExtension[];
-}
+export type NuxtDoctorModuleOptions = DoctorConfig;
 
 type EvidenceBuildManifest = {
   hasBuildManifest: boolean;
@@ -33,12 +31,9 @@ type NuxtDoctorEvidence = {
   autoImportContext?: NuxtAutoImportContext;
 };
 
-export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions = {}, nuxt: any) {
+async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   nuxt.options ??= {};
-  nuxt.options.doctor ??= {};
-  nuxt.options.doctor.config ??= options.config;
-  nuxt.options.doctor.extends ??= options.extends;
-  nuxt.options.doctor.extensions ??= options.extensions;
+  nuxt.options.doctor = options;
 
   const evidence = {
     pages: [] as Array<{ path?: string; file?: string; name?: string }>,
@@ -97,6 +92,18 @@ export default async function nuxtDoctorModule(options: NuxtDoctorModuleOptions 
     await writeManifest(nuxt, evidence);
   });
 }
+
+const nuxtDoctorModule: NuxtModule<NuxtDoctorModuleOptions> = defineNuxtModule({
+  meta: {
+    name: "vite-doctor",
+    configKey: "doctor",
+    compatibility: { nuxt: ">=4" },
+    docs: "https://vite-doctor.onmax.me/nuxt",
+  },
+  setup: setupNuxtDoctor,
+});
+
+export default nuxtDoctorModule;
 
 export async function collectNuxtDoctorRulePacks(nuxt: any): Promise<RulePack[]> {
   const extraRulePacks: RulePack[] = [];
@@ -270,14 +277,7 @@ function normalizeModuleSource(source: NuxtModuleSource): NuxtModuleSource {
   };
 }
 
-function serializableDoctorConfig(
-  doctor: {
-    config?: DoctorConfig;
-    extends?: "auto" | string[];
-  } = {},
-): DoctorConfig | undefined {
-  const config = { ...doctor.config } as DoctorConfig;
-  config.extends ??= doctor.extends;
+function serializableDoctorConfig(config: DoctorConfig = {}): DoctorConfig | undefined {
   const payload: DoctorConfig = {};
   if (config.extends !== undefined) payload.extends = config.extends;
   if (config.include !== undefined) payload.include = config.include;
