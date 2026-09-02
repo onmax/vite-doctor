@@ -33,17 +33,20 @@ The standalone CLI also works for Nuxt one-off runs, CI fallback, or monorepo sc
 
 ## Workflow
 
-1. Run Doctor against the target project or package; install dependencies first if needed.
-2. Read each Diagnostic Code, `why`, `fix`, docs URL, severity, confidence, and source location.
-3. Open `https://vite-doctor.onmax.me/diagnostics/CODE` before recommending remediation.
-4. Prefer the smallest fix that addresses the Diagnostic and preserves project conventions.
-5. Run the narrowest relevant verification after editing.
-6. Use `--format json` or `--format sarif` only when structured output is needed.
+1. Run `vite-doctor . --changed --format agent` from the target project or package. Use a full Doctor Run when the worktree has no Git baseline or the user asks for a project audit.
+2. Read `status`, `scope`, and every Diagnostic's code, message, remediation, confidence, relative location, evidence, and optional edit plan.
+3. Work only on Diagnostics owned by the requested change. Do not widen the task to unrelated findings.
+4. Apply the smallest fix that satisfies the remediation and preserves project conventions. Treat structured edit plans as proposed edits, not permission to skip review.
+5. Substitute the Diagnostic's Rule ID into `commands.verify` and run it after editing.
+6. Run the report's `next.rerun` command before finishing. Report remaining Diagnostics or incomplete evidence exactly.
+7. Use the Diagnostic Reference URL when the inline remediation is ambiguous or framework behavior needs confirmation. Routine fixes should not require network access.
 
 ## Rules
 
 - Use `vite-doctor` for Vite, Vue, Nitro, and Nuxt projects; do not invent framework-specific packages or binaries.
 - Treat Rule IDs as execution/filtering selectors.
 - Treat Diagnostic Codes as the stable remediation identity for docs, fixes, and user-facing explanations.
+- Prefer `--format agent` for remediation work. Use JSON for full run metadata and SARIF for code-scanning integrations.
+- An explicit `--format` is deterministic. Do not depend on automatic runtime recognition in scripts.
 - Use Doctor terms consistently: Doctor, Rule, Rule Pack, Diagnostic Code, and Diagnostic.
 - Keep code edits scoped to reported Diagnostics unless the user asks for broader cleanup.

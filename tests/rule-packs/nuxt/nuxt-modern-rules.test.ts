@@ -3304,9 +3304,7 @@ test("Nuxt Doctor rule payloads use JSON report helpers", () => {
     explainRule(nuxtRulePacks(), "nuxt/fetch/no-raw-fetch-in-setup", "json"),
   );
   expect(explanation.id).toBe("nuxt/fetch/no-raw-fetch-in-setup");
-  expect(JSON.parse(explainRule(nuxtRulePacks(), "nuxt/does-not-exist", "json"))).toEqual({
-    rule: null,
-  });
+  expect(explainRule(nuxtRulePacks(), "nuxt/does-not-exist", "json")).toBe("");
 });
 
 test("explicit Nuxt module sources are scanned with module metadata", async () => {

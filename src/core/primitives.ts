@@ -3,6 +3,7 @@ import { doctorInternalDiagnostics } from "./internal-diagnostic-handles.js";
 export { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
 
 export type DoctorSeverity = "blocker" | "error" | "warn" | "info";
+export type DoctorReportFormat = "text" | "json" | "sarif" | "agent";
 export type DoctorRuleConfig = "off" | DoctorSeverity | [DoctorSeverity, unknown];
 export interface DoctorSerializableConfig {
   extends?: "auto" | string[];
@@ -588,9 +589,15 @@ export interface RulePack {
 
 export interface DoctorRunResult {
   version: string;
-  reportVersion?: 2;
+  reportVersion?: 3;
   framework: DoctorFramework;
   root: string;
+  scope: {
+    mode: "all" | "changed";
+    base?: string | null;
+    files: number;
+    deletedFiles?: number;
+  };
   score: number;
   categoryScores: Record<string, number>;
   summary: {
@@ -602,6 +609,11 @@ export interface DoctorRunResult {
   };
   diagnostics: Diagnostic[];
   suppressedDiagnostics?: Diagnostic[];
+  fixes?: {
+    files: number;
+    edits: number;
+    skipped: number;
+  };
   timings?: Record<string, number>;
   phases?: Record<string, number>;
   graph?: {

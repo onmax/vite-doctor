@@ -17,7 +17,7 @@ export interface ViteDoctorSurfaceOptions {
   severity?: "error" | "warn" | "info";
   maxWarnings?: number;
   cache?: boolean;
-  format?: "json" | "sarif";
+  format?: DoctorRunOptions["format"];
 }
 
 export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
