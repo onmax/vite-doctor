@@ -35,7 +35,7 @@ export function parseDoctorArgs(args: string[]): ParsedDoctorArgs {
     else if (arg === "--extends") options.extends = parseExtends(args[++index]);
     else if (arg === "--since") options.since = args[++index];
     else if (arg === "--baseline") options.baseline = args[++index];
-    else if (arg === "--format") options.format = args[++index];
+    else if (arg === "--format") options.format = args[++index] as DoctorRunOptions["format"];
     else if (!arg.startsWith("-")) path = arg;
   }
   return { options, path };
@@ -71,7 +71,7 @@ export function applyDoctorOptions(
   options.extends = parseExtendsFlag(flags.extends) ?? options.extends;
   options.since = stringFlag(flags.since) ?? options.since;
   options.baseline = stringFlag(flags.baseline) ?? options.baseline;
-  options.format = stringFlag(flags.format) ?? options.format;
+  options.format = (stringFlag(flags.format) as DoctorRunOptions["format"]) ?? options.format;
 }
 
 function parseExtends(value: string | undefined): DoctorRunOptions["extends"] {

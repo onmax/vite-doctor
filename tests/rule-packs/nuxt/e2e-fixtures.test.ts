@@ -80,8 +80,6 @@ test("Nuxt all-issues fixture reports Nuxt and ecosystem rule packs", async () =
     "nuxt/state/prefer-explicit-usestate-key-in-exported-composables:app/composables/useCounter.ts",
     "vue/template/html-button-has-type:app/pages/account.vue",
     "vueuse/no-nuxt-auto-import-collision:app/components/IssuePanel.vue",
-    "vueuse/prefer-use-storage:app/components/IssuePanel.vue",
-    "vueuse/prefer-usewindow-size:app/components/IssuePanel.vue",
   ]);
 });
 

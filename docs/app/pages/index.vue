@@ -271,8 +271,8 @@ function toggleTheme() {
                   Nuxt 4.4.6 → Nitro 2.13.4 → H3 1.15.11
                 </p>
                 <p>
-                  <span class="text-neutral-500">Health score:</span>
-                  <span class="text-neutral-200">62/100</span>
+                  <span class="text-neutral-500">Confidence:</span>
+                  <span class="text-neutral-200"> 4 proven, 2 probable</span>
                 </p>
               </div>
               <div class="space-y-3 border-t border-white/[0.08] pt-3">

@@ -36,6 +36,22 @@ export { evaluatePackActivation, evaluateRuleApplicability } from "./internal/ap
 export { detectProject } from "./internal/project.js";
 
 export async function runDoctor(options: DoctorRunOptions = {}): Promise<DoctorRunResult> {
+  const requestedFixes = Boolean(options.fix || options.unsafeFix || options.structuralReview);
+  const initial = await executeDoctorRun(
+    requestedFixes && options.updateBaseline ? { ...options, updateBaseline: false } : options,
+  );
+  if (!requestedFixes || (!initial.fixes?.edits && !options.updateBaseline)) return initial;
+
+  const verified = await executeDoctorRun({
+    ...options,
+    fix: false,
+    unsafeFix: false,
+    structuralReview: false,
+  });
+  return { ...verified, fixes: initial.fixes };
+}
+
+async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunResult> {
   const session = await createScanSession(options);
   reportRuntimeInventoryUnknown(session);
   await runPhase(session, "parseFileFacts", () => parseSourceFiles(session));
@@ -47,8 +63,11 @@ export async function runDoctor(options: DoctorRunOptions = {}): Promise<DoctorR
   await runPhase(session, "typeRules", () => runTypeRules(session));
   await runPhase(session, "duplication", () => runDuplicationPhase(session));
   await runPhase(session, "health", () => runHealthPhase(session));
-  await runPhase(session, "fixPlanning", () => applyRequestedFixes(session));
   applyPolicyFilters(session);
+  let fixes: ReturnType<typeof applyRequestedFixes> = undefined;
+  await runPhase(session, "fixPlanning", () => {
+    fixes = applyRequestedFixes(session);
+  });
 
   const started = performance.now();
   const result = createResult(
@@ -60,7 +79,16 @@ export async function runDoctor(options: DoctorRunOptions = {}): Promise<DoctorR
     options.profile ? session.timings : undefined,
     options.profile ? session.phases : undefined,
     session.graph,
+    session.gitChanges
+      ? {
+          mode: "changed",
+          base: session.gitChanges.base,
+          files: session.files.length,
+          deletedFiles: session.gitChanges.files.filter((file) => file.kind === "deleted").length,
+        }
+      : { mode: "all", files: session.files.length },
   );
+  result.fixes = fixes;
   markSession(session, "score", started);
   return result;
 }
