@@ -20,14 +20,13 @@ export interface DoctorRunOptions {
   extends?: "auto" | string[];
   changed?: boolean;
   since?: string;
-  format?: string;
+  format?: import("./primitives.js").DoctorReportFormat;
   baseline?: string;
   updateBaseline?: boolean;
   newOnly?: boolean;
   severity?: "error" | "warn" | "info";
   rules?: string;
   types?: boolean;
-  threads?: number;
   coverage?: string;
   runtimeEvidence?: string;
   analyses?: string;
@@ -51,11 +50,13 @@ export function defineDoctorConfig(config: DoctorConfig): DoctorConfig {
 export interface LoadDoctorConfigOptions {
   cwd: string;
   defaults?: DoctorConfig;
+  configFile?: string;
 }
 
 export async function loadDoctorConfig(options: LoadDoctorConfigOptions): Promise<DoctorConfig> {
   const result = await loadConfig<DoctorConfig>({
-    configFile: "doctor.config",
+    configFile: options.configFile ?? "doctor.config",
+    configFileRequired: Boolean(options.configFile),
     cwd: options.cwd,
     dotenv: false,
     globalRc: false,

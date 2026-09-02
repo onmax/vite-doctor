@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "pathe";
 import { expect, test } from "vite-plus/test";
 import {
   createJsonReport,
+  createAgentReport,
   createRulesReport,
   createSarifReport,
   createRule,
@@ -44,6 +45,72 @@ const reportProgramRule = createRule({
           }),
           {
             ruleId: "test/report-program",
+            severity: "warn",
+            category: "architecture",
+            file: ctx.file.path,
+            range: ctx.range(node),
+          },
+        );
+      },
+    };
+  },
+});
+
+const safeFixRule = createRule({
+  meta: {
+    id: "test/safe-fix",
+    title: "Safe fix",
+    category: "correctness",
+    severity: "error",
+    requires: { script: true },
+  },
+  create(ctx) {
+    return {
+      ScriptNode(node: any) {
+        if (node.type !== "Program") return;
+        const start = ctx.file.text.indexOf("bad");
+        if (start < 0) return;
+        ctx.report(
+          allDiagnostics.DOC9999({
+            why: "The fixture contains bad.",
+            fix: "Replace bad with good.",
+          }),
+          {
+            ruleId: "test/safe-fix",
+            severity: "error",
+            category: "correctness",
+            file: ctx.file.path,
+            range: ctx.range(node),
+            fix: {
+              kind: "safe",
+              edits: [{ range: { start, end: start + 3 }, text: "good" }],
+            },
+          },
+        );
+      },
+    };
+  },
+});
+
+const reportIdentifiersRule = createRule({
+  meta: {
+    id: "test/report-identifiers",
+    title: "Report identifiers",
+    category: "architecture",
+    severity: "warn",
+    requires: { script: true },
+  },
+  create(ctx) {
+    return {
+      ScriptNode(node: any) {
+        if (node.type !== "Identifier") return;
+        ctx.report(
+          allDiagnostics.DOC9999({
+            why: `Identifier ${node.name} was visited.`,
+            fix: "Inspect the test identifier diagnostic.",
+          }),
+          {
+            ruleId: "test/report-identifiers",
             severity: "warn",
             category: "architecture",
             file: ctx.file.path,
@@ -390,6 +457,52 @@ test("since scans no files when the requested Git diff is empty", async () => {
   });
 });
 
+test("changed scope reports diagnostics whose source ranges overlap changed lines", async () => {
+  await withFixture({ "src/app.ts": "const first = true\nconst second = true\n" }, async (root) => {
+    git(root, "init");
+    git(root, "add", ".");
+    git(
+      root,
+      "-c",
+      "user.name=Doctor",
+      "-c",
+      "user.email=doctor@example.com",
+      "commit",
+      "-m",
+      "fixture",
+    );
+    writeFileSync(join(root, "src/app.ts"), "const first = true\nconst second = false\n");
+
+    const result = await runDoctor({
+      root,
+      changed: true,
+      framework: "vue",
+      extensions: [pluginWith(reportIdentifiersRule, reportProgramRule, secondRule)],
+    });
+
+    expect(result.scope).toMatchObject({ mode: "changed", files: 1 });
+    expect(result.diagnostics).toHaveLength(2);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "test/report-identifiers",
+          why: "Identifier second was visited.",
+          range: expect.objectContaining({ line: 2 }),
+        }),
+        expect.objectContaining({ ruleId: "test/report-program" }),
+      ]),
+    );
+    const agent = JSON.parse(createAgentReport(result));
+    expect(agent.commands).toEqual({
+      explain: "vite-doctor explain <code> --framework vue --format agent",
+      verify: `vite-doctor . --framework vue --since ${result.scope.base} --rules <rule> --format agent`,
+      rerun: `vite-doctor . --framework vue --since ${result.scope.base} --format agent`,
+    });
+    expect(agent.next).not.toHaveProperty("cwd");
+    expect(agent.next).not.toHaveProperty("rerun");
+  });
+});
+
 test("native rule glob matching filters enabled rules", async () => {
   await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
     const result = await runDoctor({
@@ -726,8 +839,72 @@ test("json reporter produces stable machine output", async () => {
     });
     const json = JSON.parse(createJsonReport(result));
 
-    expect(json.diagnostics[0].ruleId).toBe("test/report-program");
+    expect(json.diagnostics[0].rule).toBe("test/report-program");
+    expect(json.diagnostics[0].location.path).toBe("src/app.ts");
     expect(json.summary.warn).toBe(1);
+  });
+});
+
+test("agent reporter is compact and includes a complete remediation path", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      extensions: [pluginWith(reportProgramRule)],
+    });
+    result.diagnostics[0]!.related = [
+      {
+        file: join(root, "src/other.ts"),
+        range: { start: 0, end: 1, line: 3, column: 2 },
+        message: "Related cycle member.",
+      },
+    ];
+    const report = createAgentReport(result);
+    const agent = JSON.parse(report);
+
+    expect(agent.schema).toBe("vite-doctor.agent/v1");
+    expect(agent.diagnostics[0]).toMatchObject({
+      rule: "test/report-program",
+      location: { path: "src/app.ts" },
+      remediation: "Inspect the test program diagnostic.",
+      related: [
+        {
+          path: "src/other.ts",
+          line: 3,
+          column: 2,
+          message: "Related cycle member.",
+        },
+      ],
+    });
+    expect(agent.commands).toEqual({
+      explain: "vite-doctor explain <code> --framework vue --format agent",
+      verify: "vite-doctor . --framework vue --rules <rule> --format agent",
+      rerun: "vite-doctor . --framework vue --format agent",
+    });
+    expect(agent.next).not.toHaveProperty("cwd");
+    expect(agent.next).not.toHaveProperty("rerun");
+    expect(report).not.toContain(join(root, "src/app.ts"));
+  });
+});
+
+test("safe fixes are rerun and the report contains only remaining diagnostics", async () => {
+  await withFixture({ "src/app.ts": "const bad = true\n" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      fix: true,
+      cache: false,
+      baseline: "doctor-baseline.json",
+      updateBaseline: true,
+      extensions: [pluginWith(safeFixRule)],
+    });
+
+    expect(readFileSync(join(root, "src/app.ts"), "utf8")).toBe("const good = true\n");
+    expect(result.diagnostics).toHaveLength(0);
+    expect(result.fixes).toEqual({ files: 1, edits: 1, skipped: 0 });
+    expect(
+      JSON.parse(readFileSync(join(root, "doctor-baseline.json"), "utf8")).diagnostics,
+    ).toEqual([]);
   });
 });
 
@@ -784,7 +961,7 @@ test("sarif reporter includes partial fingerprints", async () => {
     });
     const sarif = JSON.parse(createSarifReport(result));
 
-    expect(sarif.runs[0].results[0].partialFingerprints["vue-doctor/v1"]).toBeTruthy();
+    expect(sarif.runs[0].results[0].partialFingerprints["vite-doctor/v1"]).toBeTruthy();
     expect(sarif.runs[0].results[0].ruleId).toBe("test/report-program");
   });
 });
