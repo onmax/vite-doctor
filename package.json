@@ -1,6 +1,6 @@
 {
   "name": "vite-doctor",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Small Vite Doctor CLI for project diagnostics.",
   "keywords": [
     "cli",
