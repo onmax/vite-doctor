@@ -18,12 +18,7 @@ import {
   type WorkspaceGraph,
 } from "../primitives.js";
 import { detectProject } from "./project.js";
-import {
-  GitChangeUnavailableError,
-  selectSourceInventory,
-  type ScanFileEntry,
-} from "./source-inventory.js";
-import type { AvailableGitChangeInventory } from "./git-change-ranges.js";
+import { selectScanFiles, type ScanFileEntry } from "./source-inventory.js";
 import { createHelpers } from "./doctor-helpers.js";
 import { VERSION, nativeMatch, sha256 } from "./utils.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
@@ -92,7 +87,6 @@ export interface ScanSession {
   registry: RuleRegistry;
   project: ProjectInfo;
   files: ScanFileEntry[];
-  gitChanges?: AvailableGitChangeInventory;
   handles: SourceFileHandle[];
   facts: FileFacts[];
   graph?: WorkspaceGraph;
@@ -143,11 +137,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   markSession(sessionBase, "project", started);
 
   started = performance.now();
-  const sourceInventory = await selectSourceInventory(root, config, options, project);
-  if (sourceInventory.git?.status === "unavailable") {
-    throw new GitChangeUnavailableError(sourceInventory.git);
-  }
-  const files = sourceInventory.files;
+  const files = await selectScanFiles(root, config, options, project);
   markSession(sessionBase, "files", started);
 
   const helpers = createHelpers();
@@ -156,7 +146,6 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     registry,
     project,
     files,
-    gitChanges: sourceInventory.git,
     handles: [],
     facts: [],
     diagnostics: [],

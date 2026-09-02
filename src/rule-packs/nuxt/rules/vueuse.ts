@@ -394,10 +394,7 @@ export const vueUseRulePack = defineRulePack({
   version: "0.0.0",
   activation: { nuxt: ">=4", packages: ["@vueuse/core"] },
   rules,
-  presets: {
-    recommended: [noVueUseNuxtAutoImportCollision.meta.id],
-    strict: rules.map((rule) => rule.meta.id),
-  },
+  presets: { recommended: rules.map((rule) => rule.meta.id) },
 });
 
 export default vueUseRulePack;

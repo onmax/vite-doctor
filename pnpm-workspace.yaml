@@ -50,7 +50,6 @@ catalogs:
     c12: 4.0.0-beta.5
     cac: ^7.0.0
     consola: ^3.4.2
-    detect-agent: ^1.2.0
     defu: ^6.1.7
     pathe: ^2.0.3
     picocolors: ^1.1.1

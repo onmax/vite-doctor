@@ -16,9 +16,7 @@ import {
   typescriptRulePack,
 } from "../../../src/rule-packs/typescript/index.ts";
 
-const recommendedRules = [noChainedTypeAssertions, noUnvalidatedDeserialization];
-
-const evidenceRules = [
+const recommendedRules = [
   noCallerChosenResultType,
   noChainedTypeAssertions,
   noObjectParameters,
@@ -35,9 +33,6 @@ describe("TypeScript rule pack", () => {
     );
     expect(typescriptRulePack.presets.strict).toEqual(
       expect.arrayContaining([
-        "typescript/evidence/no-caller-chosen-result-type",
-        "typescript/evidence/no-object-parameters",
-        "typescript/evidence/no-unknown-type-aliases",
         "typescript/style/no-conditional-empty-object-spread",
         "typescript/strict/no-runtime-typeof",
         "typescript/strict/require-safety-comment-for-type-assertion",
@@ -48,7 +43,7 @@ describe("TypeScript rule pack", () => {
   test("reports missing type evidence and unvalidated boundaries", async () => {
     const result = await runProjectFixture({
       framework: "vite",
-      rules: evidenceRules,
+      rules: recommendedRules,
       files: {
         "src/index.ts": `function save(value: BroadObject) {}
 function parse<T>(text: string): T { return JSON.parse(text) }
@@ -75,7 +70,7 @@ console.log(save, parse, claimed, user)`,
   test("accepts concrete contracts and parsed runtime values", async () => {
     const result = await runProjectFixture({
       framework: "vite",
-      rules: evidenceRules,
+      rules: recommendedRules,
       files: {
         "src/index.ts": `interface SavedRecord { id: string }
 function save(value: SavedRecord) {}
@@ -318,14 +313,14 @@ if (typeof input === "string") console.log(options, input)
 
   test("activates recommended rules automatically for TypeScript only", async () => {
     const typescriptResult = await runBuiltinFixture({
-      "src/index.ts": "export const user = input as object as User",
+      "src/index.ts": "export function save(value: object) { return value }",
     });
     const javascriptResult = await runBuiltinFixture({
       "src/index.js": "export function save(value) { return value }",
     });
 
     expect(typescriptResult.diagnostics.map((item) => item.ruleId)).toContain(
-      "typescript/evidence/no-chained-type-assertions",
+      "typescript/evidence/no-object-parameters",
     );
     expect(javascriptResult.diagnostics.some((item) => item.ruleId.startsWith("typescript/"))).toBe(
       false,
@@ -336,11 +331,11 @@ if (typeof input === "string") console.log(options, input)
     "scans TypeScript .%s files after automatic activation",
     async (ext) => {
       const result = await runBuiltinFixture({
-        [`src/index.${ext}`]: "export const user = input as object as User",
+        [`src/index.${ext}`]: "export function save(value: object) { return value }",
       });
 
       expect(result.diagnostics.map((item) => item.ruleId)).toContain(
-        "typescript/evidence/no-chained-type-assertions",
+        "typescript/evidence/no-object-parameters",
       );
     },
   );
@@ -349,7 +344,7 @@ if (typeof input === "string") console.log(options, input)
     const result = await runBuiltinFixture(
       {
         "app.vue": `<script setup lang="ts">
-const user = input as object as User
+function save(value: object) { return value }
 </script>`,
       },
       undefined,
@@ -357,7 +352,7 @@ const user = input as object as User
     );
 
     expect(result.diagnostics.map((item) => item.ruleId)).toContain(
-      "typescript/evidence/no-chained-type-assertions",
+      "typescript/evidence/no-object-parameters",
     );
   });
 

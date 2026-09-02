@@ -20,7 +20,6 @@
   },
   "files": [
     "dist",
-    "docs/skills/doctor",
     "README.md"
   ],
   "type": "module",
@@ -73,7 +72,6 @@
     "cac": "catalog:prod",
     "consola": "catalog:prod",
     "defu": "catalog:prod",
-    "detect-agent": "catalog:prod",
     "eslint": "catalog:analysis",
     "eslint-plugin-vue": "catalog:analysis",
     "magic-string": "catalog:analysis",
@@ -82,7 +80,6 @@
     "pathe": "catalog:prod",
     "picocolors": "catalog:prod",
     "semver": "catalog:prod",
-    "std-env": "catalog:prod",
     "typescript": "catalog:analysis",
     "vue-eslint-parser": "catalog:analysis"
   },

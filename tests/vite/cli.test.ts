@@ -10,7 +10,6 @@ import {
 } from "../../src/core/index.ts";
 import { expect, test } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
-import { formatMigrationReport } from "../../src/migration.ts";
 import { doctor } from "../../src/plugin.ts";
 
 const publicPackageJson = JSON.parse(
@@ -28,7 +27,7 @@ test("package installs the TypeScript runtime required by its parsers", () => {
 
 test("CLI rejects removed run command", async () => {
   const repoRoot = findRepoRoot();
-  await expect(main(["run", "--dry-run", "--format", "text"], repoRoot)).resolves.toBe(2);
+  await expect(main(["run", "--dry-run"], repoRoot)).resolves.toBe(1);
 });
 
 test("CLI prints the public package version", async () => {
@@ -140,7 +139,7 @@ test("CLI accepts a path shorthand for scans", async () => {
         return true;
       }) as typeof process.stdout.write;
       try {
-        await expect(main([".", "--format", "text"], root)).resolves.toBe(0);
+        await expect(main(["."], root)).resolves.toBe(0);
       } finally {
         process.stdout.write = write;
       }
@@ -283,7 +282,7 @@ useRoute();
         [".", "--framework", "nuxt", "--rules", "nuxt/routing/prefer-nuxt-useroute"],
         root,
       );
-      expect(forced.code).toBe(3);
+      expect(forced.code).toBe(1);
       expect(forced.output).toContain("Detected: Nuxt");
       expect(forced.output).toContain("nuxt/routing/prefer-nuxt-useroute");
     },
@@ -312,87 +311,34 @@ const html = "<strong>unsafe</strong>";
   );
 });
 
-test("CLI rejects the removed trusted config flag", async () => {
+test("CLI rejects executable config loading in vite-doctor", async () => {
   await withFixture(
     {
       ...viteErrorFixture(),
       "doctor.config.ts": maliciousConfigSource("cli-trusted-marker"),
     },
     async (root) => {
-      const result = await main([".", "--trusted-config", "--format", "text"], root);
-      expect(result).toBe(2);
+      const result = await main([".", "--trusted-config"], root);
+      expect(result).toBe(1);
       expect(existsSync(join(root, "cli-trusted-marker"))).toBe(false);
     },
   );
 });
 
-test("CLI automatically loads declarative Doctor config", async () => {
-  await withFixture(
-    {
-      ...viteErrorFixture(),
-      "doctor.config.json": JSON.stringify({
-        rules: { "vite/define/no-secret-define": "off" },
-      }),
-    },
-    async (root) => {
-      const result = await runCli(
-        [".", "--rules", "vite/define/no-secret-define", "--format", "json"],
-        root,
-      );
-      expect(result.code).toBe(0);
-      expect(JSON.parse(result.output).diagnostics).toEqual([]);
-    },
-  );
-});
-
-test("CLI explicitly loads executable Doctor config", async () => {
-  await withFixture(
-    {
-      ...viteErrorFixture(),
-      "doctor.config.ts": `import { writeFileSync } from "node:fs"
-writeFileSync(new URL("./explicit-config-loaded", import.meta.url), "yes")
-export default { rules: { "vite/define/no-secret-define": "off" } }
-`,
-    },
-    async (root) => {
-      const result = await runCli(
-        [
-          ".",
-          "--rules",
-          "vite/define/no-secret-define",
-          "--config",
-          "doctor.config.ts",
-          "--format",
-          "json",
-        ],
-        root,
-      );
-      expect(result.code).toBe(0);
-      expect(JSON.parse(result.output).diagnostics).toEqual([]);
-      expect(readFileSync(join(root, "explicit-config-loaded"), "utf8")).toBe("yes");
-    },
-  );
-});
-
-test("CLI returns structured failures for unknown Diagnostic Codes", async () => {
-  const result = await runWithCapturedStdout(() =>
-    main(["explain", "DOES_NOT_EXIST", "--format", "agent"], findRepoRoot()),
-  );
-  expect(result.code).toBe(2);
-  expect(JSON.parse(result.output)).toMatchObject({
-    schema: "vite-doctor.agent/v1",
-    status: "failed",
-    next: { action: "correct-invocation" },
-  });
-});
-
-test("CLI rejects the removed scan alias", async () => {
+test("CLI scan fails for a missing path", async () => {
   const repoRoot = findRepoRoot();
-  const result = await runWithCapturedStdout(() =>
-    main(["scan", "__missing_vite_doctor_path__", "--format=json"], repoRoot),
-  );
-  expect(result.code).toBe(2);
-  expect(JSON.parse(result.output).error.message).toContain("vite-doctor scan was removed");
+  const errors: string[] = [];
+  const error = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  };
+  try {
+    await expect(main(["scan", "__missing_vite_doctor_path__"], repoRoot)).resolves.toBe(1);
+  } finally {
+    console.error = error;
+  }
+
+  expect(errors.join("\n")).toContain("No readable directory found");
 });
 
 test("exports a Vite plugin factory", () => {
@@ -637,7 +583,7 @@ export default defineHandler((event) => {
       expect(
         JSON.parse(result.output).diagnostics.find(
           (item: { code: string }) => item.code === "NITRO0014",
-        ).remediation,
+        ).suggestion,
       ).toBe('Import types from "nitro/types".');
       expect(codes).not.toContain("NITRO0008");
     },
@@ -674,8 +620,6 @@ test("unresolved runtime identity suppresses version-specific advice and reports
         (item: { code: string }) => item.code,
       );
 
-      expect(result.code).toBe(3);
-      expect(JSON.parse(result.output).status).toBe("incomplete");
       expect(codes.filter((code: string) => code === "DOC0022")).toHaveLength(1);
       expect(codes).not.toContain("NITRO0013");
       expect(codes).not.toContain("NITRO0014");
@@ -741,11 +685,6 @@ export default defineEventHandler((event) => {
           expect.objectContaining({ to: "future.compatibilityVersion: 5" }),
         ]),
       );
-      const agentResult = await runCli(["migrate", ".", "--format", "agent"], root);
-      expect(JSON.parse(agentResult.output)).toMatchObject({
-        schema: "vite-doctor.migration/v1",
-        status: "findings",
-      });
       const textResult = await runCli(["migrate", "."], root);
       expect(textResult.output).toContain(
         `Summary: ${report.summary.diagnostics} diagnostics, ${report.summary.dependencyChanges} dependency/config changes`,
@@ -779,8 +718,6 @@ export default defineNuxtConfig({
         instruction:
           "Verify that the effective future.compatibilityVersion resolves to 5; Doctor could not prove it from the composed Nuxt config.",
       });
-      expect(report.summary.errors).toBe(0);
-      expect(JSON.parse(formatMigrationReport(report, "agent")).status).toBe("findings");
     },
   );
 });
@@ -818,11 +755,8 @@ test("migrate rejects Nuxt targets outside Nuxt projects", async () => {
     async (root) => {
       const result = await runCli(["migrate", ".", "--to", "nuxt@5", "--format", "json"], root);
 
-      expect(result.code).toBe(2);
-      expect(JSON.parse(result.output)).toMatchObject({
-        schema: "vite-doctor.report/v3",
-        status: "failed",
-      });
+      expect(result.code).toBe(1);
+      expect(result.output).toBe("");
     },
   );
 });
@@ -835,11 +769,8 @@ test("migrate rejects Nitro targets outside Nuxt and Nitro projects", async () =
     async (root) => {
       const result = await runCli(["migrate", ".", "--to", "nitro@3", "--format", "json"], root);
 
-      expect(result.code).toBe(2);
-      expect(JSON.parse(result.output)).toMatchObject({
-        schema: "vite-doctor.report/v3",
-        status: "failed",
-      });
+      expect(result.code).toBe(1);
+      expect(result.output).toBe("");
     },
   );
 });
@@ -896,10 +827,7 @@ function withResolvedRuntimePackages(files: Record<string, string>): Record<stri
 }
 
 async function runCli(args: string[], root: string) {
-  const explicitFormat = args.includes("--format");
-  return runWithCapturedStdout(() =>
-    main(explicitFormat ? args : [...args, "--format", "text"], root),
-  );
+  return runWithCapturedStdout(() => main(args, root));
 }
 
 async function runWithCapturedStdout(fn: () => Promise<number>) {

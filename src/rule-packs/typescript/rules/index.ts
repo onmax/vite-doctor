@@ -17,13 +17,16 @@ import { noUnknownTypeAliases } from "./no-unknown-type-aliases.js";
 import { noUnvalidatedDeserialization } from "./no-unvalidated-deserialization.js";
 import { requireSafetyCommentForTypeAssertion } from "./require-safety-comment-for-type-assertion.js";
 
-const recommendedRules = [noChainedTypeAssertions, noUnvalidatedDeserialization];
-
-const strictRules = [
+const recommendedRules = [
   noCallerChosenResultType,
-  ...recommendedRules,
+  noChainedTypeAssertions,
   noObjectParameters,
   noUnknownTypeAliases,
+  noUnvalidatedDeserialization,
+];
+
+const strictRules = [
+  ...recommendedRules,
   noConditionalEmptyObjectSpread,
   noRuntimeTypeof,
   requireSafetyCommentForTypeAssertion,

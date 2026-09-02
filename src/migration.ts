@@ -169,13 +169,6 @@ export async function createMigrationReport(
 
 export function formatMigrationReport(report: MigrationReport, format = "text"): string {
   if (format === "json") return `${JSON.stringify(report, null, 2)}\n`;
-  if (format === "agent") {
-    return `${JSON.stringify({
-      schema: "vite-doctor.migration/v1",
-      status: report.summary.diagnostics || report.summary.dependencyChanges ? "findings" : "clean",
-      ...report,
-    })}\n`;
-  }
   const lines = [
     `Migration target: ${report.target.requested.join(", ")} (${report.target.source})`,
     `Workspace: ${report.root}`,

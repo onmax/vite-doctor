@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "pathe";
 import MagicString from "magic-string";
 import type { DoctorConfig } from "../config.js";
@@ -20,53 +19,22 @@ import { codeForRuleId, diagnosticForCode } from "../diagnostics.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import type { Diagnostic as NosticsDiagnostic } from "nostics";
 
-export interface AppliedFixes {
-  files: number;
-  edits: number;
-  skipped: number;
-}
-
-export function applyRequestedFixes(session: ScanSession): AppliedFixes | undefined {
+export function applyRequestedFixes(session: ScanSession): void {
   if (!session.options.fix && !session.options.unsafeFix && !session.options.structuralReview)
-    return undefined;
+    return;
   const started = performance.now();
-  const applied = applyFixes(session.diagnostics, {
+  applyFixes(session.diagnostics, {
     includeUnsafe: session.options.unsafeFix,
     includeStructuralReview: session.options.structuralReview,
   });
   markSession(session, "fix", started);
-  return applied;
 }
 
 export function applyPolicyFilters(session: ScanSession): void {
-  applyReportEligibility(session);
   applySeverityFilter(session);
   const result = applyDiagnosticPolicy(session);
   session.diagnostics = result.diagnostics;
   session.suppressedDiagnostics = result.suppressedDiagnostics;
-}
-
-export function applyReportEligibility(session: ScanSession): void {
-  if (!session.options.changed && !session.options.since) return;
-  const eligibility = new Map(
-    session.files.map((file) => [file.path, file.reportEligibility] as const),
-  );
-  const sources = new Map(session.handles.map((handle) => [handle.path, handle.text] as const));
-  session.diagnostics = session.diagnostics.filter((diagnostic) => {
-    const fileEligibility = eligibility.get(diagnostic.file);
-    if (!fileEligibility) return false;
-    if (!diagnostic.range) return false;
-    const endLine = diagnosticEndLine(diagnostic.range, sources.get(diagnostic.file));
-    return fileEligibility.ranges.some(
-      (range) => diagnostic.range!.line <= range.endLine && endLine >= range.startLine,
-    );
-  });
-}
-
-function diagnosticEndLine(range: NonNullable<Diagnostic["range"]>, source?: string): number {
-  if (!source || range.end <= range.start) return range.line;
-  const newlines = source.slice(range.start, range.end - 1).match(/\n/g)?.length ?? 0;
-  return range.line + newlines;
 }
 
 function applySeverityFilter(session: ScanSession): void {
@@ -88,7 +56,7 @@ function severityRank(severity: DoctorSeverity): number {
 function applyFixes(
   diagnostics: Diagnostic[],
   options: { includeUnsafe?: boolean; includeStructuralReview?: boolean } = {},
-): AppliedFixes {
+) {
   const byFile = new Map<string, Diagnostic[]>();
   for (const diagnostic of diagnostics) {
     if (!diagnostic.fix) continue;
@@ -99,27 +67,14 @@ function applyFixes(
     list.push(diagnostic);
     byFile.set(diagnostic.file, list);
   }
-  const applied: AppliedFixes = { files: 0, edits: 0, skipped: 0 };
   for (const [file, items] of byFile) {
     const text = readFileSync(file, "utf8");
     const ms = new MagicString(text);
-    const candidates = items.flatMap((item) => item.fix?.edits ?? []);
     const edits = planNonOverlappingFixes(items).sort((a, b) => b.range.start - a.range.start);
-    applied.skipped += candidates.length - edits.length;
-    if (!edits.length) continue;
     for (const edit of edits) ms.overwrite(edit.range.start, edit.range.end, edit.text);
     mkdirSync(dirname(file), { recursive: true });
-    const temporary = `${file}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
-    try {
-      writeFileSync(temporary, ms.toString(), { mode: statSync(file).mode });
-      renameSync(temporary, file);
-    } finally {
-      rmSync(temporary, { force: true });
-    }
-    applied.files++;
-    applied.edits += edits.length;
+    writeFileSync(file, ms.toString());
   }
-  return applied;
 }
 
 export function createResult(
@@ -131,15 +86,13 @@ export function createResult(
   timings?: Record<string, number>,
   phases?: Record<string, number>,
   graph?: WorkspaceGraph,
-  scope: DoctorRunResult["scope"] = { mode: "all", files: 0 },
 ): DoctorRunResult {
   const scoring = scoreDiagnostics(diagnostics, config);
   return {
     version: VERSION,
-    reportVersion: 3,
+    reportVersion: 2,
     framework: project.framework,
     root,
-    scope,
     score: scoring.score,
     categoryScores: scoring.categoryScores,
     summary: scoring.summary,
