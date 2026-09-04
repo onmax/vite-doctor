@@ -718,6 +718,44 @@ test("extends selection runs configured pack rules and config overrides extends"
   );
 });
 
+test("Nuxt manifest extends controls rule selection", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        doctorConfig: { extends: ["test/strict"] },
+      }),
+      "app/app.ts": "const ok = true",
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        cache: false,
+        extensions: [
+          defineDoctorExtension({
+            name: "test",
+            rulePacks: [
+              defineRulePack({
+                name: "test",
+                version: "0.0.0",
+                rules: [reportProgramRule, secondRule],
+                presets: {
+                  recommended: ["test/second-rule"],
+                  strict: ["test/report-program"],
+                },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      const ruleIds = result.diagnostics.map((item) => item.ruleId);
+      expect(ruleIds).toContain("test/report-program");
+      expect(ruleIds).not.toContain("test/second-rule");
+    },
+  );
+});
+
 test("defineRulePack requires a recommended preset", () => {
   let thrown: unknown;
   try {

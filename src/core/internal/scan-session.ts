@@ -139,7 +139,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
   const ruleConfigs = resolveRuleConfigs(config);
-  const enabledRules = selectRules(registry, ruleConfigs, options, project);
+  const enabledRules = selectRules(registry, ruleConfigs, options, config, project);
   markSession(sessionBase, "project", started);
 
   started = performance.now();
@@ -261,6 +261,7 @@ function selectRules(
   registry: RuleRegistry,
   ruleConfigs: Map<string, ResolvedRuleConfig>,
   options: DoctorRunOptions,
+  config: DoctorConfig,
   project: ProjectInfo,
 ): DoctorRule[] {
   const wanted = options.rules
@@ -268,7 +269,7 @@ function selectRules(
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const selectedRules = resolveExtends(registry.packs, options, project);
+  const selectedRules = resolveExtends(registry.packs, options.extends ?? config.extends, project);
 
   const candidates = registry.rules
     .filter((rule) => selectedRules.has(rule.meta.id))
@@ -295,10 +296,9 @@ function selectRules(
 
 function resolveExtends(
   packs: RulePack[],
-  options: DoctorRunOptions,
+  requested: DoctorRunOptions["extends"] = "auto",
   project: ProjectInfo,
 ): Set<string> {
-  const requested = options.extends ?? options.config?.extends ?? "auto";
   if (requested === "auto") {
     return new Set(
       packs
