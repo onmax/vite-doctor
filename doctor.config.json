@@ -1,0 +1,79 @@
+{
+  "suppressions": [
+    {
+      "ruleId": "typescript/evidence/no-chained-type-assertions",
+      "file": "docs/rules/source.ts",
+      "reason": "The generated catalog narrows a known object shape after Object.fromEntries()."
+    },
+    {
+      "ruleId": "typescript/evidence/no-chained-type-assertions",
+      "file": "src/core/diagnostics.ts",
+      "reason": "Diagnostics preserves the registry's generic code and parameter types at runtime."
+    },
+    {
+      "ruleId": "typescript/evidence/no-chained-type-assertions",
+      "file": "src/core/internal/script.ts",
+      "reason": "The Oxc parser result is adapted to Doctor's parser-neutral AST handle."
+    },
+    {
+      "ruleId": "typescript/evidence/no-chained-type-assertions",
+      "file": "src/core/internal/sfc.ts",
+      "reason": "The Vue compiler AST is adapted to Doctor's parser-neutral AST handle."
+    },
+    {
+      "ruleId": "typescript/evidence/no-chained-type-assertions",
+      "file": "src/core/internal/template.ts",
+      "reason": "The Vue ESLint parser AST is adapted to Doctor's parser-neutral AST handle."
+    },
+    {
+      "ruleId": "typescript/evidence/no-chained-type-assertions",
+      "file": "src/rule-packs/vue/rules/vue/script.ts",
+      "reason": "The Oxc parser result is adapted to the Vue Rule Pack's parser-neutral AST handle."
+    },
+    {
+      "ruleId": "typescript/boundaries/no-unvalidated-deserialization",
+      "file": "src/core/internal/project.ts",
+      "reason": "Project manifests are read tolerantly and every consumed field receives a runtime fallback."
+    },
+    {
+      "ruleId": "typescript/boundaries/no-unvalidated-deserialization",
+      "file": "src/core/internal/rule-execution.ts",
+      "reason": "RuleContext.getJson() explicitly delegates the local file contract to the Rule author."
+    },
+    {
+      "ruleId": "typescript/boundaries/no-unvalidated-deserialization",
+      "file": "src/core/internal/runtime-graph.ts",
+      "reason": "Package manifests are local trusted inputs and their consumed fields are checked before use."
+    },
+    {
+      "ruleId": "typescript/boundaries/no-unvalidated-deserialization",
+      "file": "src/doctor.ts",
+      "reason": "The package manifest reader only consumes optional dependency maps through defensive lookups."
+    },
+    {
+      "ruleId": "typescript/boundaries/no-unvalidated-deserialization",
+      "file": "src/rule-packs/vue/rules/vue/i18n.ts",
+      "reason": "Locale JSON is traversed defensively and malformed files are ignored by the Rule."
+    },
+    {
+      "ruleId": "nuxt/fetch/require-stable-asyncdata-key",
+      "file": "docs/app/composables/useRuleContent.ts",
+      "reason": "The first useAsyncData argument is an explicit reactive key derived from the requested rule path."
+    },
+    {
+      "ruleId": "nuxt/fetch/prefer-create-use-fetch",
+      "file": "docs/app/composables/useRuleContent.ts",
+      "reason": "This composable wraps Nuxt Content's queryCollection builder rather than an HTTP fetch factory."
+    },
+    {
+      "ruleId": "nuxt/seo/prefer-seo-composables",
+      "file": "docs/app/pages/index.vue",
+      "reason": "The head block owns a title template, canonical link, and font preconnects as one static declaration."
+    },
+    {
+      "ruleId": "nuxt-better-auth/require-standard-auth-handler-mount",
+      "file": "docs/app/app.config.ts",
+      "reason": "nuxt-better-auth is a Rule fixture dependency and is not enabled in the documentation app."
+    }
+  ]
+}
