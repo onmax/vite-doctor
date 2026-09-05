@@ -26,17 +26,12 @@ export interface DoctorRunOptions {
   newOnly?: boolean;
   severity?: "error" | "warn" | "info";
   rules?: string;
-  coverage?: string;
-  runtimeEvidence?: string;
   analyses?: string;
-  emitGraph?: boolean;
-  confidenceMin?: string;
   structuralReview?: boolean;
   profile?: boolean;
   cache?: boolean;
   fix?: boolean;
   unsafeFix?: boolean;
-  scoreOnly?: boolean;
   maxWarnings?: number;
   extensions?: DoctorExtension[];
   runtimeTarget?: RuntimeTarget;
