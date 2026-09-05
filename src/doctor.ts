@@ -9,19 +9,14 @@ import {
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "pathe";
 import { nitroRulePack } from "./rule-packs/nitro/index.js";
-import { nuxtDoctorExtensions, nuxtRulePacks } from "./rule-packs/nuxt/rules/index.js";
+import { nuxtDoctorExtensions } from "./rule-packs/nuxt/rules/index.js";
 import { vueRulePack } from "./rule-packs/vue/rules.js";
 import { viteRulePack } from "./rules.js";
 import { typescriptRulePack } from "./rule-packs/typescript/index.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
-  const framework = detectRequestedFramework(options);
-  const packs = [viteRulePack, typescriptRulePack];
-  if (framework === "vue") packs.push(vueRulePack);
-  if (framework === "nitro") packs.push(nitroRulePack);
-  if (framework === "nuxt") packs.push(...nuxtRulePacks());
-  return packs.map(withDistributionVersion);
+  return (await viteDoctorExtensions(options)).flatMap((extension) => extension.rulePacks ?? []);
 }
 
 export async function viteDoctorExtensions(

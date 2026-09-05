@@ -10,6 +10,7 @@ import {
 } from "../../src/core/index.ts";
 import { expect, test } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
+import { viteDoctorExtensions, viteDoctorRulePacks } from "../../src/doctor.ts";
 import { formatMigrationReport } from "../../src/migration.ts";
 import { doctor } from "../../src/plugin.ts";
 
@@ -20,6 +21,68 @@ const publicPackageJson = JSON.parse(
   dependencies?: Record<string, string>;
 };
 const publicPackageVersion = publicPackageJson.version;
+
+test.each(["vite", "vue", "nitro", "nuxt"] as const)(
+  "builtin catalog matches ordered runtime Rule Packs for %s",
+  async (framework) => {
+    const packs = await viteDoctorRulePacks({ framework });
+    const extensions = await viteDoctorExtensions({ framework });
+
+    expect(packs).toEqual(extensions.flatMap((extension) => extension.rulePacks ?? []));
+    expect(new Set(packs.map((pack) => pack.name)).size).toBe(packs.length);
+    expect(packs.every((pack) => pack.version === publicPackageVersion)).toBe(true);
+  },
+);
+
+test.each(["auto", "explicit"])(
+  "Nuxt catalog lists and explains an emitted Vue diagnostic with %s framework selection",
+  async (selection) => {
+    await withFixture(
+      {
+        "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0", vue: "^3.5.0" } }),
+        "app/app.vue": "<template><button>Save</button></template>",
+      },
+      async (root) => {
+        const frameworkOptions = selection === "explicit" ? ["--framework", "nuxt"] : [];
+        const ruleId = "vue/template/html-button-has-type";
+        const run = await runCli(
+          [".", "--rules", ruleId, "--no-cache", "--format", "json", ...frameworkOptions],
+          root,
+        );
+        expect(run.code).toBe(0);
+        const report = JSON.parse(run.output);
+        expect(report.framework).toBe("nuxt");
+        expect(report.diagnostics).toEqual([
+          expect.objectContaining({ code: "VUE0022", rule: ruleId }),
+        ]);
+
+        const catalog = await runCli(["rules", "--format", "json", ...frameworkOptions], root);
+        expect(catalog.code).toBe(0);
+        expect(
+          JSON.parse(catalog.output).rules.filter((rule: { id: string }) => rule.id === ruleId),
+        ).toEqual([
+          expect.objectContaining({
+            id: ruleId,
+            version: publicPackageVersion,
+            diagnosticCodes: ["VUE0022"],
+          }),
+        ]);
+
+        for (const diagnostic of ["VUE0022", ruleId]) {
+          const explanation = await runCli(
+            ["explain", diagnostic, "--format", "json", ...frameworkOptions],
+            root,
+          );
+          expect(explanation.code).toBe(0);
+          expect(JSON.parse(explanation.output)).toMatchObject({
+            id: ruleId,
+            diagnosticCodes: ["VUE0022"],
+          });
+        }
+      },
+    );
+  },
+);
 
 test("package installs the TypeScript runtime required by its parsers", () => {
   expect(publicPackageJson.dependencies?.["@typescript-eslint/parser"]).toBeTruthy();
