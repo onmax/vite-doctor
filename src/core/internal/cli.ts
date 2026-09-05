@@ -5,14 +5,12 @@ export function applyDoctorOptions(
   flags: Record<string, unknown>,
 ): void {
   if (flags.changed) options.changed = true;
-  if (flags.types) options.types = true;
   options.coverage = stringFlag(flags.coverage) ?? options.coverage;
   options.runtimeEvidence = stringFlag(flags.runtimeEvidence) ?? options.runtimeEvidence;
   options.analyses = stringFlag(flags.analyses) ?? options.analyses;
   if (flags.emitGraph) options.emitGraph = true;
   options.confidenceMin = stringFlag(flags.confidenceMin) ?? options.confidenceMin;
   if (flags.structuralReview) options.structuralReview = true;
-  if (flags.types === false) options.types = false;
   if (flags.profile) options.profile = true;
   if (flags.newOnly) options.newOnly = true;
   if (flags.updateBaseline) options.updateBaseline = true;

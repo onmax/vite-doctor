@@ -11,7 +11,6 @@ export interface DoctorSerializableConfig {
   exclude?: string[];
   rules?: Record<string, DoctorRuleConfig>;
   suppressions?: Array<{ ruleId?: string; fingerprint?: string; file?: string; reason: string }>;
-  typeAware?: boolean;
   cache?: { dir?: string; strategy?: "content-hash" };
   score?: { weights?: Partial<Record<"blocker" | "error" | "warn" | "info", number>> };
 }
@@ -20,22 +19,9 @@ export type DoctorFramework = "vue" | "nuxt" | "vite" | "nitro";
 export type ProjectLanguage = "typescript" | "javascript";
 export type RuntimePackageName = "nuxt" | "nitro" | "h3" | "vue";
 export type ApplicabilityState = "active" | "inactive" | "unknown";
-export type ExecutionKind =
-  | "file"
-  | "manifest"
-  | "workspace"
-  | "graph"
-  | "type"
-  | "duplication"
-  | "health";
+export type ExecutionKind = "file" | "manifest" | "workspace" | "graph" | "duplication" | "health";
 export type RuleCost = "tiny" | "small" | "medium" | "large" | "xlarge";
-export type CacheScope =
-  | "none"
-  | "file-text"
-  | "sfc-block"
-  | "workspace-graph"
-  | "type-project"
-  | "run";
+export type CacheScope = "none" | "file-text" | "sfc-block" | "workspace-graph" | "run";
 export type Determinism = "deterministic" | "env-dependent" | "runtime-dependent";
 export type EvidenceKind =
   | "facts"
@@ -120,7 +106,7 @@ export interface RuleMeta {
   docsUrl?: string;
   diagnosticCodes?: string[];
   version?: string;
-  requiresContext?: Array<"manifest" | "types" | "cross-file" | "template" | "script">;
+  requiresContext?: Array<"manifest" | "cross-file" | "template" | "script">;
   frameworkVersions?: {
     vue?: string;
     nuxt?: string;
@@ -135,7 +121,6 @@ export interface RuleMeta {
     sfc?: boolean;
     template?: boolean;
     script?: boolean;
-    types?: boolean;
     vue?: boolean;
     nitro?: boolean;
     nuxt?: boolean;
@@ -175,21 +160,6 @@ export interface SfcHandle {
   getTemplateTokens(): unknown;
   offsetToPosition(offset: number): SourceRange;
   blockOffsetToFileOffset(block: "template" | "script" | "scriptSetup", offset: number): number;
-}
-
-export interface TypeGraph {
-  programId: string;
-  projectRoots?: string[];
-  files?: string[];
-  resolveType(file: string, offset: number): unknown;
-  findSymbolRefs(file: string, offset: number): Array<{ file: string; range: SourceRange }>;
-  resolveExportTarget?(file: string, exportName: string): ResolvedSymbol | null;
-}
-
-export interface ResolvedSymbol {
-  file: string;
-  name: string;
-  range?: SourceRange;
 }
 
 export interface AutoImportEntry {
@@ -539,7 +509,6 @@ export interface RuleContext {
   project: ProjectInfo;
   file: SourceFileHandle;
   sfc?: SfcHandle;
-  types?: TypeGraph;
   severity: DoctorSeverity;
   options: unknown;
   report(diagnostic: NosticsDiagnostic, metadata: DoctorDiagnosticMetadata): void;

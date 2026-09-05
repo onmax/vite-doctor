@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "pathe";
 import type { Diagnostic, DoctorRule, RuleContext, SourceFileHandle } from "../primitives.js";
-import type { DoctorRunOptions } from "../config.js";
 import { runVisitor } from "./rule-runner.js";
 import {
   buildWorkspaceGraph,
@@ -28,7 +27,7 @@ export async function runFileRules(session: ScanSession): Promise<void> {
   for (const rule of session.enabledRules) {
     if ((rule.meta.execution ?? "file") !== "file") continue;
     for (const file of session.handles) {
-      if (!canRunRuleOnFile(rule, file, session.options)) continue;
+      if (!canRunRuleOnFile(rule, file)) continue;
       const visitor = await rule.create(createRuleContext(session, file, rule));
       if (!visitor) continue;
       await runVisitor(visitor, file);
@@ -60,13 +59,6 @@ export async function runGraphRules(session: ScanSession): Promise<void> {
   if (!session.graph) return;
   runStructuralGraphRules(session, session.graph);
 }
-
-export async function buildTypeGraphPhase(session: ScanSession): Promise<void> {
-  if (!session.options.types) return;
-  session.timings.typeGraphStatus = 0;
-}
-
-export async function runTypeRules(_session: ScanSession): Promise<void> {}
 
 export async function runDuplicationPhase(session: ScanSession): Promise<void> {
   runDuplicationRules(session);
@@ -179,17 +171,12 @@ function createEmptySourceFileHandle(session: ScanSession): SourceFileHandle {
   };
 }
 
-function canRunRuleOnFile(
-  rule: DoctorRule,
-  file: SourceFileHandle,
-  options: DoctorRunOptions,
-): boolean {
+function canRunRuleOnFile(rule: DoctorRule, file: SourceFileHandle): boolean {
   if (rule.meta.sourceKinds && !rule.meta.sourceKinds.includes(file.sourceKind)) return false;
   const requires = rule.meta.requires;
   if (!requires) return true;
   if (requires.sfc && !file.sfc) return false;
   if (requires.template && !file.templateAst) return false;
   if (requires.script && !file.scriptAst) return false;
-  if (requires.types && !options.types) return false;
   return true;
 }

@@ -338,7 +338,6 @@ export function reportRuntimeInventoryUnknown(session: ScanSession): void {
 
 export function defaultConfidenceForPhase(phase: Diagnostic["analysisPhase"]) {
   if (phase === "graph") return "proven";
-  if (phase === "type") return "type-backed";
   if (phase === "manifest") return "manifest-backed";
   if (phase === "duplication" || phase === "health") return "heuristic-high";
   return "heuristic-medium";
@@ -348,7 +347,6 @@ export function evidenceKindForPhase(phase: Diagnostic["analysisPhase"]) {
   if (phase === "file") return "ast";
   if (phase === "manifest") return "manifest";
   if (phase === "graph" || phase === "workspace") return "graph";
-  if (phase === "type") return "types";
   if (phase === "duplication" || phase === "health") return "facts";
   return "facts";
 }

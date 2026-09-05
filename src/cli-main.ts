@@ -142,7 +142,6 @@ function addDoctorRunCommand(
   cli
     .command("[path]", "Run Doctor diagnostics.")
     .option("--changed", "Report diagnostics on changed lines.")
-    .option("--types", "Enable type-aware rules.")
     .option(
       "--analyses <analyses>",
       "Comma-separated analyses: dead-code, graph, dupes, or health.",

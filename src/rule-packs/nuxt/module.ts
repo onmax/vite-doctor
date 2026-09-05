@@ -284,7 +284,6 @@ function serializableDoctorConfig(config: DoctorConfig = {}): DoctorConfig | und
   if (config.exclude !== undefined) payload.exclude = config.exclude;
   if (config.rules !== undefined) payload.rules = config.rules;
   if (config.suppressions !== undefined) payload.suppressions = config.suppressions;
-  if (config.typeAware !== undefined) payload.typeAware = config.typeAware;
   if (config.cache !== undefined) payload.cache = config.cache;
   if (config.score !== undefined) payload.score = config.score;
   return Object.keys(payload).length ? payload : undefined;
