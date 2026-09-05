@@ -1137,7 +1137,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/state/prefer-explicit-usestate-key-in-exported-composables": {
     description:
       "Finds Nuxt state code that should use the supported explicit usestate key in exported composables pattern instead.",
-    why: "Compiler-generated useState() keys depend on the call site. An exported composable needs a stable explicit key so every caller shares the intended state.",
+    why: "Compiler-generated useState() keys depend on the composable's source location. An explicit key keeps state identity stable when an exported composable moves or changes.",
     recommendedReplacement:
       "Use the Nuxt-supported explicit usestate key in exported composables pattern instead.",
     examples: [
@@ -1323,7 +1323,7 @@ export const ruleDocumentationMetadata = {
   },
   "vite/env/no-empty-env-prefix": {
     description: "Flags empty env prefix in Vite env code before it leaks into runtime behavior.",
-    why: "An empty envPrefix exposes every environment variable to bundled client code, including names that were never intended to be public.",
+    why: "Vite rejects an empty envPrefix to prevent exposing every environment variable to bundled client code, including secrets.",
     recommendedReplacement:
       "Remove empty env prefix, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
