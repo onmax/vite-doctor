@@ -26,7 +26,6 @@ export interface DoctorRunOptions {
   newOnly?: boolean;
   severity?: "error" | "warn" | "info";
   rules?: string;
-  types?: boolean;
   coverage?: string;
   runtimeEvidence?: string;
   analyses?: string;

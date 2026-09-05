@@ -3,13 +3,11 @@ import type { DoctorRunResult } from "./primitives.js";
 import { parseSourceFiles } from "./internal/facts.js";
 import {
   buildGraphPhase,
-  buildTypeGraphPhase,
   runDuplicationPhase,
   runFileRules,
   runGraphRules,
   runHealthPhase,
   runManifestRules,
-  runTypeRules,
 } from "./internal/rule-execution.js";
 import { cleanCache, createScanSession, markSession, runPhase } from "./internal/scan-session.js";
 import {
@@ -59,8 +57,6 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
   await runPhase(session, "manifestRules", () => runManifestRules(session));
   await runPhase(session, "workspaceGraph", () => buildGraphPhase(session));
   await runPhase(session, "graphRules", () => runGraphRules(session));
-  await runPhase(session, "typeGraph", () => buildTypeGraphPhase(session));
-  await runPhase(session, "typeRules", () => runTypeRules(session));
   await runPhase(session, "duplication", () => runDuplicationPhase(session));
   await runPhase(session, "health", () => runHealthPhase(session));
   applyPolicyFilters(session);

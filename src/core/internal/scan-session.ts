@@ -282,7 +282,6 @@ function selectRules(
       (rule) =>
         !rule.meta.requires?.vue || project.framework === "vue" || project.framework === "nuxt",
     )
-    .filter((rule) => !rule.meta.requires?.types || options.types)
     .filter(
       (rule) => !wanted?.length || wanted.some((pattern) => nativeMatch(rule.meta.id, pattern)),
     )

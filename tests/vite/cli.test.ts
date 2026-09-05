@@ -31,6 +31,16 @@ test("CLI rejects removed run command", async () => {
   await expect(main(["run", "--dry-run", "--format", "text"], repoRoot)).resolves.toBe(2);
 });
 
+test("CLI rejects the removed type analysis flag", async () => {
+  const result = await runCli([".", "--types", "--format", "agent"], findRepoRoot());
+
+  expect(result.code).toBe(2);
+  expect(JSON.parse(result.output)).toMatchObject({
+    error: { kind: "invocation" },
+    next: { action: "correct-invocation" },
+  });
+});
+
 test("CLI prints the public package version", async () => {
   const repoRoot = findRepoRoot();
   const writes: string[] = [];
