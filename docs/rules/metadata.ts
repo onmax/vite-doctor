@@ -73,7 +73,7 @@ export const ruleDocumentationMetadata = {
   "nitro/request/prefer-assert-method": {
     description:
       "Finds Nitro request code that should use the supported assert method pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Manual method checks can drift from H3 response behavior. assertMethod() applies the framework's method validation and 405 handling consistently.",
     recommendedReplacement: "Use assertMethod(event, method) at the top of single-method handlers.",
     examples: [
       {
@@ -88,7 +88,7 @@ export const ruleDocumentationMetadata = {
   "nitro/request/prefer-get-request-ip": {
     description:
       "Finds Nitro request code that should use the supported get request IP pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Reading x-forwarded-for directly trusts raw proxy input and may return a spoofed or comma-separated value instead of the client address.",
     recommendedReplacement:
       "Use getRequestIP(event) and configure trusted proxy handling centrally.",
     examples: [
@@ -370,7 +370,7 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt-ui/prefer-u-button": {
     description: "Finds Nuxt project code that should use the supported u button pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Native buttons repeat styling, loading, icon, and link behavior that UButton keeps consistent with the project's Nuxt UI theme.",
     recommendedReplacement: "Use the Nuxt-supported u button pattern instead.",
     examples: [
       {
@@ -384,7 +384,7 @@ export const ruleDocumentationMetadata = {
   "nuxt-ui/prefer-u-form-controls": {
     description:
       "Finds Nuxt project code that should use the supported u form controls pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Native form controls bypass Nuxt UI's validation, help text, error state, and accessibility wiring.",
     recommendedReplacement: "Use the Nuxt-supported u form controls pattern instead.",
     examples: [
       {
@@ -781,7 +781,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/no-global-refresh-without-justification": {
     description:
       "Flags global refresh without justification in Nuxt project code before it leaks into runtime behavior.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Refreshing every async-data key refetches unrelated state and hides which data a mutation actually invalidates.",
     recommendedReplacement:
       "Remove global refresh without justification, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
@@ -862,7 +862,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/preview-mode-global-refresh": {
     description:
       "Finds Nuxt project code that can be written with a clearer framework-supported pattern.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "usePreviewMode() can refresh every async-data key when preview state changes, including requests unrelated to preview content.",
     recommendedReplacement: "Use the Nuxt-supported preview mode global refresh pattern instead.",
     examples: [
       {
@@ -876,7 +876,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/project/prefer-app-directory-placement": {
     description:
       "Finds Nuxt project code that should use the supported app directory placement pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Nuxt 4 scans app code under app/. Keeping legacy top-level directories can make ownership unclear and diverge from the current directory contract.",
     recommendedReplacement: "Use the Nuxt-supported app directory placement pattern instead.",
     examples: [
       {
@@ -957,7 +957,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/routing/prefer-nuxt-useroute": {
     description:
       "Finds Nuxt routing code that should use the supported nuxt useRoute pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Nuxt's useRoute() wrapper synchronizes route updates with page rendering; the vue-router version can expose route state at a different time.",
     recommendedReplacement: "Use Nuxt’s auto-imported useRoute() inside Nuxt app code.",
     examples: [
       {
@@ -970,7 +970,7 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/routing/prefer-nuxtlink": {
     description: "Finds Nuxt routing code that should use the supported NuxtLink pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "NuxtLink handles client navigation, route prefetching, base paths, and external-link behavior for Nuxt applications.",
     recommendedReplacement: "Use <NuxtLink> for internal navigation.",
     examples: [
       {
@@ -984,7 +984,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/routing/prefer-nuxtpage-over-routerview": {
     description:
       "Finds Nuxt routing code that should use the supported NuxtPage over routerview pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "NuxtPage connects routed views to Nuxt page metadata, transitions, keep-alive behavior, and Suspense handling.",
     recommendedReplacement: "Render routed pages with <NuxtPage>.",
     examples: [
       {
@@ -1061,7 +1061,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/security/prefer-useheadsafe-for-untrusted-values": {
     description:
       "Finds Nuxt security code that should use the supported useheadsafe for untrusted values pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Values derived from routes, content, or users can inject unsafe head attributes when passed through unrestricted useHead().",
     recommendedReplacement:
       "Use the Nuxt-supported useheadsafe for untrusted values pattern instead.",
     examples: [
@@ -1076,7 +1076,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/seo/prefer-seo-composables": {
     description:
       "Finds Nuxt seo code that should use the supported seo composables pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "useSeoMeta() provides typed, flat SEO fields and prevents malformed name, property, and content combinations in manual head arrays.",
     recommendedReplacement: "Use the Nuxt-supported seo composables pattern instead.",
     examples: [
       {
@@ -1122,7 +1122,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/state/no-nonserializable-usestate": {
     description:
       "Flags nonserializable usestate in Nuxt state code before it leaks into runtime behavior.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Nuxt transfers useState() values through the SSR payload, so functions, class instances, DOM objects, and other non-serializable values cannot hydrate reliably.",
     recommendedReplacement:
       "Remove nonserializable usestate, or move it to the Nuxt runtime/API that owns that behavior.",
     examples: [
@@ -1137,7 +1137,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/state/prefer-explicit-usestate-key-in-exported-composables": {
     description:
       "Finds Nuxt state code that should use the supported explicit usestate key in exported composables pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Compiler-generated useState() keys depend on the call site. An exported composable needs a stable explicit key so every caller shares the intended state.",
     recommendedReplacement:
       "Use the Nuxt-supported explicit usestate key in exported composables pattern instead.",
     examples: [
@@ -1294,7 +1294,7 @@ export const ruleDocumentationMetadata = {
   },
   "vite/env/no-broad-env-prefix": {
     description: "Flags broad env prefix in Vite env code before it leaks into runtime behavior.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Every matching prefix exposes environment variables to client code through import.meta.env, so broad prefixes can publish unrelated configuration.",
     recommendedReplacement:
       "Remove broad env prefix, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
@@ -1323,7 +1323,7 @@ export const ruleDocumentationMetadata = {
   },
   "vite/env/no-empty-env-prefix": {
     description: "Flags empty env prefix in Vite env code before it leaks into runtime behavior.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "An empty envPrefix exposes every environment variable to bundled client code, including names that were never intended to be public.",
     recommendedReplacement:
       "Remove empty env prefix, or move it to the Vite runtime/API that owns that behavior.",
     examples: [
@@ -1353,7 +1353,7 @@ export const ruleDocumentationMetadata = {
   "vite/env/prefer-direct-import-meta-env-access": {
     description:
       "Finds Vite env code that should use the supported direct import meta env access pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Direct import.meta.env.KEY access lets Vite statically replace known values and tree-shake branches; aliasing the whole object obscures those keys.",
     recommendedReplacement: "Use the Vite-supported direct import meta env access pattern instead.",
     examples: [
       {
@@ -1384,7 +1384,7 @@ export const ruleDocumentationMetadata = {
   "vite/plugin/prefer-transform-filter": {
     description:
       "Finds Vite plugin code that should use the supported transform filter pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "A hook filter lets Vite and Rolldown skip invoking transform() for unrelated modules instead of paying for a userland check on every file.",
     recommendedReplacement: "Use the Vite-supported transform filter pattern instead.",
     examples: [
       {
@@ -1612,7 +1612,7 @@ export const ruleDocumentationMetadata = {
   "vue/reactivity/no-ref-as-operand": {
     description:
       "Flags ref as operand in Vue reactivity code before it leaks into runtime behavior.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "A ref object is not its contained value, so arithmetic and comparison against the ref can coerce the wrapper or produce the wrong result.",
     recommendedReplacement:
       "Remove ref as operand, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
@@ -1629,7 +1629,7 @@ export const ruleDocumentationMetadata = {
   "vue/reactivity/no-setup-props-destructure": {
     description:
       "Flags setup props destructure in Vue reactivity code before it leaks into runtime behavior.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Destructuring the props object in setup can detach values from their reactive source when the code cannot rely on Vue's reactive props transform.",
     recommendedReplacement:
       "Remove setup props destructure, or move it to the Vue runtime/API that owns that behavior.",
     examples: [
@@ -1646,7 +1646,7 @@ export const ruleDocumentationMetadata = {
   "vue/reactivity/prefer-composable-ref-return": {
     description:
       "Finds Vue reactivity code that should use the supported composable ref return pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Returning ref.value gives callers a snapshot; returning the ref preserves updates and lets callers compose it with Vue reactivity.",
     recommendedReplacement: "Use the Vue-supported composable ref return pattern instead.",
     examples: [
       {
@@ -1733,7 +1733,7 @@ export const ruleDocumentationMetadata = {
   },
   "vue/style/prefer-define-model": {
     description: "Finds Vue style code that should use the supported define model pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "defineModel() keeps a component's model prop, update event, modifiers, and type in one compiler-checked declaration.",
     recommendedReplacement: "Use the Vue-supported define model pattern instead.",
     examples: [
       {
@@ -1748,7 +1748,7 @@ export const ruleDocumentationMetadata = {
   "vue/style/prefer-props-destructure-defaults": {
     description:
       "Finds Vue style code that should use the supported props destructure defaults pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Vue's reactive props destructure expresses defaults at the binding site and avoids a separate withDefaults() wrapper in supported Vue versions.",
     recommendedReplacement: "Use the Vue-supported props destructure defaults pattern instead.",
     examples: [
       {
@@ -1778,7 +1778,7 @@ export const ruleDocumentationMetadata = {
   "vue/template/prefer-use-template-ref": {
     description:
       "Finds Vue template code that should use the supported use template ref pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "useTemplateRef() links the script binding to the template ref name and gives TypeScript the element or component instance type.",
     recommendedReplacement: "Use the Vue-supported use template ref pattern instead.",
     examples: [
       {
@@ -1930,7 +1930,7 @@ export const ruleDocumentationMetadata = {
   "vueuse/prefer-use-scroll-and-element": {
     description:
       "Finds VueUse project code that should use the supported use scroll and element pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "VueUse scroll helpers provide reactive coordinates and manage listeners across mounting, target changes, and disposal.",
     recommendedReplacement: "Use the VueUse-supported use scroll and element pattern instead.",
     examples: [
       {
@@ -1945,7 +1945,7 @@ export const ruleDocumentationMetadata = {
   "vueuse/prefer-use-storage": {
     description:
       "Finds VueUse project code that should use the supported use storage pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Manual storage reads and watches duplicate serialization, cross-tab synchronization, default handling, and reactive updates already handled by useStorage().",
     recommendedReplacement:
       "Use VueUse useStorage() for client storage so refs, serialization, and cleanup stay together.",
     examples: [
@@ -1976,7 +1976,7 @@ export const ruleDocumentationMetadata = {
   "vueuse/prefer-usebreakpoints": {
     description:
       "Finds VueUse project code that should use the supported useBreakpoints pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "A one-time matchMedia() read does not stay reactive as the viewport changes; useBreakpoints() owns the media-query listeners and reactive state.",
     recommendedReplacement:
       "Use VueUse useBreakpoints() for responsive state that stays reactive and testable.",
     examples: [
@@ -1992,7 +1992,7 @@ export const ruleDocumentationMetadata = {
   "vueuse/prefer-useclipboard": {
     description:
       "Finds VueUse project code that should use the supported useClipboard pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Direct clipboard calls require support checks, permission handling, copied state, and cleanup that useClipboard() already provides.",
     recommendedReplacement:
       "Use VueUse useClipboard() instead of wiring navigator.clipboard directly.",
     examples: [
@@ -2025,7 +2025,7 @@ export const ruleDocumentationMetadata = {
   "vueuse/prefer-usewindow-size": {
     description:
       "Finds VueUse project code that should use the supported useWindow size pattern instead.",
-    why: "Vue and Nuxt reactivity depends on stable references and serializable state. Hidden snapshots or mutable inputs make updates harder to track.",
+    why: "Reading window dimensions directly misses later resizes unless the component owns listener setup and cleanup; useWindowSize() maintains reactive dimensions.",
     recommendedReplacement:
       "Use VueUse useWindowSize() instead of reading window dimensions by hand.",
     examples: [
