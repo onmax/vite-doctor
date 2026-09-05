@@ -25,6 +25,7 @@ import {
   normalizeDiagnostic,
   normalizeDiagnosticFromRuleCode,
 } from "../../src/core/internal/diagnostics.ts";
+import { loadDoctorConfig } from "../../src/core/config.ts";
 import { scoreDiagnostics } from "../../src/core/internal/scoring.ts";
 import { getNodeVisitorKeys } from "../../src/core/internal/visitor-keys.ts";
 
@@ -1003,6 +1004,21 @@ test("rules and explain reports expose rule metadata as json", () => {
 
   expect(rules.rules[0].id).toBe("test/report-program");
   expect(explain.id).toBe("test/report-program");
+});
+
+test("executable config preserves Doctor preset selection without loading config layers", async () => {
+  for (const selection of [[], "auto", ["test/strict"]] as const) {
+    await withFixture(
+      { "doctor.config.mjs": `export default ${JSON.stringify({ extends: selection })}` },
+      async (root) => {
+        const config = await loadDoctorConfig({
+          cwd: root,
+          configFile: join(root, "doctor.config.mjs"),
+        });
+        expect(config.extends).toEqual(selection);
+      },
+    );
+  }
 });
 
 test("runDoctor does not load repository-local config by default", async () => {
