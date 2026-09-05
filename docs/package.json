@@ -42,6 +42,11 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:deploy",
+    "@iconify-json/logos": "catalog:frontend",
+    "@iconify-json/lucide": "catalog:frontend",
+    "@iconify-json/simple-icons": "catalog:frontend",
+    "@iconify-json/unjs": "catalog:frontend",
+    "@iconify-json/vscode-icons": "catalog:frontend",
     "esbuild": "catalog:build",
     "oxc-parser": "catalog:analysis",
     "wrangler": "catalog:deploy"
