@@ -29,6 +29,18 @@ export default defineNuxtConfig({
 
   css: ["~/assets/css/main.css"],
 
+  icon: {
+    clientBundle: {
+      icons: [
+        "lucide:plug",
+        "lucide:plug-zap",
+        "lucide:wand-sparkles",
+        "vscode-icons:file-type-json",
+        "vscode-icons:file-type-nuxt",
+      ],
+    },
+  },
+
   runtimeConfig: {
     public: {
       doctorVersion: doctorPackage.version,
