@@ -153,6 +153,10 @@ export default defineNuxtConfig({
 });
 ```
 
+### Removed run options
+
+Remove `coverage`, `runtimeEvidence`, `emitGraph`, `confidenceMin`, and `scoreOnly` from `DoctorRunOptions` objects. These options had no effect on Doctor Runs; their removal is a breaking TypeScript API change. Runtime Evidence contributors, graph reports, diagnostic confidence, and scoring remain supported.
+
 ## Doctor extensions
 
 Library authors can import `createRule`, `defineRulePack`, `defineDoctorExtension`, and
