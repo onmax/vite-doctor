@@ -7,6 +7,7 @@ export default defineConfig({
     "src/index.ts",
     "src/cli.ts",
     "src/config.ts",
+    "src/extension.ts",
     "src/plugin.ts",
     "src/nuxt.ts",
     "src/rules.ts",

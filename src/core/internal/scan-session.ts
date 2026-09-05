@@ -220,15 +220,12 @@ async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
       registerRulePack(pack) {
         registeredPacks.push(pack);
       },
-      registerReporter() {},
-      registerProjectDetector() {},
       registerProjectInventoryContributor(contributor) {
         inventoryContributors.push(contributor);
       },
       registerRuntimeEvidenceContributor(contributor) {
         runtimeEvidenceContributors.push(contributor);
       },
-      registerNuxtManifestContributor() {},
     });
   }
   const packs = [

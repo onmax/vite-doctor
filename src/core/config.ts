@@ -59,6 +59,7 @@ export async function loadDoctorConfig(options: LoadDoctorConfigOptions): Promis
     cwd: options.cwd,
     dotenv: false,
     globalRc: false,
+    extend: false,
     name: "doctor",
   });
   return defu(result.config ?? {}, options.defaults ?? {}) as DoctorConfig;
