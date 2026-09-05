@@ -297,6 +297,20 @@ test("rule examples do not reuse generic placeholders", () => {
   expect(placeholderExamples).toEqual([]);
 });
 
+test("rule rationales describe the diagnosed behavior", () => {
+  const rules = getRuleDocuments();
+  const placeholder =
+    "Vue and Nuxt reactivity depends on stable references and serializable state.";
+
+  expect(rules.filter((rule) => rule.why.includes(placeholder))).toEqual([]);
+  expect(rules.find((rule) => rule.id === "nitro/request/prefer-assert-method")?.why).toContain(
+    "405",
+  );
+  expect(rules.find((rule) => rule.id === "vite/env/no-broad-env-prefix")?.why).toContain(
+    "import.meta.env",
+  );
+});
+
 test("fetch factory docs demonstrate createUseFetch", async () => {
   const docs = getRuleDocuments();
   const rule = docs.find((item) => item.id === "nuxt/fetch/prefer-create-use-fetch");
