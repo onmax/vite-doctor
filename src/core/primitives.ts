@@ -626,36 +626,17 @@ export interface DoctorRunResult {
   project: ProjectInfo;
 }
 
-export interface Reporter {
-  name: string;
-  write(result: DoctorRunResult): Promise<void> | void;
-}
-
 export interface DoctorExtension {
   name: string;
   version?: string;
   rulePacks?: RulePack[];
-  reporters?: Reporter[];
   setup?(api: DoctorExtensionApi): void | Promise<void>;
 }
 
 export interface DoctorExtensionApi {
   registerRulePack(pack: RulePack): void;
-  registerReporter(reporter: Reporter): void;
-  registerProjectDetector(detector: ProjectDetector): void;
   registerProjectInventoryContributor(contributor: ProjectInventoryContributor): void;
   registerRuntimeEvidenceContributor(contributor: RuntimeEvidenceContributor): void;
-  registerNuxtManifestContributor?(contributor: NuxtManifestContributor): void;
-}
-
-export interface ProjectDetector {
-  name: string;
-  detect(root: string): Promise<ProjectInfo | null>;
-}
-
-export interface NuxtManifestContributor {
-  name: string;
-  contribute(project: ProjectInfo): Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
 export interface ProjectInventoryContributor {

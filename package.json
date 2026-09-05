@@ -29,6 +29,7 @@
     ".": "./dist/index.mjs",
     "./cli": "./dist/cli.mjs",
     "./config": "./dist/config.mjs",
+    "./extension": "./dist/extension.mjs",
     "./nuxt": "./dist/nuxt.mjs",
     "./plugin": "./dist/plugin.mjs",
     "./rule-packs/nitro": "./dist/rule-packs/nitro/index.mjs",

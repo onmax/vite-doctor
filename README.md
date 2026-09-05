@@ -153,6 +153,12 @@ export default defineNuxtConfig({
 });
 ```
 
+## Doctor extensions
+
+Library authors can import `createRule`, `defineRulePack`, `defineDoctorExtension`, and
+`defineDoctorDiagnostics` from `vite-doctor/extension`. The same entrypoint exports their
+authoring types.
+
 ## Development
 
 ```bash

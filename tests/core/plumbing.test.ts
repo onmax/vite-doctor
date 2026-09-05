@@ -9,16 +9,18 @@ import {
   createAgentReport,
   createRulesReport,
   createSarifReport,
-  createRule,
   createNuxtProjectInventory,
   allDiagnostics,
   createDoctorDiagnosticsHost,
-  defineDoctorDiagnostics,
-  defineDoctorExtension,
-  defineRulePack,
   explainRule,
   runDoctor,
 } from "../../src/core/index.ts";
+import {
+  createRule,
+  defineDoctorDiagnostics,
+  defineDoctorExtension,
+  defineRulePack,
+} from "../../src/extension.ts";
 import {
   normalizeDiagnostic,
   normalizeDiagnosticFromRuleCode,
