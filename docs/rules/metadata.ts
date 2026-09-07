@@ -1182,6 +1182,28 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/imports/require-static-glob-pattern": {
+    description:
+      "Reports import.meta.glob patterns that Vite cannot transform into module imports.",
+    why: "Vite expands import.meta.glob during development and production builds. Its first argument must contain string literals, an array of string literals, or template literals without interpolation. Variables, concatenation, interpolated templates, and array spreads are unsupported even when their values are constant. Vite 7 rejects them during the transform; Vite 8 can instead omit their matching modules from the generated map.",
+    recommendedReplacement:
+      "Write the patterns directly inside import.meta.glob. To choose a module at runtime, use a literal glob to build the module map, then select a key from that map.",
+    examples: [
+      {
+        title: "Inline constant patterns",
+        language: "ts",
+        invalid: "const pattern = './pages/*.vue'\nconst pages = import.meta.glob(pattern)",
+        valid: "const pages = import.meta.glob('./pages/*.vue')",
+      },
+      {
+        title: "Select a module after expanding a literal glob",
+        language: "ts",
+        invalid: "const loadPage = (name: string) => import.meta.glob(`./pages/${name}.vue`)",
+        valid:
+          "const pages = import.meta.glob('./pages/*.vue')\nconst loadPage = (name: string) => pages[`./pages/${name}.vue`]?.()",
+      },
+    ],
+  },
   "vite/assets/no-dynamic-new-url": {
     description: "Flags dynamic new URL in Vite assets code before it leaks into runtime behavior.",
     why: "Vite configuration runs in both dev and build pipelines. Narrow, explicit settings reduce surprises across SSR, workers, and local file access.",
