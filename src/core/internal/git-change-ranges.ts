@@ -150,7 +150,9 @@ export async function collectGitChangeInventory(
   }
 
   for (const path of untracked.paths.filter(includePath)) {
-    const lineCount = currentLineCount(resolve(root, path));
+    const absolute = resolve(root, path);
+    if (!statSync(absolute, { throwIfNoEntry: false })?.isFile()) continue;
+    const lineCount = currentLineCount(absolute);
     changes.push({
       kind: "untracked",
       path,
@@ -263,8 +265,10 @@ async function collectFileHunks(
   const result = await runGit(root, [
     "diff",
     "--unified=0",
+    "--inter-hunk-context=0",
     "--no-color",
     "--no-ext-diff",
+    "--no-textconv",
     base,
     "--",
     ...(previousPath ? [previousPath] : []),
