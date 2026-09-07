@@ -43,22 +43,33 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
         specifier: item.source,
         kind: item.kind === "type" ? "type-import" : "import",
       });
-      if (target !== undefined) {
-        const importers = importersByFile.get(target) ?? [];
-        importers.push(fact.fileId);
-        importersByFile.set(target, importers);
-      }
       for (const specifier of item.specifiers) {
         const refs = refsByExport.get(specifier) ?? [];
         refs.push({ fileId: fact.fileId, range: item.range });
         refsByExport.set(specifier, refs);
       }
     }
+    for (const item of fact.dynamicImports) {
+      if (item.source === null) continue;
+      importEdges.push({
+        from: fact.fileId,
+        to: resolveImportTarget(session, fact, item.source, byRelativePath),
+        specifier: item.source,
+        kind: "dynamic-import",
+      });
+    }
     for (const item of fact.calls) {
       const refs = refsByExport.get(item.name) ?? [];
       refs.push({ fileId: fact.fileId, range: item.range });
       refsByExport.set(item.name, refs);
     }
+  }
+
+  for (const edge of [...importEdges, ...exportEdges]) {
+    if (edge.to === undefined) continue;
+    const importers = importersByFile.get(edge.to) ?? [];
+    importers.push(edge.from);
+    importersByFile.set(edge.to, importers);
   }
 
   const virtualRoots = createVirtualRoots(session, fileIdsByPath);
@@ -81,7 +92,7 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
     reverseIndex: { importersByFile, refsByExport, exportsByName },
     sccs: computeSccs(
       session.facts.map((fact) => fact.fileId),
-      importEdges,
+      [...importEdges.filter((edge) => edge.kind !== "dynamic-import"), ...exportEdges],
     ),
   };
 }
@@ -256,9 +267,11 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
   const live = reachableFiles(graph);
   const packageDeps = readPackageDeps(session.root);
   const importedPackages = new Set<string>();
+  const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
 
   for (const fact of session.facts) {
-    for (const item of fact.imports) {
+    for (const item of [...fact.imports, ...fact.exports, ...fact.dynamicImports]) {
+      if (!item.source) continue;
       if (
         !item.source.startsWith(".") &&
         !item.source.startsWith("~/") &&
@@ -270,12 +283,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         isLocalSpecifier(item.source) &&
         !isGeneratedOrAssetImport(item.source) &&
         !isLikelyForeignFrameworkFile(session, fact.relativePath, packageDeps) &&
-        resolveImportTarget(
-          session,
-          fact,
-          item.source,
-          new Map(session.facts.map((f) => [f.relativePath, f.fileId])),
-        ) === undefined
+        resolveImportTarget(session, fact, item.source, byRelativePath) === undefined
       ) {
         pushDiagnostic(session, {
           ruleId: "workspace/dead-code/unresolved-import",
@@ -483,6 +491,13 @@ function selectedAnalyses(session: ScanSession): Set<string> {
 
 function reachableFiles(graph: WorkspaceGraph): Set<number> {
   const live = new Set<number>();
+  const targetsByFile = new Map<number, number[]>();
+  for (const edge of [...graph.importEdges, ...graph.exportEdges]) {
+    if (edge.to === undefined) continue;
+    const targets = targetsByFile.get(edge.from) ?? [];
+    targets.push(edge.to);
+    targetsByFile.set(edge.from, targets);
+  }
   const queue = graph.virtualRoots.flatMap((root) =>
     root.fileId === undefined ? [] : [root.fileId],
   );
@@ -490,13 +505,11 @@ function reachableFiles(graph: WorkspaceGraph): Set<number> {
     if (fact.exports.some((item) => graph.reverseIndex.refsByExport.has(item.name)))
       queue.push(fact.fileId);
   }
-  while (queue.length) {
-    const id = queue.shift()!;
+  for (let index = 0; index < queue.length; index++) {
+    const id = queue[index]!;
     if (live.has(id)) continue;
     live.add(id);
-    for (const edge of graph.importEdges) {
-      if (edge.from === id && edge.to !== undefined && !live.has(edge.to)) queue.push(edge.to);
-    }
+    for (const target of targetsByFile.get(id) ?? []) if (!live.has(target)) queue.push(target);
   }
   return live;
 }

@@ -17,6 +17,8 @@ import { createCacheKey, markSession, type ScanSession } from "./scan-session.js
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 
+const FILE_FACTS_VERSION = 2;
+
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
   let fileId = 0;
@@ -36,7 +38,11 @@ async function parseSourceFile(
   const absolute = file.path;
   const text = readFileSync(absolute, "utf8");
   const hash = sha256(text);
-  const cacheKey = createCacheKey(session, "fileFacts", `${absolute}:${hash}`);
+  const cacheKey = createCacheKey(
+    session,
+    "fileFacts",
+    `${FILE_FACTS_VERSION}:${absolute}:${hash}`,
+  );
   const cachedFacts = session.cache.get<FileFacts>(cacheKey);
   const isVueSfc = absolute.endsWith(".vue");
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
@@ -150,6 +156,11 @@ function createFileFacts(
           name: "*",
           kind: node.exportKind === "type" ? "type" : "value",
           source: String(node.source?.value ?? ""),
+          range: nodeRange(session, file.path, text, node),
+        });
+      } else if (node.type === "ImportExpression") {
+        dynamicImports.push({
+          source: typeof node.source?.value === "string" ? node.source.value : null,
           range: nodeRange(session, file.path, text, node),
         });
       } else if (node.type === "CallExpression") {
