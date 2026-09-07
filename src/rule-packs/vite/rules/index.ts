@@ -14,6 +14,7 @@ export {
 export { noDynamicNewUrl, noPublicSrcImport, noSrcAbsolutePublicUrl } from "./assets.js";
 export { noDynamicWorkerUrl, noNodeApiInWorker, requireWorkerUrlPattern } from "./worker.js";
 export { noBrowserGlobalInSsrEntry } from "./ssr.js";
+export { requireStaticGlobPattern } from "./imports.js";
 export { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
 export {
   requireDisposeForSideEffects,
@@ -38,6 +39,7 @@ import {
 import { noDynamicNewUrl, noPublicSrcImport, noSrcAbsolutePublicUrl } from "./assets.js";
 import { noDynamicWorkerUrl, noNodeApiInWorker, requireWorkerUrlPattern } from "./worker.js";
 import { noBrowserGlobalInSsrEntry } from "./ssr.js";
+import { requireStaticGlobPattern } from "./imports.js";
 import { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
 import {
   requireDisposeForSideEffects,
@@ -67,6 +69,7 @@ const rules = [
   requirePluginName,
   preferTransformFilter,
   requireDisposeForSideEffects,
+  requireStaticGlobPattern,
 ];
 
 const recommended = [
@@ -83,6 +86,7 @@ const recommended = [
   noDisabledFsStrict,
   noBroadFsAllow,
   requireDisposeForSideEffects,
+  requireStaticGlobPattern,
 ].map((rule) => rule.meta.id);
 
 const viteRulePack = defineRulePack({
