@@ -10,13 +10,16 @@ const cacheDirectory = join(homedir(), ".cache");
 mkdirSync(cacheDirectory, { recursive: true });
 const temporary = mkdtempSync(join(cacheDirectory, "vite-doctor-pack-"));
 const packDirectory = join(temporary, "pack");
-const fixture = join(temporary, "fixture");
+const fixture = join(temporary, "fixture with spaces");
 const env = { ...process.env, CI: "1", NO_COLOR: "1" };
+const packageManager = process.env.npm_execpath;
+const pnpmCommand = packageManager ? process.execPath : "pnpm";
+const pnpmArgs = (args) => (packageManager ? [packageManager, ...args] : args);
 
 try {
   mkdirSync(packDirectory);
   mkdirSync(fixture);
-  execFileSync("pnpm", ["pack", "--pack-destination", packDirectory], {
+  execFileSync(pnpmCommand, pnpmArgs(["pack", "--pack-destination", packDirectory]), {
     cwd: root,
     env,
     stdio: "pipe",
@@ -29,11 +32,12 @@ try {
     join(temporary, "package.json"),
     `${JSON.stringify({ private: true, dependencies: { nuxt: nuxt.version, "vite-doctor": `file:${tarball}` } }, null, 2)}\n`,
   );
-  execFileSync("pnpm", ["install", "--ignore-scripts", "--prefer-offline"], {
+  execFileSync(pnpmCommand, pnpmArgs(["install", "--ignore-scripts", "--prefer-offline"]), {
     cwd: temporary,
     env,
     stdio: "pipe",
   });
+  verifyExports();
   writeFileSync(
     join(fixture, "package.json"),
     `${JSON.stringify({ private: true, dependencies: { nuxt: nuxt.version } }, null, 2)}\n`,
@@ -41,6 +45,7 @@ try {
   );
   writeFileSync(join(fixture, "nuxt.config.ts"), "export default defineNuxtConfig({})\n");
 
+  verifyDoctor(["exec", "vite-doctor", fixture, "--format", "agent", "--no-cache"]);
   verifyDoctor(["exec", "nuxt-doctor", fixture, "--format", "agent", "--no-cache"]);
   verifyDoctor(["nuxt", "doctor", fixture, "--format", "agent", "--no-cache"]);
   mkdirSync(join(fixture, "app/pages"), { recursive: true });
@@ -56,15 +61,18 @@ try {
     "agent",
     "--no-cache",
   ];
+  verifyDoctor(["exec", "vite-doctor", ...findingArgs], [1], "NUXT0029");
   verifyDoctor(["exec", "nuxt-doctor", ...findingArgs], [1], "NUXT0029");
   verifyDoctor(["nuxt", "doctor", ...findingArgs], [0, 1], "NUXT0029");
-  process.stdout.write("Packed Doctor CLI checks passed.\n");
+  process.stdout.write(
+    `Packed Doctor CLI checks passed on ${process.platform}, Node ${process.versions.node}.\n`,
+  );
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }
 
 function verifyDoctor(args, expectedStatuses = [0], expectedCode) {
-  const result = spawnSync("pnpm", args, {
+  const result = spawnSync(pnpmCommand, pnpmArgs(args), {
     cwd: temporary,
     env,
     encoding: "utf8",
@@ -92,4 +100,68 @@ function verifyDoctor(args, expectedStatuses = [0], expectedCode) {
     assert.equal(report.status, "clean");
     assert.deepEqual(report.diagnostics, []);
   }
+}
+
+function verifyExports() {
+  const manifest = JSON.parse(
+    readFileSync(join(temporary, "node_modules/vite-doctor/package.json"), "utf8"),
+  );
+  const subpaths = Object.keys(manifest.exports).filter((subpath) => subpath !== "./package.json");
+  const specifiers = subpaths.map((subpath) =>
+    subpath === "." ? manifest.name : `${manifest.name}/${subpath.slice(2)}`,
+  );
+  const runtimeImports = specifiers
+    .filter((specifier) => specifier !== `${manifest.name}/cli`)
+    .map((specifier) => `await import(${JSON.stringify(specifier)});`)
+    .join("\n");
+  writeFileSync(join(temporary, "imports.mjs"), `${runtimeImports}\n`);
+  execFileSync(process.execPath, [join(temporary, "imports.mjs")], {
+    cwd: temporary,
+    env,
+    stdio: "inherit",
+  });
+
+  const typeImports = specifiers.map(
+    (specifier, index) =>
+      `import * as entry${index} from ${JSON.stringify(specifier)}; export { entry${index} };`,
+  );
+  writeFileSync(
+    join(temporary, "consumer.mts"),
+    `${typeImports.join("\n")}\n` +
+      'import { doctor, defineDoctorConfig } from "vite-doctor";\n' +
+      'import { defineDoctorExtension } from "vite-doctor/extension";\n' +
+      'doctor({ config: defineDoctorConfig({ extends: ["vite/recommended"] }), extensions: [defineDoctorExtension({ name: "consumer", setup() {} })] });\n',
+  );
+  for (const [module, moduleResolution] of [
+    ["NodeNext", "NodeNext"],
+    ["ESNext", "Bundler"],
+  ]) {
+    writeFileSync(
+      join(temporary, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          module,
+          moduleResolution,
+          target: "ESNext",
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+          types: [],
+        },
+        files: ["consumer.mts"],
+      }),
+    );
+    execFileSync(
+      process.execPath,
+      [join(root, "node_modules/typescript/bin/tsc"), "-p", join(temporary, "tsconfig.json")],
+      {
+        cwd: temporary,
+        env,
+        stdio: "inherit",
+      },
+    );
+  }
+  process.stdout.write(
+    `Verified ${specifiers.length} packed exports with NodeNext and Bundler declarations.\n`,
+  );
 }

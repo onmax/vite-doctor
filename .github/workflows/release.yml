@@ -11,6 +11,9 @@ permissions:
   actions: read
 
 jobs:
+  compatibility:
+    uses: ./.github/workflows/package-compatibility.yml
+
   check:
     runs-on: ubuntu-latest
     steps:
@@ -26,7 +29,7 @@ jobs:
       - run: pnpm release:check
 
   publish:
-    needs: check
+    needs: [check, compatibility]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
