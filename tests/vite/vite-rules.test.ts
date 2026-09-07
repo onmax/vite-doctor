@@ -55,11 +55,16 @@ export default defineConfig({
       },
     });
 
-    expect(result.diagnostics.map((item) => item.ruleId).sort()).toEqual([
-      "vite/define/no-runtime-object-define",
-      "vite/define/no-secret-define",
-      "vite/define/no-untyped-define",
-      "vite/define/no-unused-define",
+    expect(result.diagnostics.map(({ ruleId, why }) => `${ruleId}: ${why}`).sort()).toEqual([
+      'vite/define/no-runtime-object-define: Vite define "__OBJECT__" uses a non-primitive replacement value.',
+      'vite/define/no-secret-define: Vite define "__SECRET_TOKEN__" looks like a secret and will be bundled into client code.',
+      'vite/define/no-untyped-define: Vite define global "__OBJECT__" is not declared in a project .d.ts file.',
+      'vite/define/no-untyped-define: Vite define global "__SECRET_TOKEN__" is not declared in a project .d.ts file.',
+      'vite/define/no-untyped-define: Vite define global "__UNTYPED__" is not declared in a project .d.ts file.',
+      'vite/define/no-untyped-define: Vite define global "__UNUSED__" is not declared in a project .d.ts file.',
+      'vite/define/no-unused-define: Vite define constant "__OBJECT__" is configured but never referenced.',
+      'vite/define/no-unused-define: Vite define constant "__SECRET_TOKEN__" is configured but never referenced.',
+      'vite/define/no-unused-define: Vite define constant "__UNUSED__" is configured but never referenced.',
     ]);
   });
 
@@ -223,12 +228,14 @@ console.log(logo)`,
       },
     });
 
-    expect(result.diagnostics.map((item) => item.ruleId).sort()).toEqual([
-      "vite/env/no-broad-env-prefix",
-      "vite/env/no-client-secret-pattern",
-      "vite/env/no-empty-env-prefix",
-      "vite/server/no-broad-fs-allow",
-      "vite/server/no-disabled-fs-strict",
+    expect(result.diagnostics.map(({ ruleId, why }) => `${ruleId}: ${why}`).sort()).toEqual([
+      'vite/env/no-broad-env-prefix: Vite envPrefix "" is broad enough to expose unrelated variables.',
+      'vite/env/no-broad-env-prefix: Vite envPrefix "APP_" is broad enough to expose unrelated variables.',
+      "vite/env/no-client-secret-pattern: import.meta.env.APP_SECRET looks like a secret and may be exposed to the browser.",
+      'vite/env/no-empty-env-prefix: Vite envPrefix: "" exposes every environment variable to client code.',
+      'vite/server/no-broad-fs-allow: Vite server.fs.allow entry "/" is broader than a project path.',
+      'vite/server/no-broad-fs-allow: Vite server.fs.allow entry "/Users/maxi" is broader than a project path.',
+      "vite/server/no-disabled-fs-strict: Vite dev server filesystem strict mode is disabled.",
     ]);
   });
 });
