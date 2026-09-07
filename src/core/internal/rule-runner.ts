@@ -3,12 +3,13 @@ import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 
 export async function runVisitor(visitor: RuleVisitor, file: SourceFileHandle) {
   if (file.sfc) await visitor.SFC?.(file.sfc);
-  if (file.scriptAst)
+  if (file.scriptAst && (visitor.ScriptNode || visitor.ImportDeclaration))
     walkScript(file.scriptAst, (node) => {
       visitor.ScriptNode?.(node);
       if ((node as any).type === "ImportDeclaration") visitor.ImportDeclaration?.(node);
     });
-  if (file.templateAst) walkTemplate(file.templateAst, (node) => visitor.TemplateNode?.(node));
+  if (file.templateAst && visitor.TemplateNode)
+    walkTemplate(file.templateAst, (node) => visitor.TemplateNode?.(node));
 }
 
 function walkScript(node: unknown, visit: (node: unknown) => void, parent?: unknown) {
