@@ -17,10 +17,11 @@ export interface DiagnosticPolicyResult {
 
 export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticPolicyResult {
   const suppressed: Diagnostic[] = [];
+  const sourceLines = new Map<string, string[]>();
   const baseline = readBaseline(input.root, input.options.baseline);
   const nextDiagnostics: Diagnostic[] = [];
   for (const diagnostic of input.diagnostics) {
-    const suppression = findSuppression(input.root, input.config, diagnostic);
+    const suppression = findSuppression(input.root, input.config, diagnostic, sourceLines);
     const inBaseline = baseline.has(diagnostic.fingerprint ?? "");
     if (suppression || (input.options.newOnly && inBaseline)) {
       suppressed.push({
@@ -98,6 +99,7 @@ function findSuppression(
   root: string,
   config: DoctorConfig,
   diagnostic: Diagnostic,
+  sourceLines: Map<string, string[]>,
 ): string | null {
   const configured = config.suppressions?.find((suppression) => {
     if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
@@ -107,16 +109,29 @@ function findSuppression(
     return true;
   });
   if (configured) return configured.reason;
-  const text = readFileSync(diagnostic.file, "utf8");
+  let lines = sourceLines.get(diagnostic.file);
+  if (!lines) {
+    try {
+      lines = readFileSync(diagnostic.file, "utf8").split(/\r?\n/);
+    } catch {
+      lines = [];
+    }
+    sourceLines.set(diagnostic.file, lines);
+  }
   const line = diagnostic.range?.line;
-  const lines = text.split(/\r?\n/);
-  const nearby = line ? lines.slice(Math.max(0, line - 3), line + 1).join("\n") : text;
-  const inline = nearby.match(/doctor-disable(?:-next-line)?\s+([^\s]+)(?:\s+--\s+(.+)|\s+(.+))?/);
-  if (!inline) return null;
-  const rules = inline[1].split(",").map((item) => item.trim());
-  if (!rules.includes(diagnostic.ruleId) && !rules.includes("*")) return null;
-  const reason = (inline[2] ?? inline[3] ?? "").trim();
-  return reason || "missing suppression reason";
+  const start = line ? Math.max(0, line - 3) : 0;
+  const end = line ? Math.min(lines.length, line + 1) : lines.length;
+  for (let index = start; index < end; index++) {
+    const inline = lines[index]!.match(
+      /doctor-disable(-next-line)?\s+([^\s]+)(?:\s+--\s+(.+)|\s+(.+))?/,
+    );
+    if (!inline || (inline[1] && line !== index + 2)) continue;
+    const rules = inline[2]!.split(",").map((item) => item.trim());
+    if (!rules.includes(diagnostic.ruleId) && !rules.includes("*")) continue;
+    const reason = (inline[3] ?? inline[4] ?? "").trim();
+    return reason || "missing suppression reason";
+  }
+  return null;
 }
 
 function nativeMatch(value: string, pattern: string): boolean {
