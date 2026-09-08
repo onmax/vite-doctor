@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
@@ -19,6 +19,61 @@ const vueProject: ProjectInfo = {
   vueVersion: "3.5.0",
   isMonorepo: false,
 };
+
+test("changed line ranges ignore Git inter-hunk context configuration", async () => {
+  await withGitFixture(
+    { "src/app.ts": "const first = false\nconst unchanged = true\nconst last = false\n" },
+    async (root) => {
+      git(root, "config", "diff.interHunkContext", "10");
+      write(root, "src/app.ts", "const first = true\nconst unchanged = true\nconst last = true\n");
+      const selection = await selectSourceInventory(
+        root,
+        {},
+        { changed: true },
+        { ...vueProject, root },
+      );
+      expect(selection.files[0]?.reportEligibility?.ranges).toEqual([
+        { startLine: 1, endLine: 1 },
+        { startLine: 3, endLine: 3 },
+      ]);
+    },
+  );
+});
+
+test("changed line ranges use source text instead of Git text conversion drivers", async () => {
+  await withGitFixture(
+    { ".gitattributes": "*.ts diff=doctor-test\n", "src/app.ts": "const changed = false\n" },
+    async (root) => {
+      git(root, "config", "diff.doctor-test.textconv", "printf converted");
+      write(root, "src/app.ts", "const changed = true\n");
+      const selection = await selectSourceInventory(
+        root,
+        {},
+        { changed: true },
+        { ...vueProject, root },
+      );
+      expect(selection.files[0]?.reportEligibility?.ranges).toEqual([{ startLine: 1, endLine: 1 }]);
+    },
+  );
+});
+
+test.skipIf(process.platform === "win32")(
+  "changed source inventory skips dangling untracked symlinks",
+  async () => {
+    await withGitFixture({ "src/app.ts": "const app = true\n" }, async (root) => {
+      symlinkSync("missing.ts", join(root, "src/dangling.ts"));
+      write(root, "src/new.ts", "const added = true\n");
+      const selection = await selectSourceInventory(
+        root,
+        {},
+        { changed: true },
+        { ...vueProject, root },
+      );
+      expect(selection.git?.status).toBe("available");
+      expect(selection.files.map((file) => file.displayPath)).toEqual(["src/new.ts"]);
+    });
+  },
+);
 
 test("changed source inventory includes staged, unstaged, untracked, renamed, and deleted paths", async () => {
   await withGitFixture(
