@@ -22,6 +22,7 @@ export const viteDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0019", ruleId: "vite/worker/no-dynamic-worker-url" },
   { code: "VITE0020", ruleId: "vite/worker/no-node-api-in-worker" },
   { code: "VITE0021", ruleId: "vite/worker/require-worker-url-pattern" },
+  { code: "VITE0022", ruleId: "vite/imports/require-static-glob-pattern" },
 ]);
 
 export const diagnostics = viteDiagnosticRegistry.diagnostics;
