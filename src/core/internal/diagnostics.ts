@@ -167,7 +167,7 @@ export function createDiagnosticFingerprint(
 ): string {
   const rel = relative(root, diagnostic.file);
   const anchor = nearestAnchor(file.text, diagnostic.range?.start ?? 0);
-  const message = diagnostic.why.replace(/\s+/g, " ").replace(/['"`][^'"`]+['"`]/g, '""');
+  const message = diagnostic.why.replace(/\s+/g, " ");
   return sha256(`${diagnostic.ruleId}:${rel}:${anchor}:${message}`);
 }
 
