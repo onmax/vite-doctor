@@ -13,7 +13,11 @@ permissions:
   pull-requests: write
 
 jobs:
+  compatibility:
+    uses: ./.github/workflows/package-compatibility.yml
+
   publish:
+    needs: compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
