@@ -13,7 +13,6 @@ describe("Vite glob imports", () => {
     "...patterns",
     "42",
     "null",
-    "",
     "pattern as string",
   ])("reports a pattern that Vite cannot transform: %s", async (pattern) => {
     const result = await runProjectFixture({
@@ -35,6 +34,19 @@ const pages = import.meta.glob(${pattern})`,
       range: { line: 4 },
     });
     expect(result.diagnostics[0]?.file).toMatch(/src\/main\.ts$/);
+  });
+
+  test.each([
+    ["missing argument", "import.meta.glob()", ["VITE0022"]],
+    ["empty string literal", 'import.meta.glob("")', []],
+  ])("handles %s explicitly", async (_label, source, expectedCodes) => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [requireStaticGlobPattern],
+      files: { "src/main.ts": source },
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(expectedCodes);
   });
 
   test("accepts Vite's literal patterns and TypeScript assertions", async () => {
