@@ -41,7 +41,7 @@ export const noKnownValueWidening = createRule({
           return;
         const annotation = node.id.typeAnnotation?.typeAnnotation;
         if (!annotation) return;
-        const initial = expression(node.init);
+        const initial = expression(node.init, true);
         if (initial?.type === "ObjectExpression" && !initial.properties.length) return;
         const losesKeys =
           evidence.globalType(annotation, "Record") &&

@@ -11,7 +11,7 @@ type Binding = {
 };
 type Scope = { parent?: Scope; owner: AnyNode; bindings: Map<string, Binding[]> };
 
-export function expression(node: AnyNode): AnyNode {
+export function expression(node: AnyNode, unwrapAssertions = false): AnyNode {
   while (
     node &&
     [
@@ -19,8 +19,7 @@ export function expression(node: AnyNode): AnyNode {
       "ChainExpression",
       "TSSatisfiesExpression",
       "TSNonNullExpression",
-      "TSAsExpression",
-      "TSTypeAssertion",
+      ...(unwrapAssertions ? ["TSAsExpression", "TSTypeAssertion"] : []),
     ].includes(node.type)
   )
     node = node.expression;
@@ -194,7 +193,7 @@ export function createLocalEvidence(program: AnyNode) {
     return globalType(node, "Array") || globalType(node, "ReadonlyArray");
   }
   function isArray(node: AnyNode, seen = new Set<Binding>()): boolean {
-    node = expression(node);
+    node = expression(node, true);
     if (!node) return false;
     if (node.type === "ArrayExpression") return true;
     if (node.type === "Identifier") {
@@ -230,8 +229,8 @@ export function createLocalEvidence(program: AnyNode) {
     }
     return false;
   }
-  function known(node: AnyNode, seen = new Set<Binding>()): boolean {
-    node = expression(node);
+  function known(node: AnyNode, owner?: AnyNode, seen = new Set<Binding>()): boolean {
+    node = expression(node, true);
     if (!node) return false;
     if (
       [
@@ -255,7 +254,8 @@ export function createLocalEvidence(program: AnyNode) {
     }
     if (node.type !== "Identifier") return false;
     const target = binding(node);
-    if (!target || target.written || seen.has(target)) return false;
+    if (!target || (owner && target.owner !== owner) || target.written || seen.has(target))
+      return false;
     if (target.annotation)
       return (
         [
@@ -274,7 +274,7 @@ export function createLocalEvidence(program: AnyNode) {
     return (
       target.kind === "const" &&
       target.node.start < node.start &&
-      known(target.init, new Set([...seen, target]))
+      known(target.init, owner, new Set([...seen, target]))
     );
   }
   return {
