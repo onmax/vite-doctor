@@ -1,5 +1,7 @@
 import { createRule } from "../../../core/index.js";
-import { parameterType, report, typeResolvesToKeyword, type AnyNode } from "./shared.js";
+import { parameterType, report, type AnyNode } from "./shared.js";
+
+import { createTypeAliasResolver } from "./type-aliases.js";
 
 const ruleId = "typescript/evidence/no-object-parameters";
 const functionTypes = new Set([
@@ -39,17 +41,17 @@ export const noObjectParameters = createRule({
     aiGeneratedCodeRisk: "high",
   },
   create(ctx) {
-    const aliases = new Map<string, AnyNode>();
+    let resolver: ReturnType<typeof createTypeAliasResolver>;
     return {
       ScriptNode(node: AnyNode) {
         if (node.type === "Program") {
-          collectAliases(node, aliases);
+          resolver = createTypeAliasResolver(node);
           return;
         }
         if (!functionTypes.has(node.type)) return;
         for (const parameter of node.params ?? []) {
           const annotation = parameterType(parameter);
-          if (!typeResolvesToKeyword(annotation, "TSObjectKeyword", aliases)) continue;
+          if (!resolver.resolvesToKeyword(annotation, "TSObjectKeyword")) continue;
           report(
             ctx,
             annotation,
@@ -62,16 +64,3 @@ export const noObjectParameters = createRule({
     };
   },
 });
-
-function collectAliases(program: AnyNode, aliases: Map<string, AnyNode>) {
-  for (const statement of program.body ?? []) {
-    const declaration =
-      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-    if (
-      declaration?.type === "TSTypeAliasDeclaration" &&
-      !declaration.typeParameters?.params?.length
-    ) {
-      aliases.set(declaration.id.name, declaration.typeAnnotation);
-    }
-  }
-}

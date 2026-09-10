@@ -16,7 +16,7 @@ type Scope = {
   types: Set<string>;
 };
 
-export function expression(node: AnyNode): AnyNode {
+export function expression(node: AnyNode, unwrapAssertions = false): AnyNode {
   while (
     node &&
     [
@@ -24,6 +24,7 @@ export function expression(node: AnyNode): AnyNode {
       "ChainExpression",
       "TSSatisfiesExpression",
       "TSNonNullExpression",
+      ...(unwrapAssertions ? ["TSAsExpression", "TSTypeAssertion"] : []),
     ].includes(node.type)
   )
     node = node.expression;
@@ -61,7 +62,10 @@ export function createLocalEvidence(program: AnyNode) {
     } else if (pattern.type === "AssignmentPattern")
       bind(pattern.left, scope, { kind: info.kind, annotation: info.annotation });
     else if (pattern.type === "RestElement" || pattern.type === "TSParameterProperty")
-      bind(pattern.argument ?? pattern.parameter, scope, info);
+      bind(pattern.argument ?? pattern.parameter, scope, {
+        kind: info.kind,
+        annotation: info.annotation,
+      });
     else if (pattern.type === "ArrayPattern")
       for (const item of pattern.elements) bind(item, scope, { kind: info.kind });
     else if (pattern.type === "ObjectPattern")
@@ -257,8 +261,47 @@ export function createLocalEvidence(program: AnyNode) {
     }
     return false;
   }
-  function known(node: AnyNode, owner: AnyNode, seen = new Set<Binding>()): boolean {
-    node = expression(node);
+  function primitive(
+    node: AnyNode,
+    owner?: AnyNode,
+    seen = new Set<Binding>(),
+  ): string | undefined {
+    node = expression(node, true);
+    if (!node) return;
+    if (node.type === "Literal") {
+      if (node.value === null) return "null";
+      if (["number", "boolean", "string", "bigint"].includes(typeof node.value))
+        return typeof node.value;
+      return;
+    }
+    if (node.type === "UnaryExpression" && ["+", "-", "~", "!"].includes(node.operator)) {
+      const operand = primitive(node.argument, owner, seen);
+      if (!operand || (node.operator === "+" && operand === "bigint")) return;
+      if (node.operator === "!") return "boolean";
+      if (operand === "symbol") return;
+      return operand === "bigint" ? "bigint" : "number";
+    }
+    if (node.type !== "Identifier") return;
+    const target = binding(node);
+    if (!target || (owner && target.owner !== owner) || target.written || seen.has(target)) return;
+    if (target.annotation) {
+      const types: Record<string, string> = {
+        TSStringKeyword: "string",
+        TSNumberKeyword: "number",
+        TSBooleanKeyword: "boolean",
+        TSBigIntKeyword: "bigint",
+        TSSymbolKeyword: "symbol",
+        TSNullKeyword: "null",
+      };
+      if (target.annotation.type === "TSLiteralType")
+        return primitive(target.annotation.literal, owner, seen);
+      return types[target.annotation.type];
+    }
+    if (target.kind === "const" && target.node.start < node.start)
+      return primitive(target.init, owner, new Set([...seen, target]));
+  }
+  function known(node: AnyNode, owner?: AnyNode, seen = new Set<Binding>()): boolean {
+    node = expression(node, true);
     if (!node) return false;
     if (
       [
@@ -270,9 +313,11 @@ export function createLocalEvidence(program: AnyNode) {
       ].includes(node.type)
     )
       return true;
+    if (node.type === "UnaryExpression") return primitive(node, owner, seen) !== undefined;
     if (node.type !== "Identifier") return false;
     const target = binding(node);
-    if (!target || target.owner !== owner || target.written || seen.has(target)) return false;
+    if (!target || (owner && target.owner !== owner) || target.written || seen.has(target))
+      return false;
     if (target.annotation)
       return (
         [

@@ -1,4 +1,5 @@
 export { noArrayFilterMap } from "./no-array-filter-map.js";
+export { noKnownValueWidening } from "./no-known-value-widening.js";
 export { noWidenThenAssert } from "./no-widen-then-assert.js";
 export { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 export { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
@@ -21,6 +22,7 @@ import { noUnvalidatedDeserialization } from "./no-unvalidated-deserialization.j
 import { requireSafetyCommentForTypeAssertion } from "./require-safety-comment-for-type-assertion.js";
 
 import { noArrayFilterMap } from "./no-array-filter-map.js";
+import { noKnownValueWidening } from "./no-known-value-widening.js";
 import { noWidenThenAssert } from "./no-widen-then-assert.js";
 import { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 
@@ -28,6 +30,7 @@ const recommendedRules = [noChainedTypeAssertions, noUnvalidatedDeserialization]
 
 const strictRules = [
   noArrayFilterMap,
+  noKnownValueWidening,
   noWidenThenAssert,
   noReduceAccumulatorCopy,
   noCallerChosenResultType,

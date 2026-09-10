@@ -156,6 +156,7 @@ const cases: [string, string, number][] = [
     0,
   ],
   ["asserted array", "(input as number[]).filter(keep).map(transform)", 0],
+  ["asserted literal", "([1] as number[]).filter(keep).map(transform)", 0],
   ["single pass", "[1, 2].flatMap(transform)", 0],
   [
     "loop shadowing",
