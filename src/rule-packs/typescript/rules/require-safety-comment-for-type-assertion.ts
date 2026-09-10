@@ -68,16 +68,24 @@ function hasSafetyComment(source: string, comments: AnyNode[], node: AnyNode): b
       if (comments[middle]!.end <= before) low = middle + 1;
       else high = middle;
     }
+    let value = "";
     for (let index = low - 1; index >= 0; index--) {
       const comment = comments[index]!;
-      if (source.slice(comment.end, before).trim()) break;
-      const value = comment.value.replace(/^[ \t]*\*[ \t]?/gm, "");
+      const gap = source.slice(comment.end, before);
+      if (gap.trim() || (gap.match(/\r\n|\r|\n/g)?.length ?? 0) > 1) break;
+      value = `${comment.value.replace(/^[ \t]*\*[ \t]?/gm, "")}\n${value}`;
       if (/(?:^|[^\p{L}\p{N}_])SAFETY\s*:\s*\S/u.test(value)) return true;
       before = comment.start;
     }
     const parent = parentOf(current);
     if (commentOwners.has(current.type)) {
-      if (parent?.type !== "ExportNamedDeclaration" || parent.declaration !== current) return false;
+      const exported = parent?.type === "ExportNamedDeclaration" && parent.declaration === current;
+      const loopInitializer =
+        current.type === "VariableDeclaration" &&
+        ((parent?.type === "ForStatement" && parent.init === current) ||
+          ((parent?.type === "ForOfStatement" || parent?.type === "ForInStatement") &&
+            parent.left === current));
+      if (!exported && !loopInitializer) return false;
     }
     current = parent;
   }

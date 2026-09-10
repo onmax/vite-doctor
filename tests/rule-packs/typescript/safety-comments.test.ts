@@ -1,3 +1,4 @@
+import { parseSync } from "oxc-parser";
 import { expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.js";
 import { requireSafetyCommentForTypeAssertion } from "../../../src/rule-packs/typescript/index.js";
@@ -9,6 +10,23 @@ const cases: [string, string, number][] = [
     "/* SAFETY:\n * Schema validated this value.\n */ const value = input as User",
     0,
   ],
+  [
+    "continued line explanation",
+    "// SAFETY:\n// Schema validated this value.\nconst value = input as User",
+    0,
+  ],
+  ["empty line group", "// SAFETY:\n//   \nconst value = input as User", 1],
+  ["blank line before declaration", "// SAFETY: validated\n\nconst value = input as User", 1],
+  ["blank CRLF line", "// SAFETY: validated\r\n\r\nconst value = input as User", 1],
+  ["separated explanation", "// SAFETY:\n\n// validated\nconst value = input as User", 1],
+  ["for initializer", "// SAFETY: validated\nfor (const value = input as User; ;) {}", 0],
+  [
+    "for of initializer",
+    "// SAFETY: validated\nfor (const { value = input as User } of items) {}",
+    0,
+  ],
+  ["for in initializer", "// SAFETY: validated\nfor (const value in input as User) {}", 0],
+  ["loop body unrelated", "// SAFETY: validated\nfor (;;) { const value = input as User }", 1],
   ["missing", "const value = input as User", 1],
   ["empty marker", "// SAFETY:\nconst value = input as User", 1],
   ["empty block marker", "/* SAFETY: */ const value = input as User", 1],
@@ -19,7 +37,7 @@ const cases: [string, string, number][] = [
   ["identifier prefix", "// UNSAFETY: validated\nconst value = input as User", 1],
   [
     "multiline declaration",
-    "// SAFETY: schema validated this input.\nconst value = (\n  input\n    as User\n)",
+    "// SAFETY: schema validated this input.\nconst value = (\n  (\n    input as User\n  )\n)",
     0,
   ],
   ["inline assertion", "const value = /* SAFETY: schema validated this input. */ input as User", 0],
@@ -48,6 +66,7 @@ const cases: [string, string, number][] = [
 ];
 
 test.each(cases)("checks %s", async (_name, source, expected) => {
+  expect(parseSync("index.ts", source).errors).toEqual([]);
   const result = await runProjectFixture({
     framework: "vite",
     rules: [requireSafetyCommentForTypeAssertion],
@@ -61,7 +80,7 @@ test("uses script comments at original Vue file offsets", async () => {
     rules: [requireSafetyCommentForTypeAssertion],
     files: {
       "App.vue":
-        '<template><p>SAFETY: validated</p></template>\n<script setup lang="ts">\nconst bad = input as User\n// SAFETY: schema validated this input.\nconst good = input as User\n</script>',
+        '<template><p>SAFETY: validated</p></template><script setup lang="ts">\nconst bad = input as User\n// SAFETY: schema validated this input.\nconst good = input as User\n</script>',
     },
   });
   expect(result.diagnostics.map((item) => item.code)).toEqual(["TS0008"]);
