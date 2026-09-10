@@ -101,10 +101,11 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
       return;
     }
     if (
-      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
+      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type) &&
+      node.importKind === "type"
     ) {
       outer.types.add(node.local.name);
-      if (node.importKind === "type") return;
+      return;
     }
     if (
       [
