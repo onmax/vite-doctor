@@ -243,7 +243,8 @@ export function createLocalEvidence(program: AnyNode) {
     )
       return true;
     if (node.type === "UnaryExpression" && ["+", "-", "~", "!"].includes(node.operator)) {
-      const argument = expression(node.argument);
+      const argument = expression(node.argument, true);
+      if (argument?.type !== "Literal") return known(argument, owner, seen);
       return (
         argument?.type === "Literal" &&
         (typeof argument.value === "number" ||
