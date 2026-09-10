@@ -19,6 +19,31 @@ test("array-pass reports expose the diagnostic code and reference", () => {
 
 const cases: [string, string, number][] = [
   [
+    "parameter is unavailable in its own default",
+    "function f(values: number[] = values.filter(keep).map(transform)) {}",
+    0,
+  ],
+  [
+    "defaulted parameter is available in the body",
+    "function f(values: number[] = values.filter(keep).map(transform)) { return values.filter(keep).map(transform) }",
+    1,
+  ],
+  [
+    "later parameter is unavailable in an earlier default",
+    "function f(result = values.filter(keep).map(transform), values: number[]) {}",
+    0,
+  ],
+  [
+    "earlier parameter is available in a later default",
+    "function f(values: number[] = [], result = values.filter(keep).map(transform)) {}",
+    1,
+  ],
+  [
+    "arrow parameter is unavailable in its own default",
+    "const f = (values: number[] = values.map(transform).filter(keep)) => values.map(transform).filter(keep)",
+    1,
+  ],
+  [
     "merged namespace exported class",
     "export {}; namespace Local { export class Array<T> {} } namespace Local { namespace Array {} function f(values: Array<number>) { return values.filter(keep).map(transform) } }",
     0,

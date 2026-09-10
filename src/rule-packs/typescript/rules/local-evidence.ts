@@ -61,7 +61,11 @@ export function createLocalEvidence(program: AnyNode) {
       });
       scope.bindings.set(pattern.name, bindings);
     } else if (pattern.type === "AssignmentPattern")
-      bind(pattern.left, scope, { kind: info.kind, annotation: info.annotation });
+      bind(pattern.left, scope, {
+        kind: info.kind,
+        annotation: info.annotation,
+        init: info.kind === "parameter" ? pattern.right : undefined,
+      });
     else if (pattern.type === "RestElement" || pattern.type === "TSParameterProperty")
       bind(pattern.argument ?? pattern.parameter, scope, {
         kind: info.kind,
@@ -269,6 +273,8 @@ export function createLocalEvidence(program: AnyNode) {
     if (node.type === "Identifier") {
       const target = binding(node);
       if (!target || target.written || seen.has(target)) return false;
+      if (target.kind === "parameter" && (target.init?.end ?? target.node.end) >= node.start)
+        return false;
       if (target.kind !== "parameter" && (!target.init || target.init.end >= node.start))
         return false;
       if (arrayType(target.annotation)) return true;
