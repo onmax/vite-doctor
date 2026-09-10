@@ -109,35 +109,3 @@ export function parameterType(parameter: AnyNode): AnyNode {
   }
   return parameter.typeAnnotation?.typeAnnotation ?? null;
 }
-
-export function typeResolvesToKeyword(
-  node: AnyNode,
-  keyword: string,
-  aliases: ReadonlyMap<string, AnyNode>,
-  seen = new Set<string>(),
-): boolean {
-  if (!node) return false;
-  if (node.type === keyword) return true;
-  if (node.type === "TSParenthesizedType") {
-    return typeResolvesToKeyword(node.typeAnnotation, keyword, aliases, seen);
-  }
-  if (node.type === "TSUnionType") {
-    return (node.types ?? []).some((item: AnyNode) =>
-      typeResolvesToKeyword(item, keyword, aliases, seen),
-    );
-  }
-  if (
-    node.type !== "TSTypeReference" ||
-    node.typeName?.type !== "Identifier" ||
-    node.typeArguments?.params?.length
-  ) {
-    return false;
-  }
-  const name = node.typeName.name;
-  if (seen.has(name)) return false;
-  const alias = aliases.get(name);
-  if (!alias) return false;
-  const nextSeen = new Set(seen);
-  nextSeen.add(name);
-  return typeResolvesToKeyword(alias, keyword, aliases, nextSeen);
-}
