@@ -76,6 +76,46 @@ const cases: [string, string, number][] = [
     "type External = unknown; const value: External = input; const erased: unknown = value; const claimed = erased as User",
     0,
   ],
+  [
+    "symbol not",
+    "function f(value: symbol) { const erased: unknown = !value; return erased as boolean }",
+    1,
+  ],
+  [
+    "symbol plus",
+    "function f(value: symbol) { const erased: unknown = +value; return erased as boolean }",
+    0,
+  ],
+  [
+    "symbol negative",
+    "function f(value: symbol) { const erased: unknown = -value; return erased as boolean }",
+    0,
+  ],
+  [
+    "symbol complement",
+    "function f(value: symbol) { const erased: unknown = ~value; return erased as boolean }",
+    0,
+  ],
+  [
+    "symbol boolean conversion",
+    "function f(value: symbol) { const erased: unknown = +!value; return erased as boolean }",
+    1,
+  ],
+  [
+    "symbol throwing nested",
+    "function f(value: symbol) { const erased: unknown = !-value; return erased as boolean }",
+    0,
+  ],
+  [
+    "symbol alias not",
+    "function f(value: symbol) { const alias = value; const erased: unknown = !alias; return erased as boolean }",
+    1,
+  ],
+  [
+    "symbol alias plus",
+    "function f(value: symbol) { const alias = value; const erased: unknown = +alias; return erased as boolean }",
+    0,
+  ],
 ];
 
 test.each(cases)("checks %s", async (_name, source, expected) => {
