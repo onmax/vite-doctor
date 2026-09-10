@@ -49,6 +49,46 @@ const cases: [string, string, number][] = [
     'import { Array } from "example"; items.reduce((acc, item) => Array.from(acc), [])',
     0,
   ],
+  [
+    "local array type",
+    "type Array = string; const initial: Array = ''; items.reduce((acc, item) => acc.slice(), initial)",
+    0,
+  ],
+  [
+    "local readonly array interface",
+    "interface ReadonlyArray { slice(): string }; const initial: ReadonlyArray = value; items.reduce((acc, item) => acc.slice(), initial)",
+    0,
+  ],
+  [
+    "array type parameter",
+    "function f<Array>(initial: Array) { return items.reduce((acc, item) => acc.slice(), initial) }",
+    0,
+  ],
+  [
+    "array type import",
+    'import type { Array } from "example"; const initial: Array = value; items.reduce((acc, item) => acc.slice(), initial)',
+    0,
+  ],
+  [
+    "inline array type import",
+    'import { type Array } from "example"; const initial: Array = value; items.reduce((acc, item) => acc.slice(), initial)',
+    0,
+  ],
+  [
+    "global array type",
+    "const initial: Array<number> = value; items.reduce((acc, item) => acc.slice(), initial)",
+    1,
+  ],
+  [
+    "value-only array name",
+    "const Array = custom; const initial: Array<number> = value; items.reduce((acc, item) => acc.slice(), initial)",
+    1,
+  ],
+  [
+    "type scope boundary",
+    "function f<Array>() {} const initial: Array<number> = value; items.reduce((acc, item) => acc.slice(), initial)",
+    1,
+  ],
   ["concat", "items.reduce((acc, item) => acc.concat([item]), [])", 1],
   [
     "slice alias",

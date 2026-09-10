@@ -9,7 +9,12 @@ type Binding = {
   written: boolean;
   owner: AnyNode;
 };
-type Scope = { parent?: Scope; owner: AnyNode; bindings: Map<string, Binding[]> };
+type Scope = {
+  parent?: Scope;
+  owner: AnyNode;
+  bindings: Map<string, Binding[]>;
+  types: Set<string>;
+};
 
 export function expression(node: AnyNode): AnyNode {
   while (
@@ -40,7 +45,7 @@ export function arrayMethod(node: AnyNode): { object: AnyNode; name: string } | 
 export function createLocalEvidence(program: AnyNode) {
   const scopes = new WeakMap<object, Scope>();
   const writes: AnyNode[] = [];
-  const root: Scope = { owner: program, bindings: new Map() };
+  const root: Scope = { owner: program, bindings: new Map(), types: new Set() };
   function bind(pattern: AnyNode, scope: Scope, info: Omit<Binding, "node" | "written" | "owner">) {
     if (!pattern) return;
     if (pattern.type === "Identifier") {
@@ -63,7 +68,30 @@ export function createLocalEvidence(program: AnyNode) {
         bind(item.value ?? item.argument, scope, { kind: info.kind });
   }
   function collect(node: AnyNode, outer: Scope) {
-    if (!node?.type || node.importKind === "type") return;
+    if (!node?.type) return;
+    if (
+      [
+        "TSTypeAliasDeclaration",
+        "TSInterfaceDeclaration",
+        "ClassDeclaration",
+        "TSEnumDeclaration",
+        "TSModuleDeclaration",
+        "TSImportEqualsDeclaration",
+      ].includes(node.type) &&
+      node.id?.name
+    )
+      outer.types.add(node.id.name);
+    if (node.type === "TSImportEqualsDeclaration" && node.importKind === "type") return;
+    if (node.type === "ImportDeclaration" && node.importKind === "type") {
+      for (const specifier of node.specifiers) outer.types.add(specifier.local.name);
+      return;
+    }
+    if (
+      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
+    ) {
+      outer.types.add(node.local.name);
+      if (node.importKind === "type") return;
+    }
     if (
       [
         "FunctionDeclaration",
@@ -102,8 +130,12 @@ export function createLocalEvidence(program: AnyNode) {
           parent: outer,
           owner: isFunction ? node : outer.owner,
           bindings: new Map<string, Binding[]>(),
+          types: new Set<string>(),
         }
       : outer;
+    for (const parameter of node.typeParameters?.params ?? [])
+      scope.types.add(parameter.name?.name ?? parameter.name);
+    if (node.type === "ClassExpression" && node.id?.name) scope.types.add(node.id.name);
     if (isFunction) {
       if (node.type === "FunctionExpression") bind(node.id, scope, { kind: "other" });
       for (const parameter of node.params)
@@ -161,7 +193,9 @@ export function createLocalEvidence(program: AnyNode) {
       node.typeName.name !== name
     )
       return false;
-    return !binding(node.typeName);
+    for (let scope = scopes.get(node); scope; scope = scope.parent)
+      if (scope.types.has(name)) return false;
+    return true;
   }
   function broadType(node: AnyNode): boolean {
     if (!node) return false;
