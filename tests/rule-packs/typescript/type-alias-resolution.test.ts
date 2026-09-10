@@ -100,6 +100,63 @@ const cases: [string, string, number][] = [
     "namespace N { export type Raw = unknown } namespace N { type Copy = Raw }",
     2,
   ],
+  [
+    "qualified alias",
+    "namespace N { export type Input = object } function save(value: N.Input) {}",
+    1,
+  ],
+  [
+    "qualified forward alias",
+    "function save(value: N.Input) {} namespace N { export type Input = object }",
+    1,
+  ],
+  [
+    "qualified private alias",
+    "namespace N { type Input = object } function save(value: N.Input) {}",
+    0,
+  ],
+  [
+    "qualified missing member",
+    "type Input = object; namespace N {} function save(value: N.Input) {}",
+    0,
+  ],
+  [
+    "qualified nested namespace",
+    "namespace N { export namespace M { export type Input = object } } function save(value: N.M.Input) {}",
+    1,
+  ],
+  [
+    "qualified dotted namespace",
+    "namespace N.M { export type Input = object } function save(value: N.M.Input) {}",
+    1,
+  ],
+  [
+    "qualified private namespace",
+    "namespace N { namespace M { export type Input = object } } function save(value: N.M.Input) {}",
+    0,
+  ],
+  [
+    "qualified namespace shadowing",
+    "namespace N { export type Input = object } function outer() { namespace N {} function save(value: N.Input) {} }",
+    0,
+  ],
+  ["qualified import", "import type * as N from 'external'; function save(value: N.Input) {}", 0],
+  [
+    "qualified competing declaration",
+    "import type * as N from 'external'; namespace N { export type Input = object } function save(value: N.Input) {}",
+    0,
+  ],
+  [
+    "qualified generic call scope",
+    "type T = object; namespace N { type T = string; export type Input<X> = X } function save(value: N.Input<T>) {}",
+    1,
+  ],
+  [
+    "qualified generic default scope",
+    "type T = string; namespace N { type T = object; export type Input<X = T> = X } function save(value: N.Input) {}",
+    1,
+  ],
+  ["qualified unknown alias", "namespace N { export type Raw = unknown } type Copy = N.Raw", 2],
   ["cycles", "type A = B; type B = A; function save(value: A) {}", 0],
   ["imports", "import type { Input } from 'external'; function save(value: Input) {}", 0],
   ["block unknown alias", "function outer() { type Raw = unknown }", 1],

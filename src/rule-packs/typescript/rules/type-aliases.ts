@@ -16,6 +16,10 @@ export function createTypeAliasResolver(program: AnyNode) {
   }
   function collect(node: AnyNode, outer: Scope, exports?: Scope) {
     if (!node?.type) return;
+    if (node.type === "TSModuleDeclaration" && node.id?.type === "TSQualifiedName") {
+      collect({ ...node, id: node.id.left, body: { ...node, id: node.id.right } }, outer, exports);
+      return;
+    }
     if (
       [
         "TSTypeAliasDeclaration",
@@ -37,7 +41,7 @@ export function createTypeAliasResolver(program: AnyNode) {
     if (
       node.type === "TSModuleDeclaration" &&
       node.id?.name &&
-      node.body?.type === "TSModuleBlock"
+      ["TSModuleBlock", "TSModuleDeclaration"].includes(node.body?.type)
     ) {
       const owner = exports ?? outer;
       let members = namespaces.get(owner);
@@ -50,6 +54,10 @@ export function createTypeAliasResolver(program: AnyNode) {
       const local: Scope = { parent: shared, bindings: new Map() };
       scopes.set(node, outer);
       scopes.set(node.body, local);
+      if (node.body.type === "TSModuleDeclaration") {
+        collect(node.body, local, shared);
+        return;
+      }
       for (const statement of node.body.body) {
         if (statement.type === "ExportNamedDeclaration" && statement.declaration) {
           scopes.set(statement, local);
@@ -82,6 +90,30 @@ export function createTypeAliasResolver(program: AnyNode) {
   }
   collect(program, root);
   function binding(node: AnyNode): AnyNode {
+    const parts: string[] = [];
+    let name = node.typeName;
+    while (name?.type === "TSQualifiedName") {
+      parts.unshift(name.right.name);
+      name = name.left;
+    }
+    if (name?.type !== "Identifier") return null;
+    if (parts.length) {
+      let owner = scopes.get(node);
+      while (owner && !owner.bindings.has(name.name)) owner = owner.parent;
+      for (const part of [name.name, ...parts.slice(0, -1)]) {
+        const declarations = owner?.bindings.get(part);
+        if (
+          !declarations?.length ||
+          declarations.some((declaration) => declaration.type !== "TSModuleDeclaration")
+        )
+          return null;
+        owner = namespaces.get(owner!)?.get(part);
+      }
+      const found = owner?.bindings
+        .get(parts[parts.length - 1])
+        ?.filter((declaration) => declaration.type !== "TSModuleDeclaration");
+      return found?.length === 1 ? found[0] : null;
+    }
     for (let scope = scopes.get(node); scope; scope = scope.parent) {
       // Namespaces occupy the namespace/value spaces, not the bare type space.
       const found = scope.bindings
@@ -100,8 +132,7 @@ export function createTypeAliasResolver(program: AnyNode) {
         return resolve(current.typeAnnotation, substitutions);
       if (current.type === "TSUnionType")
         return current.types.some((part: AnyNode) => resolve(part, substitutions));
-      if (current.type !== "TSTypeReference" || current.typeName?.type !== "Identifier")
-        return false;
+      if (current.type !== "TSTypeReference") return false;
       const target = binding(current);
       if (!target) return false;
       const replacement = substitutions.get(target);
