@@ -78,6 +78,16 @@ function hasSafetyComment(source: string, comments: AnyNode[], node: AnyNode): b
       before = comment.start;
     }
     const parent = parentOf(current);
+    if (
+      parent?.body === current &&
+      (parent.type === "ForStatement" ||
+        parent.type === "ForOfStatement" ||
+        parent.type === "ForInStatement" ||
+        parent.type === "WhileStatement" ||
+        parent.type === "DoWhileStatement")
+    ) {
+      return false;
+    }
     if (commentOwners.has(current.type)) {
       const exported = parent?.type === "ExportNamedDeclaration" && parent.declaration === current;
       const loopInitializer =
