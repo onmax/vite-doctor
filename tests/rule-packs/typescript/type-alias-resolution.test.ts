@@ -45,6 +45,31 @@ const cases: [string, string, number][] = [
     "type T = object; type Outer<X> = T; type Identity<T> = Outer<T>; function save(value: Identity<string>) {}",
     1,
   ],
+  [
+    "type alias and namespace coexistence",
+    "type Input = object; namespace Input { export const tag = 1 } function save(value: Input) {}",
+    1,
+  ],
+  [
+    "namespace before type alias",
+    "namespace Input { export const tag = 1 } type Input = object; function save(value: Input) {}",
+    1,
+  ],
+  [
+    "namespace does not shadow outer type alias",
+    "type Input = object; namespace Container { namespace Input { export const tag = 1 } function save(value: Input) {} }",
+    1,
+  ],
+  [
+    "unknown alias and namespace coexistence",
+    "type Raw = unknown; namespace Raw { export const tag = 1 } type Copy = Raw;",
+    2,
+  ],
+  [
+    "competing type declarations remain ambiguous",
+    "type Input = object; interface Input {} namespace Input { export const tag = 1 } function save(value: Input) {}",
+    0,
+  ],
   ["cycles", "type A = B; type B = A; function save(value: A) {}", 0],
   ["imports", "import type { Input } from 'external'; function save(value: Input) {}", 0],
   ["block unknown alias", "function outer() { type Raw = unknown }", 1],

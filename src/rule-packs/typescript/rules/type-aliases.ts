@@ -56,8 +56,11 @@ export function createTypeAliasResolver(program: AnyNode) {
   collect(program, root);
   function binding(node: AnyNode): AnyNode {
     for (let scope = scopes.get(node); scope; scope = scope.parent) {
-      const found = scope.bindings.get(node.typeName.name);
-      if (found) return found.length === 1 ? found[0] : null;
+      // Namespaces occupy the namespace/value spaces, not the bare type space.
+      const found = scope.bindings
+        .get(node.typeName.name)
+        ?.filter((declaration) => declaration.type !== "TSModuleDeclaration");
+      if (found?.length) return found.length === 1 ? found[0] : null;
     }
     return null;
   }
