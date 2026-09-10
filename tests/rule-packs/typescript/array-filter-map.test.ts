@@ -50,6 +50,21 @@ const cases: [string, string, number][] = [
     0,
   ],
   [
+    "defaulted array parameter",
+    "function f(values: number[] = []) { return values.filter(keep).map(transform) }",
+    1,
+  ],
+  [
+    "defaulted tuple parameter",
+    "function f(values: [number] = [1]) { return values.map(transform).filter(keep) }",
+    1,
+  ],
+  [
+    "defaulted destructured element is not an array",
+    "function f([value = 1]: number[] = []) { return value.filter(keep).map(transform) }",
+    0,
+  ],
+  [
     "rest array",
     "function f(...values: number[]) { return values.filter(keep).map(transform) }",
     1,

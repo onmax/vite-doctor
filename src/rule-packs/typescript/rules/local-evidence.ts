@@ -58,7 +58,8 @@ export function createLocalEvidence(program: AnyNode) {
         owner: scope.owner,
       });
       scope.bindings.set(pattern.name, bindings);
-    } else if (pattern.type === "AssignmentPattern") bind(pattern.left, scope, { kind: info.kind });
+    } else if (pattern.type === "AssignmentPattern")
+      bind(pattern.left, scope, { kind: info.kind, annotation: info.annotation });
     else if (pattern.type === "RestElement" || pattern.type === "TSParameterProperty")
       bind(pattern.argument ?? pattern.parameter, scope, info);
     else if (pattern.type === "ArrayPattern")
