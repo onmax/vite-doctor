@@ -46,6 +46,7 @@ export function arrayMethod(node: AnyNode): { object: AnyNode; name: string } | 
 export function createLocalEvidence(program: AnyNode) {
   const scopes = new WeakMap<object, Scope>();
   const writes: AnyNode[] = [];
+  const namespaces = new WeakMap<Scope, Map<string, Scope>>();
   const root: Scope = { owner: program, bindings: new Map(), types: new Set() };
   function bind(pattern: AnyNode, scope: Scope, info: Omit<Binding, "node" | "written" | "owner">) {
     if (!pattern) return;
@@ -72,8 +73,12 @@ export function createLocalEvidence(program: AnyNode) {
       for (const item of pattern.properties)
         bind(item.value ?? item.argument, scope, { kind: info.kind });
   }
-  function collect(node: AnyNode, outer: Scope) {
+  function collect(node: AnyNode, outer: Scope, exports?: Scope) {
     if (!node?.type) return;
+    if (node.type === "TSModuleDeclaration" && node.id?.type === "TSQualifiedName") {
+      collect({ ...node, id: node.id.left, body: { ...node, id: node.id.right } }, outer, exports);
+      return;
+    }
     if (
       [
         "TSTypeAliasDeclaration",
@@ -84,7 +89,7 @@ export function createLocalEvidence(program: AnyNode) {
       ].includes(node.type) &&
       node.id?.name
     )
-      outer.types.add(node.id.name);
+      (exports ?? outer).types.add(node.id.name);
     if (node.type === "TSImportEqualsDeclaration" && node.importKind === "type") return;
     if (node.type === "ImportDeclaration" && node.importKind === "type") {
       for (const specifier of node.specifiers) outer.types.add(specifier.local.name);
@@ -110,6 +115,41 @@ export function createLocalEvidence(program: AnyNode) {
       ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
     )
       bind(node.local, outer, { kind: "other" });
+    if (
+      node.type === "TSModuleDeclaration" &&
+      node.id?.name &&
+      ["TSModuleBlock", "TSModuleDeclaration"].includes(node.body?.type)
+    ) {
+      const owner = exports ?? outer;
+      let members = namespaces.get(owner);
+      if (!members) namespaces.set(owner, (members = new Map()));
+      let shared = members.get(node.id.name);
+      if (!shared) {
+        shared = { parent: owner, owner: outer.owner, bindings: new Map(), types: new Set() };
+        members.set(node.id.name, shared);
+      }
+      const local: Scope = {
+        parent: shared,
+        owner: outer.owner,
+        bindings: new Map(),
+        types: new Set(),
+      };
+      scopes.set(node, outer);
+      scopes.set(node.body, local);
+      if (node.body.type === "TSModuleDeclaration") {
+        collect(node.body, local, shared);
+        return;
+      }
+      for (const statement of node.body.body) {
+        if (statement.type === "ExportNamedDeclaration" && statement.declaration) {
+          scopes.set(statement, local);
+          collect(statement.declaration, local, shared);
+        } else {
+          collect(statement, local);
+        }
+      }
+      return;
+    }
     const isFunction = [
       "FunctionDeclaration",
       "FunctionExpression",

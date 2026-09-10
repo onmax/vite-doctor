@@ -19,6 +19,32 @@ test("array-pass reports expose the diagnostic code and reference", () => {
 
 const cases: [string, string, number][] = [
   [
+    "merged namespace exported class",
+    "export {}; namespace Local { export class Array<T> {} } namespace Local { namespace Array {} function f(values: Array<number>) { return values.filter(keep).map(transform) } }",
+    0,
+  ],
+  [
+    "merged namespace forward exported interface",
+    "export {}; namespace Local { function f(values: ReadonlyArray<number>) { return values.filter(keep).map(transform) } } namespace Local { export interface ReadonlyArray<T> { custom: T } }",
+    0,
+  ],
+  [
+    "merged namespace private type stays local",
+    "export {}; namespace Local { class Array<T> {} } namespace Local { function f(values: Array<number>) { return values.filter(keep).map(transform) } }",
+    1,
+  ],
+  [
+    "distinct namespace types stay local",
+    "export {}; namespace First { export class Array<T> {} } namespace Second { function f(values: Array<number>) { return values.filter(keep).map(transform) } }",
+    1,
+  ],
+  [
+    "nested merged namespace exported type",
+    "export {}; namespace Local.Inner { export class Array<T> {} } namespace Local.Inner { function f(values: Array<number>) { return values.filter(keep).map(transform) } }",
+    0,
+  ],
+
+  [
     "value Array parameter",
     "function f(Array: unknown, values: Array<number>) { return values.filter(keep).map(transform) }",
     1,
@@ -201,7 +227,7 @@ test("reports TypeScript Vue scripts with source locations", async () => {
     files: {
       "App.vue":
         '<template><p>Example</p></template>\n<script setup lang="ts">\n' +
-        cases[0]![1] +
+        "function f(values: number[]) { return values.filter(keep).map(transform) }" +
         "\n</script>",
     },
   });
