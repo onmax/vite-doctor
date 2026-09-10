@@ -1,3 +1,4 @@
+export { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 export { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 export { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
 export { noConditionalEmptyObjectSpread } from "./no-conditional-empty-object-spread.js";
@@ -17,9 +18,12 @@ import { noUnknownTypeAliases } from "./no-unknown-type-aliases.js";
 import { noUnvalidatedDeserialization } from "./no-unvalidated-deserialization.js";
 import { requireSafetyCommentForTypeAssertion } from "./require-safety-comment-for-type-assertion.js";
 
+import { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
+
 const recommendedRules = [noChainedTypeAssertions, noUnvalidatedDeserialization];
 
 const strictRules = [
+  noReduceAccumulatorCopy,
   noCallerChosenResultType,
   ...recommendedRules,
   noObjectParameters,
