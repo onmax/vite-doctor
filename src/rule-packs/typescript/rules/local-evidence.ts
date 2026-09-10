@@ -72,10 +72,30 @@ export function createLocalEvidence(program: AnyNode) {
     if (!node?.type) return;
     if (
       [
-        "FunctionDeclaration",
-        "ClassDeclaration",
         "TSTypeAliasDeclaration",
         "TSInterfaceDeclaration",
+        "ClassDeclaration",
+        "TSEnumDeclaration",
+        "TSImportEqualsDeclaration",
+      ].includes(node.type) &&
+      node.id?.name
+    )
+      outer.types.add(node.id.name);
+    if (node.type === "TSImportEqualsDeclaration" && node.importKind === "type") return;
+    if (node.type === "ImportDeclaration" && node.importKind === "type") {
+      for (const specifier of node.specifiers) outer.types.add(specifier.local.name);
+      return;
+    }
+    if (
+      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
+    ) {
+      outer.types.add(node.local.name);
+      if (node.importKind === "type") return;
+    }
+    if (
+      [
+        "FunctionDeclaration",
+        "ClassDeclaration",
         "TSEnumDeclaration",
         "TSModuleDeclaration",
         "TSImportEqualsDeclaration",
@@ -86,21 +106,6 @@ export function createLocalEvidence(program: AnyNode) {
       ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
     )
       bind(node.local, outer, { kind: "other" });
-    if (
-      [
-        "ClassDeclaration",
-        "TSTypeAliasDeclaration",
-        "TSInterfaceDeclaration",
-        "TSEnumDeclaration",
-        "TSImportEqualsDeclaration",
-      ].includes(node.type) &&
-      node.id?.name
-    )
-      outer.types.add(node.id.name);
-    if (
-      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
-    )
-      outer.types.add(node.local.name);
     const isFunction = [
       "FunctionDeclaration",
       "FunctionExpression",
@@ -128,6 +133,9 @@ export function createLocalEvidence(program: AnyNode) {
           types: new Set<string>(),
         }
       : outer;
+    for (const parameter of node.typeParameters?.params ?? [])
+      scope.types.add(parameter.name?.name ?? parameter.name);
+    if (node.type === "ClassExpression" && node.id?.name) scope.types.add(node.id.name);
     if (isFunction) {
       if (node.type === "FunctionExpression") bind(node.id, scope, { kind: "other" });
       for (const parameter of node.params)
@@ -135,11 +143,6 @@ export function createLocalEvidence(program: AnyNode) {
     }
     if (node.type === "ClassExpression") bind(node.id, scope, { kind: "other" });
     if (node.type === "CatchClause") bind(node.param, scope, { kind: "other" });
-    if (node.type === "ClassExpression" && node.id?.name) scope.types.add(node.id.name);
-    for (const parameter of node.typeParameters?.params ?? []) {
-      bind(parameter.name, scope, { kind: "other" });
-      scope.types.add(parameter.name.name ?? parameter.name);
-    }
     scopes.set(node, scope);
     if (node.type === "VariableDeclaration") {
       let target = scope;
@@ -175,7 +178,7 @@ export function createLocalEvidence(program: AnyNode) {
     if (!node) return;
     if (node.type === "Identifier") {
       const target = binding(node);
-      if (target) target.written = true;
+      if (target && target.owner === scopes.get(node)?.owner) target.written = true;
     } else if (node.type === "AssignmentPattern") markWrite(node.left);
     else if (node.type === "RestElement") markWrite(node.argument);
     else if (node.type === "ArrayPattern") for (const item of node.elements) markWrite(item);
@@ -190,7 +193,7 @@ export function createLocalEvidence(program: AnyNode) {
       node.typeName.name !== name
     )
       return false;
-    for (let scope = scopes.get(node.typeName); scope; scope = scope.parent)
+    for (let scope = scopes.get(node); scope; scope = scope.parent)
       if (scope.types.has(name)) return false;
     return true;
   }

@@ -1,5 +1,5 @@
 import { createRule } from "../../../core/index.js";
-import { isConstAssertion, isTypeAssertion, report, type AnyNode } from "./shared.js";
+import { isConstAssertion, isTypeAssertion, parentOf, report, type AnyNode } from "./shared.js";
 
 const ruleId = "typescript/strict/require-safety-comment-for-type-assertion";
 
@@ -33,7 +33,7 @@ export const requireSafetyCommentForTypeAssertion = createRule({
         if (
           !isTypeAssertion(node) ||
           isConstAssertion(node) ||
-          hasSafetyComment(ctx.file.text, node)
+          hasSafetyComment(ctx.file.text, (ctx.file.scriptAst?.comments as AnyNode[]) ?? [], node)
         ) {
           return;
         }
@@ -49,10 +49,55 @@ export const requireSafetyCommentForTypeAssertion = createRule({
   },
 });
 
-function hasSafetyComment(source: string, node: AnyNode): boolean {
-  const start = node.start ?? node.range?.[0];
-  if (typeof start !== "number") return false;
-  const before = source.slice(0, start);
-  const lines = before.split(/\r?\n/);
-  return /\bSAFETY\s*:/.test(lines.slice(-2).join("\n"));
+const commentOwners = new Set([
+  "ExpressionStatement",
+  "PropertyDefinition",
+  "ReturnStatement",
+  "ThrowStatement",
+  "VariableDeclaration",
+]);
+
+function hasSafetyComment(source: string, comments: AnyNode[], node: AnyNode): boolean {
+  let current = node;
+  while (current && current.type !== "Program") {
+    let before = current.start;
+    let low = 0;
+    let high = comments.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (comments[middle]!.end <= before) low = middle + 1;
+      else high = middle;
+    }
+    let value = "";
+    for (let index = low - 1; index >= 0; index--) {
+      const comment = comments[index]!;
+      const gap = source.slice(comment.end, before);
+      if (gap.trim() || (gap.match(/\r\n|\r|\n/g)?.length ?? 0) > 1) break;
+      value = `${comment.value.replace(/^[ \t]*\*[ \t]?/gm, "")}\n${value}`;
+      if (/(?:^|[^\p{L}\p{N}_])SAFETY\s*:\s*\S/u.test(value)) return true;
+      before = comment.start;
+    }
+    const parent = parentOf(current);
+    if (
+      parent?.body === current &&
+      (parent.type === "ForStatement" ||
+        parent.type === "ForOfStatement" ||
+        parent.type === "ForInStatement" ||
+        parent.type === "WhileStatement" ||
+        parent.type === "DoWhileStatement")
+    ) {
+      return false;
+    }
+    if (commentOwners.has(current.type)) {
+      const exported = parent?.type === "ExportNamedDeclaration" && parent.declaration === current;
+      const loopInitializer =
+        current.type === "VariableDeclaration" &&
+        ((parent?.type === "ForStatement" && parent.init === current) ||
+          ((parent?.type === "ForOfStatement" || parent?.type === "ForInStatement") &&
+            parent.left === current));
+      if (!exported && !loopInitializer) return false;
+    }
+    current = parent;
+  }
+  return false;
 }

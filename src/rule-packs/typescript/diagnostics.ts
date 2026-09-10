@@ -17,6 +17,7 @@ export const typescriptDiagnosticRegistry = defineDoctorDiagnostics([
   },
   { code: "TS0012", ruleId: "typescript/performance/no-array-filter-map" },
   { code: "TS0009", ruleId: "typescript/evidence/no-widen-then-assert" },
+  { code: "TS0010", ruleId: "typescript/performance/no-reduce-accumulator-copy" },
 ]);
 
 export const diagnostics = typescriptDiagnosticRegistry.diagnostics;

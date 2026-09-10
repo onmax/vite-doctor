@@ -1,5 +1,6 @@
 export { noArrayFilterMap } from "./no-array-filter-map.js";
 export { noWidenThenAssert } from "./no-widen-then-assert.js";
+export { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 export { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 export { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
 export { noConditionalEmptyObjectSpread } from "./no-conditional-empty-object-spread.js";
@@ -21,12 +22,14 @@ import { requireSafetyCommentForTypeAssertion } from "./require-safety-comment-f
 
 import { noArrayFilterMap } from "./no-array-filter-map.js";
 import { noWidenThenAssert } from "./no-widen-then-assert.js";
+import { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 
 const recommendedRules = [noChainedTypeAssertions, noUnvalidatedDeserialization];
 
 const strictRules = [
   noArrayFilterMap,
   noWidenThenAssert,
+  noReduceAccumulatorCopy,
   noCallerChosenResultType,
   ...recommendedRules,
   noObjectParameters,
