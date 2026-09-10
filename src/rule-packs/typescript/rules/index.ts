@@ -1,3 +1,4 @@
+export { noWidenThenAssert } from "./no-widen-then-assert.js";
 export { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 export { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 export { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
@@ -18,11 +19,13 @@ import { noUnknownTypeAliases } from "./no-unknown-type-aliases.js";
 import { noUnvalidatedDeserialization } from "./no-unvalidated-deserialization.js";
 import { requireSafetyCommentForTypeAssertion } from "./require-safety-comment-for-type-assertion.js";
 
+import { noWidenThenAssert } from "./no-widen-then-assert.js";
 import { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 
 const recommendedRules = [noChainedTypeAssertions, noUnvalidatedDeserialization];
 
 const strictRules = [
+  noWidenThenAssert,
   noReduceAccumulatorCopy,
   noCallerChosenResultType,
   ...recommendedRules,
