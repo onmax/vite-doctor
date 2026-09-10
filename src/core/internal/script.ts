@@ -12,7 +12,10 @@ export function parseScript(
       sourceType: "module",
       lang,
     } as any);
-    return result.program as unknown as Record<string, unknown>;
+    return Object.assign(result.program, { comments: result.comments }) as unknown as Record<
+      string,
+      unknown
+    >;
   } catch {
     return null;
   }
