@@ -43,9 +43,11 @@ export function arrayMethod(node: AnyNode): { object: AnyNode; name: string } | 
   return typeof name === "string" ? { object: expression(node.object), name } : null;
 }
 
-export function createLocalEvidence(program: AnyNode) {
+export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = true } = {}) {
   const scopes = new WeakMap<object, Scope>();
+  const parents = new WeakMap<object, AnyNode>();
   const writes: AnyNode[] = [];
+  const namespaces = new WeakMap<Scope, Map<string, Scope>>();
   const root: Scope = { owner: program, bindings: new Map(), types: new Set() };
   function bind(pattern: AnyNode, scope: Scope, info: Omit<Binding, "node" | "written" | "owner">) {
     if (!pattern) return;
@@ -60,7 +62,11 @@ export function createLocalEvidence(program: AnyNode) {
       });
       scope.bindings.set(pattern.name, bindings);
     } else if (pattern.type === "AssignmentPattern")
-      bind(pattern.left, scope, { kind: info.kind, annotation: info.annotation });
+      bind(pattern.left, scope, {
+        kind: info.kind,
+        annotation: info.annotation,
+        init: info.kind === "parameter" ? pattern.right : undefined,
+      });
     else if (pattern.type === "RestElement" || pattern.type === "TSParameterProperty")
       bind(pattern.argument ?? pattern.parameter, scope, {
         kind: info.kind,
@@ -72,30 +78,34 @@ export function createLocalEvidence(program: AnyNode) {
       for (const item of pattern.properties)
         bind(item.value ?? item.argument, scope, { kind: info.kind });
   }
-  function collect(node: AnyNode, outer: Scope) {
+  function collect(node: AnyNode, outer: Scope, exports?: Scope) {
     if (!node?.type) return;
+    if (node.type === "TSModuleDeclaration" && node.id?.type === "TSQualifiedName") {
+      collect({ ...node, id: node.id.left, body: { ...node, id: node.id.right } }, outer, exports);
+      return;
+    }
     if (
       [
         "TSTypeAliasDeclaration",
         "TSInterfaceDeclaration",
         "ClassDeclaration",
         "TSEnumDeclaration",
-        "TSModuleDeclaration",
         "TSImportEqualsDeclaration",
       ].includes(node.type) &&
       node.id?.name
     )
-      outer.types.add(node.id.name);
+      (exports ?? outer).types.add(node.id.name);
     if (node.type === "TSImportEqualsDeclaration" && node.importKind === "type") return;
     if (node.type === "ImportDeclaration" && node.importKind === "type") {
       for (const specifier of node.specifiers) outer.types.add(specifier.local.name);
       return;
     }
     if (
-      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
+      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type) &&
+      node.importKind === "type"
     ) {
       outer.types.add(node.local.name);
-      if (node.importKind === "type") return;
+      return;
     }
     if (
       [
@@ -111,6 +121,41 @@ export function createLocalEvidence(program: AnyNode) {
       ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
     )
       bind(node.local, outer, { kind: "other" });
+    if (
+      node.type === "TSModuleDeclaration" &&
+      node.id?.name &&
+      ["TSModuleBlock", "TSModuleDeclaration"].includes(node.body?.type)
+    ) {
+      const owner = exports ?? outer;
+      let members = namespaces.get(owner);
+      if (!members) namespaces.set(owner, (members = new Map()));
+      let shared = members.get(node.id.name);
+      if (!shared) {
+        shared = { parent: owner, owner: outer.owner, bindings: new Map(), types: new Set() };
+        members.set(node.id.name, shared);
+      }
+      const local: Scope = {
+        parent: shared,
+        owner: outer.owner,
+        bindings: new Map(),
+        types: new Set(),
+      };
+      scopes.set(node, outer);
+      scopes.set(node.body, local);
+      if (node.body.type === "TSModuleDeclaration") {
+        collect(node.body, local, shared);
+        return;
+      }
+      for (const statement of node.body.body) {
+        if (statement.type === "ExportNamedDeclaration" && statement.declaration) {
+          scopes.set(statement, local);
+          collect(statement.declaration, local, shared);
+        } else {
+          collect(statement, local);
+        }
+      }
+      return;
+    }
     const isFunction = [
       "FunctionDeclaration",
       "FunctionExpression",
@@ -165,7 +210,10 @@ export function createLocalEvidence(program: AnyNode) {
       writes.push(node.left);
     for (const key of getNodeVisitorKeys(node)) {
       const value = node[key];
-      for (const child of Array.isArray(value) ? value : [value]) collect(child, scope);
+      for (const child of Array.isArray(value) ? value : [value]) {
+        if (child?.type) parents.set(child, node);
+        collect(child, scope);
+      }
     }
   }
   collect(program, root);
@@ -217,18 +265,58 @@ export function createLocalEvidence(program: AnyNode) {
     );
   }
   function arrayType(node: AnyNode): boolean {
+    if (node?.type === "TSParenthesizedType") return arrayType(node.typeAnnotation);
     if (node?.type === "TSArrayType" || node?.type === "TSTupleType") return true;
     if (node?.type === "TSTypeOperator" && node.operator === "readonly")
       return arrayType(node.typeAnnotation);
     return globalType(node, "Array") || globalType(node, "ReadonlyArray");
   }
+  function deferredParameterReference(node: AnyNode, owner: AnyNode): boolean {
+    for (let current = node; current && current !== owner; current = parents.get(current)) {
+      if (!["FunctionExpression", "ArrowFunctionExpression"].includes(current.type)) continue;
+      let value = current;
+      let parent = parents.get(value);
+      while (parent && expression(parent) === value) {
+        value = parent;
+        parent = parents.get(value);
+      }
+      // A function stored as a parameter default is not called by that initializer.
+      if (
+        parent?.type === "AssignmentPattern" &&
+        parent.right === value &&
+        parents.get(parent) === owner
+      )
+        return true;
+      // Unknown calls may invoke callbacks synchronously. Only known, unshadowed
+      // schedulers establish deferred execution without cross-function analysis.
+      if (
+        parent?.type === "CallExpression" &&
+        parent.arguments[0] === value &&
+        parent.callee.type === "Identifier" &&
+        ["setTimeout", "setInterval", "queueMicrotask", "requestAnimationFrame"].includes(
+          parent.callee.name,
+        ) &&
+        !binding(parent.callee)
+      )
+        return true;
+    }
+    return false;
+  }
   function isArray(node: AnyNode, seen = new Set<Binding>()): boolean {
-    node = expression(node, true);
+    node = expression(node, unwrapArrayAssertions);
     if (!node) return false;
     if (node.type === "ArrayExpression") return true;
     if (node.type === "Identifier") {
       const target = binding(node);
       if (!target || target.written || seen.has(target)) return false;
+      if (
+        target.kind === "parameter" &&
+        (target.init?.end ?? target.node.end) >= node.start &&
+        !deferredParameterReference(node, target.owner)
+      )
+        return false;
+      if (target.kind !== "parameter" && (!target.init || target.init.end >= node.start))
+        return false;
       if (arrayType(target.annotation)) return true;
       if (
         target.annotation ||

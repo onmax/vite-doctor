@@ -89,6 +89,23 @@ const cases: [string, string, number][] = [
     "function f<Array>() {} const initial: Array<number> = value; items.reduce((acc, item) => acc.slice(), initial)",
     1,
   ],
+  ["asserted literal initializer", "items.reduce((acc, item) => acc.slice(), [] as number[])", 1],
+  ["angle asserted initializer", "items.reduce((acc, item) => acc.slice(), <number[]>[])", 1],
+  [
+    "asserted initializer alias",
+    "const initial = [] as number[]; items.reduce((acc, item) => acc.slice(), initial)",
+    1,
+  ],
+  [
+    "asserted initializer chain",
+    "items.reduce((acc, item) => acc.slice(), ([] as number[]).slice())",
+    1,
+  ],
+  [
+    "asserted unknown initializer",
+    "items.reduce((acc, item) => acc.slice(), input as number[])",
+    0,
+  ],
   ["concat", "items.reduce((acc, item) => acc.concat([item]), [])", 1],
   [
     "slice alias",
