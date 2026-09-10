@@ -91,7 +91,6 @@ export function createLocalEvidence(program: AnyNode) {
         "TSTypeAliasDeclaration",
         "TSInterfaceDeclaration",
         "TSEnumDeclaration",
-        "TSModuleDeclaration",
         "TSImportEqualsDeclaration",
       ].includes(node.type) &&
       node.id?.name

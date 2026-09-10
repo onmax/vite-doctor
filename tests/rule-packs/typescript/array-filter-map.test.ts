@@ -30,6 +30,26 @@ const cases: [string, string, number][] = [
     0,
   ],
   [
+    "namespace Array preserves global type",
+    "export {}; namespace Local { namespace Array { export const value = 1 } function f(values: Array<number>) { return values.filter(keep).map(transform) } }",
+    1,
+  ],
+  [
+    "namespace ReadonlyArray preserves global type",
+    "export {}; namespace Local { namespace ReadonlyArray { export const value = 1 } function f(values: ReadonlyArray<number>) { return values.filter(keep).map(transform) } }",
+    1,
+  ],
+  [
+    "namespace merged with class still shadows type",
+    "export {}; class Array<T> {} namespace Array { export const value = 1 } function f(values: Array<number>) { return values.filter(keep).map(transform) }",
+    0,
+  ],
+  [
+    "namespace merged with interface still shadows type",
+    "export {}; interface ReadonlyArray<T> { custom: T } namespace ReadonlyArray { export const value = 1 } function f(values: ReadonlyArray<number>) { return values.filter(keep).map(transform) }",
+    0,
+  ],
+  [
     "rest array",
     "function f(...values: number[]) { return values.filter(keep).map(transform) }",
     1,
