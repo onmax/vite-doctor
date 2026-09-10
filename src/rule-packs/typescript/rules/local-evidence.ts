@@ -19,6 +19,8 @@ export function expression(node: AnyNode): AnyNode {
       "ChainExpression",
       "TSSatisfiesExpression",
       "TSNonNullExpression",
+      "TSAsExpression",
+      "TSTypeAssertion",
     ].includes(node.type)
   )
     node = node.expression;
@@ -53,9 +55,13 @@ export function createLocalEvidence(program: AnyNode) {
         owner: scope.owner,
       });
       scope.bindings.set(pattern.name, bindings);
-    } else if (pattern.type === "AssignmentPattern") bind(pattern.left, scope, { kind: info.kind });
+    } else if (pattern.type === "AssignmentPattern")
+      bind(pattern.left, scope, { kind: info.kind, annotation: info.annotation });
     else if (pattern.type === "RestElement" || pattern.type === "TSParameterProperty")
-      bind(pattern.argument ?? pattern.parameter, scope, { kind: info.kind });
+      bind(pattern.argument ?? pattern.parameter, scope, {
+        kind: info.kind,
+        annotation: info.annotation,
+      });
     else if (pattern.type === "ArrayPattern")
       for (const item of pattern.elements) bind(item, scope, { kind: info.kind });
     else if (pattern.type === "ObjectPattern")
@@ -237,6 +243,16 @@ export function createLocalEvidence(program: AnyNode) {
       ].includes(node.type)
     )
       return true;
+    if (node.type === "UnaryExpression" && ["+", "-", "~", "!"].includes(node.operator)) {
+      const argument = expression(node.argument);
+      return (
+        argument?.type === "Literal" &&
+        (typeof argument.value === "number" ||
+          typeof argument.value === "boolean" ||
+          typeof argument.value === "string" ||
+          (typeof argument.value === "bigint" && node.operator !== "+"))
+      );
+    }
     if (node.type !== "Identifier") return false;
     const target = binding(node);
     if (!target || target.written || seen.has(target)) return false;
