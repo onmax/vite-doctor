@@ -35,7 +35,7 @@ export const noArrayFilterMap = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type === "Program") {
-          evidence = createLocalEvidence(node);
+          evidence = createLocalEvidence(node, { unwrapArrayAssertions: false });
           return;
         }
         if (node.type !== "CallExpression" || node.optional) return;

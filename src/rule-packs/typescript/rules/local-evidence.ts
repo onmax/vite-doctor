@@ -43,7 +43,7 @@ export function arrayMethod(node: AnyNode): { object: AnyNode; name: string } | 
   return typeof name === "string" ? { object: expression(node.object), name } : null;
 }
 
-export function createLocalEvidence(program: AnyNode) {
+export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = true } = {}) {
   const scopes = new WeakMap<object, Scope>();
   const writes: AnyNode[] = [];
   const namespaces = new WeakMap<Scope, Map<string, Scope>>();
@@ -267,7 +267,7 @@ export function createLocalEvidence(program: AnyNode) {
     return globalType(node, "Array") || globalType(node, "ReadonlyArray");
   }
   function isArray(node: AnyNode, seen = new Set<Binding>()): boolean {
-    node = expression(node);
+    node = expression(node, unwrapArrayAssertions);
     if (!node) return false;
     if (node.type === "ArrayExpression") return true;
     if (node.type === "Identifier") {
