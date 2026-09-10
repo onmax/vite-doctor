@@ -19,6 +19,37 @@ test("array-pass reports expose the diagnostic code and reference", () => {
 
 const cases: [string, string, number][] = [
   [
+    "immediately invoked default arrow has no parameter evidence",
+    "function f(values: number[] = (() => values.filter(keep).map(transform))()) {}",
+    0,
+  ],
+  [
+    "immediately invoked default function has no parameter evidence",
+    "function f(values: number[] = (function () { return values.map(transform).filter(keep) })()) {}",
+    0,
+  ],
+  [
+    "synchronous array callback has no parameter evidence",
+    "function f(values: number[] = [1].flatMap(() => values.filter(keep).map(transform))) {}",
+    0,
+  ],
+  [
+    "unknown callback timing has no parameter evidence",
+    "function f(values: number[] = invoke(() => values.filter(keep).map(transform))) {}",
+    0,
+  ],
+  [
+    "shadowed scheduler has no parameter evidence",
+    "function f(setTimeout: Function, values: number[] = setTimeout(() => values.filter(keep).map(transform))) {}",
+    0,
+  ],
+  [
+    "deferred callback inside an IIFE retains parameter evidence",
+    "function f(values: number[] = (() => { queueMicrotask(() => values.filter(keep).map(transform)); return [] })()) {}",
+    1,
+  ],
+
+  [
     "default callback retains parameter evidence",
     "function f(values: number[] = (setTimeout(() => values.filter(keep).map(transform), 0), [])) {}",
     1,

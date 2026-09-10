@@ -45,6 +45,7 @@ export function arrayMethod(node: AnyNode): { object: AnyNode; name: string } | 
 
 export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = true } = {}) {
   const scopes = new WeakMap<object, Scope>();
+  const parents = new WeakMap<object, AnyNode>();
   const writes: AnyNode[] = [];
   const namespaces = new WeakMap<Scope, Map<string, Scope>>();
   const root: Scope = { owner: program, bindings: new Map(), types: new Set() };
@@ -208,7 +209,10 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
       writes.push(node.left);
     for (const key of getNodeVisitorKeys(node)) {
       const value = node[key];
-      for (const child of Array.isArray(value) ? value : [value]) collect(child, scope);
+      for (const child of Array.isArray(value) ? value : [value]) {
+        if (child?.type) parents.set(child, node);
+        collect(child, scope);
+      }
     }
   }
   collect(program, root);
@@ -266,6 +270,37 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
       return arrayType(node.typeAnnotation);
     return globalType(node, "Array") || globalType(node, "ReadonlyArray");
   }
+  function deferredParameterReference(node: AnyNode, owner: AnyNode): boolean {
+    for (let current = node; current && current !== owner; current = parents.get(current)) {
+      if (!["FunctionExpression", "ArrowFunctionExpression"].includes(current.type)) continue;
+      let value = current;
+      let parent = parents.get(value);
+      while (parent && expression(parent) === value) {
+        value = parent;
+        parent = parents.get(value);
+      }
+      // A function stored as a parameter default is not called by that initializer.
+      if (
+        parent?.type === "AssignmentPattern" &&
+        parent.right === value &&
+        parents.get(parent) === owner
+      )
+        return true;
+      // Unknown calls may invoke callbacks synchronously. Only known, unshadowed
+      // schedulers establish deferred execution without cross-function analysis.
+      if (
+        parent?.type === "CallExpression" &&
+        parent.arguments[0] === value &&
+        parent.callee.type === "Identifier" &&
+        ["setTimeout", "setInterval", "queueMicrotask", "requestAnimationFrame"].includes(
+          parent.callee.name,
+        ) &&
+        !binding(parent.callee)
+      )
+        return true;
+    }
+    return false;
+  }
   function isArray(node: AnyNode, seen = new Set<Binding>()): boolean {
     node = expression(node, unwrapArrayAssertions);
     if (!node) return false;
@@ -275,8 +310,8 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
       if (!target || target.written || seen.has(target)) return false;
       if (
         target.kind === "parameter" &&
-        scopes.get(node)?.owner === target.owner &&
-        (target.init?.end ?? target.node.end) >= node.start
+        (target.init?.end ?? target.node.end) >= node.start &&
+        !deferredParameterReference(node, target.owner)
       )
         return false;
       if (target.kind !== "parameter" && (!target.init || target.init.end >= node.start))
