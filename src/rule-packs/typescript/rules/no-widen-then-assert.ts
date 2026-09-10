@@ -53,10 +53,10 @@ export const noWidenThenAssert = createRule({
         return false;
       seen.add(target);
       let initial = expression(target.init);
-      if (evidence.broadType(target.annotation)) return evidence.known(initial);
+      if (evidence.broadType(target.annotation)) return evidence.known(initial, owner);
       if (target.annotation) return false;
       if (isTypeAssertion(initial) && evidence.broadType(initial.typeAnnotation))
-        return evidence.known(initial.expression);
+        return evidence.known(initial.expression, owner);
       return widened(initial, owner, seen);
     }
     return {

@@ -26,6 +26,31 @@ const cases: [string, string, number][] = [
     1,
   ],
   ["same function", "function f() { const erased: unknown = { id: 1 }; return erased as User }", 1],
+  [
+    "outer function evidence",
+    "function outer() { const value = { id: 1 }; function inner() { const erased: unknown = value; return erased as User } }",
+    0,
+  ],
+  [
+    "outer evidence through local alias",
+    "const value = { id: 1 }; function inner() { const alias = value; const erased = alias as unknown; return erased as User }",
+    0,
+  ],
+  [
+    "outer annotated evidence",
+    "function outer(value: string) { return () => { const erased: unknown = value; return erased as User } }",
+    0,
+  ],
+  [
+    "same function evidence aliases",
+    "function inner() { const value = { id: 1 }; const alias = value; const erased = alias as unknown; return erased as User }",
+    1,
+  ],
+  [
+    "same function block evidence",
+    "function inner(value: string) { { const erased: unknown = value; return erased as User } }",
+    1,
+  ],
   ["boundary", "const erased: unknown = JSON.parse(text); const claimed = erased as User", 0],
   [
     "imported value",
