@@ -1,3 +1,4 @@
+import { typescriptRulePack } from "../../../src/rule-packs/typescript/index.js";
 import { nextTick, ref } from "vue";
 import { expect, test } from "vite-plus/test";
 import {
@@ -77,7 +78,9 @@ test("rule source exposes canonical docs paths and framework counts", () => {
   expect(reports.all.catalogVersion).toBe(1);
   expect(reports.all.rules.length).toBeGreaterThan(0);
   expect(reports.all.rules.every((rule) => rule.docsPath?.startsWith("/"))).toBe(true);
-  expect(reports.typescript.rules).toHaveLength(8);
+  expect(reports.typescript.rules.map((rule) => rule.id).sort()).toEqual(
+    typescriptRulePack.rules.map((rule) => rule.meta.id).sort(),
+  );
   expect(reports.nuxt.rules.length).toBe(
     reports.vue.rules.length +
       reports.nitro.rules.length +

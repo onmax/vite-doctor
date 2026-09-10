@@ -15,6 +15,7 @@ export const typescriptDiagnosticRegistry = defineDoctorDiagnostics([
     code: "TS0008",
     ruleId: "typescript/strict/require-safety-comment-for-type-assertion",
   },
+  { code: "TS0011", ruleId: "typescript/evidence/no-known-value-widening" },
 ]);
 
 export const diagnostics = typescriptDiagnosticRegistry.diagnostics;
