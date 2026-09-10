@@ -72,6 +72,26 @@ const cases: [string, string, number][] = [
     0,
   ],
   ["destructured writes", "let value = 1; ({ value } = input); const erased: unknown = value", 0],
+  ["symbol not", "function f(value: symbol) { const erased: unknown = !value;  }", 1],
+  ["symbol plus", "function f(value: symbol) { const erased: unknown = +value;  }", 0],
+  ["symbol negative", "function f(value: symbol) { const erased: unknown = -value;  }", 0],
+  ["symbol complement", "function f(value: symbol) { const erased: unknown = ~value;  }", 0],
+  [
+    "symbol boolean conversion",
+    "function f(value: symbol) { const erased: unknown = +!value;  }",
+    1,
+  ],
+  ["symbol throwing nested", "function f(value: symbol) { const erased: unknown = !-value;  }", 0],
+  [
+    "symbol alias not",
+    "function f(value: symbol) { const alias = value; const erased: unknown = !alias;  }",
+    1,
+  ],
+  [
+    "symbol alias plus",
+    "function f(value: symbol) { const alias = value; const erased: unknown = +alias;  }",
+    0,
+  ],
 ];
 
 test.each(cases)("checks %s", async (_name, source, expected) => {

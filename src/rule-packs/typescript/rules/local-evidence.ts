@@ -246,6 +246,7 @@ export function createLocalEvidence(program: AnyNode) {
       const operand = primitive(node.argument, owner, seen);
       if (!operand || (node.operator === "+" && operand === "bigint")) return;
       if (node.operator === "!") return "boolean";
+      if (operand === "symbol") return;
       return operand === "bigint" ? "bigint" : "number";
     }
     if (node.type !== "Identifier") return;
@@ -257,6 +258,7 @@ export function createLocalEvidence(program: AnyNode) {
         TSNumberKeyword: "number",
         TSBooleanKeyword: "boolean",
         TSBigIntKeyword: "bigint",
+        TSSymbolKeyword: "symbol",
         TSNullKeyword: "null",
       };
       if (target.annotation.type === "TSLiteralType")
