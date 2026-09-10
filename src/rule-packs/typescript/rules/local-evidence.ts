@@ -63,13 +63,11 @@ export function createLocalEvidence(program: AnyNode) {
         bind(item.value ?? item.argument, scope, { kind: info.kind });
   }
   function collect(node: AnyNode, outer: Scope) {
-    if (!node?.type) return;
+    if (!node?.type || node.importKind === "type") return;
     if (
       [
         "FunctionDeclaration",
         "ClassDeclaration",
-        "TSTypeAliasDeclaration",
-        "TSInterfaceDeclaration",
         "TSEnumDeclaration",
         "TSModuleDeclaration",
         "TSImportEqualsDeclaration",
@@ -113,8 +111,6 @@ export function createLocalEvidence(program: AnyNode) {
     }
     if (node.type === "ClassExpression") bind(node.id, scope, { kind: "other" });
     if (node.type === "CatchClause") bind(node.param, scope, { kind: "other" });
-    for (const parameter of node.typeParameters?.params ?? [])
-      bind(parameter.name, scope, { kind: "other" });
     scopes.set(node, scope);
     if (node.type === "VariableDeclaration") {
       let target = scope;
@@ -150,7 +146,7 @@ export function createLocalEvidence(program: AnyNode) {
     if (!node) return;
     if (node.type === "Identifier") {
       const target = binding(node);
-      if (target) target.written = true;
+      if (target && target.owner === scopes.get(node)?.owner) target.written = true;
     } else if (node.type === "AssignmentPattern") markWrite(node.left);
     else if (node.type === "RestElement") markWrite(node.argument);
     else if (node.type === "ArrayPattern") for (const item of node.elements) markWrite(item);

@@ -7,6 +7,48 @@ import {
 import { getRuleDocuments, getDiagnosticDocuments } from "../../../docs/rules/source.js";
 
 const cases: [string, string, number][] = [
+  ["default accumulator", "items.reduce((acc = [], item) => acc.concat(item), [])", 1],
+  [
+    "default reassigned",
+    "items.reduce((acc = [], item) => { acc = item; return acc.slice() }, [])",
+    0,
+  ],
+  [
+    "nested write",
+    "items.reduce((acc, item) => { function unused() { acc = item } return acc.slice() }, [])",
+    1,
+  ],
+  [
+    "nested destructuring write",
+    "items.reduce((acc, item) => { const unused = () => { [acc] = item }; return acc.slice() }, [])",
+    1,
+  ],
+  [
+    "type parameter Object",
+    "function f<Object>() { return items.reduce((acc, item) => Object.assign({}, acc, item), {}) }",
+    1,
+  ],
+  ["type alias Array", "type Array = unknown; items.reduce((acc, item) => Array.from(acc), [])", 1],
+  [
+    "interface Object",
+    "interface Object {}; items.reduce((acc, item) => Object.assign({}, acc, item), {})",
+    1,
+  ],
+  [
+    "type import Array",
+    'import type { Array } from "example"; items.reduce((acc, item) => Array.from(acc), [])',
+    1,
+  ],
+  [
+    "inline type import Object",
+    'import { type Object } from "example"; items.reduce((acc, item) => Object.assign({}, acc, item), {})',
+    1,
+  ],
+  [
+    "value import Array",
+    'import { Array } from "example"; items.reduce((acc, item) => Array.from(acc), [])',
+    0,
+  ],
   ["concat", "items.reduce((acc, item) => acc.concat([item]), [])", 1],
   [
     "slice alias",

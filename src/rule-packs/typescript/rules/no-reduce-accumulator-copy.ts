@@ -66,7 +66,9 @@ export const noReduceAccumulatorCopy = createRule({
           return;
         const reducerMethod = arrayMethod(reducer.callee);
         if (!reducerMethod || !["reduce", "reduceRight"].includes(reducerMethod.name)) return;
-        const parameter = callback.params[0];
+        const firstParameter = callback.params[0];
+        const parameter =
+          firstParameter?.type === "AssignmentPattern" ? firstParameter.left : firstParameter;
         if (parameter?.type !== "Identifier") return;
         const accumulator = evidence.binding(parameter);
         const isAccumulator = (value: AnyNode) => references(value, accumulator, callback);
