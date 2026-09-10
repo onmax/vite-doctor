@@ -229,6 +229,43 @@ export function createLocalEvidence(program: AnyNode) {
     }
     return false;
   }
+  function primitive(
+    node: AnyNode,
+    owner?: AnyNode,
+    seen = new Set<Binding>(),
+  ): string | undefined {
+    node = expression(node, true);
+    if (!node) return;
+    if (node.type === "Literal") {
+      if (node.value === null) return "null";
+      if (["number", "boolean", "string", "bigint"].includes(typeof node.value))
+        return typeof node.value;
+      return;
+    }
+    if (node.type === "UnaryExpression" && ["+", "-", "~", "!"].includes(node.operator)) {
+      const operand = primitive(node.argument, owner, seen);
+      if (!operand || (node.operator === "+" && operand === "bigint")) return;
+      if (node.operator === "!") return "boolean";
+      return operand === "bigint" ? "bigint" : "number";
+    }
+    if (node.type !== "Identifier") return;
+    const target = binding(node);
+    if (!target || (owner && target.owner !== owner) || target.written || seen.has(target)) return;
+    if (target.annotation) {
+      const types: Record<string, string> = {
+        TSStringKeyword: "string",
+        TSNumberKeyword: "number",
+        TSBooleanKeyword: "boolean",
+        TSBigIntKeyword: "bigint",
+        TSNullKeyword: "null",
+      };
+      if (target.annotation.type === "TSLiteralType")
+        return primitive(target.annotation.literal, owner, seen);
+      return types[target.annotation.type];
+    }
+    if (target.kind === "const" && target.node.start < node.start)
+      return primitive(target.init, owner, new Set([...seen, target]));
+  }
   function known(node: AnyNode, owner?: AnyNode, seen = new Set<Binding>()): boolean {
     node = expression(node, true);
     if (!node) return false;
@@ -242,17 +279,7 @@ export function createLocalEvidence(program: AnyNode) {
       ].includes(node.type)
     )
       return true;
-    if (node.type === "UnaryExpression" && ["+", "-", "~", "!"].includes(node.operator)) {
-      const argument = expression(node.argument, true);
-      if (argument?.type !== "Literal") return known(argument, owner, seen);
-      return (
-        argument?.type === "Literal" &&
-        (typeof argument.value === "number" ||
-          typeof argument.value === "boolean" ||
-          typeof argument.value === "string" ||
-          (typeof argument.value === "bigint" && node.operator !== "+"))
-      );
-    }
+    if (node.type === "UnaryExpression") return primitive(node, owner, seen) !== undefined;
     if (node.type !== "Identifier") return false;
     const target = binding(node);
     if (!target || (owner && target.owner !== owner) || target.written || seen.has(target))
