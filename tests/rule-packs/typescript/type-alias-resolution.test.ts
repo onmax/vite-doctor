@@ -70,6 +70,36 @@ const cases: [string, string, number][] = [
     "type Input = object; interface Input {} namespace Input { export const tag = 1 } function save(value: Input) {}",
     0,
   ],
+  [
+    "merged namespace exports",
+    "namespace N { export type Input = object } namespace N { function save(value: Input) {} }",
+    1,
+  ],
+  [
+    "merged namespace forward exports",
+    "namespace N { function save(value: Input) {} } namespace N { export type Input = object }",
+    1,
+  ],
+  [
+    "merged namespace private aliases",
+    "namespace N { type Input = object } namespace N { function save(value: Input) {} }",
+    0,
+  ],
+  [
+    "merged namespace private shadowing",
+    "namespace N { export type Input = object } namespace N { type Input = string; function save(value: Input) {} }",
+    0,
+  ],
+  [
+    "merged namespace generic declaration scope",
+    "namespace N { type Private = object; export type Input<T = Private> = T } namespace N { type Private = string; function save(value: Input) {} }",
+    1,
+  ],
+  [
+    "merged namespace unknown aliases",
+    "namespace N { export type Raw = unknown } namespace N { type Copy = Raw }",
+    2,
+  ],
   ["cycles", "type A = B; type B = A; function save(value: A) {}", 0],
   ["imports", "import type { Input } from 'external'; function save(value: Input) {}", 0],
   ["block unknown alias", "function outer() { type Raw = unknown }", 1],

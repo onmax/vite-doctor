@@ -7,13 +7,14 @@ type Substitution = { node: AnyNode; substitutions: Map<AnyNode, Substitution> }
 export function createTypeAliasResolver(program: AnyNode) {
   const scopes = new WeakMap<object, Scope>();
   const aliases: AnyNode[] = [];
+  const namespaces = new WeakMap<Scope, Map<string, Scope>>();
   const root: Scope = { bindings: new Map() };
   function bind(scope: Scope, name: string, node: AnyNode) {
     const bindings = scope.bindings.get(name) ?? [];
     bindings.push(node);
     scope.bindings.set(name, bindings);
   }
-  function collect(node: AnyNode, outer: Scope) {
+  function collect(node: AnyNode, outer: Scope, exports?: Scope) {
     if (!node?.type) return;
     if (
       [
@@ -26,13 +27,39 @@ export function createTypeAliasResolver(program: AnyNode) {
       ].includes(node.type) &&
       node.id?.name
     ) {
-      bind(outer, node.id.name, node);
+      bind(exports ?? outer, node.id.name, node);
       if (node.type === "TSTypeAliasDeclaration") aliases.push(node);
     }
     if (
       ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
     )
       bind(outer, node.local.name, node);
+    if (
+      node.type === "TSModuleDeclaration" &&
+      node.id?.name &&
+      node.body?.type === "TSModuleBlock"
+    ) {
+      const owner = exports ?? outer;
+      let members = namespaces.get(owner);
+      if (!members) namespaces.set(owner, (members = new Map()));
+      let shared = members.get(node.id.name);
+      if (!shared) {
+        shared = { parent: owner, bindings: new Map() };
+        members.set(node.id.name, shared);
+      }
+      const local: Scope = { parent: shared, bindings: new Map() };
+      scopes.set(node, outer);
+      scopes.set(node.body, local);
+      for (const statement of node.body.body) {
+        if (statement.type === "ExportNamedDeclaration" && statement.declaration) {
+          scopes.set(statement, local);
+          collect(statement.declaration, local, shared);
+        } else {
+          collect(statement, local);
+        }
+      }
+      return;
+    }
     const parameters = node.typeParameters?.params ?? [];
     const ownsScope =
       parameters.length ||
