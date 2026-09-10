@@ -1,7 +1,21 @@
 import { expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.js";
+import { createRulesReport, explainRule } from "../../../src/core/reports.js";
 import { noArrayFilterMap, typescriptRulePack } from "../../../src/rule-packs/typescript/index.js";
 import { getRuleDocuments, getDiagnosticDocuments } from "../../../docs/rules/source.js";
+
+test("array-pass reports expose the diagnostic code and reference", () => {
+  const id = noArrayFilterMap.meta.id;
+  const report = JSON.parse(createRulesReport([typescriptRulePack], "json"));
+  expect(report.rules.find((rule: { id: string }) => rule.id === id).diagnosticCodes).toEqual([
+    "TS0012",
+  ]);
+  const explanation = JSON.parse(explainRule([typescriptRulePack], id, "json"));
+  expect(explanation.diagnosticCodes).toEqual(["TS0012"]);
+  expect(explanation.diagnostics).toEqual([
+    { code: "TS0012", docs: "https://vite-doctor.onmax.me/diagnostics/TS0012" },
+  ]);
+});
 
 const cases: [string, string, number][] = [
   [
