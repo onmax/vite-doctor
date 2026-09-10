@@ -15,6 +15,7 @@ export const typescriptDiagnosticRegistry = defineDoctorDiagnostics([
     code: "TS0008",
     ruleId: "typescript/strict/require-safety-comment-for-type-assertion",
   },
+  { code: "TS0012", ruleId: "typescript/performance/no-array-filter-map" },
 ]);
 
 export const diagnostics = typescriptDiagnosticRegistry.diagnostics;
