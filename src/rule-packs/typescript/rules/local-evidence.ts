@@ -273,7 +273,11 @@ export function createLocalEvidence(program: AnyNode) {
     if (node.type === "Identifier") {
       const target = binding(node);
       if (!target || target.written || seen.has(target)) return false;
-      if (target.kind === "parameter" && (target.init?.end ?? target.node.end) >= node.start)
+      if (
+        target.kind === "parameter" &&
+        scopes.get(node)?.owner === target.owner &&
+        (target.init?.end ?? target.node.end) >= node.start
+      )
         return false;
       if (target.kind !== "parameter" && (!target.init || target.init.end >= node.start))
         return false;

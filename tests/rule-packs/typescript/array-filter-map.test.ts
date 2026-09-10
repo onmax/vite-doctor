@@ -19,6 +19,21 @@ test("array-pass reports expose the diagnostic code and reference", () => {
 
 const cases: [string, string, number][] = [
   [
+    "default callback retains parameter evidence",
+    "function f(values: number[] = (setTimeout(() => values.filter(keep).map(transform), 0), [])) {}",
+    1,
+  ],
+  [
+    "default function callback retains parameter evidence",
+    "function f(values: number[] = (setTimeout(function () { return values.map(transform).filter(keep) }, 0), [])) {}",
+    1,
+  ],
+  [
+    "earlier default callback retains later parameter evidence",
+    "function f(callback = () => values.filter(keep).map(transform), values: number[] = []) {}",
+    1,
+  ],
+  [
     "parameter is unavailable in its own default",
     "function f(values: number[] = values.filter(keep).map(transform)) {}",
     0,
