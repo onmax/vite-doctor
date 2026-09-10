@@ -9,7 +9,12 @@ type Binding = {
   written: boolean;
   owner: AnyNode;
 };
-type Scope = { parent?: Scope; owner: AnyNode; bindings: Map<string, Binding[]> };
+type Scope = {
+  parent?: Scope;
+  owner: AnyNode;
+  bindings: Map<string, Binding[]>;
+  types: Set<string>;
+};
 
 export function expression(node: AnyNode): AnyNode {
   while (
@@ -40,7 +45,7 @@ export function arrayMethod(node: AnyNode): { object: AnyNode; name: string } | 
 export function createLocalEvidence(program: AnyNode) {
   const scopes = new WeakMap<object, Scope>();
   const writes: AnyNode[] = [];
-  const root: Scope = { owner: program, bindings: new Map() };
+  const root: Scope = { owner: program, bindings: new Map(), types: new Set() };
   function bind(pattern: AnyNode, scope: Scope, info: Omit<Binding, "node" | "written" | "owner">) {
     if (!pattern) return;
     if (pattern.type === "Identifier") {
@@ -55,7 +60,7 @@ export function createLocalEvidence(program: AnyNode) {
       scope.bindings.set(pattern.name, bindings);
     } else if (pattern.type === "AssignmentPattern") bind(pattern.left, scope, { kind: info.kind });
     else if (pattern.type === "RestElement" || pattern.type === "TSParameterProperty")
-      bind(pattern.argument ?? pattern.parameter, scope, { kind: info.kind });
+      bind(pattern.argument ?? pattern.parameter, scope, info);
     else if (pattern.type === "ArrayPattern")
       for (const item of pattern.elements) bind(item, scope, { kind: info.kind });
     else if (pattern.type === "ObjectPattern")
@@ -80,6 +85,22 @@ export function createLocalEvidence(program: AnyNode) {
       ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
     )
       bind(node.local, outer, { kind: "other" });
+    if (
+      [
+        "ClassDeclaration",
+        "TSTypeAliasDeclaration",
+        "TSInterfaceDeclaration",
+        "TSEnumDeclaration",
+        "TSModuleDeclaration",
+        "TSImportEqualsDeclaration",
+      ].includes(node.type) &&
+      node.id?.name
+    )
+      outer.types.add(node.id.name);
+    if (
+      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
+    )
+      outer.types.add(node.local.name);
     const isFunction = [
       "FunctionDeclaration",
       "FunctionExpression",
@@ -104,6 +125,7 @@ export function createLocalEvidence(program: AnyNode) {
           parent: outer,
           owner: isFunction ? node : outer.owner,
           bindings: new Map<string, Binding[]>(),
+          types: new Set<string>(),
         }
       : outer;
     if (isFunction) {
@@ -113,8 +135,11 @@ export function createLocalEvidence(program: AnyNode) {
     }
     if (node.type === "ClassExpression") bind(node.id, scope, { kind: "other" });
     if (node.type === "CatchClause") bind(node.param, scope, { kind: "other" });
-    for (const parameter of node.typeParameters?.params ?? [])
+    if (node.type === "ClassExpression" && node.id?.name) scope.types.add(node.id.name);
+    for (const parameter of node.typeParameters?.params ?? []) {
       bind(parameter.name, scope, { kind: "other" });
+      scope.types.add(parameter.name.name ?? parameter.name);
+    }
     scopes.set(node, scope);
     if (node.type === "VariableDeclaration") {
       let target = scope;
@@ -165,7 +190,9 @@ export function createLocalEvidence(program: AnyNode) {
       node.typeName.name !== name
     )
       return false;
-    return !binding(node.typeName);
+    for (let scope = scopes.get(node.typeName); scope; scope = scope.parent)
+      if (scope.types.has(name)) return false;
+    return true;
   }
   function broadType(node: AnyNode): boolean {
     if (!node) return false;
@@ -182,6 +209,7 @@ export function createLocalEvidence(program: AnyNode) {
     );
   }
   function arrayType(node: AnyNode): boolean {
+    if (node?.type === "TSParenthesizedType") return arrayType(node.typeAnnotation);
     if (node?.type === "TSArrayType" || node?.type === "TSTupleType") return true;
     if (node?.type === "TSTypeOperator" && node.operator === "readonly")
       return arrayType(node.typeAnnotation);
@@ -194,6 +222,8 @@ export function createLocalEvidence(program: AnyNode) {
     if (node.type === "Identifier") {
       const target = binding(node);
       if (!target || target.written || seen.has(target)) return false;
+      if (target.kind !== "parameter" && (!target.init || target.init.end >= node.start))
+        return false;
       if (arrayType(target.annotation)) return true;
       if (
         target.annotation ||

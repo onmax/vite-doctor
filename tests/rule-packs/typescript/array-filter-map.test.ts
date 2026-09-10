@@ -4,6 +4,64 @@ import { noArrayFilterMap, typescriptRulePack } from "../../../src/rule-packs/ty
 import { getRuleDocuments, getDiagnosticDocuments } from "../../../docs/rules/source.js";
 
 const cases: [string, string, number][] = [
+  [
+    "value Array parameter",
+    "function f(Array: unknown, values: Array<number>) { return values.filter(keep).map(transform) }",
+    1,
+  ],
+  [
+    "value ReadonlyArray declaration",
+    "const ReadonlyArray = 1; function f(values: ReadonlyArray<number>) { return values.filter(keep).map(transform) }",
+    1,
+  ],
+  [
+    "outer type shadow with inner value",
+    "type Array<T> = Custom; function f(Array: unknown, values: Array<number>) { return values.filter(keep).map(transform) }",
+    0,
+  ],
+  [
+    "generic Array shadow",
+    "function f<Array>(values: Array<number>) { return values.filter(keep).map(transform) }",
+    0,
+  ],
+  [
+    "class Array shadow",
+    "class Array<T> {} function f(values: Array<number>) { return values.filter(keep).map(transform) }",
+    0,
+  ],
+  [
+    "rest array",
+    "function f(...values: number[]) { return values.filter(keep).map(transform) }",
+    1,
+  ],
+  [
+    "rest tuple",
+    "function f(...values: [number, number]) { return values.filter(keep).map(transform) }",
+    1,
+  ],
+  [
+    "parenthesized array",
+    "function f(values: (number[])) { return values.filter(keep).map(transform) }",
+    1,
+  ],
+  [
+    "parenthesized tuple",
+    "function f(values: ([number])) { return values.filter(keep).map(transform) }",
+    1,
+  ],
+  [
+    "annotated hoisted var",
+    "function f() { values.filter(keep).map(transform); var values: number[] = input }",
+    0,
+  ],
+  ["uninitialized local", "let values: number[]; values.filter(keep).map(transform)", 0],
+  [
+    "initialized annotated local",
+    "const values: number[] = input; values.filter(keep).map(transform)",
+    1,
+  ],
+  ["self initializer", "const values: number[] = values.filter(keep).map(transform)", 0],
+
   ["literal", "[1, 2].filter(keep).map(transform)", 1],
   ["reverse", "[1, 2].map(transform).filter(keep)", 1],
   ["const alias", "const values = [1]; const alias = values; alias.filter(keep).map(transform)", 1],
