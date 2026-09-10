@@ -254,7 +254,7 @@ export function createLocalEvidence(program: AnyNode) {
     }
     return false;
   }
-  function known(node: AnyNode, seen = new Set<Binding>()): boolean {
+  function known(node: AnyNode, owner: AnyNode, seen = new Set<Binding>()): boolean {
     node = expression(node);
     if (!node) return false;
     if (
@@ -269,7 +269,7 @@ export function createLocalEvidence(program: AnyNode) {
       return true;
     if (node.type !== "Identifier") return false;
     const target = binding(node);
-    if (!target || target.written || seen.has(target)) return false;
+    if (!target || target.owner !== owner || target.written || seen.has(target)) return false;
     if (target.annotation)
       return (
         [
@@ -288,7 +288,7 @@ export function createLocalEvidence(program: AnyNode) {
     return (
       target.kind === "const" &&
       target.node.start < node.start &&
-      known(target.init, new Set([...seen, target]))
+      known(target.init, owner, new Set([...seen, target]))
     );
   }
   return {
