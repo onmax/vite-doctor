@@ -1,5 +1,7 @@
 import { createRule } from "../../../core/index.js";
-import { report, typeResolvesToKeyword, type AnyNode } from "./shared.js";
+import { report, type AnyNode } from "./shared.js";
+
+import { createTypeAliasResolver } from "./type-aliases.js";
 
 const ruleId = "typescript/evidence/no-unknown-type-aliases";
 
@@ -30,32 +32,9 @@ export const noUnknownTypeAliases = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
-        const aliases = new Map<string, AnyNode>();
-        for (const statement of node.body ?? []) {
-          const declaration =
-            statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-          if (
-            declaration?.type === "TSTypeAliasDeclaration" &&
-            !declaration.typeParameters?.params?.length
-          ) {
-            aliases.set(declaration.id.name, declaration.typeAnnotation);
-          }
-        }
-        for (const statement of node.body ?? []) {
-          const declaration =
-            statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-          if (
-            declaration?.type !== "TSTypeAliasDeclaration" ||
-            declaration.typeParameters?.params?.length ||
-            !typeResolvesToKeyword(
-              declaration.typeAnnotation,
-              "TSUnknownKeyword",
-              aliases,
-              new Set([declaration.id.name]),
-            )
-          ) {
-            continue;
-          }
+        const resolver = createTypeAliasResolver(node);
+        for (const declaration of resolver.aliases) {
+          if (!resolver.resolvesToKeyword(declaration.typeAnnotation, "TSUnknownKeyword")) continue;
           report(
             ctx,
             declaration.id,
