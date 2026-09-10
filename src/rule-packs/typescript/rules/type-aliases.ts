@@ -106,12 +106,25 @@ export function createTypeAliasResolver(program: AnyNode) {
           !declarations?.length ||
           declarations.some(
             (declaration) =>
-              !["TSModuleDeclaration", "ClassDeclaration", "TSEnumDeclaration"].includes(
-                declaration.type,
-              ),
+              ![
+                "TSModuleDeclaration",
+                "ClassDeclaration",
+                "TSInterfaceDeclaration",
+                "TSEnumDeclaration",
+              ].includes(declaration.type),
           )
         )
           return null;
+        const classes = declarations.filter(
+          (declaration) => declaration.type === "ClassDeclaration",
+        );
+        const hasEnums = declarations.some(
+          (declaration) => declaration.type === "TSEnumDeclaration",
+        );
+        const hasInterfaces = declarations.some(
+          (declaration) => declaration.type === "TSInterfaceDeclaration",
+        );
+        if (classes.length > 1 || (hasEnums && (classes.length > 0 || hasInterfaces))) return null;
         owner = namespaces.get(owner!)?.get(part);
       }
       const found = owner?.bindings

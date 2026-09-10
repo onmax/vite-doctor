@@ -111,11 +111,6 @@ const cases: [string, string, number][] = [
     1,
   ],
   [
-    "qualified function namespace merge",
-    "function N() {}; namespace N { export type Input = object } function save(value: N.Input) {}",
-    1,
-  ],
-  [
     "qualified enum namespace merge",
     "enum N { Tag }; namespace N { export type Input = object } function save(value: N.Input) {}",
     1,
@@ -126,8 +121,28 @@ const cases: [string, string, number][] = [
     2,
   ],
   [
-    "qualified competing interface owner",
+    "qualified interface namespace merge",
     "interface N {} namespace N { export type Input = object } function save(value: N.Input) {}",
+    1,
+  ],
+  [
+    "qualified class interface namespace merge",
+    "class N {} interface N {} interface N {} namespace N { export type Input = object } function save(value: N.Input) {}",
+    1,
+  ],
+  [
+    "qualified duplicate class owners",
+    "class N {} class N {} namespace N { export type Input = object } function save(value: N.Input) {}",
+    0,
+  ],
+  [
+    "qualified mixed class enum owners",
+    "class N {} enum N { Tag } namespace N { export type Input = object } function save(value: N.Input) {}",
+    0,
+  ],
+  [
+    "qualified mixed interface enum owners",
+    "interface N {} enum N { Tag } namespace N { export type Input = object } function save(value: N.Input) {}",
     0,
   ],
   ["qualified class without namespace", "class N {} function save(value: N.Input) {}", 0],
