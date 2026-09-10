@@ -104,7 +104,12 @@ export function createTypeAliasResolver(program: AnyNode) {
         const declarations = owner?.bindings.get(part);
         if (
           !declarations?.length ||
-          declarations.some((declaration) => declaration.type !== "TSModuleDeclaration")
+          declarations.some(
+            (declaration) =>
+              !["TSModuleDeclaration", "ClassDeclaration", "TSEnumDeclaration"].includes(
+                declaration.type,
+              ),
+          )
         )
           return null;
         owner = namespaces.get(owner!)?.get(part);

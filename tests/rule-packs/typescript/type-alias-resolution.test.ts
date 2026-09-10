@@ -106,6 +106,32 @@ const cases: [string, string, number][] = [
     1,
   ],
   [
+    "qualified class namespace merge",
+    "class N {}; namespace N { export type Input = object } function save(value: N.Input) {}",
+    1,
+  ],
+  [
+    "qualified function namespace merge",
+    "function N() {}; namespace N { export type Input = object } function save(value: N.Input) {}",
+    1,
+  ],
+  [
+    "qualified enum namespace merge",
+    "enum N { Tag }; namespace N { export type Input = object } function save(value: N.Input) {}",
+    1,
+  ],
+  [
+    "qualified nested class namespace merge",
+    "namespace Outer { export class N {} export namespace N { export type Raw = unknown } } type Copy = Outer.N.Raw",
+    2,
+  ],
+  [
+    "qualified competing interface owner",
+    "interface N {} namespace N { export type Input = object } function save(value: N.Input) {}",
+    0,
+  ],
+  ["qualified class without namespace", "class N {} function save(value: N.Input) {}", 0],
+  [
     "qualified forward alias",
     "function save(value: N.Input) {} namespace N { export type Input = object }",
     1,
