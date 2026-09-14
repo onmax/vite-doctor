@@ -1,6 +1,12 @@
 import { defineDoctorDiagnostics, doctorDiagnosticsHost } from "./diagnostics.js";
 
 export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
+  { code: "SHAD0001", ruleId: "shadcn/no-restyle" },
+  { code: "SHAD0002", ruleId: "shadcn/no-raw-colors" },
+  { code: "SHAD0003", ruleId: "shadcn/no-arbitrary-values" },
+  { code: "SHAD0004", ruleId: "shadcn/no-inline-styles" },
+  { code: "SHAD0005", ruleId: "shadcn/require-static-classes" },
+  { code: "SHAD0006", ruleId: "shadcn/no-unknown-classes" },
   { code: "DOC9999", ruleId: "doctor/external-rule-diagnostic" },
   { code: "DOC0001", ruleId: "workspace/dead-code/circular-dependency" },
   { code: "DOC0002", ruleId: "workspace/dead-code/duplicate-export" },

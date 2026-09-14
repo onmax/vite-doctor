@@ -6,7 +6,7 @@ import { ruleDocumentationMetadata } from "./metadata.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
 export type RuleFix = "safe" | "suggestion" | "no";
-export type RuleFramework = "vue" | "vite" | "nuxt" | "nitro" | "typescript";
+export type RuleFramework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn";
 
 export interface RuleExample {
   title: string;
@@ -93,6 +93,7 @@ export function getRuleReports() {
     nitro: rules.filter((rule) => rule.framework === "nitro"),
     nuxt: rules.filter((rule) => ["vue", "nitro", "nuxt"].includes(rule.framework)),
     typescript: rules.filter((rule) => rule.framework === "typescript"),
+    shadcn: rules.filter((rule) => rule.framework === "shadcn"),
     all: rules,
   };
 
@@ -104,7 +105,10 @@ export function getRuleReports() {
         rules: items.map(toCatalogRule),
       },
     ]),
-  ) as unknown as Record<"vue" | "vite" | "nitro" | "nuxt" | "typescript" | "all", RulesReport>;
+  ) as unknown as Record<
+    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "all",
+    RulesReport
+  >;
 }
 
 export function getDiagnosticDocuments() {
@@ -192,6 +196,7 @@ function readDiagnosticCodeMaps() {
     "src/rule-packs/nitro/diagnostics.ts",
     "src/rule-packs/nuxt/diagnostics.ts",
     "src/rule-packs/typescript/diagnostics.ts",
+    "src/rule-packs/shadcn/diagnostics.ts",
   ];
   const map = new Map<string, string>();
   for (const file of files) {
@@ -253,6 +258,7 @@ function collectRuleDocuments() {
     .sort()
     .map((file) => join(viteRulesDir, file));
   const typescriptRulesDir = join(root, "src/rule-packs/typescript/rules");
+  const shadcnRulesDir = join(root, "src/rule-packs/shadcn/rules");
   const typescriptSources = readdirSync(typescriptRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
@@ -270,6 +276,10 @@ function collectRuleDocuments() {
       .sort()
       .map((file) => join(nuxtRulesDir, file)),
   ];
+  const shadcnSources = readdirSync(shadcnRulesDir)
+    .filter((file) => file.endsWith(".ts") && file !== "shared.ts")
+    .sort()
+    .map((file) => join(shadcnRulesDir, file));
 
   return [
     ...withRulePath(collectRules(vueSources, "vite-doctor/vue", "vue"), "/vue/rules"),
@@ -280,6 +290,7 @@ function collectRuleDocuments() {
     ),
     ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
     ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
+    ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
   ];
 }
 

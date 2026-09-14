@@ -59,8 +59,11 @@ export function evaluatePackActivation(pack: RulePack, project: ProjectInfo): Ap
   );
   if (hasPackageOrModuleConstraints) {
     const moduleNames = new Set((project.nuxt?.modules ?? []).map((module) => module.name));
+    const packageNames = new Set(
+      Object.keys((project.inventory?.packages ?? {}) as Record<string, unknown>),
+    );
     const matched =
-      pack.activation.packages?.some((name) => moduleNames.has(name)) ||
+      pack.activation.packages?.some((name) => moduleNames.has(name) || packageNames.has(name)) ||
       pack.activation.modules?.some((name) => moduleNames.has(name));
     results.push(
       matched
