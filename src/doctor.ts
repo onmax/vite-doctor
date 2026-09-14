@@ -13,6 +13,7 @@ import { nuxtDoctorExtensions } from "./rule-packs/nuxt/rules/index.js";
 import { vueRulePack } from "./rule-packs/vue/rules.js";
 import { viteRulePack } from "./rules.js";
 import { typescriptRulePack } from "./rule-packs/typescript/index.js";
+import shadcnRulePack from "./rule-packs/shadcn/index.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
@@ -29,6 +30,7 @@ export async function viteDoctorExtensions(
       name: "vite-doctor/builtin-typescript",
       rulePacks: [typescriptRulePack],
     }),
+    defineDoctorExtension({ name: "vite-doctor/builtin-shadcn", rulePacks: [shadcnRulePack] }),
   ];
   if (framework === "vue") {
     extensions.push(

@@ -1,4 +1,4 @@
-export type Framework = "vue" | "vite" | "nuxt" | "nitro" | "typescript";
+export type Framework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn";
 export type FrameworkFilter = Framework | "all";
 export type Severity = "error" | "warn" | "info";
 export type FixKind = "safe" | "suggestion" | "no";
@@ -24,6 +24,7 @@ export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; ic
     pack: "vite-doctor/nitro",
     icon: "i-unjs-nitro",
   },
+  shadcn: { label: "shadcn", pack: "vite-doctor/shadcn", icon: "i-simple-icons-shadcnui" },
   typescript: {
     label: "TypeScript",
     pack: "vite-doctor/typescript",
@@ -89,6 +90,7 @@ export function packLabel(pack: string) {
 
 export function frameworkOfPack(pack: string): Framework {
   if (pack === "vite-doctor/typescript") return "typescript";
+  if (pack === "vite-doctor/shadcn") return "shadcn";
   if (pack === "vite-doctor/nitro") return "nitro";
   if (pack === "vite-doctor/vue") return "vue";
   if (pack === "vite-doctor/vite") return "vite";

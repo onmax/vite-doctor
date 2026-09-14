@@ -82,6 +82,7 @@ export async function detectProject(
     nuxt,
     runtimeGraph: targeted.graph,
     nuxtCompatibility: targeted.compatibility,
+    inventory: { packages: deps },
   };
 }
 
