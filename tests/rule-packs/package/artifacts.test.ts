@@ -44,7 +44,11 @@ test("follows conditional exports, chunks and declarations without scanning sour
       "dist/unused.js": 'import "unused";',
     },
   )!;
-  expect(result.references.map((ref) => [ref.packageName, ref.kind, ref.required]).sort()).toEqual([
+  expect(
+    result.references
+      .map((ref) => [ref.packageName, ref.kind, ref.required])
+      .sort((a, b) => String(a).localeCompare(String(b))),
+  ).toEqual([
     ["@babel/types", "types", false],
     ["cjs-peer", "runtime", true],
     ["h3", "runtime", true],
@@ -67,10 +71,11 @@ test("resolves package imports and terminates cycles", () => {
       "dist/internal.js": 'import "./index.js"; import "internal-peer";',
     },
   )!;
-  expect(result.references.map((ref) => ref.packageName).sort()).toEqual([
-    "@scope/peer",
-    "internal-peer",
-  ]);
+  expect(
+    result.references
+      .map((ref) => ref.packageName)
+      .sort((a, b) => String(a).localeCompare(String(b))),
+  ).toEqual(["@scope/peer", "internal-peer"]);
 });
 
 test("does not confuse guarded and deferred loads with required entrypoint loads", () => {
@@ -110,9 +115,54 @@ test("reads declaration references, import equals and re-exports", () => {
         '/// <reference types="node" />\nimport Foo = require("foo");\nexport { X } from "bar";',
     },
   )!;
-  expect(result.references.map((ref) => [ref.packageName, ref.typeReference]).sort()).toEqual([
+  expect(
+    result.references
+      .map((ref) => [ref.packageName, ref.typeReference])
+      .sort((a, b) => String(a).localeCompare(String(b))),
+  ).toEqual([
     ["bar", false],
     ["foo", false],
     ["node", true],
   ]);
+});
+
+test("marks unmatched output patterns as missing evidence", () => {
+  expect(inventory({ exports: { "./*": "./dist/*.js" } }, {})?.missing).toEqual(["dist/*.js"]);
+});
+
+test("follows self-references through the export map", () => {
+  const result = inventory(
+    { name: "library", exports: { ".": "./index.js", "./adapter": "./adapter.js" } },
+    {
+      "index.js": 'export * from "library/adapter";',
+      "adapter.js": 'import "peer";',
+    },
+  )!;
+  expect(result.references).toHaveLength(1);
+  expect(result.references[0]).toMatchObject({ packageName: "peer", required: true });
+});
+
+test("includes adjacent declarations, browser and binary entrypoints, and typesVersions", () => {
+  const result = inventory(
+    {
+      main: "dist/index.mjs",
+      browser: "dist/browser.js",
+      bin: { tool: "dist/cli.cjs" },
+      typesVersions: { "*": { "*": ["types/*.d.ts"] } },
+    },
+    {
+      "dist/index.mjs": "export const ready = true;",
+      "dist/index.d.mts": 'export type Value = import("adjacent-types").Value;',
+      "dist/browser.js": 'import "browser-peer";',
+      "dist/cli.cjs": 'require("cli-peer");',
+      "types/legacy.d.ts": 'export type Value = import("legacy-types").Value;',
+    },
+  )!;
+  expect(result.references.map((ref) => ref.packageName).sort()).toEqual([
+    "adjacent-types",
+    "browser-peer",
+    "cli-peer",
+    "legacy-types",
+  ]);
+  expect(result.missing).toEqual([]);
 });

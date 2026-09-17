@@ -192,6 +192,7 @@ function readDiagnosticCodeMaps() {
   const files = [
     "src/core/diagnostic-registry.ts",
     "src/rule-packs/vue/diagnostics.ts",
+    "src/rule-packs/package/diagnostics.ts",
     "src/diagnostics.ts",
     "src/rule-packs/nitro/diagnostics.ts",
     "src/rule-packs/nuxt/diagnostics.ts",
@@ -253,6 +254,10 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
 }
 
 function collectRuleDocuments() {
+  const packageSources = readdirSync(join(root, "src/rule-packs/package/rules"))
+    .filter((file) => file.endsWith(".ts"))
+    .sort()
+    .map((file) => join(root, "src/rule-packs/package/rules", file));
   const vueSources = ruleSourcesFromIndex(join(root, "src/rule-packs/vue/rules/vue/index.ts"));
   const viteRulesDir = join(root, "src/rule-packs/vite/rules");
   const viteSources = readdirSync(viteRulesDir)
@@ -284,6 +289,10 @@ function collectRuleDocuments() {
     .map((file) => join(shadcnRulesDir, file));
 
   return [
+    ...withRulePath(
+      collectRules(packageSources, "vite-doctor/package", "package"),
+      "/package/rules",
+    ),
     ...withRulePath(collectRules(vueSources, "vite-doctor/vue", "vue"), "/vue/rules"),
     ...withRulePath(collectRules(viteSources, "vite-doctor/vite", "vite"), "/vite/rules"),
     ...withRulePath(
@@ -730,9 +739,10 @@ function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {
 }
 
 function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
+  if (rule.framework === "package")
+    return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
-  if (rule.framework === "typescript" || rule.framework === "package")
-    return `pnpm vite-doctor . --rules ${rule.id}`;
+  if (rule.framework === "typescript") return `pnpm vite-doctor . --rules ${rule.id}`;
   return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;
 }
 
