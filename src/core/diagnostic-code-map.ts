@@ -1,6 +1,7 @@
 import { defineDoctorDiagnostics, doctorDiagnosticsHost } from "./diagnostics.js";
 
 export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
+  { code: "PKG0003", ruleId: "package/no-required-optional-peer" },
   { code: "SHAD0001", ruleId: "shadcn/no-restyle" },
   { code: "SHAD0002", ruleId: "shadcn/no-raw-colors" },
   { code: "SHAD0003", ruleId: "shadcn/no-arbitrary-values" },

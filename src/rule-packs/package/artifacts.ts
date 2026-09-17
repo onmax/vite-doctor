@@ -57,10 +57,22 @@ export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null 
   const inventory = readPackageArtifacts(project.root);
   runs.set(project, inventory);
   if (inventory) project.inventory = { ...project.inventory, packageArtifacts: inventory };
+  if (inventory?.missing.length) {
+    project.evidenceGaps = [
+      ...(project.evidenceGaps ?? []),
+      {
+        source: "vite-doctor/package",
+        message:
+          "Build the package before running package rules; some referenced artifacts are missing.",
+        files: inventory.missing,
+      },
+    ];
+  }
   return inventory;
 }
 
 export function readPackageArtifacts(root: string): PackageArtifacts | null {
+  root = realpathSync(root);
   const manifestPath = resolve(root, "package.json");
   if (!existsSync(manifestPath)) return null;
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as PackageManifest;
@@ -85,7 +97,9 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     const path = resolve(from, target);
     if (!inside(path)) return;
     if (target.includes("*")) {
-      for (const match of globSync(path)) enqueue(match, kind, required);
+      const matches = globSync(path).filter((match) => statSync(match).isFile());
+      if (!matches.length) missing.add(relative(root, path));
+      for (const match of matches) enqueue(match, kind, required);
       return;
     }
     const candidates =
@@ -149,7 +163,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   if (typeof manifest.browser === "string") enqueue(manifest.browser, "runtime", true);
   else if (manifest.browser)
     for (const entry of Object.values(manifest.browser))
-      if (entry) enqueue(entry, "runtime", false);
+      if (entry && entry.startsWith(".")) enqueue(entry, "runtime", false);
   for (const entry of [manifest.types, manifest.typings]) if (entry) enqueue(entry, "types", false);
   if (typeof manifest.bin === "string") enqueue(manifest.bin, "runtime", true);
   else if (manifest.bin)
@@ -182,7 +196,27 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           continue;
         }
         const packageName = edge.typeReference ? specifier : externalPackageName(specifier);
-        if (!packageName || packageName === manifest.name) continue;
+        if (!packageName) continue;
+        if (packageName === manifest.name) {
+          const exports = manifest.exports;
+          const entries =
+            exports &&
+            typeof exports === "object" &&
+            !Array.isArray(exports) &&
+            Object.keys(exports).some((key) => key.startsWith("."))
+              ? exports
+              : { ".": exports ?? manifest.main };
+          const aliases = Object.fromEntries(
+            Object.entries(entries).map(([key, value]) => [`#self${key.slice(1)}`, value]),
+          );
+          for (const target of resolvePackageImport(
+            `#self${specifier.slice(packageName.length)}`,
+            aliases,
+          )) {
+            if (target.startsWith(".")) enqueue(target, edge.kind, required);
+          }
+          continue;
+        }
         const position = source.getLineAndCharacterOfPosition(edge.start);
         references.push({
           specifier,
@@ -363,7 +397,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
           ts.SyntaxKind.BarBarEqualsToken,
           ts.SyntaxKind.QuestionQuestionEqualsToken,
         ].includes(parent.operatorToken.kind)) ||
-      (ts.isCallExpression(parent) && Boolean(parent.questionDotToken))
+      ts.isCallChain(parent)
     )
       return false;
     if (dynamic && ts.isCallExpression(parent)) return false;
