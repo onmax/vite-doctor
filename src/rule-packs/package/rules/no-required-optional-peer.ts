@@ -1,5 +1,4 @@
 import { createRule } from "../../../core/index.js";
-import { packageArtifacts } from "../artifacts.js";
 import { diagnostics } from "../diagnostics.js";
 
 export const noRequiredOptionalPeer = createRule({
@@ -32,7 +31,8 @@ export const noRequiredOptionalPeer = createRule({
   },
   create(ctx) {
     return {
-      onProjectStart() {
+      async onProjectStart() {
+        const { packageArtifacts } = await import("../artifacts.js");
         const artifacts = packageArtifacts(ctx.project);
         if (!artifacts) return;
         const manifest = artifacts.manifest;
