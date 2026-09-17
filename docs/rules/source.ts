@@ -6,7 +6,7 @@ import { ruleDocumentationMetadata } from "./metadata.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
 export type RuleFix = "safe" | "suggestion" | "no";
-export type RuleFramework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn";
+export type RuleFramework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn" | "package";
 
 export interface RuleExample {
   title: string;
@@ -93,6 +93,7 @@ export function getRuleReports() {
     nitro: rules.filter((rule) => rule.framework === "nitro"),
     nuxt: rules.filter((rule) => ["vue", "nitro", "nuxt"].includes(rule.framework)),
     typescript: rules.filter((rule) => rule.framework === "typescript"),
+    package: rules.filter((rule) => rule.framework === "package"),
     shadcn: rules.filter((rule) => rule.framework === "shadcn"),
     all: rules,
   };
@@ -106,7 +107,7 @@ export function getRuleReports() {
       },
     ]),
   ) as unknown as Record<
-    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "all",
+    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "package" | "all",
     RulesReport
   >;
 }
@@ -141,11 +142,10 @@ export const diagnosticsCollectionSource = {
 function collectDiagnosticDocuments(): DiagnosticDocument[] {
   const maps = readDiagnosticCodeMaps();
   const ruleDiagnostics = getRuleDocuments().flatMap((rule) => {
-    const code = maps.get(rule.id);
-    if (!code) return [];
-    const path = `/diagnostics/${code}`;
-    return [
-      {
+    const codes = maps.get(rule.id) ?? [];
+    return codes.map((code) => {
+      const path = `/diagnostics/${code}`;
+      return {
         code,
         title: `${code}: ${rule.title}`,
         description: rule.description,
@@ -161,8 +161,8 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
         sourceUrl: rule.sourceUrl,
         path,
         key: `${path.slice(1)}.md`,
-      },
-    ];
+      };
+    });
   });
   const source = "src/core/internal/diagnostics.ts";
   return [
@@ -198,13 +198,15 @@ function readDiagnosticCodeMaps() {
     "src/rule-packs/typescript/diagnostics.ts",
     "src/rule-packs/shadcn/diagnostics.ts",
   ];
-  const map = new Map<string, string>();
+  const map = new Map<string, string[]>();
   for (const file of files) {
     const text = readFileSync(join(root, file), "utf8");
     for (const match of text.matchAll(
       /\{\s*code:\s*"([^"]+)"\s*,\s*ruleId:\s*"([^"]+)"\s*,?\s*\}/g,
     )) {
-      map.set(match[2]!, match[1]!);
+      const codes = map.get(match[2]!) ?? [];
+      if (!codes.includes(match[1]!)) codes.push(match[1]!);
+      map.set(match[2]!, codes);
     }
   }
   return map;
@@ -729,7 +731,8 @@ function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {
 
 function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
   if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
-  if (rule.framework === "typescript") return `pnpm vite-doctor . --rules ${rule.id}`;
+  if (rule.framework === "typescript" || rule.framework === "package")
+    return `pnpm vite-doctor . --rules ${rule.id}`;
   return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;
 }
 

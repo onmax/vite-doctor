@@ -548,12 +548,14 @@ export interface RulePack {
   version: string;
   rules: DoctorRule[];
   presets: { recommended: string[]; strict?: string[] } & Record<string, string[] | undefined>;
-  activation?: {
-    languages?: ProjectLanguage[];
-    packages?: string[];
-    modules?: string[];
-    nuxt?: string;
-  };
+  activation?:
+    | false
+    | {
+        languages?: ProjectLanguage[];
+        packages?: string[];
+        modules?: string[];
+        nuxt?: string;
+      };
 }
 
 export interface DoctorRunResult {
