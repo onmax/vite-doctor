@@ -158,7 +158,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
         const beforeQueue = queue.length;
         targets(item, required, kind, adjacentDeclaration);
         if (queue.length > beforeQueue) {
-          for (const entry of [...missing]) if (!fallbackMissing.has(entry)) missing.delete(entry);
+          for (const entry of missing) if (!fallbackMissing.has(entry)) missing.delete(entry);
           break;
         }
       }
