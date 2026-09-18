@@ -4,6 +4,7 @@ export default defineConfig({
   clean: true,
   dts: true,
   entry: [
+    "src/rule-packs/package/index.ts",
     "src/index.ts",
     "src/cli.ts",
     "src/config.ts",

@@ -1,9 +1,10 @@
-export type Framework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn";
+export type Framework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn" | "package";
 export type FrameworkFilter = Framework | "all";
 export type Severity = "error" | "warn" | "info";
 export type FixKind = "safe" | "suggestion" | "no";
 
 export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; icon: string }> = {
+  package: { label: "Package", pack: "vite-doctor/package", icon: "i-lucide-package" },
   vue: {
     label: "Vue",
     pack: "vite-doctor/vue",
@@ -89,6 +90,7 @@ export function packLabel(pack: string) {
 }
 
 export function frameworkOfPack(pack: string): Framework {
+  if (pack === "vite-doctor/package") return "package";
   if (pack === "vite-doctor/typescript") return "typescript";
   if (pack === "vite-doctor/shadcn") return "shadcn";
   if (pack === "vite-doctor/nitro") return "nitro";

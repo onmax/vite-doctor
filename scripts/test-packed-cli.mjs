@@ -64,6 +64,45 @@ try {
   verifyDoctor(["exec", "vite-doctor", ...findingArgs], [1], "NUXT0029");
   verifyDoctor(["exec", "nuxt-doctor", ...findingArgs], [1], "NUXT0029");
   verifyDoctor(["nuxt", "doctor", ...findingArgs], [0, 1], "NUXT0029");
+  const library = join(temporary, "library with spaces");
+  mkdirSync(join(library, "dist"), { recursive: true });
+  writeFileSync(
+    join(library, "package.json"),
+    JSON.stringify({
+      name: "packed-library-fixture",
+      main: "dist/index.js",
+      types: "dist/index.d.ts",
+      peerDependencies: { "optional-peer": "*" },
+      peerDependenciesMeta: { "optional-peer": { optional: true } },
+    }),
+  );
+  writeFileSync(
+    join(library, "dist/index.js"),
+    'import "optional-peer"; import "phantom-runtime";',
+  );
+  writeFileSync(
+    join(library, "dist/index.d.ts"),
+    'export type Value = import("phantom-types").Value;',
+  );
+  const libraryArgs = [
+    "exec",
+    "vite-doctor",
+    library,
+    "--framework",
+    "vite",
+    "--format",
+    "agent",
+    "--no-cache",
+  ];
+  verifyDoctor(libraryArgs, [0], undefined, "vite");
+  const packageReport = verifyDoctor(
+    [...libraryArgs, "--extends", "package/recommended", "--max-warnings", "0"],
+    [1],
+    "PKG0003",
+    "vite",
+  );
+  assert.deepEqual(packageReport.diagnostics.map((item) => item.code).sort(), ["PKG0003"]);
+  assert.match(packageReport.commands.verify, /--extends package\/recommended/);
   process.stdout.write(
     `Packed Doctor CLI checks passed on ${process.platform}, Node ${process.versions.node}.\n`,
   );
@@ -71,7 +110,7 @@ try {
   rmSync(temporary, { recursive: true, force: true });
 }
 
-function verifyDoctor(args, expectedStatuses = [0], expectedCode) {
+function verifyDoctor(args, expectedStatuses = [0], expectedCode, expectedFramework = "nuxt") {
   const result = spawnSync(pnpmCommand, pnpmArgs(args), {
     cwd: temporary,
     env,
@@ -90,8 +129,8 @@ function verifyDoctor(args, expectedStatuses = [0], expectedCode) {
     .find((line) => line.startsWith('{"schema":"vite-doctor.agent/v1"'));
   if (!reportLine) throw new Error(`Doctor report missing from: ${output}`);
   const report = JSON.parse(reportLine);
-  if (report.project?.framework !== "nuxt") {
-    throw new Error(`Expected a Nuxt Doctor Run, received: ${reportLine}`);
+  if (report.project?.framework !== expectedFramework) {
+    throw new Error(`Expected a ${expectedFramework} Doctor Run, received: ${reportLine}`);
   }
   if (expectedCode) {
     assert.equal(report.status, "findings");
@@ -100,6 +139,7 @@ function verifyDoctor(args, expectedStatuses = [0], expectedCode) {
     assert.equal(report.status, "clean");
     assert.deepEqual(report.diagnostics, []);
   }
+  return report;
 }
 
 function verifyExports() {
