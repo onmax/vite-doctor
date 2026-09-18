@@ -179,8 +179,15 @@ export function createAgentReport(result: DoctorRunResult): string {
 }
 
 export function createSarifReport(result: DoctorRunResult): string {
+  const counts = new Map<string, number>();
+  for (const diagnostic of result.diagnostics)
+    counts.set(diagnostic.ruleId, (counts.get(diagnostic.ruleId) ?? 0) + 1);
+  const ruleId = (diagnostic: Diagnostic) =>
+    (counts.get(diagnostic.ruleId) ?? 0) > 1
+      ? `${diagnostic.ruleId}:${diagnostic.code}`
+      : diagnostic.ruleId;
   const rules = new Map<string, Diagnostic>();
-  for (const diagnostic of result.diagnostics) rules.set(diagnostic.ruleId, diagnostic);
+  for (const diagnostic of result.diagnostics) rules.set(ruleId(diagnostic), diagnostic);
   return `${JSON.stringify(
     {
       version: "2.1.0",
@@ -192,7 +199,7 @@ export function createSarifReport(result: DoctorRunResult): string {
               name: "Vite Doctor",
               semanticVersion: result.version,
               rules: [...rules.values()].map((diagnostic) => ({
-                id: diagnostic.ruleId,
+                id: ruleId(diagnostic),
                 name: diagnostic.code,
                 shortDescription: { text: diagnostic.code },
                 helpUri: diagnosticReferenceUrl(diagnostic.code),
@@ -206,8 +213,8 @@ export function createSarifReport(result: DoctorRunResult): string {
             },
           },
           results: result.diagnostics.map((diagnostic) => ({
-            ruleId: diagnostic.ruleId,
-            rule: { id: diagnostic.ruleId },
+            ruleId: ruleId(diagnostic),
+            rule: { id: ruleId(diagnostic) },
             level: sarifLevel(diagnostic.severity),
             message: { text: diagnostic.why },
             partialFingerprints: {

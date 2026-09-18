@@ -46,6 +46,7 @@ interface ImportEdge {
   kind: "runtime" | "types";
   required: boolean;
   typeReference?: boolean;
+  probe?: boolean;
 }
 
 const runs = new WeakMap<ProjectInfo, PackageArtifacts | null>();
@@ -93,24 +94,34 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     );
   }
 
-  function enqueue(target: string, kind: "runtime" | "types", required: boolean, from = root) {
+  function enqueue(
+    target: string,
+    kind: "runtime" | "types",
+    required: boolean,
+    from = root,
+    probe = true,
+    adjacentDeclaration = false,
+  ) {
     const path = resolve(from, target);
     if (!inside(path)) return;
     if (target.includes("*")) {
-      const matches = globSync(path).filter((match) => statSync(match).isFile());
+      const matches = globSync(path.replace("*", "**/*")).filter((match) =>
+        statSync(match).isFile(),
+      );
       if (!matches.length) missing.add(relative(root, path));
       for (const match of matches) enqueue(match, kind, required);
       return;
     }
-    const candidates =
-      kind === "types"
+    const candidates = probe
+      ? kind === "types"
         ? typeCandidates(path)
         : [
             path,
             ...[".js", ".mjs", ".cjs", "/index.js", "/index.mjs", "/index.cjs"].map(
               (ext) => path + ext,
             ),
-          ];
+          ]
+      : [path];
     const file = candidates.find(
       (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
     );
@@ -129,19 +140,35 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       const declaration = typeCandidates(file).find(
         (candidate) => declarationExtension.test(candidate) && existsSync(candidate),
       );
-      if (declaration) queue.push({ path: declaration, kind: "types", required: false });
+      if (adjacentDeclaration && declaration)
+        queue.push({ path: declaration, kind: "types", required: false });
     }
   }
 
-  function targets(value: unknown, required: boolean, kind: "runtime" | "types" = "runtime") {
-    if (typeof value === "string") enqueue(value, kind, required);
-    else if (Array.isArray(value)) for (const item of value) targets(item, required, kind);
-    else if (value && typeof value === "object") {
+  function targets(
+    value: unknown,
+    required: boolean,
+    kind: "runtime" | "types" = "runtime",
+    adjacentDeclaration = false,
+  ) {
+    if (typeof value === "string") enqueue(value, kind, required, root, false, adjacentDeclaration);
+    else if (Array.isArray(value)) {
+      const fallbackMissing = new Set(missing);
+      for (const item of value) {
+        const beforeQueue = queue.length;
+        targets(item, required, kind, adjacentDeclaration);
+        if (queue.length > beforeQueue) {
+          for (const entry of [...missing]) if (!fallbackMissing.has(entry)) missing.delete(entry);
+          break;
+        }
+      }
+    } else if (value && typeof value === "object") {
       for (const [condition, item] of Object.entries(value))
         targets(
           item,
           required,
           condition === "types" || condition.startsWith("types@") ? "types" : kind,
+          adjacentDeclaration,
         );
     }
   }
@@ -154,23 +181,28 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       !Array.isArray(exports) &&
       Object.keys(exports).some((key) => key.startsWith("."))
     ) {
-      for (const [subpath, value] of Object.entries(exports)) targets(value, subpath === ".");
-    } else targets(exports, true);
+      for (const [subpath, value] of Object.entries(exports))
+        targets(value, subpath === ".", "runtime", true);
+    } else targets(exports, true, "runtime", true);
   } else if (!manifest.main && !manifest.module) {
     if (existsSync(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
   }
-  for (const entry of [manifest.main, manifest.module]) if (entry) enqueue(entry, "runtime", true);
-  if (typeof manifest.browser === "string") enqueue(manifest.browser, "runtime", true);
+  for (const entry of [manifest.main, manifest.module])
+    if (entry) enqueue(entry, "runtime", true, root, false, true);
+  if (typeof manifest.browser === "string")
+    enqueue(manifest.browser, "runtime", true, root, false, true);
   else if (manifest.browser)
     for (const entry of Object.values(manifest.browser))
-      if (entry && entry.startsWith(".")) enqueue(entry, "runtime", false);
-  for (const entry of [manifest.types, manifest.typings]) if (entry) enqueue(entry, "types", false);
-  if (typeof manifest.bin === "string") enqueue(manifest.bin, "runtime", true);
+      if (entry && entry.startsWith(".")) enqueue(entry, "runtime", false, root, false, true);
+  for (const entry of [manifest.types, manifest.typings])
+    if (entry) enqueue(entry, "types", false, root, false);
+  if (typeof manifest.bin === "string") enqueue(manifest.bin, "runtime", true, root, false, true);
   else if (manifest.bin)
-    for (const entry of Object.values(manifest.bin)) enqueue(entry, "runtime", true);
+    for (const entry of Object.values(manifest.bin))
+      enqueue(entry, "runtime", true, root, false, true);
   for (const version of Object.values(manifest.typesVersions ?? {}))
     for (const entries of Object.values(version))
-      for (const entry of entries) enqueue(entry, "types", false);
+      for (const entry of entries) enqueue(entry, "types", false, root, false);
 
   for (let i = 0; i < queue.length; i++) {
     const current = queue[i]!;
@@ -192,6 +224,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             edge.kind,
             required,
             edge.specifier.startsWith("#") ? root : dirname(current.path),
+            edge.kind === "types" || edge.probe === true,
           );
           continue;
         }
@@ -305,7 +338,8 @@ function resolvePackageImport(
 
 function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEdge[] {
   const edges: ImportEdge[] = [];
-  function add(literal: ts.Node | undefined, typeOnly: boolean, required: boolean) {
+  function add(literal: ts.Node | undefined, typeOnly: boolean, required: boolean, probe = false) {
+    while (literal && ts.isParenthesizedExpression(literal)) literal = literal.expression;
     if (!literal || !ts.isStringLiteralLike(literal)) return;
     edges.push({
       specifier: literal.text,
@@ -313,6 +347,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
       end: literal.end,
       kind: typeOnly ? "types" : kind,
       required: !typeOnly && required,
+      probe,
     });
   }
   function visit(node: ts.Node) {
@@ -352,11 +387,34 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
         node.expression.text === "require" &&
         !shadowsRequire(node)
       )
-        add(node.arguments[0], false, isUnconditional(node, false));
+        add(node.arguments[0], false, isUnconditional(node, false), true);
+      else if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "require" &&
+        node.expression.name.text === "resolve" &&
+        !shadowsRequire(node)
+      )
+        add(node.arguments[0], false, isUnconditional(node, false), true);
     }
     ts.forEachChild(node, visit);
   }
   visit(source);
+  const jsdoc = /\/\*\*[\s\S]*?\*\//g;
+  for (let comment; (comment = jsdoc.exec(source.text));) {
+    const imports = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
+    for (let match; (match = imports.exec(comment[0]));) {
+      const start = comment.index + match.index + match[0].indexOf(match[1]!);
+      edges.push({
+        specifier: match[1]!,
+        start,
+        end: start + match[1]!.length,
+        kind: "types",
+        required: false,
+        typeReference: true,
+      });
+    }
+  }
   for (const ref of source.typeReferenceDirectives)
     edges.push({
       specifier: ref.fileName,
@@ -434,7 +492,12 @@ function shadowsRequire(node: ts.Node): boolean {
           child.name.text === "require")
       )
         found = true;
-      if (!ts.isFunctionLike(child) && !ts.isClassLike(child)) ts.forEachChild(child, search);
+      if (
+        child !== scope &&
+        (ts.isBlock(child) || ts.isFunctionLike(child) || ts.isClassLike(child))
+      )
+        return;
+      ts.forEachChild(child, search);
     }
     ts.forEachChild(scope, search);
     if (found) return true;

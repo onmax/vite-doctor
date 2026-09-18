@@ -130,6 +130,47 @@ test("marks unmatched output patterns as missing evidence", () => {
   expect(inventory({ exports: { "./*": "./dist/*.js" } }, {})?.missing).toEqual(["dist/*.js"]);
 });
 
+test("handles nested wildcard exports and exact ESM targets", () => {
+  const result = inventory(
+    { exports: { "./features/*": "./dist/features/*.js", "./exact": "./dist/exact" } },
+    {
+      "dist/features/nested/tool.js": 'import "nested-peer";',
+      "dist/exact.js": 'import "unreachable-peer";',
+    },
+  )!;
+  expect(result.references.map((ref) => ref.packageName)).toEqual(["nested-peer"]);
+  expect(result.missing).toEqual(["dist/exact"]);
+});
+
+test("uses the first resolvable package-map fallback", () => {
+  const result = inventory(
+    { exports: { ".": ["./dist/missing.js", "./dist/index.js", "./dist/fallback.js"] } },
+    {
+      "dist/index.js": 'import "reachable-peer";',
+      "dist/fallback.js": 'import "unused-peer";',
+    },
+  )!;
+  expect(result.references.map((ref) => ref.packageName)).toEqual(["reachable-peer"]);
+  expect(result.missing).toEqual([]);
+});
+
+test("extracts require.resolve, JSDoc imports, parenthesized calls, and lexical require scopes", () => {
+  const result = inventory(
+    { main: "index.js" },
+    {
+      "index.js": `require.resolve(("resolve-peer")); require(("paren-peer"));
+/** @param {import("jsdoc-peer").Value} value */
+require("top-peer"); if (false) { const require = custom; require("shadowed") }`,
+    },
+  )!;
+  expect(result.references.map((ref) => ref.packageName).sort()).toEqual([
+    "jsdoc-peer",
+    "paren-peer",
+    "resolve-peer",
+    "top-peer",
+  ]);
+});
+
 test("follows self-references through the export map", () => {
   const result = inventory(
     { name: "library", exports: { ".": "./index.js", "./adapter": "./adapter.js" } },
