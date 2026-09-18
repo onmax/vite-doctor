@@ -142,6 +142,18 @@ test("follows self-references through the export map", () => {
   expect(result.references[0]).toMatchObject({ packageName: "peer", required: true });
 });
 
+test("resolves extensionless TypeScript runtime chunks", () => {
+  const result = inventory(
+    { exports: "./src/index.ts" },
+    {
+      "src/index.ts": 'import "./chunk";',
+      "src/chunk.ts": 'import "typescript-peer";',
+    },
+  )!;
+  expect(result.references.map((ref) => ref.packageName)).toEqual(["typescript-peer"]);
+  expect(result.missing).toEqual([]);
+});
+
 test("includes adjacent declarations, browser and binary entrypoints, and typesVersions", () => {
   const result = inventory(
     {

@@ -107,9 +107,24 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
         ? typeCandidates(path)
         : [
             path,
-            ...[".js", ".mjs", ".cjs", "/index.js", "/index.mjs", "/index.cjs"].map(
-              (ext) => path + ext,
-            ),
+            ...[
+              ".js",
+              ".mjs",
+              ".cjs",
+              ".ts",
+              ".mts",
+              ".cts",
+              ".jsx",
+              ".tsx",
+              "/index.js",
+              "/index.mjs",
+              "/index.cjs",
+              "/index.ts",
+              "/index.mts",
+              "/index.cts",
+              "/index.jsx",
+              "/index.tsx",
+            ].map((ext) => path + ext),
           ];
     const file = candidates.find(
       (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
@@ -383,9 +398,9 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     if (
       ts.isFunctionLike(parent) ||
       ts.isClassLike(parent) ||
-      ts.isIfStatement(parent) ||
-      ts.isConditionalExpression(parent) ||
-      ts.isSwitchStatement(parent) ||
+      (ts.isIfStatement(parent) && !isWithin(node, parent.expression)) ||
+      (ts.isConditionalExpression(parent) && !isWithin(node, parent.condition)) ||
+      (ts.isSwitchStatement(parent) && !isWithin(node, parent.expression)) ||
       ts.isIterationStatement(parent, false) ||
       ts.isTryStatement(parent) ||
       (ts.isBinaryExpression(parent) &&
@@ -403,6 +418,12 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     if (dynamic && ts.isCallExpression(parent)) return false;
   }
   return true;
+}
+
+function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
+  for (let current: ts.Node | undefined = node; current; current = current.parent)
+    if (current === ancestor) return true;
+  return false;
 }
 
 function shadowsRequire(node: ts.Node): boolean {

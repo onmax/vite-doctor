@@ -42,6 +42,15 @@ test.each([
   expect(await diagnose({ main: "index.js", ...optionalPeer }, { "index.js": source })).toEqual([]);
 });
 
+test("reports a require used to evaluate an if condition", async () => {
+  const diagnostics = await diagnose(
+    { main: "index.js", ...optionalPeer },
+    { "index.js": 'if (require("peer")) {}' },
+  );
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]?.code).toBe("PKG0003");
+});
+
 test("follows required local chunks and deduplicates references reached by multiple paths", async () => {
   const diagnostics = await diagnose(
     { exports: { ".": "./dist/index.js", "./adapter": "./dist/adapter.js" }, ...optionalPeer },
