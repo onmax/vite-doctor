@@ -935,6 +935,9 @@ test.each(["present", "missing", "oversized"])(
 );
 
 test.each([
+  ["assignment target", "enforceAccountAccess = () => {}"],
+  ["destructuring target", "({ enforceAccountAccess } = event)"],
+  ["array target", "[enforceAccountAccess] = event"],
   ["local variable", "const enforceAccountAccess = () => {}; enforceAccountAccess()"],
   ["hoisted function", "enforceAccountAccess(); function enforceAccountAccess() {}"],
   ["parameter", "const run = (enforceAccountAccess) => enforceAccountAccess()"],
@@ -981,6 +984,8 @@ test.each([
 });
 
 test.each([
+  "enforceAccountAccess++",
+  "enforceAccountAccess += 1",
   "enforceAccountAccess(event)",
   "const access = { enforceAccountAccess }",
   "event[enforceAccountAccess]",
@@ -1012,3 +1017,68 @@ test.each([
   });
   expect(calls).toBe(1);
 });
+
+test.each(["analytics.ts", "auth.ts", "admin/access.ts"])(
+  "matches auth middleware within an auth-named layer: %s",
+  async (name) => {
+    let calls = 0;
+    const extension = createNuxtAuthorizationReviewExtension(async () => {
+      calls++;
+      return { status: "unknown", reason: "Collected", citations: [] };
+    });
+    await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        "server/api/account.get.ts": files["server/api/account.get.ts"],
+        [`layers/admin/app/middleware/${name}`]: files["app/middleware/auth.ts"],
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: "2100-01-01T00:00:00.000Z",
+          layers: [
+            {
+              root: "layers/admin",
+              srcDir: "layers/admin/app",
+              appMiddlewareDir: "layers/admin/app/middleware",
+              priority: 0,
+            },
+          ],
+        }),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(calls).toBe(name === "analytics.ts" ? 0 : 1);
+  },
+);
+
+test.each(["present", "oversized", "inactive"])(
+  "collects active layer server middleware: %s",
+  async (state) => {
+    let calls = 0;
+    const guard = "extensions/admin/server/middleware/auth.ts";
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      calls++;
+      expect(candidate.sources.some((source) => source.path === guard)).toBe(state === "present");
+      return { status: "unknown", reason: "Collected", citations: [] };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        [guard]:
+          "export default defineEventHandler(event => requireAuth(event))" +
+          (state === "oversized" ? " ".repeat(17000) : ""),
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: "2100-01-01T00:00:00.000Z",
+          layers:
+            state === "inactive"
+              ? [{ root: ".", srcDir: "app", priority: 0 }]
+              : [{ root: "extensions/admin", priority: 0 }],
+        }),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(calls).toBe(state === "oversized" ? 0 : 1);
+    expect(JSON.parse(createAgentReport(result)).status === "incomplete").toBe(
+      state === "oversized",
+    );
+  },
+);

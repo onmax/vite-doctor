@@ -88,7 +88,8 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
       registeredRoute === undefined
         ? endpoint.match(/\.(get|post|put|patch|delete|head|options)$/i)
         : null;
-    const route = suffix ? endpoint.slice(0, -suffix[0].length) : endpoint;
+    let route = suffix ? endpoint.slice(0, -suffix[0].length) : endpoint;
+    if (registeredRoute === undefined) route = route.replace(/\/index$/i, "");
     const verb = (method ?? suffix?.[1])?.toUpperCase();
     const publicOperation =
       (verb === "POST" &&
@@ -247,6 +248,14 @@ function createsProvider(program: AnyNode, name: string, exported = false): bool
       : [],
   );
   return program.body.some((statement: AnyNode) => {
+    if (exported && name === "default" && statement.type === "ExportDefaultDeclaration") {
+      const value = statement.declaration;
+      return value.type === "Identifier"
+        ? createsProvider(program, value.name)
+        : value.type === "CallExpression" &&
+            value.callee.type === "Identifier" &&
+            factories.includes(value.callee.name);
+    }
     if (exported && statement.type !== "ExportNamedDeclaration") return false;
     const declaration =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
@@ -275,7 +284,9 @@ function isProviderBinding(
   for (const node of program.body) {
     if (node.type !== "ImportDeclaration") continue;
     const binding = node.specifiers.find(
-      (item: AnyNode) => item.type === "ImportSpecifier" && item.local.name === name,
+      (item: AnyNode) =>
+        ["ImportSpecifier", "ImportDefaultSpecifier"].includes(item.type) &&
+        item.local.name === name,
     );
     if (!binding) continue;
     const source = node.source.value as string;
@@ -302,7 +313,11 @@ function isProviderBinding(
     if (!target) return false;
     const parsed = parseSync(target, readProjectFile(target));
     if (parsed.errors.length) return false;
-    return createsProvider(parsed.program, binding.imported.name, true);
+    return createsProvider(
+      parsed.program,
+      binding.type === "ImportDefaultSpecifier" ? "default" : binding.imported.name,
+      true,
+    );
   }
   return false;
 }

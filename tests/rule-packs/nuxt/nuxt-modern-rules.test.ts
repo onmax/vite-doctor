@@ -2420,6 +2420,8 @@ test.each([
   "auth/login.post.ts",
   "auth/callback.get.ts",
   "session/create.post.ts",
+  "auth/register/index.post.ts",
+  "auth/callback/index.get.ts",
   "auth/register.post.ts",
   "auth/forgot-password.post.ts",
   "auth/reset-password.post.ts",
@@ -2442,7 +2444,7 @@ test.each([
         serverHandlers: [
           {
             file: "server/handlers/entry.ts",
-            route: `/api/${endpoint.replace(/\.(get|post)?\.?ts$/, "")}`,
+            route: `/api/${endpoint.replace(/\.(get|post)?\.?ts$/, "").replace(/\/index$/, "")}`,
             method: endpoint.includes(".get.") ? "get" : "post",
           },
         ],
@@ -2453,6 +2455,7 @@ test.each([
 });
 
 test.each([
+  "auth/register/index.get.ts",
   "auth/register.get.ts",
   "auth/register.delete.ts",
   "auth/register.ts",
@@ -4178,6 +4181,30 @@ test.each([
     files: {
       "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
       "server/api/account.get.ts": source,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["import { betterAuth } from 'better-auth'; export default betterAuth({})", 0],
+  ["import { betterAuth as createAuth } from 'better-auth'; export default createAuth({})", 0],
+  [
+    "import { betterAuth } from 'better-auth'; const instance = betterAuth({}); export default instance",
+    0,
+  ],
+  ["const betterAuth = () => ({}); export default betterAuth({})", 1],
+  ["export default { handler: request => request }", 1],
+])("default provider imports require Better Auth provenance: %s", async (provider, count) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/auth/[...all].ts":
+        "import auth from '~/utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+      "app/utils/auth.ts": provider,
     },
   });
   expect(result.diagnostics).toHaveLength(count);

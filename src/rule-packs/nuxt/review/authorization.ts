@@ -97,7 +97,10 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
           )
             middlewareDirs.push(resolve(nuxt.appDir, "middleware"));
           const middlewareFiles = appMiddlewareFiles(middlewareDirs).filter((file) =>
-            authMiddlewareName.test(relative(root, file)),
+            middlewareDirs.some(
+              (directory) =>
+                isWithin(directory, file) && authMiddlewareName.test(relative(directory, file)),
+            ),
           );
           const middleware = projectSources(root, middlewareFiles);
           const collectedMiddleware = new Set(
@@ -122,8 +125,21 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
           const registrations = nuxt.manifest?.isCurrent
             ? (nuxt.manifest.serverHandlers ?? [])
             : [];
-          const serverMiddleware = projectSources(root, nuxt.serverDirs.middleware);
-          if (serverMiddleware.length !== new Set(nuxt.serverDirs.middleware).size) {
+          const serverMiddlewareFiles = [
+            ...new Set([
+              ...nuxt.serverDirs.middleware,
+              ...appMiddlewareFiles(
+                nuxt.manifest?.isCurrent
+                  ? nuxt.layers.flatMap((layer) => [
+                      resolve(root, layer.root, "server/middleware"),
+                      resolve(root, layer.srcDir ?? layer.root, "server/middleware"),
+                    ])
+                  : [],
+              ),
+            ]),
+          ];
+          const serverMiddleware = projectSources(root, serverMiddlewareFiles);
+          if (serverMiddleware.length !== serverMiddlewareFiles.length) {
             const collected = new Set(serverMiddleware.map((source) => resolve(root, source.path)));
             ctx.project.evidenceGaps = [
               ...(ctx.project.evidenceGaps ?? []),
@@ -131,7 +147,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                 source: "vite-doctor/nuxt-authorization-review",
                 message:
                   "Authorization review requires all conventional server middleware. Some files exceed 16 KB or cannot be collected; no handlers were reviewed.",
-                files: [...new Set(nuxt.serverDirs.middleware)]
+                files: serverMiddlewareFiles
                   .filter((file) => !collected.has(resolve(root, file)))
                   .map((file) => relative(root, file).replaceAll("\\", "/")),
               },
@@ -446,7 +462,7 @@ function localImports(
           sourceType: "module",
         });
         for (const reference of scopeManager.globalScope!.through) {
-          if (!reference.isValueReference) continue;
+          if (!reference.isValueReference || !reference.isRead()) continue;
           const from = autoImports.get(reference.identifier.name);
           if (from) specifiers.push(from);
         }
