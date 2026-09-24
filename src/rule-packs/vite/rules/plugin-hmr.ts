@@ -150,8 +150,11 @@ function undisposedResource(program: AnyNode): string | null {
   const callbacks = new Map<AnyNode, AnyNode>();
   const properties = new Map<AnyNode, Map<string, AnyNode>>();
   const members = new Map<AnyNode, Map<string, AnyNode>>();
-  const propertyKey = (node: AnyNode): string | undefined =>
-    node?.computed ? node.property?.value : node?.property?.name;
+  const propertyKey = (node: AnyNode, environment = values): string | undefined => {
+    const property = node?.computed ? identity(node.property, environment) : node?.property;
+    const key = node?.computed ? property?.value : property?.name;
+    return typeof key === "string" || typeof key === "number" ? String(key) : undefined;
+  };
   const cleaned = new Set<AnyNode>();
   const visited = new Set<AnyNode>();
   type Disposer = { callback: AnyNode; path: Map<object, boolean> };
@@ -184,10 +187,11 @@ function undisposedResource(program: AnyNode): string | null {
     if (node?.type === "ThisExpression") return environment.get(thisBinding);
     if (returned.has(node)) return identity(returned.get(node), environment);
     if (node?.type === "MemberExpression") {
-      const key = propertyKey(node);
+      const key = propertyKey(node, environment);
       if (key !== undefined) {
         const object = identity(node.object, environment);
         const stored = properties.get(object);
+        if (stored?.has("__doctorUnknownOrder") && /^(0|[1-9]\d*)$/.test(key)) return node;
         if (stored?.has(key)) return stored.get(key);
         if (object?.type === "ArrayExpression" && /^(0|[1-9]\d*)$/.test(String(key))) {
           if (
@@ -477,7 +481,13 @@ function undisposedResource(program: AnyNode): string | null {
       const seen = new Set<AnyNode>();
       while (settled.normal && settled.value && !seen.has(settled.value)) {
         seen.add(settled.value);
-        const adopted = promiseCompletions.get(settled.value);
+        const choices = callbackChoices.get(settled.value);
+        const adopted = choices
+          ? {
+              normal: choices.some((choice) => promiseCompletions.get(choice)?.normal ?? true),
+              abrupt: choices.some((choice) => promiseCompletions.get(choice)?.abrupt),
+            }
+          : promiseCompletions.get(settled.value);
         if (!adopted) break;
         settled = { ...adopted, abrupt: settled.abrupt || adopted.abrupt };
       }
@@ -543,13 +553,24 @@ function undisposedResource(program: AnyNode): string | null {
         }
       }
       if (node.type === "AssignmentExpression" && node.left.type === "MemberExpression") {
-        const key = propertyKey(node.left);
+        const key = propertyKey(node.left, environment);
         if (key !== undefined) {
           const object = identity(node.left.object, environment);
           if (!properties.has(object)) properties.set(object, new Map());
           properties
             .get(object)!
             .set(key, node.operator === "=" ? identity(node.right, environment) : node);
+        }
+      }
+      if (node.type === "UnaryExpression" && node.operator === "delete") {
+        const target = node.argument;
+        if (target?.type === "MemberExpression") {
+          const key = propertyKey(target, environment);
+          if (key !== undefined) {
+            const object = identity(target.object, environment);
+            if (!properties.has(object)) properties.set(object, new Map());
+            properties.get(object)!.set(key, undefined);
+          }
         }
       }
       const handle =
@@ -665,6 +686,31 @@ function undisposedResource(program: AnyNode): string | null {
         node.callee.type === "MemberExpression" &&
         properties.get(identity(node.callee.object, environment))?.has(method!);
       if (
+        method === "from" &&
+        node.callee.type === "MemberExpression" &&
+        identity(node.callee.object, environment) === "Array" &&
+        !replacedMethod
+      ) {
+        const input = identity(node.arguments[0], environment);
+        if (input?.type === "ArrayExpression") {
+          const elements = expand(arrayElements(input), environment);
+          if (node.arguments[1]) {
+            const mapped: AnyNode[] = [];
+            for (const [index, element] of elements.entries()) {
+              const call = {
+                type: "CallExpression",
+                callee: identity(node.arguments[1], environment),
+                arguments: [identity(element, environment), { type: "Literal", value: index }],
+              };
+              if (visit(call, identity(node.arguments[2], environment)) === false) return false;
+              mapped.push(returned.get(call));
+            }
+            returned.set(node, { type: "ArrayExpression", elements: mapped });
+          } else returned.set(node, { type: "ArrayExpression", elements });
+          return true;
+        }
+      }
+      if (
         (method === "addEventListener" || method === "removeEventListener") &&
         !(node.callee.type === "Identifier" && resolve(node.callee))
       ) {
@@ -756,6 +802,31 @@ function undisposedResource(program: AnyNode): string | null {
         node.callee.type === "MemberExpression"
           ? identity(node.callee.object, environment)
           : undefined;
+      if (
+        array?.type === "ArrayExpression" &&
+        !arrayChoices.has(array) &&
+        !replacedMethod &&
+        method === "at"
+      ) {
+        const index = identity(node.arguments[0], environment);
+        if (index?.type === "Literal" && Number.isInteger(index.value)) {
+          const elements = arrayElements(array);
+          const position = index.value < 0 ? elements.length + index.value : index.value;
+          returned.set(
+            node,
+            identity(
+              {
+                type: "MemberExpression",
+                object: array,
+                property: { type: "Literal", value: position },
+                computed: true,
+              },
+              environment,
+            ),
+          );
+        }
+        return true;
+      }
       if (arrayChoices.has(array) && !replacedMethod) {
         const before = snapshot();
         const parentPath = currentPath;
@@ -836,6 +907,7 @@ function undisposedResource(program: AnyNode): string | null {
         }
         const stored = new Map(elements.map((element, index) => [String(index), element]));
         stored.set("length", { type: "Literal", value: elements.length });
+        if (method === "sort" && elements.length > 1) stored.set("__doctorUnknownOrder", true);
         properties.set(array, stored);
         returned.set(node, result);
         return true;
@@ -1268,6 +1340,27 @@ function undisposedResource(program: AnyNode): string | null {
               : (field.key?.name ?? field.key?.value);
             if (!walkStatic(field, key)) return false;
           } else if (field.type === "StaticBlock" && !walkStatic(field)) return false;
+        }
+        return true;
+      }
+      if (node.type === "ObjectExpression") {
+        const spreadGetters = (source: AnyNode, seen = new Set<AnyNode>()): boolean => {
+          source = identity(source, environment);
+          if (source?.type !== "ObjectExpression" || seen.has(source)) return true;
+          seen.add(source);
+          for (const property of source.properties) {
+            if (property.type === "SpreadElement") {
+              if (!spreadGetters(property.argument, seen)) return false;
+            } else if (property.kind === "get") {
+              const completion = inspect(property.value, [], environment, module, source);
+              if (completion.abrupt) return false;
+            }
+          }
+          return true;
+        };
+        for (const property of node.properties) {
+          if (!walk(property)) return false;
+          if (property.type === "SpreadElement" && !spreadGetters(property.argument)) return false;
         }
         return true;
       }
@@ -1707,7 +1800,27 @@ function undisposedResource(program: AnyNode): string | null {
           returned.set(node, value);
           return true;
         }
-        if (node.type === "MemberExpression") return !node.computed || walk(node.property);
+        if (node.type === "MemberExpression") {
+          if (node.computed && !walk(node.property)) return false;
+          const object = identity(node.object, environment);
+          const key = propertyKey(node, environment);
+          if (object?.type === "ObjectExpression" && key !== undefined) {
+            const property = [...object.properties]
+              .reverse()
+              .find(
+                (item: AnyNode) =>
+                  item.type === "Property" &&
+                  !item.computed &&
+                  String(item.key?.name ?? item.key?.value) === key,
+              );
+            if (property?.kind === "get" && !properties.get(object)?.has(key)) {
+              const completion = inspect(property.value, [], environment, module, object);
+              returned.set(node, completion.value);
+              return completion.normal;
+            }
+          }
+          return true;
+        }
         if (!walk(node.arguments)) return false;
         return visit(node) !== false;
       }

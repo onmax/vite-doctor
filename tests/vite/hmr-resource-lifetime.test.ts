@@ -976,9 +976,9 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
-    "getter callback remains unknown",
+    "getter callback resolves to cleanup",
     "const callbacks = { get cleanup() { return () => clearInterval(timer) } }; import.meta.hot.dispose(callbacks.cleanup)",
-    true,
+    false,
   ],
 ] as const) {
   test(name, async () => {
@@ -2786,6 +2786,46 @@ for (const [name, source, leaks] of [
     "known object spread retains timer",
     "const state = { ...{ timer: setInterval(refresh) } }; import.meta.hot.dispose(() => clearInterval(state.timer))",
     false,
+  ],
+  [
+    "computed key mutation invalidates timer handle",
+    "const state = { timer: setInterval(refresh) }; const key = 'timer'; state[key] = undefined; import.meta.hot.dispose(() => clearInterval(state.timer))",
+    true,
+  ],
+  [
+    "deleting object member invalidates timer handle",
+    "const state = { timer: setInterval(refresh) }; delete state.timer; import.meta.hot.dispose(() => clearInterval(state.timer))",
+    true,
+  ],
+  [
+    "spread getter creates a timer",
+    "const source = { get timer() { setInterval(refresh); return 0 } }; const state = { ...source }; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "Array.from mapper creates a timer",
+    "Array.from([1], () => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "reading a getter creates a timer",
+    "const source = { get timer() { return setInterval(refresh) } }; source.timer; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "Array.at retains the interval handle",
+    "const timer = [setInterval(refresh)].at(0); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "sorted array may move the timer away from index zero",
+    "const timer = setInterval(refresh); const values = [timer, '']; values.sort(); import.meta.hot.dispose(() => clearInterval(values[0]))",
+    true,
+  ],
+  [
+    "conditional async rejection prevents cleanup",
+    "const timer = setInterval(refresh); async function fail() { throw Error('no') }; async function outer() { if (flag) return fail(); return 1 }; import.meta.hot.dispose(async () => { await outer(); clearInterval(timer) })",
+    true,
   ],
   [
     "object spread override retains latest timer",
