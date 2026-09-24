@@ -892,3 +892,103 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, setup, cleanup] of [
+  [
+    "object member callback",
+    "const disposers = { cleanup: () => clearInterval(timer) }",
+    "import.meta.hot.dispose(disposers.cleanup)",
+  ],
+  [
+    "computed member callback",
+    "const disposers = { cleanup: () => clearInterval(timer) }",
+    "import.meta.hot.dispose(disposers['cleanup'])",
+  ],
+  [
+    "object parameter",
+    "function cleanup({ timer: handle }) { clearInterval(handle) }",
+    "import.meta.hot.dispose(() => cleanup({ timer }))",
+  ],
+  [
+    "nested parameter",
+    "function cleanup({ resources: [handle] }) { clearInterval(handle) }",
+    "import.meta.hot.dispose(() => cleanup({ resources: [timer] }))",
+  ],
+  [
+    "array parameter",
+    "function cleanup([, handle]) { clearInterval(handle) }",
+    "import.meta.hot.dispose(() => cleanup([null, timer]))",
+  ],
+  [
+    "rest parameter",
+    "function cleanup(...handles) { clearInterval(handles[1]) }",
+    "import.meta.hot.dispose(() => cleanup(null, timer))",
+  ],
+  [
+    "array rest parameter",
+    "function cleanup([, ...handles]) { clearInterval(handles[0]) }",
+    "import.meta.hot.dispose(() => cleanup([null, timer]))",
+  ],
+  [
+    "object rest parameter",
+    "function cleanup({ ignored, ...handles }) { clearInterval(handles.timer) }",
+    "import.meta.hot.dispose(() => cleanup({ ignored: null, timer }))",
+  ],
+  [
+    "destructured default",
+    "function cleanup({ handle = timer } = {}) { clearInterval(handle) }",
+    "import.meta.hot.dispose(() => cleanup())",
+  ],
+  [
+    "array default",
+    "function cleanup([handle = timer]) { clearInterval(handle) }",
+    "import.meta.hot.dispose(() => cleanup([]))",
+  ],
+] as const) {
+  for (const leaks of [false, true]) {
+    test(`${name} ${leaks ? "preserves unmatched resources" : "disposes matching resources"}`, async () => {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule: requireDisposeForSideEffects,
+        files: {
+          "src/main.ts": `import.meta.hot.accept(); const timer = setInterval(refresh); ${leaks ? setup.replace(/clearInterval\([^)]*\)/g, "clearInterval(other)") : setup}; ${cleanup}`,
+        },
+      });
+      expect(result.diagnostics.length > 0).toBe(leaks);
+    });
+  }
+}
+
+for (const [name, source, leaks] of [
+  [
+    "rest excludes extracted keys",
+    "function cleanup({ timer: ignored, ...rest }) { clearInterval(rest.timer) }; import.meta.hot.dispose(() => cleanup({ timer }))",
+    true,
+  ],
+  [
+    "rest snapshots array entries",
+    "let handle = timer; function cleanup([...rest]) { handle = other; clearInterval(rest[0]) }; import.meta.hot.dispose(() => cleanup([handle]))",
+    false,
+  ],
+  [
+    "spread array does not establish a default",
+    "function cleanup([ignored, handle = timer]) { clearInterval(handle) }; import.meta.hot.dispose(() => cleanup([...unknown]))",
+    true,
+  ],
+  [
+    "getter callback remains unknown",
+    "const callbacks = { get cleanup() { return () => clearInterval(timer) } }; import.meta.hot.dispose(callbacks.cleanup)",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: {
+        "src/main.ts": `import.meta.hot.accept(); const timer = setInterval(refresh); ${source}`,
+      },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}

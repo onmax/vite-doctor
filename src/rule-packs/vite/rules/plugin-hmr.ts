@@ -150,6 +150,15 @@ function undisposedResource(program: AnyNode): string | null {
         const object = identity(node.object, environment);
         const stored = properties.get(object);
         if (stored?.has(key)) return stored.get(key);
+        if (object?.type === "ArrayExpression" && /^(0|[1-9]\d*)$/.test(String(key))) {
+          if (
+            object.elements
+              .slice(0, Number(key) + 1)
+              .some((item: AnyNode) => item?.type === "SpreadElement")
+          )
+            return node;
+          return identity(object.elements[Number(key)], environment);
+        }
         if (object?.type === "ObjectExpression") {
           const property = object.properties.find(
             (item: AnyNode) => !item.computed && (item.key?.name ?? item.key?.value) === key,
@@ -235,16 +244,79 @@ function undisposedResource(program: AnyNode): string | null {
       return;
     visited.add(target);
     const local = new Map(environment);
-    for (const [index, param] of target.params.entries()) {
-      const argument = identity(args[index], environment);
-      if (param.type === "Identifier") local.set(param, argument);
-      else if (param.type === "AssignmentPattern" && param.left.type === "Identifier") {
+    const read = (object: AnyNode, key: string): AnyNode =>
+      identity(
+        {
+          type: "MemberExpression",
+          object,
+          property: { type: "Literal", value: key },
+          computed: true,
+        },
+        local,
+      );
+    const bind = (pattern: AnyNode, argument: AnyNode): void => {
+      if (!pattern) return;
+      if (pattern.type === "Identifier") local.set(pattern, argument);
+      else if (pattern.type === "AssignmentPattern") {
         const useDefault =
           argument === undefined ||
           argument === "undefined" ||
           (argument?.type === "UnaryExpression" && argument.operator === "void");
-        local.set(param.left, useDefault ? identity(param.right, local) : argument);
+        bind(pattern.left, useDefault ? identity(pattern.right, local) : argument);
+      } else if (pattern.type === "ArrayPattern" && argument?.type === "ArrayExpression") {
+        for (const [index, element] of pattern.elements.entries()) {
+          if (element?.type === "RestElement")
+            bind(element.argument, {
+              type: "ArrayExpression",
+              elements: argument.elements
+                .slice(index)
+                .map((_: AnyNode, offset: number) => read(argument, String(index + offset))),
+            });
+          else bind(element, read(argument, String(index)));
+        }
+      } else if (pattern.type === "ObjectPattern") {
+        const excluded = new Set<string>();
+        for (const property of pattern.properties) {
+          if (property.type === "RestElement") {
+            if (argument?.type !== "ObjectExpression") continue;
+            const rest = { type: "ObjectExpression", properties: [] };
+            const entries = new Map<string, AnyNode>();
+            for (const item of argument.properties) {
+              const key = item.computed ? item.key?.value : (item.key?.name ?? item.key?.value);
+              if (key !== undefined && !excluded.has(String(key)))
+                entries.set(String(key), read(argument, String(key)));
+            }
+            for (const key of properties.get(argument)?.keys() ?? [])
+              if (!excluded.has(key)) entries.set(key, read(argument, key));
+            properties.set(rest, entries);
+            bind(property.argument, rest);
+          } else {
+            const key = property.computed
+              ? property.key?.value
+              : (property.key?.name ?? property.key?.value);
+            if (key === undefined) continue;
+            excluded.add(String(key));
+            const missing =
+              argument?.type === "ObjectExpression" &&
+              !properties.get(argument)?.has(String(key)) &&
+              !argument.properties.some(
+                (item: AnyNode) =>
+                  item.type === "SpreadElement" ||
+                  item.computed ||
+                  String(item.key?.name ?? item.key?.value) === String(key),
+              );
+            bind(property.value, missing ? undefined : read(argument, String(key)));
+          }
+        }
       }
+    };
+    for (const [index, param] of target.params.entries()) {
+      if (param.type === "RestElement")
+        bind(param.argument, {
+          type: "ArrayExpression",
+          elements: args.slice(index).map((arg) => identity(arg, environment)),
+        });
+      else bind(param, identity(args[index], environment));
     }
     evaluate(target.body, local, module);
     for (const binding of environment.keys()) {
@@ -328,7 +400,7 @@ function undisposedResource(program: AnyNode): string | null {
         const argument = unwrapResourceExpression(node.arguments[0]);
         callbackValue = identity(argument, environment);
         callback =
-          argument?.type === "Identifier"
+          argument?.type === "Identifier" || argument?.type === "MemberExpression"
             ? (callbacks.get(callbackValue) ?? callbackValue)
             : argument;
         return;
