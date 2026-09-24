@@ -2162,17 +2162,17 @@ test.each([
   [
     "empty array iteration",
     "try { for (const item of []) throw createError({ statusCode: 404 }) } catch { throw new Error() }",
-    0,
+    1,
   ],
   [
     "empty object iteration",
     "try { for (const item in {}) throw createError({ statusCode: 404 }) } catch { throw new Error() }",
-    0,
+    1,
   ],
   [
     "empty string iteration",
     "try { for (const item of '') throw createError({ statusCode: 404 }) } catch { throw new Error() }",
-    0,
+    1,
   ],
   [
     "nonempty array iteration",
@@ -2189,6 +2189,78 @@ test.each([
     framework: "nitro",
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
+
+test.each([
+  [
+    "literal parameter",
+    "function fail(code) { throw createError({ statusCode: code }) }; try { fail(404) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "default literal parameter",
+    "function fail(code = 404) { throw createError({ statusCode: code }) }; try { fail() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "server status parameter",
+    "function fail(code) { throw createError({ statusCode: code }) }; try { fail(500) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "recursive literal restoration",
+    "function fail(code) { if (code === 404) fail(500); if (code === 404) throw createError({ statusCode: code }) }; try { fail(404) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "helper declaration alias",
+    "function missing() { throw createError({ statusCode: 404 }) }; const fail = missing; try { fail() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "helper assignment alias",
+    "function missing() { throw createError({ statusCode: 404 }) }; let fail; fail = missing; try { fail() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "replaced helper alias",
+    "function missing() { throw createError({ statusCode: 404 }) }; let fail = missing; fail = () => {}; try { fail() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "await array operand",
+    "function missing() { throw createError({ statusCode: 404 }) }; try { await [missing()] } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "await object operand",
+    "function missing() { throw createError({ statusCode: 404 }) }; try { await ({ value: missing() }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "inherited object property",
+    "Object.prototype.inherited = 1; try { for (const key in {}) throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "replaced array iterator",
+    "Array.prototype[Symbol.iterator] = function* () { yield 1 }; try { for (const item of []) throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "replaced string iterator",
+    "String.prototype[Symbol.iterator] = function* () { yield 1 }; try { for (const item of '') throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+])("preserves reviewed helper and iteration behavior: %s", async (_name, body, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(async () => { ${body} })`,
+    },
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
 });

@@ -345,8 +345,13 @@ function evaluateOutcomes(
             }
             if (declaration.id.type === "Identifier") {
               const name = declaration.id.name;
-              if (isFunction(declaration.init))
-                functions.set(evaluated.resolveBinding(declaration.id), declaration.init);
+              const initializer = unwrapExpression(declaration.init);
+              const fn = isFunction(initializer)
+                ? initializer
+                : initializer?.type === "Identifier"
+                  ? evaluated.functions?.get(evaluated.resolveBinding(initializer))
+                  : undefined;
+              if (fn) functions.set(evaluated.resolveBinding(declaration.id), fn);
               const value = evaluated.value;
               if (value && "error" in value)
                 values.set(evaluated.resolveBinding(declaration.id), value.error);
@@ -480,8 +485,13 @@ function evaluateOutcomes(
           )
             return { ...evaluated, outcome: "throw" };
           functions.delete(binding);
-          if (binding && assignment.operator === "=" && isFunction(assignment.right))
-            functions.set(binding, assignment.right);
+          const source = unwrapExpression(assignment.right);
+          const fn = isFunction(source)
+            ? source
+            : source?.type === "Identifier"
+              ? evaluated.functions?.get(evaluated.resolveBinding(source))
+              : undefined;
+          if (binding && assignment.operator === "=" && fn) functions.set(binding, fn);
           values.delete(binding);
           const value = assignment.operator === "=" ? evaluated.value : undefined;
           if (value && "error" in value) values.set(binding, value.error);
@@ -646,7 +656,14 @@ function evaluateOutcomes(
       });
     });
   }
-  const call = assignment.type === "AwaitExpression" ? assignment.argument : assignment;
+  const call =
+    assignment.type === "AwaitExpression" ? unwrapExpression(assignment.argument) : assignment;
+  if (
+    assignment.type === "AwaitExpression" &&
+    call.type !== "CallExpression" &&
+    call.type !== "NewExpression"
+  )
+    return outcomes(call, normal, bindings, conditions);
   if (!argumentValues && (call.type === "CallExpression" || call.type === "NewExpression")) {
     let paths = outcomes(call.callee, normal, bindings, conditions).map((current) => ({
       path: current,
@@ -699,7 +716,9 @@ function evaluateOutcomes(
     )
       shadows.add(callee.id.name);
     const localConditions = new Map(path.conditions);
+    const localLiterals = new Map(path.literals);
     for (const name of shadows) {
+      localLiterals.delete(path.resolveBinding({ name } as AnyNode, callee));
       local.delete(path.resolveBinding({ name } as AnyNode, callee));
       functions.delete(path.resolveBinding({ name } as AnyNode, callee));
       localConditions.delete(conditionKey({ name } as AnyNode, path, callee));
@@ -716,6 +735,7 @@ function evaluateOutcomes(
         bindings: local,
         functions,
         conditions: localConditions,
+        literals: localLiterals,
         calls: [...(path.calls ?? []), callee],
       },
     ];
@@ -752,7 +772,11 @@ function evaluateOutcomes(
                 ? source.conditions.get(conditionKey(arg, source))
                 : undefined;
           if (boolean !== undefined) booleans.set(conditionKey(target, result), boolean);
-          return { ...result, bindings: values, conditions: booleans };
+          const literals = new Map(result.literals);
+          const binding = result.resolveBinding(target);
+          literals.delete(binding);
+          if (value && "literal" in value) literals.set(binding, value);
+          return { ...result, bindings: values, conditions: booleans, literals };
         });
       });
     }
@@ -768,10 +792,14 @@ function evaluateOutcomes(
         );
         const restoredFunctions = new Map(current.functions);
         const restoredConditions = new Map(current.conditions);
+        const restoredLiterals = new Map(current.literals);
         for (const name of shadows) {
           const binding = path.resolveBinding({ name } as AnyNode, callee);
           restored.delete(binding);
           restoredFunctions.delete(binding);
+          restoredLiterals.delete(binding);
+          if (path.literals?.has(binding))
+            restoredLiterals.set(binding, path.literals.get(binding)!);
           const key = conditionKey({ name } as AnyNode, path, callee);
           restoredConditions.delete(key);
           if (bindings.has(binding)) restored.set(binding, bindings.get(binding)!);
@@ -789,6 +817,7 @@ function evaluateOutcomes(
           bindings: restored,
           functions: restoredFunctions,
           conditions: restoredConditions,
+          literals: restoredLiterals,
           calls: path.calls,
         };
       });
@@ -979,16 +1008,6 @@ function loopOutcomes(
       : node.type === "ForInStatement" || node.type === "ForOfStatement"
         ? outcomes(node.right, path, bindings, conditions)
         : [path];
-  const source = unwrapExpression(node.right);
-  if (
-    (node.type === "ForOfStatement" &&
-      ((source?.type === "ArrayExpression" && source.elements.length === 0) ||
-        (source?.type === "Literal" && source.value === ""))) ||
-    (node.type === "ForInStatement" &&
-      source?.type === "ObjectExpression" &&
-      source.properties.length === 0)
-  )
-    return pending;
   const seen = new Set<string>();
   const iteration = {
     type: "IfStatement",
