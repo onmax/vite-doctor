@@ -1925,3 +1925,53 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["const source = [1, ,]; source.pop(); const displayed = source.map(() => Date.now())", 1],
+  ["const source = [, 1]; source.shift(); const displayed = source.map(() => Date.now())", 1],
+  ["const source = []; source.length = 1; const displayed = source.map(() => Date.now())", 0],
+  ["const source = []; source.length = 1; const displayed = source.find(() => Date.now())", 1],
+  ["const source = [, 1]; source.length = 1; const displayed = source.map(() => Date.now())", 0],
+  [
+    "async function clock() { return Date.now() }; let pending; pending = clock(); const displayed = await pending",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; let pending; pending = clock(); pending = Promise.resolve('stable'); const displayed = await pending",
+    0,
+  ],
+  [
+    "async function clock() { return Date.now() }; const displayed = await clock().then(undefined)",
+    1,
+  ],
+  ["async function clock() { return Date.now() }; const displayed = await clock().then(void 0)", 1],
+  [
+    "async function clock() { return Date.now() }; const undefined = () => 'stable'; const displayed = await clock().then(undefined)",
+    0,
+  ],
+  ["function Clock() { this.generatedAt = Date.now() }; const displayed = new Clock()", 1],
+])("preserves reviewed hydration flow: %s", async (setup, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">${setup}</script><template>{{ displayed.generatedAt ?? displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["this.generatedAt = Date.now(); this.label = 'stable'", "new Clock()", "generatedAt", 1],
+  ["this.generatedAt = Date.now(); this.label = 'stable'", "new Clock()", "label", 0],
+  [
+    "this.generatedAt = Date.now(); return { generatedAt: 'stable' }",
+    "new Clock()",
+    "generatedAt",
+    0,
+  ],
+  ["this.generatedAt = Date.now()", "Clock()", "generatedAt", 0],
+])("projects constructor instance writes: %s %s %s", async (body, call, key, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">function Clock() { ${body} }; const displayed = ${call}</script><template>{{ displayed.${key} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

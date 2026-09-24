@@ -101,9 +101,36 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
   if (owner && renderedSetupWrite(ctx, node, owner)) return true;
   return Boolean(
     owner &&
-    contributesToReturn(node, owner, getScriptParents(ctx)) &&
+    (contributesToReturn(node, owner, getScriptParents(ctx)) ||
+      constructorWrite(node, owner, getScriptParents(ctx))) &&
     functionFlowsToTemplate(ctx, owner, new Set(), node),
   );
+}
+
+function constructorWrite(
+  source: AnyNode,
+  owner: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): AnyNode {
+  if (owner.async || owner.generator || owner.type === "ArrowFunctionExpression") return null;
+  for (let current = source; current && current !== owner; current = parents.get(current)) {
+    const parent = parents.get(current);
+    if (
+      parent?.type !== "AssignmentExpression" ||
+      parent.operator !== "=" ||
+      parent.right !== current
+    )
+      continue;
+    let target = unwrapExpression(parent.left);
+    if (target?.type !== "MemberExpression") continue;
+    while (target?.type === "MemberExpression") target = unwrapExpression(target.object);
+    if (
+      target?.type === "ThisExpression" &&
+      contributesToReturn(source, owner, parents, new Set(), parent.right)
+    )
+      return parent;
+  }
+  return null;
 }
 
 function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): boolean {
@@ -326,12 +353,22 @@ function functionFlowsToTemplate(
     return false;
   };
   const reachesCall = (call: AnyNode, template = false): boolean => {
+    const instanceWrite = constructorWrite(source, fn, parents);
+    if (instanceWrite && call.type !== "NewExpression" && !contributesToReturn(source, fn, parents))
+      return false;
     if (call.type === "NewExpression") {
       let returnsObject = false;
+      let replacesInstance = false;
       walkScriptLocal(fn.body, (statement) => {
         if (statement.type !== "ReturnStatement" || containingFunction(statement, parents) !== fn)
           return;
         const value = resolveLocalValue(statement.argument, parents);
+        if (
+          value &&
+          !["Literal", "UnaryExpression"].includes(value.type) &&
+          !isUndefinedValue(value, parents)
+        )
+          replacesInstance = true;
         if (
           [
             "ObjectExpression",
@@ -344,7 +381,7 @@ function functionFlowsToTemplate(
         )
           returnsObject = true;
       });
-      if (!returnsObject) return false;
+      if (!returnsObject && !(instanceWrite && !replacesInstance)) return false;
     }
     const captured = capturedReferences.get(getter ? call : call.callee);
     const reference = captured ?? (template ? { start: Infinity } : call);
@@ -558,13 +595,23 @@ function resultAliases(
     unwrapExpression(parents.get(expression)) === unwrapExpression(expression)
   )
     expression = parents.get(expression);
-  const binding = parents.get(expression);
+  const stored = parents.get(expression);
+  const target = stored?.type === "VariableDeclarator" ? stored.id : stored?.left;
   if (
-    binding?.type !== "VariableDeclarator" ||
-    binding.init !== expression ||
-    binding.id.type !== "Identifier"
+    target?.type !== "Identifier" ||
+    !(
+      (stored.type === "VariableDeclarator" && stored.init === expression) ||
+      (stored.type === "AssignmentExpression" &&
+        stored.operator === "=" &&
+        stored.right === expression)
+    )
   )
     return results;
+  const binding =
+    stored.type === "VariableDeclarator"
+      ? stored
+      : resolveLocalBinding(stored, target.name, parents);
+  if (!binding) return results;
   let scope = containingFunction(binding, parents);
   if (!scope) {
     scope = binding;
@@ -573,9 +620,10 @@ function resultAliases(
   walkScriptLocal(scope.body, (reference) => {
     if (
       reference.type === "Identifier" &&
-      reference.start > binding.start &&
+      reference.start > stored.start &&
       resolveLocalBinding(reference, reference.name, parents) === binding &&
-      !hasPriorAliasWrite(reference, binding, scope, parents)
+      (stored === binding || writeDominatesReference(stored, reference, scope, parents)) &&
+      !hasPriorAliasWrite(reference, binding, scope, parents, stored, false)
     ) {
       results.push(...resultAliases(reference, parents, seen));
     }
@@ -761,10 +809,25 @@ function resultCallbackCall(
     }
     if (value?.type === "ArrayExpression") {
       const method = call.callee.property.name;
-      let count = arrayElementCount(
-        value,
-        ["find", "findIndex", "findLast", "findLastIndex"].includes(method),
-      );
+      const visitsHoles = ["find", "findIndex", "findLast", "findLastIndex"].includes(method);
+      let length = 0;
+      let occupied: Set<number> | null = new Set();
+      for (const element of value.elements) {
+        if (element?.type === "SpreadElement") {
+          const size =
+            element.argument?.type === "ArrayExpression"
+              ? arrayElementCount(element.argument, true)
+              : Infinity;
+          if (!Number.isFinite(size)) {
+            occupied = null;
+            break;
+          }
+          for (let index = 0; index < size; index++) occupied.add(length++);
+        } else {
+          if (element) occupied.add(length);
+          length++;
+        }
+      }
       const minimum =
         ["sort", "toSorted"].includes(method) ||
         (["reduce", "reduceRight"].includes(method) && call.arguments.length < 2)
@@ -795,20 +858,37 @@ function resultCallbackCall(
           key === "length" &&
           write.operator === "=" &&
           write.right?.type === "Literal" &&
-          write.right.value === 0 &&
+          Number.isInteger(write.right.value) &&
+          write.right.value >= 0 &&
+          write.right.value < 2 ** 32 &&
           dominates
         ) {
-          count = 0;
+          length = write.right.value;
+          if (length === 0) occupied = new Set();
+          else if (occupied) occupied = new Set([...occupied].filter((index) => index < length));
         } else if (
           write.type === "CallExpression" &&
           ["push", "unshift"].includes(key) &&
           dominates
         ) {
-          count += write.arguments.some((argument: AnyNode) => argument.type === "SpreadElement")
-            ? Infinity
-            : write.arguments.length;
+          if (write.arguments.some((argument: AnyNode) => argument.type === "SpreadElement"))
+            occupied = null;
+          else if (occupied) {
+            const added = write.arguments.length;
+            if (key === "unshift") occupied = new Set([...occupied].map((index) => index + added));
+            for (let index = 0; index < added; index++)
+              occupied.add(key === "push" ? length + index : index);
+            length += added;
+          }
         } else if (write.type === "CallExpression" && ["pop", "shift"].includes(key) && dominates) {
-          count = Math.max(0, count - 1);
+          if (occupied) {
+            if (key === "pop") occupied.delete(length - 1);
+            else
+              occupied = new Set(
+                [...occupied].filter((index) => index > 0).map((index) => index - 1),
+              );
+            length = Math.max(0, length - 1);
+          }
         } else if (
           key === "length" ||
           key === undefined ||
@@ -816,9 +896,10 @@ function resultCallbackCall(
           (write.type === "CallExpression" &&
             ["push", "unshift", "pop", "shift", "splice", "fill", "copyWithin"].includes(key))
         ) {
-          count = Infinity;
+          occupied = null;
         }
       });
+      const count = occupied ? (visitsHoles ? length : occupied.size) : Infinity;
       if (count < minimum) return null;
       let methodReplaced = false;
       for (const binding of bindings)
@@ -1132,6 +1213,10 @@ function asyncResultIsConsumed(
           let root = chain;
           while (parentOf(root)) root = parentOf(root);
           walkScriptLocal(root, (child) => callbackParents.set(child, parentOf(child)));
+          if (isUndefinedValue(unwrapExpression(chain.arguments[0]), callbackParents)) {
+            current = parent;
+            continue;
+          }
           let callback = unwrapExpression(chain.arguments[0]);
           const bindings = new Set<AnyNode>();
           while (callback?.type === "Identifier") {
@@ -1400,6 +1485,20 @@ function projectionIncludes(
         )
           path.unshift("value");
         path.unshift(String(index));
+      }
+      if (
+        returnedSource &&
+        end === returnedSource[1] &&
+        parent === constructorWrite(start, end, parents)
+      ) {
+        let target = parent.left;
+        const instancePath: (string | null)[] = [];
+        while (target?.type === "MemberExpression") {
+          const key = target.computed ? target.property?.value : target.property?.name;
+          instancePath.unshift(key === undefined ? null : String(key));
+          target = unwrapExpression(target.object);
+        }
+        path.unshift(...instancePath);
       }
       if (
         parent?.type === "Property" &&
