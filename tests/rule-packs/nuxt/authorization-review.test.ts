@@ -343,7 +343,7 @@ test.each(
     return { status: "unknown", reason: "Collected", citations: [] };
   });
   const layerGuard = `layers/admin/${alias.length === 1 ? "src/" : ""}guard.ts`;
-  await runProjectFixture({
+  const result = await runProjectFixture({
     framework: "nuxt",
     files: {
       "app/middleware/auth.ts": files["app/middleware/auth.ts"],
@@ -360,13 +360,19 @@ test.each(
     },
     rules: extension.rulePacks![0]!.rules,
   });
-  expect(candidates).toHaveLength(1);
-  const paths = candidates[0]!.sources.map((source) => source.path);
   if (local === undefined) {
-    expect(paths).not.toContain(layerGuard);
-    expect(paths).not.toContain("guard.ts");
+    expect(candidates).toHaveLength(0);
+    expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+    expect(result.project.evidenceGaps).toContainEqual(
+      expect.objectContaining({
+        source: "vite-doctor/nuxt-authorization-review",
+        files: [`${alias}/guard`],
+      }),
+    );
     return;
   }
+  expect(candidates).toHaveLength(1);
+  const paths = candidates[0]!.sources.map((source) => source.path);
   expect(paths).toContain(local ? layerGuard : "guard.ts");
   expect(paths).not.toContain(local ? "guard.ts" : layerGuard);
 });
@@ -717,7 +723,12 @@ test("rejects layer middleware evidence after the active layer config changes", 
   expect(calls).toBe(0);
 });
 
-test.each([false, true])("collects nested guard policy and handles cycles: %s", async (cycle) => {
+test.each([
+  { cycle: false, dynamic: false },
+  { cycle: true, dynamic: false },
+  { cycle: false, dynamic: true },
+  { cycle: true, dynamic: true },
+])("collects nested guard policy: cycle=$cycle, dynamic=$dynamic", async ({ cycle, dynamic }) => {
   let calls = 0;
   const collected: string[] = [];
   const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
@@ -731,8 +742,9 @@ test.each([false, true])("collects nested guard policy and handles cycles: %s", 
       ...files,
       "server/api/account.get.ts":
         "import guard from '../utils/guard'; export default defineEventHandler(guard)",
-      "server/utils/guard.ts":
-        "import policy from './policy'; export default event => policy(event)",
+      "server/utils/guard.ts": dynamic
+        ? "export default async event => (await import('./policy')).default(event)"
+        : "import policy from './policy'; export default event => policy(event)",
       "server/utils/policy.ts": cycle
         ? "import guard from './guard'; export default guard"
         : "export default event => requireAuth(event)",
@@ -743,24 +755,28 @@ test.each([false, true])("collects nested guard policy and handles cycles: %s", 
   expect(collected).toContain("server/utils/policy.ts");
 });
 
-test("omitted nested guard policies make the report incomplete", async () => {
-  let calls = 0;
-  const extension = createNuxtAuthorizationReviewExtension(async () => {
-    calls++;
-    return { status: "unknown", reason: "Missing policy", citations: [] };
-  });
-  const result = await runProjectFixture({
-    framework: "nuxt",
-    files: {
-      ...files,
-      "server/api/account.get.ts":
-        "import guard from '../utils/guard'; export default defineEventHandler(guard)",
-      "server/utils/guard.ts":
-        "import policy from './policy'; export default event => policy(event)",
-      "server/utils/policy.ts": " ".repeat(16_001),
-    },
-    rules: extension.rulePacks![0]!.rules,
-  });
-  expect(calls).toBe(0);
-  expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
-});
+test.each([false, true])(
+  "omitted nested guard policies make the report incomplete: dynamic=%s",
+  async (dynamic) => {
+    let calls = 0;
+    const extension = createNuxtAuthorizationReviewExtension(async () => {
+      calls++;
+      return { status: "unknown", reason: "Missing policy", citations: [] };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "server/api/account.get.ts":
+          "import guard from '../utils/guard'; export default defineEventHandler(guard)",
+        "server/utils/guard.ts": dynamic
+          ? "export default async event => (await import('./policy')).default(event)"
+          : "import policy from './policy'; export default event => policy(event)",
+        "server/utils/policy.ts": " ".repeat(16_001),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(calls).toBe(0);
+    expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+  },
+);

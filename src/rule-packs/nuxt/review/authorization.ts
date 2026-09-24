@@ -187,7 +187,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                 ...(ctx.project.evidenceGaps ?? []),
                 {
                   source: "vite-doctor/nuxt-authorization-review",
-                  message: `Authorization review for ${handler.path} omitted local imports because of source limits; the handler was not reviewed.`,
+                  message: `Authorization review for ${handler.path} could not collect all local imports; the handler was not reviewed.`,
                   files: imports.omitted,
                 },
               ];
@@ -401,9 +401,14 @@ function localImports(
   const visited = new Set([resolve(root, source.path)]);
   for (const current of queue) {
     const file = resolve(root, current.path);
-    for (const match of current.text.matchAll(/\b(?:from\s*|require\s*\(\s*)["']([^"']+)["']/g)) {
+    for (const match of current.text.matchAll(
+      /\b(?:from\s*|(?:require|import)\s*\(\s*)["']([^"']+)["']/g,
+    )) {
       const specifier = match[1]!;
-      if (unknownLayerAliases && /^(?:~{1,2}|@{1,2})(?:\/|$)/.test(specifier)) continue;
+      if (unknownLayerAliases && /^(?:~{1,2}|@{1,2})(?:\/|$)/.test(specifier)) {
+        omitted.push(specifier);
+        continue;
+      }
       const alias = Object.keys(aliases)
         .sort((a, b) => b.length - a.length)
         .find((key) => specifier === key || specifier.startsWith(`${key}/`));
