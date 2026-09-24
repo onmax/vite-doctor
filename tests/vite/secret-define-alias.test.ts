@@ -180,6 +180,20 @@ test.each([
   ["const { PRIVATE_TOKEN: replacement = 'fallback' } = import.meta.env", true],
   ["const { ['PRIVATE_TOKEN']: replacement = '' } = process.env", true],
   ["const { PUBLIC_VERSION: replacement = 'fallback' } = process.env", false],
+  ["const { PUBLIC_VERSION: replacement = process.env.PRIVATE_TOKEN } = process.env", true],
+  ["const { PUBLIC_VERSION: replacement = import.meta.env.PRIVATE_TOKEN } = import.meta.env", true],
+  [
+    "const fallback = process.env.PRIVATE_TOKEN; const { PUBLIC_VERSION: replacement = fallback } = process.env",
+    true,
+  ],
+  [
+    "const fallback = process.env.PUBLIC_VERSION; const { PUBLIC_VERSION: replacement = fallback } = process.env",
+    false,
+  ],
+  [
+    "const fallback = replacement; const { PUBLIC_VERSION: replacement = fallback } = process.env",
+    false,
+  ],
   ["let { PRIVATE_TOKEN: replacement = '' } = process.env; replacement = 'public'", false],
   ["const key = 'PRIVATE_TOKEN'; const { [key]: replacement = '' } = process.env", false],
   ["let { PRIVATE_TOKEN: replacement } = process.env; replacement = 'public'", false],

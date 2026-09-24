@@ -166,7 +166,7 @@ export const noSecretDefine = createRule({
 
 function readAliasInitializers(source: string) {
   const { scopeManager } = parseForESLint(source, { range: true, sourceType: "module" });
-  const initializers = new Map<number, [number, number]>();
+  const initializers = new Map<number, [number, number][]>();
   for (const scope of scopeManager.scopes) {
     for (const reference of scope.references) {
       const definition = reference.resolved?.defs[0];
@@ -179,7 +179,7 @@ function readAliasInitializers(source: string) {
         continue;
       const { id, init } = definition.node;
       if (id.type === "Identifier") {
-        initializers.set(reference.identifier.range[0], init.range);
+        initializers.set(reference.identifier.range[0], [init.range]);
       } else if (
         id.type === "ObjectPattern" &&
         init.type === "MemberExpression" &&
@@ -202,7 +202,11 @@ function readAliasInitializers(source: string) {
           ((!property.computed && property.key.type === "Identifier") ||
             (property.key.type === "Literal" && typeof property.key.value === "string"))
         ) {
-          initializers.set(reference.identifier.range[0], property.key.range);
+          const ranges = [property.key.range];
+          if (property.value.type === "AssignmentPattern") {
+            ranges.push(property.value.right.range);
+          }
+          initializers.set(reference.identifier.range[0], ranges);
         }
       }
     }
@@ -214,7 +218,7 @@ function resolvesSecretAlias(
   value: string,
   start: number,
   source: string,
-  initializers: Map<number, [number, number]>,
+  initializers: Map<number, [number, number][]>,
   seen = new Set<number>(),
 ): boolean {
   if (seen.size >= 4) return false;
@@ -252,13 +256,17 @@ function resolvesSecretAlias(
     }
   }
   if (expression.type !== "Identifier") return false;
-  const range = initializers.get(start + expression.range[0] - 1);
-  if (!range || seen.has(range[0])) return false;
-  seen.add(range[0]);
-  const initializer = source.slice(...range);
+  const ranges = initializers.get(start + expression.range[0] - 1);
   return (
-    SECRET_NAME_RE.test(initializer) ||
-    resolvesSecretAlias(initializer, range[0], source, initializers, seen)
+    ranges?.some((range) => {
+      if (seen.has(range[0])) return false;
+      const nextSeen = new Set(seen).add(range[0]);
+      const initializer = source.slice(...range);
+      return (
+        SECRET_NAME_RE.test(initializer) ||
+        resolvesSecretAlias(initializer, range[0], source, initializers, nextSeen)
+      );
+    }) ?? false
   );
 }
 
