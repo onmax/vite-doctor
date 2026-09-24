@@ -2135,3 +2135,92 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "for break skips update",
+    "for (; true; setInterval(refresh)) { break }; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "for return skips update",
+    "function setup() { for (; true; setInterval(refresh)) { return } }; setup(); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "for throw skips update",
+    "try { for (; true; setInterval(refresh)) { throw Error() } } catch {}; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "for continue reaches update",
+    "for (; ready; setInterval(refresh)) { continue }; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "for conditional continue reaches update",
+    "for (; ready; setInterval(refresh)) { if (flag) continue; break }; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "for update observes body binding",
+    "let create = () => {}; for (; ready; create()) { create = () => setInterval(refresh) }; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "switch fallthrough cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (mode) { case 0: saveState(); default: clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "switch chained fallthrough cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (mode) { case 0: saveState(); case 1: saveState(); default: clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "switch break skips cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (mode) { case 0: break; default: clearInterval(timer) } })",
+    true,
+  ],
+  [
+    "switch return skips cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (mode) { case 0: return; default: clearInterval(timer) } })",
+    true,
+  ],
+  [
+    "switch without default may skip cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (mode) { case 0: saveState(); case 1: clearInterval(timer) } })",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
+
+for (const loop of [
+  "while ((timer = setInterval(refresh), enabled))",
+  "for (; (timer = setInterval(refresh), enabled);)",
+]) {
+  for (const [body, leaks] of [
+    ["break", false],
+    ["continue", true],
+    ["if (flag) continue; break", true],
+  ] as const) {
+    test(`${loop} with ${body} tracks test repetition`, async () => {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule: requireDisposeForSideEffects,
+        files: {
+          "src/main.ts": `let timer; ${loop} { ${body} }; import.meta.hot.accept(); import.meta.hot.dispose(() => clearInterval(timer))`,
+        },
+      });
+      expect(result.diagnostics.length > 0).toBe(leaks);
+    });
+  }
+}

@@ -797,7 +797,8 @@ function undisposedResource(program: AnyNode): string | null {
       else if (leftContinues) restore(afterLeft);
       return leftContinues || rightContinues;
     };
-    const controls: boolean[] = [];
+    const controls: { node: AnyNode; loop: boolean; continues: ReturnType<typeof snapshot>[] }[] =
+      [];
     const labels = new Map<string, { exit: Set<AnyNode>; state: ReturnType<typeof snapshot> }[]>();
     const walk = (node: AnyNode): boolean => {
       if (!node || typeof node !== "object") return true;
@@ -1053,16 +1054,18 @@ function undisposedResource(program: AnyNode): string | null {
         ].includes(node.type)
       ) {
         const pretest = node.type === "WhileStatement" || node.type === "ForStatement";
+        let testResources: AnyNode[] = [];
         if (pretest) {
           if (!walk(node.init)) return false;
           const resourceStart = resources.length;
           if (!walk(node.test)) return false;
           const test = identity(node.test, environment);
           if (test?.type === "Literal" && !test.value) return true;
-          for (const resource of resources.slice(resourceStart)) repeated.add(resource.value);
+          testResources = resources.slice(resourceStart).map((resource) => resource.value);
         }
         const loop = node.type !== "SwitchStatement";
-        controls.push(loop);
+        const control = { node, loop, continues: [] as ReturnType<typeof snapshot>[] };
+        controls.push(control);
         const nontermination = new Set(cleaned);
         if (loop) {
           exits.push(nontermination);
@@ -1074,23 +1077,40 @@ function undisposedResource(program: AnyNode): string | null {
           const firstExit = exits.length;
           let bodyStopped = false;
           if (loop) loopDepth++;
-          if (loop) {
+          if (node.type === "ForStatement") {
+            const continues = walk(node.body);
+            bodyStopped = !continues && !control.continues.length;
+            let updateState = continues ? snapshot() : undefined;
+            for (const state of control.continues) {
+              if (updateState) merge(updateState, state);
+              else restore(state);
+              updateState = snapshot();
+            }
+            if (updateState && !walk(node.update)) bodyStopped = true;
+          } else if (loop) {
             for (const [key, child] of Object.entries(node)) {
               if (key !== "__doctorParent" && !(pretest && ["init", "test"].includes(key)))
-                if (!walk(child) && key === "body") bodyStopped = true;
+                if (!walk(child) && key === "body") bodyStopped = !control.continues.length;
             }
           } else {
-            walk(node.discriminant);
-            let combined = node.cases.some((item: AnyNode) => !item.test) ? undefined : snapshot();
-            for (const item of node.cases) {
-              restore(before);
+            if (!walk(node.discriminant)) {
+              controls.pop();
+              return false;
+            }
+            const entry = snapshot();
+            let combined = node.cases.some((item: AnyNode) => !item.test) ? undefined : entry;
+            for (const [index, item] of node.cases.entries()) {
+              restore(entry);
               walk(item.test);
-              walk(item.consequent);
+              walk(node.cases.slice(index).flatMap((item: AnyNode) => item.consequent));
               if (combined) merge(combined, snapshot());
               combined = snapshot();
             }
           }
           if (loop) loopDepth--;
+          if (!bodyStopped) {
+            for (const value of testResources) repeated.add(value);
+          }
           controls.pop();
           const iterationCleaned = resources
             .slice(resourceStart)
@@ -1119,7 +1139,17 @@ function undisposedResource(program: AnyNode): string | null {
           target.push({ exit, state: snapshot() });
           return false;
         }
-        if (controls.at(-1) || node.type === "ContinueStatement" || node.label)
+        if (node.type === "ContinueStatement") {
+          const control = controls.findLast(
+            (item) =>
+              item.loop &&
+              (!node.label ||
+                (item.node.__doctorParent?.type === "LabeledStatement" &&
+                  item.node.__doctorParent.label.name === node.label.name)),
+          );
+          control?.continues.push(snapshot());
+        }
+        if (controls.at(-1)?.loop || node.type === "ContinueStatement" || node.label)
           exits.push(new Set(cleaned));
         return false;
       }
