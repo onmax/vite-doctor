@@ -285,6 +285,27 @@ function loopOutcomes(
   conditions: Set<string>,
   labels = new Set<string>(),
 ): Path[] {
+  if (
+    node.type === "ForStatement" &&
+    node.init?.type === "VariableDeclaration" &&
+    node.init.kind !== "var"
+  ) {
+    return outcomes(
+      {
+        type: "BlockStatement",
+        body: [
+          node.init,
+          [...labels].reduce(
+            (body, name) => ({ type: "LabeledStatement", label: { name }, body }),
+            { ...node, init: null } as AnyNode,
+          ),
+        ],
+      },
+      path,
+      bindings,
+      conditions,
+    );
+  }
   const result: Path[] = [];
   const pending =
     node.type === "ForStatement" && node.init
@@ -338,12 +359,18 @@ function stableConditions(node: AnyNode): Set<string> {
   const uses = new Map<string, number>();
   const unstable = new Set<string>();
   const assignments = new Set<AnyNode>();
-  const declarations = new Set<string>();
+  const nested = new Set<AnyNode>();
   walkScriptLocal(node, (child) => {
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(child.type)
+    )
+      walkScriptLocal(child, (descendant) => nested.add(descendant));
+    if (nested.has(child)) return;
     if (child.type === "ExpressionStatement") assignments.add(child.expression);
     if (child.type === "ForStatement" && child.update) assignments.add(child.update);
   });
   walkScriptLocal(node, (child) => {
+    if (nested.has(child)) return;
     if (
       child.type === "IfStatement" ||
       child.type === "WhileStatement" ||
@@ -360,8 +387,6 @@ function stableConditions(node: AnyNode): Set<string> {
       child.init?.type === "Literal" &&
       typeof child.init.value === "boolean"
     ) {
-      if (declarations.has(child.id.name)) unstable.add(child.id.name);
-      declarations.add(child.id.name);
       uses.set(child.id.name, (uses.get(child.id.name) ?? 0) + 1);
       return;
     }
@@ -452,11 +477,25 @@ function stableCatchBinding(handler: AnyNode): string | undefined {
     }
     if (
       (node.type === "VariableDeclarator" && node.id?.name === name) ||
-      (node.type === "AssignmentExpression" && node.left?.name === name) ||
+      (node.type === "AssignmentExpression" && assignsBinding(node.left, name)) ||
       (node.type === "UpdateExpression" && node.argument?.name === name) ||
       (node.type === "CatchClause" && node.param?.name === name)
     )
       stable = false;
   });
   return stable ? name : undefined;
+}
+
+function assignsBinding(node: AnyNode, name: string): boolean {
+  if (!node) return false;
+  if (node.type === "Identifier") return node.name === name;
+  if (node.type === "AssignmentPattern") return assignsBinding(node.left, name);
+  if (node.type === "RestElement") return assignsBinding(node.argument, name);
+  if (node.type === "ArrayPattern")
+    return node.elements.some((element: AnyNode) => assignsBinding(element, name));
+  if (node.type === "ObjectPattern")
+    return node.properties.some((property: AnyNode) =>
+      assignsBinding(property.type === "RestElement" ? property.argument : property.value, name),
+    );
+  return false;
 }

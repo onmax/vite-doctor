@@ -39,6 +39,48 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "callback-local condition write",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "const inspect = () => { missing = readFlag() }; if (missing) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "loop-local correlated condition",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "for (let missing = false; false;) {}; if (missing) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "loop-local true shadow",
+    "throw createError({ statusCode: 404 })",
+    "const preserve = true; for (let preserve = false; false;) {}; if (preserve) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "loop-local false shadow",
+    "throw createError({ statusCode: 404 })",
+    "const preserve = false; for (let preserve = true; false;) {}; if (preserve) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "array catch assignment",
+    "throw createError({ statusCode: 404 })",
+    "[error] = [null]; if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "nested object catch assignment",
+    "throw createError({ statusCode: 404 })",
+    "({ value: [error = null] } = other); if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "catch member assignment",
+    "throw createError({ statusCode: 404 })",
+    "error.detail = null; if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
     "trailing protected status spread",
     "throw createError({ statusCode: 404, ...options })",
     "throw createError({ statusCode: 500 })",
