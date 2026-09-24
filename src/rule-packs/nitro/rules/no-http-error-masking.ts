@@ -104,7 +104,13 @@ interface Path {
 
 type Bindings = ReadonlyMap<string, Outcome>;
 
-function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set<string>): Path[] {
+function outcomes(
+  node: AnyNode,
+  path: Path,
+  bindings: Bindings,
+  conditions: Set<string>,
+  argumentsEvaluated = false,
+): Path[] {
   if (--path.budget.remaining < 0) throw analysisLimit;
   bindings = path.bindings ?? bindings;
   const normal = { ...path, bindings, outcome: "normal" as const, label: undefined };
@@ -174,11 +180,16 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     });
   }
   if (node.type === "ThrowStatement") {
-    const outcome =
-      httpStatus(node.argument, path.resolveBinding) ??
-      (node.argument?.type === "Identifier" ? bindings.get(node.argument.name) : undefined) ??
-      "throw";
-    return [{ ...normal, outcome }];
+    return outcomes(node.argument, normal, bindings, conditions).map((current) => {
+      if (current.outcome !== "normal") return current;
+      const outcome =
+        httpStatus(node.argument, current.resolveBinding) ??
+        (node.argument?.type === "Identifier"
+          ? current.bindings?.get(node.argument.name)
+          : undefined) ??
+        "throw";
+      return { ...current, outcome };
+    });
   }
   if (node.type === "ReturnStatement")
     return outcomes(node.argument, normal, bindings, conditions).map((current) => ({
@@ -404,6 +415,26 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     return paths;
   }
   const call = assignment.type === "AwaitExpression" ? assignment.argument : assignment;
+  if (!argumentsEvaluated && (call.type === "CallExpression" || call.type === "NewExpression")) {
+    let paths = [normal as Path];
+    for (const argument of call.arguments) {
+      paths = paths.flatMap((current) =>
+        current.outcome === "normal"
+          ? outcomes(
+              argument.type === "SpreadElement" ? argument.argument : argument,
+              current,
+              bindings,
+              conditions,
+            )
+          : [current],
+      );
+    }
+    return paths.flatMap((current) =>
+      current.outcome === "normal"
+        ? outcomes(node, current, bindings, conditions, true)
+        : [current],
+    );
+  }
   let callee = call.callee;
   while (callee?.type === "ParenthesizedExpression") callee = callee.expression;
   if (callee?.type === "Identifier") callee = path.functions?.get(callee.name);
@@ -874,13 +905,13 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
       ]);
     } else if (
       (parent.type === "WhileStatement" || parent.type === "ForStatement") &&
-      child === parent.body &&
-      parent.test
+      child === parent.body
     ) {
       prefixes.unshift([
+        ...(parent.type === "ForStatement" && parent.init ? [parent.init] : []),
         {
           type: "IfStatement",
-          test: parent.test,
+          test: parent.test ?? { type: "Literal", value: true },
           consequent: null,
           alternate: { type: "ReturnStatement" },
         } as AnyNode,

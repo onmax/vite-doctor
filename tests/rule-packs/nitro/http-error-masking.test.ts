@@ -39,6 +39,42 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "throw argument",
+    "function missing() { throw createError({ statusCode: 404 }) }; throw missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "nested argument",
+    "function missing() { throw createError({ statusCode: 404 }) }; consume(missing())",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "deep argument",
+    "function missing() { throw createError({ statusCode: 404 }) }; consume(wrap(missing()))",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "constructor argument",
+    "function missing() { throw createError({ statusCode: 404 }) }; new Response(missing())",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "awaited throw argument",
+    "function missing() { throw createError({ statusCode: 404 }) }; throw await missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "first argument throws before later masking helper",
+    "function missing() { throw createError({ statusCode: 404 }) }; function fail() { throw new Error() }; consume(missing(), fail())",
+    "throw new Error()",
+    true,
+  ],
+  [
     "finite recursive masking",
     "throw createError({ statusCode: 404 })",
     "function replace(again) { if (again) return replace(false); throw new Error() }; replace(true)",
@@ -1146,3 +1182,20 @@ test("bounds correlated path exploration without affecting the next try", async 
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
   expect(result.diagnostics.find((item) => item.code === "NITRO0018")?.message).toContain("401");
 }, 5000);
+
+test.each([false, true])("respects enclosing for initializer %s", async (enter) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+      const enter = ${!enter};
+      for (let enter = ${enter}; enter;) {
+        try { throw createError({ statusCode: 404 }) }
+        catch { throw new Error() }
+      }
+    })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(enter);
+});
