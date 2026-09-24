@@ -271,6 +271,7 @@ function collectRuleDocuments() {
     .map((file) => join(nitroRulesDir, file));
   const nuxtSources = [
     ...ruleSourcesFromIndex(join(nuxtRulesDir, "nuxt/index.ts")),
+    join(root, "src/rule-packs/nuxt/review/authorization.ts"),
     ...readdirSync(nuxtRulesDir)
       .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "nuxt.ts")
       .sort()
