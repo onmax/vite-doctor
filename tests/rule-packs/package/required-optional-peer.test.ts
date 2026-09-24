@@ -12,6 +12,10 @@ test.each([
   'const peer = require("peer/subpath");',
   'module.exports = require("peer");',
   'await import("peer");',
+  'require("peer") || fallback;',
+  'require("peer") && usePeer();',
+  'require("peer") ?? fallback;',
+  'require("peer").value ||= fallback;',
 ])("reports an optional peer required by the entrypoint: %s", async (source) => {
   const diagnostics = await diagnose(
     { main: "dist/index.js", ...optionalPeer },
@@ -33,6 +37,11 @@ test.each([
   'if (enabled) require("peer");',
   'const peer = enabled ? require("peer") : null;',
   'const peer = enabled && require("peer");',
+  'const peer = enabled || require("peer");',
+  'const peer = enabled ?? require("peer");',
+  'peer ||= require("peer");',
+  'peer &&= require("peer");',
+  'peer ??= require("peer");',
   'export const load = () => require("peer");',
   'import("peer").catch(() => {});',
   'function load(require) { return require("peer") }',
@@ -110,4 +119,36 @@ test("checks conditional default exports and package import aliases", async () =
     },
   );
   expect(diagnostics.map((d) => d.code)).toEqual(["PKG0003", "PKG0003"]);
+});
+
+test.each(["./cli.js", { example: "./cli.js" }])(
+  "allows optional peers loaded only by standalone binaries: %j",
+  async (bin) => {
+    expect(
+      await diagnose(
+        { main: "index.js", bin, ...optionalPeer },
+        {
+          "index.js": "export {};",
+          "cli.js": 'import "./adapter.js";',
+          "adapter.js": 'import "peer";',
+        },
+      ),
+    ).toEqual([]);
+  },
+);
+
+test("still reports a binary also loaded by the default entrypoint", async () => {
+  const diagnostics = await diagnose(
+    { main: "index.js", bin: "cli.js", ...optionalPeer },
+    { "index.js": 'import "./cli.js";', "cli.js": 'import "peer";' },
+  );
+  expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["PKG0003"]);
+});
+
+test("still diagnoses undeclared dependencies in standalone binaries", async () => {
+  const diagnostics = await diagnose(
+    { main: "index.js", bin: "cli.js" },
+    { "index.js": "export {};", "cli.js": 'import "undeclared";' },
+  );
+  expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["PKG0001"]);
 });

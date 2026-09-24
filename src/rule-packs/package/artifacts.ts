@@ -258,10 +258,10 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       if (entry && entry.startsWith(".")) enqueue(entry, "runtime", false, root, false, true);
   for (const entry of [manifest.types, manifest.typings])
     if (entry) enqueue(entry, "types", false, root, false);
-  if (typeof manifest.bin === "string") enqueue(manifest.bin, "runtime", true, root, false, true);
+  if (typeof manifest.bin === "string") enqueue(manifest.bin, "runtime", false, root, false, true);
   else if (manifest.bin)
     for (const entry of Object.values(manifest.bin))
-      enqueue(entry, "runtime", true, root, false, true);
+      enqueue(entry, "runtime", false, root, false, true);
   for (const version of Object.values(manifest.typesVersions ?? {}))
     for (const entries of Object.values(version))
       for (const entry of entries) enqueue(entry, "types", false, root, false);
@@ -518,7 +518,8 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
           ts.SyntaxKind.AmpersandAmpersandEqualsToken,
           ts.SyntaxKind.BarBarEqualsToken,
           ts.SyntaxKind.QuestionQuestionEqualsToken,
-        ].includes(parent.operatorToken.kind)) ||
+        ].includes(parent.operatorToken.kind) &&
+        isWithin(node, parent.right)) ||
       ts.isCallChain(parent)
     )
       return false;
