@@ -65,7 +65,7 @@ function optionsForwardCredentials(
   if (!value || seen.has(value)) return false;
   seen = new Set(seen).add(value);
   if (value.type === "Identifier")
-    return optionsForwardCredentials(unmodifiedOptionsInitializer(value, call), call, seen);
+    return optionsForwardCredentials(unmodifiedInitializer(value, call), call, seen);
   if (value.type !== "ObjectExpression") return false;
   for (const property of [...value.properties].reverse()) {
     if (property.type === "SpreadElement") {
@@ -108,7 +108,7 @@ function credentialHeaders(
   if (!value || seen.has(value)) return;
   seen = new Set(seen).add(value);
   if (value.type === "Identifier") {
-    return credentialHeaders(localInitializer(value, call), call, seen);
+    return credentialHeaders(unmodifiedInitializer(value, call), call, seen);
   }
   if (value.type === "NewExpression" && value.callee?.name === "Headers") {
     const input = unwrapExpression(value.arguments[0]);
@@ -178,7 +178,7 @@ function resolveInitializer(value: AnyNode, call: AnyNode): AnyNode {
   while (value?.type === "Identifier") {
     if (seen.has(value)) return;
     seen.add(value);
-    value = unwrapExpression(localInitializer(value, call));
+    value = unwrapExpression(unmodifiedInitializer(value, call));
   }
   return value;
 }
@@ -262,7 +262,7 @@ function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
   }
 }
 
-function unmodifiedOptionsInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
+function unmodifiedInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
   const initializer = localInitializer(identifier, call);
   if (!initializer) return;
   let scope = initializer.__doctorParent ?? initializer.parent;
@@ -270,29 +270,58 @@ function unmodifiedOptionsInitializer(identifier: AnyNode, call: AnyNode): AnyNo
     scope = scope.__doctorParent ?? scope.parent;
   if (!scope) return;
   // Escaped objects and closure writes make initializer evidence unreliable.
-  function hasUnsafeReference(
-    node: AnyNode,
-    parent?: AnyNode,
-    key?: string,
-    enclosingCall?: AnyNode,
-  ): boolean {
+  function hasUnsafeReference(node: AnyNode, ancestors: AnyNode[] = [], key?: string): boolean {
     if (!node || typeof node !== "object") return false;
-    if (node.type === "CallExpression") enclosingCall = node;
+    const parent = ancestors[0];
+    if (node.params?.some((param: AnyNode) => bindsName(param, identifier.name))) return false;
     if (node.type === "Identifier" && node.name === identifier.name) {
       if (parent?.type === "VariableDeclarator" && key === "id") return false;
       if (parent?.type === "Property" && key === "key" && !parent.computed) return false;
       if (parent?.type === "MemberExpression" && key === "property" && !parent.computed)
         return false;
-      if (parent?.type === "SpreadElement" && enclosingCall === call) return false;
-      if (unwrapExpression(call.arguments[1]) === node) return false;
+      if (node === identifier) return false;
+      if (isFetchArgument(node, ancestors)) return false;
+      if (
+        parent?.type === "MemberExpression" &&
+        key === "object" &&
+        !parent.computed &&
+        parent.property.name !== "headers"
+      ) {
+        const consumer = ancestors[1];
+        if (consumer?.type === "VariableDeclarator" && consumer.init === parent) return false;
+        if (consumer?.type === "ExpressionStatement") return false;
+      }
       return true;
     }
     return Object.entries(node).some(([childKey, child]) => {
       if (childKey === "parent" || childKey.startsWith("__")) return false;
       return Array.isArray(child)
-        ? child.some((item) => hasUnsafeReference(item, node, childKey, enclosingCall))
-        : hasUnsafeReference(child, node, childKey, enclosingCall);
+        ? child.some((item) => hasUnsafeReference(item, [node, ...ancestors], childKey))
+        : hasUnsafeReference(child, [node, ...ancestors], childKey);
     });
   }
   return hasUnsafeReference(scope) ? undefined : initializer;
+}
+
+function isFetchArgument(node: AnyNode, ancestors: AnyNode[]): boolean {
+  let value = node;
+  for (const parent of ancestors) {
+    if (parent.type === "CallExpression")
+      return (
+        parent.callee?.type === "Identifier" &&
+        parent.callee.name === "$fetch" &&
+        parent.arguments[1] === value
+      );
+    if (
+      unwrapExpression(parent) === value ||
+      (parent.type === "SpreadElement" && parent.argument === value) ||
+      (parent.type === "Property" &&
+        parent.value === value &&
+        propertyName(parent) === "headers") ||
+      parent.type === "ObjectExpression"
+    ) {
+      value = parent;
+    } else return false;
+  }
+  return false;
 }

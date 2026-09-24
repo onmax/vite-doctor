@@ -247,3 +247,32 @@ test.each([
   );
   expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
 });
+
+test.each([
+  "headers.cookie = ''",
+  "delete headers.cookie",
+  "headers.set('cookie', '')",
+  "const alias = headers; alias.cookie = ''",
+  "mutate(headers)",
+])("mutated header bindings do not prove credentials: %s", async (mutation) => {
+  for (const options of ["options", "{ headers }", "{ headers: new Headers(headers) }"]) {
+    const result = await runNuxtAppRuleFixture(
+      forwardAuthHeadersSsr,
+      `<script setup lang="ts">const headers = useRequestHeaders(['cookie']); const options = { headers }; ${mutation}; await $fetch('/api/user', ${options})</script>`,
+    );
+    expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
+  }
+});
+
+test.each([
+  "const method = options.method",
+  "options.method",
+  "await $fetch('/api/account', options)",
+  "await $fetch('/api/account', { ...options })",
+])("harmless options references preserve credential evidence: %s", async (read) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">const headers = useRequestHeaders(['cookie']); const options = { headers, method: 'GET' }; ${read}; await $fetch('/api/user', options)</script>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
