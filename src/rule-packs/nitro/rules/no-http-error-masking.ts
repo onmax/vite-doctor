@@ -115,7 +115,7 @@ function outcomes(
   bindings = path.bindings ?? bindings;
   const normal = { ...path, bindings, outcome: "normal" as const, label: undefined };
   if (!node) return [normal];
-  if (node.type === "ParenthesizedExpression" || node.type === "ExpressionStatement")
+  if (unwrapExpression(node) !== node || node.type === "ExpressionStatement")
     return outcomes(node.expression, normal, bindings, conditions);
   if (node.type === "BlockStatement") {
     const locals = blockBindings(node);
@@ -239,18 +239,21 @@ function outcomes(
       );
       entries = [match === -1 ? fallback : match];
     } else if (fallback === -1) entries.push(-1);
-    return entries.flatMap((entry) => {
-      if (entry === -1) return [normal];
-      return outcomes(
-        { type: "BlockStatement", body: cases.slice(entry).flatMap((item) => item.consequent) },
-        normal,
-        bindings,
-        conditions,
-      ).map((current) =>
-        current.outcome === "break" && !current.label
-          ? { ...current, outcome: "normal" as const }
-          : current,
-      );
+    return outcomes(node.discriminant, normal, bindings, conditions).flatMap((evaluated) => {
+      if (evaluated.outcome !== "normal") return [evaluated];
+      return entries.flatMap((entry) => {
+        if (entry === -1) return [evaluated];
+        return outcomes(
+          { type: "BlockStatement", body: cases.slice(entry).flatMap((item) => item.consequent) },
+          evaluated,
+          bindings,
+          conditions,
+        ).map((current) =>
+          current.outcome === "break" && !current.label
+            ? { ...current, outcome: "normal" as const }
+            : current,
+        );
+      });
     });
   }
   if (node.type === "VariableDeclaration") {
@@ -376,6 +379,30 @@ function outcomes(
         ),
       );
     }
+    return paths;
+  }
+  const children: AnyNode[] | undefined =
+    node.type === "ArrayExpression"
+      ? node.elements
+      : node.type === "ObjectExpression"
+        ? node.properties.flatMap((property: AnyNode) =>
+            property.type === "SpreadElement"
+              ? [property.argument]
+              : [...(property.computed ? [property.key] : []), property.value],
+          )
+        : node.type === "BinaryExpression"
+          ? [node.left, node.right]
+          : node.type === "UnaryExpression" || node.type === "SpreadElement"
+            ? [node.argument]
+            : node.type === "TemplateLiteral" || node.type === "SequenceExpression"
+              ? node.expressions
+              : undefined;
+  if (children) {
+    let paths: Path[] = [normal];
+    for (const child of children)
+      paths = paths.flatMap((current) =>
+        current.outcome === "normal" ? outcomes(child, current, bindings, conditions) : [current],
+      );
     return paths;
   }
   if (node.type === "MemberExpression") {
@@ -550,7 +577,9 @@ function loopOutcomes(
   const pending =
     node.type === "ForStatement" && node.init
       ? outcomes(node.init, path, bindings, conditions)
-      : [path];
+      : node.type === "ForInStatement" || node.type === "ForOfStatement"
+        ? outcomes(node.right, path, bindings, conditions)
+        : [path];
   const seen = new Set<string>();
   const iteration = {
     type: "IfStatement",
@@ -587,6 +616,10 @@ function loopOutcomes(
   let first = node.type === "DoWhileStatement";
   while (pending.length) {
     const current = pending.pop()!;
+    if (current.outcome !== "normal") {
+      result.push(current);
+      continue;
+    }
     const key = JSON.stringify([
       [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
       [...(current.bindings ?? [])].sort(([a], [b]) => a.localeCompare(b)),
@@ -658,9 +691,15 @@ function stableConditions(node: AnyNode): Set<string> {
       child.type === "DoWhileStatement" ||
       (child.type === "ForStatement" && child.test)
     ) {
-      let test = child.test;
-      while (test.type === "UnaryExpression" && test.operator === "!") test = test.argument;
-      if (test.type === "Identifier") uses.set(test.name, (uses.get(test.name) ?? 0) + 1);
+      const record = (test: AnyNode): void => {
+        test = unwrapExpression(test);
+        if (test.type === "UnaryExpression" && test.operator === "!") record(test.argument);
+        else if (test.type === "LogicalExpression" && ["&&", "||"].includes(test.operator)) {
+          record(test.left);
+          record(test.right);
+        } else if (test.type === "Identifier") uses.set(test.name, (uses.get(test.name) ?? 0) + 1);
+      };
+      record(child.test);
     }
     if (
       child.type === "VariableDeclarator" &&
@@ -758,10 +797,24 @@ function conditionPaths(
   });
 }
 
+function unwrapExpression(node: AnyNode): AnyNode {
+  while (
+    [
+      "ParenthesizedExpression",
+      "TSAsExpression",
+      "TSTypeAssertion",
+      "TSSatisfiesExpression",
+    ].includes(node?.type)
+  )
+    node = node.expression;
+  return node;
+}
+
 function httpStatus(
   node: AnyNode,
   resolve: Path["resolveBinding"],
 ): number | "server-error" | undefined {
+  node = unwrapExpression(node);
   if (node?.callee?.type === "Identifier" && resolve(node.callee)) return;
   if (
     ["NewExpression", "CallExpression"].includes(node?.type) &&
@@ -778,7 +831,7 @@ function httpStatus(
   )
     return "server-error";
   if (node?.type !== "CallExpression" || node.callee?.name !== "createError") return;
-  const options = node.arguments?.[0];
+  const options = unwrapExpression(node.arguments?.[0]);
   if (!options || (options.type === "Literal" && typeof options.value === "string")) return 500;
   if (options.type !== "ObjectExpression") return;
   const statuses = new Map<string, number | undefined>();
@@ -789,11 +842,10 @@ function httpStatus(
       continue;
     }
     const key = property.key?.name ?? property.key?.value;
-    if (key === "statusCode" || key === "status")
-      statuses.set(
-        key,
-        typeof property.value?.value === "number" ? property.value.value : undefined,
-      );
+    if (key === "statusCode" || key === "status") {
+      const value = unwrapExpression(property.value);
+      statuses.set(key, typeof value?.value === "number" ? value.value : undefined);
+    }
   }
   if (statuses.has("statusCode")) return statuses.get("statusCode");
   return statuses.has("status") ? statuses.get("status") : 500;

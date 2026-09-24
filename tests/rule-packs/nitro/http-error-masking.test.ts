@@ -39,6 +39,127 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "404 as const",
+    "throw createError({ statusCode: 404 as const })",
+    "throw createError({ statusCode: 500 as const })",
+    true,
+  ],
+  [
+    "<number>404",
+    "throw createError({ statusCode: <number>404 })",
+    "throw createError({ statusCode: 500 as const })",
+    true,
+  ],
+  [
+    "404 satisfies number",
+    "throw createError({ statusCode: 404 satisfies number })",
+    "throw createError({ statusCode: 500 as const })",
+    true,
+  ],
+  [
+    "[missing()]",
+    "function missing() { throw createError({ statusCode: 404 }) }; const value = [missing()]",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "[...missing()]",
+    "function missing() { throw createError({ statusCode: 404 }) }; const value = [...missing()]",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "({ value: missing() })",
+    "function missing() { throw createError({ statusCode: 404 }) }; const value = ({ value: missing() })",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "({ [missing()]: 1 })",
+    "function missing() { throw createError({ statusCode: 404 }) }; const value = ({ [missing()]: 1 })",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "({ ...missing() })",
+    "function missing() { throw createError({ statusCode: 404 }) }; const value = ({ ...missing() })",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "1 + missing()",
+    "function missing() { throw createError({ statusCode: 404 }) }; const value = 1 + missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "!missing()",
+    "function missing() { throw createError({ statusCode: 404 }) }; const value = !missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "`value: ${missing()}`",
+    "function missing() { throw createError({ statusCode: 404 }) }; const value = `value: ${missing()}`",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "switch (missing()) {}",
+    "function missing() { throw createError({ statusCode: 404 }) }; switch (missing()) {}",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "for (const item of missing()) {}",
+    "function missing() { throw createError({ statusCode: 404 }) }; for (const item of missing()) {}",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "for (const item in missing()) {}",
+    "function missing() { throw createError({ statusCode: 404 }) }; for (const item in missing()) {}",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "[fail(), missing()]",
+    "function fail() { throw new Error() }; function missing() { throw createError({ statusCode: 404 }) }; const value = [fail(), missing()]",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "({ first: fail(), second: missing() })",
+    "function fail() { throw new Error() }; function missing() { throw createError({ statusCode: 404 }) }; const value = ({ first: fail(), second: missing() })",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "({ [fail()]: missing() })",
+    "function fail() { throw new Error() }; function missing() { throw createError({ statusCode: 404 }) }; const value = ({ [fail()]: missing() })",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "flag || !flag",
+    "throw createError({ statusCode: 404 })",
+    "if (flag || !flag) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "!flag || flag",
+    "throw createError({ statusCode: 404 })",
+    "if (!flag || flag) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "contradiction",
+    "throw createError({ statusCode: 404 })",
+    "if (flag && !flag) throw new Error(); throw error",
+    false,
+  ],
+
+  [
     "compound preservation",
     "throw createError({ statusCode: 404 })",
     "if (error && isError(error)) throw error; throw new Error()",
