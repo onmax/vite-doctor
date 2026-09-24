@@ -43,7 +43,7 @@ export const noHttpErrorMasking = createRule({
           const caught = catchOutcomes(node.handler, path, new Map(), conditions);
           return caught.some(
             (result) =>
-              result.outcome === 500 &&
+              (result.outcome === 500 || result.outcome === "server-error") &&
               (!node.finalizer ||
                 outcomes(node.finalizer, result, new Map(), conditions).some(
                   (final) => final.outcome === "normal",
@@ -66,40 +66,48 @@ export const noHttpErrorMasking = createRule({
   },
 });
 
-type Outcome = number | "normal" | "exit" | "throw" | "break" | "continue";
+type Outcome = number | "server-error" | "normal" | "exit" | "throw" | "break" | "continue";
 
 interface Path {
   outcome: Outcome;
   label?: string;
   conditions: ReadonlyMap<string, boolean>;
+  bindings?: Bindings;
+  functions?: ReadonlyMap<string, AnyNode>;
 }
 
 type Bindings = ReadonlyMap<string, Outcome>;
 
 function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set<string>): Path[] {
-  const normal = { ...path, outcome: "normal" as const, label: undefined };
+  bindings = path.bindings ?? bindings;
+  const normal = { ...path, bindings, outcome: "normal" as const, label: undefined };
   if (!node) return [normal];
   if (node.type === "BlockStatement") {
     const locals = blockBindings(node);
+    const functions = new Map(path.functions);
+    for (const name of locals) functions.delete(name);
+    for (const statement of node.body) {
+      if (statement.type === "FunctionDeclaration" && statement.id)
+        functions.set(statement.id.name, statement);
+      if (statement.type === "VariableDeclaration")
+        for (const declaration of statement.declarations)
+          if (
+            declaration.id.type === "Identifier" &&
+            declaration.init &&
+            isFunction(declaration.init)
+          )
+            functions.set(declaration.id.name, declaration.init);
+    }
     const scopedBindings = new Map(bindings);
     const scopedConditions = new Map(normal.conditions);
     for (const name of locals) {
       scopedBindings.delete(name);
       scopedConditions.delete(name);
     }
-    let paths: Path[] = [{ ...normal, conditions: scopedConditions }];
+    let paths: Path[] = [
+      { ...normal, bindings: scopedBindings, functions, conditions: scopedConditions },
+    ];
     for (const statement of node.body) {
-      if (statement.type === "VariableDeclaration") {
-        for (const declaration of statement.declarations) {
-          const status = httpStatus(declaration.init);
-          if (
-            declaration.id.type === "Identifier" &&
-            status !== undefined &&
-            stableBinding(node, declaration.id.name, declaration)
-          )
-            scopedBindings.set(declaration.id.name, status);
-        }
-      }
       const next = paths.flatMap((current) =>
         current.outcome === "normal"
           ? outcomes(statement, current, scopedBindings, conditions)
@@ -111,6 +119,7 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
             JSON.stringify([
               current.outcome,
               current.label,
+              [...(current.bindings ?? [])].sort(([a], [b]) => a.localeCompare(b)),
               [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
             ]),
             current,
@@ -124,7 +133,17 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
         restored.delete(name);
         if (path.conditions.has(name)) restored.set(name, path.conditions.get(name)!);
       }
-      return { ...current, conditions: restored };
+      const restoredBindings = new Map(current.bindings);
+      for (const name of locals) {
+        restoredBindings.delete(name);
+        if (bindings.has(name)) restoredBindings.set(name, bindings.get(name)!);
+      }
+      return {
+        ...current,
+        bindings: restoredBindings,
+        functions: path.functions,
+        conditions: restored,
+      };
     });
   }
   if (node.type === "ThrowStatement") {
@@ -132,7 +151,7 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       httpStatus(node.argument) ??
       (node.argument?.type === "Identifier" ? bindings.get(node.argument.name) : undefined) ??
       "throw";
-    return [{ ...path, outcome }];
+    return [{ ...normal, outcome }];
   }
   if (node.type === "ReturnStatement") return [{ ...path, outcome: "exit" }];
   if (node.type === "BreakStatement" || node.type === "ContinueStatement")
@@ -194,8 +213,14 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
   }
   if (node.type === "VariableDeclaration") {
     const next = new Map(path.conditions);
+    const values = new Map(bindings);
     for (const declaration of node.declarations) {
       if (declaration.id.type !== "Identifier") continue;
+      if (declaration.init) {
+        values.delete(declaration.id.name);
+        const status = httpStatus(declaration.init);
+        if (status !== undefined) values.set(declaration.id.name, status);
+      }
       next.delete(declaration.id.name);
       if (
         declaration.init?.type === "Literal" &&
@@ -204,11 +229,15 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       )
         next.set(declaration.id.name, declaration.init.value);
     }
-    return [{ ...normal, conditions: next }];
+    return [{ ...normal, bindings: values, conditions: next }];
   }
   const assignment = node.type === "ExpressionStatement" ? node.expression : node;
   if (assignment.type === "AssignmentExpression" && assignment.left.type === "Identifier") {
     const next = new Map(path.conditions);
+    const values = new Map(bindings);
+    values.delete(assignment.left.name);
+    const status = assignment.operator === "=" ? httpStatus(assignment.right) : undefined;
+    if (status !== undefined) values.set(assignment.left.name, status);
     next.delete(assignment.left.name);
     if (
       assignment.operator === "=" &&
@@ -217,7 +246,7 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       conditions.has(assignment.left.name)
     )
       next.set(assignment.left.name, assignment.right.value);
-    return [{ ...normal, conditions: next }];
+    return [{ ...normal, bindings: values, conditions: next }];
   }
   if (isLoop(node)) return loopOutcomes(node, normal, bindings, conditions);
   if (node.type === "IfStatement") {
@@ -261,7 +290,9 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     let paths = outcomes(node.block, normal, bindings, conditions);
     if (node.handler) {
       paths = paths.flatMap((current) =>
-        typeof current.outcome === "number" || current.outcome === "throw"
+        typeof current.outcome === "number" ||
+        current.outcome === "server-error" ||
+        current.outcome === "throw"
           ? catchOutcomes(node.handler, current, bindings, conditions)
           : [current],
       );
@@ -276,6 +307,52 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       );
     }
     return paths;
+  }
+  let callee = assignment.callee;
+  while (callee?.type === "ParenthesizedExpression") callee = callee.expression;
+  if (
+    assignment.type === "CallExpression" &&
+    isFunction(callee) &&
+    !callee.async &&
+    !callee.generator
+  ) {
+    const local = new Map(bindings);
+    const shadows = new Set<string>();
+    const nested = new Set<AnyNode>();
+    walkScriptLocal(callee.body, (child) => {
+      if (isFunction(child)) walkScriptLocal(child, (descendant) => nested.add(descendant));
+      if (nested.has(child) || child.type !== "VariableDeclaration" || child.kind !== "var") return;
+      for (const declaration of child.declarations)
+        for (const name of bindings.keys())
+          if (assignsBinding(declaration.id, name)) shadows.add(name);
+    });
+    for (const param of callee.params)
+      for (const name of bindings.keys()) if (assignsBinding(param, name)) shadows.add(name);
+    for (const name of shadows) local.delete(name);
+    return outcomes(callee.body, { ...normal, bindings: local }, local, conditions).map(
+      (current) => {
+        const restored = new Map(
+          [...(current.bindings ?? [])].filter(([name]) => bindings.has(name)),
+        );
+        for (const name of shadows) restored.set(name, bindings.get(name)!);
+        return {
+          ...current,
+          outcome: current.outcome === "exit" ? "normal" : current.outcome,
+          bindings: restored,
+        };
+      },
+    );
+  }
+  if (!isFunction(node)) {
+    const values = new Map(bindings);
+    for (const name of values.keys()) if (!stableBinding(node, name)) values.delete(name);
+    walkScriptLocal(node, (child) => {
+      if (child.type !== "Identifier") return;
+      const fn = path.functions?.get(child.name);
+      if (!fn) return;
+      for (const name of values.keys()) if (!stableBinding(fn, name)) values.delete(name);
+    });
+    return [{ ...normal, bindings: values }];
   }
   return [normal];
 }
@@ -337,7 +414,10 @@ function loopOutcomes(
   let first = node.type === "DoWhileStatement";
   while (pending.length) {
     const current = pending.pop()!;
-    const key = JSON.stringify([...current.conditions].sort(([a], [b]) => a.localeCompare(b)));
+    const key = JSON.stringify([
+      [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
+      [...(current.bindings ?? [])].sort(([a], [b]) => a.localeCompare(b)),
+    ]);
     if (!first && seen.has(key)) continue;
     if (!first) seen.add(key);
     const paths = outcomes(first ? node.body : iteration, current, bindings, conditions);
@@ -360,11 +440,20 @@ function catchOutcomes(
   bindings: Bindings,
   conditions: Set<string>,
 ): Path[] {
-  const caught = new Map(bindings);
+  const caught = new Map(path.bindings ?? bindings);
   if (handler.param?.type === "Identifier") caught.delete(handler.param.name);
-  const name = stableCatchBinding(handler);
+  const name = handler.param?.type === "Identifier" ? handler.param.name : undefined;
   if (name) caught.set(name, path.outcome);
-  return outcomes(handler.body, path, caught, conditions);
+  return outcomes(handler.body, { ...path, bindings: caught }, caught, conditions).map(
+    (current) => {
+      if (!name) return current;
+      const restored = new Map(current.bindings);
+      restored.delete(name);
+      const outer = path.bindings ?? bindings;
+      if (outer.has(name)) restored.set(name, outer.get(name)!);
+      return { ...current, bindings: restored };
+    },
+  );
 }
 
 function stableConditions(node: AnyNode): Set<string> {
@@ -435,10 +524,12 @@ function stableConditions(node: AnyNode): Set<string> {
   );
 }
 
-function httpStatus(node: AnyNode): number | undefined {
+function httpStatus(node: AnyNode): number | "server-error" | undefined {
+  if (node?.type === "NewExpression" && node.callee?.name === "Error") return "server-error";
   if (node?.type !== "CallExpression" || node.callee?.name !== "createError") return;
   const options = node.arguments?.[0];
-  if (options?.type !== "ObjectExpression") return;
+  if (!options || (options.type === "Literal" && typeof options.value === "string")) return 500;
+  if (options.type !== "ObjectExpression") return;
   const statuses = new Map<string, number | undefined>();
   for (const property of options.properties ?? []) {
     if (property.type === "SpreadElement" || property.computed) {
@@ -454,7 +545,7 @@ function httpStatus(node: AnyNode): number | undefined {
       );
   }
   if (statuses.has("statusCode")) return statuses.get("statusCode");
-  return statuses.get("status");
+  return statuses.has("status") ? statuses.get("status") : 500;
 }
 
 function blockBindings(node: AnyNode): Set<string> {
@@ -472,13 +563,7 @@ function blockBindings(node: AnyNode): Set<string> {
   return names;
 }
 
-function stableCatchBinding(handler: AnyNode): string | undefined {
-  if (handler.param?.type !== "Identifier") return;
-  const name = handler.param.name;
-  return stableBinding(handler.body, name) ? name : undefined;
-}
-
-function stableBinding(body: AnyNode, name: string, declaration?: AnyNode): boolean {
+function stableBinding(body: AnyNode, name: string): boolean {
   let stable = true;
   const nested = unreferencedFunctionNodes(body);
   walkScriptLocal(body, (node) => {
@@ -492,9 +577,7 @@ function stableBinding(body: AnyNode, name: string, declaration?: AnyNode): bool
       return;
     }
     if (
-      (node !== declaration &&
-        node.type === "VariableDeclarator" &&
-        assignsBinding(node.id, name)) ||
+      (node.type === "VariableDeclarator" && assignsBinding(node.id, name)) ||
       (node.type === "AssignmentExpression" && assignsBinding(node.left, name)) ||
       (node.type === "UpdateExpression" && node.argument?.name === name) ||
       (node.type === "CatchClause" && node.param?.name === name)

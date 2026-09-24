@@ -102,3 +102,14 @@ test("accepts an @types provider for an external declaration import", async () =
     ),
   ).toEqual([]);
 });
+
+test.each([
+  { main: 42 },
+  { browser: { "./index.js": true } },
+  { bin: { cli: false } },
+  { dependencies: { h3: 42 } },
+  { typesVersions: { "*": { "*": "index.d.ts" } } },
+  { peerDependenciesMeta: { h3: { optional: "yes" } } },
+])("rejects malformed package metadata %j", async (manifest) => {
+  await expect(diagnose(manifest, {})).rejects.toThrow("Invalid package.json manifest");
+});

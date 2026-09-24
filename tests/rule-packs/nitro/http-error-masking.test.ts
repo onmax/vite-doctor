@@ -39,6 +39,104 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "IIFE parameter shadow",
+    "throw createError({ statusCode: 404 })",
+    "((error) => { error = new Error() })(other); if (isError(error)) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "IIFE var shadow",
+    "throw createError({ statusCode: 404 })",
+    "(() => { var error = new Error() })(); if (isError(error)) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "generic Error replacement",
+    "throw createError({ statusCode: 404 })",
+    'throw new Error("failed")',
+    true,
+  ],
+  [
+    "default H3 replacement",
+    "throw createError({ statusCode: 404 })",
+    'throw createError({ message: "failed" })',
+    true,
+  ],
+  [
+    "string H3 replacement",
+    "throw createError({ statusCode: 404 })",
+    'throw createError("failed")',
+    true,
+  ],
+  ["empty H3 replacement", "throw createError({ statusCode: 404 })", "throw createError()", true],
+  [
+    "guard before catch mutation",
+    "throw createError({ statusCode: 404 })",
+    "if (isError(error)) throw error; error = normalize(error); throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "IIFE protected throw",
+    "(() => { throw createError({ statusCode: 404 }) })()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "IIFE function throw",
+    "(function () { throw createError({ statusCode: 404 }) })()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "IIFE local return",
+    "(() => { return; throw createError({ statusCode: 404 }) })()",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "nested block var",
+    "{ var local = createError({ statusCode: 404 }) }; throw local",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "unreachable local write",
+    "let local = createError({ statusCode: 404 }); throw local; local = new Error()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "false branch local write",
+    "let local = createError({ statusCode: 404 }); if (false) local = new Error(); throw local",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "conditional local mutation",
+    "let local = createError({ statusCode: 404 }); if (change) local = new Error(); throw local",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "named closure local mutation",
+    "let local = createError({ statusCode: 404 }); const mutate = () => { local = new Error() }; mutate(); throw local",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "named closure catch mutation",
+    "throw createError({ statusCode: 404 })",
+    "const mutate = () => { error = new Error() }; mutate(); if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "IIFE unknown catch mutation",
+    "throw createError({ statusCode: 404 })",
+    "(() => { error = normalize(error) })(); if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+
+  [
     "invoked condition closure",
     "if (missing) throw createError({ statusCode: 404 })",
     "const mutate = () => { missing = false }; mutate(); if (missing) throw error; throw createError({ statusCode: 500 })",
