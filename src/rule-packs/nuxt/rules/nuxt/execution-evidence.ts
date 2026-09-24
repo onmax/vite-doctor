@@ -90,10 +90,48 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
 
   const declarator = nearestVariableDeclarator(node);
   const name = declarator?.id?.type === "Identifier" ? declarator.id.name : "";
-  if (!name) return false;
-  if (getTemplateBoundIdentifiers(ctx).has(name)) return true;
-  if (new RegExp(`{{[^}]*\\b${escapeRegExp(name)}\\b[^}]*}}`).test(template)) return true;
-  return isHydratingStateValue(node);
+  if (name && getTemplateBoundIdentifiers(ctx).has(name)) return true;
+  if (name && new RegExp(`{{[^}]*\\b${escapeRegExp(name)}\\b[^}]*}}`).test(template)) return true;
+  if (isHydratingStateValue(node)) return true;
+  const owner = nearestFunctionOrProgram(node);
+  const functionName = owner ? namedFunctionForNode(owner) : null;
+  return Boolean(functionName && functionFlowsToTemplate(ctx, functionName, template, new Set()));
+}
+
+function functionFlowsToTemplate(
+  ctx: RuleContext,
+  functionName: string,
+  template: string,
+  seen: Set<string>,
+): boolean {
+  if (seen.has(functionName) || seen.size >= 4) return false;
+  seen.add(functionName);
+  if (new RegExp(`{{[^}]*\\b${escapeRegExp(functionName)}\\s*\\(`).test(template)) return true;
+  const renderedIdentifier = (name: string) =>
+    getTemplateBoundIdentifiers(ctx).has(name) ||
+    new RegExp(`{{[^}]*\\b${escapeRegExp(name)}\\b[^}]*}}`).test(template);
+  const visit = (node: AnyNode, owner: string | null, variable: string | null): boolean => {
+    if (!node || typeof node !== "object") return false;
+    if (Array.isArray(node)) return node.some((child) => visit(child, owner, variable));
+    if (node.type === "FunctionDeclaration") owner = node.id?.name ?? owner;
+    if (node.type === "VariableDeclarator") {
+      const name = node.id?.type === "Identifier" ? node.id.name : null;
+      if (name && ["ArrowFunctionExpression", "FunctionExpression"].includes(node.init?.type))
+        return visit(node.init, name, null);
+      return visit(node.init, owner, name);
+    }
+    if (node.type === "CallExpression" && node.callee?.name === functionName) {
+      if (variable && renderedIdentifier(variable)) return true;
+      if (owner && owner !== functionName && functionFlowsToTemplate(ctx, owner, template, new Set(seen)))
+        return true;
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "__doctorParent" || key === "parent") continue;
+      if (value && typeof value === "object" && visit(value, owner, variable)) return true;
+    }
+    return false;
+  };
+  return visit(ctx.file.scriptAst, null, null);
 }
 
 export function isInsideExportedFunction(text: string, offset: number) {
