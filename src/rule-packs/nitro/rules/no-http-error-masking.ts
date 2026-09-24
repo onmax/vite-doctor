@@ -3,6 +3,7 @@ import { createRule, report, walkScriptLocal, type AnyNode } from "./shared.js";
 import { isNitroRouteFile } from "./request-helpers.js";
 
 const ruleId = "nitro/h3/no-http-error-masking";
+const analysisLimit = Symbol("HTTP error analysis limit");
 
 export const noHttpErrorMasking = createRule({
   meta: {
@@ -45,25 +46,33 @@ export const noHttpErrorMasking = createRule({
         const lexical = lexicalBindings(root);
         const initial: Path = {
           outcome: "normal",
+          budget: { remaining: 4096 },
           conditions: new Map(),
           resolveBinding: lexical.resolve,
           functions: enclosingFunctions(node, lexical),
         };
-        const candidate = enclosingPaths(node, initial, conditions)
-          .flatMap((path) => outcomes(node.block, path, new Map(), conditions))
-          .find((path) => {
-            if (typeof path.outcome !== "number" || path.outcome < 400 || path.outcome >= 500)
-              return false;
-            const caught = catchOutcomes(node.handler, path, new Map(), conditions);
-            return caught.some(
-              (result) =>
-                (result.outcome === 500 || result.outcome === "server-error") &&
-                (!node.finalizer ||
-                  outcomes(node.finalizer, result, new Map(), conditions).some(
-                    (final) => final.outcome === "normal",
-                  )),
-            );
-          });
+        let candidate: Path | undefined;
+        try {
+          candidate = enclosingPaths(node, initial, conditions)
+            .flatMap((path) => outcomes(node.block, path, new Map(), conditions))
+            .find((path) => {
+              if (typeof path.outcome !== "number" || path.outcome < 400 || path.outcome >= 500)
+                return false;
+              const caught = catchOutcomes(node.handler, path, new Map(), conditions);
+              return caught.some(
+                (result) =>
+                  (result.outcome === 500 || result.outcome === "server-error") &&
+                  (!node.finalizer ||
+                    outcomes(node.finalizer, result, new Map(), conditions).some(
+                      (final) => final.outcome === "normal",
+                    )),
+              );
+            });
+        } catch (error) {
+          // Incomplete path exploration cannot prove that an HTTP error is masked.
+          if (error === analysisLimit) return;
+          throw error;
+        }
         if (!candidate) return;
         const status = candidate.outcome;
         report(
@@ -83,6 +92,7 @@ export const noHttpErrorMasking = createRule({
 type Outcome = number | "server-error" | "normal" | "exit" | "throw" | "break" | "continue";
 
 interface Path {
+  budget: { remaining: number };
   resolveBinding: (node: AnyNode) => AnyNode;
   outcome: Outcome;
   label?: string;
@@ -95,6 +105,7 @@ interface Path {
 type Bindings = ReadonlyMap<string, Outcome>;
 
 function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set<string>): Path[] {
+  if (--path.budget.remaining < 0) throw analysisLimit;
   bindings = path.bindings ?? bindings;
   const normal = { ...path, bindings, outcome: "normal" as const, label: undefined };
   if (!node) return [normal];
@@ -336,6 +347,7 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     const caught =
       test.type === "CallExpression" &&
       test.callee?.name === "isError" &&
+      !path.resolveBinding(test.callee) &&
       test.arguments?.length === 1 &&
       test.arguments[0]?.type === "Identifier"
         ? bindings.get(test.arguments[0].name)
@@ -851,6 +863,28 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
     if (parent.type === "BlockStatement" || parent.type === "Program") {
       const index = parent.body.indexOf(child);
       if (index >= 0) prefixes.unshift(parent.body.slice(0, index));
+    } else if (parent.type === "IfStatement") {
+      prefixes.unshift([
+        {
+          type: "IfStatement",
+          test: parent.test,
+          consequent: child === parent.consequent ? null : { type: "ReturnStatement" },
+          alternate: child === parent.alternate ? null : { type: "ReturnStatement" },
+        } as AnyNode,
+      ]);
+    } else if (
+      (parent.type === "WhileStatement" || parent.type === "ForStatement") &&
+      child === parent.body &&
+      parent.test
+    ) {
+      prefixes.unshift([
+        {
+          type: "IfStatement",
+          test: parent.test,
+          consequent: null,
+          alternate: { type: "ReturnStatement" },
+        } as AnyNode,
+      ]);
     }
   }
   let paths = [initial];

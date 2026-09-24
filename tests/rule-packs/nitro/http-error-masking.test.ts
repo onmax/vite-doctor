@@ -1066,6 +1066,53 @@ test.each([
   } catch { throw createError({ statusCode: 500 }) } finally { if (missing) return }`,
     false,
   ],
+  [
+    "contradictory enclosing branch",
+    `if (change) {
+      try { if (!change) throw createError({ statusCode: 404 }) }
+      catch { throw new Error() }
+    }`,
+    false,
+  ],
+  [
+    "enclosing branch preserves the caught error",
+    `if (missing) {
+      try { throw createError({ statusCode: 404 }) }
+      catch (error) { if (missing) throw error; throw new Error() }
+    }`,
+    false,
+  ],
+  [
+    "enclosing alternate preserves the caught error",
+    `if (missing) {} else {
+      try { throw createError({ statusCode: 404 }) }
+      catch (error) { if (!missing) throw error; throw new Error() }
+    }`,
+    false,
+  ],
+  [
+    "enclosing loop preserves the caught error",
+    `while (missing) {
+      try { throw createError({ statusCode: 404 }) }
+      catch (error) { if (missing) throw error; throw new Error() }
+    }`,
+    false,
+  ],
+  [
+    "feasible enclosing branch masks the caught error",
+    `if (missing) {
+      try { throw createError({ statusCode: 404 }) }
+      catch (error) { if (!missing) throw error; throw new Error() }
+    }`,
+    true,
+  ],
+  [
+    "shadowed isError does not prove preservation",
+    `const isError = () => false;
+    try { throw createError({ statusCode: 404 }) }
+    catch (error) { if (isError(error)) throw error; throw new Error() }`,
+    true,
+  ],
 ])("handles %s", async (_name, body, expected) => {
   const result = await runRuleFixture({
     framework: "nitro",
@@ -1076,3 +1123,26 @@ test.each([
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
 });
+
+test("bounds correlated path exploration without affecting the next try", async () => {
+  const branches = Array.from({ length: 20 }, (_, index) => `if (flag${index}) {}`).join("\n");
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        try {
+          ${branches}
+          ${branches}
+          throw createError({ statusCode: 404 })
+        } catch { throw new Error() }
+      });
+      export function anotherHandler() {
+        try { throw createError({ statusCode: 401 }) }
+        catch { throw new Error() }
+      }`,
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+  expect(result.diagnostics.find((item) => item.code === "NITRO0018")?.message).toContain("401");
+}, 5000);
