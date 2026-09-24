@@ -99,12 +99,15 @@ interface Path {
   conditions: ReadonlyMap<string, boolean>;
   bindings?: Bindings;
   functions?: ReadonlyMap<AnyNode, AnyNode>;
+  objects?: ReadonlyMap<AnyNode, AnyNode>;
   calls?: readonly AnyNode[];
   value?: Value;
   errors?: ReadonlyMap<number, Outcome>;
   literals?: ReadonlyMap<AnyNode, { literal: unknown }>;
   uninitialized?: ReadonlySet<AnyNode>;
   arrayIteratorElements?: AnyNode[] | null;
+  asyncBody?: boolean;
+  adoptingAsync?: boolean;
 }
 
 type ErrorValue = { id: number; status: Outcome };
@@ -132,25 +135,29 @@ function outcomes(
   bindings: Bindings,
   conditions: Set<string>,
   argumentValues?: readonly (Value | undefined)[],
+  evaluatedArguments?: AnyNode[],
 ): Path[] {
-  return evaluateOutcomes(node, path, bindings, conditions, argumentValues).map((current) => {
-    if (current.outcome !== "normal") return current;
-    const expression = unwrapExpression(node);
-    const status = httpStatus(expression, current.resolveBinding, current.literals);
-    if (status !== undefined)
-      return { ...current, value: { error: { id: --current.budget.remaining, status } } };
-    if (expression?.type === "Literal") return { ...current, value: { literal: expression.value } };
-    if (expression?.type === "Identifier") {
-      const binding = current.resolveBinding(expression);
-      if (binding && current.uninitialized?.has(binding)) return { ...current, outcome: "throw" };
-      const error = current.bindings?.get(binding);
-      return {
-        ...current,
-        value: error ? { error } : binding ? current.literals?.get(binding) : undefined,
-      };
-    }
-    return current;
-  });
+  return evaluateOutcomes(node, path, bindings, conditions, argumentValues, evaluatedArguments).map(
+    (current) => {
+      if (current.outcome !== "normal") return current;
+      const expression = unwrapExpression(node);
+      const status = httpStatus(expression, current.resolveBinding, current.literals);
+      if (status !== undefined)
+        return { ...current, value: { error: { id: --current.budget.remaining, status } } };
+      if (expression?.type === "Literal")
+        return { ...current, value: { literal: expression.value } };
+      if (expression?.type === "Identifier") {
+        const binding = current.resolveBinding(expression);
+        if (binding && current.uninitialized?.has(binding)) return { ...current, outcome: "throw" };
+        const error = current.bindings?.get(binding);
+        return {
+          ...current,
+          value: error ? { error } : binding ? current.literals?.get(binding) : undefined,
+        };
+      }
+      return current;
+    },
+  );
 }
 
 function evaluateOutcomes(
@@ -159,6 +166,7 @@ function evaluateOutcomes(
   bindings: Bindings,
   conditions: Set<string>,
   argumentValues?: readonly (Value | undefined)[],
+  evaluatedArguments?: AnyNode[],
 ): Path[] {
   if (--path.budget.remaining < 0) throw analysisLimit;
   bindings = path.bindings ?? bindings;
@@ -175,7 +183,9 @@ function evaluateOutcomes(
   if (node.type === "BlockStatement") {
     const locals = blockBindings(node);
     const functions = new Map(path.functions);
+    const objects = new Map(path.objects);
     for (const name of locals) functions.delete(path.resolveBinding({ name } as AnyNode, node));
+    for (const name of locals) objects.delete(path.resolveBinding({ name } as AnyNode, node));
     for (const statement of node.body) {
       if (statement.type === "FunctionDeclaration" && statement.id)
         functions.set(path.resolveBinding(statement.id), statement);
@@ -192,6 +202,7 @@ function evaluateOutcomes(
         ...normal,
         bindings: scopedBindings,
         functions,
+        objects,
         conditions: scopedConditions,
         uninitialized,
       },
@@ -217,6 +228,9 @@ function evaluateOutcomes(
               [...(current.functions ?? [])]
                 .map(([binding, fn]) => [binding.start, fn.start])
                 .sort(([a], [b]) => a - b),
+              [...(current.objects ?? [])]
+                .map(([binding, object]) => [binding.start, object.start])
+                .sort(([a], [b]) => a - b),
             ]),
             current,
           ]),
@@ -237,16 +251,20 @@ function evaluateOutcomes(
         if (bindings.has(binding)) restoredBindings.set(binding, bindings.get(binding)!);
       }
       const restoredFunctions = new Map(current.functions);
+      const restoredObjects = new Map(current.objects);
       for (const name of locals) {
         const binding = path.resolveBinding({ name } as AnyNode, node);
         restoredFunctions.delete(binding);
+        restoredObjects.delete(binding);
         if (path.functions?.has(binding))
           restoredFunctions.set(binding, path.functions.get(binding)!);
+        if (path.objects?.has(binding)) restoredObjects.set(binding, path.objects.get(binding)!);
       }
       return {
         ...current,
         bindings: restoredBindings,
         functions: restoredFunctions,
+        objects: restoredObjects,
         conditions: restored,
       };
     });
@@ -279,9 +297,19 @@ function evaluateOutcomes(
     });
   }
   if (node.type === "ReturnStatement")
-    return outcomes(node.argument, normal, bindings, conditions).map((current) => ({
+    return outcomes(
+      node.argument,
+      {
+        ...normal,
+        adoptingAsync:
+          normal.asyncBody && unwrapExpression(node.argument)?.type === "CallExpression",
+      },
+      bindings,
+      conditions,
+    ).map((current) => ({
       ...current,
       outcome: current.outcome === "normal" ? "exit" : current.outcome,
+      adoptingAsync: path.adoptingAsync,
     }));
   if (node.type === "BreakStatement" || node.type === "ContinueStatement")
     return [
@@ -337,11 +365,13 @@ function evaluateOutcomes(
             const next = new Map(evaluated.conditions);
             const values = new Map(evaluated.bindings);
             const functions = new Map(evaluated.functions);
+            const objects = new Map(evaluated.objects);
             for (const name of bindingNames(declaration.id)) {
               if (declaration.id.type === "Identifier")
                 next.delete(conditionKey({ name } as AnyNode, evaluated, declaration.id));
               if (declaration.init && declaration.id.type === "Identifier") {
                 functions.delete(evaluated.resolveBinding({ name } as AnyNode, declaration.id));
+                objects.delete(evaluated.resolveBinding({ name } as AnyNode, declaration.id));
                 values.delete(evaluated.resolveBinding({ name } as AnyNode, declaration.id));
               }
             }
@@ -354,6 +384,13 @@ function evaluateOutcomes(
                   ? evaluated.functions?.get(evaluated.resolveBinding(initializer))
                   : undefined;
               if (fn) functions.set(evaluated.resolveBinding(declaration.id), fn);
+              const object =
+                initializer?.type === "ObjectExpression"
+                  ? initializer
+                  : initializer?.type === "Identifier"
+                    ? evaluated.objects?.get(evaluated.resolveBinding(initializer))
+                    : undefined;
+              if (object) objects.set(evaluated.resolveBinding(declaration.id), object);
               const value = evaluated.value;
               if (value && "error" in value)
                 values.set(evaluated.resolveBinding(declaration.id), value.error);
@@ -388,6 +425,7 @@ function evaluateOutcomes(
               value: undefined,
               bindings: values,
               functions,
+              objects,
               conditions: next,
               literals,
               uninitialized,
@@ -527,6 +565,12 @@ function evaluateOutcomes(
           assignment.left.object.type === "Identifier"
         ) {
           const member = assignment.left;
+          const objects = new Map(evaluated.objects);
+          const object = objects.get(evaluated.resolveBinding(member.object));
+          if (object)
+            for (const [binding, candidate] of objects)
+              if (candidate === object) objects.delete(binding);
+          evaluated = { ...evaluated, objects };
           const property = member.computed
             ? knownLiteral(member.property, target)
             : member.property.name;
@@ -550,6 +594,7 @@ function evaluateOutcomes(
           const next = new Map(evaluated.conditions);
           const values = new Map(evaluated.bindings);
           const functions = new Map(evaluated.functions);
+          const objects = new Map(evaluated.objects);
           const binding = evaluated.resolveBinding(assignment.left);
           if (
             binding?.__doctorParent?.type === "FunctionExpression" &&
@@ -557,6 +602,7 @@ function evaluateOutcomes(
           )
             return { ...evaluated, outcome: "throw" };
           functions.delete(binding);
+          objects.delete(binding);
           const source = unwrapExpression(assignment.right);
           const fn = isFunction(source)
             ? source
@@ -564,6 +610,13 @@ function evaluateOutcomes(
               ? evaluated.functions?.get(evaluated.resolveBinding(source))
               : undefined;
           if (binding && assignment.operator === "=" && fn) functions.set(binding, fn);
+          const object =
+            source?.type === "ObjectExpression"
+              ? source
+              : source?.type === "Identifier"
+                ? evaluated.objects?.get(evaluated.resolveBinding(source))
+                : undefined;
+          if (binding && assignment.operator === "=" && object) objects.set(binding, object);
           values.delete(binding);
           const value = assignment.operator === "=" ? evaluated.value : undefined;
           if (value && "error" in value) values.set(binding, value.error);
@@ -580,7 +633,7 @@ function evaluateOutcomes(
             conditions.has(assignment.left.name)
           )
             next.set(conditionKey(assignment.left, evaluated), assignment.right.value);
-          return { ...evaluated, bindings: values, functions, conditions: next, literals };
+          return { ...evaluated, bindings: values, functions, objects, conditions: next, literals };
         }
         const values = new Map(evaluated.bindings);
         const functions = new Map(evaluated.functions);
@@ -709,6 +762,14 @@ function evaluateOutcomes(
         : [object];
       return properties.map((current) => {
         if (current.outcome !== "normal") return current;
+        if (
+          !node.optional &&
+          ((objectValue && "literal" in objectValue && objectValue.literal == null) ||
+            (node.object.type === "Identifier" &&
+              node.object.name === "undefined" &&
+              !current.resolveBinding(node.object)))
+        )
+          return { ...current, outcome: "throw" };
         const property = node.computed
           ? current.value && "literal" in current.value
             ? current.value.literal
@@ -736,51 +797,77 @@ function evaluateOutcomes(
     call.type !== "NewExpression"
   )
     return outcomes(call, normal, bindings, conditions);
-  if (call.type === "CallExpression" || call.type === "NewExpression") {
-    const expand = (args: AnyNode[]): AnyNode[] =>
-      args.flatMap((arg) => {
-        const operand = arg.type === "SpreadElement" ? unwrapExpression(arg.argument) : undefined;
-        if (operand?.type !== "ArrayExpression") return [arg];
-        if (normal.arrayIteratorElements === null) return [arg];
-        return expand(
-          normal.arrayIteratorElements ??
-            operand.elements.map(
-              (element: AnyNode) => element ?? { type: "Literal", value: undefined },
-            ),
-        );
-      });
-    call = { ...call, arguments: expand(call.arguments) };
-  }
   if (!argumentValues && (call.type === "CallExpression" || call.type === "NewExpression")) {
     let paths = outcomes(call.callee, normal, bindings, conditions).map((current) => ({
       path: current,
       values: [] as (Value | undefined)[],
+      arguments: [] as AnyNode[],
     }));
     for (const argument of call.arguments) {
-      paths = paths.flatMap(({ path: current, values }) =>
-        current.outcome === "normal"
-          ? outcomes(
-              argument.type === "SpreadElement" ? argument.argument : argument,
-              current,
-              bindings,
-              conditions,
-            ).map((evaluated) => ({ path: evaluated, values: [...values, evaluated.value] }))
-          : [{ path: current, values }],
-      );
+      paths = paths.flatMap(({ path: current, values, arguments: evaluatedArguments }) => {
+        const evaluate = (
+          item: AnyNode,
+          state: Path,
+          items: AnyNode[],
+          itemValues: (Value | undefined)[],
+        ): typeof paths => {
+          if (state.outcome !== "normal")
+            return [{ path: state, values: itemValues, arguments: items }];
+          const operand =
+            item.type === "SpreadElement" ? unwrapExpression(item.argument) : undefined;
+          if (operand?.type === "ArrayExpression" && state.arrayIteratorElements !== null) {
+            const elements: AnyNode[] = state.arrayIteratorElements ?? operand.elements;
+            return elements.reduce<typeof paths>(
+              (results, element) =>
+                results.flatMap((result) =>
+                  evaluate(
+                    element ?? { type: "Literal", value: undefined },
+                    result.path,
+                    result.arguments,
+                    result.values,
+                  ),
+                ),
+              [{ path: state, values: itemValues, arguments: items }],
+            );
+          }
+          return outcomes(
+            item.type === "SpreadElement" ? item.argument : item,
+            state,
+            bindings,
+            conditions,
+          ).map((evaluated) => ({
+            path: evaluated,
+            values: [...itemValues, evaluated.value],
+            arguments: [...items, item],
+          }));
+        };
+        return evaluate(argument, current, evaluatedArguments, values);
+      });
     }
-    return paths.flatMap(({ path: current, values }) =>
+    return paths.flatMap(({ path: current, values, arguments: evaluatedArguments }) =>
       current.outcome === "normal"
-        ? outcomes(node, current, bindings, conditions, values)
+        ? outcomes(node, current, bindings, conditions, values, evaluatedArguments)
         : [current],
     );
   }
+  if (evaluatedArguments) call = { ...call, arguments: evaluatedArguments };
   let callee = unwrapExpression(call.callee);
   if (callee?.type === "Identifier") callee = path.functions?.get(path.resolveBinding(callee));
+  if (callee?.type === "MemberExpression" && callee.object.type === "Identifier") {
+    const object = path.objects?.get(path.resolveBinding(callee.object));
+    const key = callee.computed ? knownLiteral(callee.property, path) : callee.property.name;
+    const property = object?.properties.some(
+      (item: AnyNode) => item.type === "SpreadElement" || item.computed,
+    )
+      ? undefined
+      : object?.properties.findLast((item: AnyNode) => (item.key.name ?? item.key.value) === key);
+    if (property?.kind === "init") callee = unwrapExpression(property.value);
+  }
   if (
     (call.type === "CallExpression" ||
       (call.type === "NewExpression" && callee?.type !== "ArrowFunctionExpression")) &&
     isFunction(callee) &&
-    (!callee.async || assignment.type === "AwaitExpression") &&
+    (!callee.async || assignment.type === "AwaitExpression" || path.adoptingAsync) &&
     !callee.generator
   ) {
     // An exhausted analysis budget is not evidence that the call returns.
@@ -796,6 +883,7 @@ function evaluateOutcomes(
     });
     for (const param of callee.params) for (const name of bindingNames(param)) shadows.add(name);
     const functions = new Map(path.functions);
+    const objects = new Map(path.objects);
     if (
       callee.type === "FunctionExpression" &&
       callee.id &&
@@ -808,6 +896,7 @@ function evaluateOutcomes(
       localLiterals.delete(path.resolveBinding({ name } as AnyNode, callee));
       local.delete(path.resolveBinding({ name } as AnyNode, callee));
       functions.delete(path.resolveBinding({ name } as AnyNode, callee));
+      objects.delete(path.resolveBinding({ name } as AnyNode, callee));
       localConditions.delete(conditionKey({ name } as AnyNode, path, callee));
     }
     if (
@@ -821,9 +910,12 @@ function evaluateOutcomes(
         ...normal,
         bindings: local,
         functions,
+        objects,
         conditions: localConditions,
         literals: localLiterals,
         calls: [...(path.calls ?? []), callee],
+        asyncBody: Boolean(callee.async),
+        adoptingAsync: false,
       },
     ];
     for (const [index, param] of callee.params.entries()) {
@@ -898,12 +990,14 @@ function evaluateOutcomes(
           ),
         );
         const restoredFunctions = new Map(current.functions);
+        const restoredObjects = new Map(current.objects);
         const restoredConditions = new Map(current.conditions);
         const restoredLiterals = new Map(current.literals);
         for (const name of shadows) {
           const binding = path.resolveBinding({ name } as AnyNode, callee);
           restored.delete(binding);
           restoredFunctions.delete(binding);
+          restoredObjects.delete(binding);
           restoredLiterals.delete(binding);
           if (path.literals?.has(binding))
             restoredLiterals.set(binding, path.literals.get(binding)!);
@@ -912,6 +1006,7 @@ function evaluateOutcomes(
           if (bindings.has(binding)) restored.set(binding, bindings.get(binding)!);
           if (path.functions?.has(binding))
             restoredFunctions.set(binding, path.functions.get(binding)!);
+          if (path.objects?.has(binding)) restoredObjects.set(binding, path.objects.get(binding)!);
           if (path.conditions.has(key)) restoredConditions.set(key, path.conditions.get(key)!);
         }
         return {
@@ -923,9 +1018,12 @@ function evaluateOutcomes(
               : undefined,
           bindings: restored,
           functions: restoredFunctions,
+          objects: restoredObjects,
           conditions: restoredConditions,
           literals: restoredLiterals,
           calls: path.calls,
+          asyncBody: path.asyncBody,
+          adoptingAsync: path.adoptingAsync,
         };
       });
   }

@@ -2400,3 +2400,58 @@ test.each([
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
 });
+
+test.each([
+  [
+    "adopted async rejection",
+    "async function missing() { throw createError({ statusCode: 404 }) }; async function load() { return missing() }; try { await load() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "unawaited async call",
+    "async function missing() { throw createError({ statusCode: 404 }) }; try { missing() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "local object method throws intentional error",
+    "const helpers = { missing() { throw createError({ statusCode: 404 }) } }; try { helpers.missing() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "replaced object method does not throw intentional error",
+    "const helpers = { missing() { throw createError({ statusCode: 404 }) } }; helpers.missing = () => { throw new Error() }; try { helpers.missing() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "replaced object method through alias does not throw intentional error",
+    "const helpers = { missing() { throw createError({ statusCode: 404 }) } }; const alias = helpers; alias.missing = () => { throw new Error() }; try { helpers.missing() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "nullish access stops before intentional error",
+    "try { null.value; throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "undefined access stops before intentional error",
+    "try { undefined.value; throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "earlier argument changes iterator to client status",
+    "function change() { Array.prototype[Symbol.iterator] = function* () { yield 404 }; return 0 }; function fail(_, code) { throw createError({ statusCode: code }) }; try { fail(change(), ...[500]) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "earlier argument changes iterator to server status",
+    "function change() { Array.prototype[Symbol.iterator] = function* () { yield 500 }; return 0 }; function fail(_, code) { throw createError({ statusCode: code }) }; try { fail(change(), ...[404]) } catch { throw new Error() }",
+    0,
+  ],
+])("tracks reviewed call ordering and nullish paths: %s", async (_name, body, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
