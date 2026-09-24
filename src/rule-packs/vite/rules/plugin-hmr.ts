@@ -567,6 +567,14 @@ function undisposedResource(program: AnyNode): string | null {
           ? propertyKey(node.callee) === resource.cleanup
           : [
               resource.cleanup,
+              ...(["interval", "timeout"].includes(resource.kind)
+                ? ["clearInterval", "clearTimeout"].flatMap((name) => [
+                    name,
+                    `window.${name}`,
+                    `globalThis.${name}`,
+                    `self.${name}`,
+                  ])
+                : []),
               `window.${resource.cleanup}`,
               `globalThis.${resource.cleanup}`,
               `self.${resource.cleanup}`,
@@ -580,6 +588,29 @@ function undisposedResource(program: AnyNode): string | null {
           (!global || !resolve(global) || globalAlias || typeof calleeValue === "string")
         )
           cleaned.add(resource.value);
+      }
+      const array =
+        node.callee.type === "MemberExpression"
+          ? identity(node.callee.object, environment)
+          : undefined;
+      if (
+        array?.type === "ArrayExpression" &&
+        !replacedMethod &&
+        ["forEach", "map"].includes(method!)
+      ) {
+        const elements: AnyNode[] = [];
+        for (const [index, element] of array.elements.entries()) {
+          if (!element) continue;
+          const call = {
+            type: "CallExpression",
+            callee: node.arguments[0],
+            arguments: [identity(element, environment), { type: "Literal", value: index }, array],
+          };
+          if (visit(call) === false) return false;
+          elements.push(returned.get(call));
+        }
+        if (method === "map") returned.set(node, { type: "ArrayExpression", elements });
+        return true;
       }
       const completion =
         node.callee.type === "Super"
@@ -763,6 +794,7 @@ function undisposedResource(program: AnyNode): string | null {
       return leftContinues || rightContinues;
     };
     const controls: boolean[] = [];
+    const labels = new Map<string, { exit: Set<AnyNode>; state: ReturnType<typeof snapshot> }[]>();
     const walk = (node: AnyNode): boolean => {
       if (!node || typeof node !== "object") return true;
       if (Array.isArray(node)) return node.every(walk);
@@ -935,6 +967,36 @@ function undisposedResource(program: AnyNode): string | null {
           node.test,
         );
       }
+      if (node.type === "LabeledStatement" && node.body.type === "BlockStatement") {
+        const breaks: { exit: Set<AnyNode>; state: ReturnType<typeof snapshot> }[] = [];
+        labels.set(node.label.name, breaks);
+        const continues = walk(node.body);
+        labels.delete(node.label.name);
+        if (!continues && breaks.length) restore(breaks[0].state);
+        for (const item of breaks) {
+          merge(snapshot(), item.state);
+          exits.splice(exits.indexOf(item.exit), 1);
+        }
+        return continues || breaks.length > 0;
+      }
+      if (node.type === "AssignmentExpression" && ["||=", "&&=", "??="].includes(node.operator)) {
+        if (!walk(node.left)) return false;
+        const left = identity(node.left, environment);
+        const resource = resources.some((resource) => resource.value === left);
+        const known = resource || left?.type === "Literal" || left == null || left === "undefined";
+        const assignment = { ...node, operator: "=" };
+        if (!known) return branch(assignment, null);
+        const value = resource ? true : left?.value;
+        const useRight =
+          node.operator === "&&="
+            ? Boolean(value)
+            : node.operator === "||="
+              ? !value
+              : value == null;
+        if (useRight && !walk(assignment)) return false;
+        returned.set(node, useRight ? identity(node.right, environment) : left);
+        return true;
+      }
       if (node.type === "LogicalExpression") {
         if (!walk(node.left)) return false;
         if (memberPath(node.left) === "import.meta.hot" && node.operator === "&&")
@@ -1030,6 +1092,13 @@ function undisposedResource(program: AnyNode): string | null {
         return true;
       }
       if (node.type === "BreakStatement" || node.type === "ContinueStatement") {
+        const target = node.type === "BreakStatement" && labels.get(node.label?.name);
+        if (target) {
+          const exit = new Set(cleaned);
+          exits.push(exit);
+          target.push({ exit, state: snapshot() });
+          return false;
+        }
         if (controls.at(-1) || node.type === "ContinueStatement" || node.label)
           exits.push(new Set(cleaned));
         return false;
@@ -1142,9 +1211,10 @@ function unwrapResourceExpression(node: AnyNode): AnyNode {
       "TSNonNullExpression",
       "TSSatisfiesExpression",
       "ParenthesizedExpression",
+      "AwaitExpression",
     ].includes(node.type)
   )
-    node = node.expression;
+    node = node.expression ?? node.argument;
   return node;
 }
 

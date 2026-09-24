@@ -1906,3 +1906,85 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "synchronous array callback leak",
+    "[1].forEach(() => setInterval(refresh)); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "empty array callback",
+    "[].forEach(() => setInterval(refresh)); import.meta.hot.dispose(() => saveState())",
+    false,
+  ],
+  [
+    "array callback local cleanup",
+    "[1, 2].forEach(() => { const timer = setInterval(refresh); clearInterval(timer) }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "mapped timer cleanup",
+    "const timers = [1, 2].map(() => setInterval(refresh)); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "truthy logical assignment",
+    "let timer = setInterval(refresh); timer ||= setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "nullish logical assignment",
+    "let timer; timer ??= setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "executed logical assignment leaks old handle",
+    "let timer = setInterval(refresh); timer &&= setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "awaited timer handle",
+    "const timer = await setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "interval canceled by clearTimeout",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => clearTimeout(timer))",
+    false,
+  ],
+  [
+    "timeout canceled by clearInterval",
+    "const timer = setTimeout(refresh); import.meta.hot.dispose(() => window.clearInterval(timer))",
+    false,
+  ],
+  [
+    "labeled block continuation",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { block: { break block }; clearInterval(timer) })",
+    false,
+  ],
+  [
+    "conditional labeled block continuation",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { block: { if (flag) break block }; clearInterval(timer) })",
+    false,
+  ],
+  [
+    "labeled block skips cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { block: { break block; clearInterval(timer) } })",
+    true,
+  ],
+  [
+    "labeled block callback return",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { block: { if (flag) return; break block }; clearInterval(timer) })",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
