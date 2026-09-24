@@ -233,3 +233,76 @@ export default defineConfig(() => {
   });
   expect(result.diagnostics.some((item) => item.ruleId === noSecretDefine.meta.id)).toBe(expected);
 });
+
+test.each([
+  'JSON.stringify(replacement ?? "")',
+  'JSON.stringify(replacement + "")',
+  'JSON.stringify(enabled ? replacement : "")',
+  "JSON.stringify([replacement])",
+])("traces aliases in compound replacements: %s", async (expression) => {
+  for (const source of ["PRIVATE_TOKEN", "PUBLIC_VERSION"]) {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `const original = process.env.${source}
+const replacement = original ?? ""
+export default { define: {
+  __CONFIG__: ${expression},
+} }`,
+      },
+    });
+    expect(result.diagnostics.some((item) => item.ruleId === noSecretDefine.meta.id)).toBe(
+      source === "PRIVATE_TOKEN",
+    );
+  }
+});
+
+test.each([
+  'JSON.stringify(publicValues.replacement ?? "")',
+  "JSON.stringify(publicValue as typeof replacement)",
+])("does not trace property names or type references: %s", async (expression) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const replacement = process.env.PRIVATE_TOKEN
+export default { define: {
+  __CONFIG__: ${expression},
+} }`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("follows long immutable alias chains", async () => {
+  const declarations = ["const value0 = process.env.PRIVATE_TOKEN"];
+  for (let index = 1; index < 100; index++) {
+    declarations.push(`const value${index} = value${index - 1}`);
+  }
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declarations.join("\n")}
+export default { define: {
+  __CONFIG__: JSON.stringify(value99),
+} }`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
+});
+
+test("preserves direct diagnostics when alias scope parsing fails", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const legacyOctal = 01
+export default { define: {
+  __CONFIG__: JSON.stringify(process.env.PRIVATE_TOKEN),
+} }`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
+});

@@ -165,8 +165,14 @@ export const noSecretDefine = createRule({
 });
 
 function readAliasInitializers(source: string) {
-  const { scopeManager } = parseForESLint(source, { range: true, sourceType: "module" });
   const initializers = new Map<number, [number, number][]>();
+  let parsed: ReturnType<typeof parseForESLint>;
+  try {
+    parsed = parseForESLint(source, { range: true, sourceType: "module" });
+  } catch {
+    return initializers;
+  }
+  const { scopeManager } = parsed;
   for (const scope of scopeManager.scopes) {
     for (const reference of scope.references) {
       const definition = reference.resolved?.defs[0];
@@ -219,55 +225,48 @@ function resolvesSecretAlias(
   start: number,
   source: string,
   initializers: Map<number, [number, number][]>,
-  seen = new Set<number>(),
 ): boolean {
-  if (seen.size >= 4) return false;
-  let parsed: ReturnType<typeof parseForESLint>;
-  try {
-    parsed = parseForESLint(`(${value})`, { range: true });
-  } catch {
-    return false;
-  }
-  const statement = parsed.ast.body[0];
-  if (statement?.type !== "ExpressionStatement") return false;
-  let expression = statement.expression;
-  while (true) {
-    if (
-      expression.type === "TSAsExpression" ||
-      expression.type === "TSTypeAssertion" ||
-      expression.type === "TSNonNullExpression" ||
-      expression.type === "TSSatisfiesExpression"
-    ) {
-      expression = expression.expression;
-    } else if (
-      expression.type === "CallExpression" &&
-      expression.callee.type === "MemberExpression" &&
-      !expression.callee.computed &&
-      expression.callee.object.type === "Identifier" &&
-      expression.callee.object.name === "JSON" &&
-      expression.callee.property.type === "Identifier" &&
-      expression.callee.property.name === "stringify" &&
-      expression.arguments[0]?.type !== "SpreadElement" &&
-      expression.arguments[0]
-    ) {
-      expression = expression.arguments[0];
-    } else {
-      break;
+  const pending = [{ value, start }];
+  const seen = new Set<number>();
+  while (pending.length) {
+    const current = pending.pop()!;
+    let parsed: ReturnType<typeof parseForESLint>;
+    try {
+      parsed = parseForESLint(`(${current.value})`, { range: true });
+    } catch {
+      continue;
+    }
+    const identifiers = new Set<number>();
+    const nodes: unknown[] = [parsed.ast];
+    while (nodes.length) {
+      const node = nodes.pop() as { type: string; range: [number, number]; [key: string]: unknown };
+      if (node.type.startsWith("TS")) {
+        if (node.expression) nodes.push(node.expression);
+        continue;
+      }
+      if (node.type === "Identifier") identifiers.add(node.range[0]);
+      for (const key of parsed.visitorKeys[node.type] ?? []) {
+        const child = node[key];
+        if (Array.isArray(child)) nodes.push(...child.filter(Boolean));
+        else if (child) nodes.push(child);
+      }
+    }
+    for (const scope of parsed.scopeManager.scopes) {
+      for (const reference of scope.references) {
+        if (!reference.isValueReference || !identifiers.has(reference.identifier.range[0]))
+          continue;
+        const ranges = initializers.get(current.start + reference.identifier.range[0] - 1);
+        for (const range of ranges ?? []) {
+          if (seen.has(range[0])) continue;
+          seen.add(range[0]);
+          const initializer = source.slice(...range);
+          if (SECRET_NAME_RE.test(initializer)) return true;
+          pending.push({ value: initializer, start: range[0] });
+        }
+      }
     }
   }
-  if (expression.type !== "Identifier") return false;
-  const ranges = initializers.get(start + expression.range[0] - 1);
-  return (
-    ranges?.some((range) => {
-      if (seen.has(range[0])) return false;
-      const nextSeen = new Set(seen).add(range[0]);
-      const initializer = source.slice(...range);
-      return (
-        SECRET_NAME_RE.test(initializer) ||
-        resolvesSecretAlias(initializer, range[0], source, initializers, nextSeen)
-      );
-    }) ?? false
-  );
+  return false;
 }
 
 function readDefineEntriesFromCurrentFile(ctx: RuleContext) {
