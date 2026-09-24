@@ -2565,6 +2565,56 @@ for (const [name, source, leaks] of [
     "let state; if (flag) { state = { timer: setInterval(a) }; state.self = state } else { state = { timer: setInterval(b) }; state.self = state }; import.meta.hot.dispose(() => clearInterval(state.self.timer))",
     false,
   ],
+  [
+    "branch arrays retain timers",
+    "let timers; if (flag) timers = [setInterval(a)]; else timers = [setInterval(b)]; import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "branch arrays preserve separate leaks",
+    "const a = setInterval(refresh); const b = setInterval(refresh); const timers = flag ? [a] : [b]; import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "assignment expressions return handles",
+    "let slot; const timer = (slot = setInterval(refresh)); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "member assignment expressions return handles",
+    "const state = {}; const timer = (state.timer = setInterval(refresh)); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "qualified cleanup aliases retain identity",
+    "const stop = window.clearInterval; const timer = setInterval(refresh); import.meta.hot.dispose(() => stop(timer))",
+    false,
+  ],
+  [
+    "stable member guards correlate registration",
+    "const state = { enabled }; let timer; if (state.enabled) timer = setInterval(refresh); if (state.enabled) import.meta.hot.dispose(() => clearInterval(timer)); else import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "changed member guards do not correlate",
+    "const state = { enabled }; let timer; if (state.enabled) timer = setInterval(refresh); state.enabled = other; if (state.enabled) import.meta.hot.dispose(() => clearInterval(timer)); else import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "true while executes cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { while (true) { clearInterval(timer); break } })",
+    false,
+  ],
+  [
+    "unconditional for executes cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { for (;;) { clearInterval(timer); break } })",
+    false,
+  ],
+  [
+    "mandatory loop preserves early exit leaks",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { while (true) { if (flag) break; clearInterval(timer); break } })",
+    true,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({

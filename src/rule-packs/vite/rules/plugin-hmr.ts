@@ -156,8 +156,8 @@ function undisposedResource(program: AnyNode): string | null {
   const conditions = new Map<AnyNode, object>();
   const resourcePaths = new Map<AnyNode, Map<object, boolean>>();
   let disposers: Disposer[] = [{ callback: undefined, path: new Map() }];
-  const arrayElements = (array: AnyNode): AnyNode[] => {
-    const stored = properties.get(array);
+  const arrayElements = (array: AnyNode, state = properties): AnyNode[] => {
+    const stored = state.get(array);
     const length = stored?.get("length");
     if (!stored?.has("length")) return array.elements;
     if (
@@ -532,11 +532,11 @@ function undisposedResource(program: AnyNode): string | null {
         }
       }
       if (node.type !== "CallExpression") return;
-      const calleeGlobal = identity(node.callee?.object, environment);
-      const globalAlias = ["window", "globalThis", "self"].includes(calleeGlobal);
       const calleeValue = identity(node.callee, environment);
+      const calleeGlobal = identity(calleeValue?.object ?? node.callee?.object, environment);
+      const globalAlias = ["window", "globalThis", "self"].includes(calleeGlobal);
       const callee = globalAlias
-        ? `window.${propertyKey(node.callee)}`
+        ? `window.${propertyKey(calleeValue) ?? propertyKey(node.callee)}`
         : typeof calleeValue === "string"
           ? calleeValue
           : memberPath(node.callee);
@@ -748,6 +748,23 @@ function undisposedResource(program: AnyNode): string | null {
       const mergedObjects = new Map<AnyNode, Map<AnyNode, AnyNode>>();
       const mergeValue = (a: AnyNode, b: AnyNode): AnyNode => {
         if (a === b) return a;
+        if (a?.type === "ArrayExpression" && b?.type === "ArrayExpression") {
+          const previous = mergedObjects.get(a)?.get(b);
+          if (previous) return previous;
+          const value = { type: "ArrayExpression", elements: [] as AnyNode[] };
+          if (!mergedObjects.has(a)) mergedObjects.set(a, new Map());
+          mergedObjects.get(a)!.set(b, value);
+          const first = arrayElements(a, left.properties);
+          const second = arrayElements(b, right.properties);
+          for (let index = 0; index < Math.max(first.length, second.length); index++)
+            value.elements.push(
+              mergeValue(
+                identity(first[index], left.values),
+                identity(second[index], right.values),
+              ),
+            );
+          return value;
+        }
         if (a?.type === "ObjectExpression" && b?.type === "ObjectExpression") {
           const previous = mergedObjects.get(a)?.get(b);
           if (previous) return previous;
@@ -833,8 +850,9 @@ function undisposedResource(program: AnyNode): string | null {
         inverted = !inverted;
         condition = unwrapResourceExpression(condition.argument);
       }
-      const conditionValue =
-        condition?.type === "Identifier" ? identity(condition, environment) : undefined;
+      const conditionValue = ["Identifier", "MemberExpression"].includes(condition?.type)
+        ? identity(condition, environment)
+        : undefined;
       if (conditionValue !== undefined && !conditions.has(conditionValue))
         conditions.set(conditionValue, {});
       const choice = conditions.get(conditionValue) ?? {};
@@ -1234,12 +1252,14 @@ function undisposedResource(program: AnyNode): string | null {
       ) {
         const pretest = node.type === "WhileStatement" || node.type === "ForStatement";
         let testResources: AnyNode[] = [];
+        let mandatory = node.type === "DoWhileStatement";
         if (pretest) {
           if (!walk(node.init)) return false;
           const resourceStart = resources.length;
           if (!walk(node.test)) return false;
           const test = identity(node.test, environment);
           if (test?.type === "Literal" && !test.value) return true;
+          mandatory = !node.test || (test?.type === "Literal" && !!test.value);
           testResources = resources.slice(resourceStart).map((resource) => resource.value);
         }
         const loop = node.type !== "SwitchStatement";
@@ -1326,8 +1346,8 @@ function undisposedResource(program: AnyNode): string | null {
                 exits.slice(firstExit).every((exit) => exit.has(resource.value)),
             );
           if (bodyStopped) exits.splice(exits.indexOf(nontermination), 1);
-          if (loop && node.type !== "DoWhileStatement") merge(before, snapshot());
-          if (node.type === "DoWhileStatement" && !bodyStopped) {
+          if (loop && !mandatory) merge(before, snapshot());
+          if (mandatory && !bodyStopped) {
             nontermination.clear();
             for (const value of cleaned) nontermination.add(value);
           }
@@ -1414,6 +1434,8 @@ function undisposedResource(program: AnyNode): string | null {
           return false;
       }
       if (bindsValue && visit(node) === false) return false;
+      if (node.type === "AssignmentExpression" && node.operator === "=")
+        returned.set(node, identity(node.right, environment));
       if (node.type === "SequenceExpression")
         returned.set(node, identity(node.expressions.at(-1), environment));
       if (node.type === "ReturnStatement" || node.type === "ThrowStatement") {
