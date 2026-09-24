@@ -149,7 +149,7 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
       ".nuxt/doctor.manifest.json": JSON.stringify({
         generatedAt: new Date().toISOString(),
         appDir: "app",
-        layers: [{ root: "layers/admin/app", priority: 0 }],
+        layers: [{ root: "layers/admin", srcDir: "layers/admin", priority: 0 }],
         serverHandlers: [
           { file: "server/handlers/entry.ts", route: "/api/account" },
           { file: "server/handlers/entry.ts", route: "/api/profile" },
@@ -304,35 +304,42 @@ test.each([
 });
 
 test.each([
-  [true, "layers/admin/src"],
-  [false, "layers/admin/src"],
-  [true, "layers/admin"],
-  [false, "layers/admin"],
-] as const)("layer middleware requires a current manifest: %s, %s", async (current, srcDir) => {
-  const candidates: Parameters<AuthorizationReviewer>[0][] = [];
-  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
-    candidates.push(candidate);
-    return { status: "unknown", reason: "Collected", citations: [] };
-  });
-  await runProjectFixture({
-    framework: "nuxt",
-    files: {
-      "nuxt.config.ts": "export default defineNuxtConfig({})",
-      [`${srcDir}/middleware/auth.ts`]: files["app/middleware/auth.ts"],
-      "server/api/account.get.ts": files["server/api/account.get.ts"],
-      ".nuxt/doctor.manifest.json": JSON.stringify({
-        generatedAt: current ? "2100-01-01T00:00:00.000Z" : "2000-01-01T00:00:00.000Z",
-        layers: [{ root: "layers/admin", srcDir, priority: 0 }],
-      }),
-    },
-    rules: extension.rulePacks![0]!.rules,
-  });
-  expect(candidates).toHaveLength(current ? 1 : 0);
-  if (current)
-    expect(candidates[0]!.sources.map((source) => source.path)).toContain(
-      `${srcDir}/middleware/auth.ts`,
-    );
-});
+  [true, "layers/admin/src", "middleware"],
+  [false, "layers/admin/src", "middleware"],
+  [true, "layers/admin", "middleware"],
+  [true, "layers/admin", "app/middleware"],
+  [true, "layers/admin/src", "app/middleware"],
+  [false, "layers/admin", "middleware"],
+  [false, "layers/admin", "app/middleware"],
+  [false, "layers/admin/src", "app/middleware"],
+] as const)(
+  "layer middleware requires a current manifest: %s, %s, %s",
+  async (current, srcDir, middlewareDir) => {
+    const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      candidates.push(candidate);
+      return { status: "unknown", reason: "Collected", citations: [] };
+    });
+    await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        "nuxt.config.ts": "export default defineNuxtConfig({})",
+        [`${srcDir}/${middlewareDir}/auth.ts`]: files["app/middleware/auth.ts"],
+        "server/api/account.get.ts": files["server/api/account.get.ts"],
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: current ? "2100-01-01T00:00:00.000Z" : "2000-01-01T00:00:00.000Z",
+          layers: [{ root: "layers/admin", srcDir, priority: 0 }],
+        }),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(candidates).toHaveLength(current ? 1 : 0);
+    if (current)
+      expect(candidates[0]!.sources.map((source) => source.path)).toContain(
+        `${srcDir}/${middlewareDir}/auth.ts`,
+      );
+  },
+);
 
 test.each([false, true])(
   "server middleware must fit the evidence limit: oversized=%s",

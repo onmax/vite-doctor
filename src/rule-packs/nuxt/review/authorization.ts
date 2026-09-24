@@ -68,7 +68,10 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
               nuxt.manifest?.isCurrent
                 ? [
                     ...nuxt.appRoots,
-                    ...nuxt.layers.map((layer) => resolve(root, layer.srcDir ?? layer.root)),
+                    ...nuxt.layers.flatMap((layer) => {
+                      const srcDir = resolve(root, layer.srcDir ?? layer.root);
+                      return [srcDir, resolve(srcDir, "app")];
+                    }),
                   ]
                 : [],
             ),
