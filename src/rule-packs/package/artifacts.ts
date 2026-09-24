@@ -53,6 +53,53 @@ const runs = new WeakMap<ProjectInfo, PackageArtifacts | null>();
 const scriptExtension = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/;
 const declarationExtension = /\.d\.[cm]?ts$/;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function recordOf(value: unknown, accepts: (entry: unknown) => boolean): boolean {
+  return isRecord(value) && Object.values(value).every(accepts);
+}
+
+function parsePackageManifest(value: unknown): PackageManifest {
+  if (!isRecord(value)) throw new TypeError("package.json must contain an object");
+  const fields: Record<string, (entry: unknown) => boolean> = {
+    name: isString,
+    private: (entry) => typeof entry === "boolean",
+    main: isString,
+    module: isString,
+    browser: (entry) =>
+      isString(entry) || recordOf(entry, (target) => isString(target) || target === false),
+    types: isString,
+    typings: isString,
+    imports: isRecord,
+    bin: (entry) => isString(entry) || recordOf(entry, isString),
+    typesVersions: (entry) =>
+      recordOf(entry, (version) =>
+        recordOf(version, (paths) => Array.isArray(paths) && paths.every(isString)),
+      ),
+    dependencies: (entry) => recordOf(entry, isString),
+    optionalDependencies: (entry) => recordOf(entry, isString),
+    peerDependencies: (entry) => recordOf(entry, isString),
+    peerDependenciesMeta: (entry) =>
+      recordOf(
+        entry,
+        (meta) =>
+          isRecord(meta) && (meta.optional === undefined || typeof meta.optional === "boolean"),
+      ),
+    devDependencies: (entry) => recordOf(entry, isString),
+  };
+  for (const [field, accepts] of Object.entries(fields)) {
+    if (value[field] !== undefined && !accepts(value[field]))
+      throw new TypeError(`Invalid package.json field: ${field}`);
+  }
+  return value;
+}
+
 export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null {
   if (runs.has(project)) return runs.get(project)!;
   const inventory = readPackageArtifacts(project.root);
@@ -76,9 +123,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   root = realpathSync(root);
   const manifestPath = resolve(root, "package.json");
   if (!existsSync(manifestPath)) return null;
-  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
-  if (!isPackageManifest(manifest))
-    throw new TypeError(`Invalid package manifest: ${manifestPath}`);
+  const manifest = parsePackageManifest(JSON.parse(readFileSync(manifestPath, "utf8")));
   if (manifest.private) return null;
   const references: PackageReference[] = [];
   const missing = new Set<string>();
@@ -435,44 +480,6 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
       required: false,
     });
   return edges;
-}
-
-function isPackageManifest(value: unknown): value is PackageManifest {
-  const isString = (entry: unknown): entry is string => typeof entry === "string";
-  const isRecord = (entry: unknown): entry is Record<string, unknown> =>
-    typeof entry === "object" && entry !== null && !Array.isArray(entry);
-  const recordOf = (entry: unknown, accepts: (item: unknown) => boolean): boolean =>
-    isRecord(entry) && Object.values(entry).every(accepts);
-  if (!isRecord(value)) return false;
-  const fields: Record<string, (entry: unknown) => boolean> = {
-    name: isString,
-    private: (entry) => typeof entry === "boolean",
-    main: isString,
-    module: isString,
-    browser: (entry) =>
-      isString(entry) || recordOf(entry, (item) => isString(item) || item === false),
-    types: isString,
-    typings: isString,
-    imports: isRecord,
-    bin: (entry) => isString(entry) || recordOf(entry, isString),
-    typesVersions: (entry) =>
-      recordOf(entry, (version) =>
-        recordOf(version, (paths) => Array.isArray(paths) && paths.every(isString)),
-      ),
-    dependencies: (entry) => recordOf(entry, isString),
-    optionalDependencies: (entry) => recordOf(entry, isString),
-    peerDependencies: (entry) => recordOf(entry, isString),
-    peerDependenciesMeta: (entry) =>
-      recordOf(
-        entry,
-        (meta) =>
-          isRecord(meta) && (meta.optional === undefined || typeof meta.optional === "boolean"),
-      ),
-    devDependencies: (entry) => recordOf(entry, isString),
-  };
-  return Object.entries(fields).every(
-    ([key, accepts]) => value[key] === undefined || accepts(value[key]),
-  );
 }
 
 function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {

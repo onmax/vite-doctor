@@ -21,18 +21,22 @@ function inventory(manifest: unknown, files: Record<string, string>) {
 }
 
 test.each([
-  null,
-  [],
   { main: 42 },
   { private: "false" },
   { browser: { "./entry.js": true } },
   { bin: ["cli.js"] },
   { imports: [] },
   { dependencies: { vue: 3 } },
+  { dependencies: ["h3"] },
   { peerDependenciesMeta: { vue: { optional: "true" } } },
   { typesVersions: { "*": { "*": [42] } } },
-])("rejects malformed package manifest %j", (manifest) => {
-  expect(() => inventory(manifest, {})).toThrow("Invalid package manifest:");
+  { typesVersions: { "*": { "*": "index.d.ts" } } },
+])("rejects malformed package manifest fields: %j", (manifest) => {
+  expect(() => inventory(manifest, {})).toThrow("Invalid package.json field:");
+});
+
+test.each([null, []])("rejects a non-object package manifest %j", (manifest) => {
+  expect(() => inventory(manifest, {})).toThrow("package.json must contain an object");
 });
 
 test("follows conditional exports, chunks and declarations without scanning source or unrelated output", () => {
