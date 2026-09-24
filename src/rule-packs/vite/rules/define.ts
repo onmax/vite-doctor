@@ -415,6 +415,8 @@ function resolvesSecretAlias(
     serialized?: boolean;
     serializationKey?: string;
     propertyList?: string[];
+    replacer?: Range;
+    replacerApplied?: boolean;
     awaited: boolean;
     args: Range[];
     following?: Range[][];
@@ -434,6 +436,73 @@ function resolvesSecretAlias(
     literals.set(value, range);
     return range;
   }
+  function readValue(
+    range: Range,
+    bindings: Trace["bindings"],
+    visited = new Set<number>(),
+  ): { node: AnyNode; offset: number } | undefined {
+    if (visited.has(range[0])) return;
+    visited.add(range[0]);
+    const offset = range[0] - 1;
+    try {
+      const ast = parseForESLint(`(${source.slice(...range)})`, { range: true }).ast;
+      let node = (ast.body[0] as AnyNode).expression;
+      while (node?.type.startsWith("TS") && node.expression) node = node.expression;
+      if (node?.type === "Identifier") {
+        const ranges =
+          bindings.get(offset + node.range[0]) ?? initializers.get(offset + node.range[0]);
+        if (ranges?.length === 1) return readValue(ranges[0]!, bindings, visited);
+      }
+      return { node, offset };
+    } catch {
+      return;
+    }
+  }
+  function serializedProperties(
+    node: AnyNode,
+    offset: number,
+    bindings: Trace["bindings"],
+    visited = new Set<number>(),
+  ): Array<{ node: AnyNode; offset: number; key: string | null }> {
+    const properties = new Map<unknown, { node: AnyNode; offset: number; key: string | null }>();
+    for (const property of node.properties) {
+      if (property.type === "SpreadElement") {
+        const range: Range = [
+          offset + property.argument.range[0],
+          offset + property.argument.range[1],
+        ];
+        if (visited.has(range[0])) continue;
+        const value = readValue(range, bindings);
+        if (value?.node.type === "ObjectExpression") {
+          for (const item of serializedProperties(
+            value.node,
+            value.offset,
+            bindings,
+            new Set([...visited, range[0]]),
+          ))
+            properties.set(item.key ?? item.node, item);
+        } else {
+          properties.set(property, {
+            node: { type: "Property", value: property.argument },
+            offset,
+            key: null,
+          });
+        }
+      } else {
+        const resolved = property.computed
+          ? readValue([offset + property.key.range[0], offset + property.key.range[1]], bindings)
+              ?.node
+          : undefined;
+        const key = property.computed
+          ? resolved?.type === "Literal"
+            ? String(resolved.value)
+            : null
+          : propertyName(property.key);
+        properties.set(key ?? property, { node: property, offset, key });
+      }
+    }
+    return [...properties.values()];
+  }
   while (pending.length) {
     const current = pending.pop()!;
     let parsed: ReturnType<typeof parseForESLint>;
@@ -446,9 +515,14 @@ function resolvesSecretAlias(
     const serializedNodes = new Set<unknown>();
     const serializationKeys = new Map<unknown, string>();
     const propertyLists = new Map<unknown, string[]>();
+    const replacers = new Map<unknown, Range>();
+    const replaced = new Set<unknown>();
     function serialize(from: unknown, to: unknown, key = serializationKeys.get(from) ?? "") {
       if (!serializedNodes.has(from)) return;
       serializedNodes.add(to);
+      const replacer = replacers.get(from);
+      if (replacer) replacers.set(to, replacer);
+      if (replaced.has(from)) replaced.add(to);
       serializationKeys.set(to, key);
       const list = propertyLists.get(from);
       if (list) propertyLists.set(to, list);
@@ -464,6 +538,8 @@ function resolvesSecretAlias(
       const statement = parsed.ast.body[0];
       if (statement?.type === "ExpressionStatement") {
         if (current.serialized) serializedNodes.add(statement.expression);
+        if (current.replacer) replacers.set(statement.expression, current.replacer);
+        if (current.replacerApplied) replaced.add(statement.expression);
         serializationKeys.set(statement.expression, current.serializationKey ?? "");
         if (current.propertyList) propertyLists.set(statement.expression, current.propertyList);
         if (current.invoked) invokedNodes.add(statement.expression);
@@ -634,6 +710,44 @@ function resolvesSecretAlias(
         }
         continue;
       }
+      const replacerRange = replacers.get(node);
+      if (
+        serializedNodes.has(node) &&
+        replacerRange &&
+        !replaced.has(node) &&
+        ![
+          "Identifier",
+          "CallExpression",
+          "AwaitExpression",
+          "ConditionalExpression",
+          "SequenceExpression",
+          "ArrowFunctionExpression",
+          "FunctionExpression",
+          "FunctionDeclaration",
+        ].includes(node.type) &&
+        !(
+          node.type === "ObjectExpression" &&
+          serializationHooks.has(current.start + node.range[0] - 1)
+        )
+      ) {
+        pending.push({
+          ...current,
+          value: source.slice(...replacerRange),
+          start: replacerRange[0],
+          invoked: true,
+          serialized: true,
+          replacer: replacerRange,
+          replacerApplied: true,
+          serializationKey: serializationKeys.get(node),
+          propertyList: propertyLists.get(node),
+          args: [
+            literalRange(serializationKeys.get(node) ?? ""),
+            [current.start + node.range[0] - 1, current.start + node.range[1] - 1],
+          ],
+          bindings: new Map(current.bindings),
+        });
+        continue;
+      }
       if (node.type === "ObjectExpression" && serializedNodes.has(node)) {
         const hook = serializationHooks.get(current.start + node.range[0] - 1);
         if (hook) {
@@ -649,11 +763,48 @@ function resolvesSecretAlias(
               args: [literalRange(serializationKeys.get(node) ?? "")],
               serializationKey: serializationKeys.get(node),
               propertyList: propertyLists.get(node),
+              replacer: replacers.get(node),
+              replacerApplied: replaced.has(node),
               bindings: new Map(current.bindings),
             });
           }
           continue;
         }
+        for (const property of serializedProperties(node, current.start - 1, current.bindings)) {
+          const list = propertyLists.get(node);
+          if (list && property.key !== null && !list.includes(property.key)) continue;
+          if (property.node.computed && property.key === null) {
+            const keyRange: Range = [
+              property.offset + property.node.key.range[0],
+              property.offset + property.node.key.range[1],
+            ];
+            pending.push({
+              ...current,
+              value: source.slice(...keyRange),
+              start: keyRange[0],
+              serialized: false,
+              invoked: false,
+              replacer: undefined,
+              args: [],
+            });
+          }
+          const value = property.node.value;
+          const range: Range = [property.offset + value.range[0], property.offset + value.range[1]];
+          const prefix = property.node.method || property.node.kind === "get" ? "function" : "";
+          pending.push({
+            ...current,
+            value: prefix + source.slice(...range),
+            start: range[0] - prefix.length,
+            serialized: true,
+            serializationKey: property.key ?? "",
+            propertyList: list,
+            invoked: property.node.kind === "get",
+            args: [],
+            replacer: replacers.get(node),
+            replacerApplied: false,
+          });
+        }
+        continue;
       }
       if (node.type === "Property" && node.kind === "get" && serializedNodes.has(node))
         invokedNodes.add(node.value);
@@ -700,9 +851,7 @@ function resolvesSecretAlias(
               "CallExpression",
             ].includes(replacer.type)
           ) {
-            invokedNodes.add(node.arguments[1]);
-            serializedNodes.add(node.arguments[1]);
-            nodes.push(node.arguments[1]);
+            replacers.set(argument, [offset + replacer.range[0], offset + replacer.range[1]]);
           }
           nodes.push(argument);
           continue;
@@ -754,7 +903,12 @@ function resolvesSecretAlias(
           node.computed &&
           node.property.type === "Literal"
         ) {
-          const range = current.bindings.get(position)?.[Number(node.property.value)];
+          const key = String(node.property.value);
+          const index = Number(key);
+          const range =
+            Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key
+              ? current.bindings.get(position)?.[index]
+              : undefined;
           if (range)
             pending.push({
               ...current,
@@ -768,7 +922,7 @@ function resolvesSecretAlias(
         const member = memberReturns.get(current.start + node.range[0] - 1);
         if (member && (invokedNodes.has(node) || member.getter)) {
           const awaited = awaitedNodes.has(node);
-          const identity = `${JSON.stringify([serializationKeys.get(node), propertyLists.get(node)])}:${member.range[0]}:member:${awaited}:${serializedNodes.has(node)}:${JSON.stringify(callArguments.get(node))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(node))}`;
+          const identity = `${JSON.stringify([current.replacer, current.replacerApplied, serializationKeys.get(node), propertyLists.get(node)])}:${member.range[0]}:member:${awaited}:${serializedNodes.has(node)}:${JSON.stringify(callArguments.get(node))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(node))}`;
           if (!seen.has(identity)) {
             seen.add(identity);
             pending.push({
@@ -777,6 +931,8 @@ function resolvesSecretAlias(
               serialized: serializedNodes.has(node),
               serializationKey: serializationKeys.get(node),
               propertyList: propertyLists.get(node),
+              replacer: replacers.get(node),
+              replacerApplied: replaced.has(node),
               invoked: true,
               awaited,
               args: callArguments.get(node) ?? [],
@@ -815,7 +971,33 @@ function resolvesSecretAlias(
       )
         return true;
       if (node.type === "ConditionalExpression") {
-        for (const branch of [node.consequent, node.alternate]) {
+        let branches = [node.consequent, node.alternate];
+        const test = node.test;
+        if (
+          test.type === "BinaryExpression" &&
+          ["===", "!==", "==", "!="].includes(test.operator)
+        ) {
+          const left = readValue(
+            [current.start + test.left.range[0] - 1, current.start + test.left.range[1] - 1],
+            current.bindings,
+          )?.node;
+          const right = readValue(
+            [current.start + test.right.range[0] - 1, current.start + test.right.range[1] - 1],
+            current.bindings,
+          )?.node;
+          if (
+            left?.type === "Literal" &&
+            right?.type === "Literal" &&
+            typeof left.value === typeof right.value
+          ) {
+            const equal = left.value === right.value;
+            const branch = (test.operator.includes("!") ? !equal : equal)
+              ? node.consequent
+              : node.alternate;
+            branches = [branch];
+          }
+        }
+        for (const branch of branches) {
           serialize(node, branch);
           if (invokedNodes.has(node)) invokedNodes.add(branch);
           callArguments.set(branch, callArguments.get(node) ?? []);
@@ -825,7 +1007,7 @@ function resolvesSecretAlias(
           awaitedNodes.add(node.consequent);
           awaitedNodes.add(node.alternate);
         }
-        nodes.push(node.consequent, node.alternate);
+        nodes.push(...branches);
         continue;
       }
       if (node.type === "SequenceExpression") {
@@ -849,6 +1031,9 @@ function resolvesSecretAlias(
         if (serializedNodes.has(node) && node.type !== "MemberExpression")
           children.forEach((child, index) => {
             serializedNodes.add(child);
+            const replacer = replacers.get(node);
+            if (replacer) replacers.set(child, replacer);
+            if (node.type !== "ArrayExpression" && replaced.has(node)) replaced.add(child);
             serializationKeys.set(
               child,
               node.type === "ArrayExpression" ? String(index) : (serializationKeys.get(node) ?? ""),
@@ -869,7 +1054,7 @@ function resolvesSecretAlias(
           const serialized = serializedNodes.has(reference.identifier);
           const invoked = invokedReferences.has(reference.identifier.range[0]);
           const awaited = awaitedReferences.has(reference.identifier.range[0]);
-          const identity = `${JSON.stringify([serializationKeys.get(reference.identifier), propertyLists.get(reference.identifier)])}:${range[0]}:${invoked}:${awaited}:${serialized}:${JSON.stringify(callArguments.get(reference.identifier))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(reference.identifier))}`;
+          const identity = `${JSON.stringify([current.replacer, current.replacerApplied, serializationKeys.get(reference.identifier), propertyLists.get(reference.identifier)])}:${range[0]}:${invoked}:${awaited}:${serialized}:${JSON.stringify(callArguments.get(reference.identifier))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(reference.identifier))}`;
           if (seen.has(identity)) continue;
           seen.add(identity);
           const initializer = source.slice(...range);
@@ -880,6 +1065,8 @@ function resolvesSecretAlias(
             serialized,
             serializationKey: serializationKeys.get(reference.identifier),
             propertyList: propertyLists.get(reference.identifier),
+            replacer: replacers.get(reference.identifier),
+            replacerApplied: replaced.has(reference.identifier),
             awaited,
             args: callArguments.get(reference.identifier) ?? [],
             following: followingCalls.get(reference.identifier),
@@ -972,21 +1159,47 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         const callee = resolve(node.callee);
         if (!callee?.params) return empty();
         const previous = new Map<number, [number, number][] | undefined>();
-        callee.params.forEach((parameter: AnyNode, index: number) => {
-          const binding = parameter.type === "AssignmentPattern" ? parameter.left : parameter;
-          if (binding.type !== "Identifier") return;
-          let value = resolve(node.arguments[index]);
-          if (
-            (!value || (value.type === "Identifier" && value.name === "undefined")) &&
-            parameter.type === "AssignmentPattern"
-          )
-            value = parameter.right;
-          for (const [position, key] of bindingKeys) {
-            if (key !== `binding:${binding.start}`) continue;
-            previous.set(position, initializers.get(position));
-            initializers.set(position, value ? [[value.start, value.end]] : []);
+        function bind(pattern: AnyNode, input: AnyNode) {
+          let value = resolve(input);
+          if (pattern.type === "AssignmentPattern") {
+            if (
+              !value ||
+              (value.type === "Identifier" && value.name === "undefined") ||
+              (value.type === "UnaryExpression" && value.operator === "void")
+            )
+              value = pattern.right;
+            bind(pattern.left, value);
+          } else if (pattern.type === "Identifier") {
+            for (const [position, key] of bindingKeys) {
+              if (key !== `binding:${pattern.start}`) continue;
+              if (!previous.has(position)) previous.set(position, initializers.get(position));
+              initializers.set(position, value ? [[value.start, value.end]] : []);
+            }
+          } else if (pattern.type === "ObjectPattern") {
+            for (const property of pattern.properties) {
+              if (property.type !== "Property") continue;
+              const key = keyOf(property);
+              const match =
+                value?.type === "ObjectExpression"
+                  ? readOptions(value).findLast(
+                      (item) => item.type === "Property" && keyOf(item) === key,
+                    )
+                  : undefined;
+              bind(property.value, match?.value);
+            }
+          } else if (pattern.type === "ArrayPattern") {
+            pattern.elements.forEach((element: AnyNode, index: number) => {
+              if (element)
+                bind(
+                  element,
+                  value?.type === "ArrayExpression" ? value.elements[index] : undefined,
+                );
+            });
           }
-        });
+        }
+        callee.params.forEach((parameter: AnyNode, index: number) =>
+          bind(parameter, node.arguments[index]),
+        );
         try {
           return readConfig(callee);
         } finally {

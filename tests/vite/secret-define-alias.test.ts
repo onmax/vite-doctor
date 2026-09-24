@@ -959,3 +959,55 @@ export default mergeConfig(flag ? secret : publicConfig, ${predicate} ? {} : pub
     expect(result.diagnostics).toHaveLength(0);
   },
 );
+
+test.each([
+  [
+    'JSON.stringify({ hidden: process.env.PRIVATE_TOKEN }, (key, value) => key === "hidden" ? undefined : value)',
+    false,
+  ],
+  [
+    'JSON.stringify({ visible: process.env.PRIVATE_TOKEN }, (key, value) => key === "hidden" ? undefined : value)',
+    true,
+  ],
+  [
+    'JSON.stringify({ nested: { hidden: process.env.PRIVATE_TOKEN } }, (key, value) => key === "hidden" ? undefined : value)',
+    false,
+  ],
+  ['JSON.stringify({ hidden: process.env.PRIVATE_TOKEN }, () => "public")', false],
+  ["JSON.stringify({}, () => process.env.PRIVATE_TOKEN)", true],
+  ['JSON.stringify({ ...{ value: process.env.PRIVATE_TOKEN }, value: "public" })', false],
+  ['JSON.stringify({ value: "public", ...{ value: process.env.PRIVATE_TOKEN } })', true],
+  ['JSON.stringify({ [name]: process.env.PRIVATE_TOKEN }, ["public"])', true],
+  ['JSON.stringify({ [name]: process.env.PRIVATE_TOKEN }, ["other"])', false],
+  ['JSON.stringify({ [name]: process.env.PRIVATE_TOKEN, public: "safe" })', false],
+  ["JSON.stringify({ [name]: { toJSON(key) { return key } } })", false],
+  ["JSON.stringify({ [secretName]: { toJSON(key) { return key } } })", true],
+  ['JSON.stringify(read("safe", process.env.PRIVATE_TOKEN))', false],
+])("preserves reviewed serialization semantics: %s", async (value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const name = "public"; const secretName = "PRIVATE_TOKEN"; const read = (...values) => values["01"]; export default { define: { VALUE: ${value} } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    "const make = ({ config }) => config; export default make({ config: { define: { PRIVATE_TOKEN: {} } } })",
+    "const make = ({ config: renamed }) => renamed; export default make({ config: { define: { PRIVATE_TOKEN: {} } } })",
+    "const make = ([config]) => config; export default make([{ define: { PRIVATE_TOKEN: {} } }])",
+    "const make = (config = { define: { PRIVATE_TOKEN: {} } }) => config; export default make(void 0)",
+    "const missing = void 0; const make = (config = { define: { PRIVATE_TOKEN: {} } }) => config; export default make(missing)",
+    "const make = ({ config = { define: { PRIVATE_TOKEN: {} } } }) => config; export default make({})",
+  ])(`resolves reviewed factory bindings for ${rule.meta.id}: %s`, async (config) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": config },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  });
+}
