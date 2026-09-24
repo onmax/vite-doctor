@@ -2793,6 +2793,16 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "Object.assign mutation invalidates timer handle",
+    "const state = { timer: setInterval(refresh) }; Object.assign(state, { timer: undefined }); import.meta.hot.dispose(() => clearInterval(state.timer))",
+    true,
+  ],
+  [
+    "Object.assign retains assigned timer handle",
+    "const state = {}; Object.assign(state, { timer: setInterval(refresh) }); import.meta.hot.dispose(() => clearInterval(state.timer))",
+    false,
+  ],
+  [
     "deleting object member invalidates timer handle",
     "const state = { timer: setInterval(refresh) }; delete state.timer; import.meta.hot.dispose(() => clearInterval(state.timer))",
     true,
@@ -2851,6 +2861,11 @@ for (const [name, source, leaks] of [
     "resolved promise reaction creates a timer",
     "Promise.resolve().then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
     true,
+  ],
+  [
+    "resolved rejecting promise skips fulfilled reaction",
+    "async function fail() { throw Error('no') }; Promise.resolve(fail()).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
   ],
   [
     "Array.at retains the interval handle",

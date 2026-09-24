@@ -734,14 +734,41 @@ function undisposedResource(program: AnyNode): string | null {
         node.callee.type === "MemberExpression" &&
         properties.get(identity(node.callee.object, environment))?.has(method!);
       if (
+        method === "assign" &&
+        node.callee.type === "MemberExpression" &&
+        identity(node.callee.object, environment) === "Object" &&
+        !replacedMethod
+      ) {
+        const target = identity(node.arguments[0], environment);
+        for (const argument of node.arguments.slice(1)) {
+          const source = identity(argument, environment);
+          for (const [key, descriptor] of effectiveProperties(source, environment)) {
+            let value = descriptor.property.value;
+            if (descriptor.accessor && descriptor.property.kind === "get") {
+              const completion = inspect(value, [], environment, module, descriptor.receiver);
+              if (!completion.normal) return false;
+              value = completion.value;
+            } else if (descriptor.property.kind !== "init") continue;
+            if (!properties.has(target)) properties.set(target, new Map());
+            properties.get(target)!.set(key, identity(value, environment));
+          }
+        }
+        returned.set(node, target);
+        return true;
+      }
+      if (
         method === "resolve" &&
         node.callee.type === "MemberExpression" &&
         identity(node.callee.object, environment) === "Promise" &&
         !replacedMethod
       ) {
         const promise = {};
-        promises.set(promise, identity(node.arguments[0], environment));
-        promiseCompletions.set(promise, { normal: true, abrupt: false, value: node.arguments[0] });
+        const value = identity(node.arguments[0], environment);
+        promises.set(promise, promises.get(value) ?? value);
+        promiseCompletions.set(
+          promise,
+          promiseCompletions.get(value) ?? { normal: true, abrupt: false, value },
+        );
         returned.set(node, promise);
         return true;
       }
