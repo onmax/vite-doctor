@@ -728,6 +728,7 @@ test.each([
   { cycle: true, dynamic: false },
   { cycle: false, dynamic: true },
   { cycle: true, dynamic: true },
+  { cycle: false, dynamic: "commented" },
 ])("collects nested guard policy: cycle=$cycle, dynamic=$dynamic", async ({ cycle, dynamic }) => {
   let calls = 0;
   const collected: string[] = [];
@@ -743,7 +744,7 @@ test.each([
       "server/api/account.get.ts":
         "import guard from '../utils/guard'; export default defineEventHandler(guard)",
       "server/utils/guard.ts": dynamic
-        ? "export default async event => (await import('./policy')).default(event)"
+        ? `export default async event => (await import(${dynamic === "commented" ? '/* webpackChunkName: "policy" */' : ""}'./policy')).default(event)`
         : "import policy from './policy'; export default event => policy(event)",
       "server/utils/policy.ts": cycle
         ? "import guard from './guard'; export default guard"
@@ -755,7 +756,7 @@ test.each([
   expect(collected).toContain("server/utils/policy.ts");
 });
 
-test.each([false, true])(
+test.each([false, true, "commented"])(
   "omitted nested guard policies make the report incomplete: dynamic=%s",
   async (dynamic) => {
     let calls = 0;
@@ -770,7 +771,7 @@ test.each([false, true])(
         "server/api/account.get.ts":
           "import guard from '../utils/guard'; export default defineEventHandler(guard)",
         "server/utils/guard.ts": dynamic
-          ? "export default async event => (await import('./policy')).default(event)"
+          ? `export default async event => (await import(${dynamic === "commented" ? '/* webpackChunkName: "policy" */' : ""}'./policy')).default(event)`
           : "import policy from './policy'; export default event => policy(event)",
         "server/utils/policy.ts": " ".repeat(16_001),
       },

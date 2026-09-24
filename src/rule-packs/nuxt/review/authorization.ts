@@ -1,4 +1,6 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { parseSync } from "oxc-parser";
+import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { dirname, extname, relative, resolve } from "pathe";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
@@ -401,10 +403,28 @@ function localImports(
   const visited = new Set([resolve(root, source.path)]);
   for (const current of queue) {
     const file = resolve(root, current.path);
-    for (const match of current.text.matchAll(
-      /\b(?:from\s*|(?:require|import)\s*\(\s*)["']([^"']+)["']/g,
-    )) {
-      const specifier = match[1]!;
+    const parsed = parseSync(file, current.text);
+    if (parsed.errors.length) {
+      omitted.push(current.path);
+      continue;
+    }
+    const specifiers: string[] = [];
+    walkScriptLocal(parsed.program, (node) => {
+      const source =
+        node.type === "ImportDeclaration" ||
+        node.type === "ExportNamedDeclaration" ||
+        node.type === "ExportAllDeclaration" ||
+        node.type === "ImportExpression"
+          ? node.source
+          : node.type === "CallExpression" &&
+              node.callee.type === "Identifier" &&
+              node.callee.name === "require"
+            ? node.arguments[0]
+            : undefined;
+      if (source?.type === "Literal" && typeof source.value === "string")
+        specifiers.push(source.value);
+    });
+    for (const specifier of specifiers) {
       if (unknownLayerAliases && /^(?:~{1,2}|@{1,2})(?:\/|$)/.test(specifier)) {
         omitted.push(specifier);
         continue;

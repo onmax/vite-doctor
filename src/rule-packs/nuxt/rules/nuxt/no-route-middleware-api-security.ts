@@ -71,7 +71,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
   const manifest = ctx.project.nuxt?.manifest;
   const registered = manifest?.isCurrent ? (manifest.serverHandlers ?? []) : [];
   // Manifest timestamps cannot prove module-provided middleware is still registered.
-  if ((dirs?.middleware ?? []).some(hasUnconditionalMiddlewareGuard)) return [];
+  if ((dirs?.middleware ?? []).some(hasUnconditionalAuthGuard)) return [];
   const candidates = [
     ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({ file, route: undefined })),
     ...registered.filter((handler) => !handler.middleware),
@@ -91,14 +91,14 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
             existsSync(handler.file) &&
             (isSensitive(toPosixPath(relative(ctx.project.root, handler.file))) ||
               isSensitive(handler.route ?? "")) &&
-            !hasAuthGuard(readProjectFile(handler.file)),
+            !hasUnconditionalAuthGuard(handler.file),
         )
         .map((handler) => handler.file),
     ),
   ];
 }
 
-function hasUnconditionalMiddlewareGuard(file: string): boolean {
+function hasUnconditionalAuthGuard(file: string): boolean {
   try {
     const parsed = parseSync(file, readProjectFile(file));
     if (parsed.errors.length) return false;
@@ -151,12 +151,6 @@ function hasUnconditionalMiddlewareGuard(file: string): boolean {
   } catch {
     return false;
   }
-}
-
-function hasAuthGuard(text: string): boolean {
-  return /requireUserSession|requireMcpAdminToken|isAuthorizedAdmin|requireAuth|authorize|authGuard|protectRoute/i.test(
-    text,
-  );
 }
 
 function readProjectFile(file: string): string {

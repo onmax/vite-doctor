@@ -3997,3 +3997,21 @@ test("session lookup alone does not protect a sensitive handler", async () => {
   });
   expect(result.diagnostics).toHaveLength(1);
 });
+
+test.each([
+  "import { requireAuth } from './auth'; export default defineEventHandler(() => ({ private: true }))",
+  "export default defineEventHandler(() => { /* requireAuth(event) */ return { private: true } })",
+  "export default defineEventHandler(event => { const unused = () => requireAuth(event); return { private: true } })",
+  "export default defineEventHandler(() => ({ note: 'requireAuth(event)' }))",
+])("unused guard references do not protect a sensitive handler: %s", async (handler) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/account.get.ts": handler,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
