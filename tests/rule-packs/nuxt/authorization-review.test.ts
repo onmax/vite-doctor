@@ -362,7 +362,7 @@ test.each(
       [layerGuard]: "export default () => ({ private: true })",
       "guard.ts": "export default () => ({ unrelated: true })",
       ".nuxt/doctor.manifest.json": JSON.stringify({
-        generatedAt: new Date().toISOString(),
+        generatedAt: "2100-01-01T00:00:00.000Z",
         localLayerAliases: local,
         layers: [{ root: "layers/admin", srcDir: "layers/admin/src", priority: 0 }],
         aliases: { "~": ".", "@": ".", "~~": ".", "@@": "." },

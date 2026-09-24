@@ -4352,3 +4352,63 @@ test.each(["unguarded", "guarded", "scoped-guard", "method-guard", "empty"])(
       ]);
   },
 );
+
+test.each([true, false])("provider aliases follow localLayerAliases: %s", async (enabled) => {
+  const handler = "layers/admin/server/api/auth/[...all].ts";
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      [handler]:
+        "import { auth } from '~/utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+      "layers/admin/app/utils/auth.ts":
+        "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        localLayerAliases: enabled,
+        layers: [{ root: "layers/admin", srcDir: "layers/admin/app", priority: 0 }],
+        resolvedServerHandlers: [{ file: handler, route: "/api/auth/**" }],
+      }),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(enabled ? 0 : 1);
+});
+
+test("Nuxt captures cached wildcard overlaps and nested cache exclusions", async () => {
+  await withFixture({}, {}, async (root) => {
+    const hooks = new Map<string, (payload?: any) => unknown>();
+    const nuxt = {
+      _version: "4.5.1",
+      options: { rootDir: root, srcDir: "app", buildDir: ".nuxt", modules: [] },
+      hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
+      async callHook() {},
+    };
+    await nuxtDoctorModule({}, nuxt as any);
+    await hooks.get("nitro:init")!({
+      options: {
+        handlers: [{ handler: join(root, "custom/entry.ts"), route: "/api/**", method: "get" }],
+        routeRules: {
+          "/api/account": { cache: { maxAge: 60 } },
+          "/api/admin/**": { cache: { maxAge: 60 } },
+          "/api/admin/settings": { cache: false },
+          "/api/profile": { cache: false },
+          "/outside/account": { cache: { maxAge: 60 } },
+        },
+      },
+      scannedHandlers: [],
+      hooks: { hook() {} },
+    });
+    const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+    expect(manifest.resolvedServerHandlers.map((handler: any) => handler.route)).toEqual([
+      "/api/account",
+      "/api/admin/settings",
+      "/api/admin/**",
+      "/api/**",
+    ]);
+    expect(manifest.resolvedServerHandlers.every((handler: any) => handler.method === "get")).toBe(
+      true,
+    );
+  });
+});

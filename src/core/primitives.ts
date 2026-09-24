@@ -275,6 +275,7 @@ export interface NuxtDoctorManifest {
   routeRules: Record<string, unknown>;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+  serverInventory?: Record<string, string[]>;
   pages?: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes?: string[];
   buildManifest?: {

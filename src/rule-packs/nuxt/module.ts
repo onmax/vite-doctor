@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { autoRegisteredNuxtLayers } from "../../core/internal/runtime-graph.js";
+import {
+  autoRegisteredNuxtLayers,
+  nuxtServerInventory,
+} from "../../core/internal/runtime-graph.js";
 import { defineNuxtModule, getLayerDirectories } from "nuxt/kit";
 import type { NuxtModule } from "nuxt/schema";
 import { join, relative, resolve } from "pathe";
@@ -25,6 +28,7 @@ type NuxtAutoImportContext = {
 
 type NuxtDoctorEvidence = {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+  serverInventory?: Record<string, string[]>;
   pages?: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
@@ -39,6 +43,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
 
   const evidence = {
     resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
+    serverInventory: undefined as Record<string, string[]> | undefined,
     pages: [] as Array<{ path?: string; file?: string; name?: string }>,
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
@@ -68,6 +73,40 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
           method: handler.method,
           middleware: handler.middleware,
         }));
+      // Nitro expands wildcard handlers for cached route rules in its virtual handlers module.
+      const rules = Object.entries(nitro.options.routeRules ?? {}) as Array<
+        [string, { cache?: unknown }]
+      >;
+      const wildcard = /\/\*\*.*$/;
+      for (const [path, rule] of rules) {
+        if (
+          !rule.cache &&
+          !rules.some(
+            ([route, parent]) =>
+              parent.cache && wildcard.test(route) && path.startsWith(route.replace(wildcard, "")),
+          )
+        )
+          continue;
+        for (const [index, handler] of evidence.resolvedServerHandlers!.entries()) {
+          if (!handler.route || handler.middleware) continue;
+          if (handler.route === path) break;
+          if (
+            !wildcard.test(handler.route) ||
+            !path.startsWith(handler.route.replace(wildcard, ""))
+          )
+            continue;
+          evidence.resolvedServerHandlers!.splice(index, 0, { ...handler, route: path });
+          break;
+        }
+      }
+      const directories = new Set<string>([
+        resolve(nuxt.options.rootDir, nuxt.options.serverDir ?? "server"),
+        ...(nuxt.options._layers ? getLayerDirectories(nuxt).map((layer) => layer.server) : []),
+        ...toArray(nitro.options.scanDirs).map((directory) => resolve(String(directory))),
+      ]);
+      evidence.serverInventory = Object.fromEntries(
+        [...directories].map((directory) => [directory, nuxtServerInventory(directory)]),
+      );
       await writeManifest(nuxt, evidence);
     };
     await captureHandlers();
@@ -212,6 +251,7 @@ export async function writeManifest(
       middleware: handler.middleware,
     })),
     resolvedServerHandlers: evidence?.resolvedServerHandlers,
+    serverInventory: evidence?.serverInventory,
     pages: evidence?.pages ?? [],
     prerenderRoutes: [
       ...new Set([

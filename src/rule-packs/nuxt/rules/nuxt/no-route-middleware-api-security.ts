@@ -324,12 +324,26 @@ function isProviderBinding(
     );
     if (!binding) continue;
     const source = node.source.value as string;
+    const layer = [...ctx.project.nuxt!.layers]
+      .filter((layer) => {
+        const root = resolve(ctx.project.root, layer.root);
+        return root !== ctx.project.root && file.startsWith(`${root}/`);
+      })
+      .sort((a, b) => b.root.length - a.root.length)[0];
     const aliases: Record<string, string> = {
       "~~": ctx.project.root,
       "@@": ctx.project.root,
       "~": ctx.project.nuxt!.appDir,
       "@": ctx.project.nuxt!.appDir,
       ...(ctx.project.nuxt?.manifest?.isCurrent ? ctx.project.nuxt.manifest.aliases : {}),
+      ...(layer && ctx.project.nuxt!.localLayerAliases === true
+        ? {
+            "~~": resolve(ctx.project.root, layer.root),
+            "@@": resolve(ctx.project.root, layer.root),
+            "~": resolve(ctx.project.root, layer.srcDir ?? layer.root),
+            "@": resolve(ctx.project.root, layer.srcDir ?? layer.root),
+          }
+        : {}),
     };
     const alias = Object.keys(aliases)
       .sort((a, b) => b.length - a.length)

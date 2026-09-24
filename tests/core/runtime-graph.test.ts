@@ -467,3 +467,35 @@ test("a layers file does not invalidate or crash Nuxt manifest discovery", async
     },
   );
 });
+
+test.each(["add", "delete", "rename"])(
+  "invalidates changed server inventory: %s",
+  async (change) => {
+    await withRuntimeGraph(
+      {
+        ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+        "layers/admin/backend/api/account.ts": "export default () => ({})",
+      },
+      async (root) => {
+        const directory = join(root, "layers/admin/backend");
+        mkdirSync(join(root, ".nuxt"), { recursive: true });
+        writeFileSync(
+          join(root, ".nuxt/doctor.manifest.json"),
+          JSON.stringify({
+            generatedAt: "2100-01-01T00:00:00.000Z",
+            layers: [{ root: "layers/admin", serverDir: directory, priority: 0 }],
+            resolvedServerHandlers: [
+              { file: "layers/admin/backend/api/account.ts", route: "/api/account" },
+            ],
+            serverInventory: { [directory]: ["api", "api/account.ts"] },
+          }),
+        );
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+        if (change !== "add") rmSync(join(directory, "api/account.ts"));
+        if (change !== "delete")
+          writeFileSync(join(directory, "api/profile.ts"), "export default () => ({})");
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(false);
+      },
+    );
+  },
+);

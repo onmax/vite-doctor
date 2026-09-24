@@ -139,6 +139,13 @@ export function autoRegisteredNuxtLayers(root: string): string[] {
   }
 }
 
+export function nuxtServerInventory(directory: string): string[] {
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { recursive: true })
+    .map((entry) => String(entry).replaceAll("\\", "/"))
+    .sort();
+}
+
 export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest | null) {
   if (!manifest?.generatedAt || !Number.isFinite(Date.parse(manifest.generatedAt))) return false;
   const recordedLayers =
@@ -148,6 +155,43 @@ export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest
       .map((layer) => resolve(root, layer.root).split("/").pop()!)
       .sort();
   if (JSON.stringify(recordedLayers) !== JSON.stringify(autoRegisteredNuxtLayers(root)))
+    return false;
+  if (
+    manifest.serverInventory &&
+    Object.entries(manifest.serverInventory).some(([directory, entries]) => {
+      try {
+        return (
+          JSON.stringify(entries) !== JSON.stringify(nuxtServerInventory(resolve(root, directory)))
+        );
+      } catch {
+        return true;
+      }
+    })
+  )
+    return false;
+  const generatedAt = Date.parse(manifest.generatedAt);
+  const serverDirectories = new Set([
+    resolve(root, "server"),
+    ...(manifest.layers ?? []).map((layer) =>
+      resolve(root, layer.serverDir ?? join(layer.root, "server")),
+    ),
+  ]);
+  const directoriesUnchanged = (directory: string): boolean => {
+    if (!existsSync(directory)) return true;
+    try {
+      if (Math.floor(statSync(directory).mtimeMs) > generatedAt) return false;
+      return readdirSync(directory, { withFileTypes: true }).every(
+        (entry) => !entry.isDirectory() || directoriesUnchanged(join(directory, entry.name)),
+      );
+    } catch {
+      return false;
+    }
+  };
+  if (
+    manifest.resolvedServerHandlers &&
+    !manifest.serverInventory &&
+    [...serverDirectories].some((directory) => !directoriesUnchanged(directory))
+  )
     return false;
   const configs = [
     { root, nuxtConfigMtimeMs: manifest.nuxtConfigMtimeMs },
