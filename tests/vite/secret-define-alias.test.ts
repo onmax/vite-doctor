@@ -169,3 +169,47 @@ export default { define: {
     },
   );
 }
+
+test.each([
+  ["const { PRIVATE_TOKEN: replacement } = process.env", true],
+  ["const { PUBLIC_VERSION: replacement, PRIVATE_TOKEN: other } = process.env", false],
+  ["const { 'PRIVATE_TOKEN': replacement } = process.env", true],
+  ["const { ['PRIVATE_TOKEN']: replacement } = process.env", true],
+  ["const { PRIVATE_TOKEN: replacement } = import.meta.env", true],
+  ["let { PRIVATE_TOKEN: replacement } = process.env; replacement = 'public'", false],
+  ["const { PRIVATE_TOKEN: other, ...replacement } = process.env", false],
+  ["const key = 'PRIVATE_TOKEN'; const { [key]: replacement } = process.env", false],
+])("resolves static renamed environment bindings: %s", async (declaration, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declaration}
+const value = replacement
+export default { define: {
+  __CONFIG__: JSON.stringify(value),
+} }`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.ruleId === noSecretDefine.meta.id)).toBe(expected);
+});
+
+test.each([
+  ["PRIVATE_TOKEN", "PUBLIC_VERSION", false],
+  ["PUBLIC_VERSION", "PRIVATE_TOKEN", true],
+])("resolves shadowed destructured bindings with outer %s", async (outer, inner, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const { ${outer}: replacement } = process.env
+export default defineConfig(() => {
+  const { ${inner}: replacement } = process.env
+  return { define: {
+    __CONFIG__: JSON.stringify(replacement),
+  } }
+})`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.ruleId === noSecretDefine.meta.id)).toBe(expected);
+});

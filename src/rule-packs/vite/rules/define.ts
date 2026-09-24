@@ -174,11 +174,37 @@ function readAliasInitializers(source: string) {
         reference.resolved?.defs.length !== 1 ||
         definition?.type !== "Variable" ||
         definition.parent.kind !== "const" ||
-        definition.node.id.type !== "Identifier" ||
         !definition.node.init
       )
         continue;
-      initializers.set(reference.identifier.range[0], definition.node.init.range);
+      const { id, init } = definition.node;
+      if (id.type === "Identifier") {
+        initializers.set(reference.identifier.range[0], init.range);
+      } else if (
+        id.type === "ObjectPattern" &&
+        init.type === "MemberExpression" &&
+        !init.computed &&
+        init.property.type === "Identifier" &&
+        init.property.name === "env" &&
+        ((init.object.type === "Identifier" && init.object.name === "process") ||
+          (init.object.type === "MetaProperty" &&
+            init.object.meta.name === "import" &&
+            init.object.property.name === "meta"))
+      ) {
+        const property = id.properties.find(
+          (property) =>
+            property.type === "Property" &&
+            property.value.type === "Identifier" &&
+            property.value.name === reference.identifier.name,
+        );
+        if (
+          property?.type === "Property" &&
+          ((!property.computed && property.key.type === "Identifier") ||
+            (property.key.type === "Literal" && typeof property.key.value === "string"))
+        ) {
+          initializers.set(reference.identifier.range[0], property.key.range);
+        }
+      }
     }
   }
   return initializers;
