@@ -119,9 +119,9 @@ function outcomes(
   path: Path,
   bindings: Bindings,
   conditions: Set<string>,
-  argumentsEvaluated = false,
+  argumentValues?: readonly (Value | undefined)[],
 ): Path[] {
-  return evaluateOutcomes(node, path, bindings, conditions, argumentsEvaluated).map((current) => {
+  return evaluateOutcomes(node, path, bindings, conditions, argumentValues).map((current) => {
     if (current.outcome !== "normal") return current;
     const expression = unwrapExpression(node);
     const status = httpStatus(expression, current.resolveBinding);
@@ -146,7 +146,7 @@ function evaluateOutcomes(
   path: Path,
   bindings: Bindings,
   conditions: Set<string>,
-  argumentsEvaluated = false,
+  argumentValues?: readonly (Value | undefined)[],
 ): Path[] {
   if (--path.budget.remaining < 0) throw analysisLimit;
   bindings = path.bindings ?? bindings;
@@ -515,23 +515,26 @@ function evaluateOutcomes(
       .map((current) => ({ ...current, value: undefined }));
   }
   const call = assignment.type === "AwaitExpression" ? assignment.argument : assignment;
-  if (!argumentsEvaluated && (call.type === "CallExpression" || call.type === "NewExpression")) {
-    let paths = outcomes(call.callee, normal, bindings, conditions);
+  if (!argumentValues && (call.type === "CallExpression" || call.type === "NewExpression")) {
+    let paths = outcomes(call.callee, normal, bindings, conditions).map((current) => ({
+      path: current,
+      values: [] as (Value | undefined)[],
+    }));
     for (const argument of call.arguments) {
-      paths = paths.flatMap((current) =>
+      paths = paths.flatMap(({ path: current, values }) =>
         current.outcome === "normal"
           ? outcomes(
               argument.type === "SpreadElement" ? argument.argument : argument,
               current,
               bindings,
               conditions,
-            )
-          : [current],
+            ).map((evaluated) => ({ path: evaluated, values: [...values, evaluated.value] }))
+          : [{ path: current, values }],
       );
     }
-    return paths.flatMap((current) =>
+    return paths.flatMap(({ path: current, values }) =>
       current.outcome === "normal"
-        ? outcomes(node, current, bindings, conditions, true)
+        ? outcomes(node, current, bindings, conditions, values)
         : [current],
     );
   }
@@ -584,15 +587,8 @@ function evaluateOutcomes(
           if (result.outcome !== "normal" || target.type !== "Identifier") return result;
           const arg = defaulted ? param.right : supplied;
           const source = defaulted ? result : path;
-          const status = httpStatus(arg, path.resolveBinding);
-          const error =
-            defaulted && result.value && "error" in result.value
-              ? result.value.error
-              : arg?.type === "Identifier"
-                ? source.bindings?.get(arg.name)
-                : status !== undefined
-                  ? { id: --path.budget.remaining, status }
-                  : undefined;
+          const value = defaulted ? result.value : argumentValues?.[index];
+          const error = value && "error" in value ? value.error : undefined;
           const values = new Map(result.bindings);
           if (error) values.set(target.name, error);
           const booleans = new Map(result.conditions);

@@ -1715,3 +1715,43 @@ test.each([
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
 });
+
+test.each([
+  [
+    "returned alias",
+    "function pass(value) { return value }; function preserve(value) { if (isError(value)) throw value }",
+    "preserve(pass(error))",
+    false,
+  ],
+  [
+    "multiple arguments",
+    "function pass(value) { return value }; function preserve(first, second) { if (isError(first)) throw first }",
+    "preserve(pass(error), pass(false))",
+    false,
+  ],
+  [
+    "argument snapshot",
+    "function preserve(first, second) { if (isError(first)) throw first }",
+    "preserve(error, error = new Error())",
+    false,
+  ],
+  [
+    "shared identity",
+    "function pass(value) { return value }; function change(value) { value.statusCode = 500 }",
+    "change(pass(error)); throw error",
+    true,
+  ],
+])("propagates supplied values through %s", async (_name, helpers, handler, reports) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "api/account.ts": `export default defineEventHandler(() => {
+        ${helpers}
+        try { throw createError({ statusCode: 404 }) }
+        catch (error) { ${handler}; throw new Error() }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+});
