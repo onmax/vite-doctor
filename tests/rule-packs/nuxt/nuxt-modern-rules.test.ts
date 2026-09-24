@@ -2434,6 +2434,32 @@ test("path-scoped server middleware does not hide unrelated sensitive handlers",
   ]);
 });
 
+test.each([
+  ["(event) => requireAuth(event)", 0],
+  ["async (event) => { await requireUserSession(event) }", 0],
+  ["(event) => { return requireAuth(event) }", 0],
+  ["async (event) => { return await requireAuth(event) }", 0],
+  ["(event) => { if (event.path.startsWith('/api/admin')) return requireAuth(event) }", 1],
+  ["async (event) => { if (event.path === '/api/account') return; await requireAuth(event) }", 1],
+  ["async (event) => { try { await requireAuth(event) } catch {} }", 1],
+  ["(event) => { const guard = () => requireAuth(event) }", 1],
+  ["(event) => { requireAuth(event) }", 1],
+  ["(event) => getUserSession(event)", 1],
+  ["(event) => isAuthorizedAdmin(event)", 1],
+  ["(event) => requireAuth(otherEvent)", 1],
+])("server middleware guard coverage for %s", async (handler, count) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+      "server/middleware/auth.ts": `export default defineEventHandler(${handler})`,
+      "server/api/account.get.ts": `export default defineEventHandler(() => ({}))`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});
+
 test("route middleware security ignores sensitive ancestor directory names", async () => {
   await withFixture(
     {

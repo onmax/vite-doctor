@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { relative } from "pathe";
+import { parseSync } from "oxc-parser";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
 import { createNuxtRuntimeEvidence } from "./evidence.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -70,6 +71,7 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
 
 function unguardedSensitiveHandlers(ctx: any): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
+  if (dirs?.middleware.some(hasUnconditionalMiddlewareGuard)) return [];
   const files = new Set<string>([...(dirs?.api ?? []), ...(dirs?.routes ?? [])]);
   return [...files].filter(
     (file) =>
@@ -77,6 +79,49 @@ function unguardedSensitiveHandlers(ctx: any): string[] {
         toPosixPath(relative(ctx.project.root, file)),
       ) && !hasAuthGuard(readProjectFile(file)),
   );
+}
+
+function hasUnconditionalMiddlewareGuard(file: string): boolean {
+  try {
+    const parsed = parseSync(file, readProjectFile(file));
+    if (parsed.errors.length) return false;
+    const declaration: AnyNode = parsed.program.body.find(
+      (node) => node.type === "ExportDefaultDeclaration",
+    );
+    const factory = declaration?.declaration;
+    if (
+      factory?.type !== "CallExpression" ||
+      factory.callee.type !== "Identifier" ||
+      !["defineEventHandler", "eventHandler"].includes(factory.callee.name)
+    )
+      return false;
+    const handler = factory.arguments[0];
+    if (!["ArrowFunctionExpression", "FunctionExpression"].includes(handler?.type)) return false;
+    let expression = handler.body;
+    if (expression.type === "BlockStatement") {
+      // A guard after branching or an early return cannot prove all-path coverage.
+      const first = expression.body[0];
+      expression =
+        first?.type === "ReturnStatement"
+          ? first.argument
+          : first?.type === "ExpressionStatement" && first.expression.type === "AwaitExpression"
+            ? first.expression
+            : null;
+    }
+    if (expression?.type === "AwaitExpression") expression = expression.argument;
+    return (
+      expression?.type === "CallExpression" &&
+      expression.callee.type === "Identifier" &&
+      /^(?:requireUserSession|requireMcpAdminToken|requireAuth|authGuard|protectRoute)$/.test(
+        expression.callee.name,
+      ) &&
+      handler.params[0]?.type === "Identifier" &&
+      expression.arguments[0]?.type === "Identifier" &&
+      expression.arguments[0].name === handler.params[0].name
+    );
+  } catch {
+    return false;
+  }
 }
 
 function hasAuthGuard(text: string): boolean {
