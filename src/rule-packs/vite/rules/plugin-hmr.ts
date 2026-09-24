@@ -357,6 +357,7 @@ function undisposedResource(program: AnyNode): string | null {
       return { normal: true, abrupt: false };
     visited.add(target);
     const local = new Map(environment);
+    if (target.type === "FunctionExpression" && target.id) local.set(target.id, target);
     local.set(thisBinding, receiver);
     for (const [index, param] of target.params.entries()) {
       if (param.type === "RestElement")
@@ -386,6 +387,7 @@ function undisposedResource(program: AnyNode): string | null {
     const exits: Set<AnyNode>[] = [];
     const exitedDisposers: Disposer[] = [];
     const thrownExits = new Set<Set<AnyNode>>();
+    const throwStates = new Map<Set<AnyNode>, ReturnType<typeof snapshot>>();
     let normal = false;
     let abrupt = false;
     const returns: AnyNode[] = [];
@@ -426,24 +428,20 @@ function undisposedResource(program: AnyNode): string | null {
       }
       {
         const path = memberPath(node.callee);
-        const global = node.callee?.object ?? node.callee;
-        const globalValue = identity(global, environment);
-        const globalAlias = ["window", "globalThis", "self"].includes(globalValue);
+        const target = identity(node.callee, environment);
+        const global = identity(target?.object ?? node.callee?.object, environment);
         const callee =
-          (!resolve(global) || globalAlias) &&
-          !(node.callee?.computed && typeof node.callee.property?.value !== "string")
-            ? globalAlias && node.callee?.type === "MemberExpression"
-              ? propertyKey(node.callee)
-              : path?.replace(/^(?:window|globalThis|self)\./, "")
-            : undefined;
+          typeof target === "string"
+            ? target
+            : ["window", "globalThis", "self"].includes(global)
+              ? propertyKey(target)
+              : undefined;
         const kind =
-          node.type === "CallExpression" && callee === "setInterval" && !resolve(node.callee)
+          node.type === "CallExpression" && callee === "setInterval"
             ? "interval"
-            : node.type === "CallExpression" && callee === "setTimeout" && !resolve(node.callee)
+            : node.type === "CallExpression" && callee === "setTimeout"
               ? "timeout"
-              : node.type === "NewExpression" &&
-                  ["WebSocket", "EventSource"].includes(callee ?? "") &&
-                  !resolve(node.callee)
+              : node.type === "NewExpression" && ["WebSocket", "EventSource"].includes(callee ?? "")
                 ? callee!
                 : node.type === "CallExpression" && path?.endsWith(".subscribe")
                   ? "subscription"
@@ -584,10 +582,12 @@ function undisposedResource(program: AnyNode): string | null {
         abrupt = true;
         exits.push(new Set(cleaned));
         thrownExits.add(exits[exits.length - 1]);
+        throwStates.set(exits[exits.length - 1], snapshot());
       }
       return completion.normal;
     };
     const snapshot = () => ({
+      path: new Map(currentPath),
       disposers: [...disposers],
       cleaned: new Set(cleaned),
       values: new Map(environment),
@@ -616,11 +616,26 @@ function undisposedResource(program: AnyNode): string | null {
           if (
             choices.every(
               (choice, index) =>
-                resources.some((resource) => resource.value === choice) &&
+                (choice === undefined
+                  ? [left, right]
+                      .filter((state) => state.values.get(key) === undefined)
+                      .every((state) =>
+                        choices
+                          .filter((other) => other !== undefined)
+                          .every((other) =>
+                            [...(resourcePaths.get(other) ?? [])].some(
+                              ([condition, side]) =>
+                                state.path.has(condition) && state.path.get(condition) !== side,
+                            ),
+                          ),
+                      )
+                  : resources.some((resource) => resource.value === choice)) &&
                 choices
                   .slice(index + 1)
                   .every(
                     (other) =>
+                      choice === undefined ||
+                      other === undefined ||
                       choice === other ||
                       [...(resourcePaths.get(choice) ?? [])].some(
                         ([condition, side]) =>
@@ -654,6 +669,12 @@ function undisposedResource(program: AnyNode): string | null {
       const resourceStart = resources.length;
       const before = snapshot();
       const parentPath = currentPath;
+      let inverted = false;
+      condition = unwrapResourceExpression(condition);
+      while (condition?.type === "UnaryExpression" && condition.operator === "!") {
+        inverted = !inverted;
+        condition = unwrapResourceExpression(condition.argument);
+      }
       const conditionValue =
         condition?.type === "Identifier" ? identity(condition, environment) : undefined;
       if (conditionValue !== undefined && !conditions.has(conditionValue))
@@ -667,7 +688,7 @@ function undisposedResource(program: AnyNode): string | null {
           path: new Map(disposer.path).set(choice, side),
         }));
       };
-      selectPath(true);
+      selectPath(!inverted);
       const firstExit = exits.length;
       const beforeAbrupt = abrupt;
       const leftContinues = walk(left);
@@ -680,16 +701,16 @@ function undisposedResource(program: AnyNode): string | null {
       if (catches) {
         const throws = leftExits.filter((exit) => thrownExits.has(exit));
         if (throws.length) {
-          for (const value of throws[0])
-            if (throws.every((exit) => exit.has(value))) cleaned.add(value);
+          restore(throwStates.get(throws[0])!);
+          for (const exit of throws.slice(1)) merge(snapshot(), throwStates.get(exit)!);
         }
       }
-      selectPath(false);
+      selectPath(inverted);
       const rightContinues = walk(right);
       abrupt ||= leftAbrupt && (!catches || leftExits.some((exit) => !thrownExits.has(exit)));
-      currentPath = parentPath;
       const rightValue = identity(right, environment);
       const afterRight = snapshot();
+      currentPath = parentPath;
       if (expression && leftContinues && rightContinues) {
         const choices = [leftValue, rightValue].flatMap(
           (value) => alternatives.get(value) ?? [value],
@@ -982,6 +1003,7 @@ function undisposedResource(program: AnyNode): string | null {
         } else {
           abrupt = true;
           thrownExits.add(exits[exits.length - 1]);
+          throwStates.set(exits[exits.length - 1], snapshot());
         }
         return false;
       }

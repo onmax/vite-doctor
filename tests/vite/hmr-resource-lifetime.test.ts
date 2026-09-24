@@ -1735,3 +1735,80 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "aliased timer creation",
+    "const start = setInterval; start(refresh); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "aliased timer cleanup",
+    "const start = setInterval; const timer = start(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "aliased socket creation",
+    "const Socket = WebSocket; new Socket(url); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "shadowed timer creation alias",
+    "const setInterval = () => {}; const start = setInterval; start(refresh); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "optional timer cleanup",
+    "let timer; if (flag) timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "optional timer overwritten",
+    "let timer = setInterval(refresh); if (flag) timer = undefined; import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "named recursive cleanup",
+    "const timer = setInterval(refresh); const cleanup = function again() { again(); clearInterval(timer) }; import.meta.hot.dispose(cleanup)",
+    true,
+  ],
+  [
+    "catch sees assigned timer",
+    "let timer; try { timer = setInterval(refresh); throw Error() } catch { clearInterval(timer) }; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "catch sees overwritten timer",
+    "let timer = setInterval(refresh); try { timer = 0; throw Error() } catch { clearInterval(timer) }; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "catch sees assigned property",
+    "const state = {}; try { state.timer = setInterval(refresh); throw Error() } catch { clearInterval(state.timer) }; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "catch merges throw states",
+    "let timer = setInterval(refresh); try { if (flag) { timer = 0; throw Error() }; throw Error() } catch { clearInterval(timer) }; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "opposite guards correlate lifetimes",
+    "if (flag) window.addEventListener('resize', refresh); if (!flag) import.meta.hot.dispose(() => {}); else import.meta.hot.dispose(() => window.removeEventListener('resize', refresh))",
+    false,
+  ],
+  [
+    "opposite unrelated guards retain leaks",
+    "if (flag) window.addEventListener('resize', refresh); if (!other) import.meta.hot.dispose(() => {}); else import.meta.hot.dispose(() => window.removeEventListener('resize', refresh))",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
