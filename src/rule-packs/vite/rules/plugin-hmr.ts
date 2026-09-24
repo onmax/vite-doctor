@@ -668,8 +668,11 @@ function undisposedResource(program: AnyNode): string | null {
             properties.set(instance, new Map());
             const local = new Map(environment);
             local.set(thisBinding, instance);
+            const fields = ["ClassDeclaration", "ClassExpression"].includes(target.type)
+              ? target.body.body
+              : [];
             const initialize = (): void => {
-              for (const field of target.body.body) {
+              for (const field of fields) {
                 if (field.static) continue;
                 const key = field.computed
                   ? identity(field.key, local)?.value
@@ -683,8 +686,18 @@ function undisposedResource(program: AnyNode): string | null {
                 }
               }
             };
-            const base = identity(target.superClass, environment);
-            const derived = ["ClassDeclaration", "ClassExpression"].includes(base?.type);
+            const baseValue = identity(target.superClass, environment);
+            const base = callbacks.get(baseValue) ?? baseValue;
+            const derived = Boolean(target.superClass);
+            const constructableBase =
+              [
+                "ClassDeclaration",
+                "ClassExpression",
+                "FunctionDeclaration",
+                "FunctionExpression",
+              ].includes(base?.type) &&
+              !base.async &&
+              !base.generator;
             const initializeBase = (baseArgs: AnyNode[]): Completion => {
               const completion = construct(base, baseArgs, instance);
               if (!completion.normal) return completion;
@@ -696,28 +709,39 @@ function undisposedResource(program: AnyNode): string | null {
               initialize();
               return completion;
             };
-            const constructor = target.body.body.find(
-              (field: AnyNode) => field.kind === "constructor",
-            );
+            const constructor =
+              fields.find((field: AnyNode) => field.kind === "constructor")?.value ??
+              (["FunctionDeclaration", "FunctionExpression"].includes(target.type)
+                ? target
+                : undefined);
             let completion: Completion = { normal: true, abrupt: false };
-            if (derived) {
+            if (constructableBase) {
               if (constructor) superConstructors.set(instance, initializeBase);
               else completion = initializeBase(args);
             } else initialize();
-            if (constructor)
-              completion = inspect(constructor.value, args, environment, module, instance);
+            if (constructor) completion = inspect(constructor, args, environment, module, instance);
             superConstructors.delete(allocated);
             constructing.delete(target);
             const replacement = completion.value;
-            if (
-              replacement &&
-              !["Literal", "UnaryExpression", "TemplateLiteral"].includes(replacement.type)
-            )
-              instance = replacement;
+            const returnsUndefined =
+              replacement == null ||
+              replacement === "undefined" ||
+              (replacement.type === "UnaryExpression" && replacement.operator === "void");
+            const primitive =
+              !returnsUndefined &&
+              !replacement.regex &&
+              ["Literal", "UnaryExpression", "TemplateLiteral"].includes(replacement.type);
+            if (derived && primitive) return { normal: false, abrupt: true };
+            if (!returnsUndefined && !primitive) instance = replacement;
             return { ...completion, value: instance };
           };
           const completion = construct(target, node.arguments);
           returned.set(node, completion.value);
+          if (completion.abrupt) {
+            abrupt = true;
+            exits.push(new Set(cleaned));
+            if (module) exitedDisposers.push(...disposers);
+          }
           return completion.normal;
         }
       }

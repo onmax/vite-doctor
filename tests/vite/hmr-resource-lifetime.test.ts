@@ -1460,6 +1460,47 @@ for (const [name, source, leaks] of [
     "class Base { constructor() { return {} } }; class Worker extends Base { timer = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
     false,
   ],
+  [
+    "function superclass leaks",
+    "function Base() { this.timer = setInterval(refresh) }; class Worker extends Base {}; new Worker()",
+    true,
+  ],
+  [
+    "function superclass cleans",
+    "function Base() { this.timer = setInterval(refresh) }; class Worker extends Base {}; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
+  [
+    "function expression superclass arguments clean",
+    "const Base = function(timer) { this.timer = timer }; class Worker extends Base { constructor(timer) { super(timer) } }; const worker = new Worker(setInterval(refresh)); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
+  [
+    "function superclass replacement initializes derived fields",
+    "function Base() { return {} }; class Worker extends Base { timer = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
+  [
+    "derived regexp return allows registration",
+    "let timer; class Base {}; class Worker extends Base { constructor() { super(); timer = setInterval(refresh); return /valid/ } }; new Worker(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  ...["1", "null", "false", "'invalid'", "-1", "`invalid`"].map(
+    (value) =>
+      [
+        `derived primitive return ${value} prevents registration`,
+        `let timer; class Base {}; class Worker extends Base { constructor() { super(); timer = setInterval(refresh); return ${value} } }; new Worker(); import.meta.hot.dispose(() => clearInterval(timer))`,
+        true,
+      ] as const,
+  ),
+  ...["", "undefined", "void 0"].map(
+    (value) =>
+      [
+        `derived undefined return ${value} allows registration`,
+        `let timer; class Base {}; class Worker extends Base { constructor() { super(); timer = setInterval(refresh); return ${value} } }; new Worker(); import.meta.hot.dispose(() => clearInterval(timer))`,
+        false,
+      ] as const,
+  ),
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({
