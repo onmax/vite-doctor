@@ -22,6 +22,7 @@ export const noHttpErrorMasking = createRule({
     title: "Preserve intentional HTTP errors in Nitro handlers",
     category: "request",
     severity: "warn",
+    fixable: "suggestion",
     docsUrl: "https://h3.dev/guide/api/error",
     requires: { script: true, nitro: true },
   },
@@ -88,6 +89,17 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     }
     let paths: Path[] = [{ ...normal, conditions: scopedConditions }];
     for (const statement of node.body) {
+      if (statement.type === "VariableDeclaration") {
+        for (const declaration of statement.declarations) {
+          const status = httpStatus(declaration.init);
+          if (
+            declaration.id.type === "Identifier" &&
+            status !== undefined &&
+            stableBinding(node, declaration.id.name, declaration)
+          )
+            scopedBindings.set(declaration.id.name, status);
+        }
+      }
       const next = paths.flatMap((current) =>
         current.outcome === "normal"
           ? outcomes(statement, current, scopedBindings, conditions)
@@ -359,6 +371,7 @@ function stableConditions(node: AnyNode): Set<string> {
   const uses = new Map<string, number>();
   const unstable = new Set<string>();
   const assignments = new Set<AnyNode>();
+  const skipped = unreferencedFunctionNodes(node);
   const nested = new Set<AnyNode>();
   walkScriptLocal(node, (child) => {
     if (
@@ -370,7 +383,7 @@ function stableConditions(node: AnyNode): Set<string> {
     if (child.type === "ForStatement" && child.update) assignments.add(child.update);
   });
   walkScriptLocal(node, (child) => {
-    if (nested.has(child)) return;
+    if (skipped.has(child)) return;
     if (
       child.type === "IfStatement" ||
       child.type === "WhileStatement" ||
@@ -402,6 +415,7 @@ function stableConditions(node: AnyNode): Set<string> {
     }
     if (child.type === "AssignmentExpression" || child.type === "UpdateExpression") {
       if (
+        !nested.has(child) &&
         assignments.has(child) &&
         child.operator === "=" &&
         child.left.type === "Identifier" &&
@@ -461,29 +475,63 @@ function blockBindings(node: AnyNode): Set<string> {
 function stableCatchBinding(handler: AnyNode): string | undefined {
   if (handler.param?.type !== "Identifier") return;
   const name = handler.param.name;
+  return stableBinding(handler.body, name) ? name : undefined;
+}
+
+function stableBinding(body: AnyNode, name: string, declaration?: AnyNode): boolean {
   let stable = true;
-  const nested = new Set<AnyNode>();
-  walkScriptLocal(handler.body, (node) => {
+  const nested = unreferencedFunctionNodes(body);
+  walkScriptLocal(body, (node) => {
     if (nested.has(node)) return;
     if (
-      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
-        node.type,
-      ) ||
-      (node.type === "BlockStatement" && blockBindings(node).has(name)) ||
+      (node !== body && node.type === "BlockStatement" && blockBindings(node).has(name)) ||
+      (isFunction(node) && node.params.some((param: AnyNode) => assignsBinding(param, name))) ||
       (node.type === "CatchClause" && node.param?.name === name)
     ) {
       walkScriptLocal(node, (child) => nested.add(child));
       return;
     }
     if (
-      (node.type === "VariableDeclarator" && node.id?.name === name) ||
+      (node !== declaration &&
+        node.type === "VariableDeclarator" &&
+        assignsBinding(node.id, name)) ||
       (node.type === "AssignmentExpression" && assignsBinding(node.left, name)) ||
       (node.type === "UpdateExpression" && node.argument?.name === name) ||
       (node.type === "CatchClause" && node.param?.name === name)
     )
       stable = false;
   });
-  return stable ? name : undefined;
+  return stable;
+}
+
+function isFunction(node: AnyNode): boolean {
+  return ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+    node.type,
+  );
+}
+
+function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
+  const names = new Map<AnyNode, AnyNode>();
+  const identifiers = new Map<string, Set<AnyNode>>();
+  walkScriptLocal(root, (node) => {
+    if (node.type === "Identifier") {
+      if (!identifiers.has(node.name)) identifiers.set(node.name, new Set());
+      identifiers.get(node.name)!.add(node);
+    }
+    if (node.type === "FunctionDeclaration" && node.id) names.set(node, node.id);
+    if (
+      node.type === "VariableDeclarator" &&
+      node.id.type === "Identifier" &&
+      node.init &&
+      isFunction(node.init)
+    )
+      names.set(node.init, node.id);
+  });
+  const skipped = new Set<AnyNode>();
+  for (const [fn, name] of names) {
+    if (identifiers.get(name.name)?.size === 1) walkScriptLocal(fn, (node) => skipped.add(node));
+  }
+  return skipped;
 }
 
 function assignsBinding(node: AnyNode, name: string): boolean {

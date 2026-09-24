@@ -39,6 +39,42 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "invoked condition closure",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "const mutate = () => { missing = false }; mutate(); if (missing) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "invoked catch closure",
+    "throw createError({ statusCode: 404 })",
+    "(() => { error = new Error() })(); if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "uninvoked catch closure",
+    "throw createError({ statusCode: 404 })",
+    "const mutate = () => { error = new Error() }; if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "local error variable",
+    "const error = createError({ statusCode: 404 }); throw error",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "mutated local error variable",
+    "let error = createError({ statusCode: 404 }); error = new Error(); throw error",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "local replacement variable",
+    "throw createError({ statusCode: 404 })",
+    "const replacement = createError({ statusCode: 500 }); throw replacement",
+    true,
+  ],
+  [
     "callback-local condition write",
     "if (missing) throw createError({ statusCode: 404 })",
     "const inspect = () => { missing = readFlag() }; if (missing) throw error; throw createError({ statusCode: 500 })",
