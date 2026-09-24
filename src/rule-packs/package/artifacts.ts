@@ -14,7 +14,7 @@ export interface PackageManifest {
   typings?: string;
   exports?: unknown;
   imports?: Record<string, unknown>;
-  bin?: string | Record<string, string>;
+  bin?: string | string[] | Record<string, string>;
   typesVersions?: Record<string, Record<string, string[]>>;
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
@@ -47,7 +47,13 @@ function isPackageManifest(value: unknown): value is PackageManifest {
       (entry) => isString(entry) || isMap(entry, (target) => isString(target) || target === false),
     ) &&
     optional("imports", isRecord) &&
-    optional("bin", (entry) => isString(entry) || isMap(entry, isString)) &&
+    optional(
+      "bin",
+      (entry) =>
+        isString(entry) ||
+        (Array.isArray(entry) && entry.every(isString)) ||
+        isMap(entry, isString),
+    ) &&
     optional("typesVersions", (entry) =>
       isMap(entry, (version) =>
         isMap(version, (targets) => Array.isArray(targets) && targets.every(isString)),

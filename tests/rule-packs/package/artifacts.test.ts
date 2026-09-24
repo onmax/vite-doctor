@@ -208,12 +208,30 @@ test("includes adjacent declarations, browser and binary entrypoints, and typesV
   expect(result.missing).toEqual([]);
 });
 
+test("follows npm-compatible binary arrays and records missing executables", () => {
+  const result = inventory(
+    { bin: ["cli.js", "missing.js"] },
+    {
+      "cli.js": 'import "./command.js";',
+      "command.js": 'import "cli-peer";',
+    },
+  )!;
+  expect(result.references).toHaveLength(1);
+  expect(result.references[0]).toMatchObject({
+    packageName: "cli-peer",
+    kind: "runtime",
+    required: true,
+  });
+  expect(result.missing).toEqual(["missing.js"]);
+});
+
 test.each([
   null,
   [],
   { main: 42 },
   { browser: { "./index.js": true } },
   { bin: { example: false } },
+  { bin: ["cli.js", false] },
   { dependencies: { example: 1 } },
   { typesVersions: { "*": { "*": "index.d.ts" } } },
   { peerDependenciesMeta: { example: { optional: "yes" } } },
