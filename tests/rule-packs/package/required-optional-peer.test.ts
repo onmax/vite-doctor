@@ -613,3 +613,41 @@ test.each([{ node: [] }, { node: [null] }, { node: [{ browser: "peer" }, null] }
     ).toEqual([]);
   },
 );
+
+test.each(["node-addons", "module-sync"])(
+  "selects built-in Node condition %s",
+  async (condition) => {
+    for (const source of ['import "#adapter";', 'require("#adapter");']) {
+      expect(
+        await diagnose(
+          {
+            main: "index.js",
+            imports: { "#adapter": { [condition]: "peer", default: "./safe.js" } },
+            ...optionalPeer,
+          },
+          { "index.js": source, "safe.js": "export {};" },
+        ),
+      ).toMatchObject([{ code: "PKG0003" }]);
+    }
+  },
+);
+
+test.each([
+  ['(function require(peer = require("peer")) {})()', 0],
+  ['(function require() { require("peer"); })()', 0],
+  ['(function require() {})(); require("peer");', 1],
+  ['module.require("peer");', 1],
+  ['const module = { require() {} }; module.require("peer");', 0],
+  ['(function module() { module.require("peer"); })()', 0],
+  ['try { module.require("peer"); } catch {}', 0],
+  ['function later() { module.require("peer"); }', 0],
+  ['(function () { if (false) return; require("peer"); })()', 1],
+  ['(function () { if (true) {} else return; require("peer"); })()', 1],
+  ['(function () { if (enabled) return; require("peer"); })()', 0],
+  ['(function () { if (true) return; require("peer"); })()', 0],
+  ['(function () { while (false) { return; } require("peer"); })()', 1],
+])("classifies required CommonJS loads: %s", async (source, count) => {
+  expect(
+    await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source }),
+  ).toHaveLength(count);
+});

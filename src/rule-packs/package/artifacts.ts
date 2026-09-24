@@ -484,6 +484,8 @@ function resolvePackageImport(
         if (
           condition !== "default" &&
           condition !== "node" &&
+          condition !== "node-addons" &&
+          condition !== "module-sync" &&
           condition !== mode &&
           !(types && targetKind === "types")
         )
@@ -551,9 +553,14 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
         add(node.arguments[0], false, isUnconditional(node, true));
       else if (
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === "require" &&
-        !shadowsRequire(node)
+        (ts.isIdentifier(node.expression) &&
+          node.expression.text === "require" &&
+          !shadowsRequire(node)) ||
+        (ts.isPropertyAccessExpression(node.expression) &&
+          ts.isIdentifier(node.expression.expression) &&
+          node.expression.expression.text === "module" &&
+          node.expression.name.text === "require" &&
+          !shadowsName(node, "module"))
       )
         add(node.arguments[0], false, isUnconditional(node, false), "commonjs");
       else if (
@@ -829,10 +836,36 @@ function isDefinitelyAbrupt(statement: ts.Statement): boolean {
   return false;
 }
 
+function literalTruthiness(node: ts.Expression): boolean | undefined {
+  if (ts.isParenthesizedExpression(node)) return literalTruthiness(node.expression);
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (node.kind === ts.SyntaxKind.FalseKeyword || node.kind === ts.SyntaxKind.NullKeyword)
+    return false;
+  if (ts.isStringLiteralLike(node)) return Boolean(node.text);
+  if (ts.isNumericLiteral(node)) return Boolean(Number(node.text));
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+    const value = literalTruthiness(node.operand);
+    return value === undefined ? undefined : !value;
+  }
+  return undefined;
+}
+
 function hasAbruptCompletion(statement: ts.Statement, includeThrow = true): boolean {
   let abrupt = false;
   function visit(node: ts.Node) {
     if (ts.isFunctionLike(node)) return;
+    if (ts.isIfStatement(node)) {
+      visit(node.expression);
+      const condition = literalTruthiness(node.expression);
+      if (condition !== false) visit(node.thenStatement);
+      if (condition !== true && node.elseStatement) visit(node.elseStatement);
+      return;
+    }
+    if (
+      (ts.isWhileStatement(node) && literalTruthiness(node.expression) === false) ||
+      (ts.isForStatement(node) && node.condition && literalTruthiness(node.condition) === false)
+    )
+      return;
     if (ts.isTryStatement(node) && node.finallyBlock && isDefinitelyAbrupt(node.finallyBlock)) {
       visit(node.finallyBlock);
       return;
@@ -1062,6 +1095,7 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
       : name.elements.some((element) => ts.isBindingElement(element) && binds(element.name));
   }
   for (let scope = node.parent; scope; scope = scope.parent) {
+    if (ts.isFunctionExpression(scope) && scope.name?.text === identifier) return true;
     if (ts.isFunctionLike(scope) && scope.parameters.some((param) => binds(param.name)))
       return true;
     if (
