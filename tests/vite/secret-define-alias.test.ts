@@ -870,3 +870,92 @@ test.each([
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+test.each([
+  ['JSON.stringify({}, ["PRIVATE_TOKEN"])', false],
+  ['JSON.stringify({}, "PRIVATE_TOKEN")', false],
+  ["JSON.stringify({}, { value: process.env.PRIVATE_TOKEN })", false],
+  [
+    'JSON.stringify({ toJSON() { return { hidden: process.env.PRIVATE_TOKEN } } }, ["public"])',
+    false,
+  ],
+  ['JSON.stringify({ public: "safe", hidden: process.env.PRIVATE_TOKEN }, ["public"])', false],
+  ['JSON.stringify({ public: process.env.PRIVATE_TOKEN }, ["public"])', true],
+  ['JSON.stringify({ nested: { hidden: process.env.PRIVATE_TOKEN } }, ["nested"])', false],
+  ["JSON.stringify({ toJSON(key = process.env.PRIVATE_TOKEN) { return key } })", false],
+  ["JSON.stringify({ nested: { toJSON(key = process.env.PRIVATE_TOKEN) { return key } } })", false],
+  ["JSON.stringify({ PRIVATE_TOKEN: { toJSON(key) { return key } } })", true],
+  ["JSON.stringify({ toJSON(key) { return key } })", false],
+])("preserves JSON serialization arguments: %s", async (value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `export default { define: { VALUE: ${value} } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ["(...values) => values[0]", "process.env.PRIVATE_TOKEN", true],
+  ["(...values) => values[1]", 'process.env.PRIVATE_TOKEN, "public"', false],
+  ["(first, ...values) => values[0]", '"public", process.env.PRIVATE_TOKEN', true],
+  ["(...values) => values", '"public", process.env.PRIVATE_TOKEN', true],
+])("binds rest arguments: %s", async (helper, args, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const read = ${helper}; export default { define: { VALUE: JSON.stringify(read(${args})) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    ["const make = config => config; export default make({ define: { PRIVATE_TOKEN: {} } })", true],
+    [
+      "function make(config) { return config }; export default make({ define: { PRIVATE_TOKEN: {} } })",
+      true,
+    ],
+    [
+      "const make = (config = { define: { PRIVATE_TOKEN: {} } }) => config; export default make()",
+      true,
+    ],
+    [
+      "const make = (config = { define: { PRIVATE_TOKEN: {} } }) => config; export default make({})",
+      false,
+    ],
+    [
+      'const make = config => config; export default mergeConfig(make({ define: { VALUE: { nested: process.env.PRIVATE_TOKEN } } }), make({ define: { VALUE: "safe" } }))',
+      false,
+    ],
+  ])(`binds config factory arguments for ${rule.meta.id}: %s`, async (config, expected) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: {
+        "vite.config.ts": `import { mergeConfig } from 'vite'; ${config}`,
+      },
+    });
+    expect(result.diagnostics.length > 0).toBe(expected);
+  });
+}
+
+test.each(["!flag", "!!!flag", "!alias"])(
+  "correlates negated config predicates: %s",
+  async (predicate) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `import { mergeConfig } from 'vite'; const flag = process.env.MODE; const alias = flag;
+const secret = { define: { VALUE: process.env.PRIVATE_TOKEN } }; const publicConfig = { define: { VALUE: 'public' } };
+export default mergeConfig(flag ? secret : publicConfig, ${predicate} ? {} : publicConfig)`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
