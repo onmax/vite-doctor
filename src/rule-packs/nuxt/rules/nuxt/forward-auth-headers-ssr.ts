@@ -22,7 +22,7 @@ export const forwardAuthHeadersSsr = createRule({
         if (!String(url).startsWith("/api/")) return;
         if (!isAuthSensitiveInternalApi(String(url))) return;
         const snippet = ctx.file.text.slice(node.start, node.end);
-        if (/useRequestFetch|useFetch|headers\s*:|cookie/i.test(snippet)) return;
+        if (forwardsRequestCredentials(snippet, ctx.file.text)) return;
         report(
           ctx,
           node,
@@ -41,4 +41,16 @@ function isAuthSensitiveInternalApi(url: string): boolean {
   return /\/api\/(?:auth|admin|account|user|users|me|profile|session|feedback|agent|private|billing|settings)(?:\/|$)/i.test(
     url,
   );
+}
+
+function forwardsRequestCredentials(call: string, source: string): boolean {
+  if (/\buseRequestFetch\s*\(/.test(call)) return true;
+  if (/\buseRequestHeaders\s*\(/.test(call)) return true;
+  if (/\bheaders\s*:\s*\{[^}]*\b(?:cookie|authorization)\s*:/is.test(call)) return true;
+  const headerVariable = call.match(/\bheaders\s*:\s*([A-Za-z_$][\w$]*)/);
+  if (!headerVariable) return false;
+  const declaration = new RegExp(
+    `\\b(?:const|let)\\s+${headerVariable[1]}\\s*=\\s*useRequestHeaders\\s*\\(`,
+  );
+  return declaration.test(source);
 }
