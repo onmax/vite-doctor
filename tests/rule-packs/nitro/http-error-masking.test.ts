@@ -110,3 +110,86 @@ test.each([
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
 });
+
+test.each([
+  "api/account.ts",
+  "routes/account.ts",
+  "server/api/account.ts",
+  "app/server/api/account.ts",
+])("analyzes Nitro handler %s", async (file) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      [file]: `export default defineEventHandler(() => {
+      try { throw createError({ statusCode: 401 }) }
+      catch { throw createError({ statusCode: 500 }) }
+    })`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
+});
+
+test.each([
+  [
+    "nested rethrow",
+    `try {
+    try { throw createError({ statusCode: 401 }) }
+    catch (error) { if (isError(error)) throw error }
+  } catch { throw createError({ statusCode: 500 }) }`,
+    true,
+  ],
+  [
+    "finalizer returns",
+    `try { throw createError({ statusCode: 401 }) }
+    catch { throw createError({ statusCode: 500 }) } finally { return }`,
+    false,
+  ],
+  [
+    "finalizer throws",
+    `try { throw createError({ statusCode: 401 }) }
+    catch { throw createError({ statusCode: 500 }) } finally { throw new Error() }`,
+    false,
+  ],
+  [
+    "finalizer conditionally returns",
+    `try { throw createError({ statusCode: 401 }) }
+    catch { throw createError({ statusCode: 500 }) } finally { if (stop) return }`,
+    true,
+  ],
+  [
+    "correlated preservation",
+    `try {
+    if (missing) throw createError({ statusCode: 404 }); throw new Error()
+  } catch (error) { if (missing) throw error; throw createError({ statusCode: 500 }) }`,
+    false,
+  ],
+  [
+    "correlated masking",
+    `try {
+    if (missing) throw createError({ statusCode: 404 }); throw new Error()
+  } catch (error) { if (!missing) throw error; throw createError({ statusCode: 500 }) }`,
+    true,
+  ],
+  [
+    "reassigned condition",
+    `try {
+    if (missing) throw createError({ statusCode: 404 }); throw new Error()
+  } catch (error) { missing = false; if (missing) throw error; throw createError({ statusCode: 500 }) }`,
+    true,
+  ],
+  [
+    "correlated finalizer",
+    `try {
+    if (missing) throw createError({ statusCode: 404 }); throw new Error()
+  } catch { throw createError({ statusCode: 500 }) } finally { if (missing) return }`,
+    false,
+  ],
+])("handles %s", async (_name, body, expected) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+});
