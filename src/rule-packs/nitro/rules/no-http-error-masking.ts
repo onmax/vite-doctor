@@ -65,7 +65,7 @@ export const noHttpErrorMasking = createRule({
   },
 });
 
-type Outcome = number | "normal" | "exit" | "throw";
+type Outcome = number | "normal" | "exit" | "throw" | "break" | "continue";
 
 interface Path {
   outcome: Outcome;
@@ -107,8 +107,43 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     return [{ ...path, outcome }];
   }
   if (node.type === "ReturnStatement") return [{ ...path, outcome: "exit" }];
+  if (node.type === "BreakStatement" || node.type === "ContinueStatement")
+    return [
+      {
+        ...path,
+        outcome: node.label ? "exit" : node.type === "BreakStatement" ? "break" : "continue",
+      },
+    ];
+  const assignment = node.type === "ExpressionStatement" ? node.expression : node;
+  if (assignment.type === "AssignmentExpression" && assignment.left.type === "Identifier") {
+    const next = new Map(path.conditions);
+    next.delete(assignment.left.name);
+    if (
+      assignment.operator === "=" &&
+      assignment.right.type === "Literal" &&
+      typeof assignment.right.value === "boolean" &&
+      conditions.has(assignment.left.name)
+    )
+      next.set(assignment.left.name, assignment.right.value);
+    return [{ ...normal, conditions: next }];
+  }
+  if (
+    [
+      "WhileStatement",
+      "DoWhileStatement",
+      "ForStatement",
+      "ForInStatement",
+      "ForOfStatement",
+    ].includes(node.type)
+  )
+    return loopOutcomes(node, normal, bindings, conditions);
   if (node.type === "IfStatement") {
-    const test = node.test;
+    let test = node.test;
+    let negated = false;
+    while (test.type === "UnaryExpression" && test.operator === "!") {
+      negated = !negated;
+      test = test.argument;
+    }
     const caught =
       test.type === "CallExpression" &&
       test.callee?.name === "isError" &&
@@ -116,12 +151,16 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       test.arguments[0]?.type === "Identifier"
         ? bindings.get(test.arguments[0].name)
         : undefined;
-    if (typeof caught === "number" || (test.type === "Literal" && test.value === true))
-      return outcomes(node.consequent, normal, bindings, conditions);
-    if (test.type === "Literal" && test.value === false)
-      return outcomes(node.alternate, normal, bindings, conditions);
-    const negated = test.type === "UnaryExpression" && test.operator === "!";
-    const identifier = negated ? test.argument : test;
+    const known =
+      typeof caught === "number" ? true : test.type === "Literal" ? Boolean(test.value) : undefined;
+    if (known !== undefined)
+      return outcomes(
+        known !== negated ? node.consequent : node.alternate,
+        normal,
+        bindings,
+        conditions,
+      );
+    const identifier = test;
     const name =
       identifier.type === "Identifier" && conditions.has(identifier.name)
         ? identifier.name
@@ -156,6 +195,46 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
   return [normal];
 }
 
+function loopOutcomes(
+  node: AnyNode,
+  path: Path,
+  bindings: Bindings,
+  conditions: Set<string>,
+): Path[] {
+  const result: Path[] = [];
+  const pending =
+    node.type === "ForStatement" && node.init
+      ? outcomes(node.init, path, bindings, conditions)
+      : [path];
+  const seen = new Set<string>();
+  const iteration = {
+    type: "IfStatement",
+    test:
+      node.test ??
+      (node.type === "ForStatement"
+        ? { type: "Literal", value: true }
+        : { type: "Identifier", name: "" }),
+    consequent: node.body,
+    alternate: { type: "BreakStatement" },
+  } as AnyNode;
+  let first = node.type === "DoWhileStatement";
+  while (pending.length) {
+    const current = pending.pop()!;
+    const key = JSON.stringify([...current.conditions].sort(([a], [b]) => a.localeCompare(b)));
+    if (!first && seen.has(key)) continue;
+    if (!first) seen.add(key);
+    const paths = outcomes(first ? node.body : iteration, current, bindings, conditions);
+    first = false;
+    for (const next of paths) {
+      if (next.outcome === "break") result.push({ ...next, outcome: "normal" });
+      else if (next.outcome === "normal" || next.outcome === "continue")
+        pending.push(...outcomes(node.update, next, bindings, conditions));
+      else result.push(next);
+    }
+  }
+  return result;
+}
+
 function catchOutcomes(
   handler: AnyNode,
   path: Path,
@@ -172,12 +251,20 @@ function catchOutcomes(
 function stableConditions(node: AnyNode): Set<string> {
   const uses = new Map<string, number>();
   const unstable = new Set<string>();
+  const assignments = new Set<AnyNode>();
   walkScriptLocal(node, (child) => {
-    if (child.type === "IfStatement") {
-      const test =
-        child.test.type === "UnaryExpression" && child.test.operator === "!"
-          ? child.test.argument
-          : child.test;
+    if (child.type === "ExpressionStatement") assignments.add(child.expression);
+    if (child.type === "ForStatement" && child.update) assignments.add(child.update);
+  });
+  walkScriptLocal(node, (child) => {
+    if (
+      child.type === "IfStatement" ||
+      child.type === "WhileStatement" ||
+      child.type === "DoWhileStatement" ||
+      (child.type === "ForStatement" && child.test)
+    ) {
+      let test = child.test;
+      while (test.type === "UnaryExpression" && test.operator === "!") test = test.argument;
       if (test.type === "Identifier") uses.set(test.name, (uses.get(test.name) ?? 0) + 1);
     }
     if (child.type === "VariableDeclarator" || child.type === "CatchClause") {
@@ -185,7 +272,22 @@ function stableConditions(node: AnyNode): Set<string> {
         if (binding.type === "Identifier") unstable.add(binding.name);
       });
     }
+    if (child.type === "ForInStatement" || child.type === "ForOfStatement") {
+      walkScriptLocal(child.left, (target) => {
+        if (target.type === "Identifier") unstable.add(target.name);
+      });
+    }
     if (child.type === "AssignmentExpression" || child.type === "UpdateExpression") {
+      if (
+        assignments.has(child) &&
+        child.operator === "=" &&
+        child.left.type === "Identifier" &&
+        child.right.type === "Literal" &&
+        typeof child.right.value === "boolean"
+      ) {
+        uses.set(child.left.name, (uses.get(child.left.name) ?? 0) + 1);
+        return;
+      }
       walkScriptLocal(child.left ?? child.argument, (target) => {
         if (target.type === "Identifier") unstable.add(target.name);
       });

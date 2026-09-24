@@ -39,6 +39,90 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "negated H3 guard",
+    "throw createError({ statusCode: 401 })",
+    "if (!isError(error)) throw createError({ statusCode: 500 }); throw error",
+    false,
+  ],
+  [
+    "negated H3 guard alternate",
+    "throw createError({ statusCode: 401 })",
+    "if (!isError(error)) throw error; else throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "literal assignment preserves",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "missing = true; if (missing) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "literal false assignment preserves",
+    "throw createError({ statusCode: 404 })",
+    "missing = false; if (!missing) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "do while throw",
+    "do { throw createError({ statusCode: 400 }) } while (false)",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "while throw",
+    "while (ready) { throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "unreachable while",
+    "while (false) { throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "for throw",
+    "for (;;) { throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "for of throw",
+    "for (const item of items) { throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "for in throw",
+    "for (const key in items) { throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "loop break",
+    "do { break; throw createError({ statusCode: 400 }) } while (false)",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "loop continue",
+    "do { continue; throw createError({ statusCode: 400 }) } while (false)",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "later loop iteration",
+    "ready = false; for (;;) { if (ready) throw createError({ statusCode: 400 }); ready = true }",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "catch loop conversion",
+    "throw createError({ statusCode: 400 })",
+    "do { throw createError({ statusCode: 500 }) } while (false)",
+    true,
+  ],
+  [
     "optional catch binding",
     "throw createError({ statusCode: 401 })",
     "throw createError({ statusCode: 500 })",
