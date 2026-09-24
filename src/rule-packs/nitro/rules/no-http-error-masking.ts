@@ -55,8 +55,10 @@ export const noHttpErrorMasking = createRule({
           asyncBody: Boolean(
             enclosingFunction?.async ||
             (handlerCall?.type === "CallExpression" &&
-              ["defineEventHandler", "eventHandler"].includes(handlerCall.callee?.name) &&
-              handlerCall.arguments.includes(enclosingFunction)),
+              handlerCall.arguments.includes(enclosingFunction) &&
+              ["defineEventHandler", "eventHandler"].some((name) =>
+                isH3Reference(unwrapExpression(handlerCall.callee), name, lexical.resolve),
+              )),
           ),
         };
         let candidate: Path | undefined;
@@ -1047,7 +1049,10 @@ function evaluateOutcomes(
       if (callee?.type === "Identifier") callee = path.functions?.get(path.resolveBinding(callee));
     }
   }
-  if (call.type === "NewExpression" && callee?.type === "ArrowFunctionExpression")
+  if (
+    call.type === "NewExpression" &&
+    (callee?.type === "ArrowFunctionExpression" || callee?.async || callee?.generator)
+  )
     return [{ ...normal, outcome: "throw" }];
   if (
     (call.type === "CallExpression" ||
@@ -1678,7 +1683,9 @@ function conditionPaths(
           : valueNode.type === "Literal"
             ? Boolean(valueNode.value)
             : valueNode.type === "Identifier"
-              ? values.has(current.resolveBinding(valueNode))
+              ? values.has(current.resolveBinding(valueNode)) ||
+                current.functions?.has(current.resolveBinding(valueNode)) ||
+                current.objects?.has(current.resolveBinding(valueNode))
                 ? true
                 : current.conditions.get(conditionKey(valueNode, current))
               : undefined;
@@ -1703,6 +1710,7 @@ function unwrapExpression(node: AnyNode): AnyNode {
       "TSAsExpression",
       "TSTypeAssertion",
       "TSSatisfiesExpression",
+      "TSNonNullExpression",
     ].includes(node?.type)
   )
     node = node.expression;

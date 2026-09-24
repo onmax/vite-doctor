@@ -2627,6 +2627,58 @@ test("enclosing synchronous handler adopts rejected return", async () => {
 });
 
 test.each([
+  [
+    "function missing() { throw createError({ statusCode: 404 }) }; try { missing!() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "try { throw createError({ statusCode: 404 }) } catch (error) { const preserve = () => {}; if (preserve) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "try { throw createError({ statusCode: 404 }) } catch (error) { const preserve = {}; if (preserve) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "async function invalid() {}; try { new invalid(); throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "function* invalid() {}; try { new invalid(); throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+])("respects known functions and TypeScript wrappers: %s", async (body, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
+
+test.each([
+  [
+    "function defineEventHandler(callback) { return callback }; export default defineEventHandler(() => { try { throw createError({ statusCode: 404 }) } catch { return Promise.reject(new Error()) } })",
+    0,
+  ],
+  [
+    "import { eventHandler as handler } from 'h3'; export default handler(() => { try { throw createError({ statusCode: 404 }) } catch { return Promise.reject(new Error()) } })",
+    1,
+  ],
+  [
+    "import { eventHandler as handler } from 'other'; export default handler(() => { try { throw createError({ statusCode: 404 }) } catch { return Promise.reject(new Error()) } })",
+    0,
+  ],
+])("adopts only H3 handler returns: %s", async (source, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": source },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
+
+test.each([
   "await (true ? Promise.reject(createError({ statusCode: 404 })) : null)",
   "await (0, Promise.reject(createError({ statusCode: 404 })))",
   "await (false || Promise.reject(createError({ statusCode: 404 })))",
