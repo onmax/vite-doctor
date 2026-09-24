@@ -207,3 +207,20 @@ test("includes adjacent declarations, browser and binary entrypoints, and typesV
   ]);
   expect(result.missing).toEqual([]);
 });
+
+test.each([
+  null,
+  [],
+  { main: 42 },
+  { private: "false" },
+  { dependencies: { h3: false } },
+  { browser: { "./index.js": true } },
+  { bin: { cli: 42 } },
+  { imports: [] },
+  { typesVersions: { "*": { "*": [42] } } },
+  { peerDependenciesMeta: { h3: { optional: "true" } } },
+])("rejects malformed package manifest %j", (manifest) => {
+  expect(() => inventory({}, { "package.json": JSON.stringify(manifest) })).toThrow(
+    "Invalid package manifest",
+  );
+});

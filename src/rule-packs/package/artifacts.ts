@@ -72,11 +72,62 @@ export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null 
   return inventory;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPackageManifest(value: unknown): value is PackageManifest {
+  if (!isRecord(value)) return false;
+  const isString = (entry: unknown) => typeof entry === "string";
+  const recordOf = (entry: unknown, valid: (item: unknown) => boolean) =>
+    isRecord(entry) && Object.values(entry).every(valid);
+  for (const field of ["name", "main", "module", "types", "typings"]) {
+    if (value[field] !== undefined && !isString(value[field])) return false;
+  }
+  if (value.private !== undefined && typeof value.private !== "boolean") return false;
+  for (const field of [
+    "dependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "devDependencies",
+  ]) {
+    if (value[field] !== undefined && !recordOf(value[field], isString)) return false;
+  }
+  if (
+    value.browser !== undefined &&
+    !isString(value.browser) &&
+    !recordOf(value.browser, (entry) => entry === false || isString(entry))
+  )
+    return false;
+  if (value.bin !== undefined && !isString(value.bin) && !recordOf(value.bin, isString))
+    return false;
+  if (value.imports !== undefined && !isRecord(value.imports)) return false;
+  if (
+    value.typesVersions !== undefined &&
+    !recordOf(value.typesVersions, (version) =>
+      recordOf(version, (targets) => Array.isArray(targets) && targets.every(isString)),
+    )
+  )
+    return false;
+  if (
+    value.peerDependenciesMeta !== undefined &&
+    !recordOf(
+      value.peerDependenciesMeta,
+      (entry) =>
+        isRecord(entry) && (entry.optional === undefined || typeof entry.optional === "boolean"),
+    )
+  )
+    return false;
+  return true;
+}
+
 export function readPackageArtifacts(root: string): PackageArtifacts | null {
   root = realpathSync(root);
   const manifestPath = resolve(root, "package.json");
   if (!existsSync(manifestPath)) return null;
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as PackageManifest;
+  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
+  if (!isPackageManifest(manifest))
+    throw new TypeError(`Invalid package manifest: ${manifestPath}`);
   if (manifest.private) return null;
   const references: PackageReference[] = [];
   const missing = new Set<string>();
