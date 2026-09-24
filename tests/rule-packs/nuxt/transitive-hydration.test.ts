@@ -1259,3 +1259,39 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["result.generatedAt = 'stable'", 0],
+  ["result['generatedAt'] = 'stable'", 0],
+  ["result = { generatedAt: 'stable' }", 0],
+  ["result.label = 'stable'", 1],
+  ["if (flag) result.generatedAt = 'stable'", 1],
+  ["function event() { result.generatedAt = 'stable' }", 1],
+])("respects stored member replacements: %s", async (replacement, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function label() { let result = {}; result.generatedAt = Date.now(); ${replacement}; return result.generatedAt }; const displayed = label()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["result.nested.generatedAt = 'stable'", 0],
+  ["result['nested'] = { generatedAt: 'stable' }", 0],
+  ["result.nested.label = 'stable'", 1],
+  ["if (flag) result.nested = {}", 1],
+])("respects nested stored member replacements: %s", async (replacement, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function label() { const result = { nested: {} }; result.nested.generatedAt = Date.now(); ${replacement}; return result.nested.generatedAt }; const displayed = label()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test("preserves stored member flow before a later replacement", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function label() { const result = {}; result.generatedAt = Date.now(); return result.generatedAt; result.generatedAt = 'stable' }; const displayed = label()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});

@@ -1098,6 +1098,16 @@ function hasPriorAliasWrite(
   source = binding,
 ): boolean {
   const name = reference.name ?? binding.id?.name ?? binding.left?.name;
+  const storedPath: string[] = [];
+  if (source.type === "AssignmentExpression") {
+    let target = source.left;
+    while (target?.type === "MemberExpression") {
+      const key = target.computed ? target.property?.value : target.property?.name;
+      if (key === undefined) break;
+      storedPath.unshift(String(key));
+      target = unwrapExpression(target.object);
+    }
+  }
   let reassigned = false;
   walkScriptLocal(owner.body, (write) => {
     if (
@@ -1114,8 +1124,24 @@ function hasPriorAliasWrite(
           : ["ForInStatement", "ForOfStatement"].includes(write.type)
             ? write.left
             : null;
+    let replacesMember = false;
+    if (storedPath.length && write.type === "AssignmentExpression" && write.operator === "=") {
+      const writtenPath: string[] = [];
+      let root = target;
+      while (root?.type === "MemberExpression") {
+        const key = root.computed ? root.property?.value : root.property?.name;
+        if (key === undefined) break;
+        writtenPath.unshift(String(key));
+        root = unwrapExpression(root.object);
+      }
+      replacesMember =
+        root?.type === "Identifier" &&
+        root.name === name &&
+        writtenPath.length > 0 &&
+        writtenPath.every((key, index) => storedPath[index] === key);
+    }
     if (
-      patternBinds(target, name) &&
+      (patternBinds(target, name) || replacesMember) &&
       resolveLocalBinding(write, name, parents) === binding &&
       writeDominatesReference(write, reference, owner, parents)
     )
