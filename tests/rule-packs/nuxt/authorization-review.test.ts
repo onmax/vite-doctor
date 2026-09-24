@@ -864,3 +864,26 @@ test.each(["import(`./policies/${tenant}`)", "require(policyPath)"])(
     expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
   },
 );
+
+test("stale manifests still collect Nuxt 4 app middleware", async () => {
+  let calls = 0;
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    calls++;
+    expect(candidate.sources.map((source) => source.path)).toContain("app/middleware/auth.ts");
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2000-01-01T00:00:00.000Z",
+        appDir: ".",
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(result.project.nuxt?.manifest?.isCurrent).toBe(false);
+  expect(calls).toBe(1);
+});

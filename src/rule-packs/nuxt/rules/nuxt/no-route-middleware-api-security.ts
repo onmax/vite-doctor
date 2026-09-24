@@ -82,9 +82,12 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
   ];
   const sensitive =
     /(?:^|\/)(?:auth|sessions?|admin|accounts?|users?|me|profiles?|private|billing|settings)(?:[./-]|$)/i;
-  const isSensitive = (path: string, method?: string): boolean => {
-    const endpoint = path.replace(/\.[cm]?[jt]s$/i, "");
-    const suffix = endpoint.match(/\.(get|post|put|patch|delete|head|options)$/i);
+  const isSensitive = (path: string, method?: string, registeredRoute?: string): boolean => {
+    const endpoint = registeredRoute ?? path.replace(/\.[cm]?[jt]s$/i, "");
+    const suffix =
+      registeredRoute === undefined
+        ? endpoint.match(/\.(get|post|put|patch|delete|head|options)$/i)
+        : null;
     const route = suffix ? endpoint.slice(0, -suffix[0].length) : endpoint;
     const verb = (method ?? suffix?.[1])?.toUpperCase();
     const publicOperation =
@@ -101,8 +104,12 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
         .filter(
           (handler) =>
             existsSync(handler.file) &&
-            (isSensitive(toPosixPath(relative(ctx.project.root, handler.file))) ||
-              isSensitive(handler.route ?? "", handler.method)) &&
+            (isSensitive(
+              toPosixPath(relative(ctx.project.root, handler.file)),
+              handler.method,
+              handler.route,
+            ) ||
+              isSensitive(handler.route ?? "", handler.method, handler.route)) &&
             !isAuthProviderHandler(ctx, handler.file, handler.route) &&
             !hasUnconditionalAuthGuard(handler.file),
         )
@@ -307,7 +314,17 @@ function hasUnconditionalAuthGuard(file: string): boolean {
     const declaration: AnyNode = parsed.program.body.find(
       (node) => node.type === "ExportDefaultDeclaration",
     );
-    const factory = declaration?.declaration;
+    let factory = declaration?.declaration;
+    const visited = new Set<string>();
+    while (factory?.type === "Identifier") {
+      if (visited.has(factory.name)) return false;
+      visited.add(factory.name);
+      const binding = parsed.program.body
+        .filter((node) => node.type === "VariableDeclaration" && node.kind === "const")
+        .flatMap((node: AnyNode) => node.declarations)
+        .find((node: AnyNode) => node.id.type === "Identifier" && node.id.name === factory.name);
+      factory = binding?.init;
+    }
     if (
       factory?.type !== "CallExpression" ||
       factory.callee.type !== "Identifier" ||

@@ -82,7 +82,10 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             !nuxt.manifest?.isCurrent ||
             !nuxt.layers.some((layer) => resolve(root, layer.root) === root)
           )
-            middlewareDirs.push(resolve(nuxt.appDir, "middleware"));
+            middlewareDirs.push(
+              resolve(nuxt.appDir, "middleware"),
+              resolve(nuxt.appDir, "app/middleware"),
+            );
           const middlewareFiles = appMiddlewareFiles(middlewareDirs).filter((file) =>
             authMiddlewareName.test(relative(root, file)),
           );

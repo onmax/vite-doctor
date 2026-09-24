@@ -4133,3 +4133,52 @@ test.each([true, false])("aliased auth providers require provenance: %s", async 
   });
   expect(result.diagnostics).toHaveLength(supported ? 0 : 1);
 });
+
+test.each([
+  ["auth/register.post.ts", "delete", 1],
+  ["auth/register.ts", "post", 0],
+  ["auth/register.get.ts", "post", 0],
+  ["auth/register.post.ts", undefined, 1],
+])("registered auth handler %s uses registration method %s", async (file, method, count) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+      [`server/handlers/${file}`]: `export default defineEventHandler(() => ({}))`,
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        appDir: "app",
+        serverHandlers: [{ file: `server/handlers/${file}`, route: "/api/auth/register", method }],
+      }),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  [
+    "const handler = defineEventHandler(async event => { await requireAuth(event) }); export default handler",
+    0,
+  ],
+  [
+    "const handler = eventHandler(event => requireAuth(event)); const alias = handler; export default alias",
+    0,
+  ],
+  ["const handler = defineEventHandler(() => ({})); export default handler", 1],
+  ["const handler = alias; const alias = handler; export default handler", 1],
+  [
+    "let handler = defineEventHandler(event => requireAuth(event)); handler = defineEventHandler(() => ({})); export default handler",
+    1,
+  ],
+])("exported handler bindings preserve guard coverage: %s", async (source, count) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+      "server/api/account.get.ts": source,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});
