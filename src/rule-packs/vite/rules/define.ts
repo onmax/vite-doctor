@@ -159,6 +159,7 @@ export const noSecretDefine = createRule({
           shadowedPromises,
           serializationHooks,
           bindingKeys,
+          source: aliasSource,
         } = readAliasInitializers(ctx.file.text);
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           if (
@@ -167,7 +168,7 @@ export const noSecretDefine = createRule({
               resolvesSecretAlias(
                 value.rawValue,
                 value.valueStart,
-                ctx.file.text,
+                aliasSource,
                 initializers,
                 memberReturns,
                 localCalls,
@@ -226,6 +227,7 @@ function readAliasInitializers(source: string) {
       mergeHelpers,
       shadowedPromises,
       localCalls,
+      source,
     };
   }
   const { scopeManager } = parsed;
@@ -253,14 +255,30 @@ function readAliasInitializers(source: string) {
     AnyNode,
     Array<{ position: number; member?: AnyNode; mutation?: AnyNode }>
   >();
-  function recordArrayMutation(node: AnyNode, memberWrite = false, mutation?: AnyNode) {
+  const executionRanges = new Map<number, [number, number]>();
+  function recordArrayMutation(
+    node: AnyNode,
+    memberWrite = false,
+    mutation?: AnyNode,
+    executionPosition?: number,
+  ) {
     if (!node) return;
     const member = memberWrite && node.type === "MemberExpression" ? node : undefined;
     while (memberWrite && node.type === "MemberExpression") node = node.object;
     const value = resolveImmutable(node);
     if (value.type !== "ArrayExpression") return;
     const events = arrayMutations.get(value) ?? [];
-    events.push({ position: mutation?.range[1] ?? node.range[1], member, mutation });
+    const executionRange =
+      executionPosition === undefined ? undefined : executionRanges.get(executionPosition);
+    const localArray =
+      executionRange && value.range[0] >= executionRange[0] && value.range[1] <= executionRange[1];
+    events.push({
+      position: localArray
+        ? (mutation?.range[1] ?? node.range[1])
+        : (executionPosition ?? mutation?.range[1] ?? node.range[1]),
+      member,
+      mutation,
+    });
     arrayMutations.set(value, events);
   }
   function arrayElementsAt(value: AnyNode, position: number) {
@@ -286,13 +304,17 @@ function readAliasInitializers(source: string) {
         elements[member.property.value] = mutation.right.range;
         changed = true;
       } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "push") {
-        elements.push(...mutation.arguments.map((argument: AnyNode) => argument.range));
+        elements.push(
+          ...mutation.arguments.flatMap((argument: AnyNode) => expandMutationArgument(argument)),
+        );
         changed = true;
       } else if (
         mutation?.type === "CallExpression" &&
         mutation.callee.property?.name === "unshift"
       ) {
-        elements.unshift(...mutation.arguments.map((argument: AnyNode) => argument.range));
+        elements.unshift(
+          ...mutation.arguments.flatMap((argument: AnyNode) => expandMutationArgument(argument)),
+        );
         changed = true;
       } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "pop") {
         elements.pop();
@@ -315,7 +337,9 @@ function readAliasInitializers(source: string) {
         elements.splice(
           mutation.arguments[0].value,
           mutation.arguments[1].value,
-          ...mutation.arguments.slice(2).map((argument: AnyNode) => argument.range),
+          ...mutation.arguments
+            .slice(2)
+            .flatMap((argument: AnyNode) => expandMutationArgument(argument)),
         );
         changed = true;
       } else if (
@@ -331,21 +355,35 @@ function readAliasInitializers(source: string) {
     }
     return changed ? elements.filter((range) => range != null) : [value.range];
   }
-  const visitMutation = (node: AnyNode) => {
-    if (node.type === "AssignmentExpression") recordArrayMutation(node.left, true, node);
+  function expandMutationArgument(
+    argument: AnyNode,
+    seen = new Set<AnyNode>(),
+  ): [number, number][] {
+    if (argument.type !== "SpreadElement") return [argument.range];
+    const value = resolveImmutable(argument.argument);
+    if (value.type !== "ArrayExpression" || seen.has(value)) return [];
+    return value.elements.flatMap((element: AnyNode) =>
+      element ? expandMutationArgument(element, new Set([...seen, value])) : [],
+    );
+  }
+  const visitMutation = (node: AnyNode, executionPosition?: number) => {
+    if (node.type === "AssignmentExpression")
+      recordArrayMutation(node.left, true, node, executionPosition);
     else if (
       node.type === "UpdateExpression" ||
       (node.type === "UnaryExpression" && node.operator === "delete")
     )
-      recordArrayMutation(node.argument, true, node);
+      recordArrayMutation(node.argument, true, node, executionPosition);
     else if (node.type === "CallExpression") {
-      if (node.callee.type === "MemberExpression") recordArrayMutation(node.callee, true, node);
+      if (node.callee.type === "MemberExpression")
+        recordArrayMutation(node.callee, true, node, executionPosition);
       const serializesArray =
         memberPath(node.callee) === "JSON.stringify" &&
         !references.get(node.callee.object.range[0])?.resolved;
       if (!serializesArray)
         for (const argument of node.arguments)
-          if (argument.type !== "SpreadElement") recordArrayMutation(argument, false, node);
+          if (argument.type !== "SpreadElement")
+            recordArrayMutation(argument, false, node, executionPosition);
     }
   };
   const executedFunctions = new Set<AnyNode>();
@@ -361,9 +399,30 @@ function readAliasInitializers(source: string) {
     if (["FunctionExpression", "ArrowFunctionExpression"].includes(value.type)) return value;
   }
   function isConfigHelper(node: AnyNode) {
+    node = resolveImmutable(node);
     const identifier = node.type === "MemberExpression" ? node.object : node;
     if (identifier.type !== "Identifier") return false;
     const definition = references.get(identifier.range[0])?.resolved?.defs[0];
+    if (
+      definition?.type === "Variable" &&
+      definition.parent.kind === "const" &&
+      definition.node.init?.type === "CallExpression" &&
+      definition.node.init.callee.type === "Identifier" &&
+      definition.node.init.callee.name === "require" &&
+      !references.get(definition.node.init.callee.range[0])?.resolved &&
+      definition.node.init.arguments[0]?.type === "Literal" &&
+      ["vite", "vitest/config"].includes(definition.node.init.arguments[0].value as string)
+    ) {
+      if (node.type === "MemberExpression")
+        return !node.computed && node.property.name === "defineConfig";
+      if (definition.node.id.type === "ObjectPattern")
+        return definition.node.id.properties.some(
+          (property: AnyNode) =>
+            property.type === "Property" &&
+            propertyName(property.key) === "defineConfig" &&
+            property.value.name === identifier.name,
+        );
+    }
     if (
       definition?.type !== "ImportBinding" ||
       definition.parent.type !== "ImportDeclaration" ||
@@ -372,7 +431,8 @@ function readAliasInitializers(source: string) {
       return false;
     if (node.type === "MemberExpression")
       return (
-        definition.node.type === "ImportNamespaceSpecifier" &&
+        (definition.node.type === "ImportNamespaceSpecifier" ||
+          definition.node.type === "ImportDefaultSpecifier") &&
         !node.computed &&
         node.property.name === "defineConfig"
       );
@@ -381,28 +441,53 @@ function readAliasInitializers(source: string) {
       propertyName(definition.node.imported) === "defineConfig"
     );
   }
-  function collectExecutedFunction(node?: AnyNode) {
+  function collectExecutedFunction(node?: AnyNode, position?: number) {
     if (!node || executedFunctions.has(node)) return;
     executedFunctions.add(node);
-    collectMutations(node.body);
+    if (position !== undefined) executionRanges.set(position, node.range);
+    collectMutations(
+      node.body,
+      position !== undefined && (position < node.range[0] || position > node.range[1])
+        ? position
+        : undefined,
+    );
   }
-  function collectMutations(node: AnyNode) {
+  function collectMutations(node: AnyNode, executionPosition?: number) {
     if (!node) return;
     if (
       ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
     )
       return;
-    if (node.type === "ExportDefaultDeclaration")
-      collectExecutedFunction(calledFunction(node.declaration));
-    if (node.type === "CallExpression") {
-      collectExecutedFunction(calledFunction(node.callee));
-      if (isConfigHelper(node.callee)) collectExecutedFunction(calledFunction(node.arguments[0]));
+    if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
+      const condition = staticBoolean(node.test);
+      collectMutations(node.test, executionPosition);
+      if (condition !== false) collectMutations(node.consequent, executionPosition);
+      if (condition !== true) collectMutations(node.alternate, executionPosition);
+      return;
     }
-    visitMutation(node);
+    if (node.type === "LogicalExpression") {
+      const condition = staticBoolean(node.left);
+      collectMutations(node.left, executionPosition);
+      if (condition === undefined || (node.operator === "&&" ? condition : !condition))
+        collectMutations(node.right, executionPosition);
+      return;
+    }
+    if (node.type === "ExportDefaultDeclaration")
+      collectExecutedFunction(calledFunction(node.declaration), node.range[0]);
+    if (node.type === "CallExpression") {
+      collectExecutedFunction(calledFunction(node.callee), executionPosition ?? node.range[0]);
+      if (isConfigHelper(node.callee))
+        collectExecutedFunction(
+          calledFunction(node.arguments[0]),
+          executionPosition ?? node.range[0],
+        );
+    }
+    visitMutation(node, executionPosition);
     for (const key of parsed.visitorKeys[node.type] ?? []) {
       const child = node[key];
-      if (Array.isArray(child)) child.forEach(collectMutations);
-      else if (child) collectMutations(child);
+      if (Array.isArray(child))
+        child.forEach((item: AnyNode) => collectMutations(item, executionPosition));
+      else if (child) collectMutations(child, executionPosition);
     }
   }
   collectMutations(parsed.ast);
@@ -612,6 +697,35 @@ function readAliasInitializers(source: string) {
       return pattern.elements.flatMap((element: AnyNode, index: number) => {
         if (!element) return [];
         const start = firstSpread >= 0 ? Math.min(index, firstSpread) : index;
+        if (element.type === "RestElement" && firstSpread < 0) {
+          if (index === 0) return projectBinding(element.argument, value, name, seen);
+          const remainder = elements.slice(index);
+          if (!remainder.length) return [];
+          const originalStart = remainder[0].range[0];
+          const originalEnd = remainder.at(-1).range[1];
+          const arrayStart = source.length;
+          source += `[${source.slice(originalStart, originalEnd)}]`;
+          const shift = arrayStart + 1 - originalStart;
+          for (const map of [initializers, bindingKeys, memberReturns, serializationHooks])
+            for (const [position, entry] of map)
+              if (position >= originalStart && position < originalEnd)
+                (map as Map<number, unknown>).set(position + shift, entry);
+          const expression = parseForESLint(`(${source.slice(arrayStart)})`, { range: true }).ast
+            .body[0] as AnyNode;
+          const rest = expression.expression;
+          function moveRanges(node: AnyNode) {
+            if (!node) return;
+            node.range = [node.range[0] + arrayStart - 1, node.range[1] + arrayStart - 1];
+            nodesByRange.set(node.range.join(":"), node);
+            for (const key of parsed.visitorKeys[node.type] ?? []) {
+              const child = node[key];
+              if (Array.isArray(child)) child.forEach(moveRanges);
+              else if (child) moveRanges(child);
+            }
+          }
+          moveRanges(rest);
+          return projectBinding(element.argument, rest, name, seen);
+        }
         const candidates =
           element.type === "RestElement" || (firstSpread >= 0 && index >= firstSpread)
             ? [...elements.slice(start), undefined]
@@ -736,6 +850,7 @@ function readAliasInitializers(source: string) {
     mergeHelpers,
     shadowedPromises,
     localCalls,
+    source,
   };
 }
 
@@ -1317,6 +1432,10 @@ function resolvesSecretAlias(
             serializationKey: property.key ?? "",
             propertyList: list,
             invoked: property.node.kind === "get",
+            receiver:
+              property.node.kind === "get"
+                ? [current.start + node.range[0] - 1, current.start + node.range[1] - 1]
+                : undefined,
             args: [],
             replacer: replacers.get(node),
             replacerApplied: false,
@@ -2395,6 +2514,14 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   return entries;
 }
 
+function staticBoolean(node: AnyNode): boolean | undefined {
+  if (node?.type === "Literal") return Boolean(node.value);
+  if (node?.type === "UnaryExpression" && node.operator === "!") {
+    const value = staticBoolean(node.argument);
+    if (value !== undefined) return !value;
+  }
+}
+
 function visitReturnValues(
   node: AnyNode,
   visit: (value: AnyNode) => void,
@@ -2488,12 +2615,9 @@ function visitReturnValues(
     return node.cases.some((branch: AnyNode) => branch.test === null) && allTerminate;
   }
   if (node.type === "IfStatement") {
-    if (node.test.type === "Literal")
-      return visitReturnValues(
-        node.test.value ? node.consequent : node.alternate,
-        visit,
-        onUndefined,
-      );
+    const condition = staticBoolean(node.test);
+    if (condition !== undefined)
+      return visitReturnValues(condition ? node.consequent : node.alternate, visit, onUndefined);
     const consequent = visitReturnValues(node.consequent, visit, onUndefined);
     const alternate = visitReturnValues(node.alternate, visit, onUndefined);
     return consequent && alternate;

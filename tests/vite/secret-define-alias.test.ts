@@ -2018,6 +2018,20 @@ test("preserves immutable arrays passed directly to JSON.stringify", async () =>
 
 test.each([
   ['const replacement = ["safe"]; replacement[0] = process.env.PRIVATE_TOKEN', true],
+  [
+    "const values = [process.env.PRIVATE_TOKEN]; const replacement = []; replacement.push(...values)",
+    true,
+  ],
+  [
+    "const values = [process.env.PRIVATE_TOKEN]; const replacement = []; replacement.unshift(...values)",
+    true,
+  ],
+  ["const replacement = []; if (false) replacement.push(process.env.PRIVATE_TOKEN)", false],
+  ["const replacement = []; if (!false) replacement.push(process.env.PRIVATE_TOKEN)", true],
+  [
+    "const replacement = []; add(); function add() { replacement.push(process.env.PRIVATE_TOKEN) }",
+    true,
+  ],
   ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.push("safe")', true],
   ['const replacement = [process.env.PRIVATE_TOKEN]; replacement[0] = "safe"', false],
   ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.fill("safe")', false],
@@ -2043,6 +2057,67 @@ test.each([
     },
   });
   expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  'import { defineConfig as wrap } from "vite"; export default wrap',
+  'const { defineConfig: wrap } = require("vite"); export default wrap',
+  'const vite = require("vite"); export default vite.defineConfig',
+])("tracks callback writes through %s", async (setup) => {
+  const [declaration, invocation] = setup.split("; export default ");
+  for (const [initial, write, secret] of [
+    ['"safe"', "values.push(process.env.PRIVATE_TOKEN)", true],
+    ["process.env.PRIVATE_TOKEN", 'values[0] = "safe"', false],
+  ] as const) {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `${declaration}; export default ${invocation}(() => { const values = [${initial}]; ${write}; return { define: { VALUE: JSON.stringify(values) } } })`,
+      },
+    });
+    expect(result.diagnostics.length > 0).toBe(secret);
+  }
+});
+
+test("binds serialized getters to their object", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts":
+        'const source = { payload: process.env.PRIVATE_TOKEN, get exposed() { return this.payload } }; export default { define: { VALUE: JSON.stringify(source, ["exposed"]) } }',
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  ['const [...replacement] = ["safe", process.env.PRIVATE_TOKEN]', false],
+  ['const [...replacement] = ["safe", process.env.PRIVATE_TOKEN]', true],
+  ['const [first, ...replacement] = ["safe", "public", process.env.PRIVATE_TOKEN]', false],
+  ['const [first, ...replacement] = ["safe", "public", process.env.PRIVATE_TOKEN]', true],
+])("preserves array rest indices for %s at index %s", async (declaration, secret) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declaration}; export default { define: { VALUE: JSON.stringify(replacement[${secret ? 1 : 0}]) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(secret);
+});
+
+test("skips returns behind static unary conditions", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts":
+        'function read() { if (!false) return "public"; return process.env.PRIVATE_TOKEN }; export default { define: { VALUE: JSON.stringify(read()) } }',
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
 });
 
 test("binds the receiver of an exported config getter", async () => {
