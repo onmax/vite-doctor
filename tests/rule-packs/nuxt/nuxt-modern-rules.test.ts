@@ -2416,6 +2416,34 @@ test("a guard in one API handler does not hide an unguarded sensitive handler", 
   expect(diagnostic?.message).not.toContain("feedback.get.ts");
 });
 
+test.each(["auth/login.post.ts", "auth/callback.get.ts", "auth/[...all].ts", "session.get.ts"])(
+  "public authentication endpoint %s does not require a server guard",
+  async (endpoint) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+        "server/api/admin.get.ts": `export default defineEventHandler((event) => requireAuth(event))`,
+        [`server/api/${endpoint}`]: `export default defineEventHandler(() => ({}))`,
+        "server/handlers/entry.ts": `export default defineEventHandler(() => ({}))`,
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          nuxtVersion: "4",
+          vueVersion: "3.5",
+          appDir: "app",
+          serverHandlers: [
+            {
+              file: "server/handlers/entry.ts",
+              route: `/api/${endpoint.replace(/\.(get|post)?\.?ts$/, "")}`,
+            },
+          ],
+        }),
+      },
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
 test("path-scoped server middleware does not hide unrelated sensitive handlers", async () => {
   const result = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,
@@ -2524,7 +2552,7 @@ test("missing registered handlers do not produce security diagnostics", async ()
 });
 
 test.each([
-  ["async (event) => { await requireAuth(event) }", undefined, undefined, 0],
+  ["async (event) => { await requireAuth(event) }", undefined, undefined, 1],
   [
     "async (event) => { if (event.path === '/api/admin') await requireAuth(event) }",
     undefined,
@@ -2534,9 +2562,9 @@ test.each([
   ["(event) => getUserSession(event)", undefined, undefined, 1],
   ["async (event) => { await requireAuth(event) }", "/api/admin/**", undefined, 1],
   ["async (event) => { await requireAuth(event) }", undefined, "GET", 1],
-  ["async (event) => { await requireAuth(event) }", undefined, "post", 0],
+  ["async (event) => { await requireAuth(event) }", undefined, "post", 1],
 ])(
-  "registered middleware guard coverage for %s at %s with method %s",
+  "manifest-only middleware does not prove guard coverage for %s at %s with method %s",
   async (handler, route, method, count) => {
     const result = await runRuleFixture({
       rule: noRouteMiddlewareApiSecurity,
@@ -2566,7 +2594,7 @@ test.each([
 );
 
 test.each([
-  ["2999-01-01T00:00:00.000Z", "get", 0, "GET"],
+  ["2999-01-01T00:00:00.000Z", "get", 1, "GET"],
   ["2999-01-01T00:00:00.000Z", "post", 1, "GET"],
   ["2999-01-01T00:00:00.000Z", undefined, 1, "GET"],
   ["2000-01-01T00:00:00.000Z", "get", 1, "GET"],

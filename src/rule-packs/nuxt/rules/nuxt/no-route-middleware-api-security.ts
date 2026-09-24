@@ -1,3 +1,4 @@
+import type { RuleContext } from "../../../../core/primitives.js";
 import { existsSync, readFileSync } from "node:fs";
 import { relative } from "pathe";
 import { parseSync } from "oxc-parser";
@@ -65,38 +66,26 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
   );
 }
 
-function unguardedSensitiveHandlers(ctx: any): string[] {
+function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
   const registered = ctx.project.nuxt?.manifest?.serverHandlers ?? [];
-  const middleware = [
-    ...(dirs?.middleware ?? []).map((file: string) => ({ file, method: undefined })),
-    ...(ctx.project.nuxt?.manifest?.isCurrent ? registered : []).filter(
-      (handler: { middleware?: boolean; route?: string }) => handler.middleware && !handler.route,
-    ),
-  ].filter((handler: { file: string }) => hasUnconditionalMiddlewareGuard(handler.file));
+  // Manifest timestamps cannot prove module-provided middleware is still registered.
+  if ((dirs?.middleware ?? []).some(hasUnconditionalMiddlewareGuard)) return [];
   const candidates = [
-    ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({
-      file,
-      method: file.match(/\.(get|head|post|put|delete|patch|options|connect|trace)\.[^.]+$/i)?.[1],
-    })),
-    ...registered.filter((handler: { middleware?: boolean }) => !handler.middleware),
+    ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({ file, route: undefined })),
+    ...registered.filter((handler) => !handler.middleware),
   ];
   const sensitive =
-    /(?:^|\/)(?:auth|admin|account|user|users|me|profile|session|private|billing|settings)(?:[./-]|$)/i;
+    /(?:^|\/)(?:admin|account|user|users|me|profile|private|billing|settings)(?:[./-]|$)/i;
   return [
-    ...new Set<string>(
+    ...new Set(
       candidates
         .filter(
           (handler) =>
             existsSync(handler.file) &&
             (sensitive.test(toPosixPath(relative(ctx.project.root, handler.file))) ||
               sensitive.test(handler.route ?? "")) &&
-            !hasAuthGuard(readProjectFile(handler.file)) &&
-            !middleware.some(
-              (guard: { method?: string }) =>
-                !guard.method ||
-                (handler.method && guard.method.toUpperCase() === handler.method.toUpperCase()),
-            ),
+            !hasAuthGuard(readProjectFile(handler.file)),
         )
         .map((handler) => handler.file),
     ),
