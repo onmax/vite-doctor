@@ -155,6 +155,33 @@ function undisposedResource(program: AnyNode): string | null {
     const key = node?.computed ? property?.value : property?.name;
     return typeof key === "string" || typeof key === "number" ? String(key) : undefined;
   };
+  const definitionKey = (node: AnyNode, environment = values): string | undefined => {
+    const key = node.computed
+      ? identity(node.key, environment)?.value
+      : (node.key?.name ?? node.key?.value);
+    return typeof key === "string" || typeof key === "number" ? String(key) : undefined;
+  };
+  const effectiveProperties = (
+    source: AnyNode,
+    environment: Map<AnyNode, AnyNode>,
+    seen = new Set<AnyNode>(),
+  ): Map<string, { property: AnyNode; receiver: AnyNode; accessor: boolean }> => {
+    source = identity(source, environment);
+    const result = new Map<string, { property: AnyNode; receiver: AnyNode; accessor: boolean }>();
+    if (source?.type !== "ObjectExpression" || seen.has(source)) return result;
+    seen.add(source);
+    for (const property of source.properties) {
+      if (property.type === "SpreadElement") {
+        for (const [key, descriptor] of effectiveProperties(property.argument, environment, seen))
+          result.set(key, { ...descriptor, accessor: false });
+      } else {
+        const key = definitionKey(property, environment);
+        if (key !== undefined) result.set(key, { property, receiver: source, accessor: true });
+      }
+    }
+    seen.delete(source);
+    return result;
+  };
   const cleaned = new Set<AnyNode>();
   const visited = new Set<AnyNode>();
   type Disposer = { callback: AnyNode; path: Map<object, boolean> };
@@ -556,6 +583,27 @@ function undisposedResource(program: AnyNode): string | null {
         const key = propertyKey(node.left, environment);
         if (key !== undefined) {
           const object = identity(node.left.object, environment);
+          const descriptor = effectiveProperties(object, environment).get(key);
+          if (
+            descriptor?.accessor &&
+            descriptor.property.kind === "set" &&
+            !properties.get(object)?.has(key)
+          ) {
+            const completion = inspect(
+              descriptor.property.value,
+              [node.right],
+              environment,
+              module,
+              descriptor.receiver,
+            );
+            if (completion.abrupt) {
+              abrupt = true;
+              exits.push(new Set(cleaned));
+              thrownExits.add(exits[exits.length - 1]);
+              throwStates.set(exits[exits.length - 1], snapshot());
+            }
+            return completion.normal;
+          }
           if (!properties.has(object)) properties.set(object, new Map());
           properties
             .get(object)!
@@ -685,6 +733,29 @@ function undisposedResource(program: AnyNode): string | null {
       const replacedMethod =
         node.callee.type === "MemberExpression" &&
         properties.get(identity(node.callee.object, environment))?.has(method!);
+      if (
+        method === "resolve" &&
+        node.callee.type === "MemberExpression" &&
+        identity(node.callee.object, environment) === "Promise" &&
+        !replacedMethod
+      ) {
+        const promise = {};
+        promises.set(promise, identity(node.arguments[0], environment));
+        promiseCompletions.set(promise, { normal: true, abrupt: false, value: node.arguments[0] });
+        returned.set(node, promise);
+        return true;
+      }
+      if (
+        method === "then" &&
+        node.callee.type === "MemberExpression" &&
+        !replacedMethod &&
+        promiseCompletions.get(identity(node.callee.object, environment))?.normal
+      ) {
+        const promise = identity(node.callee.object, environment);
+        const completion = inspect(node.arguments[0], [promises.get(promise)], environment, module);
+        returned.set(node, {});
+        return completion.normal || completion.abrupt;
+      }
       if (
         method === "from" &&
         node.callee.type === "MemberExpression" &&
@@ -1344,17 +1415,14 @@ function undisposedResource(program: AnyNode): string | null {
         return true;
       }
       if (node.type === "ObjectExpression") {
-        const spreadGetters = (source: AnyNode, seen = new Set<AnyNode>()): boolean => {
-          source = identity(source, environment);
-          if (source?.type !== "ObjectExpression" || seen.has(source)) return true;
-          seen.add(source);
-          for (const property of source.properties) {
-            if (property.type === "SpreadElement") {
-              if (!spreadGetters(property.argument, seen)) return false;
-            } else if (property.kind === "get") {
-              const completion = inspect(property.value, [], environment, module, source);
-              if (completion.abrupt) return false;
-            }
+        const spreadGetters = (source: AnyNode): boolean => {
+          for (const { property, receiver, accessor } of effectiveProperties(
+            source,
+            environment,
+          ).values()) {
+            if (!accessor || property.kind !== "get") continue;
+            const completion = inspect(property.value, [], environment, module, receiver);
+            if (completion.abrupt) return false;
           }
           return true;
         };
@@ -1805,16 +1873,20 @@ function undisposedResource(program: AnyNode): string | null {
           const object = identity(node.object, environment);
           const key = propertyKey(node, environment);
           if (object?.type === "ObjectExpression" && key !== undefined) {
-            const property = [...object.properties]
-              .reverse()
-              .find(
-                (item: AnyNode) =>
-                  item.type === "Property" &&
-                  !item.computed &&
-                  String(item.key?.name ?? item.key?.value) === key,
+            const descriptor = effectiveProperties(object, environment).get(key);
+            const property = descriptor?.property;
+            if (
+              descriptor?.accessor &&
+              property?.kind === "get" &&
+              !properties.get(object)?.has(key)
+            ) {
+              const completion = inspect(
+                property.value,
+                [],
+                environment,
+                module,
+                descriptor!.receiver,
               );
-            if (property?.kind === "get" && !properties.get(object)?.has(key)) {
-              const completion = inspect(property.value, [], environment, module, object);
               returned.set(node, completion.value);
               return completion.normal;
             }
@@ -1834,6 +1906,17 @@ function undisposedResource(program: AnyNode): string | null {
           throwStates.set(exits[exits.length - 1], snapshot());
         }
         return completion?.normal ?? true;
+      }
+      if (node.type === "TaggedTemplateExpression") {
+        if (!walk(node.tag) || !walk(node.quasi)) return false;
+        const completion = inspect(
+          node.tag,
+          [{ type: "ArrayExpression", elements: [] }, ...node.quasi.expressions],
+          environment,
+          module,
+        );
+        if (completion.value) returned.set(node, completion.value);
+        return completion.normal;
       }
       const bindsValue =
         node.type === "VariableDeclarator" ||

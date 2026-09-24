@@ -2813,6 +2813,46 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "shadowed getter does not run during spread",
+    "const source = { get timer() { setInterval(refresh); return 0 }, timer: 0 }; ({ ...source }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "destination override still reads spread getter",
+    "const source = { get timer() { setInterval(refresh); return 0 } }; ({ ...source, timer: 0 }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "copied getter becomes a data property",
+    "const original = { get timer() { setInterval(refresh); return 0 } }; const source = { ...original }; ({ ...source }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "computed getter creates a timer",
+    "const key = 'timer'; const source = { get [key]() { return setInterval(refresh) } }; source[key]; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "shadowed computed getter does not run",
+    "const key = 'timer'; const source = { get [key]() { setInterval(refresh); return 0 }, timer: 0 }; source[key]; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "setter cleans up assigned timer",
+    "const timer = setInterval(refresh); const owner = { set timer(value) { clearInterval(value) } }; import.meta.hot.dispose(() => { owner.timer = timer })",
+    false,
+  ],
+  [
+    "tagged template invokes resource factory",
+    "function start() { setInterval(refresh) }; start`now`; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "resolved promise reaction creates a timer",
+    "Promise.resolve().then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
     "Array.at retains the interval handle",
     "const timer = [setInterval(refresh)].at(0); import.meta.hot.dispose(() => clearInterval(timer))",
     false,
