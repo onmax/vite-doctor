@@ -710,3 +710,84 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["function clock() { return Date.now() }; const displayed = [1].map(clock)", 1],
+  ["const clock = () => Date.now(); const displayed = [1].map(clock)", 1],
+  ["function clock() { return Date.now() }; const displayed = [].map(clock)", 0],
+  [
+    "function clock() { return Date.now() }; function label() { return [1].map(clock) }; const displayed = label()",
+    1,
+  ],
+  [
+    'function clock() { return Date.now() }; function label(clock) { return [1].map(clock) }; const displayed = label(() => "stable")',
+    0,
+  ],
+  [
+    'function clock() { return Date.now() }; clock = () => "stable"; const displayed = [1].map(clock)',
+    0,
+  ],
+  ["const displayed = [1, 2].sort(() => Date.now() % 2 ? -1 : 1)", 1],
+  ["const displayed = [1, 2].toSorted(() => Date.now() % 2 ? -1 : 1)", 1],
+  ["const displayed = [1].sort(() => Date.now() % 2 ? -1 : 1)", 0],
+  ["const displayed = [].toSorted(() => Date.now() % 2 ? -1 : 1)", 0],
+  ["function clock() { return Date.now() % 2 ? -1 : 1 }; const displayed = [1, 2].sort(clock)", 1],
+])("traces eager callback bindings: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ['clock = () => "stable"; function clock() { return Date.now() }', "{{ clock() }}", 0],
+  [
+    'clock = () => "stable"; function clock() { return Date.now() }; const displayed = clock()',
+    "{{ displayed }}",
+    0,
+  ],
+  [
+    'const displayed = clock(); clock = () => "stable"; function clock() { return Date.now() }',
+    "{{ displayed }}",
+    1,
+  ],
+])("honors hoisted helper replacements: %s", async (script, template, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>${template}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["const Array = { from: () => [] };", "Array.from", 0],
+  ["", "Array.from", 1],
+  ["", 'Array["from"]', 1],
+  ['const from = "of";', "Array[from]", 0],
+])("resolves native iterator consumption: %s %s", async (setup, consume, count) => {
+  for (const templateCall of [false, true]) {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>function* clock() { yield Date.now() }; ${setup}
+      ${templateCall ? "" : `const displayed = ${consume}(clock())`}</script>
+      <template>{{ ${templateCall ? `${consume}(clock())` : "displayed"} }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(count);
+  }
+});
+
+test.each(['status = "Ready"', "update()", "const ignored = update()"])(
+  "preserves conditionally selected effects: %s",
+  async (effect) => {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>
+let status = "Waiting";
+function update() { status = "Ready" }
+function label() { if (Date.now()) { ${effect}; return "Label" } return "Label" }
+</script><template>{{ label() }} {{ status }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(1);
+  },
+);

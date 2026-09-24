@@ -113,6 +113,12 @@ function functionFlowsToTemplate(
   const callbackCall = resultCallbackCall(fn, parents);
   if (callbackCall) {
     const owner = containingFunction(callbackCall, parents);
+    if (
+      !owner &&
+      callbackCall.callee.type === "MemberExpression" &&
+      isLikelyRenderedTimeExpression(ctx, callbackCall)
+    )
+      return true;
     if (owner && contributesToReturn(callbackCall, owner, parents))
       return functionFlowsToTemplate(ctx, owner, seen, callbackCall);
   }
@@ -153,7 +159,7 @@ function functionFlowsToTemplate(
       if (
         write.type !== "AssignmentExpression" ||
         write.operator !== "=" ||
-        write.start <= binding.start ||
+        (binding.type !== "FunctionDeclaration" && write.start <= binding.start) ||
         write.start >= reference.start
       )
         return;
@@ -189,7 +195,12 @@ function functionFlowsToTemplate(
         matchesCallee(callee) &&
         reachesCall(call, true) &&
         projectionIncludes(source, fn, call, parents) &&
-        (!fn.generator || isConsumedIterator(call, (node) => node.parent)) &&
+        (!fn.generator ||
+          isConsumedIterator(
+            call,
+            (node) => node.parent,
+            () => !resolveLocalBinding(ctx.file.scriptAst, "Array", parents),
+          )) &&
         (!fn.async ||
           asyncResultIsConsumed(
             call,
@@ -211,13 +222,26 @@ function functionFlowsToTemplate(
       owner = node;
     }
     if (node.type === "VariableDeclarator") return visit(node.init, owner, node);
+    const callback =
+      node.type === "CallExpression" &&
+      matchesCallee(node.arguments[0]) &&
+      resultCallbackCall(fn, parents, node.arguments[0]) === node;
+
     if (
       (getter ? node.type === "MemberExpression" : node.type === "CallExpression") &&
-      matchesCallee(getter ? node : node.callee) &&
+      (callback || matchesCallee(getter ? node : node.callee)) &&
       resolveLocalBinding(node, functionName, parents) === binding &&
       reachesCall(node)
     ) {
-      if (fn.generator && !isConsumedIterator(node, (node) => parents.get(node))) return false;
+      if (
+        fn.generator &&
+        !isConsumedIterator(
+          node,
+          (node) => parents.get(node),
+          (call) => !resolveLocalBinding(call, "Array", parents),
+        )
+      )
+        return false;
       if (
         fn.async &&
         !asyncResultIsConsumed(
@@ -316,9 +340,12 @@ function arrayElementCount(array: AnyNode, includeHoles: boolean): number {
   return count;
 }
 
-function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): AnyNode {
+function resultCallbackCall(
+  fn: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+  expression = fn,
+): AnyNode {
   if (fn.generator || fn.async) return null;
-  let expression = fn;
   while (parents.get(expression)?.type === "ParenthesizedExpression")
     expression = parents.get(expression);
   const call = parents.get(expression);
@@ -340,6 +367,8 @@ function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): An
     [
       "map",
       "flatMap",
+      "sort",
+      "toSorted",
       "filter",
       "some",
       "every",
@@ -357,7 +386,10 @@ function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): An
       const method = call.callee.property.name;
       const count = arrayElementCount(value, ["find", "findIndex"].includes(method));
       const minimum =
-        ["reduce", "reduceRight"].includes(method) && call.arguments.length < 2 ? 2 : 1;
+        ["sort", "toSorted"].includes(method) ||
+        (["reduce", "reduceRight"].includes(method) && call.arguments.length < 2)
+          ? 2
+          : 1;
       if (count < minimum) return null;
       let scope = containingFunction(call, parents);
       if (!scope) {
@@ -422,7 +454,11 @@ function asyncResultIsConsumed(
   return awaited;
 }
 
-function isConsumedIterator(node: AnyNode, parentOf: (node: AnyNode) => AnyNode): boolean {
+function isConsumedIterator(
+  node: AnyNode,
+  parentOf: (node: AnyNode) => AnyNode,
+  hasNativeArray: (node: AnyNode) => boolean,
+): boolean {
   const parent = parentOf(node);
   return (
     (parent?.type === "SpreadElement" &&
@@ -432,7 +468,9 @@ function isConsumedIterator(node: AnyNode, parentOf: (node: AnyNode) => AnyNode)
       parent.arguments[0] === node &&
       parent.callee?.type === "MemberExpression" &&
       parent.callee.object?.name === "Array" &&
-      parent.callee.property?.name === "from")
+      (parent.callee.computed ? parent.callee.property?.value : parent.callee.property?.name) ===
+        "from" &&
+      hasNativeArray(parent))
   );
 }
 
@@ -657,8 +695,16 @@ function returnsSameLiteral(owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>):
   let first: AnyNode;
   let same = true;
   walkScriptLocal(owner.body, (statement) => {
-    if (statement.type !== "ReturnStatement" || containingFunction(statement, parents) !== owner)
-      return;
+    if (containingFunction(statement, parents) !== owner) return;
+    if (
+      statement.type === "ExpressionStatement" ||
+      (statement.type === "VariableDeclarator" &&
+        statement.init &&
+        statement.init.type !== "Literal") ||
+      ["AssignmentExpression", "UpdateExpression", "ThrowStatement"].includes(statement.type)
+    )
+      same = false;
+    if (statement.type !== "ReturnStatement") return;
     const value = statement.argument;
     if (value?.type !== "Literal" || value.regex) {
       same = false;
