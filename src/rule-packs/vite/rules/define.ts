@@ -249,57 +249,73 @@ function readAliasInitializers(source: string) {
       return resolveImmutable(definition.node.init, seen);
     return node;
   }
-  const mutableArrays = new Map<AnyNode, Array<[number, number] | undefined> | null>();
-  function invalidateArray(node: AnyNode, memberWrite = false, mutation?: AnyNode) {
+  const arrayMutations = new Map<
+    AnyNode,
+    Array<{ position: number; member?: AnyNode; mutation?: AnyNode }>
+  >();
+  function recordArrayMutation(node: AnyNode, memberWrite = false, mutation?: AnyNode) {
     if (!node) return;
     const member = memberWrite && node.type === "MemberExpression" ? node : undefined;
     while (memberWrite && node.type === "MemberExpression") node = node.object;
     const value = resolveImmutable(node);
     if (value.type !== "ArrayExpression") return;
-    const elements = mutableArrays.has(value)
-      ? mutableArrays.get(value)
-      : value.elements.map((element: AnyNode) => element?.range);
-    if (!elements) return;
-    if (
-      member &&
-      mutation?.type === "AssignmentExpression" &&
-      mutation.operator === "=" &&
-      member.computed &&
-      member.property.type === "Literal" &&
-      Number.isInteger(member.property.value) &&
-      member.property.value >= 0
-    ) {
-      elements[member.property.value] = mutation.right.range;
-    } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "push") {
-      elements.push(...mutation.arguments.map((argument: AnyNode) => argument.range));
-    } else if (
-      mutation?.type === "CallExpression" &&
-      mutation.callee.property?.name === "fill" &&
-      mutation.arguments.length === 1
-    ) {
-      elements.fill(mutation.arguments[0].range);
-    } else {
-      mutableArrays.set(value, null);
-      return;
+    const events = arrayMutations.get(value) ?? [];
+    events.push({ position: mutation?.range[1] ?? node.range[1], member, mutation });
+    arrayMutations.set(value, events);
+  }
+  function arrayElementsAt(value: AnyNode, position: number) {
+    const events = arrayMutations.get(value);
+    if (!events) return;
+    const elements: Array<[number, number] | undefined> = value.elements.map(
+      (element: AnyNode) => element?.range,
+    );
+    let changed = false;
+    for (const { position: writePosition, member, mutation } of events.toSorted(
+      (left, right) => left.position - right.position,
+    )) {
+      if (writePosition > position) break;
+      if (
+        member &&
+        mutation?.type === "AssignmentExpression" &&
+        mutation.operator === "=" &&
+        member.computed &&
+        member.property.type === "Literal" &&
+        Number.isInteger(member.property.value) &&
+        member.property.value >= 0
+      ) {
+        elements[member.property.value] = mutation.right.range;
+        changed = true;
+      } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "push") {
+        elements.push(...mutation.arguments.map((argument: AnyNode) => argument.range));
+        changed = true;
+      } else if (
+        mutation?.type === "CallExpression" &&
+        mutation.callee.property?.name === "fill" &&
+        mutation.arguments.length === 1
+      ) {
+        elements.fill(mutation.arguments[0].range);
+        changed = true;
+      } else if (mutation?.type !== "CallExpression" || !member) {
+        return null;
+      }
     }
-    mutableArrays.set(value, elements);
+    return changed ? elements.filter((range) => range != null) : [value.range];
   }
   walkScriptLocal(parsed.ast, (node) => {
-    if (node.type === "AssignmentExpression") invalidateArray(node.left, true, node);
+    if (node.type === "AssignmentExpression") recordArrayMutation(node.left, true, node);
     else if (
       node.type === "UpdateExpression" ||
       (node.type === "UnaryExpression" && node.operator === "delete")
     )
-      invalidateArray(node.argument, true);
+      recordArrayMutation(node.argument, true, node);
     else if (node.type === "CallExpression") {
-      if (node.callee.type === "MemberExpression") invalidateArray(node.callee.object, false, node);
+      if (node.callee.type === "MemberExpression") recordArrayMutation(node.callee, true, node);
       const serializesArray =
         memberPath(node.callee) === "JSON.stringify" &&
-        !references.get(node.callee.object.range[0])?.resolved &&
-        node.arguments.length === 1;
+        !references.get(node.callee.object.range[0])?.resolved;
       if (!serializesArray)
         for (const argument of node.arguments)
-          if (argument.type !== "SpreadElement") invalidateArray(argument);
+          if (argument.type !== "SpreadElement") recordArrayMutation(argument, false, node);
     }
   });
   for (const scope of scopeManager.scopes) {
@@ -387,14 +403,9 @@ function readAliasInitializers(source: string) {
         }
       }
       if (id.type === "Identifier") {
-        const effective = mutableArrays.get(resolveImmutable(init));
-        if (!mutableArrays.has(resolveImmutable(init)))
-          initializers.set(reference.identifier.range[0], [init.range]);
-        else if (effective)
-          initializers.set(
-            reference.identifier.range[0],
-            effective.filter((range) => range != null),
-          );
+        const effective = arrayElementsAt(resolveImmutable(init), reference.identifier.range[0]);
+        if (effective === undefined) initializers.set(reference.identifier.range[0], [init.range]);
+        else if (effective) initializers.set(reference.identifier.range[0], effective);
       } else if (
         id.type === "ObjectPattern" &&
         init.type === "MemberExpression" &&

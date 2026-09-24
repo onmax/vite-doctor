@@ -2043,3 +2043,33 @@ test("binds array-rest values in serialization helpers", async () => {
   });
   expect(result.diagnostics).toHaveLength(1);
 });
+
+test.each([
+  [
+    'const replacement = [process.env.PRIVATE_TOKEN]; const config = { define: { VALUE: JSON.stringify(replacement) } }; replacement[0] = "safe"; export default config',
+    true,
+  ],
+  [
+    'const replacement = ["safe"]; const config = { define: { VALUE: JSON.stringify(replacement) } }; replacement[0] = process.env.PRIVATE_TOKEN; export default config',
+    false,
+  ],
+  [
+    "const replacement = [process.env.PRIVATE_TOKEN]; export default { define: { VALUE: JSON.stringify(replacement, null, 2) } }",
+    true,
+  ],
+  [
+    "const replacement = [process.env.PRIVATE_TOKEN]; replacement.reverse(); export default { define: { VALUE: JSON.stringify(replacement) } }",
+    true,
+  ],
+  [
+    "const replacement = [process.env.PRIVATE_TOKEN]; replacement.forEach(() => {}); export default { define: { VALUE: JSON.stringify(replacement) } }",
+    true,
+  ],
+])("retains array secrets at the serialization site: %s", async (source, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: { "vite.config.ts": source },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
