@@ -588,7 +588,8 @@ function importEdges(
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
         add(node.arguments[0], false, isUnconditional(node, true));
       else if (
-        (ts.isIdentifier(node.expression) &&
+        (commonjs &&
+          ts.isIdentifier(node.expression) &&
           node.expression.text === "require" &&
           !shadowsRequire(node)) ||
         (ts.isPropertyAccessExpression(node.expression) &&
@@ -683,6 +684,18 @@ function isNonAbruptElement(node: ts.Expression): boolean {
   );
 }
 
+function isNonAbruptStatement(statement: ts.Statement): boolean {
+  if (ts.isExpressionStatement(statement)) return isNonAbruptElement(statement.expression);
+  if (ts.isVariableStatement(statement))
+    return statement.declarationList.declarations.every(
+      (declaration) =>
+        ts.isIdentifier(declaration.name) &&
+        (!declaration.initializer || isNonAbruptElement(declaration.initializer)),
+    );
+  if (ts.isBlock(statement)) return statement.statements.every(isNonAbruptStatement);
+  return ts.isEmptyStatement(statement);
+}
+
 function isNonCallable(node: ts.Expression): boolean {
   while (ts.isParenthesizedExpression(node)) node = node.expression;
   return (
@@ -734,6 +747,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
   let expression: ts.Node = node;
   while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
   const awaitedCalls = new Set<ts.CallExpression>();
+  let awaitedImmediate = false;
   if (dynamic && ts.isArrayLiteralExpression(expression.parent)) {
     const elements = expression.parent.elements;
     if (!elements.slice(0, elements.indexOf(expression as ts.Expression)).every(isNonAbruptElement))
@@ -762,13 +776,16 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     const call = member.parent;
     if (
       member.expression !== expression ||
-      !["then", "finally"].includes(member.name.text) ||
+      !["then", "finally", "catch"].includes(member.name.text) ||
       !ts.isCallExpression(call) ||
       ts.isCallChain(call) ||
       call.expression !== member ||
       (member.name.text === "then"
         ? call.arguments.length > 2 || (call.arguments[1] && !isNonCallable(call.arguments[1]))
-        : call.arguments.length > 1) ||
+        : call.arguments.length > 1 ||
+          (member.name.text === "catch" &&
+            call.arguments[0] &&
+            !isNonCallable(call.arguments[0]))) ||
       !call.arguments.every(isNonAbruptElement)
     )
       break;
@@ -791,6 +808,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     const invocation = callee.parent;
     if (!ts.isCallExpression(invocation) || !ts.isAwaitExpression(invocation.parent)) return false;
     awaitedCalls.add(invocation);
+    awaitedImmediate = true;
   }
   if (dynamic) {
     for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
@@ -799,8 +817,10 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       let callee: ts.Node = ancestor;
       while (ts.isParenthesizedExpression(callee.parent)) callee = callee.parent;
       const invocation = callee.parent;
-      if (ts.isCallExpression(invocation) && ts.isAwaitExpression(invocation.parent))
+      if (ts.isCallExpression(invocation) && ts.isAwaitExpression(invocation.parent)) {
         awaitedCalls.add(invocation);
+        awaitedImmediate = true;
+      }
     }
   }
   for (let parent = node.parent; parent; parent = parent.parent) {
@@ -848,6 +868,13 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       return false;
     if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
       const index = parent.statements.findIndex((statement) => isWithin(node, statement));
+      if (
+        awaitedImmediate &&
+        ts.isBlock(parent) &&
+        ts.isFunctionLike(parent.parent) &&
+        parent.statements.slice(0, index).some((statement) => !isNonAbruptStatement(statement))
+      )
+        return false;
       if (
         parent.statements
           .slice(0, index)
@@ -1165,7 +1192,11 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
       : name.elements.some((element) => ts.isBindingElement(element) && binds(element.name));
   }
   for (let scope = node.parent; scope; scope = scope.parent) {
-    if (ts.isFunctionExpression(scope) && scope.name?.text === identifier) return true;
+    if (
+      (ts.isFunctionExpression(scope) || ts.isClassExpression(scope)) &&
+      scope.name?.text === identifier
+    )
+      return true;
     if (ts.isFunctionLike(scope) && scope.parameters.some((param) => binds(param.name)))
       return true;
     if (

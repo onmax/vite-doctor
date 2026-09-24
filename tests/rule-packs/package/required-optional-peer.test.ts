@@ -39,6 +39,9 @@ test.each([
   'new (class { field = 0; constructor() { require("peer"); } })();',
   'await import("peer").then(module => module.default);',
   'await import("peer").then().then(module => module.default);',
+  'await import("peer").catch();',
+  'await import("peer").catch(undefined);',
+  'await import("peer").catch(null).finally(() => cleanup());',
   '(function (first = 0) { require("peer"); })();',
   '(function (first = 0) { require("peer"); }).call(null);',
   '(function (first = 0) { require("peer"); }).apply(null, []);',
@@ -168,6 +171,7 @@ test.each([
   'import("peer").then(module => module.default);',
   'await import("peer").then(module => module.default, () => null);',
   'await import("peer").then(module => module.default).catch(() => null);',
+  'await import("peer").catch(() => null);',
   'try { await import("peer").then(module => module.default); } catch {}',
   '(function () { try { require("peer"); } finally { return; } })();',
   '(function () { try { require("peer"); } finally { if (enabled) return; } })();',
@@ -637,10 +641,21 @@ test.each([
   'await (async () => import("peer"))();',
   'await (() => { return import("peer"); })();',
   'await (async () => { await import("peer"); })();',
+  'await (async () => { const value = 1; await import("peer"); })();',
 ])("follows an awaited immediate invocation: %s", async (source) => {
   expect(
     await diagnose({ main: "index.mjs", ...optionalPeer }, { "index.mjs": source }),
   ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each([
+  'await (async () => { await mayReject(); await import("peer"); })();',
+  'await (async () => { unknown(); await import("peer"); })();',
+  'await (async () => { const value = unknown(); await import("peer"); })();',
+])("skips unreachable loads after potentially abrupt operations: %s", async (source) => {
+  expect(await diagnose({ main: "index.mjs", ...optionalPeer }, { "index.mjs": source })).toEqual(
+    [],
+  );
 });
 
 test.each([
@@ -680,6 +695,19 @@ test.each([
   ).toHaveLength(entry.endsWith(".cjs") ? 1 : 0);
 });
 
+test.each([
+  ["index.mjs", undefined],
+  ["index.js", "module"],
+  ["index.cjs", "module"],
+])("classifies bare require by format: %s (%s)", async (entry, type) => {
+  expect(
+    await diagnose(
+      { main: entry, ...(type && { type }), ...optionalPeer },
+      { [entry]: 'require("peer");' },
+    ),
+  ).toHaveLength(entry.endsWith(".cjs") ? 1 : 0);
+});
+
 test("uses the nearest package type for module.require", async () => {
   expect(
     await diagnose(
@@ -698,6 +726,10 @@ test.each([
   ['(function require() {})(); require("peer");', 1],
   ['module.require("peer");', 1],
   ['const module = { require() {} }; module.require("peer");', 0],
+  [
+    'const Adapter = class module { static require() {} static peer = module.require("peer"); };',
+    0,
+  ],
   ['(function module() { module.require("peer"); })()', 0],
   ['try { module.require("peer"); } catch {}', 0],
   ['function later() { module.require("peer"); }', 0],
