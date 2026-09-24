@@ -254,3 +254,18 @@ test.each([
 ])("rejects an invalid package manifest: %j", (manifest) => {
   expect(() => inventory(manifest, {})).toThrow(TypeError);
 });
+
+test.each([true, false])(
+  "only scans the last binary with a shared basename (shadowed file exists: %s)",
+  (exists) => {
+    const result = inventory(
+      { bin: ["a/cli.js", "b/cli.js"] },
+      {
+        ...(exists ? { "a/cli.js": 'import "shadowed-peer";' } : {}),
+        "b/cli.js": 'import "active-peer";',
+      },
+    )!;
+    expect(result.references.map((ref) => ref.packageName)).toEqual(["active-peer"]);
+    expect(result.missing).toEqual([]);
+  },
+);
