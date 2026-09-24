@@ -4421,19 +4421,68 @@ test("NUXT0037 keeps configured middleware when only server inventory is stale",
   expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
 });
 
-test("NUXT0037 finds the current root source directory after config changes", async () => {
+test.each([
+  ["identifier keys", "srcDir: 'src'", "middleware"],
+  ["quoted keys", '"srcDir": "src", dir: { "middleware": "guards" }', "guards"],
+])(
+  "NUXT0037 finds the current root source directory after config changes with %s",
+  async (_label, config, middlewareDir) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "nuxt.config.ts": `export default defineNuxtConfig({ ${config} })`,
+        [`src/${middlewareDir}/auth.ts`]:
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: "2000-01-01T00:00:00.000Z",
+          appDir: "layers/old/app",
+          layers: [{ root: "layers/old", srcDir: "layers/old/app", priority: 0 }],
+        }),
+      },
+    });
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(
+      1,
+    );
+  },
+);
+
+test("NUXT0037 retains configured handlers when only server inventory changes", async () => {
   const result = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,
     framework: "nuxt",
     files: {
-      "nuxt.config.ts": "export default defineNuxtConfig({ srcDir: 'src' })",
-      "src/middleware/auth.ts":
+      "app/middleware/auth.ts":
         "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
-      "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+      "server/handlers/account.ts": "export default defineEventHandler(() => ({ private: true }))",
+      "server/api/health.ts": "export default defineEventHandler(() => 'ok')",
       ".nuxt/doctor.manifest.json": JSON.stringify({
-        generatedAt: "2000-01-01T00:00:00.000Z",
-        appDir: "layers/old/app",
-        layers: [{ root: "layers/old", srcDir: "layers/old/app", priority: 0 }],
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        serverInventory: { server: [] },
+        serverHandlers: [{ file: "server/handlers/account.ts", route: "/api/account" }],
+      }),
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+});
+
+test("NUXT0037 does not treat differently cased methods as matching constraints", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/account.ts": "export default defineEventHandler(() => ({ private: true }))",
+      "server/middleware/auth.ts":
+        "export default defineEventHandler(event => requireUserSession(event))",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        resolvedServerHandlers: [
+          { file: "server/api/account.ts", route: "/api/account", method: "GET" },
+          { file: "server/middleware/auth.ts", middleware: true, method: "get" },
+        ],
       }),
     },
   });

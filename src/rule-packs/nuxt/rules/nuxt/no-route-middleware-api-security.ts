@@ -69,7 +69,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
           )
         )
           return;
-        const unguarded = unguardedSensitiveHandlers(ctx);
+        const unguarded = unguardedSensitiveHandlers(ctx, configurationCurrent);
         for (const file of unguarded) {
           const text = readFileSync(file, "utf8");
           ctx.report(
@@ -116,17 +116,19 @@ function rootMiddlewareConfiguration(root: string): { srcDir: string; middleware
   const text = config ? readFileSync(config, "utf8") : "";
   return {
     srcDir:
-      text.match(/\bsrcDir\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] ??
+      text.match(/(?:["'`])?\bsrcDir\b(?:["'`])?\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] ??
       (existsSync(join(root, "app")) ? "app" : "."),
-    middleware: text.match(/\bmiddleware\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? "middleware",
+    middleware:
+      text.match(/(?:["'`])?\bmiddleware\b(?:["'`])?\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] ??
+      "middleware",
   };
 }
 
-function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
+function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: boolean): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
   const manifest = ctx.project.nuxt?.manifest;
   const resolvedHandlers = manifest?.isCurrent ? manifest.resolvedServerHandlers : undefined;
-  const registered = manifest?.isCurrent ? (manifest.serverHandlers ?? []) : [];
+  const registered = configurationCurrent ? (manifest?.serverHandlers ?? []) : [];
   const middleware = resolvedHandlers
     ? resolvedHandlers.filter(
         (handler) => handler.middleware && hasUnconditionalAuthGuard(handler.file),
@@ -189,8 +191,7 @@ function middlewareCoversHandler(
   middleware: { route?: string; method?: string },
   handler: { route?: string; method?: string },
 ): boolean {
-  if (middleware.method && middleware.method.toLowerCase() !== handler.method?.toLowerCase())
-    return false;
+  if (middleware.method && middleware.method !== handler.method) return false;
   if (!middleware.route || middleware.route === "/**") return true;
   if (!handler.route) return false;
   return (
