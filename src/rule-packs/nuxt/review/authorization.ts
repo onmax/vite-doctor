@@ -163,6 +163,19 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
               [
                 ...(ctx.project.nuxt?.serverDirs.api ?? []),
                 ...(ctx.project.nuxt?.serverDirs.routes ?? []),
+                ...appMiddlewareFiles(
+                  nuxt.manifest?.isCurrent
+                    ? nuxt.layers.flatMap((layer) =>
+                        ["api", "routes"].map((directory) =>
+                          resolve(
+                            root,
+                            layer.serverDir ?? resolve(root, layer.root, "server"),
+                            directory,
+                          ),
+                        ),
+                      )
+                    : [],
+                ),
                 ...registered.map((entry) => resolve(root, entry.file)),
               ].map((file) => resolve(root, file)),
             ),

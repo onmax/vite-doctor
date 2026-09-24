@@ -4215,3 +4215,25 @@ test.each([
   });
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each(["ts", "js", "mts", "mjs", "cts", "cjs"])(
+  "auth providers resolve directory index.%s with provenance",
+  async (extension) => {
+    for (const supported of [true, false]) {
+      const result = await runRuleFixture({
+        rule: noRouteMiddlewareApiSecurity,
+        framework: "nuxt",
+        files: {
+          "app/middleware/auth.ts":
+            "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+          "server/api/auth/[...all].ts":
+            "import { auth } from '~/utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+          [`app/utils/auth/index.${extension}`]: supported
+            ? "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})"
+            : "export const auth = { handler: () => ({ private: true }) }",
+        },
+      });
+      expect(result.diagnostics).toHaveLength(supported ? 0 : 1);
+    }
+  },
+);

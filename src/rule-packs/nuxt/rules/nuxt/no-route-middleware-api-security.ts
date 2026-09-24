@@ -308,7 +308,12 @@ function isProviderBinding(
     if (!base) continue;
     const candidates = extname(base)
       ? [base]
-      : ["ts", "js", "mts", "mjs", "cts", "cjs"].map((extension) => `${base}.${extension}`);
+      : [
+          ...["ts", "js", "mts", "mjs", "cts", "cjs"].map((extension) => `${base}.${extension}`),
+          ...["ts", "js", "mts", "mjs", "cts", "cjs"].map((extension) =>
+            resolve(base, `index.${extension}`),
+          ),
+        ];
     const target = candidates.find((candidate) => existsSync(candidate));
     if (!target) return false;
     const parsed = parseSync(target, readProjectFile(target));

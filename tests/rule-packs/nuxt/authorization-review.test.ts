@@ -1101,3 +1101,44 @@ test.each(["present", "oversized", "inactive", "custom-server"])(
     );
   },
 );
+
+test.each(["api", "routes"])("reviews conventional layer %s handlers", async (directory) => {
+  const handler = `extensions/accounts/backend/${directory}/account.ts`;
+  const reviewed: string[] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    reviewed.push(candidate.handler.path);
+    return {
+      status: "report",
+      reason: "The handler has no server guard.",
+      citations: [
+        { path: candidate.handler.path, line: 1 },
+        { path: "app/middleware/auth.ts", line: 1 },
+      ],
+    };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": files["app/middleware/auth.ts"],
+      [handler]: files["server/api/account.get.ts"],
+      [`extensions/accounts/app/server/${directory}/account.ts`]: " ".repeat(17000),
+      [`extensions/accounts/server/${directory}/account.ts`]: " ".repeat(17000),
+      [`extensions/inactive/server/${directory}/account.ts`]: " ".repeat(17000),
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        layers: [
+          {
+            root: "extensions/accounts",
+            srcDir: "extensions/accounts/app",
+            serverDir: "extensions/accounts/backend",
+            priority: 0,
+          },
+        ],
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(reviewed).toEqual([handler]);
+  expect(result.diagnostics.map((item) => item.code)).toEqual(["NUXT0074"]);
+  expect(result.project.evidenceGaps ?? []).toEqual([]);
+});
