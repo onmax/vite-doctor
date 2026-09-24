@@ -170,3 +170,7 @@ vp run ready
 vp run -r test
 vp run -r build
 ```
+
+## Releasing
+
+See [the maintainer release guide](./RELEASING.md) for release PRs, npm approval, and recovery steps.
