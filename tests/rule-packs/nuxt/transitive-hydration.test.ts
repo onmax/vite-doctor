@@ -605,3 +605,60 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  'function label() { Date.now(); return "Ready" }',
+  'function label() { const unused = Date.now(); return "Ready" }',
+  'const label = () => { Date.now(); return "Ready" }',
+])("ignores discarded time values in directly rendered helpers: %s", async (script) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ label() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["{{ helpers.label }}", ""],
+  ['<span :title="helpers.label" />', ""],
+  ["{{ displayed }}", "const displayed = helpers.label"],
+  ["{{ label() }}", "function label() { return helpers.label }"],
+])("finds rendered getter values in %s with %s", async (template, script) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>
+const helpers = { get label() { return Date.now() } }
+${script}
+</script><template>${template}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  ['get label() { Date.now(); return "Ready" }', "{{ helpers.label }}"],
+  ["label() { return Date.now() }", "{{ helpers.label }}"],
+  ["get label() { return Date.now() }", '<button @click="helpers.label">Read</button>'],
+])("ignores unrendered getter time values: %s", async (property, template) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>const helpers = { ${property} }</script><template>${template}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["await (label())", 1],
+  ["await Promise.all([label()])", 1],
+  ['(await label(), "stable")', 0],
+  ['(await Promise.all([label()]), "stable")', 0],
+  ['await (label(), Promise.resolve("stable"))', 0],
+])("tracks consumed async results in %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>
+async function label() { return Date.now() }
+const displayed = ${expression}
+</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

@@ -96,7 +96,7 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
   const owner = nearestFunctionOrProgram(node);
   return Boolean(
     owner &&
-    (!owner.generator || contributesToReturn(node, owner, getScriptParents(ctx))) &&
+    contributesToReturn(node, owner, getScriptParents(ctx)) &&
     functionFlowsToTemplate(ctx, owner, new Set(), node),
   );
 }
@@ -116,6 +116,7 @@ function functionFlowsToTemplate(
     if (owner && contributesToReturn(callbackCall, owner, parents))
       return functionFlowsToTemplate(ctx, owner, seen, callbackCall);
   }
+  const getter = parents.get(fn)?.kind === "get";
   const binding = functionBinding(fn, parents);
   const functionName = binding.id?.type === "Identifier" ? binding.id.name : null;
   if (!functionName) return false;
@@ -182,15 +183,14 @@ function functionFlowsToTemplate(
       let callee = reference;
       while (callee.parent?.type === "MemberExpression" && callee.parent.object === callee)
         callee = callee.parent;
-      const call = callee.parent;
+      const call = getter ? callee : callee.parent;
       return (
-        call?.type === "CallExpression" &&
-        call.callee === callee &&
+        (getter || (call?.type === "CallExpression" && call.callee === callee)) &&
         matchesCallee(callee) &&
         reachesCall(call, true) &&
         projectionIncludes(source, fn, call, parents) &&
         (!fn.generator || isConsumedIterator(call, (node) => node.parent)) &&
-        (!fn.async || call.parent?.type === "AwaitExpression")
+        (!fn.async || asyncResultIsConsumed(call, (node) => node.parent))
       );
     })
   )
@@ -207,13 +207,13 @@ function functionFlowsToTemplate(
     }
     if (node.type === "VariableDeclarator") return visit(node.init, owner, node);
     if (
-      node.type === "CallExpression" &&
-      matchesCallee(node.callee) &&
+      (getter ? node.type === "MemberExpression" : node.type === "CallExpression") &&
+      matchesCallee(getter ? node : node.callee) &&
       resolveLocalBinding(node, functionName, parents) === binding &&
       reachesCall(node)
     ) {
       if (fn.generator && !isConsumedIterator(node, (node) => parents.get(node))) return false;
-      if (fn.async && parents.get(node)?.type !== "AwaitExpression") return false;
+      if (fn.async && !asyncResultIsConsumed(node, (node) => parents.get(node))) return false;
       if (
         variable &&
         (!owner || contributesToReturn(node, owner, parents)) &&
@@ -355,6 +355,50 @@ function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): An
     }
   }
   return null;
+}
+
+function asyncResultIsConsumed(node: AnyNode, parentOf: (node: AnyNode) => AnyNode): boolean {
+  let awaited = false;
+  for (let current = node; current; current = parentOf(current)) {
+    const parent = parentOf(current);
+    if (!parent) return awaited;
+    if (parent.type === "SequenceExpression" && parent.expressions.at(-1) !== current) return false;
+    if (parent.type === "UnaryExpression" && parent.operator === "void") return false;
+    if (!awaited) {
+      if (parent.type === "AwaitExpression") awaited = true;
+      else if (
+        ![
+          "ParenthesizedExpression",
+          "SequenceExpression",
+          "TSAsExpression",
+          "TSNonNullExpression",
+          "TSTypeAssertion",
+        ].includes(parent.type)
+      ) {
+        if (parent.type !== "ArrayExpression") return false;
+        const aggregate = parentOf(parent);
+        if (
+          aggregate?.type !== "CallExpression" ||
+          aggregate.arguments[0] !== parent ||
+          aggregate.callee?.type !== "MemberExpression" ||
+          aggregate.callee.object?.name !== "Promise" ||
+          aggregate.callee.property?.name !== "all"
+        )
+          return false;
+        current = parent;
+      }
+    } else if (
+      [
+        "VariableDeclarator",
+        "ReturnStatement",
+        "ArrowFunctionExpression",
+        "VExpressionContainer",
+      ].includes(parent.type)
+    ) {
+      return true;
+    } else if (parent.type === "ExpressionStatement") return false;
+  }
+  return awaited;
 }
 
 function isConsumedIterator(node: AnyNode, parentOf: (node: AnyNode) => AnyNode): boolean {
