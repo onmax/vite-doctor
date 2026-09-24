@@ -24,7 +24,7 @@ test.each([
   { main: 42 },
   { private: "false" },
   { browser: { "./entry.js": true } },
-  { bin: ["cli.js"] },
+  { bin: [42] },
   { imports: [] },
   { dependencies: { vue: 3 } },
   { dependencies: ["h3"] },
@@ -226,3 +226,49 @@ test("includes adjacent declarations, browser and binary entrypoints, and typesV
   ]);
   expect(result.missing).toEqual([]);
 });
+
+test("follows npm-compatible binary arrays and records missing executables", () => {
+  const result = inventory(
+    { bin: ["cli.js", "missing.js"] },
+    {
+      "cli.js": 'import "./command.js";',
+      "command.js": 'import "cli-peer";',
+    },
+  )!;
+  expect(result.references).toHaveLength(1);
+  expect(result.references[0]).toMatchObject({
+    packageName: "cli-peer",
+    kind: "runtime",
+    required: true,
+  });
+  expect(result.missing).toEqual(["missing.js"]);
+});
+
+test.each([
+  null,
+  [],
+  { main: 42 },
+  { browser: { "./index.js": true } },
+  { bin: { example: false } },
+  { bin: ["cli.js", false] },
+  { dependencies: { example: 1 } },
+  { typesVersions: { "*": { "*": "index.d.ts" } } },
+  { peerDependenciesMeta: { example: { optional: "yes" } } },
+])("rejects an invalid package manifest: %j", (manifest) => {
+  expect(() => inventory(manifest, {})).toThrow(TypeError);
+});
+
+test.each([true, false])(
+  "only scans the last binary with a shared basename (shadowed file exists: %s)",
+  (exists) => {
+    const result = inventory(
+      { bin: ["a/cli.js", "b/cli.js"] },
+      {
+        ...(exists ? { "a/cli.js": 'import "shadowed-peer";' } : {}),
+        "b/cli.js": 'import "active-peer";',
+      },
+    )!;
+    expect(result.references.map((ref) => ref.packageName)).toEqual(["active-peer"]);
+    expect(result.missing).toEqual([]);
+  },
+);
