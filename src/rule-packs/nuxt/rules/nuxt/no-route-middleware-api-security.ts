@@ -22,6 +22,15 @@ export const noRouteMiddlewareApiSecurity = createRule({
     if (evidence.isContentDocsFile()) return;
     const relativePath = toPosixPath(ctx.file.relativePath);
     if (/(?:^|\/)server\/middleware\//.test(relativePath)) return;
+    if (
+      ctx.project.nuxt?.manifest?.isCurrent &&
+      ctx.project.nuxt.layers.some((layer) =>
+        toPosixPath(ctx.file.path).startsWith(
+          `${resolve(ctx.project.root, layer.serverDir ?? resolve(ctx.project.root, layer.root, "server"))}/`,
+        ),
+      )
+    )
+      return;
     const isMiddlewareFile =
       relativePath.startsWith("middleware/") ||
       relativePath.startsWith("app/middleware/") ||
@@ -69,17 +78,27 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
 function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
   const manifest = ctx.project.nuxt?.manifest;
+  const resolvedHandlers = manifest?.isCurrent ? manifest.resolvedServerHandlers : undefined;
   const registered = manifest?.isCurrent ? (manifest.serverHandlers ?? []) : [];
-  // Manifest timestamps cannot prove module-provided middleware is still registered.
-  if ((dirs?.middleware ?? []).some(hasUnconditionalAuthGuard)) return [];
-  const candidates = [
-    ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({
-      file,
-      route: undefined,
-      method: undefined,
-    })),
-    ...registered.filter((handler) => !handler.middleware),
-  ];
+  const middleware = resolvedHandlers
+    ? resolvedHandlers
+        .filter(
+          (handler) =>
+            handler.middleware && !handler.method && (!handler.route || handler.route === "/**"),
+        )
+        .map((handler) => handler.file)
+    : (dirs?.middleware ?? []);
+  if (middleware.some(hasUnconditionalAuthGuard)) return [];
+  const candidates = resolvedHandlers
+    ? resolvedHandlers.filter((handler) => !handler.middleware)
+    : [
+        ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({
+          file,
+          route: undefined,
+          method: undefined,
+        })),
+        ...registered.filter((handler) => !handler.middleware),
+      ];
   const sensitive =
     /(?:^|\/)(?:auth|sessions?|admin|accounts?|users?|me|profiles?|private|billing|settings)(?:[./-]|$)/i;
   const isSensitive = (path: string, method?: string, registeredRoute?: string): boolean => {
@@ -106,7 +125,9 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
           (handler) =>
             existsSync(handler.file) &&
             (isSensitive(
-              toPosixPath(relative(ctx.project.root, handler.file)),
+              resolvedHandlers
+                ? (handler.route ?? "")
+                : toPosixPath(relative(ctx.project.root, handler.file)),
               handler.method,
               handler.route,
             ) ||

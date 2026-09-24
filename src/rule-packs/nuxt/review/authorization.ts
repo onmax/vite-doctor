@@ -122,25 +122,30 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             return;
           }
           if (!middleware.length) return;
-          const registrations = nuxt.manifest?.isCurrent
-            ? (nuxt.manifest.serverHandlers ?? [])
-            : [];
-          const serverMiddlewareFiles = [
-            ...new Set([
-              ...nuxt.serverDirs.middleware,
-              ...appMiddlewareFiles(
-                nuxt.manifest?.isCurrent
-                  ? nuxt.layers.map((layer) =>
-                      resolve(
-                        root,
-                        layer.serverDir ?? resolve(root, layer.root, "server"),
-                        "middleware",
-                      ),
-                    )
-                  : [],
-              ),
-            ]),
-          ];
+          const resolvedHandlers = nuxt.manifest?.isCurrent
+            ? nuxt.manifest.resolvedServerHandlers
+            : undefined;
+          if (nuxt.manifest?.isCurrent && !resolvedHandlers) {
+            ctx.project.evidenceGaps = [
+              ...(ctx.project.evidenceGaps ?? []),
+              {
+                source: "vite-doctor/nuxt-authorization-review",
+                message:
+                  "Authorization review requires resolved Nitro handlers. Regenerate the Doctor manifest before reviewing handlers.",
+                files: [".nuxt/doctor.manifest.json"],
+              },
+            ];
+            return;
+          }
+          const serverMiddlewareFiles = resolvedHandlers
+            ? [
+                ...new Set(
+                  resolvedHandlers
+                    .filter((entry) => entry.middleware)
+                    .map((entry) => resolve(root, entry.file)),
+                ),
+              ]
+            : nuxt.serverDirs.middleware;
           const serverMiddleware = projectSources(root, serverMiddlewareFiles);
           if (serverMiddleware.length !== serverMiddlewareFiles.length) {
             const collected = new Set(serverMiddleware.map((source) => resolve(root, source.path)));
@@ -149,7 +154,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
               {
                 source: "vite-doctor/nuxt-authorization-review",
                 message:
-                  "Authorization review requires all conventional server middleware. Some files exceed 16 KB or cannot be collected; no handlers were reviewed.",
+                  "Authorization review requires all active server middleware. Some files exceed 16 KB or cannot be collected; no handlers were reviewed.",
                 files: serverMiddlewareFiles
                   .filter((file) => !collected.has(resolve(root, file)))
                   .map((file) => relative(root, file).replaceAll("\\", "/")),
@@ -157,36 +162,17 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             ];
             return;
           }
-          const registered = registrations.filter((entry) => !entry.middleware);
-          const layerHandlerDirs = nuxt.manifest?.isCurrent
-            ? nuxt.layers.flatMap((layer) =>
-                ["api", "routes"].map((directory) =>
-                  resolve(root, layer.serverDir ?? resolve(root, layer.root, "server"), directory),
+          const handlerFiles = resolvedHandlers
+            ? [
+                ...new Set(
+                  resolvedHandlers
+                    .filter((entry) => !entry.middleware && sensitivePath.test(entry.route ?? ""))
+                    .map((entry) => resolve(root, entry.file)),
                 ),
-              )
-            : [];
-          const handlerFiles = [
-            ...new Set(
-              [
-                ...(ctx.project.nuxt?.serverDirs.api ?? []),
-                ...(ctx.project.nuxt?.serverDirs.routes ?? []),
-                ...appMiddlewareFiles(layerHandlerDirs),
-                ...registered.map((entry) => resolve(root, entry.file)),
-              ].map((file) => resolve(root, file)),
-            ),
-          ].filter(
-            (file) =>
-              sensitivePath.test(
-                relative(
-                  layerHandlerDirs.find((directory) => file.startsWith(`${directory}/`)) ?? root,
-                  file,
-                ),
-              ) ||
-              registered.some(
-                (entry) =>
-                  resolve(root, entry.file) === file && sensitivePath.test(entry.route ?? ""),
-              ),
-          );
+              ]
+            : [...new Set([...nuxt.serverDirs.api, ...nuxt.serverDirs.routes])].filter((file) =>
+                sensitivePath.test(relative(root, file)),
+              );
           const handlers = projectSources(root, handlerFiles);
           const collectedHandlers = new Set(handlers.map((source) => resolve(root, source.path)));
           const omittedHandlers = handlerFiles.filter((file) => !collectedHandlers.has(file));
@@ -495,6 +481,15 @@ function localImports(
       }
     }
     walkScriptLocal(parsed.program, (node) => {
+      if (node.importKind === "type" || node.exportKind === "type") return;
+      if (
+        (node.type === "ImportDeclaration" || node.type === "ExportNamedDeclaration") &&
+        node.specifiers.length > 0 &&
+        node.specifiers.every(
+          (specifier: any) => specifier.importKind === "type" || specifier.exportKind === "type",
+        )
+      )
+        return;
       const source =
         node.type === "ImportDeclaration" ||
         node.type === "ExportNamedDeclaration" ||

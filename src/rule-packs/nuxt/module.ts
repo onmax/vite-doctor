@@ -24,6 +24,7 @@ type NuxtAutoImportContext = {
 };
 
 type NuxtDoctorEvidence = {
+  resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   pages?: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
@@ -37,6 +38,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   nuxt.options.doctor = options;
 
   const evidence = {
+    resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
     pages: [] as Array<{ path?: string; file?: string; name?: string }>,
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
@@ -44,6 +46,34 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
   };
+
+  nuxt.hook?.("nitro:init", async (nitro: any) => {
+    const captureHandlers = async () => {
+      const environments = new Set([
+        nitro.options.dev ? "dev" : "prod",
+        nitro.options.preset,
+        ...(nitro.options.preset === "nitro-prerender" ? ["prerender"] : []),
+      ]);
+      evidence.resolvedServerHandlers = [...nitro.scannedHandlers, ...nitro.options.handlers]
+        .filter((handler: any) => {
+          const environmentsForHandler = [handler.env].flat().filter(Boolean);
+          return (
+            !environmentsForHandler.length ||
+            environmentsForHandler.some((env: string) => environments.has(env))
+          );
+        })
+        .map((handler: any) => ({
+          file: relative(nuxt.options.rootDir, handler.handler),
+          route: handler.route,
+          method: handler.method,
+          middleware: handler.middleware,
+        }));
+      await writeManifest(nuxt, evidence);
+    };
+    await captureHandlers();
+    nitro.hooks.hook("rollup:before", captureHandlers);
+    nitro.hooks.hook("compiled", captureHandlers);
+  });
 
   nuxt.hook?.("imports:context", (context: NuxtAutoImportContext) => {
     evidence.autoImportContext = context;
@@ -181,6 +211,7 @@ export async function writeManifest(
       method: handler.method,
       middleware: handler.middleware,
     })),
+    resolvedServerHandlers: evidence?.resolvedServerHandlers,
     pages: evidence?.pages ?? [],
     prerenderRoutes: [
       ...new Set([

@@ -4258,3 +4258,97 @@ test.each([
   });
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test("Nuxt module captures and refreshes Nitro's resolved handlers", async () => {
+  await withFixture({}, {}, async (root) => {
+    const hooks = new Map<string, (payload?: any) => unknown>();
+    const nitroHooks = new Map<string, () => unknown>();
+    const nuxt = {
+      _version: "4.5.1",
+      options: { rootDir: root, srcDir: "app", buildDir: ".nuxt", modules: [] },
+      hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
+      async callHook() {},
+    };
+    await nuxtDoctorModule({}, nuxt as any);
+    const nitro = {
+      options: {
+        dev: false,
+        preset: "node-server",
+        handlers: [{ handler: join(root, "custom/account.ts"), route: "/api/account" }],
+      },
+      scannedHandlers: [
+        {
+          handler: join(root, "layer/profile.ts"),
+          route: "/api/profile",
+          method: "get",
+          env: "prod",
+        },
+        { handler: join(root, "layer/debug.ts"), route: "/api/admin", env: "dev" },
+        { handler: join(root, "layer/guard.ts"), middleware: true, env: ["prod", "prerender"] },
+      ],
+      hooks: { hook: (name: string, callback: () => unknown) => nitroHooks.set(name, callback) },
+    };
+    await hooks.get("nitro:init")!(nitro);
+    const readHandlers = () =>
+      JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"))
+        .resolvedServerHandlers;
+    expect(readHandlers()).toEqual([
+      { file: "layer/profile.ts", route: "/api/profile", method: "get" },
+      { file: "layer/guard.ts", middleware: true },
+      { file: "custom/account.ts", route: "/api/account" },
+    ]);
+    nitro.scannedHandlers = [];
+    await nitroHooks.get("compiled")!();
+    await hooks.get("prepare:types")!();
+    expect(readHandlers()).toEqual([{ file: "custom/account.ts", route: "/api/account" }]);
+    nitro.options.handlers = [];
+    await nitroHooks.get("rollup:before")!();
+    expect(readHandlers()).toEqual([]);
+  });
+});
+
+test.each(["unguarded", "guarded", "scoped-guard", "method-guard", "empty"])(
+  "NUXT0037 uses resolved layer handlers and middleware: %s",
+  async (state) => {
+    const handler = "layers/admin/backend/api/account.ts";
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        [handler]: "export default defineEventHandler(() => ({ private: true }))",
+        "layers/admin/backend/api/health.ts": "export default defineEventHandler(() => 'ok')",
+        "layers/admin/backend/middleware/auth.ts":
+          "export default defineEventHandler(event => requireUserSession(event))",
+        "server/api/profile.ts": "export default defineEventHandler(() => ({ ignored: true }))",
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: "2100-01-01T00:00:00.000Z",
+          layers: [{ root: "layers/admin", serverDir: "layers/admin/backend", priority: 0 }],
+          resolvedServerHandlers:
+            state === "empty"
+              ? []
+              : [
+                  { file: handler, route: "/api/account" },
+                  { file: "layers/admin/backend/api/health.ts", route: "/api/health" },
+                  ...(state === "unguarded"
+                    ? []
+                    : [
+                        {
+                          file: "layers/admin/backend/middleware/auth.ts",
+                          middleware: true,
+                          route: state === "scoped-guard" ? "/api/admin/**" : undefined,
+                          method: state === "method-guard" ? "post" : undefined,
+                        },
+                      ]),
+                ],
+        }),
+      },
+    });
+    expect(result.diagnostics).toHaveLength(state === "guarded" || state === "empty" ? 0 : 1);
+    if (result.diagnostics.length)
+      expect(result.diagnostics[0]!.related?.map((item) => item.file)).toEqual([
+        expect.stringContaining(handler),
+      ]);
+  },
+);

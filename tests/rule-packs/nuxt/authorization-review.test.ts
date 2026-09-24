@@ -131,7 +131,10 @@ test.each([
         ? {
             ".nuxt/doctor.manifest.json": JSON.stringify({
               generatedAt: "2100-01-01T00:00:00.000Z",
-              serverHandlers: [{ file: path, route: "/api/account" }],
+              resolvedServerHandlers: [
+                { file: path, route: "/api/account" },
+                { file: "server/api/profile.get.ts", route: "/api/profile" },
+              ],
             }),
           }
         : {}),
@@ -195,6 +198,7 @@ test.each(["~/server/guard", "@/server/guard", "#guards/guard", "../guard"])(
         "server/api/account.get.ts": `import guard from '${specifier}'; export default defineEventHandler(guard)`,
         "server/guard.ts": "export default () => ({ private: true })",
         ".nuxt/doctor.manifest.json": JSON.stringify({
+          resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
           appDir: "app",
           generatedAt: "2100-01-01T00:00:00.000Z",
           aliases: { "~": ".", "@": ".", "#guards": "server" },
@@ -231,7 +235,7 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
         generatedAt: new Date().toISOString(),
         appDir: "app",
         layers: [{ root: "layers/admin", srcDir: "layers/admin/app", priority: 0 }],
-        serverHandlers: [
+        resolvedServerHandlers: [
           { file: "server/handlers/entry.ts", route: "/api/account" },
           { file: "server/handlers/entry.ts", route: "/api/profile" },
           { file: "server/handlers/account.ts", route: "/api/data" },
@@ -242,7 +246,7 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
     },
     rules: extension.rulePacks![0]!.rules,
   });
-  expect(paths.sort()).toEqual(["server/handlers/account.ts", "server/handlers/entry.ts"]);
+  expect(paths.sort()).toEqual(["server/handlers/entry.ts"]);
   expect(result.project.evidenceGaps).toContainEqual(
     expect.objectContaining({
       source: "vite-doctor/nuxt-authorization-review",
@@ -250,7 +254,7 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
     }),
   );
   expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
-  expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(2);
+  expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(1);
 });
 
 test.each(["界".repeat(40_000), "x".repeat(119_700), '"'.repeat(40_000)])(
@@ -277,7 +281,7 @@ test.each(["界".repeat(40_000), "x".repeat(119_700), '"'.repeat(40_000)])(
 );
 
 test.each([true, false])(
-  "excludes manifest-only middleware even with a current manifest: %s",
+  "collects resolved registered middleware only with a current manifest: %s",
   async (current) => {
     const candidates: Parameters<AuthorizationReviewer>[0][] = [];
     const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
@@ -293,7 +297,8 @@ test.each([true, false])(
         "nuxt.config.ts": "export default defineNuxtConfig({})",
         ".nuxt/doctor.manifest.json": JSON.stringify({
           generatedAt: current ? "2100-01-01T00:00:00Z" : "2000-01-01T00:00:00Z",
-          serverHandlers: [
+          resolvedServerHandlers: [
+            { file: "server/api/account.get.ts", route: "/api/account" },
             { file: "server/handlers/entry.ts", route: "/api/account" },
             { file: "server/guards/global.ts", middleware: true },
           ],
@@ -308,7 +313,7 @@ test.each([true, false])(
       candidates.some((candidate) =>
         candidate.sources.some((source) => source.path === "server/guards/global.ts"),
       ),
-    ).toBe(false);
+    ).toBe(current);
   },
 );
 
@@ -361,7 +366,9 @@ test.each(
         localLayerAliases: local,
         layers: [{ root: "layers/admin", srcDir: "layers/admin/src", priority: 0 }],
         aliases: { "~": ".", "@": ".", "~~": ".", "@@": "." },
-        serverHandlers: [{ file: "layers/admin/server/api/account.ts", route: "/api/account" }],
+        resolvedServerHandlers: [
+          { file: "layers/admin/server/api/account.ts", route: "/api/account" },
+        ],
       }),
     },
     rules: extension.rulePacks![0]!.rules,
@@ -422,6 +429,7 @@ test.each([
         [`${srcDir}/${middlewareDir}/auth.ts`]: files["app/middleware/auth.ts"],
         "server/api/account.get.ts": files["server/api/account.get.ts"],
         ".nuxt/doctor.manifest.json": JSON.stringify({
+          resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
           generatedAt: current ? "2100-01-01T00:00:00.000Z" : "2000-01-01T00:00:00.000Z",
           layers: [
             {
@@ -501,6 +509,7 @@ test.each([true, false])("manifest aliases require current evidence: %s", async 
         "import guard from '#guards/guard'; export default defineEventHandler(guard)",
       "server/old/guard.ts": "export default () => ({ private: true })",
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
         generatedAt: current ? "2100-01-01T00:00:00.000Z" : "2000-01-01T00:00:00.000Z",
         aliases: { "#guards": "server/old" },
       }),
@@ -563,6 +572,7 @@ test.each([
       [activePath]: files["app/middleware/auth.ts"],
       [inactivePath]: files["app/middleware/auth.ts"],
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
         generatedAt: "2100-01-01T00:00:00.000Z",
         layers: [
           {
@@ -713,6 +723,7 @@ test("rejects layer middleware evidence after the active layer config changes", 
       "layers/admin/middleware/auth.ts": files["app/middleware/auth.ts"],
       "server/api/account.get.ts": files["server/api/account.get.ts"],
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
         generatedAt: "2100-01-01T00:00:00.000Z",
         layers: [
           {
@@ -885,6 +896,7 @@ test.each([".", "old-app"])("stale middleware configuration %s is incomplete", a
       ...files,
       "nuxt.config.ts": "export default defineNuxtConfig({})",
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
         generatedAt: "2000-01-01T00:00:00.000Z",
         appDir,
       }),
@@ -923,6 +935,7 @@ test.each(["present", "missing", "oversized"])(
                   : "export const enforceAccountAccess = event => requireUserSession(event)",
             }),
         ".nuxt/doctor.manifest.json": JSON.stringify({
+          resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
           generatedAt: new Date(Date.now() + 1000).toISOString(),
           appDir: "app",
           autoImportEnabled: true,
@@ -975,6 +988,7 @@ test.each([
       "server/api/account.get.ts": `${source}\nexport default defineEventHandler(() => ({ private: true }))`,
       "utils/local.ts": "export const enforceAccountAccess = () => {}",
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
         generatedAt: new Date(Date.now() + 1000).toISOString(),
         appDir: "app",
         autoImportEnabled: true,
@@ -1011,6 +1025,7 @@ test.each([
       "server/utils/access.ts":
         "export const enforceAccountAccess = event => requireUserSession(event)",
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
         generatedAt: new Date(Date.now() + 1000).toISOString(),
         appDir: "app",
         autoImportEnabled: true,
@@ -1038,6 +1053,7 @@ test.each(["analytics.ts", "auth.ts", "admin/access.ts"])(
         "server/api/account.get.ts": files["server/api/account.get.ts"],
         [`layers/admin/app/middleware/${name}`]: files["app/middleware/auth.ts"],
         ".nuxt/doctor.manifest.json": JSON.stringify({
+          resolvedServerHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
           generatedAt: "2100-01-01T00:00:00.000Z",
           layers: [
             {
@@ -1079,6 +1095,10 @@ test.each(["present", "oversized", "inactive", "custom-server"])(
           "export default defineEventHandler(event => requireAuth(event))" +
           (state === "oversized" ? " ".repeat(17000) : ""),
         ".nuxt/doctor.manifest.json": JSON.stringify({
+          resolvedServerHandlers: [
+            { file: "server/api/account.get.ts", route: "/api/account" },
+            ...(state === "inactive" ? [] : [{ file: guard, middleware: true }]),
+          ],
           generatedAt: "2100-01-01T00:00:00.000Z",
           layers:
             state === "inactive"
@@ -1128,6 +1148,7 @@ test.each(["api", "routes"])("reviews conventional layer %s handlers", async (di
       [`extensions/admin/server/${directory}/account.ts`]: " ".repeat(17000),
       [`extensions/inactive/server/${directory}/account.ts`]: " ".repeat(17000),
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        resolvedServerHandlers: [{ file: handler, route: "/api/account" }],
         generatedAt: "2100-01-01T00:00:00.000Z",
         layers: [
           {
@@ -1145,3 +1166,85 @@ test.each(["api", "routes"])("reviews conventional layer %s handlers", async (di
   expect(result.diagnostics.map((item) => item.code)).toEqual(["NUXT0074"]);
   expect(result.project.evidenceGaps ?? []).toEqual([]);
 });
+
+test.each([undefined, [], [{ file: "custom/entry.ts", route: "/api/account" }]])(
+  "uses resolved Nitro inventory without scanning excluded or shadowed files: %j",
+  async (resolvedServerHandlers) => {
+    const reviewed: string[] = [];
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      reviewed.push(candidate.handler.path);
+      return { status: "unknown", reason: "Collected", citations: [] };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "layers/admin/server/api/account.get.ts": files["server/api/account.get.ts"],
+        "layers/admin/server/middleware/auth.ts": " ".repeat(17000),
+        "custom/entry.ts": files["server/api/account.get.ts"],
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: "2100-01-01T00:00:00.000Z",
+          layers: [{ root: "layers/admin", serverDir: "layers/admin/server", priority: 0 }],
+          serverHandlers: [{ file: "server/api/account.get.ts", route: "/api/account" }],
+          resolvedServerHandlers,
+        }),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(reviewed).toEqual(resolvedServerHandlers?.length ? ["custom/entry.ts"] : []);
+    expect(JSON.parse(createAgentReport(result)).status === "incomplete").toBe(
+      resolvedServerHandlers === undefined,
+    );
+  },
+);
+
+test.each([
+  "import type { Policy } from '../types'",
+  "import { type Policy } from '../types'",
+  "export type { Policy } from '../types'",
+  "export { type Policy } from '../types'",
+  "export type * from '../types'",
+  "import type Policy = require('../types')",
+])("erased dependencies do not consume guard evidence: %s", async (declaration) => {
+  const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    candidates.push(candidate);
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "server/api/account.get.ts": `${declaration}; import guard from '../guard'; export default defineEventHandler(guard)`,
+      "server/types.ts": "export interface Policy {}" + " ".repeat(17000),
+      "server/guard.ts": "export default event => requireUserSession(event)",
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(candidates).toHaveLength(1);
+  expect(candidates[0]!.sources.map((source) => source.path)).toContain("server/guard.ts");
+  expect(result.project.evidenceGaps ?? []).toEqual([]);
+});
+
+test.each(["import { type Policy, guard }", "export { type Policy, guard }"])(
+  "mixed declarations retain runtime evidence: %s",
+  async (declaration) => {
+    const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      candidates.push(candidate);
+      return { status: "unknown", reason: "Collected", citations: [] };
+    });
+    await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "server/api/account.get.ts": `${declaration} from '../guard'; export default defineEventHandler(() => ({}))`,
+        "server/guard.ts":
+          "export interface Policy {}; export const guard = event => requireUserSession(event)",
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.sources.map((source) => source.path)).toContain("server/guard.ts");
+  },
+);

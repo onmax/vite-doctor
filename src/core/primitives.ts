@@ -217,6 +217,7 @@ export interface NuxtProjectInfo {
     hasManifest: boolean;
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
+    resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
     pages?: Array<{ path?: string; file?: string; name?: string }>;
     prerenderRoutes?: string[];
     buildManifest?: {
@@ -273,6 +274,7 @@ export interface NuxtDoctorManifest {
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
+  resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   pages?: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes?: string[];
   buildManifest?: {
