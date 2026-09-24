@@ -536,6 +536,11 @@ test.each([
 
 test.each([
   ["[].map(() => clock())", 0],
+  ["[...[]].map(() => clock())", 0],
+  ["[...[...[]]].map(() => clock())", 0],
+  ["[...[], 1].reduce(() => clock())", 0],
+  ["[...[,]].map(() => clock())", 1],
+  ["[...[1, 2]].reduce(() => clock())", 1],
   ["[, ,].map(() => clock())", 0],
   ["[].find(() => clock())", 0],
   ["[,].find(() => clock())", 1],
@@ -553,6 +558,11 @@ test.each([
 });
 
 test.each([
+  ["{ value = clock() } = {}", "{ value: 'stable' }", "value", 0],
+  ["[value = clock()] = []", "['stable']", "value", 0],
+  ["{ nested: { value = clock() } = {} } = {}", "{ nested: { value: 'stable' } }", "value", 0],
+  ["{ value = clock() } = { value: 'stable' }", "", "value", 0],
+  ["{ nested: { value = clock() } = {} } = {}", "{}", "value", 1],
   ["{ value = clock() } = {}", "{}", "value", 1],
   ["{ value = clock() } = {}", "{ value: undefined }", "value", 1],
   ["{ value = clock() } = {}", "{ value: void 0 }", "value", 1],
@@ -577,3 +587,21 @@ test.each([
     }
   },
 );
+
+test.each([
+  ["", "label()", 0],
+  ["const displayed = label()", "displayed", 0],
+  ["const displayed = await label()", "displayed", 1],
+  ["async function outer() { return await label() }; const displayed = outer()", "displayed", 0],
+  [
+    "async function outer() { return await label() }; const displayed = await outer()",
+    "displayed",
+    1,
+  ],
+])("requires async helper results to be awaited: %s %s", async (script, template, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>async function label() { return Date.now() }; ${script}</script><template>{{ ${template} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

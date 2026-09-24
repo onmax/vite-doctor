@@ -142,16 +142,9 @@ function functionFlowsToTemplate(
       current && current !== fn;
       child = current, current = parents.get(current)
     ) {
-      const index = fn.params?.indexOf(current) ?? -1;
-      if (index < 0 || current.type !== "AssignmentPattern" || current.right !== child) continue;
-      const argument = call.arguments[index];
-      if (
-        argument &&
-        argument.type !== "SpreadElement" &&
-        !(argument.type === "Identifier" && argument.name === "undefined") &&
-        !(argument.type === "UnaryExpression" && argument.operator === "void")
-      )
-        return false;
+      if (current.type !== "AssignmentPattern" || current.right !== child) continue;
+      const argument = parameterValue(current, fn, call, parents);
+      if (argument && !isUndefinedValue(argument)) return false;
     }
     if (!memberPath.length) return true;
     const reference = template ? { start: Infinity } : call;
@@ -196,7 +189,8 @@ function functionFlowsToTemplate(
         matchesCallee(callee) &&
         reachesCall(call, true) &&
         projectionIncludes(source, fn, call, parents) &&
-        (!fn.generator || isConsumedIterator(call, (node) => node.parent))
+        (!fn.generator || isConsumedIterator(call, (node) => node.parent)) &&
+        (!fn.async || call.parent?.type === "AwaitExpression")
       );
     })
   )
@@ -219,6 +213,7 @@ function functionFlowsToTemplate(
       reachesCall(node)
     ) {
       if (fn.generator && !isConsumedIterator(node, (node) => parents.get(node))) return false;
+      if (fn.async && parents.get(node)?.type !== "AwaitExpression") return false;
       if (
         variable &&
         (!owner || contributesToReturn(node, owner, parents)) &&
@@ -245,6 +240,67 @@ function functionFlowsToTemplate(
     return false;
   };
   return visit(ctx.file.scriptAst, null, null);
+}
+
+function isUndefinedValue(node: AnyNode): boolean {
+  return (
+    !node ||
+    (node.type === "Identifier" && node.name === "undefined") ||
+    (node.type === "UnaryExpression" && node.operator === "void")
+  );
+}
+
+function parameterValue(
+  pattern: AnyNode,
+  fn: AnyNode,
+  call: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): AnyNode {
+  const index = fn.params?.indexOf(pattern) ?? -1;
+  if (index >= 0) {
+    if (call.arguments.slice(0, index + 1).some((arg: AnyNode) => arg.type === "SpreadElement"))
+      return undefined;
+    return call.arguments[index] ?? null;
+  }
+  const parent = parents.get(pattern);
+  if (parent?.type === "AssignmentPattern" && parent.left === pattern) {
+    const value = parameterValue(parent, fn, call, parents);
+    return value === undefined ? undefined : isUndefinedValue(value) ? parent.right : value;
+  }
+  if (parent?.type === "Property" && parent.value === pattern) {
+    const value = parameterValue(parents.get(parent), fn, call, parents);
+    const key = parent.computed ? parent.key?.value : (parent.key?.name ?? parent.key?.value);
+    if (value?.type !== "ObjectExpression" || key === undefined) return undefined;
+    for (const property of [...value.properties].reverse()) {
+      if (property.type === "SpreadElement") return undefined;
+      const propertyKey = property.computed
+        ? property.key?.value
+        : (property.key?.name ?? property.key?.value);
+      if (propertyKey === undefined) return undefined;
+      if (String(propertyKey) === String(key)) return property.value;
+    }
+    return null;
+  }
+  if (parent?.type === "ArrayPattern") {
+    const value = parameterValue(parent, fn, call, parents);
+    const index = parent.elements.indexOf(pattern);
+    if (value?.type !== "ArrayExpression" || index < 0) return undefined;
+    if (value.elements.slice(0, index + 1).some((item: AnyNode) => item?.type === "SpreadElement"))
+      return undefined;
+    return value.elements[index] ?? null;
+  }
+  return undefined;
+}
+
+function arrayElementCount(array: AnyNode, includeHoles: boolean): number {
+  let count = 0;
+  for (const element of array.elements ?? []) {
+    if (element?.type === "SpreadElement") {
+      if (element.argument?.type !== "ArrayExpression") return Infinity;
+      count += arrayElementCount(element.argument, true);
+    } else if (element || includeHoles) count++;
+  }
+  return count;
 }
 
 function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): AnyNode {
@@ -286,17 +342,10 @@ function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): An
     const value = binding ? binding.init : receiver;
     if (value?.type === "ArrayExpression") {
       const method = call.callee.property.name;
-      const elements = value.elements ?? [];
-      const count = ["find", "findIndex"].includes(method)
-        ? elements.length
-        : elements.filter(Boolean).length;
+      const count = arrayElementCount(value, ["find", "findIndex"].includes(method));
       const minimum =
         ["reduce", "reduceRight"].includes(method) && call.arguments.length < 2 ? 2 : 1;
-      if (
-        count < minimum &&
-        !elements.some((element: AnyNode) => element?.type === "SpreadElement")
-      )
-        return null;
+      if (count < minimum) return null;
       let scope = containingFunction(call, parents);
       if (!scope) {
         scope = call;
