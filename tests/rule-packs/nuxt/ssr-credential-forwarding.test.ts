@@ -356,3 +356,63 @@ function other() { try {} catch (headers) { consume(headers) } }
   );
   expect(result.diagnostics).toHaveLength(0);
 });
+
+test.each([
+  ["{ headers: useRequestHeaders(['cookie']) }", "forwarded.headers", "", false],
+  ["{ headers: useRequestHeaders(['authorization']) }", "forwarded['headers']", "", false],
+  ["{ headers: useRequestHeaders(['cookie']) }", "(forwarded as const).headers", "", false],
+  [
+    "{ headers: useRequestHeaders(['cookie']), ...{ method: 'GET' } }",
+    "forwarded.headers",
+    "",
+    false,
+  ],
+  ["{ ...{ headers: useRequestHeaders(['cookie']) } }", "forwarded.headers", "", false],
+  [
+    "{ headers: useRequestHeaders(['cookie']) }",
+    "forwarded.headers",
+    "await $fetch('/api/account', { headers: forwarded.headers })",
+    false,
+  ],
+  [
+    "{ headers: useRequestHeaders(['cookie']) }",
+    "forwarded.headers",
+    "forwarded.headers = {}",
+    true,
+  ],
+  [
+    "{ headers: useRequestHeaders(['cookie']) }",
+    "forwarded['headers']",
+    "delete forwarded.headers.cookie",
+    true,
+  ],
+  ["{ headers: useRequestHeaders(['cookie']) }", "forwarded.headers", "mutate(forwarded)", true],
+  [
+    "{ headers: useRequestHeaders(['cookie']) }",
+    "forwarded.headers",
+    "const alias = forwarded.headers; alias.cookie = ''",
+    true,
+  ],
+  ["{ headers: useRequestHeaders(['cookie']), ...unknown }", "forwarded.headers", "", true],
+  ["{ headers: useRequestHeaders(['cookie']), headers: {} }", "forwarded.headers", "", true],
+  ["{ headers: useRequestHeaders(['accept']) }", "forwarded.headers", "", true],
+  ["{ headers: useRequestHeaders(['cookie']) }", "forwarded[key]", "", true],
+  ["{ headers: useRequestHeaders(['cookie']) }", "{ ...forwarded.headers, cookie: '' }", "", true],
+  [
+    "{ headers: useRequestHeaders(['authorization']) }",
+    "{ ...forwarded.headers, cookie: '' }",
+    "",
+    false,
+  ],
+])(
+  "options header access preserves credential evidence: %s, %s, %s",
+  async (initializer, headers, statement, diagnosed) => {
+    const result = await runNuxtAppRuleFixture(
+      forwardAuthHeadersSsr,
+      `<script setup lang="ts">const forwarded = ${initializer}; ${statement}; await $fetch('/api/user', { headers: ${headers} })</script>`,
+    );
+    expect(result.diagnostics.some((item) => item.ruleId === forwardAuthHeadersSsr.meta.id)).toBe(
+      diagnosed,
+    );
+  },
+);

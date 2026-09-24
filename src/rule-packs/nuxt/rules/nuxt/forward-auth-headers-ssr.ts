@@ -53,28 +53,29 @@ function isCredentialHeader(name: string | undefined): boolean {
 }
 
 function forwardsRequestCredentials(call: AnyNode): boolean {
-  return optionsForwardCredentials(call.arguments?.[1], call) === true;
+  const headers = optionsCredentialHeaders(call.arguments?.[1], call);
+  return headers ? [...headers.values()].some(Boolean) : false;
 }
 
-function optionsForwardCredentials(
+function optionsCredentialHeaders(
   value: AnyNode,
   call: AnyNode,
   seen = new Set<AnyNode>(),
-): boolean | undefined {
+): Map<string, boolean> | false | undefined {
   value = unwrapExpression(value);
   if (!value || seen.has(value)) return false;
   seen = new Set(seen).add(value);
   if (value.type === "Identifier")
-    return optionsForwardCredentials(unmodifiedInitializer(value, call), call, seen);
+    return optionsCredentialHeaders(unmodifiedInitializer(value, call), call, seen);
   if (value.type !== "ObjectExpression") return false;
   for (const property of [...value.properties].reverse()) {
     if (property.type === "SpreadElement") {
-      const forwarded = optionsForwardCredentials(property.argument, call, seen);
+      const forwarded = optionsCredentialHeaders(property.argument, call, seen);
       if (forwarded !== undefined) return forwarded;
     } else {
       const name = propertyName(property);
       if (!name) return false;
-      if (name === "headers") return hasCredentialHeaders(property.value, call);
+      if (name === "headers") return credentialHeaders(property.value, call, seen) ?? false;
     }
   }
 }
@@ -95,10 +96,6 @@ function unwrapExpression(value: AnyNode): AnyNode {
   return value;
 }
 
-function hasCredentialHeaders(value: AnyNode, call: AnyNode): boolean {
-  return [...(credentialHeaders(value, call)?.values() ?? [])].some(Boolean);
-}
-
 function credentialHeaders(
   value: AnyNode,
   call: AnyNode,
@@ -109,6 +106,9 @@ function credentialHeaders(
   seen = new Set(seen).add(value);
   if (value.type === "Identifier") {
     return credentialHeaders(unmodifiedInitializer(value, call), call, seen);
+  }
+  if (isHeadersAccess(value)) {
+    return optionsCredentialHeaders(value.object, call, seen) || undefined;
   }
   if (value.type === "NewExpression" && value.callee?.name === "Headers") {
     const input = unwrapExpression(value.arguments[0]);
@@ -353,6 +353,13 @@ function unmodifiedInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
   return hasUnsafeReference(scope) ? undefined : initializer;
 }
 
+function isHeadersAccess(value: AnyNode): boolean {
+  return (
+    value.type === "MemberExpression" &&
+    (value.computed ? value.property?.value === "headers" : value.property?.name === "headers")
+  );
+}
+
 function isFetchArgument(node: AnyNode, ancestors: AnyNode[]): boolean {
   let value = node;
   for (const parent of ancestors) {
@@ -364,6 +371,7 @@ function isFetchArgument(node: AnyNode, ancestors: AnyNode[]): boolean {
       );
     if (
       unwrapExpression(parent) === value ||
+      (isHeadersAccess(parent) && parent.object === value) ||
       (parent.type === "SpreadElement" && parent.argument === value) ||
       (parent.type === "Property" &&
         parent.value === value &&
