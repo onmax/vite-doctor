@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runNuxtAppRuleFixture } from "../../../src/core/testkit.ts";
+import { runNuxtAppRuleFixture, runRuleFixture } from "../../../src/core/testkit.ts";
 import { noTimeDependentRenderWithoutNuxtTimeOrClientOnly } from "../../../src/rule-packs/nuxt/rules/nuxt/no-time-dependent-render-without-nuxt-time-or-client-only.ts";
 
 test("finds time dependence through local render helpers", async () => {
@@ -199,4 +199,95 @@ function label() { ${body} }
 </script><template><span>{{ label() }}</span></template>`,
   );
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  'let value = clock(); return value; value = "stable"',
+  'let value = clock(); function unused() { value = "stable" }; return value',
+  'let value = clock(); const unused = () => { value = "stable" }; return value',
+  'if (clock() % 2) return "a"; return "b"',
+  'switch (clock() % 2) { case 0: return "a"; default: return "b" }',
+  'switch (1) { case clock(): return "a"; default: return "b" }',
+])("preserves returned time dependence: %s", async (body) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+function label() { ${body} }
+</script><template>{{ label() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  '<li v-for="clock in items">{{ clock() }}</li>',
+  '<li v-for="{ clock } in items" :title="clock()" />',
+  '<Widget v-slot="{ clock }">{{ clock() }}</Widget>',
+  '<Widget><template #default="{ clock }">{{ clock() }}</template></Widget>',
+  "<!-- {{ clock() }} -->",
+  '<!-- <span :title="clock()" /> -->',
+])("ignores template-local and commented helper calls: %s", async (template) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+const items = []
+</script><template>${template}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["displayed.label", 0],
+  ["displayed.generatedAt", 1],
+  ["displayed['generatedAt']", 1],
+  ["displayed", 1],
+])("follows object projections in %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+const displayed = { label: 'stable', generatedAt: clock() }
+</script><template>{{ ${expression} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test("follows helper chains beyond four functions and stops cycles", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+function a() { return clock() }
+function b() { return a() }
+function c() { return b() }
+function d() { return c() }
+function cycle() { return cycle() + clock() }
+</script><template>{{ d() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("diagnoses byte-identical files independently", async () => {
+  const source = `<script setup lang="ts">
+function clock() { return Date.now() }
+function label() { return clock() }
+</script><template>{{ label() }}</template>`;
+  const result = await runRuleFixture({
+    rule: noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    framework: "nuxt",
+    files: { "app/pages/one.vue": source, "app/pages/two.vue": source },
+  });
+  expect(result.diagnostics).toHaveLength(2);
+});
+
+test("traces typed helpers through the template AST", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock(): number { return Date.now() }
+function label(): string { return String(clock()) }
+</script><template>{{ label() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
 });

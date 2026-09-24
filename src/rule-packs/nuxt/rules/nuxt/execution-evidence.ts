@@ -1,4 +1,3 @@
-import { parseSync } from "oxc-parser";
 import type { RuleContext } from "../../../../core/index.js";
 import {
   findAncestor,
@@ -95,38 +94,24 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
   if (name && new RegExp(`{{[^}]*\\b${escapeRegExp(name)}\\b[^}]*}}`).test(template)) return true;
   if (isHydratingStateValue(node)) return true;
   const owner = nearestFunctionOrProgram(node);
-  return Boolean(owner && functionFlowsToTemplate(ctx, owner, template, new Set()));
+  return Boolean(owner && functionFlowsToTemplate(ctx, owner, new Set()));
 }
 
-function functionFlowsToTemplate(
-  ctx: RuleContext,
-  fn: AnyNode,
-  template: string,
-  seen: Set<AnyNode>,
-): boolean {
+function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNode>): boolean {
   const parents = getScriptParents(ctx);
   const binding = functionBinding(fn, parents);
   const functionName = binding.id?.type === "Identifier" ? binding.id.name : null;
-  if (!functionName || fn.generator || seen.has(fn) || seen.size >= 4) return false;
+  if (!functionName || fn.generator || seen.has(fn)) return false;
   seen.add(fn);
-  const renderedExpressions = [...template.matchAll(/{{([\s\S]*?)}}/g)].map(
-    (match) => match[1] ?? "",
-  );
-  for (const match of template.matchAll(
-    /(?:\s:|\sv-(bind\b|if\b|else-if\b|show\b|text\b|html\b|for\b))[^=]*=\s*(["'])([\s\S]*?)\2/g,
-  )) {
-    const expression = match[3] ?? "";
-    renderedExpressions.push(
-      match[1] === "for" ? (expression.match(/\s+(?:in|of)\s+([\s\S]*)$/)?.[1] ?? "") : expression,
-    );
-  }
-  const renderedIdentifier = (name: string) =>
-    renderedExpressions.some((expression) =>
-      new RegExp(`\\b${escapeRegExp(name)}\\b`).test(expression),
-    );
+  const renderedReferences = getRenderedReferences(ctx);
   if (
     resolveLocalBinding(ctx.file.scriptAst, functionName, parents) === binding &&
-    renderedExpressions.some((expression) => expressionCallsHelper(expression, functionName))
+    renderedReferences.some(
+      (reference) =>
+        reference.name === functionName &&
+        reference.parent?.type === "CallExpression" &&
+        reference.parent.callee === reference,
+    )
   )
     return true;
   const visit = (node: AnyNode, owner: AnyNode, variable: AnyNode): boolean => {
@@ -148,14 +133,17 @@ function functionFlowsToTemplate(
       if (
         name &&
         resolveLocalBinding(ctx.file.scriptAst, name, parents) === variable &&
-        renderedIdentifier(name)
+        renderedReferences.some(
+          (reference) =>
+            reference.name === name && projectionIncludes(node, variable, reference, parents),
+        )
       )
         return true;
       if (
         owner &&
         owner !== fn &&
         contributesToReturn(node, owner, parents) &&
-        functionFlowsToTemplate(ctx, owner, template, new Set(seen))
+        functionFlowsToTemplate(ctx, owner, new Set(seen))
       )
         return true;
     }
@@ -168,23 +156,74 @@ function functionFlowsToTemplate(
   return visit(ctx.file.scriptAst, null, null);
 }
 
-function expressionCallsHelper(expression: string, name: string): boolean {
-  try {
-    const { program, errors } = parseSync("template.ts", `(${expression})`, { lang: "ts" });
-    if (errors.length) return false;
-    let found = false;
-    walkScriptLocal(program, (node) => {
-      if (
-        node.type === "CallExpression" &&
-        node.callee?.type === "Identifier" &&
-        node.callee.name === name
-      )
-        found = true;
-    });
-    return found;
-  } catch {
-    return false;
+function getRenderedReferences(ctx: RuleContext): AnyNode[] {
+  const references: AnyNode[] = [];
+  const visit = (node: AnyNode) => {
+    if (!node) return;
+    if (node.type === "VExpressionContainer") {
+      for (const reference of node.references ?? []) {
+        if (!reference.variable && reference.mode !== "w") references.push(reference.id);
+      }
+      return;
+    }
+    if (node.type === "VElement") {
+      for (const attribute of node.startTag.attributes) {
+        if (
+          attribute.directive &&
+          ["bind", "if", "else-if", "show", "text", "html", "for"].includes(attribute.key.name.name)
+        )
+          visit(attribute.value);
+      }
+      for (const child of node.children) visit(child);
+    }
+  };
+  visit(ctx.file.templateAst);
+  return references;
+}
+
+function projectionIncludes(
+  node: AnyNode,
+  variable: AnyNode,
+  reference: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): boolean {
+  const path: string[] = [];
+  for (let current = node; current && current !== variable; current = parents.get(current)) {
+    const parent = parents.get(current);
+    if (
+      parent?.type === "Property" &&
+      parent.value === current &&
+      parents.get(parent)?.type === "ObjectExpression"
+    ) {
+      const key = parent.computed ? parent.key?.value : (parent.key?.name ?? parent.key?.value);
+      if (key === undefined) return true;
+      path.unshift(String(key));
+    }
   }
+  let current = reference;
+  for (const key of path) {
+    const member = current.parent;
+    if (member?.type !== "MemberExpression" || member.object !== current) return true;
+    const accessed = member.computed ? member.property?.value : member.property?.name;
+    if (accessed === undefined) return true;
+    if (String(accessed) !== key) return false;
+    current = member;
+  }
+  return true;
+}
+
+function containingFunction(node: AnyNode, parents: WeakMap<AnyNode, AnyNode>): AnyNode {
+  let current = parents.get(node);
+  while (current) {
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+        current.type,
+      )
+    )
+      return current;
+    current = parents.get(current);
+  }
+  return null;
 }
 
 function contributesToReturn(
@@ -210,23 +249,6 @@ function contributesToReturn(
     ) {
       const identifier = parent.id ?? parent.left;
       if (identifier?.type !== "Identifier") return false;
-      let reassigned = false;
-      walkScriptLocal(owner.body, (write) => {
-        const target =
-          write.type === "AssignmentExpression"
-            ? write.left
-            : write.type === "UpdateExpression"
-              ? write.argument
-              : ["ForInStatement", "ForOfStatement"].includes(write.type)
-                ? write.left
-                : null;
-        if (
-          patternBinds(target, identifier.name) &&
-          resolveLocalBinding(write, identifier.name, parents) === parent
-        )
-          reassigned = true;
-      });
-      if (reassigned) return false;
       let returned = false;
       walkScriptLocal(owner.body, (reference) => {
         if (
@@ -234,6 +256,7 @@ function contributesToReturn(
           reference !== identifier &&
           reference.name === identifier.name &&
           resolveLocalBinding(reference, identifier.name, parents) === parent &&
+          !hasPriorAliasWrite(reference, parent, owner, parents) &&
           contributesToReturn(reference, owner, parents, seen)
         )
           returned = true;
@@ -250,6 +273,22 @@ function contributesToReturn(
       parent !== owner
     )
       return false;
+    if (
+      (parent?.type === "IfStatement" && parent.test === current) ||
+      (parent?.type === "SwitchStatement" && parent.discriminant === current) ||
+      (parent?.type === "SwitchCase" && parent.test === current)
+    ) {
+      let selectsReturn = false;
+      const branch = parent.type === "SwitchCase" ? parents.get(parent) : parent;
+      walkScriptLocal(branch, (statement) => {
+        if (
+          statement.type === "ReturnStatement" &&
+          containingFunction(statement, parents) === owner
+        )
+          selectsReturn = true;
+      });
+      if (selectsReturn) return true;
+    }
     if (parent?.type === "ReturnStatement") {
       let scope = parent;
       while (
@@ -271,8 +310,40 @@ function contributesToReturn(
   return false;
 }
 
+function hasPriorAliasWrite(
+  reference: AnyNode,
+  binding: AnyNode,
+  owner: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): boolean {
+  const identifier = binding.id ?? binding.left;
+  let reassigned = false;
+  walkScriptLocal(owner.body, (write) => {
+    if (
+      write.start >= reference.start ||
+      write.start < binding.start ||
+      containingFunction(write, parents) !== owner
+    )
+      return;
+    const target =
+      write.type === "AssignmentExpression"
+        ? write.left
+        : write.type === "UpdateExpression"
+          ? write.argument
+          : ["ForInStatement", "ForOfStatement"].includes(write.type)
+            ? write.left
+            : null;
+    if (
+      patternBinds(target, identifier.name) &&
+      resolveLocalBinding(write, identifier.name, parents) === binding
+    )
+      reassigned = true;
+  });
+  return reassigned;
+}
+
 function getScriptParents(ctx: RuleContext): WeakMap<AnyNode, AnyNode> {
-  const key = `nuxt:script-parents:${ctx.file.hash}`;
+  const key = `nuxt:script-parents:${ctx.file.relativePath}:${ctx.file.hash}`;
   const cached = ctx.cache.get<WeakMap<AnyNode, AnyNode>>(key);
   if (cached) return cached;
   const parents = new WeakMap<AnyNode, AnyNode>();
