@@ -47,7 +47,7 @@ interface ImportEdge {
   kind: "runtime" | "types";
   required: boolean;
   typeReference?: boolean;
-  probe?: boolean;
+  probe?: boolean | "commonjs";
   resolutionOnly?: boolean;
 }
 
@@ -151,7 +151,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     kind: "runtime" | "types",
     required: boolean,
     from = root,
-    probe: boolean | "main" = true,
+    probe: boolean | "main" | "commonjs" = true,
     adjacentDeclaration = false,
     sourceResolution = false,
   ) {
@@ -168,7 +168,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     const candidates = probe
       ? kind === "types"
         ? typeCandidates(path)
-        : probe === "main"
+        : probe === "main" || (probe === "commonjs" && !sourceResolution)
           ? [
               path,
               ...[".js", ".json", ".node", "/index.js", "/index.json", "/index.node"].map(
@@ -315,7 +315,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             kind,
             executionRequired && kind === "runtime",
             edge.specifier.startsWith("#") ? root : dirname(current.path),
-            kind === "types" || edge.probe === true || /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
+            edge.probe || kind === "types" || /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
             false,
             /\.(?:[cm]?ts|tsx)$/.test(current.path),
           );
@@ -469,7 +469,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
     literal: ts.Node | undefined,
     typeOnly: boolean,
     required: boolean,
-    probe = false,
+    probe: boolean | "commonjs" = false,
     resolutionOnly = false,
   ) {
     while (literal && ts.isParenthesizedExpression(literal)) literal = literal.expression;
@@ -521,7 +521,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
         node.expression.text === "require" &&
         !shadowsRequire(node)
       )
-        add(node.arguments[0], false, isUnconditional(node, false), true);
+        add(node.arguments[0], false, isUnconditional(node, false), "commonjs");
       else if (
         ts.isPropertyAccessExpression(node.expression) &&
         ts.isIdentifier(node.expression.expression) &&
@@ -529,7 +529,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
         node.expression.name.text === "resolve" &&
         !shadowsRequire(node)
       )
-        add(node.arguments[0], false, isUnconditional(node, false), true, true);
+        add(node.arguments[0], false, isUnconditional(node, false), "commonjs", true);
     }
     ts.forEachChild(node, visit);
   }
@@ -685,12 +685,13 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     const call = member.parent;
     if (
       member.expression !== expression ||
-      member.name.text !== "then" ||
+      !["then", "finally"].includes(member.name.text) ||
       !ts.isCallExpression(call) ||
       ts.isCallChain(call) ||
       call.expression !== member ||
-      call.arguments.length > 2 ||
-      (call.arguments[1] && !isNonCallable(call.arguments[1])) ||
+      (member.name.text === "then"
+        ? call.arguments.length > 2 || (call.arguments[1] && !isNonCallable(call.arguments[1]))
+        : call.arguments.length > 1) ||
       !call.arguments.every(isNonAbruptElement)
     )
       break;
@@ -764,7 +765,19 @@ function isDefinitelyAbrupt(statement: ts.Statement): boolean {
       !hasAbruptCompletion(statement.statement)
     );
   }
-  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+  if (
+    ts.isReturnStatement(statement) ||
+    ts.isThrowStatement(statement) ||
+    ts.isBreakStatement(statement) ||
+    ts.isContinueStatement(statement)
+  )
+    return true;
+  if (
+    ts.isTryStatement(statement) &&
+    statement.finallyBlock &&
+    isDefinitelyAbrupt(statement.finallyBlock)
+  )
+    return true;
   if (ts.isBlock(statement)) return statement.statements.some(isDefinitelyAbrupt);
   if (ts.isIfStatement(statement))
     return (
@@ -779,6 +792,10 @@ function hasAbruptCompletion(statement: ts.Statement, includeThrow = true): bool
   let abrupt = false;
   function visit(node: ts.Node) {
     if (ts.isFunctionLike(node)) return;
+    if (ts.isTryStatement(node) && node.finallyBlock && isDefinitelyAbrupt(node.finallyBlock)) {
+      visit(node.finallyBlock);
+      return;
+    }
     if (ts.isReturnStatement(node) || (includeThrow && ts.isThrowStatement(node))) abrupt = true;
     if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) {
       let target = node.parent;

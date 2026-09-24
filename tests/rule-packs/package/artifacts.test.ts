@@ -366,3 +366,30 @@ test.each(["dist/index", "dist"])("probes legacy main %s with .js", (main) => {
   expect(result?.missing).toEqual([]);
   expect(result?.references).toHaveLength(1);
 });
+
+test.each(["mjs", "cjs", "jsx"])("does not probe CommonJS chunks with .%s", (extension) => {
+  for (const target of ["chunk", "chunk/index"]) {
+    const result = inventory(
+      { main: "index.js" },
+      { "index.js": 'require("./chunk");', [`${target}.${extension}`]: 'import "peer";' },
+    )!;
+    expect(result.references).toEqual([]);
+    expect(result.missing).toEqual(["chunk"]);
+  }
+});
+
+test.each(["js", "json", "node"])("resolves CommonJS chunks with .%s", (extension) => {
+  for (const target of ["chunk", "chunk/index"]) {
+    const result = inventory(
+      { main: "index.js" },
+      {
+        "index.js": 'require("./chunk");',
+        [`${target}.${extension}`]: extension === "js" ? 'require("peer");' : "",
+      },
+    )!;
+    expect(result.references).toMatchObject(
+      extension === "js" ? [{ packageName: "peer", required: true }] : [],
+    );
+    expect(result.missing).toEqual([]);
+  }
+});
