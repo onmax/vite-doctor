@@ -2264,3 +2264,74 @@ test.each([
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
 });
+
+test.each([
+  [
+    "object alias",
+    "const { value: original } = { value: error }; if (isError(original)) throw original; throw new Error()",
+    0,
+  ],
+  [
+    "array alias",
+    "const [original] = [error]; if (isError(original)) throw original; throw new Error()",
+    0,
+  ],
+  [
+    "nested alias",
+    "const { value: [original] } = { value: [error] }; if (isError(original)) throw original; throw new Error()",
+    0,
+  ],
+  ["increment to 500", "error.statusCode++; throw error", 1],
+  ["prefix increment to 500", "++error.statusCode; throw error", 1],
+  ["computed increment", "const key = 'statusCode'; error[key]++; throw error", 1],
+  ["decrement preserves", "error.statusCode--; throw error", 0],
+])("tracks reviewed catch mutations: %s", async (_name, body, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => { try { throw createError({ statusCode: 499 }) } catch (error) { ${body} } })`,
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
+
+test.each([
+  [
+    "multiple spread values",
+    "function fail(first, code = 404) { throw createError({ statusCode: code }) }; try { fail(...[1, 500]) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "sparse spread default",
+    "function fail(code = 404) { throw createError({ statusCode: code }) }; try { fail(...[,]) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "empty spread default",
+    "function fail(code = 404) { throw createError({ statusCode: code }) }; try { fail(...[]) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "trailing argument",
+    "function fail(code = 404) { throw createError({ statusCode: code }) }; try { fail(...[], 500) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "nested spread",
+    "function fail(first, code = 404) { throw createError({ statusCode: code }) }; try { fail(...[1, ...[500]]) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "unknown spread default",
+    "function fail(code = 404) { throw createError({ statusCode: code }) }; try { fail(...args) } catch { throw new Error() }",
+    1,
+  ],
+])("tracks reviewed spread arguments: %s", async (_name, body, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
