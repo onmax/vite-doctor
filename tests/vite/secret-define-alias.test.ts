@@ -456,3 +456,90 @@ export default { define: { __CONFIG__: JSON.stringify(${expression}) } }`,
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+test.each([
+  ["const base = { read() { return replacement } }; const reader = { ...base }", true],
+  [
+    "const base = { read() { return 'public' } }; const reader = { read() { return replacement }, ...base }",
+    false,
+  ],
+  [
+    "const base = { read() { return replacement } }; const reader = { read() { return 'public' }, ...base }",
+    true,
+  ],
+  [
+    "const base = { read() { return replacement } }; const reader = { ...base, read() { return 'public' } }",
+    false,
+  ],
+  [
+    "const base = { read() { return replacement } }; const middle = { ...base }; const reader = { ...middle }",
+    true,
+  ],
+])("preserves method spread order: %s", async (declaration, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const replacement = process.env.PRIVATE_TOKEN; ${declaration}; export default { define: { __CONFIG__: JSON.stringify(reader.read()) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ["const read = async () => replacement", "read()", false],
+  ["const read = async () => replacement", "await read()", true],
+  ["async function read() { return replacement }", "read()", false],
+  ["async function read() { return replacement }", "await read()", true],
+  ["function* read() { return replacement }", "read()", false],
+  ["const reader = { async read() { return replacement } }", "reader.read()", false],
+  ["const reader = { async read() { return replacement } }", "await reader.read()", true],
+  ["const reader = { *read() { return replacement } }", "reader.read()", false],
+  ["", "process.env[`PRIVATE_TOKEN`]", true],
+  ["", "process.env[`PUBLIC_VALUE`]", false],
+])(
+  "handles resolved values and static template keys: %s %s",
+  async (declaration, expression, expected) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `const replacement = process.env.PRIVATE_TOKEN; ${declaration}; export default { define: { __CONFIG__: JSON.stringify(${expression}) } }`,
+      },
+    });
+    expect(result.diagnostics.length > 0).toBe(expected);
+  },
+);
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    ["const defs = { PRIVATE_TOKEN: {} }; export default { define: { ...defs } }", 1],
+    ["const defs = { __CONFIG__: {} }; export default { define: { ...defs, __CONFIG__: '1' } }", 0],
+    [
+      "const defs = { PRIVATE_TOKEN: {} }; const nested = { ...defs }; export default { define: { ...nested } }",
+      1,
+    ],
+    ["const config = { define: { PRIVATE_TOKEN: {} } }; export { config as default }", 1],
+  ])(`${rule.meta.id} resolves define spreads and named defaults: %s`, async (config, count) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": config },
+    });
+    expect(result.diagnostics).toHaveLength(count);
+  });
+}
+
+test.each([
+  ["...defs, __CONFIG__: JSON.stringify('public')", false],
+  ["__CONFIG__: JSON.stringify('public'), ...defs", true],
+])("honors define replacement overwrite order: %s", async (properties, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const defs = { __CONFIG__: JSON.stringify(process.env.PRIVATE_TOKEN) }; export default { define: { ${properties} } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});

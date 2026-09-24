@@ -175,7 +175,10 @@ export const noSecretDefine = createRule({
 
 function readAliasInitializers(source: string) {
   const initializers = new Map<number, [number, number][]>();
-  const memberReturns = new Map<number, [number, number][]>();
+  const memberReturns = new Map<
+    number,
+    { ranges: [number, number][]; async: boolean; generator: boolean }
+  >();
   let parsed: ReturnType<typeof parseForESLint>;
   try {
     parsed = parseForESLint(source, { range: true, sourceType: "module" });
@@ -261,7 +264,7 @@ function readAliasInitializers(source: string) {
       const key = node.computed ? resolve(node.property, seen) : node.property;
       const name = key?.type === "Literal" ? String(key.value) : !node.computed ? key?.name : null;
       if (object?.type === "ObjectExpression" && name !== null) {
-        const property = object.properties.findLast(
+        const property = readProperties(object, new Set(seen)).findLast(
           (property: AnyNode) =>
             property.type === "Property" &&
             (property.computed
@@ -272,6 +275,14 @@ function readAliasInitializers(source: string) {
       }
     }
     return node;
+  }
+  function readProperties(object: AnyNode, seen: Set<AnyNode>): AnyNode[] {
+    return object.properties.flatMap((property: AnyNode) => {
+      if (property.type !== "SpreadElement") return [property];
+      const spread = resolve(property.argument, new Set(seen));
+      if (spread?.type !== "ObjectExpression" || seen.has(spread)) return [];
+      return readProperties(spread, new Set([...seen, spread]));
+    });
   }
   for (const member of members) {
     const value = resolve(member);
@@ -285,7 +296,7 @@ function readAliasInitializers(source: string) {
     if (value.body.type === "BlockStatement")
       visitReturnValues(value.body, (node) => ranges.push(node.range));
     else ranges.push(value.body.range);
-    memberReturns.set(member.range[0], ranges);
+    memberReturns.set(member.range[0], { ranges, async: value.async, generator: value.generator });
   }
   return { initializers, memberReturns };
 }
@@ -295,9 +306,9 @@ function resolvesSecretAlias(
   start: number,
   source: string,
   initializers: Map<number, [number, number][]>,
-  memberReturns: Map<number, [number, number][]>,
+  memberReturns: Map<number, { ranges: [number, number][]; async: boolean; generator: boolean }>,
 ): boolean {
-  const pending = [{ value, start, invoked: false }];
+  const pending = [{ value, start, invoked: false, awaited: false }];
   const seen = new Set<string>();
   while (pending.length) {
     const current = pending.pop()!;
@@ -310,10 +321,15 @@ function resolvesSecretAlias(
     }
     const identifiers = new Set<number>();
     const invokedNodes = new Set<unknown>();
+    const awaitedNodes = new Set<unknown>();
+    const awaitedReferences = new Set<number>();
     const invokedReferences = new Set<number>();
     if (current.invoked) {
       const statement = parsed.ast.body[0];
-      if (statement?.type === "ExpressionStatement") invokedNodes.add(statement.expression);
+      if (statement?.type === "ExpressionStatement") {
+        invokedNodes.add(statement.expression);
+        if (current.awaited) awaitedNodes.add(statement.expression);
+      }
     }
     const nodes: unknown[] = [parsed.ast];
     while (nodes.length) {
@@ -321,6 +337,7 @@ function resolvesSecretAlias(
       if (node.type.startsWith("TS")) {
         if (node.expression) {
           if (invokedNodes.has(node)) invokedNodes.add(node.expression);
+          if (awaitedNodes.has(node)) awaitedNodes.add(node.expression);
           nodes.push(node.expression);
         }
         continue;
@@ -337,22 +354,32 @@ function resolvesSecretAlias(
       if (
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
       ) {
-        if (invokedNodes.has(node)) {
+        if (invokedNodes.has(node) && !node.generator && (!node.async || awaitedNodes.has(node))) {
           const body = node.body as AnyNode;
           if (body.type !== "BlockStatement") nodes.push(body);
           else visitReturnValues(body, (value) => nodes.push(value));
         }
         continue;
       }
-      if (node.type === "CallExpression") invokedNodes.add(node.callee);
+      if (node.type === "AwaitExpression") awaitedNodes.add(node.argument);
+      if (node.type === "CallExpression") {
+        invokedNodes.add(node.callee);
+        if (awaitedNodes.has(node)) awaitedNodes.add(node.callee);
+      }
       if (node.type === "MemberExpression") {
-        const ranges = memberReturns.get(current.start + node.range[0] - 1);
-        if (invokedNodes.has(node) && ranges) {
-          for (const range of ranges) {
+        const member = memberReturns.get(current.start + node.range[0] - 1);
+        if (invokedNodes.has(node) && member) {
+          if (member.generator || (member.async && !awaitedNodes.has(node))) continue;
+          for (const range of member.ranges) {
             const identity = `${range[0]}:return`;
             if (seen.has(identity)) continue;
             seen.add(identity);
-            pending.push({ value: source.slice(...range), start: range[0], invoked: false });
+            pending.push({
+              value: source.slice(...range),
+              start: range[0],
+              invoked: false,
+              awaited: false,
+            });
           }
           continue;
         }
@@ -370,6 +397,9 @@ function resolvesSecretAlias(
       }
       if (
         (node.type === "Identifier" && SECRET_NAME_RE.test(node.name as string)) ||
+        (node.type === "TemplateLiteral" &&
+          (node.expressions as unknown[]).length === 0 &&
+          SECRET_NAME_RE.test((node.quasis as AnyNode[])[0]?.value.cooked ?? "")) ||
         (node.type === "Literal" &&
           typeof node.value === "string" &&
           SECRET_NAME_RE.test(node.value))
@@ -386,6 +416,7 @@ function resolvesSecretAlias(
       if (node.type === "Identifier") {
         identifiers.add(node.range[0]);
         if (invokedNodes.has(node)) invokedReferences.add(node.range[0]);
+        if (awaitedNodes.has(node)) awaitedReferences.add(node.range[0]);
       }
       for (const key of parsed.visitorKeys[node.type] ?? []) {
         const child = node[key];
@@ -400,11 +431,12 @@ function resolvesSecretAlias(
         const ranges = initializers.get(current.start + reference.identifier.range[0] - 1);
         for (const range of ranges ?? []) {
           const invoked = invokedReferences.has(reference.identifier.range[0]);
-          const identity = `${range[0]}:${invoked}`;
+          const awaited = awaitedReferences.has(reference.identifier.range[0]);
+          const identity = `${range[0]}:${invoked}:${awaited}`;
           if (seen.has(identity)) continue;
           seen.add(identity);
           const initializer = source.slice(...range);
-          pending.push({ value: initializer, start: range[0], invoked });
+          pending.push({ value: initializer, start: range[0], invoked, awaited });
         }
       }
     }
@@ -475,10 +507,13 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
       if (option) {
         const values = resolve(option.value);
         if (values?.type !== "ObjectExpression") return;
-        for (const property of values.properties) {
+        const properties = new Map<string, AnyNode>();
+        for (const property of readOptions(values)) {
           if (property.type !== "Property") continue;
           const key = keyOf(property);
-          if (key === null) continue;
+          if (key !== null) properties.set(key, property);
+        }
+        for (const [key, property] of properties) {
           const valueStart = property.value.start;
           entries.push({
             key,
@@ -497,7 +532,11 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   }
   for (const statement of (program as AnyNode).body) {
     if (statement.type === "ExportDefaultDeclaration") readConfig(statement.declaration);
-    else if (
+    else if (statement.type === "ExportNamedDeclaration" && !statement.source) {
+      for (const specifier of statement.specifiers) {
+        if (propertyName(specifier.exported) === "default") readConfig(specifier.local);
+      }
+    } else if (
       statement.type === "ExpressionStatement" &&
       statement.expression.type === "AssignmentExpression" &&
       statement.expression.operator === "=" &&
