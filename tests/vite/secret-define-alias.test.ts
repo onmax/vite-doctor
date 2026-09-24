@@ -2035,6 +2035,9 @@ test.each([
   ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.push("safe")', true],
   ['const replacement = [process.env.PRIVATE_TOKEN]; replacement[0] = "safe"', false],
   ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.fill("safe")', false],
+  ['const replacement = ["safe"]; replacement.fill(process.env.PRIVATE_TOKEN, 0, 1)', true],
+  ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.fill("safe", 0, 1)', false],
+  ['const replacement = ["safe"]; replacement.fill(process.env.PRIVATE_TOKEN, 1, 2)', false],
   ["const replacement = []; replacement.unshift(process.env.PRIVATE_TOKEN)", true],
   ["const replacement = [process.env.PRIVATE_TOKEN]; replacement.pop()", false],
   ["const replacement = [process.env.PRIVATE_TOKEN]; replacement.shift()", false],
@@ -2130,6 +2133,33 @@ test("binds the receiver of an exported config getter", async () => {
     },
   });
   expect(result.diagnostics).toHaveLength(1);
+});
+
+test("binds the receiver of a getter projected into factory parameters", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts":
+        "const make = ({ value }) => value; const source = { config: { define: { PRIVATE_TOKEN: process.env.PRIVATE_TOKEN } }, get value() { return this.config } }; export default make(source)",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  ["0 ?? values.push(process.env.PRIVATE_TOKEN)", false],
+  ["null ?? values.push(process.env.PRIVATE_TOKEN)", true],
+  ["false || values.push(process.env.PRIVATE_TOKEN)", true],
+])("tracks only reachable logical mutations: %s", async (expression, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const values = []; ${expression}; export default { define: { VALUE: JSON.stringify(values) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
 });
 
 test.each([

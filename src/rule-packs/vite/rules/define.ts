@@ -345,9 +345,19 @@ function readAliasInitializers(source: string) {
       } else if (
         mutation?.type === "CallExpression" &&
         mutation.callee.property?.name === "fill" &&
-        mutation.arguments.length === 1
+        mutation.arguments.length >= 1 &&
+        mutation.arguments.length <= 3 &&
+        mutation.arguments
+          .slice(1)
+          .every(
+            (argument: AnyNode) => argument.type === "Literal" && Number.isInteger(argument.value),
+          )
       ) {
-        elements.fill(mutation.arguments[0].range);
+        elements.fill(
+          mutation.arguments[0].range,
+          mutation.arguments[1]?.value,
+          mutation.arguments[2]?.value,
+        );
         changed = true;
       } else if (mutation?.type !== "CallExpression" || !member) {
         return null;
@@ -466,9 +476,18 @@ function readAliasInitializers(source: string) {
       return;
     }
     if (node.type === "LogicalExpression") {
-      const condition = staticBoolean(node.left);
+      const left = resolveImmutable(node.left);
+      const condition =
+        node.operator === "??"
+          ? left.type === "Literal"
+            ? left.value == null
+            : undefined
+          : staticBoolean(left);
       collectMutations(node.left, executionPosition);
-      if (condition === undefined || (node.operator === "&&" ? condition : !condition))
+      if (
+        condition === undefined ||
+        (node.operator === "&&" ? condition : node.operator === "??" ? condition : !condition)
+      )
         collectMutations(node.right, executionPosition);
       return;
     }
@@ -2280,6 +2299,29 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
                       (item) => item.type === "Property" && keyOf(item) === key,
                     )
                   : undefined;
+              if (match?.kind === "get") {
+                const bindGetterThis = (child: AnyNode) => {
+                  if (
+                    !child ||
+                    [
+                      "FunctionExpression",
+                      "FunctionDeclaration",
+                      "ArrowFunctionExpression",
+                    ].includes(child.type)
+                  )
+                    return;
+                  if (child.type === "ThisExpression") {
+                    if (!previous.has(child.start))
+                      previous.set(child.start, initializers.get(child.start));
+                    initializers.set(child.start, [[value.start, value.end]]);
+                  }
+                  for (const part of Object.values(child)) {
+                    if (Array.isArray(part)) part.forEach(bindGetterThis);
+                    else if (part && typeof part === "object") bindGetterThis(part);
+                  }
+                };
+                bindGetterThis(match.value.body);
+              }
               const projected = match ? effectiveProperty(match).value : undefined;
               if (projected && mergedNodes.has(projected)) {
                 const start = -nodesByRange.size - 1;
