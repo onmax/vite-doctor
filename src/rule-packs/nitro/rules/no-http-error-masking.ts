@@ -49,7 +49,7 @@ export const noHttpErrorMasking = createRule({
           budget: { remaining: 4096 },
           conditions: new Map(),
           resolveBinding: lexical.resolve,
-          functions: enclosingFunctions(node, lexical),
+          functions: declaredFunctions(lexical),
         };
         let candidate: Path | undefined;
         try {
@@ -93,12 +93,12 @@ type Outcome = number | "server-error" | "normal" | "exit" | "throw" | "break" |
 
 interface Path {
   budget: { remaining: number };
-  resolveBinding: (node: AnyNode) => AnyNode;
+  resolveBinding: (node: AnyNode, location?: AnyNode) => AnyNode;
   outcome: Outcome;
   label?: string;
   conditions: ReadonlyMap<string, boolean>;
   bindings?: Bindings;
-  functions?: ReadonlyMap<string, AnyNode>;
+  functions?: ReadonlyMap<AnyNode, AnyNode>;
   calls?: readonly AnyNode[];
   value?: Value;
   errors?: ReadonlyMap<number, Outcome>;
@@ -163,10 +163,10 @@ function evaluateOutcomes(
   if (node.type === "BlockStatement") {
     const locals = blockBindings(node);
     const functions = new Map(path.functions);
-    for (const name of locals) functions.delete(name);
+    for (const name of locals) functions.delete(path.resolveBinding({ name } as AnyNode, node));
     for (const statement of node.body) {
       if (statement.type === "FunctionDeclaration" && statement.id)
-        functions.set(statement.id.name, statement);
+        functions.set(path.resolveBinding(statement.id), statement);
     }
     const scopedBindings = new Map(bindings);
     const scopedConditions = new Map(normal.conditions);
@@ -194,7 +194,9 @@ function evaluateOutcomes(
               [...(current.literals ?? [])].map(([node, value]) => [node.start, value]),
               [...(current.bindings ?? [])].sort(([a], [b]) => a.localeCompare(b)),
               [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
-              [...(current.functions ?? [])].sort(([a], [b]) => a.localeCompare(b)),
+              [...(current.functions ?? [])]
+                .map(([binding, fn]) => [binding.start, fn.start])
+                .sort(([a], [b]) => a - b),
             ]),
             current,
           ]),
@@ -214,8 +216,10 @@ function evaluateOutcomes(
       }
       const restoredFunctions = new Map(current.functions);
       for (const name of locals) {
-        restoredFunctions.delete(name);
-        if (path.functions?.has(name)) restoredFunctions.set(name, path.functions.get(name)!);
+        const binding = path.resolveBinding({ name } as AnyNode, node);
+        restoredFunctions.delete(binding);
+        if (path.functions?.has(binding))
+          restoredFunctions.set(binding, path.functions.get(binding)!);
       }
       return {
         ...current,
@@ -310,13 +314,14 @@ function evaluateOutcomes(
           for (const name of bindingNames(declaration.id)) {
             next.delete(name);
             if (declaration.init) {
-              functions.delete(name);
+              functions.delete(evaluated.resolveBinding({ name } as AnyNode, declaration.id));
               values.delete(name);
             }
           }
           if (declaration.id.type === "Identifier") {
             const name = declaration.id.name;
-            if (isFunction(declaration.init)) functions.set(name, declaration.init);
+            if (isFunction(declaration.init))
+              functions.set(evaluated.resolveBinding(declaration.id), declaration.init);
             const value = evaluated.value;
             if (value && "error" in value) values.set(name, value.error);
             if (
@@ -400,14 +405,14 @@ function evaluateOutcomes(
           const next = new Map(evaluated.conditions);
           const values = new Map(evaluated.bindings);
           const functions = new Map(evaluated.functions);
-          functions.delete(assignment.left.name);
-          if (assignment.operator === "=" && isFunction(assignment.right))
-            functions.set(assignment.left.name, assignment.right);
+          const binding = evaluated.resolveBinding(assignment.left);
+          functions.delete(binding);
+          if (binding && assignment.operator === "=" && isFunction(assignment.right))
+            functions.set(binding, assignment.right);
           values.delete(assignment.left.name);
           const value = assignment.operator === "=" ? evaluated.value : undefined;
           if (value && "error" in value) values.set(assignment.left.name, value.error);
           const literals = new Map(evaluated.literals);
-          const binding = evaluated.resolveBinding(assignment.left);
           if (binding) {
             literals.delete(binding);
             if (value && "literal" in value) literals.set(binding, value);
@@ -427,7 +432,7 @@ function evaluateOutcomes(
         const next = new Map(evaluated.conditions);
         for (const name of bindingNames(assignment.left)) {
           values.delete(name);
-          functions.delete(name);
+          functions.delete(evaluated.resolveBinding({ name } as AnyNode, assignment.left));
           next.delete(name);
         }
         return { ...evaluated, bindings: values, functions, conditions: next };
@@ -539,7 +544,7 @@ function evaluateOutcomes(
     );
   }
   let callee = unwrapExpression(call.callee);
-  if (callee?.type === "Identifier") callee = path.functions?.get(callee.name);
+  if (callee?.type === "Identifier") callee = path.functions?.get(path.resolveBinding(callee));
   if (
     call.type === "CallExpression" &&
     isFunction(callee) &&
@@ -562,7 +567,7 @@ function evaluateOutcomes(
     const localConditions = new Map(path.conditions);
     for (const name of shadows) {
       local.delete(name);
-      functions.delete(name);
+      functions.delete(path.resolveBinding({ name } as AnyNode, callee));
       localConditions.delete(name);
     }
     let parameterPaths: Path[] = [
@@ -617,10 +622,12 @@ function evaluateOutcomes(
         const restoredConditions = new Map(current.conditions);
         for (const name of shadows) {
           restored.delete(name);
-          restoredFunctions.delete(name);
+          const binding = path.resolveBinding({ name } as AnyNode, callee);
+          restoredFunctions.delete(binding);
           restoredConditions.delete(name);
           if (bindings.has(name)) restored.set(name, bindings.get(name)!);
-          if (path.functions?.has(name)) restoredFunctions.set(name, path.functions.get(name)!);
+          if (path.functions?.has(binding))
+            restoredFunctions.set(binding, path.functions.get(binding)!);
           if (path.conditions.has(name)) restoredConditions.set(name, path.conditions.get(name)!);
         }
         return {
@@ -644,7 +651,7 @@ function evaluateOutcomes(
       if (child.type !== "CallExpression") return;
       for (const reference of [child.callee, ...child.arguments]) {
         if (reference.type !== "Identifier") continue;
-        const fn = path.functions?.get(reference.name);
+        const fn = path.functions?.get(path.resolveBinding(reference));
         if (!fn) continue;
         for (const name of values.keys()) if (!stableBinding(fn, name)) values.delete(name);
       }
@@ -748,7 +755,9 @@ function loopOutcomes(
       [...(current.errors ?? [])],
       [...(current.literals ?? [])].map(([node, value]) => [node.start, value]),
       [...(current.bindings ?? [])].sort(([a], [b]) => a.localeCompare(b)),
-      [...(current.functions ?? [])].sort(([a], [b]) => a.localeCompare(b)),
+      [...(current.functions ?? [])]
+        .map(([binding, fn]) => [binding.start, fn.start])
+        .sort(([a], [b]) => a - b),
     ]);
     if (!first && seen.has(key)) continue;
     if (!first) seen.add(key);
@@ -1115,14 +1124,11 @@ function lexicalBindings(root: AnyNode) {
   };
 }
 
-function enclosingFunctions(node: AnyNode, lexical: ReturnType<typeof lexicalBindings>) {
+function declaredFunctions(lexical: ReturnType<typeof lexicalBindings>) {
   return new Map(
     [...lexical.names]
-      .filter(
-        ([fn, binding]) =>
-          fn.type === "FunctionDeclaration" && lexical.resolve(binding, node) === binding,
-      )
-      .map(([fn]) => [fn.id.name, fn]),
+      .filter(([fn]) => fn.type === "FunctionDeclaration")
+      .map(([fn, binding]) => [binding, fn]),
   );
 }
 
@@ -1223,6 +1229,11 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
           alternate: child === parent.alternate ? null : { type: "ReturnStatement" },
         } as AnyNode,
       ]);
+    } else if (
+      (parent.type === "ForInStatement" || parent.type === "ForOfStatement") &&
+      child === parent.body
+    ) {
+      prefixes.unshift([parent.right]);
     } else if (
       (parent.type === "WhileStatement" || parent.type === "ForStatement") &&
       child === parent.body

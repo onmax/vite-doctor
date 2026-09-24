@@ -1755,3 +1755,65 @@ test.each([
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
 });
+
+test.each([
+  [
+    "declaration",
+    "function missing() {}",
+    "const missing = () => { throw createError({ statusCode: 404 }) }",
+    false,
+  ],
+  [
+    "initializer",
+    "const missing = () => {}",
+    "function missing() { throw createError({ statusCode: 404 }) }",
+    false,
+  ],
+  [
+    "outer throwing helper",
+    "function missing() { throw createError({ statusCode: 404 }) }",
+    "const missing = () => {}",
+    true,
+  ],
+  [
+    "outer helper replacement",
+    "let missing = () => {}; missing = () => { throw createError({ statusCode: 404 }) }",
+    "function missing() {}",
+    true,
+  ],
+])("resolves closed-over helpers by lexical binding: %s", async (_, outer, inner, reports) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        ${outer}
+        function invoke() { missing() }
+        {
+          ${inner}
+          try { invoke() } catch { throw new Error() }
+        }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+});
+
+test.each(["in", "of"])(
+  "evaluates enclosing for-%s sources before entering the body",
+  async (operator) => {
+    const result = await runRuleFixture({
+      framework: "nitro",
+      rule: noHttpErrorMasking,
+      files: {
+        "server/api/account.ts": `export default defineEventHandler(() => {
+        function fail() { throw new Error() }
+        for (const item ${operator} fail()) {
+          try { throw createError({ statusCode: 404 }) } catch { throw new Error() }
+        }
+      })`,
+      },
+    });
+    expect(result.diagnostics).toEqual([]);
+  },
+);
