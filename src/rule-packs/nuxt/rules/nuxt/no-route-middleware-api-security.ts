@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { relative } from "pathe";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
 import { createNuxtRuntimeEvidence } from "./evidence.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -22,6 +23,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
         .length > 0;
     if (!hasServerHandlers) return;
     const relativePath = toPosixPath(ctx.file.relativePath);
+    if (/(?:^|\/)server\/middleware\//.test(relativePath)) return;
     const isMiddlewareFile =
       relativePath.startsWith("middleware/") ||
       relativePath.startsWith("app/middleware/") ||
@@ -68,13 +70,11 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
 
 function unguardedSensitiveHandlers(ctx: any): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
-  if ((dirs?.middleware ?? []).some((file: string) => hasAuthGuard(readProjectFile(file))))
-    return [];
   const files = new Set<string>([...(dirs?.api ?? []), ...(dirs?.routes ?? [])]);
   return [...files].filter(
     (file) =>
       /(?:^|\/)(?:auth|admin|account|user|users|me|profile|session|private|billing|settings)(?:[./-]|$)/i.test(
-        toPosixPath(file),
+        toPosixPath(relative(ctx.project.root, file)),
       ) && !hasAuthGuard(readProjectFile(file)),
   );
 }

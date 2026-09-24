@@ -2416,6 +2416,75 @@ test("a guard in one API handler does not hide an unguarded sensitive handler", 
   expect(diagnostic?.message).not.toContain("feedback.get.ts");
 });
 
+test("path-scoped server middleware does not hide unrelated sensitive handlers", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+      "server/middleware/auth.ts": `export default defineEventHandler((event) => {
+        if (event.path.startsWith('/api/admin')) return requireAuth(event)
+      })`,
+      "server/api/account.get.ts": `export default defineEventHandler(() => ({}))`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.related?.map((item) => item.file)).toEqual([
+    expect.stringContaining("server/api/account.get.ts"),
+  ]);
+});
+
+test("route middleware security ignores sensitive ancestor directory names", async () => {
+  await withFixture(
+    {
+      "user/project/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+      "user/project/app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+      "user/project/server/api/feedback.get.ts": `export default defineEventHandler(() => [])`,
+    },
+    {},
+    async (root) => {
+      const result = await runDoctor({
+        root: join(root, "user/project"),
+        framework: "nuxt",
+        runtimeTarget: { nuxt: "4.0.0" },
+        extensions: [
+          defineDoctorExtension({
+            name: "fixture",
+            rulePacks: [
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules: [noRouteMiddlewareApiSecurity],
+                presets: { recommended: [noRouteMiddlewareApiSecurity.meta.id] },
+              }),
+            ],
+          }),
+        ],
+      });
+      expect(result.diagnostics).toHaveLength(0);
+    },
+  );
+});
+
+test.each(["mts", "cts", "cjs"])(
+  "route middleware security includes %s handlers",
+  async (extension) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+        "server/api/feedback.get.ts": `export default defineEventHandler(() => [])`,
+        [`server/api/account.get.${extension}`]: `export default defineEventHandler(() => ({}))`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.related?.map((item) => item.file)).toEqual([
+      expect.stringContaining(`server/api/account.get.${extension}`),
+    ]);
+  },
+);
+
 test("module packs activate from dependencies", async () => {
   await withFixture(
     {

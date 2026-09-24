@@ -251,18 +251,21 @@ function readNuxtImportsDirs(root: string): string[] {
 
 async function serverDirs(root: string) {
   return {
-    api: await globFiles(root, ["server/api/**/*.{ts,js,mjs}", "app/server/api/**/*.{ts,js,mjs}"]),
+    api: await globFiles(root, [
+      "server/api/**/*.{ts,js,mjs,mts,cts,cjs}",
+      "app/server/api/**/*.{ts,js,mjs,mts,cts,cjs}",
+    ]),
     routes: await globFiles(root, [
-      "server/routes/**/*.{ts,js,mjs}",
-      "app/server/routes/**/*.{ts,js,mjs}",
+      "server/routes/**/*.{ts,js,mjs,mts,cts,cjs}",
+      "app/server/routes/**/*.{ts,js,mjs,mts,cts,cjs}",
     ]),
     middleware: await globFiles(root, [
-      "server/middleware/**/*.{ts,js,mjs}",
-      "app/server/middleware/**/*.{ts,js,mjs}",
+      "server/middleware/**/*.{ts,js,mjs,mts,cts,cjs}",
+      "app/server/middleware/**/*.{ts,js,mjs,mts,cts,cjs}",
     ]),
     plugins: await globFiles(root, [
-      "server/plugins/**/*.{ts,js,mjs}",
-      "app/server/plugins/**/*.{ts,js,mjs}",
+      "server/plugins/**/*.{ts,js,mjs,mts,cts,cjs}",
+      "app/server/plugins/**/*.{ts,js,mjs,mts,cts,cjs}",
     ]),
   };
 }
