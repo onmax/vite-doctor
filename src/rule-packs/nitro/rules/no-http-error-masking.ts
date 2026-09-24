@@ -236,47 +236,18 @@ function outcomes(
   }
   if (node.type === "SwitchStatement") {
     const cases: AnyNode[] = node.cases;
-    const fallback = cases.findIndex((item) => !item.test);
-    const discriminant = unwrapExpression(node.discriminant);
-    return outcomes(discriminant, normal, bindings, conditions).flatMap((evaluated) => {
-      if (evaluated.outcome !== "normal") return [evaluated];
-      let unmatched = [evaluated];
-      const entries: { path: Path; entry: number }[] = [];
-      const seen = new Set<unknown>();
-      for (const [index, item] of cases.entries()) {
-        if (!item.test) continue;
-        const test = unwrapExpression(item.test);
-        const remaining: Path[] = [];
-        for (const path of unmatched) {
-          for (const current of outcomes(test, path, bindings, conditions)) {
-            if (current.outcome !== "normal") {
-              entries.push({ path: current, entry: -1 });
-              continue;
-            }
-            const known = discriminant.type === "Literal" && test.type === "Literal";
-            const duplicate = test.type === "Literal" && seen.has(test.value);
-            if (!duplicate && (!known || discriminant.value === test.value))
-              entries.push({ path: current, entry: index });
-            if (!known || discriminant.value !== test.value) remaining.push(current);
-          }
-        }
-        if (test.type === "Literal") seen.add(test.value);
-        unmatched = remaining;
-      }
-      entries.push(...unmatched.map((path) => ({ path, entry: fallback })));
-      return entries.flatMap(({ path, entry }) => {
-        if (entry === -1) return [path];
-        return outcomes(
-          { type: "BlockStatement", body: cases.slice(entry).flatMap((item) => item.consequent) },
-          path,
-          bindings,
-          conditions,
-        ).map((current) =>
-          current.outcome === "break" && !current.label
-            ? { ...current, outcome: "normal" as const }
-            : current,
-        );
-      });
+    return switchEntries(node, normal, bindings, conditions).flatMap(({ path, entry }) => {
+      if (entry === -1) return [path];
+      return outcomes(
+        { type: "BlockStatement", body: cases.slice(entry).flatMap((item) => item.consequent) },
+        path,
+        bindings,
+        conditions,
+      ).map((current) =>
+        current.outcome === "break" && !current.label
+          ? { ...current, outcome: "normal" as const }
+          : current,
+      );
     });
   }
   if (node.type === "VariableDeclaration") {
@@ -299,7 +270,12 @@ function outcomes(
           if (declaration.id.type === "Identifier") {
             const name = declaration.id.name;
             if (isFunction(declaration.init)) functions.set(name, declaration.init);
-            const status = httpStatus(declaration.init, path.resolveBinding);
+            const initializer = declaration.init && unwrapExpression(declaration.init);
+            const status =
+              httpStatus(initializer, path.resolveBinding) ??
+              (initializer?.type === "Identifier"
+                ? evaluated.bindings?.get(initializer.name)
+                : undefined);
             if (status !== undefined) values.set(name, status);
             if (
               declaration.init?.type === "Literal" &&
@@ -349,7 +325,10 @@ function outcomes(
         values.delete(assignment.left.name);
         const status =
           assignment.operator === "="
-            ? httpStatus(assignment.right, path.resolveBinding)
+            ? (httpStatus(assignment.right, path.resolveBinding) ??
+              (unwrapExpression(assignment.right).type === "Identifier"
+                ? evaluated.bindings?.get(unwrapExpression(assignment.right).name)
+                : undefined))
             : undefined;
         if (status !== undefined) values.set(assignment.left.name, status);
         next.delete(assignment.left.name);
@@ -997,8 +976,47 @@ function enclosingFunctions(node: AnyNode, lexical: ReturnType<typeof lexicalBin
   );
 }
 
+function switchEntries(
+  node: AnyNode,
+  path: Path,
+  bindings: Bindings,
+  conditions: Set<string>,
+): { path: Path; entry: number }[] {
+  const cases: AnyNode[] = node.cases;
+  const fallback = cases.findIndex((item) => !item.test);
+  const discriminant = unwrapExpression(node.discriminant);
+  return outcomes(discriminant, path, bindings, conditions).flatMap((evaluated) => {
+    if (evaluated.outcome !== "normal") return [{ path: evaluated, entry: -1 }];
+    let unmatched = [evaluated];
+    const entries: { path: Path; entry: number }[] = [];
+    const seen = new Set<unknown>();
+    for (const [index, item] of cases.entries()) {
+      if (!item.test) continue;
+      const test = unwrapExpression(item.test);
+      const remaining: Path[] = [];
+      for (const path of unmatched) {
+        for (const current of outcomes(test, path, bindings, conditions)) {
+          if (current.outcome !== "normal") {
+            entries.push({ path: current, entry: -1 });
+            continue;
+          }
+          const known = discriminant.type === "Literal" && test.type === "Literal";
+          const duplicate = test.type === "Literal" && seen.has(test.value);
+          if (!duplicate && (!known || discriminant.value === test.value))
+            entries.push({ path: current, entry: index });
+          if (!known || discriminant.value !== test.value) remaining.push(current);
+        }
+      }
+      if (test.type === "Literal") seen.add(test.value);
+      unmatched = remaining;
+    }
+    entries.push(...unmatched.map((path) => ({ path, entry: fallback })));
+    return entries;
+  });
+}
+
 function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): Path[] {
-  const prefixes: AnyNode[][] = [];
+  const prefixes: (AnyNode[] | ((path: Path) => Path[]))[] = [];
   for (
     let child = node, parent = child.__doctorParent;
     parent;
@@ -1008,6 +1026,29 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
     if (parent.type === "BlockStatement" || parent.type === "Program") {
       const index = parent.body.indexOf(child);
       if (index >= 0) prefixes.unshift(parent.body.slice(0, index));
+    } else if (parent.type === "SwitchCase") {
+      const switchNode = parent.__doctorParent;
+      const target = switchNode.cases.indexOf(parent);
+      const preceding = parent.consequent.slice(0, parent.consequent.indexOf(child));
+      prefixes.unshift((path) =>
+        switchEntries(switchNode, path, new Map(), conditions).flatMap(
+          ({ path: entryPath, entry }) => {
+            if (entry < 0 || entry > target || entryPath.outcome !== "normal") return [];
+            let paths = [entryPath];
+            for (const statement of [
+              ...switchNode.cases.slice(entry, target).flatMap((item: AnyNode) => item.consequent),
+              ...preceding,
+            ]) {
+              paths = paths.flatMap((current) =>
+                current.outcome === "normal"
+                  ? outcomes(statement, current, new Map(), conditions)
+                  : [],
+              );
+            }
+            return paths.filter((current) => current.outcome === "normal");
+          },
+        ),
+      );
     } else if (parent.type === "IfStatement") {
       prefixes.unshift([
         {
@@ -1035,7 +1076,11 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
   let paths = [initial];
   for (const statement of prefixes.flat()) {
     paths = paths.flatMap((path) =>
-      path.outcome === "normal" ? outcomes(statement, path, new Map(), conditions) : [path],
+      path.outcome !== "normal"
+        ? [path]
+        : typeof statement === "function"
+          ? statement(path)
+          : outcomes(statement, path, new Map(), conditions),
     );
   }
   return paths.filter((path) => path.outcome === "normal");

@@ -1495,3 +1495,70 @@ test.each([
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
 });
+
+test.each([
+  ["const original = error", "original"],
+  ["const original = error as Error", "original"],
+  ["let original; original = error", "original"],
+  ["const first = error; const original = first", "original"],
+])("preserves caught error aliases through %s", async (declaration, alias) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        try { throw createError({ statusCode: 404 }) }
+        catch (error) { ${declaration}; if (isError(${alias})) throw ${alias}; throw new Error() }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(false);
+});
+
+test.each([
+  ["unmatched case", 'switch ("a") { case "b": MASK }', false],
+  ["matched case", 'switch ("a") { case "a": MASK }', true],
+  ["fallthrough", 'switch ("a") { case "a": log(); case "b": MASK }', true],
+  ["break before target", 'switch ("a") { case "a": break; case "b": MASK }', false],
+  ["return before target", 'switch ("a") { case "a": return; MASK }', false],
+  ["unreachable default", 'switch ("a") { default: MASK; case "a": break }', false],
+  ["matched default", 'switch ("a") { case "b": break; default: MASK }', true],
+  ["nested unmatched case", 'switch ("a") { case "a": switch ("b") { case "a": MASK } }', false],
+  [
+    "preceding case state",
+    'let preserve = false; switch ("a") { case "a": preserve = true; case "b": if (!preserve) { MASK } }',
+    false,
+  ],
+  [
+    "case test throws",
+    'function fail() { throw new Error() }; switch ("a") { case fail(): MASK }',
+    false,
+  ],
+])("respects enclosing switch %s", async (_name, source, expected) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        ${source.replace("MASK", "try { throw createError({ statusCode: 404 }) } catch { throw new Error() }")}
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+});
+
+test("keeps the unmatched path for a possibly NaN switch identifier", async () => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        const value = NaN;
+        try {
+          switch (value) { case value: break; default: throw createError({ statusCode: 404 }) }
+        } catch { throw new Error() }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(true);
+});
