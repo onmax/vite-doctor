@@ -101,7 +101,7 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
   const parents = getScriptParents(ctx);
   const binding = functionBinding(fn, parents);
   const functionName = binding.id?.type === "Identifier" ? binding.id.name : null;
-  if (!functionName || fn.generator || seen.has(fn)) return false;
+  if (!functionName || seen.has(fn)) return false;
   seen.add(fn);
   const renderedReferences = getRenderedReferences(ctx);
   if (
@@ -110,7 +110,8 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
       (reference) =>
         reference.name === functionName &&
         reference.parent?.type === "CallExpression" &&
-        reference.parent.callee === reference,
+        reference.parent.callee === reference &&
+        (!fn.generator || isConsumedIterator(reference.parent, (node) => node.parent)),
     )
   )
     return true;
@@ -120,8 +121,13 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
     if (
       ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
     ) {
+      const call = parents.get(node);
+      const computedGetter =
+        call?.type === "CallExpression" &&
+        call.callee?.name === "computed" &&
+        call.arguments[0] === node;
       owner = node;
-      variable = null;
+      if (!computedGetter) variable = null;
     }
     if (node.type === "VariableDeclarator") return visit(node.init, owner, node);
     if (
@@ -129,13 +135,15 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
       node.callee?.name === functionName &&
       resolveLocalBinding(node, functionName, parents) === binding
     ) {
-      const name = variable?.id?.type === "Identifier" ? variable.id.name : null;
+      if (fn.generator && !isConsumedIterator(node, (node) => parents.get(node))) return false;
       if (
-        name &&
-        resolveLocalBinding(ctx.file.scriptAst, name, parents) === variable &&
+        variable &&
+        (!owner || contributesToReturn(node, owner, parents)) &&
         renderedReferences.some(
           (reference) =>
-            reference.name === name && projectionIncludes(node, variable, reference, parents),
+            patternBinds(variable.id, reference.name) &&
+            resolveLocalBinding(ctx.file.scriptAst, reference.name, parents) === variable &&
+            projectionIncludes(node, variable, reference, parents),
         )
       )
         return true;
@@ -154,6 +162,19 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
     return false;
   };
   return visit(ctx.file.scriptAst, null, null);
+}
+
+function isConsumedIterator(node: AnyNode, parentOf: (node: AnyNode) => AnyNode): boolean {
+  const parent = parentOf(node);
+  return (
+    parent?.type === "SpreadElement" ||
+    (["ForOfStatement", "VForExpression"].includes(parent?.type) && parent.right === node) ||
+    (parent?.type === "CallExpression" &&
+      parent.arguments[0] === node &&
+      parent.callee?.type === "MemberExpression" &&
+      parent.callee.object?.name === "Array" &&
+      parent.callee.property?.name === "from")
+  );
 }
 
 function getRenderedReferences(ctx: RuleContext): AnyNode[] {
@@ -190,6 +211,16 @@ function projectionIncludes(
   const path: string[] = [];
   for (let current = node; current && current !== variable; current = parents.get(current)) {
     const parent = parents.get(current);
+    if (parent?.type === "ArrayExpression") {
+      const index = parent.elements.indexOf(current);
+      if (
+        parent.elements
+          .slice(0, index + 1)
+          .some((element: AnyNode) => element?.type === "SpreadElement")
+      )
+        return true;
+      path.unshift(String(index));
+    }
     if (
       parent?.type === "Property" &&
       parent.value === current &&
@@ -199,6 +230,12 @@ function projectionIncludes(
       if (key === undefined) return true;
       path.unshift(String(key));
     }
+  }
+  const bindingPath = patternPath(variable.id, reference.name);
+  if (!bindingPath) return false;
+  for (const key of bindingPath) {
+    if (!path.length) break;
+    if (path.shift() !== key) return false;
   }
   let current = reference;
   for (const key of path) {
@@ -210,6 +247,26 @@ function projectionIncludes(
     current = member;
   }
   return true;
+}
+
+function patternPath(pattern: AnyNode, name: string): string[] | null {
+  if (!pattern) return null;
+  if (pattern.type === "Identifier") return pattern.name === name ? [] : null;
+  if (pattern.type === "AssignmentPattern") return patternPath(pattern.left, name);
+  const entries =
+    pattern.type === "ArrayPattern"
+      ? pattern.elements.map((element: AnyNode, index: number) => [String(index), element])
+      : pattern.type === "ObjectPattern"
+        ? pattern.properties.map((property: AnyNode) => [
+            property.computed ? property.key?.value : (property.key?.name ?? property.key?.value),
+            property.value,
+          ])
+        : [];
+  for (const [key, value] of entries) {
+    const path = patternPath(value, name);
+    if (path && key !== undefined) return [String(key), ...path];
+  }
+  return null;
 }
 
 function containingFunction(node: AnyNode, parents: WeakMap<AnyNode, AnyNode>): AnyNode {
@@ -289,6 +346,7 @@ function contributesToReturn(
       });
       if (selectsReturn) return true;
     }
+    if (parent?.type === "YieldExpression" && owner.generator) return true;
     if (parent?.type === "ReturnStatement") {
       let scope = parent;
       while (
@@ -335,11 +393,45 @@ function hasPriorAliasWrite(
             : null;
     if (
       patternBinds(target, identifier.name) &&
-      resolveLocalBinding(write, identifier.name, parents) === binding
+      resolveLocalBinding(write, identifier.name, parents) === binding &&
+      writeDominatesReference(write, reference, owner, parents)
     )
       reassigned = true;
   });
   return reassigned;
+}
+
+function writeDominatesReference(
+  write: AnyNode,
+  reference: AnyNode,
+  owner: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): boolean {
+  const referenceAncestors = new Set<AnyNode>();
+  for (let node = reference; node && node !== owner; node = parents.get(node))
+    referenceAncestors.add(node);
+  for (let node = write; node && node !== owner; node = parents.get(node)) {
+    const parent = parents.get(node);
+    if (referenceAncestors.has(node)) return true;
+    if (parent?.type === "IfStatement" || parent?.type === "ConditionalExpression") {
+      if (node !== parent.test && !referenceAncestors.has(node)) return false;
+    }
+    if (
+      [
+        "SwitchCase",
+        "ForStatement",
+        "ForInStatement",
+        "ForOfStatement",
+        "WhileStatement",
+        "DoWhileStatement",
+        "CatchClause",
+        "TryStatement",
+      ].includes(parent?.type)
+    )
+      return false;
+    if (parent?.type === "LogicalExpression" && parent.right === node) return false;
+  }
+  return true;
 }
 
 function getScriptParents(ctx: RuleContext): WeakMap<AnyNode, AnyNode> {

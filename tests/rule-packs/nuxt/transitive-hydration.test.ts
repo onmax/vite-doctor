@@ -190,6 +190,7 @@ test.each([
   'let value = clock(); [value] = ["stable"]; return value',
   'let value = clock(); ({ value } = { value: "stable" }); return value',
   "let value = clock(); value++; return value",
+  'let value = clock(); if (flag) { value = "stable"; return value }; return "stable"',
 ])("does not follow reassigned return aliases: %s", async (body) => {
   const result = await runNuxtAppRuleFixture(
     noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
@@ -288,6 +289,76 @@ test("traces typed helpers through the template AST", async () => {
 function clock(): number { return Date.now() }
 function label(): string { return String(clock()) }
 </script><template>{{ label() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  ["const displayed = computed(() => clock())", "displayed", 1],
+  ["const displayed = computed(() => { return clock() })", "displayed", 1],
+  ["const displayed = computed(() => { clock(); return 'stable' })", "displayed", 0],
+  ["const displayed = ['stable', clock()]", "displayed[0]", 0],
+  ["const displayed = ['stable', clock()]", "displayed[1]", 1],
+  ["const displayed = { items: ['stable', clock()] }", "displayed.items[0]", 0],
+  ["const [displayed] = [clock()]", "displayed", 1],
+  ["const [displayed] = ['stable', clock()]", "displayed", 0],
+  ["const { time: displayed } = { time: clock() }", "displayed", 1],
+  ["const { label: displayed } = { label: 'stable', time: clock() }", "displayed", 0],
+])("traces rendered projections: %s -> %s", async (script, expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+${script}
+</script><template>{{ ${expression} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  'let value = clock(); if (false) value = "stable"; return value',
+  'let value = clock(); if (flag) value = "stable"; return value',
+  'let value = clock(); if (flag) { value = "stable"; return "done" }; return value',
+  'let value = clock(); flag && (value = "stable"); return value',
+  "let value = clock(); for (const item of []) value = item; return value",
+])("preserves aliases across conditional writes: %s", async (body) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+function label(flag) { ${body} }
+</script><template>{{ label() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each(["[...clock()]", "Array.from(clock())"])(
+  "traces consumed generators: %s",
+  async (expression) => {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup lang="ts">
+function* clock() { yield Date.now() }
+</script><template>{{ ${expression} }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(1);
+  },
+);
+
+test.each([
+  ["function* values() { yield clock() }", "<span>{{ [...values()] }}</span>"],
+  ["function* values() { yield clock() }", '<span v-for="value in values()">{{ value }}</span>'],
+  [
+    "function* values() { yield clock() }; const displayed = [...values()]",
+    "<span>{{ displayed }}</span>",
+  ],
+])("traces helpers through consumed generators: %s", async (script, template) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+${script}
+</script><template>${template}</template>`,
   );
   expect(result.diagnostics).toHaveLength(1);
 });
