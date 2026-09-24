@@ -85,19 +85,49 @@ function hasCredentialHeaders(value: AnyNode, call: AnyNode, seen = new Set<AnyN
   );
 }
 
+function bindsName(pattern: AnyNode, name: string): boolean {
+  if (!pattern) return false;
+  if (pattern.type === "Identifier") return pattern.name === name;
+  if (pattern.type === "AssignmentPattern") return bindsName(pattern.left, name);
+  if (pattern.type === "RestElement") return bindsName(pattern.argument, name);
+  if (pattern.type === "ArrayPattern")
+    return pattern.elements.some((element: AnyNode) => bindsName(element, name));
+  if (pattern.type === "ObjectPattern")
+    return pattern.properties.some((property: AnyNode) =>
+      bindsName(property.type === "RestElement" ? property.argument : property.value, name),
+    );
+  return false;
+}
+
 function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
-  let scope = call.__doctorParent ?? call.parent;
+  let scope = identifier.__doctorParent ?? identifier.parent ?? call.__doctorParent ?? call.parent;
+  const anchorStart = identifier.start ?? identifier.range?.[0];
   while (scope) {
-    if (Array.isArray(scope.body)) {
-      for (const statement of scope.body) {
-        if (statement.type !== "VariableDeclaration") continue;
-        const declaration = statement.declarations.find(
-          (item: AnyNode) => item.id?.type === "Identifier" && item.id.name === identifier.name,
+    const statements = Array.isArray(scope.body) ? [...scope.body] : [];
+    const loopDeclaration = scope.init ?? scope.left;
+    if (loopDeclaration?.type === "VariableDeclaration") statements.push(loopDeclaration);
+    for (const statement of statements) {
+      if (statement.type === "VariableDeclaration") {
+        const declaration = statement.declarations.find((item: AnyNode) =>
+          bindsName(item.id, identifier.name),
         );
-        if (declaration) return statement.kind === "const" ? declaration.init : undefined;
+        if (declaration) {
+          const end = declaration.end ?? declaration.range?.[1];
+          return statement.kind === "const" &&
+            declaration.id.type === "Identifier" &&
+            end <= anchorStart
+            ? declaration.init
+            : undefined;
+        }
       }
+      if (
+        (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") &&
+        statement.id?.name === identifier.name
+      )
+        return;
     }
-    if (scope.params?.some((param: AnyNode) => param.name === identifier.name)) return;
+    if (scope.type === "CatchClause" && bindsName(scope.param, identifier.name)) return;
+    if (scope.params?.some((param: AnyNode) => bindsName(param, identifier.name))) return;
     scope = scope.__doctorParent ?? scope.parent;
   }
 }

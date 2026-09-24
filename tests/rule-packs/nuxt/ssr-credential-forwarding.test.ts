@@ -92,3 +92,34 @@ const user = await $fetch('/api/user', { headers })
   );
   expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
 });
+
+test.each([
+  "await $fetch('/api/user', { headers }); var headers = useRequestHeaders(['cookie'])",
+  "await $fetch('/api/user', { headers }); const headers = useRequestHeaders(['cookie'])",
+  "const headers = useRequestHeaders(['cookie']); try {} catch (headers) { await $fetch('/api/user', { headers }) }",
+  "const headers = useRequestHeaders(['cookie']); try {} catch ({ headers }) { await $fetch('/api/user', { headers }) }",
+  "const headers = useRequestHeaders(['cookie']); async function load({ headers }) { await $fetch('/api/user', { headers }) }",
+  "const headers = useRequestHeaders(['cookie']); { const { headers } = unrelated; await $fetch('/api/user', { headers }) }",
+  "const headers = useRequestHeaders(['cookie']); { await $fetch('/api/user', { headers }); const headers = unrelated }",
+  "const headers = useRequestHeaders(['cookie']); for (const headers of unrelated) { await $fetch('/api/user', { headers }) }",
+])("unavailable or shadowed initializers do not prove forwarding: %s", async (source) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">${source}</script>`,
+  );
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
+});
+
+test("header aliases resolve in their declaration scope", async () => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">
+const headers = useRequestHeaders(['cookie'])
+const forwarded = headers
+async function load(headers) {
+  return $fetch('/api/user', { headers: forwarded })
+}
+</script>`,
+  );
+  expect(result.diagnostics).toEqual([]);
+});
