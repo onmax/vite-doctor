@@ -72,7 +72,8 @@ function unguardedSensitiveHandlers(ctx: any): string[] {
     ...(dirs?.middleware ?? []),
     ...registered
       .filter(
-        (handler: { middleware?: boolean; route?: string }) => handler.middleware && !handler.route,
+        (handler: { middleware?: boolean; route?: string; method?: string }) =>
+          handler.middleware && !handler.route && !handler.method,
       )
       .map((handler: { file: string }) => handler.file),
   ];

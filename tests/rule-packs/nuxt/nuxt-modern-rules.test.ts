@@ -2524,35 +2524,44 @@ test("missing registered handlers do not produce security diagnostics", async ()
 });
 
 test.each([
-  ["async (event) => { await requireAuth(event) }", undefined, 0],
-  ["async (event) => { if (event.path === '/api/admin') await requireAuth(event) }", undefined, 1],
-  ["(event) => getUserSession(event)", undefined, 1],
-  ["async (event) => { await requireAuth(event) }", "/api/admin/**", 1],
-])("registered middleware guard coverage for %s at %s", async (handler, route, count) => {
-  const result = await runRuleFixture({
-    rule: noRouteMiddlewareApiSecurity,
-    framework: "nuxt",
-    files: {
-      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
-      "server/handlers/auth.ts": `export default defineEventHandler(${handler})`,
-      "server/handlers/data.ts": `export default defineEventHandler(() => ({}))`,
-      ".nuxt/doctor.manifest.json": JSON.stringify({
-        nuxtVersion: "4",
-        vueVersion: "3.5",
-        appDir: "app",
-        serverHandlers: [
-          { file: "server/handlers/auth.ts", middleware: true, route },
-          { file: "server/handlers/data.ts", route: "/api/account" },
-        ],
-      }),
-    },
-  });
-  expect(result.diagnostics).toHaveLength(count);
-  if (count)
-    expect(result.diagnostics[0]?.related?.map((item) => item.file)).toEqual([
-      expect.stringContaining("server/handlers/data.ts"),
-    ]);
-});
+  ["async (event) => { await requireAuth(event) }", undefined, undefined, 0],
+  [
+    "async (event) => { if (event.path === '/api/admin') await requireAuth(event) }",
+    undefined,
+    undefined,
+    1,
+  ],
+  ["(event) => getUserSession(event)", undefined, undefined, 1],
+  ["async (event) => { await requireAuth(event) }", "/api/admin/**", undefined, 1],
+  ["async (event) => { await requireAuth(event) }", undefined, "GET", 1],
+])(
+  "registered middleware guard coverage for %s at %s with method %s",
+  async (handler, route, method, count) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+        "server/handlers/auth.ts": `export default defineEventHandler(${handler})`,
+        "server/handlers/data.ts": `export default defineEventHandler(() => ({}))`,
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          nuxtVersion: "4",
+          vueVersion: "3.5",
+          appDir: "app",
+          serverHandlers: [
+            { file: "server/handlers/auth.ts", middleware: true, route, method },
+            { file: "server/handlers/data.ts", route: "/api/account", method: "POST" },
+          ],
+        }),
+      },
+    });
+    expect(result.diagnostics).toHaveLength(count);
+    if (count)
+      expect(result.diagnostics[0]?.related?.map((item) => item.file)).toEqual([
+        expect.stringContaining("server/handlers/data.ts"),
+      ]);
+  },
+);
 
 test("route middleware security ignores sensitive ancestor directory names", async () => {
   await withFixture(
