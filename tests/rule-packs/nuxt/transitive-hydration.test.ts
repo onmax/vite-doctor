@@ -1725,3 +1725,110 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  [
+    "async function clock() { return Date.now() }; const displayed = await clock().then(value => ({ label: 'Ready', generatedAt: value }))",
+    "displayed.label",
+    0,
+  ],
+  [
+    "async function clock() { return Date.now() }; const displayed = await clock().then(value => ({ label: 'Ready', generatedAt: value }))",
+    "displayed.generatedAt",
+    1,
+  ],
+  [
+    "let displayed = 'stable'; function initialize() { if (false) displayed = Date.now() }; initialize()",
+    "displayed",
+    0,
+  ],
+  [
+    "function clock(value = Date.now()) { return value }; const alias = clock; alias.call = () => 'stable'; const displayed = clock.call(null)",
+    "displayed",
+    0,
+  ],
+  [
+    "function clock(value = Date.now()) { return value }; const alias = () => 'other'; alias.call = () => 'stable'; const displayed = clock.call(null)",
+    "displayed",
+    1,
+  ],
+  [
+    "let displayed = 'stable'; async function initialize(flag) { if (flag) await later(); displayed = Date.now() }; initialize(false)",
+    "displayed",
+    1,
+  ],
+  [
+    "let displayed = 'stable'; async function initialize() { await later(); displayed = Date.now() }; await Promise.all([initialize()])",
+    "displayed",
+    1,
+  ],
+  [
+    "let displayed = 'stable'; async function initialize(flag) { if (flag) await later(); displayed = Date.now() }; initialize(true)",
+    "displayed",
+    0,
+  ],
+  [
+    "let displayed = 'stable'; async function initialize() { await later(); displayed = Date.now() }; await Promise.resolve(initialize())",
+    "displayed",
+    1,
+  ],
+  [
+    "let displayed = 'stable'; async function initialize() { await later(); displayed = Date.now() }; Promise.all([initialize()])",
+    "displayed",
+    0,
+  ],
+  [
+    "function* values() { if (flag) yield Date.now() }; const [, displayed] = values()",
+    "displayed",
+    0,
+  ],
+  [
+    "function* values() { if (flag) yield Date.now() }; const [displayed] = values()",
+    "displayed",
+    1,
+  ],
+  [
+    "function* stable() { if (flag) yield 'a'; else yield 'b' }; function* values() { yield* stable(); yield Date.now() }; const displayed = values().next().value",
+    "displayed",
+    0,
+  ],
+])("preserves reviewed execution flow: %s (%s)", async (script, rendered, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">${script}</script><template>{{ ${rendered} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["value => value", "displayed.label", 0],
+  ["value => value", "displayed.generatedAt", 1],
+  ["value => ({ nested: value })", "displayed.nested.label", 0],
+  ["value => ({ nested: value })", "displayed.nested.generatedAt", 1],
+  ["value => value.label", "displayed", 0],
+  ["value => value.generatedAt", "displayed", 1],
+])("preserves incoming Promise projections: %s", async (callback, rendered, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+async function clock() { return { label: 'Ready', generatedAt: Date.now() } }
+const displayed = await clock().then(${callback})
+</script><template>{{ ${rendered} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["[, displayed]", 0],
+  ["[, , displayed]", 1],
+  ["[, , , displayed]", 0],
+])("bounds delegated generator slots: %s", async (pattern, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function* values() { yield* ['a', 'b']; yield Date.now() }
+const ${pattern} = values()
+</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

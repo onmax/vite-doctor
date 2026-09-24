@@ -116,6 +116,7 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
   if (
     !assignment ||
     assignment === owner ||
+    isInactivePath(assignment, owner, parents) ||
     !contributesToReturn(source, owner, parents, new Set(), assignment.right)
   )
     return false;
@@ -136,7 +137,7 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
     return false;
   const executes = (fn: AnyNode, seen: Set<AnyNode>, effect: AnyNode): boolean => {
     if (seen.has(fn) || fn.generator) return false;
-    let suspended = false;
+    const suspensions: AnyNode[] = [];
     if (fn.async)
       walkScriptLocal(fn.body, (node) => {
         if (
@@ -145,7 +146,7 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
           containingFunction(node, parents) === fn &&
           !isInactivePath(node, fn, parents)
         )
-          suspended = true;
+          suspensions.push(node);
       });
     seen.add(fn);
     let found = false;
@@ -158,7 +159,19 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
           resultCallbackCall(fn, parents, argument, true) === call,
       );
       if (!invokes && !callback) return;
-      if (suspended && (!invokes || parents.get(call)?.type !== "AwaitExpression")) return;
+      if (
+        suspensions.some((node) =>
+          writeDominatesReference(node, effect, fn, parents, invokes ? call : undefined),
+        ) &&
+        (!invokes ||
+          !asyncResultIsConsumed(
+            call,
+            (node) => parents.get(node),
+            (node) => !resolveLocalBinding(node, "Promise", parents),
+            true,
+          ))
+      )
+        return;
       if (ctx.helpers.isClientOnlyExecutionContext(call, ctx.file.text)) return;
       if (isInactivePath(call, containingFunction(call, parents), parents)) return;
       const caller = containingFunction(call, parents);
@@ -383,9 +396,13 @@ function functionFlowsToTemplate(
         path.unshift(String(key));
         target = target.object;
       }
-      if (target?.name !== functionName || !path.every((key, index) => invokedPath[index] === key))
+      if (target?.type !== "Identifier" || !path.every((key, index) => invokedPath[index] === key))
         return;
-      if (resolveLocalBinding(write, functionName, parents) !== binding) return;
+      if (
+        resolveLocalBinding(write, target.name, parents) !== binding &&
+        resolveLocalValue(target, parents) !== fn
+      )
+        return;
       const owner = containingFunction(write, parents);
       if (owner !== (template ? null : containingFunction(call, parents))) return;
       if (writeDominatesReference(write, reference, owner ?? ctx.file.scriptAst, parents))
@@ -890,43 +907,97 @@ function generatorSlotIncludes(
     return yields.some(
       (yielded) =>
         contributesToReturn(source, fn, parents, new Set(), yielded.argument) &&
-        yields.filter(
-          (prior) =>
-            prior.end <= yielded.start &&
-            yieldProducesValue(prior, parents) &&
-            writeDominatesReference(prior, yielded, fn, parents),
-        ).length <= Number(path[0]),
+        yields.reduce(
+          (count, prior) =>
+            count +
+            (prior.end <= yielded.start && writeDominatesReference(prior, yielded, fn, parents)
+              ? yieldCount(prior, parents)[0]
+              : 0),
+          0,
+        ) <= Number(path[0]) &&
+        (findAncestor(yielded, (node) =>
+          [
+            "ForStatement",
+            "ForOfStatement",
+            "ForInStatement",
+            "WhileStatement",
+            "DoWhileStatement",
+          ].includes(node.type),
+        ) ||
+          yields.reduce(
+            (count, prior) =>
+              count +
+              (prior.end <= yielded.start
+                ? findAncestor(prior, (node) =>
+                    [
+                      "ForStatement",
+                      "ForOfStatement",
+                      "ForInStatement",
+                      "WhileStatement",
+                      "DoWhileStatement",
+                    ].includes(node.type),
+                  )
+                  ? Infinity
+                  : yieldCount(prior, parents)[1]
+                : 0),
+            0,
+          ) >= Number(path[0])),
     );
   yields.sort((a, b) => a.start - b.start);
   const yielded = yields[Number(path[0])];
   return Boolean(yielded && contributesToReturn(source, fn, parents, new Set(), yielded.argument));
 }
 
-function yieldProducesValue(
-  yielded: AnyNode,
+function yieldCount(
+  node: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   seen = new Set<AnyNode>(),
-): boolean {
-  if (!yielded.delegate) return true;
-  const argument = unwrapExpression(yielded.argument);
-  if (argument?.type === "ArrayExpression")
-    return argument.elements.some((element: AnyNode) => element?.type !== "SpreadElement");
-  if (argument?.type !== "CallExpression") return false;
-  const fn = resolveLocalValue(argument.callee, parents);
-  if (!fn?.generator || seen.has(fn)) return false;
-  seen.add(fn);
-  for (const statement of fn.body.body) {
-    if (statement.type === "ReturnStatement" || statement.type === "ThrowStatement") return false;
-    if (
-      statement.type === "ExpressionStatement" &&
-      statement.expression?.type === "YieldExpression" &&
-      yieldProducesValue(statement.expression, parents, seen)
-    )
-      return true;
-    if (statement.type !== "ExpressionStatement" && statement.type !== "VariableDeclaration")
-      return false;
+): [number, number] {
+  if (!node) return [0, 0];
+  if (node.type === "YieldExpression") {
+    if (!node.delegate) return [1, 1];
+    const argument = unwrapExpression(node.argument);
+    if (argument?.type === "ArrayExpression")
+      return [
+        argument.elements.filter((element: AnyNode) => element?.type !== "SpreadElement").length,
+        argument.elements.some((element: AnyNode) => element?.type === "SpreadElement")
+          ? Infinity
+          : argument.elements.length,
+      ];
+    const fn =
+      argument?.type === "CallExpression" ? resolveLocalValue(argument.callee, parents) : null;
+    if (!fn?.generator || seen.has(fn)) return [0, Infinity];
+    return yieldCount(fn.body, parents, new Set([...seen, fn]));
   }
-  return false;
+  if (node.type === "ExpressionStatement") return yieldCount(node.expression, parents, seen);
+  if (node.type === "IfStatement") {
+    const test = unwrapExpression(node.test);
+    if (test?.type === "Literal")
+      return yieldCount(test.value ? node.consequent : node.alternate, parents, seen);
+    const left = yieldCount(node.consequent, parents, new Set(seen));
+    const right = yieldCount(node.alternate, parents, new Set(seen));
+    return [Math.min(left[0], right[0]), Math.max(left[1], right[1])];
+  }
+  if (node.type === "BlockStatement") {
+    const total: [number, number] = [0, 0];
+    for (const statement of node.body) {
+      if (["ReturnStatement", "ThrowStatement"].includes(statement.type)) break;
+      const count = yieldCount(statement, parents, new Set(seen));
+      total[0] += count[0];
+      total[1] += count[1];
+      let exits = false;
+      walkScriptLocal(statement, (child) => {
+        if (["ReturnStatement", "ThrowStatement"].includes(child.type)) exits = true;
+      });
+      if (exits) return [total[0], Infinity];
+    }
+    return total;
+  }
+  let produces = false;
+  walkScriptLocal(node, (child) => {
+    if (child.type === "YieldExpression") produces = true;
+  });
+  return [0, produces ? Infinity : 0];
 }
 
 function reachesFirstYield(
@@ -948,7 +1019,7 @@ function reachesFirstYield(
       contributesToReturn(source, fn, parents, new Set(), yielded.argument) &&
       !yields.some(
         (prior) =>
-          yieldProducesValue(prior, parents) &&
+          yieldCount(prior, parents)[0] > 0 &&
           prior.end <= yielded.start &&
           writeDominatesReference(prior, yielded, fn, parents),
       ),
@@ -975,6 +1046,7 @@ function asyncResultIsConsumed(
   node: AnyNode,
   parentOf: (node: AnyNode) => AnyNode,
   hasNativePromise: (node: AnyNode) => boolean,
+  effectOnly = false,
 ): boolean {
   let awaited = false;
   for (let current = node; current; current = parentOf(current)) {
@@ -992,7 +1064,12 @@ function asyncResultIsConsumed(
           !["then", "catch", "finally"].includes(method)
         )
           return false;
-        if (method === "then" && chain.arguments[0] && chain.arguments[0].type !== "Literal") {
+        if (
+          !effectOnly &&
+          method === "then" &&
+          chain.arguments[0] &&
+          chain.arguments[0].type !== "Literal"
+        ) {
           const callbackParents = new WeakMap<AnyNode, AnyNode>();
           let root = chain;
           while (parentOf(root)) root = parentOf(root);
@@ -1082,7 +1159,7 @@ function asyncResultIsConsumed(
       ].includes(parent.type)
     ) {
       return true;
-    } else if (parent.type === "ExpressionStatement") return false;
+    } else if (parent.type === "ExpressionStatement") return effectOnly;
   }
   return awaited;
 }
@@ -1165,14 +1242,59 @@ function projectionIncludes(
   reference: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   returnedSource?: [AnyNode, AnyNode],
+  sourcePath: (string | null)[] = [],
 ): boolean {
-  const path: (string | null)[] = [];
+  const path = [...sourcePath];
   for (const [start, end] of [...(returnedSource ? [returnedSource] : []), [node, variable]]) {
     for (let current = start; current && current !== end; current = parents.get(current)) {
       const parent = parents.get(current);
       if (["FunctionExpression", "ArrowFunctionExpression"].includes(current.type)) {
         const call = resultCallbackCall(current, parents);
         if (call && ["map", "from"].includes(call.callee.property?.name)) path.unshift(null);
+      }
+      if (
+        parent?.type === "MemberExpression" &&
+        parent.object === current &&
+        (parent.computed ? parent.property?.value : parent.property?.name) === "then"
+      ) {
+        const chain = parents.get(parent);
+        const callback =
+          chain?.type === "CallExpression" ? resolveLocalValue(chain.arguments[0], parents) : null;
+        if (callback?.params?.[0]?.type === "Identifier") {
+          let included = false;
+          walkScriptLocal(callback.body, (value) => {
+            if (
+              value.type === "Identifier" &&
+              value.name === callback.params[0].name &&
+              resolveLocalBinding(value, value.name, parents) === callback.params[0] &&
+              contributesToReturn(value, callback, parents)
+            ) {
+              const remainingPath = [...path];
+              let selected = value;
+              while (remainingPath.length) {
+                const member = parents.get(selected);
+                if (member?.type !== "MemberExpression" || member.object !== selected) break;
+                const key = member.computed ? member.property?.value : member.property?.name;
+                if (key === undefined) break;
+                const projected = remainingPath.shift();
+                if (projected !== null && projected !== String(key)) return;
+                selected = member;
+              }
+              if (
+                projectionIncludes(
+                  chain,
+                  variable,
+                  reference,
+                  parents,
+                  [selected, callback],
+                  remainingPath,
+                )
+              )
+                included = true;
+            }
+          });
+          return included;
+        }
       }
       if (parent?.type === "ArrayExpression") {
         const index = parent.elements.indexOf(current);
@@ -1617,6 +1739,7 @@ function writeDominatesReference(
   reference: AnyNode,
   owner: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
+  invocation?: AnyNode,
 ): boolean {
   const referenceAncestors = new Set<AnyNode>();
   for (let node = reference; node && node !== owner; node = parents.get(node))
@@ -1626,8 +1749,18 @@ function writeDominatesReference(
     if (referenceAncestors.has(node)) return true;
     if (parent?.type === "IfStatement" || parent?.type === "ConditionalExpression") {
       if (node !== parent.test && !referenceAncestors.has(node)) {
-        const test = unwrapExpression(parent.test);
-        if (test?.type !== "Literal" || expressionBranchIsInactive(parent, node)) return false;
+        let test = unwrapExpression(parent.test);
+        if (invocation && test?.type === "Identifier") {
+          const index = owner.params?.findIndex(
+            (parameter: AnyNode) => parameter === resolveLocalBinding(test, test.name, parents),
+          );
+          if (index >= 0) test = unwrapExpression(invocation.arguments[index]);
+        }
+        if (
+          test?.type !== "Literal" ||
+          node !== (test.value ? parent.consequent : parent.alternate)
+        )
+          return false;
       }
     }
     if (
