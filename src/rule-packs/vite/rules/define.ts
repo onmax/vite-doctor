@@ -10,6 +10,8 @@ import {
   SECRET_NAME_RE,
   hasTypeDeclaration,
   propertyName,
+  memberPath,
+  type AnyNode,
 } from "./shared.js";
 
 export const noUnusedDefine = createRule({
@@ -143,7 +145,6 @@ export const noSecretDefine = createRule({
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           if (
             !SECRET_NAME_RE.test(entry.key) &&
-            !SECRET_NAME_RE.test(entry.rawValue) &&
             !resolvesSecretAlias(entry.rawValue, entry.valueStart, ctx.file.text, initializers)
           )
             continue;
@@ -228,22 +229,32 @@ function resolvesSecretAlias(
   source: string,
   initializers: Map<number, [number, number][]>,
 ): boolean {
-  const pending = [{ value, start }];
-  const seen = new Set<number>();
+  const pending = [{ value, start, invoked: false }];
+  const seen = new Set<string>();
   while (pending.length) {
     const current = pending.pop()!;
     let parsed: ReturnType<typeof parseForESLint>;
     try {
       parsed = parseForESLint(`(${current.value})`, { range: true });
     } catch {
+      if (SECRET_NAME_RE.test(current.value)) return true;
       continue;
     }
     const identifiers = new Set<number>();
+    const invokedNodes = new Set<unknown>();
+    const invokedReferences = new Set<number>();
+    if (current.invoked) {
+      const statement = parsed.ast.body[0];
+      if (statement?.type === "ExpressionStatement") invokedNodes.add(statement.expression);
+    }
     const nodes: unknown[] = [parsed.ast];
     while (nodes.length) {
       const node = nodes.pop() as { type: string; range: [number, number]; [key: string]: unknown };
       if (node.type.startsWith("TS")) {
-        if (node.expression) nodes.push(node.expression);
+        if (node.expression) {
+          if (invokedNodes.has(node)) invokedNodes.add(node.expression);
+          nodes.push(node.expression);
+        }
         continue;
       }
       if (
@@ -255,6 +266,28 @@ function resolvesSecretAlias(
           ))
       )
         continue;
+      if (
+        ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
+      ) {
+        if (invokedNodes.has(node)) {
+          const body = node.body as AnyNode;
+          if (body.type !== "BlockStatement") nodes.push(body);
+          else visitReturnValues(body, (value) => nodes.push(value));
+        }
+        continue;
+      }
+      if (node.type === "CallExpression") invokedNodes.add(node.callee);
+      if (node.type === "Property") {
+        nodes.push(node.value);
+        continue;
+      }
+      if (
+        (node.type === "Identifier" && SECRET_NAME_RE.test(node.name as string)) ||
+        (node.type === "Literal" &&
+          typeof node.value === "string" &&
+          SECRET_NAME_RE.test(node.value))
+      )
+        return true;
       if (node.type === "ConditionalExpression") {
         nodes.push(node.consequent, node.alternate);
         continue;
@@ -263,7 +296,10 @@ function resolvesSecretAlias(
         nodes.push((node.expressions as unknown[]).at(-1));
         continue;
       }
-      if (node.type === "Identifier") identifiers.add(node.range[0]);
+      if (node.type === "Identifier") {
+        identifiers.add(node.range[0]);
+        if (invokedNodes.has(node)) invokedReferences.add(node.range[0]);
+      }
       for (const key of parsed.visitorKeys[node.type] ?? []) {
         const child = node[key];
         if (Array.isArray(child)) nodes.push(...child.filter(Boolean));
@@ -276,11 +312,12 @@ function resolvesSecretAlias(
           continue;
         const ranges = initializers.get(current.start + reference.identifier.range[0] - 1);
         for (const range of ranges ?? []) {
-          if (seen.has(range[0])) continue;
-          seen.add(range[0]);
+          const invoked = invokedReferences.has(reference.identifier.range[0]);
+          const identity = `${range[0]}:${invoked}`;
+          if (seen.has(identity)) continue;
+          seen.add(identity);
           const initializer = source.slice(...range);
-          if (SECRET_NAME_RE.test(initializer)) return true;
-          pending.push({ value: initializer, start: range[0] });
+          pending.push({ value: initializer, start: range[0], invoked });
         }
       }
     }
@@ -292,30 +329,95 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   const text = ctx.file.text;
   const entries: Array<{ key: string; rawValue: string; valueStart: number; range: SourceRange }> =
     [];
+  const initializers = readAliasInitializers(text);
+  const nodesByRange = new Map<string, AnyNode>();
   walkScriptLocal(program, (node) => {
-    if (
-      node.type !== "Property" ||
-      propertyName(node.key) !== "define" ||
-      node.value.type !== "ObjectExpression"
-    )
-      return;
-    for (const property of node.value.properties) {
-      if (property.type !== "Property") continue;
-      const key = propertyName(property.key);
-      if (key === null) continue;
-      const valueStart = property.value.start;
-      entries.push({
-        key,
-        rawValue: text.slice(valueStart, property.value.end),
-        valueStart,
-        range: ctx.helpers.rangeFromOffsets(
-          ctx.file.path,
-          text,
-          property.key.start,
-          property.key.end,
-        ),
-      });
-    }
+    nodesByRange.set(`${node.start}:${node.end}`, node);
   });
+  const seen = new Set<AnyNode>();
+  function resolve(node: AnyNode): AnyNode {
+    const visited = new Set<AnyNode>();
+    while (node && !visited.has(node)) {
+      visited.add(node);
+      if (
+        (node.type.startsWith("TS") || node.type === "ParenthesizedExpression") &&
+        node.expression
+      )
+        node = node.expression;
+      else if (node.type === "Identifier") {
+        const ranges = initializers.get(node.start);
+        if (ranges?.length !== 1) break;
+        node = nodesByRange.get(ranges[0]!.join(":"));
+      } else break;
+    }
+    return node;
+  }
+  function keyOf(property: AnyNode): string | null {
+    if (!property.computed) return propertyName(property.key);
+    const key = resolve(property.key);
+    return key?.type === "Literal" ? propertyName(key) : null;
+  }
+  function readConfig(input: AnyNode) {
+    const node = resolve(input);
+    if (!node || seen.has(node)) return;
+    seen.add(node);
+    if (node.type === "CallExpression" && node.callee.name === "defineConfig") {
+      readConfig(node.arguments[0]);
+    } else if (["ArrowFunctionExpression", "FunctionExpression"].includes(node.type)) {
+      if (node.body.type !== "BlockStatement") readConfig(node.body);
+      else visitReturnValues(node.body, readConfig);
+    } else if (node.type === "ConditionalExpression") {
+      readConfig(node.consequent);
+      readConfig(node.alternate);
+    } else if (node.type === "ObjectExpression") {
+      for (const option of node.properties) {
+        if (option.type !== "Property" || keyOf(option) !== "define") continue;
+        const values = resolve(option.value);
+        if (values?.type !== "ObjectExpression") continue;
+        for (const property of values.properties) {
+          if (property.type !== "Property") continue;
+          const key = keyOf(property);
+          if (key === null) continue;
+          const valueStart = property.value.start;
+          entries.push({
+            key,
+            rawValue: text.slice(valueStart, property.value.end),
+            valueStart,
+            range: ctx.helpers.rangeFromOffsets(
+              ctx.file.path,
+              text,
+              property.key.start,
+              property.key.end,
+            ),
+          });
+        }
+      }
+    }
+  }
+  for (const statement of (program as AnyNode).body) {
+    if (statement.type === "ExportDefaultDeclaration") readConfig(statement.declaration);
+    else if (
+      statement.type === "ExpressionStatement" &&
+      statement.expression.type === "AssignmentExpression" &&
+      statement.expression.operator === "=" &&
+      memberPath(statement.expression.left) === "module.exports"
+    )
+      readConfig(statement.expression.right);
+  }
   return entries;
+}
+
+function visitReturnValues(node: AnyNode, visit: (value: AnyNode) => void) {
+  if (!node || typeof node !== "object") return;
+  if (["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type))
+    return;
+  if (node.type === "ReturnStatement") {
+    if (node.argument) visit(node.argument);
+    return;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "parent") continue;
+    if (Array.isArray(value)) value.forEach((child) => visitReturnValues(child, visit));
+    else if (value && typeof value === "object") visitReturnValues(value, visit);
+  }
 }

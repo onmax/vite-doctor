@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../src/core/testkit.ts";
-import { noSecretDefine } from "../../src/rule-packs/vite/rules/define.ts";
+import { noRuntimeObjectDefine, noSecretDefine } from "../../src/rule-packs/vite/rules/define.ts";
 
 test("finds a secret source hidden behind local define aliases", async () => {
   const result = await runRuleFixture({
@@ -329,4 +329,101 @@ export default { define: { __CONFIG__: JSON.stringify(replacement) } }`,
     },
   });
   expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  "typeof privateToken",
+  "void privateToken",
+  "!privateToken",
+  "privateToken === 'present'",
+  "privateToken ? 'present' : 'absent'",
+  "(privateToken, 'public')",
+  "{ callback: () => privateToken }",
+  "{ callback: function () { return privateToken } }",
+  "{ callback() { return privateToken } }",
+])("filters non-propagating initializers before secret names: %s", async (initializer) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const privateToken = process.env.PRIVATE_TOKEN
+const replacement = ${initializer}
+export default { define: { __CONFIG__: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  ["{ callback: () => replacement }", false],
+  ["{ callback: function () { return replacement } }", false],
+  ["(() => replacement)()", true],
+  ["(function () { return replacement })()", true],
+  ["read()", true],
+  ["{ callback: read }", false],
+  ["(function () { const unused = replacement; return 'public' })()", false],
+])("traces function bodies only when invoked: %s", async (expression, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const replacement = process.env.PRIVATE_TOKEN
+const read = () => replacement
+export default { define: { __CONFIG__: JSON.stringify(${expression}) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    "export default { define: { __VERSION__: '1' }, plugins: [options] }",
+    "export default defineConfig(() => { const nested = { define: { PRIVATE_TOKEN: {} } }; return { define: { __VERSION__: '1' }, plugins: [options, nested] } })",
+  ])(`${rule.meta.id} ignores unrelated define properties: %s`, async (config) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": `const options = { define: { PRIVATE_TOKEN: {} } }; ${config}` },
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+  test("recognizes CommonJS config exports for " + rule.meta.id, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.cjs": "module.exports = { define: { PRIVATE_TOKEN: {} } }" },
+    });
+    expect(result.diagnostics.length).toBe(1);
+  });
+  test.each([
+    "export default { define: { PRIVATE_TOKEN: {} } }",
+    "export default defineConfig({ define: { PRIVATE_TOKEN: {} } })",
+    "export default defineConfig(() => ({ define: { PRIVATE_TOKEN: {} } }))",
+    "export default defineConfig(function () { return { define: { PRIVATE_TOKEN: {} } } })",
+    "const config = { define: { PRIVATE_TOKEN: {} } }; export default config",
+    "const values = { PRIVATE_TOKEN: {} }; export default { define: values }",
+  ])(`${rule.meta.id} retains exported config forms: %s`, async (config) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": config },
+    });
+    expect(result.diagnostics.length).toBe(1);
+  });
+}
+
+test.each([
+  ["const PASSWORD = '__VERSION__'", "PASSWORD", false],
+  ["const key = 'PRIVATE_TOKEN'", "key", true],
+  ["", "'PRIVATE_TOKEN'", true],
+  ["const PASSWORD = getKey()", "PASSWORD", false],
+])("uses static computed keys: %s", async (declaration, key, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declaration}; export default { define: { [${key}]: JSON.stringify('1') } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
 });
