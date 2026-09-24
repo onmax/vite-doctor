@@ -139,7 +139,14 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
     seen.add(fn);
     let found = false;
     walkScriptLocal(ctx.file.scriptAst, (call) => {
-      if (call.type !== "CallExpression" || resolveLocalValue(call.callee, parents) !== fn) return;
+      if (call.type !== "CallExpression") return;
+      const invokes = resolveLocalValue(call.callee, parents) === fn;
+      const callback = call.arguments.some(
+        (argument: AnyNode) =>
+          resolveLocalValue(argument, parents) === fn &&
+          resultCallbackCall(fn, parents, argument, true) === call,
+      );
+      if (!invokes && !callback) return;
       if (ctx.helpers.isClientOnlyExecutionContext(call, ctx.file.text)) return;
       if (isInactivePath(call, containingFunction(call, parents), parents)) return;
       const caller = containingFunction(call, parents);
@@ -444,6 +451,7 @@ function functionFlowsToTemplate(
                 parents,
                 variable,
               ) &&
+              (!fn.generator || generatorSlotIncludes(source, fn, variable, reference, parents)) &&
               projectionIncludes(result, variable, reference, parents, [source, fn]),
           )
         )
@@ -608,6 +616,7 @@ function resultCallbackCall(
   fn: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   expression = fn,
+  includeEffects = false,
 ): AnyNode {
   if (fn.generator) return null;
   while (
@@ -639,6 +648,7 @@ function resultCallbackCall(
   }
   if (call.arguments[0] !== expression) return null;
   if (call.callee?.type === "Identifier" && call.callee.name === "computed") {
+    if (includeEffects) return null;
     const binding = resolveLocalBinding(call, "computed", parents);
     return !binding ||
       (binding.type === "ImportSpecifier" &&
@@ -651,6 +661,7 @@ function resultCallbackCall(
     call.callee?.type === "MemberExpression" &&
     !call.callee.computed &&
     [
+      ...(includeEffects ? ["forEach"] : []),
       "map",
       "flatMap",
       "sort",
@@ -796,6 +807,40 @@ function isInactivePath(
     if (expressionBranchIsInactive(parents.get(current), current)) return true;
   }
   return false;
+}
+
+function generatorSlotIncludes(
+  source: AnyNode,
+  fn: AnyNode,
+  variable: AnyNode,
+  reference: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): boolean {
+  const pattern = variable.id ?? variable.left;
+  if (pattern?.type !== "ArrayPattern") return true;
+  const path = patternPath(pattern, reference.name);
+  if (!path?.length) return true;
+  const yields: AnyNode[] = [];
+  walkScriptLocal(fn.body, (node) => {
+    if (
+      node.type === "YieldExpression" &&
+      containingFunction(node, parents) === fn &&
+      !isInactivePath(node, fn, parents)
+    )
+      yields.push(node);
+  });
+  if (
+    yields.some(
+      (node) =>
+        node.delegate ||
+        parents.get(node)?.type !== "ExpressionStatement" ||
+        parents.get(parents.get(node)) !== fn.body,
+    )
+  )
+    return true;
+  yields.sort((a, b) => a.start - b.start);
+  const yielded = yields[Number(path[0])];
+  return Boolean(yielded && contributesToReturn(source, fn, parents, new Set(), yielded.argument));
 }
 
 function reachesFirstYield(

@@ -1610,3 +1610,35 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["[1].forEach(() => { displayed = Date.now() })", 1],
+  ["[].forEach(() => { displayed = Date.now() })", 0],
+  ["computed(() => { displayed = Date.now() })", 0],
+  ["[1].forEach(() => Date.now())", 0],
+  ["if (false) [1].forEach(() => { displayed = Date.now() })", 0],
+  ["function initialize() { displayed = Date.now() }; [1].forEach(initialize)", 1],
+  ["function setup() { [1].forEach(() => { displayed = Date.now() }) }; setup()", 1],
+  ["[1].forEach(() => { displayed = Date.now() }); displayed = 'stable'", 0],
+])("traces eager callback writes: %s", async (calls, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>let displayed; ${calls}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["yield Date.now(); yield 'stable'", "[, displayed]", 0],
+  ["yield Date.now(); yield 'stable'", "[displayed]", 1],
+  ["yield 'stable'; yield Date.now()", "[, displayed]", 1],
+  ["yield 'stable'; yield Date.now()", "[displayed]", 0],
+  ["const time = Date.now(); yield time; yield 'stable'", "[, displayed]", 0],
+  ["const time = Date.now(); yield 'stable'; yield time", "[, displayed]", 1],
+])("projects generator destructuring: %s / %s", async (body, pattern, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function* values() { ${body} }; const ${pattern} = values()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
