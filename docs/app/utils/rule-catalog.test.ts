@@ -349,3 +349,11 @@ test("rule explorer model filters and sorts rules", async () => {
     "vue/reactivity/no-ref-as-operand",
   ]);
 });
+
+test("authorization review generates its Rule Catalog and Diagnostic Reference", async () => {
+  expect(
+    getRuleDocuments().some((rule) => rule.id === "nuxt/review/api-authorization-coverage"),
+  ).toBe(true);
+  expect(getDiagnosticDocuments().some((diagnostic) => diagnostic.code === "NUXT0074")).toBe(true);
+  expect(await diagnosticsCollectionSource.getKeys()).toContain("diagnostics/NUXT0074.md");
+});

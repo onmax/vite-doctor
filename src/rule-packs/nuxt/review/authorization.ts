@@ -32,13 +32,22 @@ const maxSourceBytes = 16_000;
 export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationReviewer) {
   const rule = createRule({
     meta: {
-      id: ruleId,
+      id: "nuxt/review/api-authorization-coverage",
       title: "Review server authorization for auth-sensitive Nuxt API routes",
       description:
         "Reviews auth-sensitive Nuxt server handlers against related middleware and guards.",
       why: "Nuxt app route middleware runs during app navigation and cannot authorize a direct server API request.",
       recommendedReplacement:
         "Verify the server guard and enforce authorization in the handler or server middleware.",
+      examples: [
+        {
+          title: "Authorize the server request",
+          language: "ts",
+          invalid: "export default defineEventHandler(() => ({ private: true }))",
+          valid:
+            "export default defineEventHandler(async (event) => { await requireUserSession(event); return { private: true } })",
+        },
+      ],
       category: "middleware",
       severity: "warn",
       execution: "manifest",
@@ -69,7 +78,21 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             ? (nuxt.manifest.serverHandlers ?? [])
             : [];
           const serverMiddleware = projectSources(root, nuxt.serverDirs.middleware);
-          if (serverMiddleware.length !== new Set(nuxt.serverDirs.middleware).size) return;
+          if (serverMiddleware.length !== new Set(nuxt.serverDirs.middleware).size) {
+            const collected = new Set(serverMiddleware.map((source) => resolve(root, source.path)));
+            ctx.project.evidenceGaps = [
+              ...(ctx.project.evidenceGaps ?? []),
+              {
+                source: "vite-doctor/nuxt-authorization-review",
+                message:
+                  "Authorization review requires all conventional server middleware. Some files exceed 16 KB or cannot be collected; no handlers were reviewed.",
+                files: [...new Set(nuxt.serverDirs.middleware)]
+                  .filter((file) => !collected.has(resolve(root, file)))
+                  .map((file) => relative(root, file).replaceAll("\\", "/")),
+              },
+            ];
+            return;
+          }
           const registered = registrations.filter((entry) => !entry.middleware);
           const handlers = projectSources(root, [
             ...(ctx.project.nuxt?.serverDirs.api ?? []),
@@ -103,7 +126,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                   "@@": root,
                   "~": nuxt.appDir,
                   "@": nuxt.appDir,
-                  ...nuxt.manifest?.aliases,
+                  ...(nuxt.manifest?.isCurrent ? nuxt.manifest.aliases : {}),
                   ...(layer && nuxt.localLayerAliases === true
                     ? {
                         "~~": resolve(root, layer.root),

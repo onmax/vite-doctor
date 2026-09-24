@@ -1,4 +1,5 @@
 import { expect, test } from "vite-plus/test";
+import { createAgentReport } from "../../../src/core/reports.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
 import {
   createNuxtAuthorizationReviewExtension,
@@ -114,6 +115,7 @@ test.each(["~/server/guard", "@/server/guard", "#guards/guard", "../guard"])(
         "server/guard.ts": "export default () => ({ private: true })",
         ".nuxt/doctor.manifest.json": JSON.stringify({
           appDir: "app",
+          generatedAt: "2100-01-01T00:00:00.000Z",
           aliases: { "~": ".", "@": ".", "#guards": "server" },
         }),
       },
@@ -357,9 +359,47 @@ test.each([false, true])(
       },
       rules: extension.rulePacks![0]!.rules,
     });
+    expect(result.project.evidenceGaps ?? []).toEqual(
+      oversized
+        ? [
+            expect.objectContaining({
+              source: "vite-doctor/nuxt-authorization-review",
+              files: ["server/middleware/auth.ts"],
+            }),
+          ]
+        : [],
+    );
+    if (oversized) expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
     expect(calls).toBe(oversized ? 0 : 1);
     expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(
       oversized ? 0 : 1,
     );
   },
 );
+
+test.each([true, false])("manifest aliases require current evidence: %s", async (current) => {
+  const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    candidates.push(candidate);
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "server/api/account.get.ts":
+        "import guard from '#guards/guard'; export default defineEventHandler(guard)",
+      "server/old/guard.ts": "export default () => ({ private: true })",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: current ? "2100-01-01T00:00:00.000Z" : "2000-01-01T00:00:00.000Z",
+        aliases: { "#guards": "server/old" },
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(candidates).toHaveLength(1);
+  expect(candidates[0]!.sources.some((source) => source.path === "server/old/guard.ts")).toBe(
+    current,
+  );
+});
