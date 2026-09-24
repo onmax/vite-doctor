@@ -137,7 +137,12 @@ export const noSecretDefine = createRule({
       ScriptNode(node) {
         if ((node as { type?: string }).type !== "Program") return;
         for (const entry of readDefineEntriesFromCurrentFile(ctx)) {
-          if (!SECRET_NAME_RE.test(entry.key) && !SECRET_NAME_RE.test(entry.rawValue)) continue;
+          if (
+            !SECRET_NAME_RE.test(entry.key) &&
+            !SECRET_NAME_RE.test(entry.rawValue) &&
+            !resolvesSecretAlias(entry.rawValue, ctx.file.text)
+          )
+            continue;
           ctx.report(
             diagnostics.VITE0005({
               why: `Vite define "${entry.key}" looks like a secret and will be bundled into client code.`,
@@ -156,6 +161,21 @@ export const noSecretDefine = createRule({
     };
   },
 });
+
+function resolvesSecretAlias(value: string, source: string, seen = new Set<string>()): boolean {
+  const unwrapped = value
+    .trim()
+    .replace(/^JSON\.stringify\s*\((.*)\)$/s, "$1")
+    .trim();
+  if (!/^[A-Za-z_$][\w$]*$/.test(unwrapped) || seen.has(unwrapped) || seen.size >= 4) return false;
+  seen.add(unwrapped);
+  const declaration = source.match(
+    new RegExp(`\\b(?:const|let)\\s+${unwrapped.replaceAll("$", "\\$")}\\s*=\\s*([^;\\n]+)`),
+  );
+  if (!declaration) return false;
+  const initializer = declaration[1]!.trim();
+  return SECRET_NAME_RE.test(initializer) || resolvesSecretAlias(initializer, source, seen);
+}
 
 function readDefineEntriesFromCurrentFile(ctx: RuleContext) {
   const text = ctx.file.text;
