@@ -933,3 +933,82 @@ test.each(["present", "missing", "oversized"])(
     );
   },
 );
+
+test.each([
+  ["local variable", "const enforceAccountAccess = () => {}; enforceAccountAccess()"],
+  ["hoisted function", "enforceAccountAccess(); function enforceAccountAccess() {}"],
+  ["parameter", "const run = (enforceAccountAccess) => enforceAccountAccess()"],
+  ["destructured parameter", "const run = ({ enforceAccountAccess }) => enforceAccountAccess()"],
+  ["block binding", "{ const enforceAccountAccess = () => {}; enforceAccountAccess() }"],
+  ["catch binding", "try {} catch (enforceAccountAccess) { enforceAccountAccess() }"],
+  [
+    "explicit import",
+    "import { enforceAccountAccess } from '../../utils/local'; enforceAccountAccess()",
+  ],
+  ["member property", "event.enforceAccountAccess()"],
+  ["object key", "const access = { enforceAccountAccess: true }"],
+  ["method name", "const access = { enforceAccountAccess() {} }"],
+  ["type reference", "let access: enforceAccountAccess"],
+])("ignores auto-import names used as %s", async (_name, source) => {
+  let calls = 0;
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    calls++;
+    expect(candidate.sources.map((item) => item.path)).not.toContain("server/utils/access.ts");
+    if (_name === "explicit import") {
+      expect(candidate.sources.map((item) => item.path)).toContain("utils/local.ts");
+    }
+    return { status: "unknown", reason: "Evidence collected", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "server/api/account.get.ts": `${source}\nexport default defineEventHandler(() => ({ private: true }))`,
+      "utils/local.ts": "export const enforceAccountAccess = () => {}",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date(Date.now() + 1000).toISOString(),
+        appDir: "app",
+        autoImportEnabled: true,
+        autoImports: [
+          { name: "enforceAccountAccess", from: "~~/server/utils/access", kind: "app" },
+        ],
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(calls).toBe(1);
+  expect(JSON.parse(createAgentReport(result)).status).not.toBe("incomplete");
+});
+
+test.each([
+  "enforceAccountAccess(event)",
+  "const access = { enforceAccountAccess }",
+  "event[enforceAccountAccess]",
+  "{ const enforceAccountAccess = () => {}; } enforceAccountAccess(event)",
+])("collects unbound auto-import references: %s", async (source) => {
+  let calls = 0;
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    calls++;
+    expect(candidate.sources.map((item) => item.path)).toContain("server/utils/access.ts");
+    return { status: "unknown", reason: "Evidence collected", citations: [] };
+  });
+  await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "server/api/account.get.ts": `${source}\nexport default defineEventHandler(() => ({ private: true }))`,
+      "server/utils/access.ts":
+        "export const enforceAccountAccess = event => requireUserSession(event)",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date(Date.now() + 1000).toISOString(),
+        appDir: "app",
+        autoImportEnabled: true,
+        autoImports: [
+          { name: "enforceAccountAccess", from: "~~/server/utils/access", kind: "app" },
+        ],
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(calls).toBe(1);
+});

@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { parseSync } from "oxc-parser";
+import { parseForESLint } from "@typescript-eslint/parser";
 import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { dirname, extname, relative, resolve } from "pathe";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../../core/index.js";
@@ -438,11 +439,23 @@ function localImports(
       continue;
     }
     const specifiers: string[] = [];
-    walkScriptLocal(parsed.program, (node) => {
-      if (node.type === "Identifier") {
-        const from = autoImports.get(node.name);
-        if (from) specifiers.push(from);
+    if (autoImports.size) {
+      try {
+        const { scopeManager } = parseForESLint(current.text, {
+          filePath: file,
+          sourceType: "module",
+        });
+        for (const reference of scopeManager.globalScope!.through) {
+          if (!reference.isValueReference) continue;
+          const from = autoImports.get(reference.identifier.name);
+          if (from) specifiers.push(from);
+        }
+      } catch {
+        omitted.push(`${current.path}: unresolved auto-import references`);
+        continue;
       }
+    }
+    walkScriptLocal(parsed.program, (node) => {
       const source =
         node.type === "ImportDeclaration" ||
         node.type === "ExportNamedDeclaration" ||
