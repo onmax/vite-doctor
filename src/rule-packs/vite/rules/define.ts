@@ -105,11 +105,13 @@ export const noRuntimeObjectDefine = createRule({
     return {
       ScriptNode(node) {
         if ((node as { type?: string }).type !== "Program") return;
+        const { bindingKeys } = readAliasInitializers(ctx.file.text);
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           if (
             isLiteralPrimitive(entry.rawValue) ||
             entry.rawValue.startsWith("JSON.stringify(") ||
-            /^process\.env\.[^.]+$/.test(memberPath(entry.valueNode) ?? "")
+            (/^process\.env\.[^.]+$/.test(memberPath(entry.valueNode) ?? "") &&
+              bindingKeys.get(entry.valueNode.object.object.start) === "global:process")
           )
             continue;
           ctx.report(
@@ -251,6 +253,13 @@ function readAliasInitializers(source: string) {
           ? `binding:${reference.resolved.identifiers[0]?.range[0]}`
           : `global:${reference.identifier.name}`,
       );
+      if (
+        definition?.type === "ImportBinding" &&
+        definition.parent.type === "ImportDeclaration" &&
+        ["node:process", "process"].includes(definition.parent.source.value as string) &&
+        ["ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(definition.node.type)
+      )
+        bindingKeys.set(reference.identifier.range[0], "global:process");
       if (
         definition?.type === "ImportBinding" &&
         definition.parent.type === "ImportDeclaration" &&
@@ -413,9 +422,12 @@ function readAliasInitializers(source: string) {
         );
         if (match?.kind === "get") {
           const values: AnyNode[] = [];
-          visitReturnValues(match.value.body, (returned) =>
-            values.push(...projectBinding(property.value, returned, name, seen)),
+          const terminates = visitReturnValues(
+            match.value.body,
+            (returned) => values.push(...projectBinding(property.value, returned, name, seen)),
+            () => values.push(...projectBinding(property.value, undefined, name, seen)),
           );
+          if (!terminates) values.push(...projectBinding(property.value, undefined, name, seen));
           return values;
         }
         if (match && match.kind !== "init") return [];
@@ -854,6 +866,7 @@ function resolvesSecretAlias(
                 else if (value) bindThis(value);
               }
             };
+            node.params.forEach(bindThis);
             bindThis(body);
           }
           const args = callArguments.get(node) ?? [];
@@ -933,15 +946,35 @@ function resolvesSecretAlias(
                             propertyName(item.key) === key,
                         )
                       : undefined;
-                  bind(
-                    property.value,
-                    match
-                      ? [
-                          match.offset + match.node.value.range[0],
-                          match.offset + match.node.value.range[1],
-                        ]
-                      : undefined,
-                  );
+                  if (match?.node.kind === "get") {
+                    const outcomes: Array<Range | undefined> = [];
+                    const terminates = visitReturnValues(
+                      match.node.value.body,
+                      (returned) =>
+                        outcomes.push([
+                          match.offset + returned.range[0],
+                          match.offset + returned.range[1],
+                        ]),
+                      () => outcomes.push(undefined),
+                    );
+                    if (!terminates) outcomes.push(undefined);
+                    const alternatives = new Map<string, Range[]>();
+                    for (const outcome of outcomes) {
+                      bind(property.value, outcome);
+                      for (const [name, ranges] of bindings)
+                        alternatives.set(name, [...(alternatives.get(name) ?? []), ...ranges]);
+                    }
+                    for (const [name, ranges] of alternatives) bindings.set(name, ranges);
+                  } else
+                    bind(
+                      property.value,
+                      match?.node.kind === "init"
+                        ? [
+                            match.offset + match.node.value.range[0],
+                            match.offset + match.node.value.range[1],
+                          ]
+                        : undefined,
+                    );
                 }
               } else {
                 pattern.elements.forEach((element: AnyNode, index: number) => {
@@ -1808,9 +1841,10 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             }
           } else if (pattern.type === "ObjectPattern") {
             const consumed = new Set<string>();
+            let unknownConsumed = false;
             for (const property of pattern.properties) {
               if (property.type === "RestElement") {
-                if (value?.type !== "ObjectExpression") continue;
+                if (value?.type !== "ObjectExpression" || unknownConsumed) continue;
                 const start = -nodesByRange.size - 1;
                 const rest = {
                   type: "ObjectExpression",
@@ -1827,6 +1861,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
               if (property.type !== "Property") continue;
               const key = keyOf(property);
               if (key !== null) consumed.add(key);
+              else unknownConsumed = true;
               const match =
                 value?.type === "ObjectExpression"
                   ? readOptions(value).findLast(
@@ -1884,6 +1919,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
               else if (value && typeof value === "object") bindThis(value);
             }
           };
+          callee.params.forEach(bindThis);
           bindThis(callee.body);
         }
         try {
@@ -2047,42 +2083,71 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   return entries;
 }
 
-function visitReturnValues(node: AnyNode, visit: (value: AnyNode) => void): boolean {
+function visitReturnValues(
+  node: AnyNode,
+  visit: (value: AnyNode) => void,
+  onUndefined: () => void = () => {},
+): boolean {
   if (!node || typeof node !== "object") return false;
   if (["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type))
     return false;
   if (node.type === "ReturnStatement") {
     if (node.argument) visit(node.argument);
+    else onUndefined();
     return true;
   }
   if (["ThrowStatement", "BreakStatement", "ContinueStatement"].includes(node.type)) return true;
   if (node.type === "BlockStatement") {
     for (const statement of node.body) {
-      if (visitReturnValues(statement, visit)) return true;
+      if (visitReturnValues(statement, visit, onUndefined)) return true;
     }
     return false;
   }
   if (node.type === "TryStatement") {
     const finalReturns: AnyNode[] = [];
-    const finalTerminates = visitReturnValues(node.finalizer, (value) => finalReturns.push(value));
+    let finalUndefined = false;
+    const finalTerminates = visitReturnValues(
+      node.finalizer,
+      (value) => finalReturns.push(value),
+      () => {
+        finalUndefined = true;
+      },
+    );
     if (finalTerminates) {
       finalReturns.forEach(visit);
+      if (finalUndefined) onUndefined();
       return true;
     }
-    const bodyTerminates = visitReturnValues(node.block, visit);
-    const catchTerminates = node.handler ? visitReturnValues(node.handler.body, visit) : true;
+    const bodyTerminates = visitReturnValues(node.block, visit, onUndefined);
+    const catchTerminates = node.handler
+      ? visitReturnValues(node.handler.body, visit, onUndefined)
+      : true;
     finalReturns.forEach(visit);
+    if (finalUndefined) onUndefined();
     return bodyTerminates && catchTerminates;
   }
+  if (
+    ["WhileStatement", "ForStatement"].includes(node.type) &&
+    node.test?.type === "Literal" &&
+    !node.test.value
+  )
+    return false;
   if (node.type === "IfStatement") {
-    const consequent = visitReturnValues(node.consequent, visit);
-    const alternate = visitReturnValues(node.alternate, visit);
+    if (node.test.type === "Literal")
+      return visitReturnValues(
+        node.test.value ? node.consequent : node.alternate,
+        visit,
+        onUndefined,
+      );
+    const consequent = visitReturnValues(node.consequent, visit, onUndefined);
+    const alternate = visitReturnValues(node.alternate, visit, onUndefined);
     return consequent && alternate;
   }
   for (const [key, value] of Object.entries(node)) {
     if (key === "parent") continue;
-    if (Array.isArray(value)) value.forEach((child) => visitReturnValues(child, visit));
-    else if (value && typeof value === "object") visitReturnValues(value, visit);
+    if (Array.isArray(value))
+      value.forEach((child) => visitReturnValues(child, visit, onUndefined));
+    else if (value && typeof value === "object") visitReturnValues(value, visit, onUndefined);
   }
   return false;
 }

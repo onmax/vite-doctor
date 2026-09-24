@@ -1650,3 +1650,95 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
     expect(result.diagnostics.length > 0).toBe(expected);
   });
 }
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    [
+      'const make = ({ ["de" + "fine"]: ignored, ...config }) => config; export default make({ define: { PRIVATE_TOKEN: {} } })',
+      false,
+    ],
+    [
+      "const make = ({ [unknownKey]: ignored, ...config }) => config; export default make({ define: { PRIVATE_TOKEN: {} } })",
+      false,
+    ],
+    [
+      "const make = ({ other: ignored, ...config }) => config; export default make({ other: true, define: { PRIVATE_TOKEN: {} } })",
+      true,
+    ],
+    [
+      "const factory = { config: { define: { PRIVATE_TOKEN: {} } }, make(value = this.config) { return value } }; export default factory.make()",
+      true,
+    ],
+    [
+      "const factory = { config: { define: { PRIVATE_TOKEN: {} } }, make(value = this.config) { return value } }; const make = factory.make; export default make()",
+      false,
+    ],
+  ])(
+    "respects reviewed config projections for " + rule.meta.id + ": %s",
+    async (source, expected) => {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule,
+        files: { "vite.config.ts": source },
+      });
+      expect(result.diagnostics.length > 0).toBe(expected);
+    },
+  );
+}
+
+test.each([
+  [
+    "const process = { env: { VALUE: {} } }; export default { define: { VALUE: process.env.VALUE } }",
+    true,
+  ],
+  ["export default { define: { VALUE: process.env.VALUE } }", false],
+  [
+    'import process from "node:process"; export default { define: { VALUE: process.env.VALUE } }',
+    false,
+  ],
+])("checks the environment receiver binding: %s", async (source, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noRuntimeObjectDefine,
+    files: { "vite.config.ts": source },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ["get value() {}", true],
+  ["get value() { return }", true],
+  ['get value() { while (false) return process.env.PRIVATE_TOKEN; return "safe" }', false],
+  ['get value() { if (false) return process.env.PRIVATE_TOKEN; return "safe" }', false],
+  ["get value() { return process.env.PRIVATE_TOKEN }", true],
+  ['get value() { return "safe" }', false],
+])(
+  "projects getter completion into local and parameter defaults: %s",
+  async (property, expected) => {
+    for (const source of [
+      `const source = { ${property} }; const { value: replacement = process.env.PRIVATE_TOKEN } = source; export default { define: { VALUE: JSON.stringify(replacement) } }`,
+      `const read = ({ value = process.env.PRIVATE_TOKEN }) => value; export default { define: { VALUE: JSON.stringify(read({ ${property} })) } }`,
+    ]) {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule: noSecretDefine,
+        files: { "vite.config.ts": source },
+      });
+      expect(result.diagnostics.length > 0).toBe(expected);
+    }
+  },
+);
+
+test.each([
+  ["process.env.PRIVATE_TOKEN", true],
+  ["process.env.PUBLIC_VERSION", false],
+])("follows neutral aliases returned by parameter getters: %s", async (value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const replacement = ${value}; const read = ({ value }) => value; export default { define: { VALUE: JSON.stringify(read({ get value() { return replacement } })) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
