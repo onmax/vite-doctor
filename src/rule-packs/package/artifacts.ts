@@ -53,6 +53,53 @@ const runs = new WeakMap<ProjectInfo, PackageArtifacts | null>();
 const scriptExtension = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/;
 const declarationExtension = /\.d\.[cm]?ts$/;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function recordOf(value: unknown, accepts: (entry: unknown) => boolean): boolean {
+  return isRecord(value) && Object.values(value).every(accepts);
+}
+
+function parsePackageManifest(value: unknown): PackageManifest {
+  if (!isRecord(value)) throw new TypeError("package.json must contain an object");
+  const fields: Record<string, (entry: unknown) => boolean> = {
+    name: isString,
+    private: (entry) => typeof entry === "boolean",
+    main: isString,
+    module: isString,
+    browser: (entry) =>
+      isString(entry) || recordOf(entry, (target) => isString(target) || target === false),
+    types: isString,
+    typings: isString,
+    imports: isRecord,
+    bin: (entry) => isString(entry) || recordOf(entry, isString),
+    typesVersions: (entry) =>
+      recordOf(entry, (version) =>
+        recordOf(version, (paths) => Array.isArray(paths) && paths.every(isString)),
+      ),
+    dependencies: (entry) => recordOf(entry, isString),
+    optionalDependencies: (entry) => recordOf(entry, isString),
+    peerDependencies: (entry) => recordOf(entry, isString),
+    peerDependenciesMeta: (entry) =>
+      recordOf(
+        entry,
+        (meta) =>
+          isRecord(meta) && (meta.optional === undefined || typeof meta.optional === "boolean"),
+      ),
+    devDependencies: (entry) => recordOf(entry, isString),
+  };
+  for (const [field, accepts] of Object.entries(fields)) {
+    if (value[field] !== undefined && !accepts(value[field]))
+      throw new TypeError(`Invalid package.json field: ${field}`);
+  }
+  return value;
+}
+
 export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null {
   if (runs.has(project)) return runs.get(project)!;
   const inventory = readPackageArtifacts(project.root);
@@ -72,62 +119,11 @@ export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null 
   return inventory;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isPackageManifest(value: unknown): value is PackageManifest {
-  if (!isRecord(value)) return false;
-  const isString = (entry: unknown) => typeof entry === "string";
-  const recordOf = (entry: unknown, valid: (item: unknown) => boolean) =>
-    isRecord(entry) && Object.values(entry).every(valid);
-  for (const field of ["name", "main", "module", "types", "typings"]) {
-    if (value[field] !== undefined && !isString(value[field])) return false;
-  }
-  if (value.private !== undefined && typeof value.private !== "boolean") return false;
-  for (const field of [
-    "dependencies",
-    "optionalDependencies",
-    "peerDependencies",
-    "devDependencies",
-  ]) {
-    if (value[field] !== undefined && !recordOf(value[field], isString)) return false;
-  }
-  if (
-    value.browser !== undefined &&
-    !isString(value.browser) &&
-    !recordOf(value.browser, (entry) => entry === false || isString(entry))
-  )
-    return false;
-  if (value.bin !== undefined && !isString(value.bin) && !recordOf(value.bin, isString))
-    return false;
-  if (value.imports !== undefined && !isRecord(value.imports)) return false;
-  if (
-    value.typesVersions !== undefined &&
-    !recordOf(value.typesVersions, (version) =>
-      recordOf(version, (targets) => Array.isArray(targets) && targets.every(isString)),
-    )
-  )
-    return false;
-  if (
-    value.peerDependenciesMeta !== undefined &&
-    !recordOf(
-      value.peerDependenciesMeta,
-      (entry) =>
-        isRecord(entry) && (entry.optional === undefined || typeof entry.optional === "boolean"),
-    )
-  )
-    return false;
-  return true;
-}
-
 export function readPackageArtifacts(root: string): PackageArtifacts | null {
   root = realpathSync(root);
   const manifestPath = resolve(root, "package.json");
   if (!existsSync(manifestPath)) return null;
-  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
-  if (!isPackageManifest(manifest))
-    throw new TypeError(`Invalid package manifest: ${manifestPath}`);
+  const manifest = parsePackageManifest(JSON.parse(readFileSync(manifestPath, "utf8")));
   if (manifest.private) return null;
   const references: PackageReference[] = [];
   const missing = new Set<string>();
