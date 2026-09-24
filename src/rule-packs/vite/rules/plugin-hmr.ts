@@ -138,6 +138,8 @@ function undisposedResource(program: AnyNode): string | null {
   const thisBinding = {};
   const lexicalReceivers = new Map<AnyNode, AnyNode>();
   const alternatives = new Map<AnyNode, AnyNode[]>();
+  const callbackChoices = new Map<AnyNode, AnyNode[]>();
+  const superConstructors = new Map<AnyNode, (args: AnyNode[]) => Completion>();
   const values = new Map<AnyNode, AnyNode>();
   const returned = new Map<AnyNode, AnyNode>();
   const callbacks = new Map<AnyNode, AnyNode>();
@@ -337,6 +339,7 @@ function undisposedResource(program: AnyNode): string | null {
     if (visited.has(target)) return { normal: false, abrupt: true };
     if (
       !target ||
+      target.generator ||
       !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
         target.type,
       )
@@ -371,6 +374,7 @@ function undisposedResource(program: AnyNode): string | null {
     module: boolean,
   ): Completion {
     const exits: Set<AnyNode>[] = [];
+    const exitedDisposers: AnyNode[] = [];
     let normal = false;
     let abrupt = false;
     const returns: AnyNode[] = [];
@@ -457,7 +461,8 @@ function undisposedResource(program: AnyNode): string | null {
       const globalAlias = ["window", "globalThis", "self"].includes(calleeGlobal);
       const callee = globalAlias ? `window.${propertyKey(node.callee)}` : memberPath(node.callee);
       if (module && callee === "import.meta.hot.dispose") {
-        disposers = [identity(node.arguments[0], environment)];
+        const callback = identity(node.arguments[0], environment);
+        disposers = callbackChoices.get(callback) ?? [callback];
         return;
       }
       const method =
@@ -544,8 +549,16 @@ function undisposedResource(program: AnyNode): string | null {
         )
           cleaned.add(resource.value);
       }
-      const completion = inspect(node.callee, node.arguments, environment, module);
-      if (completion.value) returned.set(node, completion.value);
+      const completion =
+        node.callee.type === "Super"
+          ? (superConstructors.get(environment.get(thisBinding))?.(
+              node.arguments.map((arg: AnyNode) => identity(arg, environment)),
+            ) ?? { normal: true, abrupt: false })
+          : inspect(node.callee, node.arguments, environment, module);
+      if (completion.value) {
+        returned.set(node, completion.value);
+        if (node.callee.type === "Super") environment.set(thisBinding, completion.value);
+      }
       if (completion.abrupt) {
         abrupt = true;
         exits.push(new Set(cleaned));
@@ -602,6 +615,12 @@ function undisposedResource(program: AnyNode): string | null {
         const choices = [leftValue, rightValue].flatMap(
           (value) => alternatives.get(value) ?? [value],
         );
+        const callbacksValue = {};
+        callbackChoices.set(
+          callbacksValue,
+          [leftValue, rightValue].flatMap((value) => callbackChoices.get(value) ?? [value]),
+        );
+        returned.set(expression, callbacksValue);
         const created = new Set(resources.slice(resourceStart).map((resource) => resource.value));
         if (choices.every((value) => created.has(value))) {
           const value = {};
@@ -633,34 +652,73 @@ function undisposedResource(program: AnyNode): string | null {
         if (node.id) environment.set(resolve(node.id), node);
       }
       if (node.type === "NewExpression") {
+        if (!walk(node.callee)) return false;
         const target = identity(node.callee, environment);
         if (["ClassDeclaration", "ClassExpression"].includes(target?.type)) {
           if (!walk(node.arguments)) return false;
-          const instance = {};
-          returned.set(node, instance);
-          properties.set(instance, new Map());
-          const local = new Map(environment);
-          local.set(thisBinding, instance);
-          for (const field of target.body.body) {
-            if (field.static) continue;
-            const key = field.computed
-              ? identity(field.key, local)?.value
-              : (field.key?.name ?? field.key?.value);
-            if (field.type === "PropertyDefinition") {
-              if (field.value) evaluate(field.value, local, module);
-              if (key !== undefined)
-                properties.get(instance)!.set(key, identity(field.value, local));
-            } else if (key !== undefined && field.kind !== "constructor") {
-              properties.get(instance)!.set(key, field.value);
-            }
-          }
-          const constructor = target.body.body.find(
-            (field: AnyNode) => field.kind === "constructor",
-          );
-          return (
-            !constructor ||
-            inspect(constructor.value, node.arguments, environment, module, instance).normal
-          );
+          const constructing = new Set<AnyNode>();
+          const construct = (
+            target: AnyNode,
+            args: AnyNode[],
+            allocated: AnyNode = {},
+          ): Completion => {
+            if (constructing.has(target)) return { normal: false, abrupt: true };
+            constructing.add(target);
+            let instance: AnyNode = allocated;
+            properties.set(instance, new Map());
+            const local = new Map(environment);
+            local.set(thisBinding, instance);
+            const initialize = (): void => {
+              for (const field of target.body.body) {
+                if (field.static) continue;
+                const key = field.computed
+                  ? identity(field.key, local)?.value
+                  : (field.key?.name ?? field.key?.value);
+                if (field.type === "PropertyDefinition") {
+                  if (field.value) evaluate(field.value, local, module);
+                  if (key !== undefined)
+                    properties.get(instance)!.set(key, identity(field.value, local));
+                } else if (key !== undefined && field.kind !== "constructor") {
+                  properties.get(instance)!.set(key, field.value);
+                }
+              }
+            };
+            const base = identity(target.superClass, environment);
+            const derived = ["ClassDeclaration", "ClassExpression"].includes(base?.type);
+            const initializeBase = (baseArgs: AnyNode[]): Completion => {
+              const completion = construct(base, baseArgs, instance);
+              if (!completion.normal) return completion;
+              if (completion.value) {
+                instance = completion.value;
+                local.set(thisBinding, instance);
+                if (!properties.has(instance)) properties.set(instance, new Map());
+              }
+              initialize();
+              return completion;
+            };
+            const constructor = target.body.body.find(
+              (field: AnyNode) => field.kind === "constructor",
+            );
+            let completion: Completion = { normal: true, abrupt: false };
+            if (derived) {
+              if (constructor) superConstructors.set(instance, initializeBase);
+              else completion = initializeBase(args);
+            } else initialize();
+            if (constructor)
+              completion = inspect(constructor.value, args, environment, module, instance);
+            superConstructors.delete(allocated);
+            constructing.delete(target);
+            const replacement = completion.value;
+            if (
+              replacement &&
+              !["Literal", "UnaryExpression", "TemplateLiteral"].includes(replacement.type)
+            )
+              instance = replacement;
+            return { ...completion, value: instance };
+          };
+          const completion = construct(target, node.arguments);
+          returned.set(node, completion.value);
+          return completion.normal;
         }
       }
       if (node.type === "PropertyDefinition" && !node.static)
@@ -731,13 +789,20 @@ function undisposedResource(program: AnyNode): string | null {
       const bindsValue =
         node.type === "VariableDeclarator" ||
         node.type === "AssignmentExpression" ||
-        (node.type === "CallExpression" && memberPath(node.callee) === "import.meta.hot.dispose");
+        node.type === "CallExpression" ||
+        node.type === "NewExpression";
       if (!bindsValue && visit(node) === false) return false;
       for (const [key, child] of Object.entries(node)) {
-        if (key !== "__doctorParent" && !walk(child)) return false;
+        if (
+          key !== "__doctorParent" &&
+          !(node.type === "NewExpression" && key === "callee") &&
+          !walk(child)
+        )
+          return false;
       }
-      if (bindsValue) visit(node);
+      if (bindsValue && visit(node) === false) return false;
       if (node.type === "ReturnStatement" || node.type === "ThrowStatement") {
+        if (module) exitedDisposers.push(...disposers);
         exits.push(new Set(cleaned));
         if (node.type === "ReturnStatement") {
           normal = true;
@@ -759,6 +824,7 @@ function undisposedResource(program: AnyNode): string | null {
     for (const value of cleaned) {
       if (exits.some((exit) => !exit.has(value))) cleaned.delete(value);
     }
+    if (module) disposers = [...new Set([...disposers, ...exitedDisposers])];
     const value =
       returns.length && returns.every((value) => value === returns[0]) ? returns[0] : undefined;
     return { normal, abrupt, value };

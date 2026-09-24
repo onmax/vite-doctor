@@ -1385,6 +1385,81 @@ for (const [name, source, leaks] of [
     "class Worker { empty; timer = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
     false,
   ],
+  [
+    "generator disposer",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(function* () { clearInterval(timer) })",
+    true,
+  ],
+  [
+    "immediate nested cleanup",
+    "clearInterval(setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "conditional callbacks clean",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(ready ? () => clearInterval(timer) : () => clearInterval(timer))",
+    false,
+  ],
+  [
+    "conditional callback leaks",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(ready ? () => clearInterval(timer) : () => {})",
+    true,
+  ],
+  [
+    "returning registration leaks",
+    "const timer = setInterval(refresh); function setup() { if (ready) { import.meta.hot.dispose(() => {}); return }; import.meta.hot.dispose(() => clearInterval(timer)) }; setup()",
+    true,
+  ],
+  [
+    "throwing registration leaks",
+    "const timer = setInterval(refresh); function setup() { if (ready) { import.meta.hot.dispose(() => {}); throw Error() }; import.meta.hot.dispose(() => clearInterval(timer)) }; setup()",
+    true,
+  ],
+  [
+    "inherited field leaks",
+    "class Base { timer = setInterval(refresh) }; class Worker extends Base {}; new Worker(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "inherited constructor cleans",
+    "class Base { constructor() { this.timer = setInterval(refresh) } }; class Worker extends Base {}; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
+  [
+    "replacement constructor leaks",
+    "class Worker { timer = setInterval(refresh); constructor() { return {} } }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    true,
+  ],
+  [
+    "primitive constructor cleans",
+    "class Worker { timer = setInterval(refresh); constructor() { return 1 } }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
+  [
+    "inline static resource leaks",
+    "new (class { static timer = setInterval(refresh) })(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "inline computed resource leaks",
+    "new (class { [setInterval(refresh)] = 1 })(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "explicit superclass arguments clean",
+    "class Base { constructor(timer) { this.timer = timer } }; class Worker extends Base { constructor(timer) { super(timer) } }; const worker = new Worker(setInterval(refresh)); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
+  [
+    "inherited closure cleans",
+    "class Base { timer = setInterval(refresh); cleanup = () => clearInterval(this.timer) }; class Worker extends Base { other = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => { worker.cleanup(); clearInterval(worker.other) })",
+    false,
+  ],
+  [
+    "derived replacement cleans",
+    "class Base { constructor() { return {} } }; class Worker extends Base { timer = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({
