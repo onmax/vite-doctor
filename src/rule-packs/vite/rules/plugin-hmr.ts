@@ -183,6 +183,16 @@ function undisposedResource(program: AnyNode): string | null {
             return property.kind === "get" || property.kind === "set"
               ? node
               : identity(property.value, environment);
+          if (
+            !(key in Object.prototype) &&
+            object.properties.every(
+              (item: AnyNode) =>
+                item.type !== "SpreadElement" &&
+                !item.computed &&
+                (item.key?.name ?? item.key?.value) !== "__proto__",
+            )
+          )
+            return undefined;
         }
         if (!members.has(object)) members.set(object, new Map());
         const paths = members.get(object)!;
@@ -395,7 +405,9 @@ function undisposedResource(program: AnyNode): string | null {
         );
       else bindResource(param, identity(args[index], environment), local, module);
     }
+    const parentPath = currentPath;
     const completion = evaluate(target.body, local, module);
+    currentPath = parentPath;
     for (const binding of environment.keys()) {
       if (binding !== thisBinding && local.has(binding))
         environment.set(binding, local.get(binding));
@@ -415,6 +427,7 @@ function undisposedResource(program: AnyNode): string | null {
     let normal = false;
     let abrupt = false;
     const returns: AnyNode[] = [];
+    const returnPaths: Map<object, boolean>[] = [];
     walkEvaluation(root, (node) => {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     });
@@ -817,6 +830,8 @@ function undisposedResource(program: AnyNode): string | null {
       if (caughtThrowOnly) restore(afterRight);
       else if (includeAbrupt || (leftContinues && rightContinues)) merge(afterLeft, afterRight);
       else if (leftContinues) restore(afterLeft);
+      if (leftContinues !== rightContinues)
+        currentPath = new Map(leftContinues ? afterLeft.path : afterRight.path);
       return leftContinues || rightContinues;
     };
     const controls: {
@@ -856,16 +871,31 @@ function undisposedResource(program: AnyNode): string | null {
           }
         }
         if (!walk(node.superClass)) return false;
+        const walkStatic = (field: AnyNode, key?: string): boolean => {
+          const hadReceiver = environment.has(thisBinding);
+          const receiver = environment.get(thisBinding);
+          environment.set(thisBinding, node);
+          try {
+            if (field.type === "PropertyDefinition") {
+              if (!walk(field.value)) return false;
+              if (key !== undefined)
+                properties.get(node)!.set(String(key), identity(field.value, environment));
+              return true;
+            }
+            return walk(field);
+          } finally {
+            if (hadReceiver) environment.set(thisBinding, receiver);
+            else environment.delete(thisBinding);
+          }
+        };
         for (const field of node.body.body) {
           if (field.computed && !walk(field.key)) return false;
           if (field.type === "PropertyDefinition" && field.static) {
-            if (!walk(field.value)) return false;
             const key = field.computed
               ? identity(field.key, environment)?.value
               : (field.key?.name ?? field.key?.value);
-            if (key !== undefined)
-              properties.get(node)!.set(String(key), identity(field.value, environment));
-          } else if (field.type === "StaticBlock" && !walk(field)) return false;
+            if (!walkStatic(field, key)) return false;
+          } else if (field.type === "StaticBlock" && !walkStatic(field)) return false;
         }
         return true;
       }
@@ -873,6 +903,17 @@ function undisposedResource(program: AnyNode): string | null {
         if (!walk(node.callee)) return false;
         const value = identity(node.callee, environment);
         const target = callbacks.get(value) ?? value;
+        if (
+          value === "Promise" ||
+          (value?.type === "MemberExpression" &&
+            propertyKey(value) === "Promise" &&
+            ["window", "globalThis", "self"].includes(identity(value.object, environment)))
+        ) {
+          if (!walk(node.arguments)) return false;
+          inspect(node.arguments[0], [{}, {}], environment, module);
+          returned.set(node, {});
+          return true;
+        }
         if (
           [
             "ClassDeclaration",
@@ -1307,6 +1348,7 @@ function undisposedResource(program: AnyNode): string | null {
         if (node.type === "ReturnStatement") {
           normal = true;
           returns.push(identity(node.argument, environment));
+          returnPaths.push(new Map(currentPath));
         } else {
           abrupt = true;
           thrownExits.add(exits[exits.length - 1]);
@@ -1323,6 +1365,7 @@ function undisposedResource(program: AnyNode): string | null {
           ? undefined
           : identity(root, environment),
       );
+      returnPaths.push(new Map(currentPath));
       exits.push(new Set(cleaned));
     }
     for (const value of cleaned) {
@@ -1336,6 +1379,22 @@ function undisposedResource(program: AnyNode): string | null {
         value,
         returns.flatMap((item) => callbackChoices.get(item) ?? [item]),
       );
+      const handles = returns.flatMap((item) => alternatives.get(item) ?? [item]);
+      if (
+        handles.every(
+          (handle) =>
+            resources.some((resource) => resource.value === handle) &&
+            returns.every(
+              (item, index) =>
+                (alternatives.get(item) ?? [item]).includes(handle) ||
+                [...(resourcePaths.get(handle) ?? [])].some(
+                  ([condition, side]) =>
+                    returnPaths[index].has(condition) && returnPaths[index].get(condition) !== side,
+                ),
+            ),
+        )
+      )
+        alternatives.set(value, handles);
     }
     return { normal, abrupt, value };
   }

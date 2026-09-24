@@ -2296,3 +2296,80 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "Promise executor creates a live timer",
+    "new Promise(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "Promise executor exposes its timer for cleanup",
+    "let timer; new Promise(() => { timer = setInterval(refresh) }); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "Promise executor throw does not stop module evaluation",
+    "new Promise(() => { throw error }); const timer = setInterval(refresh); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "shadowed Promise does not invoke its argument",
+    "function Promise(executor) {}; new Promise(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "static arrow captures class receiver",
+    "class Worker { static timer = setInterval(refresh); static cleanup = () => clearInterval(this.timer) }; import.meta.hot.dispose(Worker.cleanup)",
+    false,
+  ],
+  [
+    "static field aliases class resource",
+    "class Worker { static timer = setInterval(refresh); static alias = this.timer }; import.meta.hot.dispose(() => clearInterval(Worker.alias))",
+    false,
+  ],
+  [
+    "static block captures class receiver",
+    "class Worker { static timer = setInterval(refresh); static { this.cleanup = () => clearInterval(this.timer) } }; import.meta.hot.dispose(Worker.cleanup)",
+    false,
+  ],
+  [
+    "helper returns alternate handles",
+    "function start() { if (flag) return setInterval(a); return setInterval(b) }; const timer = start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "inline helper returns alternate handles",
+    "function start() { if (flag) return setInterval(a); return setInterval(b) }; clearInterval(start()); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "returning one of two live handles preserves leak",
+    "function start() { const a = setInterval(refresh); const b = setInterval(refresh); if (flag) return a; return b }; const timer = start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "missing optional method skips argument",
+    "const object = {}; object.missing?.(setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "missing optional method skips chained key",
+    "const object = {}; object.missing?.()[setInterval(refresh)]; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "present optional method evaluates argument",
+    "const object = { method() {} }; object.method?.(setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
