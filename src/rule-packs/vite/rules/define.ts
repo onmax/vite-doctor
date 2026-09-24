@@ -342,21 +342,28 @@ function readAliasInitializers(source: string) {
             .flatMap((argument: AnyNode) => expandMutationArgument(argument)),
         );
         changed = true;
-      } else if (
-        mutation?.type === "CallExpression" &&
-        mutation.callee.property?.name === "fill" &&
-        mutation.arguments.length >= 1 &&
-        mutation.arguments.length <= 3 &&
-        mutation.arguments
-          .slice(1)
-          .every(
-            (argument: AnyNode) => argument.type === "Literal" && Number.isInteger(argument.value),
+      } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "fill") {
+        const bounds = mutation.arguments.slice(1).map((argument: AnyNode) => {
+          const resolved = resolveImmutable(argument);
+          if (resolved.type === "Literal") return resolved.value;
+          if (
+            resolved.type === "UnaryExpression" &&
+            ["+", "-"].includes(resolved.operator) &&
+            resolved.argument.type === "Literal" &&
+            typeof resolved.argument.value === "number"
           )
-      ) {
+            return resolved.operator === "-" ? -resolved.argument.value : +resolved.argument.value;
+        });
+        if (
+          mutation.arguments.length < 1 ||
+          mutation.arguments.length > 3 ||
+          !bounds.every((bound: unknown) => Number.isInteger(bound))
+        )
+          return null;
         elements.fill(
           mutation.arguments[0].range,
-          mutation.arguments[1]?.value,
-          mutation.arguments[2]?.value,
+          bounds[0] as number | undefined,
+          bounds[1] as number | undefined,
         );
         changed = true;
       } else if (mutation?.type !== "CallExpression" || !member) {
@@ -481,7 +488,9 @@ function readAliasInitializers(source: string) {
         node.operator === "??"
           ? left.type === "Literal"
             ? left.value == null
-            : undefined
+            : isDefinitelyNonNullish(left)
+              ? false
+              : undefined
           : staticBoolean(left);
       collectMutations(node.left, executionPosition);
       if (
@@ -2192,11 +2201,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
                   const bindReceiver = (child: AnyNode) => {
                     if (
                       !child ||
-                      [
-                        "FunctionExpression",
-                        "FunctionDeclaration",
-                        "ArrowFunctionExpression",
-                      ].includes(child.type)
+                      ["FunctionExpression", "FunctionDeclaration"].includes(child.type)
                     )
                       return;
                     if (child.type === "ThisExpression") {
@@ -2301,14 +2306,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
                   : undefined;
               if (match?.kind === "get") {
                 const bindGetterThis = (child: AnyNode) => {
-                  if (
-                    !child ||
-                    [
-                      "FunctionExpression",
-                      "FunctionDeclaration",
-                      "ArrowFunctionExpression",
-                    ].includes(child.type)
-                  )
+                  if (!child || ["FunctionExpression", "FunctionDeclaration"].includes(child.type))
                     return;
                   if (child.type === "ThisExpression") {
                     if (!previous.has(child.start))
@@ -2558,10 +2556,26 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
 
 function staticBoolean(node: AnyNode): boolean | undefined {
   if (node?.type === "Literal") return Boolean(node.value);
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
+    return Boolean(node.quasis[0].value.cooked);
+  if (isDefinitelyNonNullish(node)) return true;
   if (node?.type === "UnaryExpression" && node.operator === "!") {
     const value = staticBoolean(node.argument);
     if (value !== undefined) return !value;
   }
+}
+
+function isDefinitelyNonNullish(node: AnyNode): boolean {
+  return (
+    [
+      "ObjectExpression",
+      "ArrayExpression",
+      "FunctionExpression",
+      "ArrowFunctionExpression",
+      "ClassExpression",
+    ].includes(node?.type) ||
+    (node?.type === "TemplateLiteral" && node.expressions.length === 0)
+  );
 }
 
 function visitReturnValues(
