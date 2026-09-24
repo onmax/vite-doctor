@@ -301,7 +301,12 @@ test.each([
   else expect(create).toThrow("HTTPS or loopback HTTP");
 });
 
-test("collects route middleware from a layer's custom source directory", async () => {
+test.each([
+  [true, "layers/admin/src"],
+  [false, "layers/admin/src"],
+  [true, "layers/admin"],
+  [false, "layers/admin"],
+] as const)("layer middleware requires a current manifest: %s, %s", async (current, srcDir) => {
   const candidates: Parameters<AuthorizationReviewer>[0][] = [];
   const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
     candidates.push(candidate);
@@ -310,16 +315,51 @@ test("collects route middleware from a layer's custom source directory", async (
   await runProjectFixture({
     framework: "nuxt",
     files: {
-      "layers/admin/src/middleware/auth.ts": files["app/middleware/auth.ts"],
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      [`${srcDir}/middleware/auth.ts`]: files["app/middleware/auth.ts"],
       "server/api/account.get.ts": files["server/api/account.get.ts"],
       ".nuxt/doctor.manifest.json": JSON.stringify({
-        layers: [{ root: "layers/admin", srcDir: "layers/admin/src", priority: 0 }],
+        generatedAt: current ? "2100-01-01T00:00:00.000Z" : "2000-01-01T00:00:00.000Z",
+        layers: [{ root: "layers/admin", srcDir, priority: 0 }],
       }),
     },
     rules: extension.rulePacks![0]!.rules,
   });
-  expect(candidates).toHaveLength(1);
-  expect(candidates[0]!.sources.map((source) => source.path)).toContain(
-    "layers/admin/src/middleware/auth.ts",
-  );
+  expect(candidates).toHaveLength(current ? 1 : 0);
+  if (current)
+    expect(candidates[0]!.sources.map((source) => source.path)).toContain(
+      `${srcDir}/middleware/auth.ts`,
+    );
 });
+
+test.each([false, true])(
+  "server middleware must fit the evidence limit: oversized=%s",
+  async (oversized) => {
+    let calls = 0;
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      calls++;
+      return {
+        status: "report",
+        reason: "No guard visible",
+        citations: [
+          { path: candidate.handler.path, line: 1 },
+          { path: "app/middleware/auth.ts", line: 1 },
+        ],
+      };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "server/middleware/auth.ts":
+          "export default defineEventHandler(event => requireAuth(event))" +
+          (oversized ? " ".repeat(16_001) : ""),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(calls).toBe(oversized ? 0 : 1);
+    expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(
+      oversized ? 0 : 1,
+    );
+  },
+);

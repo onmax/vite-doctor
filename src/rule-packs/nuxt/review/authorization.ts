@@ -54,16 +54,22 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
           const nuxt = ctx.project.nuxt!;
           const middleware = projectSources(
             root,
-            appMiddlewareFiles(root, [
-              ...nuxt.appRoots,
-              ...nuxt.layers.map((layer) => resolve(root, layer.srcDir ?? layer.root)),
-            ]),
+            appMiddlewareFiles(
+              root,
+              nuxt.manifest?.isCurrent
+                ? [
+                    ...nuxt.appRoots,
+                    ...nuxt.layers.map((layer) => resolve(root, layer.srcDir ?? layer.root)),
+                  ]
+                : [],
+            ),
           ).filter((source) => authMiddlewareName.test(source.path));
           if (!middleware.length) return;
           const registrations = nuxt.manifest?.isCurrent
             ? (nuxt.manifest.serverHandlers ?? [])
             : [];
           const serverMiddleware = projectSources(root, nuxt.serverDirs.middleware);
+          if (serverMiddleware.length !== new Set(nuxt.serverDirs.middleware).size) return;
           const registered = registrations.filter((entry) => !entry.middleware);
           const handlers = projectSources(root, [
             ...(ctx.project.nuxt?.serverDirs.api ?? []),

@@ -68,7 +68,8 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
 
 function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
-  const registered = ctx.project.nuxt?.manifest?.serverHandlers ?? [];
+  const manifest = ctx.project.nuxt?.manifest;
+  const registered = manifest?.isCurrent ? (manifest.serverHandlers ?? []) : [];
   // Manifest timestamps cannot prove module-provided middleware is still registered.
   if ((dirs?.middleware ?? []).some(hasUnconditionalMiddlewareGuard)) return [];
   const candidates = [

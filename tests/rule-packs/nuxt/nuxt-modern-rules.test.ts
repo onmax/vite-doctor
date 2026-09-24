@@ -2428,6 +2428,7 @@ test.each(["auth/login.post.ts", "auth/callback.get.ts", "session/create.post.ts
         [`server/api/${endpoint}`]: `export default defineEventHandler(() => ({}))`,
         "server/handlers/entry.ts": `export default defineEventHandler(() => ({}))`,
         ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: new Date().toISOString(),
           nuxtVersion: "4",
           vueVersion: "3.5",
           appDir: "app",
@@ -2460,6 +2461,7 @@ test.each([
       [`server/api/${endpoint}`]: `export default defineEventHandler(() => ({}))`,
       "server/handlers/entry.ts": `export default defineEventHandler(() => ({}))`,
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date().toISOString(),
         nuxtVersion: "4",
         vueVersion: "3.5",
         appDir: "app",
@@ -2566,6 +2568,7 @@ test.each([
           ? { "server/api/health.ts": `export default defineEventHandler(() => ({}))` }
           : {}),
         ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: new Date().toISOString(),
           nuxtVersion: "4",
           vueVersion: "3.5",
           appDir: "app",
@@ -2589,6 +2592,7 @@ test("missing registered handlers do not produce security diagnostics", async ()
       "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
       "server/handlers/current.ts": `export default defineEventHandler(() => ({}))`,
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date().toISOString(),
         nuxtVersion: "4",
         vueVersion: "3.5",
         appDir: "app",
@@ -3939,5 +3943,26 @@ test.each([true, false])(
       expect(manifest.localLayerAliases).toBe(localLayerAliases);
       expect(manifest.layers[0]).toMatchObject({ root: layerRoot, srcDir: join(layerRoot, "src") });
     });
+  },
+);
+
+test.each([undefined, "2000-01-01T00:00:00.000Z"])(
+  "ignores stale registered handlers with timestamp %s",
+  async (generatedAt) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "nuxt.config.ts": "export default defineNuxtConfig({})",
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        "server/handlers/data.ts": "export default defineEventHandler(() => ({}))",
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt,
+          serverHandlers: [{ file: "server/handlers/data.ts", route: "/api/account" }],
+        }),
+      },
+    });
+    expect(result.diagnostics).toHaveLength(0);
   },
 );
