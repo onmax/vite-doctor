@@ -191,12 +191,12 @@ function readAliasInitializers(source: string) {
             init.object.meta.name === "import" &&
             init.object.property.name === "meta"))
       ) {
-        const property = id.properties.find(
-          (property) =>
-            property.type === "Property" &&
-            property.value.type === "Identifier" &&
-            property.value.name === reference.identifier.name,
-        );
+        const property = id.properties.find((property) => {
+          if (property.type !== "Property") return false;
+          const binding =
+            property.value.type === "AssignmentPattern" ? property.value.left : property.value;
+          return binding.type === "Identifier" && binding.name === reference.identifier.name;
+        });
         if (
           property?.type === "Property" &&
           ((!property.computed && property.key.type === "Identifier") ||
