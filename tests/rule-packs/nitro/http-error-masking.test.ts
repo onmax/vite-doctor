@@ -2388,6 +2388,21 @@ test.each([
     1,
   ],
   [
+    "nested try in later do-while iteration",
+    "let ready = false; do { if (ready) { try { throw createError({ statusCode: 404 }) } catch { throw new Error() } } ready = true } while (true)",
+    1,
+  ],
+  [
+    "nested try after error status changes",
+    "let error = createError({ statusCode: 500 }); let ready = false; while (true) { if (ready) { try { throw error } catch { throw new Error() } } error.statusCode = 404; ready = true }",
+    1,
+  ],
+  [
+    "continue to outer loop never enters nested try",
+    "outer: while (true) { while (true) { continue outer; try { throw createError({ statusCode: 404 }) } catch { throw new Error() } } }",
+    0,
+  ],
+  [
     "unreachable later iteration after return",
     "let ready = false; while (true) { if (ready) { try { throw createError({ statusCode: 404 }) } catch { throw new Error() } } else return; ready = true }",
     0,
@@ -2406,6 +2421,87 @@ test.each([
     "adopted async rejection",
     "async function missing() { throw createError({ statusCode: 404 }) }; async function load() { return missing() }; try { await load() } catch { throw new Error() }",
     1,
+  ],
+  [
+    "nested argument Promise is not adopted",
+    "async function missing() { throw createError({ statusCode: 404 }) }; function consume(_) { return Promise.resolve() }; async function load() { return consume(missing()) }; try { await load() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "awaited explicit rejection",
+    "try { await Promise.reject(createError({ statusCode: 404 })) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "optional call of known function",
+    "function missing() { throw createError({ statusCode: 404 }) }; try { missing?.() } catch { throw new Error() }",
+    1,
+  ],
+  ["optional call on nullish object", "try { null?.missing() } catch { throw new Error() }", 0],
+  [
+    "optional chain skips argument evaluation",
+    "function missing() { throw createError({ statusCode: 404 }) }; try { null?.call(missing()) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "optional chain skips computed key evaluation",
+    "function missing() { throw createError({ statusCode: 404 }) }; try { null?.[missing()] } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "unary guard preserves caught error",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { const preserve = !false; if (preserve) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "empty destructuring throws before client error",
+    "try { const {} = null; throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "later parameter is unavailable in earlier default",
+    "function fail(a = b, b) { throw createError({ statusCode: 404 }) }; try { fail() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "destructured names retain independent values",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { const { preserved, decoy } = { preserved: false, decoy: error }; if (isError(preserved)) throw preserved; throw new Error() }",
+    1,
+  ],
+  [
+    "compound status update reaches 500",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { error.statusCode += 96; throw error }",
+    1,
+  ],
+  [
+    "primitive replacement masks client error",
+    "try { throw createError({ statusCode: 404 }) } catch { throw 'failed' }",
+    1,
+  ],
+  [
+    "plain object replacement masks client error",
+    "try { throw createError({ statusCode: 404 }) } catch { throw { message: 'failed' } }",
+    1,
+  ],
+  [
+    "subtraction compound status reaches 500",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { error.statusCode = 501; error.statusCode -= 1; throw error }",
+    1,
+  ],
+  [
+    "object shorthand method",
+    "function missing() { throw createError({ statusCode: 404 }) }; const helpers = { missing }; try { helpers.missing() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "method following unknown spread",
+    "const helpers = { ...unknown, missing() { throw createError({ statusCode: 404 }) } }; try { helpers.missing() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "method replacement through helper parameter",
+    "const helpers = { missing() { throw createError({ statusCode: 404 }) } }; function replace(target) { target.missing = () => { throw new Error() } }; replace(helpers); try { helpers.missing() } catch { throw new Error() }",
+    0,
   ],
   [
     "unawaited async call",

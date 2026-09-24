@@ -129,6 +129,35 @@ function errorStatus(value: ErrorValue | undefined, path: Path): Outcome | undef
   return value && (path.errors?.get(value.id) ?? value.status);
 }
 
+function compoundStatus(operator: string, previous: number, operand: number): number | undefined {
+  switch (operator) {
+    case "+=":
+      return previous + operand;
+    case "-=":
+      return previous - operand;
+    case "*=":
+      return previous * operand;
+    case "/=":
+      return previous / operand;
+    case "%=":
+      return previous % operand;
+    case "**=":
+      return previous ** operand;
+    case "|=":
+      return previous | operand;
+    case "&=":
+      return previous & operand;
+    case "^=":
+      return previous ^ operand;
+    case "<<=":
+      return previous << operand;
+    case ">>=":
+      return previous >> operand;
+    case ">>>=":
+      return previous >>> operand;
+  }
+}
+
 function outcomes(
   node: AnyNode,
   path: Path,
@@ -178,6 +207,21 @@ function evaluateOutcomes(
     label: undefined,
   };
   if (!node) return [normal];
+  if (node.type === "ChainExpression") {
+    const expression = node.expression;
+    if (
+      (expression.type === "MemberExpression" &&
+        expression.optional &&
+        knownNullish(expression.object, normal)) ||
+      (expression.type === "CallExpression" &&
+        ((expression.optional && knownNullish(expression.callee, normal)) ||
+          (expression.callee.type === "MemberExpression" &&
+            expression.callee.optional &&
+            knownNullish(expression.callee.object, normal))))
+    )
+      return [{ ...normal, value: { literal: undefined } }];
+    return outcomes(expression, normal, bindings, conditions);
+  }
   if (unwrapExpression(node) !== node || node.type === "ExpressionStatement")
     return outcomes(node.expression, normal, bindings, conditions);
   if (node.type === "BlockStatement") {
@@ -292,8 +336,12 @@ function evaluateOutcomes(
         errorStatus(
           current.value && "error" in current.value ? current.value.error : undefined,
           current,
-        ) ?? "throw";
-      return { ...current, outcome };
+        ) ?? (current.value && "literal" in current.value ? "server-error" : "throw");
+      return {
+        ...current,
+        outcome:
+          outcome === "throw" && argument?.type === "ObjectExpression" ? "server-error" : outcome,
+      };
     });
   }
   if (node.type === "ReturnStatement")
@@ -408,7 +456,7 @@ function evaluateOutcomes(
                 declaration.id.type === "Identifier"
                   ? declaration.id
                   : { ...declaration.id, type: "Identifier", name };
-              const binding = evaluated.resolveBinding(reference);
+              const binding = evaluated.resolveBinding(reference, declaration.id);
               if (binding) {
                 if (declaration.id.type === "Identifier") literals.delete(binding);
                 uninitialized.delete(binding);
@@ -577,16 +625,16 @@ function evaluateOutcomes(
           if (property === "statusCode" || property === "status") {
             const error = target.bindings?.get(target.resolveBinding(member.object));
             const errors = new Map(evaluated.errors);
-            if (error)
-              errors.set(
-                error.id,
-                assignment.operator === "=" &&
-                  evaluated.value &&
-                  "literal" in evaluated.value &&
-                  typeof evaluated.value.literal === "number"
-                  ? evaluated.value.literal
-                  : "throw",
-              );
+            const previous = error && errorStatus(error, target);
+            const operand =
+              evaluated.value && "literal" in evaluated.value ? evaluated.value.literal : undefined;
+            const status =
+              assignment.operator === "="
+                ? operand
+                : typeof previous === "number" && typeof operand === "number"
+                  ? compoundStatus(assignment.operator, previous, operand)
+                  : undefined;
+            if (error) errors.set(error.id, typeof status === "number" ? status : "throw");
             return { ...evaluated, errors };
           }
         }
@@ -749,6 +797,27 @@ function evaluateOutcomes(
       paths = paths.flatMap((current) =>
         current.outcome === "normal" ? outcomes(child, current, bindings, conditions) : [current],
       );
+    if (node.type === "UnaryExpression")
+      return paths.map((current) => {
+        if (current.outcome !== "normal" || !current.value || !("literal" in current.value))
+          return { ...current, value: undefined };
+        const value = current.value.literal;
+        const literal =
+          node.operator === "!"
+            ? !value
+            : node.operator === "void"
+              ? undefined
+              : node.operator === "+" && (typeof value === "number" || typeof value === "string")
+                ? +value
+                : node.operator === "-" && typeof value === "number"
+                  ? -value
+                  : node.operator === "~" && typeof value === "number"
+                    ? ~value
+                    : node.operator === "typeof"
+                      ? typeof value
+                      : undefined;
+        return { ...current, value: { literal } };
+      });
     return node.type === "SequenceExpression"
       ? paths
       : paths.map((current) => ({ ...current, value: undefined }));
@@ -798,7 +867,12 @@ function evaluateOutcomes(
   )
     return outcomes(call, normal, bindings, conditions);
   if (!argumentValues && (call.type === "CallExpression" || call.type === "NewExpression")) {
-    let paths = outcomes(call.callee, normal, bindings, conditions).map((current) => ({
+    let paths = outcomes(
+      call.callee,
+      { ...normal, adoptingAsync: false },
+      bindings,
+      conditions,
+    ).map((current) => ({
       path: current,
       values: [] as (Value | undefined)[],
       arguments: [] as AnyNode[],
@@ -846,22 +920,63 @@ function evaluateOutcomes(
     }
     return paths.flatMap(({ path: current, values, arguments: evaluatedArguments }) =>
       current.outcome === "normal"
-        ? outcomes(node, current, bindings, conditions, values, evaluatedArguments)
+        ? outcomes(
+            node,
+            { ...current, adoptingAsync: path.adoptingAsync },
+            bindings,
+            conditions,
+            values,
+            evaluatedArguments,
+          )
         : [current],
     );
   }
   if (evaluatedArguments) call = { ...call, arguments: evaluatedArguments };
   let callee = unwrapExpression(call.callee);
+  if (
+    assignment.type === "AwaitExpression" &&
+    callee?.type === "MemberExpression" &&
+    callee.object.type === "Identifier" &&
+    callee.object.name === "Promise" &&
+    !path.resolveBinding(callee.object) &&
+    (callee.computed ? knownLiteral(callee.property, path) : callee.property.name) === "reject"
+  ) {
+    const rejection = argumentValues?.[0];
+    return [
+      {
+        ...normal,
+        outcome:
+          rejection && "error" in rejection
+            ? (errorStatus(rejection.error, path) ?? "throw")
+            : "throw",
+        value: rejection,
+      },
+    ];
+  }
   if (callee?.type === "Identifier") callee = path.functions?.get(path.resolveBinding(callee));
   if (callee?.type === "MemberExpression" && callee.object.type === "Identifier") {
     const object = path.objects?.get(path.resolveBinding(callee.object));
     const key = callee.computed ? knownLiteral(callee.property, path) : callee.property.name;
-    const property = object?.properties.some(
-      (item: AnyNode) => item.type === "SpreadElement" || item.computed,
-    )
-      ? undefined
-      : object?.properties.findLast((item: AnyNode) => (item.key.name ?? item.key.value) === key);
-    if (property?.kind === "init") callee = unwrapExpression(property.value);
+    const properties = object?.properties ?? [];
+    const index = properties.findLastIndex(
+      (item: AnyNode) =>
+        item.type !== "SpreadElement" &&
+        (item.computed ? knownLiteral(item.key, path) : (item.key.name ?? item.key.value)) === key,
+    );
+    if (
+      index !== -1 &&
+      !properties
+        .slice(index + 1)
+        .some(
+          (item: AnyNode) =>
+            item.type === "SpreadElement" ||
+            (item.computed && knownLiteral(item.key, path) === undefined),
+        )
+    ) {
+      const property = properties[index];
+      if (property.kind === "init") callee = unwrapExpression(property.value);
+      if (callee?.type === "Identifier") callee = path.functions?.get(path.resolveBinding(callee));
+    }
   }
   if (
     (call.type === "CallExpression" ||
@@ -916,6 +1031,12 @@ function evaluateOutcomes(
         calls: [...(path.calls ?? []), callee],
         asyncBody: Boolean(callee.async),
         adoptingAsync: false,
+        uninitialized: new Set([
+          ...(path.uninitialized ?? []),
+          ...callee.params.flatMap((param: AnyNode) =>
+            bindingNames(param).map((name) => path.resolveBinding({ name } as AnyNode, callee)),
+          ),
+        ]),
       },
     ];
     for (const [index, param] of callee.params.entries()) {
@@ -940,6 +1061,10 @@ function evaluateOutcomes(
             : [current];
           return evaluated.flatMap((result) => {
             if (result.outcome !== "normal") return [result];
+            const uninitialized = new Set(result.uninitialized);
+            for (const name of bindingNames(target))
+              uninitialized.delete(result.resolveBinding({ name } as AnyNode, callee));
+            result = { ...result, uninitialized };
             if (target.type !== "Identifier")
               return patternOutcomes(
                 target,
@@ -967,10 +1092,18 @@ function evaluateOutcomes(
                   : undefined;
             if (boolean !== undefined) booleans.set(conditionKey(target, result), boolean);
             const literals = new Map(result.literals);
+            const objects = new Map(result.objects);
             const binding = result.resolveBinding(target);
+            const object =
+              arg?.type === "Identifier"
+                ? source.objects?.get(source.resolveBinding(arg))
+                : arg?.type === "ObjectExpression"
+                  ? arg
+                  : undefined;
+            if (object) objects.set(binding, object);
             literals.delete(binding);
             if (value && "literal" in value) literals.set(binding, value);
-            return { ...result, bindings: values, conditions: booleans, literals };
+            return { ...result, bindings: values, conditions: booleans, literals, objects };
           });
         });
       });
@@ -1059,6 +1192,16 @@ function knownLiteral(node: AnyNode, path: Path): unknown {
       : undefined;
 }
 
+function knownNullish(node: AnyNode, path: Path): boolean {
+  node = unwrapExpression(node);
+  if (node?.type === "Literal") return node.value == null;
+  if (node?.type !== "Identifier") return false;
+  const binding = path.resolveBinding(node);
+  return binding
+    ? path.literals?.has(binding) === true && path.literals.get(binding)?.literal == null
+    : node.name === "undefined";
+}
+
 function patternOutcomes(
   pattern: AnyNode,
   source: AnyNode,
@@ -1112,6 +1255,7 @@ function patternOutcomes(
   }
   const entries: [AnyNode, AnyNode, AnyNode?][] = [];
   if (pattern.type === "ObjectPattern") {
+    if (source?.type === "Literal" && source.value == null) return [{ ...path, outcome: "throw" }];
     for (const property of pattern.properties) {
       if (property.type === "RestElement") continue;
       const key = property.computed
@@ -1253,15 +1397,7 @@ function loopOutcomes(
       result.push(current);
       continue;
     }
-    const key = pathKey([
-      [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
-      [...(current.errors ?? [])],
-      [...(current.literals ?? [])].map(([node, value]) => [node.start, value]),
-      [...(current.bindings ?? [])].map(([binding, value]) => [binding?.start, value]),
-      [...(current.functions ?? [])]
-        .map(([binding, fn]) => [binding.start, fn.start])
-        .sort(([a], [b]) => a - b),
-    ]);
+    const key = loopStateKey(current);
     if (!first && seen.has(key)) continue;
     if (!first) seen.add(key);
     const paths = outcomes(first ? node.body : iteration, current, bindings, conditions);
@@ -1276,6 +1412,18 @@ function loopOutcomes(
     }
   }
   return result;
+}
+
+function loopStateKey(current: Path): string {
+  return pathKey([
+    [...current.conditions].sort(([left], [right]) => left.localeCompare(right)),
+    [...(current.errors ?? [])],
+    [...(current.literals ?? [])].map(([binding, value]) => [binding.start, value]),
+    [...(current.bindings ?? [])].map(([binding, value]) => [binding?.start, value]),
+    [...(current.functions ?? [])].map(([binding, fn]) => [binding.start, fn.start]),
+    [...(current.objects ?? [])].map(([binding, object]) => [binding.start, object.start]),
+    [...(current.uninitialized ?? [])].map((binding) => binding.start),
+  ]);
 }
 
 function catchOutcomes(
@@ -1624,8 +1772,15 @@ function lexicalBindings(root: AnyNode) {
   const scopes = new Map<AnyNode, Scope>();
   const names = new Map<AnyNode, AnyNode>();
   function bind(pattern: AnyNode, scope: Scope) {
-    for (const binding of bindingNames(pattern))
-      if (!scope.bindings.has(binding)) scope.bindings.set(binding, pattern);
+    if (!pattern) return;
+    if (pattern.type === "Identifier") {
+      if (!scope.bindings.has(pattern.name)) scope.bindings.set(pattern.name, pattern);
+    } else if (pattern.type === "AssignmentPattern") bind(pattern.left, scope);
+    else if (pattern.type === "RestElement") bind(pattern.argument, scope);
+    else if (pattern.type === "ArrayPattern")
+      pattern.elements.forEach((item: AnyNode) => bind(item, scope));
+    else if (pattern.type === "ObjectPattern")
+      pattern.properties.forEach((item: AnyNode) => bind(item.value ?? item.argument, scope));
   }
   function collect(node: AnyNode, outer: Scope) {
     if (!node?.type) return;
@@ -1833,7 +1988,9 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
     ) {
       prefixes.unshift([parent.right]);
     } else if (
-      (parent.type === "WhileStatement" || parent.type === "ForStatement") &&
+      (parent.type === "WhileStatement" ||
+        parent.type === "ForStatement" ||
+        parent.type === "DoWhileStatement") &&
       child === parent.body
     ) {
       prefixes.unshift((path) => {
@@ -1844,17 +2001,24 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
         const pending = [...entry];
         const entries: Path[] = [];
         const seen = new Set<string>();
+        const labels = new Set<string>();
+        for (
+          let ancestor = parent.__doctorParent;
+          ancestor?.type === "LabeledStatement";
+          ancestor = ancestor.__doctorParent
+        )
+          if (ancestor.body === parent || ancestor.body?.type === "LabeledStatement")
+            labels.add(ancestor.label.name);
         while (pending.length) {
           const current = pending.pop()!;
           if (current.outcome !== "normal") continue;
-          const key = pathKey([
-            [...current.conditions],
-            [...(current.literals ?? [])].map(([binding, value]) => [binding.start, value]),
-            [...(current.bindings ?? [])].map(([binding, value]) => [binding?.start, value]),
-          ]);
+          const key = loopStateKey(current);
           if (seen.has(key)) continue;
           seen.add(key);
-          const test = parent.test ?? { type: "Literal", value: true };
+          const test =
+            parent.type === "DoWhileStatement" && entries.length === 0
+              ? { type: "Literal", value: true }
+              : (parent.test ?? { type: "Literal", value: true });
           for (const { path: tested, value } of conditionPaths(
             test,
             current,
@@ -1864,8 +2028,19 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
             if (tested.outcome !== "normal" || !value) continue;
             entries.push(tested);
             for (const body of outcomes(parent.body, tested, new Map(), conditions)) {
-              if (body.outcome !== "normal" && body.outcome !== "continue") continue;
-              pending.push(...outcomes(parent.update, body, new Map(), conditions));
+              if (
+                body.outcome !== "normal" &&
+                !(body.outcome === "continue" && (!body.label || labels.has(body.label)))
+              )
+                continue;
+              pending.push(
+                ...outcomes(
+                  parent.update,
+                  { ...body, outcome: "normal", label: undefined },
+                  new Map(),
+                  conditions,
+                ),
+              );
             }
           }
         }
