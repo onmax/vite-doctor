@@ -357,6 +357,8 @@ test.each([
 });
 
 test.each([
+  'function load() { class Adapter { @require("peer") method() {} } }',
+  'class Outer { load() { class Adapter { @require("peer") method() {} } } }',
   'class Adapter { @(() => require("peer")) method() {} }',
   'if (enabled) { class Adapter { @require("peer") method() {} } }',
 ])("preserves guarded decorator loads: %s", async (source) => {

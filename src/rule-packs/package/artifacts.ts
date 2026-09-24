@@ -527,7 +527,11 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
 
 function isDecoratorExpression(node: ts.Node, ancestor: ts.Node): boolean {
   for (let current = node.parent; current && current !== ancestor; current = current.parent)
-    if (ts.isDecorator(current)) return true;
+    if (ts.isDecorator(current))
+      return (
+        current.parent === ancestor ||
+        (ts.isParameter(current.parent) && current.parent.parent === ancestor)
+      );
   return false;
 }
 
