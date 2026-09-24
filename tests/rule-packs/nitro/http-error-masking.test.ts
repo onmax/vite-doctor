@@ -918,6 +918,81 @@ test.each([
 
 test.each([
   [
+    "shadowed createError",
+    "const createError = () => new Error(); try { throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    false,
+  ],
+  [
+    "shadowed Error",
+    "const Error = class {}; try { throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    false,
+  ],
+  [
+    "parameter createError",
+    "function handler(createError) { try { throw createError({ statusCode: 404 }) } catch { throw new Error() } }",
+    false,
+  ],
+  [
+    "uncalled enclosing mutation",
+    "function missing() { throw createError({ statusCode: 404 }) }; function unused() { missing = () => {} }; try { missing() } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "correlated enclosing replacement",
+    "function missing() { throw createError({ statusCode: 404 }) }; if (change) missing = () => {}; try { if (change) missing() } catch { throw new Error() }",
+    false,
+  ],
+  [
+    "conditional enclosing replacement",
+    "function missing() { throw createError({ statusCode: 404 }) }; if (change) missing = () => {}; try { missing() } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "unreachable enclosing replacement",
+    "function missing() { throw createError({ statusCode: 404 }) }; if (false) missing = () => {}; try { missing() } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "definite enclosing replacement",
+    "function missing() { throw createError({ statusCode: 404 }) }; if (true) missing = () => {}; try { missing() } catch { throw new Error() }",
+    false,
+  ],
+  [
+    "called enclosing mutation",
+    "function missing() { throw createError({ statusCode: 404 }) }; function replace() { missing = () => {} }; replace(); try { missing() } catch { throw new Error() }",
+    false,
+  ],
+  [
+    "synchronous assignment value",
+    "let value; try { function missing() { throw createError({ statusCode: 404 }) }; (value = missing()) } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "awaited assignment value",
+    "let value; try { async function missing() { throw createError({ statusCode: 404 }) }; (value = await missing()) } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "synchronous assignment value.result",
+    "let value; try { function missing() { throw createError({ statusCode: 404 }) }; (value.result = missing()) } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "awaited assignment value.result",
+    "let value; try { async function missing() { throw createError({ statusCode: 404 }) }; (value.result = await missing()) } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "synchronous assignment { result: value }",
+    "let value; try { function missing() { throw createError({ statusCode: 404 }) }; ({ result: value } = missing()) } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "awaited assignment { result: value }",
+    "let value; try { async function missing() { throw createError({ statusCode: 404 }) }; ({ result: value } = await missing()) } catch { throw new Error() }",
+    true,
+  ],
+  [
     "enclosing helper",
     "function missing() { throw createError({ statusCode: 404 }) }; try { missing() } catch { throw new Error() }",
     true,
