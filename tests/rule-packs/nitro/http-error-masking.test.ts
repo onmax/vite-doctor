@@ -2433,6 +2433,26 @@ test.each([
     1,
   ],
   [
+    "returned explicit rejection is adopted",
+    "async function load() { return Promise.reject(createError({ statusCode: 404 })) }; try { await load() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "constructor call of arrow throws before client error",
+    "try { new (() => {}); throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "tagged template substitution throws client error",
+    "function missing() { throw createError({ statusCode: 404 }) }; try { tag`${missing()}` } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "for-of binding reaches nested try",
+    "for (const code of [404]) { try { throw createError({ statusCode: code }) } catch { throw new Error() } }",
+    1,
+  ],
+  [
     "optional call of known function",
     "function missing() { throw createError({ statusCode: 404 }) }; try { missing?.() } catch { throw new Error() }",
     1,
@@ -2446,6 +2466,16 @@ test.each([
   [
     "optional chain skips computed key evaluation",
     "function missing() { throw createError({ statusCode: 404 }) }; try { null?.[missing()] } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "long optional chain skips argument evaluation",
+    "function missing() { throw createError({ statusCode: 404 }) }; try { null?.target.call(missing()) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "long optional chain skips computed key evaluation",
+    "function missing() { throw createError({ statusCode: 404 }) }; try { null?.target[missing()] } catch { throw new Error() }",
     0,
   ],
   [

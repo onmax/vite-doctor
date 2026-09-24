@@ -209,16 +209,7 @@ function evaluateOutcomes(
   if (!node) return [normal];
   if (node.type === "ChainExpression") {
     const expression = node.expression;
-    if (
-      (expression.type === "MemberExpression" &&
-        expression.optional &&
-        knownNullish(expression.object, normal)) ||
-      (expression.type === "CallExpression" &&
-        ((expression.optional && knownNullish(expression.callee, normal)) ||
-          (expression.callee.type === "MemberExpression" &&
-            expression.callee.optional &&
-            knownNullish(expression.callee.object, normal))))
-    )
+    if (shortCircuitsChain(expression, normal))
       return [{ ...normal, value: { literal: undefined } }];
     return outcomes(expression, normal, bindings, conditions);
   }
@@ -790,7 +781,9 @@ function evaluateOutcomes(
             ? [node.argument]
             : node.type === "TemplateLiteral" || node.type === "SequenceExpression"
               ? node.expressions
-              : undefined;
+              : node.type === "TaggedTemplateExpression"
+                ? [node.tag, ...node.quasi.expressions]
+                : undefined;
   if (children) {
     let paths: Path[] = [normal];
     for (const child of children)
@@ -934,7 +927,7 @@ function evaluateOutcomes(
   if (evaluatedArguments) call = { ...call, arguments: evaluatedArguments };
   let callee = unwrapExpression(call.callee);
   if (
-    assignment.type === "AwaitExpression" &&
+    (assignment.type === "AwaitExpression" || path.adoptingAsync) &&
     callee?.type === "MemberExpression" &&
     callee.object.type === "Identifier" &&
     callee.object.name === "Promise" &&
@@ -978,6 +971,8 @@ function evaluateOutcomes(
       if (callee?.type === "Identifier") callee = path.functions?.get(path.resolveBinding(callee));
     }
   }
+  if (call.type === "NewExpression" && callee?.type === "ArrowFunctionExpression")
+    return [{ ...normal, outcome: "throw" }];
   if (
     (call.type === "CallExpression" ||
       (call.type === "NewExpression" && callee?.type !== "ArrowFunctionExpression")) &&
@@ -1200,6 +1195,19 @@ function knownNullish(node: AnyNode, path: Path): boolean {
   return binding
     ? path.literals?.has(binding) === true && path.literals.get(binding)?.literal == null
     : node.name === "undefined";
+}
+
+function shortCircuitsChain(node: AnyNode, path: Path): boolean {
+  node = unwrapExpression(node);
+  if (node.type === "MemberExpression")
+    return (
+      (node.optional && knownNullish(node.object, path)) || shortCircuitsChain(node.object, path)
+    );
+  if (node.type === "CallExpression")
+    return (
+      (node.optional && knownNullish(node.callee, path)) || shortCircuitsChain(node.callee, path)
+    );
+  return false;
 }
 
 function patternOutcomes(
@@ -1986,7 +1994,31 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
       (parent.type === "ForInStatement" || parent.type === "ForOfStatement") &&
       child === parent.body
     ) {
-      prefixes.unshift([parent.right]);
+      prefixes.unshift((path) =>
+        outcomes(parent.right, path, new Map(), conditions).flatMap((current) => {
+          if (current.outcome !== "normal") return [];
+          const right = unwrapExpression(parent.right);
+          const elements =
+            parent.type === "ForOfStatement" && current.arrayIteratorElements !== null
+              ? (current.arrayIteratorElements ??
+                (right.type === "ArrayExpression" ? right.elements : undefined))
+              : undefined;
+          const target =
+            parent.left.type === "VariableDeclaration"
+              ? parent.left.declarations[0].id
+              : parent.left;
+          const values = elements?.length ? elements : [{ type: "UnknownExpression" }];
+          return values.flatMap((value: AnyNode) =>
+            patternOutcomes(
+              target,
+              value ?? { type: "Literal", value: undefined },
+              current,
+              conditions,
+              current,
+            ),
+          );
+        }),
+      );
     } else if (
       (parent.type === "WhileStatement" ||
         parent.type === "ForStatement" ||
