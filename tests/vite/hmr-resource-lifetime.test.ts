@@ -2863,6 +2863,11 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "object spread retains a getter-created timer",
+    "const source = { get timer() { return setInterval(refresh) } }; const state = { ...source }; import.meta.hot.dispose(() => clearInterval(state.timer))",
+    false,
+  ],
+  [
     "shadowed getter does not run during spread",
     "const source = { get timer() { setInterval(refresh); return 0 }, timer: 0 }; ({ ...source }); import.meta.hot.dispose(() => {})",
     false,
@@ -2900,6 +2905,31 @@ for (const [name, source, leaks] of [
   [
     "resolved promise reaction creates a timer",
     "Promise.resolve().then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "awaited promise reaction retains a timer",
+    "const pending = Promise.resolve().then(() => setInterval(refresh)); const timer = await pending; import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "listener registration is not truthy",
+    "const target = document; const handler = () => {}; const result = target.addEventListener('change', handler); import.meta.hot.dispose(() => { if (result) target.removeEventListener('change', handler) })",
+    true,
+  ],
+  [
+    "synchronously canceled timeout never fires",
+    "const pending = setTimeout(() => setInterval(refresh), 0); clearTimeout(pending); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "canceling timeout during disposal cannot credit its callback cleanup",
+    "const timer = setInterval(refresh); const pending = setTimeout(() => clearInterval(timer), 0); import.meta.hot.dispose(() => clearTimeout(pending))",
+    true,
+  ],
+  [
+    "subscription results have unknown truthiness",
+    "const sub = events.subscribe(refresh); import.meta.hot.dispose(() => { if (sub) sub.unsubscribe() })",
     true,
   ],
   [

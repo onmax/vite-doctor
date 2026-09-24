@@ -132,6 +132,12 @@ function undisposedResource(program: AnyNode): string | null {
   };
   type Completion = { normal: boolean; abrupt: boolean; value?: AnyNode };
   const resources: Resource[] = [];
+  const knownTruthyResource = (value: AnyNode): boolean =>
+    resources.some(
+      (resource) =>
+        resource.value === value &&
+        ["interval", "timeout", "WebSocket", "EventSource"].includes(resource.kind),
+    );
   const repeated = new Set<AnyNode>();
   let loopDepth = 0;
   const listeners: Listener[] = [];
@@ -140,6 +146,11 @@ function undisposedResource(program: AnyNode): string | null {
   const lexicalEnvironments = new Map<AnyNode, Map<AnyNode, AnyNode>>();
   const promises = new Map<AnyNode, AnyNode>();
   const promiseCompletions = new Map<AnyNode, Completion>();
+  const pendingTimeouts: {
+    timeout: AnyNode;
+    callback: AnyNode;
+    environment: Map<AnyNode, AnyNode>;
+  }[] = [];
   const arrayChoices = new Map<AnyNode, { array: AnyNode; path: Map<object, boolean> }[]>();
   const alternatives = new Map<AnyNode, AnyNode[]>();
   const callbackChoices = new Map<AnyNode, AnyNode[]>();
@@ -703,8 +714,10 @@ function undisposedResource(program: AnyNode): string | null {
             callback?.type === "ArrowFunctionExpression" ||
             callback?.type === "FunctionExpression" ||
             callback?.type === "FunctionDeclaration"
-          )
-            inspect(callback, [], environment, false);
+          ) {
+            const timeout = created[0];
+            if (timeout) pendingTimeouts.push({ timeout, callback, environment });
+          }
         }
       }
       if (node.type !== "CallExpression") return;
@@ -732,7 +745,7 @@ function undisposedResource(program: AnyNode): string | null {
           value?.type === "ArrayExpression" ||
           value?.type === "ObjectExpression" ||
           promises.has(value) ||
-          resources.some((resource) => resource.value === value)
+          knownTruthyResource(value)
         )
           returned.set(node, {
             type: "Literal",
@@ -830,7 +843,10 @@ function undisposedResource(program: AnyNode): string | null {
       ) {
         const promise = identity(node.callee.object, environment);
         const completion = inspect(node.arguments[0], [promises.get(promise)], environment, module);
-        returned.set(node, {});
+        const result = {};
+        if (completion.normal) promises.set(result, completion.value);
+        promiseCompletions.set(result, completion);
+        returned.set(node, result);
         return completion.normal || completion.abrupt;
       }
       if (
@@ -1511,19 +1527,26 @@ function undisposedResource(program: AnyNode): string | null {
       }
       if (node.type === "ObjectExpression") {
         const spreadGetters = (source: AnyNode): boolean => {
-          for (const { property, receiver, accessor } of effectiveProperties(
+          for (const [key, { property, receiver, accessor }] of effectiveProperties(
             source,
             environment,
-          ).values()) {
+          )) {
             if (!accessor || property.kind !== "get") continue;
             const completion = inspect(property.value, [], environment, module, receiver);
-            if (completion.abrupt) return false;
+            if (!completion.normal) return false;
+            if (!properties.has(node)) properties.set(node, new Map());
+            properties.get(node)!.set(key, completion.value);
           }
           return true;
         };
         for (const property of node.properties) {
           if (!walk(property)) return false;
           if (property.type === "SpreadElement" && !spreadGetters(property.argument)) return false;
+          if (property.type === "Property") {
+            const key = definitionKey(property, environment);
+            if (key !== undefined && properties.get(node)?.has(key))
+              properties.get(node)!.set(key, identity(property.value, environment));
+          }
         }
         return true;
       }
@@ -1656,7 +1679,7 @@ function undisposedResource(program: AnyNode): string | null {
         if (
           test?.type === "Literal" ||
           memberPath(node.test) === "import.meta.hot" ||
-          resources.some((resource) => resource.value === test)
+          knownTruthyResource(test)
         ) {
           const selected =
             test?.type === "Literal" && !test.value ? node.alternate : node.consequent;
@@ -1689,7 +1712,7 @@ function undisposedResource(program: AnyNode): string | null {
       if (node.type === "AssignmentExpression" && ["||=", "&&=", "??="].includes(node.operator)) {
         if (!walk(node.left)) return false;
         const left = identity(node.left, environment);
-        const resource = resources.some((resource) => resource.value === left);
+        const resource = knownTruthyResource(left);
         const known = resource || left?.type === "Literal" || left == null || left === "undefined";
         const assignment = { ...node, operator: "=" };
         if (!known) return branch(assignment, null);
@@ -1709,12 +1732,9 @@ function undisposedResource(program: AnyNode): string | null {
         if (memberPath(node.left) === "import.meta.hot" && node.operator === "&&")
           return walk(node.right);
         const left = identity(node.left, environment);
-        const known =
-          left?.type === "Literal" ||
-          left === "undefined" ||
-          resources.some((resource) => resource.value === left);
+        const known = left?.type === "Literal" || left === "undefined" || knownTruthyResource(left);
         if (known) {
-          const value = resources.some((resource) => resource.value === left)
+          const value = knownTruthyResource(left)
             ? true
             : left === "undefined"
               ? undefined
@@ -2100,6 +2120,13 @@ function undisposedResource(program: AnyNode): string | null {
     return { normal, abrupt, value };
   }
   evaluate(program, values, true);
+  for (const { timeout, callback, environment } of pendingTimeouts) {
+    if (cleaned.has(timeout)) continue;
+    const priorCleaned = new Set(cleaned);
+    const priorResources = new Set(resources.map((resource) => resource.value));
+    inspect(callback, [], environment, false);
+    for (const value of priorResources) if (!priorCleaned.has(value)) cleaned.delete(value);
+  }
   const initialCleaned = new Set(cleaned);
   const initialValues = new Map(values);
   const initialProperties = new Map(
