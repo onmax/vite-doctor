@@ -1141,3 +1141,85 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "member setup leak",
+    "const helpers = { start() { setInterval(refresh) } }; helpers.start(); import.meta.hot.dispose(saveState)",
+    true,
+  ],
+  [
+    "member setup cleanup",
+    "const helpers = { start() { return setInterval(refresh) } }; const timer = helpers.start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "static template event",
+    "addEventListener(`resize`, refresh); import.meta.hot.dispose(() => removeEventListener(`resize`, refresh))",
+    false,
+  ],
+  [
+    "template and string event",
+    "const event = `resize`; addEventListener(event, refresh); import.meta.hot.dispose(() => removeEventListener('resize', refresh))",
+    false,
+  ],
+  [
+    "different template events",
+    "addEventListener(`resize`, refresh); import.meta.hot.dispose(() => removeEventListener(`scroll`, refresh))",
+    true,
+  ],
+  [
+    "dynamic template events",
+    "addEventListener(`resize${suffix}`, refresh); import.meta.hot.dispose(() => removeEventListener(`resize${suffix}`, refresh))",
+    true,
+  ],
+  [
+    "direct recursion before cleanup",
+    "const timer = setInterval(refresh); function recurse() { recurse() }; import.meta.hot.dispose(() => { recurse(); clearInterval(timer) })",
+    true,
+  ],
+  [
+    "mutual recursion before cleanup",
+    "const timer = setInterval(refresh); function first() { second() }; function second() { first() }; import.meta.hot.dispose(() => { first(); clearInterval(timer) })",
+    true,
+  ],
+  [
+    "cleanup before recursion",
+    "const timer = setInterval(refresh); function recurse() { recurse() }; import.meta.hot.dispose(() => { clearInterval(timer); recurse() })",
+    false,
+  ],
+  [
+    "conditional recursion before cleanup",
+    "const timer = setInterval(refresh); function recurse() { if (again) recurse() }; import.meta.hot.dispose(() => { recurse(); clearInterval(timer) })",
+    true,
+  ],
+  [
+    "stale returned resource",
+    "function start() { return setInterval(refresh) }; const first = start(); clearInterval(first); const second = start(); import.meta.hot.dispose(() => clearInterval(first))",
+    true,
+  ],
+  [
+    "distinct returned resources cleaned",
+    "function start() { return setInterval(refresh) }; const first = start(); const second = start(); import.meta.hot.dispose(() => { clearInterval(first); clearInterval(second) })",
+    false,
+  ],
+  [
+    "latest returned resource cleaned",
+    "function start() { return setInterval(refresh) }; const first = start(); clearInterval(first); const second = start(); import.meta.hot.dispose(() => clearInterval(second))",
+    false,
+  ],
+  [
+    "stale nested returned resource",
+    "function create() { return setInterval(refresh) }; function start() { return create() }; const first = start(); clearInterval(first); const second = start(); import.meta.hot.dispose(() => clearInterval(first))",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}

@@ -288,7 +288,7 @@ function undisposedResource(program: AnyNode): string | null {
     module = false,
   ): Completion {
     target = unwrapResourceExpression(target);
-    if (target?.type === "Identifier") {
+    if (target?.type === "Identifier" || target?.type === "MemberExpression") {
       const value = identity(target, environment);
       if (
         resources.some((resource) => resource.value === value && resource.kind === "subscription")
@@ -319,9 +319,9 @@ function undisposedResource(program: AnyNode): string | null {
       visited.delete(target);
       return completion;
     }
+    if (visited.has(target)) return { normal: false, abrupt: true };
     if (
       !target ||
-      visited.has(target) ||
       !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
         target.type,
       )
@@ -385,7 +385,7 @@ function undisposedResource(program: AnyNode): string | null {
           node.type === "VariableDeclarator" ? node.init : node.right,
         );
         if (init) {
-          const value = init.type === "Identifier" ? identity(init, environment) : init;
+          const value = identity(init, environment);
           environment.set(binding, value);
           if (["ArrowFunctionExpression", "FunctionExpression"].includes(init.type))
             callbacks.set(value, init);
@@ -418,14 +418,11 @@ function undisposedResource(program: AnyNode): string | null {
                   ? "subscription"
                   : null;
         if (module && kind) {
-          if (
-            loopDepth ||
-            (resources.some((resource) => resource.value === node) && !cleaned.has(node))
-          )
-            repeated.add(node);
-          cleaned.delete(node);
+          const value = {};
+          returned.set(node, value);
+          if (loopDepth) repeated.add(value);
           resources.push({
-            value: node,
+            value,
             kind,
             cleanup:
               kind === "interval"
@@ -465,8 +462,11 @@ function undisposedResource(program: AnyNode): string | null {
           node.callee.type === "Identifier"
             ? (resolve(node.callee) ?? "window")
             : receiverIdentity(node.callee.object, environment);
+        const eventValue = identity(node.arguments[0], environment);
         const event =
-          node.arguments[0]?.value ?? identity(node.arguments[0], environment) ?? node.arguments[0];
+          eventValue?.type === "TemplateLiteral" && eventValue.expressions.length === 0
+            ? eventValue.quasis[0].value.cooked
+            : (eventValue?.value ?? eventValue);
         const handler = receiverIdentity(node.arguments[1], environment);
         const options = capture(node.arguments[2], environment);
         if (module && method === "addEventListener") {
@@ -625,10 +625,12 @@ function undisposedResource(program: AnyNode): string | null {
         }
         return true;
       }
-      if (visit(node) === false) return false;
+      const bindsValue = node.type === "VariableDeclarator" || node.type === "AssignmentExpression";
+      if (!bindsValue && visit(node) === false) return false;
       for (const [key, child] of Object.entries(node)) {
         if (key !== "__doctorParent" && !walk(child)) return false;
       }
+      if (bindsValue) visit(node);
       if (node.type === "ReturnStatement" || node.type === "ThrowStatement") {
         exits.push(new Set(cleaned));
         if (node.type === "ReturnStatement") {
