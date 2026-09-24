@@ -1053,3 +1053,59 @@ test.each([
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+test.each([
+  ["settings.public", false],
+  ['settings["public"]', false],
+  ["settings[key]", false],
+  ["settings.token", true],
+  ["values[1]", false],
+  ["values[0]", true],
+  ["nested.settings.public", false],
+  ["overwritten.token", false],
+])("traces only the selected static member: %s", async (value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const key = "public";
+const settings = { token: process.env.PRIVATE_TOKEN, public: "safe" };
+const values = [process.env.PRIVATE_TOKEN, "safe"];
+const nested = { settings };
+const overwritten = { ...settings, token: "safe" };
+export default { define: { VALUE: JSON.stringify(${value}) } };`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each(["null", "undefined", "void 0", "missing"])(
+  "preserves a secret define value beneath a nullish merge override: %s",
+  async (value) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `import { mergeConfig } from "vite";
+const missing = undefined;
+export default mergeConfig({ define: { VALUE: process.env.PRIVATE_TOKEN } }, { define: { VALUE: ${value} } });`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  },
+);
+
+test.each(["false", "0", '""', '"safe"'])(
+  "applies non-nullish merge overrides: %s",
+  async (value) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `import { mergeConfig } from "vite";
+export default mergeConfig({ define: { VALUE: process.env.PRIVATE_TOKEN } }, { define: { VALUE: ${value} } });`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);

@@ -469,10 +469,11 @@ function resolvesSecretAlias(
   function readValue(
     range: Range,
     bindings: Trace["bindings"],
-    visited = new Set<number>(),
+    visited = new Set<string>(),
   ): { node: AnyNode; offset: number } | undefined {
-    if (visited.has(range[0])) return;
-    visited.add(range[0]);
+    const identity = range.join(":");
+    if (visited.has(identity)) return;
+    visited.add(identity);
     const offset = range[0] - 1;
     try {
       const ast = parseForESLint(`(${source.slice(...range)})`, { range: true }).ast;
@@ -482,6 +483,59 @@ function resolvesSecretAlias(
         const ranges =
           bindings.get(offset + node.range[0]) ?? initializers.get(offset + node.range[0]);
         if (ranges?.length === 1) return readValue(ranges[0]!, bindings, visited);
+      }
+      if (node?.type === "MemberExpression") {
+        const object = readValue(
+          [offset + node.object.range[0], offset + node.object.range[1]],
+          bindings,
+          new Set(visited),
+        );
+        const property = node.computed
+          ? readValue(
+              [offset + node.property.range[0], offset + node.property.range[1]],
+              bindings,
+              new Set(visited),
+            )?.node
+          : node.property;
+        const key = node.computed
+          ? property?.type === "Literal"
+            ? String(property.value)
+            : null
+          : property?.name;
+        if (object && key != null) {
+          let selected: AnyNode;
+          let selectedOffset = object.offset;
+          if (object.node.type === "ObjectExpression") {
+            const properties = serializedProperties(object.node, object.offset, bindings);
+            const entry = properties.findLast((item) => item.key === key);
+            if (
+              entry &&
+              entry.node.kind !== "get" &&
+              !properties.some((item) => item.key === null)
+            ) {
+              selected = entry.node.value;
+              selectedOffset = entry.offset;
+            }
+          } else if (
+            object.node.type === "ArrayExpression" &&
+            !object.node.elements.some((item: AnyNode) => item?.type === "SpreadElement")
+          ) {
+            const index = Number(key);
+            if (
+              Number.isInteger(index) &&
+              index >= 0 &&
+              index < 2 ** 32 - 1 &&
+              String(index) === key
+            )
+              selected = object.node.elements[index];
+          }
+          if (selected)
+            return readValue(
+              [selectedOffset + selected.range[0], selectedOffset + selected.range[1]],
+              bindings,
+              visited,
+            );
+        }
       }
       return { node, offset };
     } catch {
@@ -974,6 +1028,26 @@ function resolvesSecretAlias(
           }
           continue;
         }
+        const range: Range = [current.start + node.range[0] - 1, current.start + node.range[1] - 1];
+        const selected = readValue(range, current.bindings);
+        if (selected && selected.offset + selected.node.range[0] !== range[0]) {
+          const start = selected.offset + selected.node.range[0];
+          pending.push({
+            ...current,
+            value: source.slice(start, selected.offset + selected.node.range[1]),
+            start,
+            invoked: invokedNodes.has(node),
+            serialized: serializedNodes.has(node),
+            serializationKey: serializationKeys.get(node),
+            propertyList: propertyLists.get(node),
+            replacer: replacers.get(node),
+            replacerApplied: replaced.has(node),
+            awaited: awaitedNodes.has(node),
+            args: callArguments.get(node) ?? [],
+            following: followingCalls.get(node),
+          });
+          continue;
+        }
         const property = node.property as AnyNode;
         if (
           (!node.computed && property.name === "length") ||
@@ -1185,7 +1259,25 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
               {
                 entries: [
                   ...new Map(
-                    [...base.entries, ...override.entries].map((entry) => [entry.key, entry]),
+                    [
+                      ...base.entries,
+                      ...override.entries.filter((entry) => {
+                        const value = resolve(
+                          nodesByRange.get(
+                            `${entry.valueStart}:${entry.valueStart + entry.rawValue.length}`,
+                          ),
+                        );
+                        return (
+                          !(value?.type === "Literal" && value.value === null) &&
+                          !(
+                            value?.type === "Identifier" &&
+                            value.name === "undefined" &&
+                            bindingKeys.get(value.start) === "global:undefined"
+                          ) &&
+                          !(value?.type === "UnaryExpression" && value.operator === "void")
+                        );
+                      }),
+                    ].map((entry) => [entry.key, entry]),
                   ).values(),
                 ],
                 predicates: new Map([...base.predicates, ...override.predicates]),
