@@ -39,6 +39,69 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "awaited local throw",
+    "async function missing() { throw createError({ statusCode: 404 }) }; await missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "unawaited local rejection",
+    "async function missing() { throw createError({ statusCode: 404 }) }; missing()",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "local caught argument",
+    "throw createError({ statusCode: 404 })",
+    "function preserve(value) { if (isError(value)) throw value }; preserve(error); throw new Error()",
+    false,
+  ],
+  [
+    "IIFE argument shadows outer error",
+    "throw createError({ statusCode: 404 })",
+    "((error) => { if (isError(error)) throw error })(unknown); throw new Error()",
+    true,
+  ],
+  [
+    "shadowed function declaration",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "function mutate() { missing = false }; { function mutate() {}; mutate() }; if (missing) throw error; throw new Error()",
+    false,
+  ],
+
+  ["callable Error", "throw createError({ statusCode: 404 })", "throw Error('failed')", true],
+  [
+    "invoked local throw",
+    "function missing() { throw createError({ statusCode: 404 }) }; missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "uncalled local throw",
+    "function missing() { throw createError({ statusCode: 404 }) }",
+    "throw new Error()",
+    false,
+  ],
+  ["recursive local call", "function recur() { recur() }; recur()", "throw new Error()", false],
+  [
+    "IIFE caught argument",
+    "throw createError({ statusCode: 404 })",
+    "((value) => { if (isError(value)) throw value })(error); throw new Error()",
+    false,
+  ],
+  [
+    "shadowed no-op callback",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "const mutate = () => { missing = false }; { const mutate = () => {}; mutate() }; if (missing) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "shadowed passed callback",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "const mutate = () => { missing = false }; { const mutate = () => {}; consume(mutate) }; if (missing) throw error; throw new Error()",
+    false,
+  ],
+  [
     "inspected condition callback",
     "if (missing) throw createError({ statusCode: 404 })",
     "const mutate = () => { missing = false }; void mutate; if (missing) throw error; throw new Error()",

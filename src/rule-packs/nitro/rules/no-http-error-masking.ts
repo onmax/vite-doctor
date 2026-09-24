@@ -1,3 +1,4 @@
+import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
 import { createRule, report, walkScriptLocal, type AnyNode } from "./shared.js";
 import { isNitroRouteFile } from "./request-helpers.js";
 
@@ -74,6 +75,7 @@ interface Path {
   conditions: ReadonlyMap<string, boolean>;
   bindings?: Bindings;
   functions?: ReadonlyMap<string, AnyNode>;
+  calls?: ReadonlySet<AnyNode>;
 }
 
 type Bindings = ReadonlyMap<string, Outcome>;
@@ -316,11 +318,13 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
   const call = assignment.type === "AwaitExpression" ? assignment.argument : assignment;
   let callee = call.callee;
   while (callee?.type === "ParenthesizedExpression") callee = callee.expression;
+  if (callee?.type === "Identifier") callee = path.functions?.get(callee.name);
   if (
     call.type === "CallExpression" &&
     isFunction(callee) &&
     (!callee.async || assignment.type === "AwaitExpression") &&
-    !callee.generator
+    !callee.generator &&
+    !path.calls?.has(callee)
   ) {
     const local = new Map(bindings);
     const shadows = new Set<string>();
@@ -329,25 +333,57 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       if (isFunction(child)) walkScriptLocal(child, (descendant) => nested.add(descendant));
       if (nested.has(child) || child.type !== "VariableDeclaration" || child.kind !== "var") return;
       for (const declaration of child.declarations)
-        for (const name of bindings.keys())
-          if (assignsBinding(declaration.id, name)) shadows.add(name);
+        for (const name of bindingNames(declaration.id)) shadows.add(name);
     });
-    for (const param of callee.params)
-      for (const name of bindings.keys()) if (assignsBinding(param, name)) shadows.add(name);
-    for (const name of shadows) local.delete(name);
-    return outcomes(callee.body, { ...normal, bindings: local }, local, conditions).map(
-      (current) => {
-        const restored = new Map(
-          [...(current.bindings ?? [])].filter(([name]) => bindings.has(name)),
-        );
-        for (const name of shadows) restored.set(name, bindings.get(name)!);
-        return {
-          ...current,
-          outcome: current.outcome === "exit" ? "normal" : current.outcome,
-          bindings: restored,
-        };
+    for (const param of callee.params) for (const name of bindingNames(param)) shadows.add(name);
+    const functions = new Map(path.functions);
+    const localConditions = new Map(path.conditions);
+    for (const name of shadows) {
+      local.delete(name);
+      functions.delete(name);
+      localConditions.delete(name);
+    }
+    callee.params.forEach((param: AnyNode, index: number) => {
+      if (param.type !== "Identifier") return;
+      const arg = call.arguments[index];
+      const status =
+        httpStatus(arg) ?? (arg?.type === "Identifier" ? bindings.get(arg.name) : undefined);
+      if (status !== undefined) local.set(param.name, status);
+    });
+    return outcomes(
+      callee.body,
+      {
+        ...normal,
+        bindings: local,
+        functions,
+        conditions: localConditions,
+        calls: new Set([...(path.calls ?? []), callee]),
       },
-    );
+      local,
+      conditions,
+    ).map((current) => {
+      const restored = new Map(
+        [...(current.bindings ?? [])].filter(([name]) => bindings.has(name)),
+      );
+      const restoredFunctions = new Map(current.functions);
+      const restoredConditions = new Map(current.conditions);
+      for (const name of shadows) {
+        restored.delete(name);
+        restoredFunctions.delete(name);
+        restoredConditions.delete(name);
+        if (bindings.has(name)) restored.set(name, bindings.get(name)!);
+        if (path.functions?.has(name)) restoredFunctions.set(name, path.functions.get(name)!);
+        if (path.conditions.has(name)) restoredConditions.set(name, path.conditions.get(name)!);
+      }
+      return {
+        ...current,
+        outcome: current.outcome === "exit" ? "normal" : current.outcome,
+        bindings: restored,
+        functions: restoredFunctions,
+        conditions: restoredConditions,
+        calls: path.calls,
+      };
+    });
   }
   if (!isFunction(node)) {
     const values = new Map(bindings);
@@ -560,7 +596,8 @@ function stableConditions(node: AnyNode): Set<string> {
 }
 
 function httpStatus(node: AnyNode): number | "server-error" | undefined {
-  if (node?.type === "NewExpression" && node.callee?.name === "Error") return "server-error";
+  if (["NewExpression", "CallExpression"].includes(node?.type) && node.callee?.name === "Error")
+    return "server-error";
   if (node?.type !== "CallExpression" || node.callee?.name !== "createError") return;
   const options = node.arguments?.[0];
   if (!options || (options.type === "Literal" && typeof options.value === "string")) return 500;
@@ -629,27 +666,84 @@ function isFunction(node: AnyNode): boolean {
 }
 
 function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
+  type Scope = { parent?: Scope; bindings: Map<string, AnyNode>; functionScope?: boolean };
+  const scopes = new Map<AnyNode, Scope>();
   const names = new Map<AnyNode, AnyNode>();
-  const invoked = new Set<string>();
-  walkScriptLocal(root, (node) => {
-    if (node.type === "CallExpression") {
-      for (const reference of [node.callee, ...node.arguments])
-        if (reference.type === "Identifier") invoked.add(reference.name);
+  const invoked = new Set<AnyNode>();
+  function bind(pattern: AnyNode, scope: Scope) {
+    for (const binding of bindingNames(pattern))
+      if (!scope.bindings.has(binding)) scope.bindings.set(binding, pattern);
+  }
+  function collect(node: AnyNode, outer: Scope) {
+    if (!node?.type) return;
+    if (node.type === "FunctionDeclaration" && node.id) {
+      bind(node.id, outer);
+      names.set(node, outer.bindings.get(node.id.name)!);
     }
-    if (node.type === "FunctionDeclaration" && node.id) names.set(node, node.id);
-    if (
-      node.type === "VariableDeclarator" &&
-      node.id.type === "Identifier" &&
-      node.init &&
-      isFunction(node.init)
-    )
-      names.set(node.init, node.id);
+    const scoped =
+      isFunction(node) ||
+      [
+        "BlockStatement",
+        "CatchClause",
+        "ForStatement",
+        "ForInStatement",
+        "ForOfStatement",
+      ].includes(node.type);
+    const scope: Scope = scoped
+      ? { parent: outer, bindings: new Map(), functionScope: isFunction(node) }
+      : outer;
+    scopes.set(node, scope);
+    if (isFunction(node)) {
+      node.params.forEach((param: AnyNode) => bind(param, scope));
+      if (node.type === "FunctionExpression") bind(node.id, scope);
+    }
+    if (node.type === "CatchClause") bind(node.param, scope);
+    if (node.type === "ClassDeclaration") bind(node.id, scope);
+    if (node.type === "VariableDeclaration") {
+      let target = scope;
+      if (node.kind === "var")
+        while (target.parent && !target.functionScope) target = target.parent;
+      for (const declaration of node.declarations) {
+        bind(declaration.id, target);
+        if (declaration.id.type === "Identifier" && isFunction(declaration.init))
+          names.set(declaration.init, target.bindings.get(declaration.id.name)!);
+      }
+    }
+    for (const key of getNodeVisitorKeys(node)) {
+      const value = node[key];
+      if (Array.isArray(value)) value.forEach((child) => collect(child, scope));
+      else collect(value, scope);
+    }
+  }
+  collect(root, { bindings: new Map(), functionScope: true });
+  walkScriptLocal(root, (node) => {
+    if (node.type !== "CallExpression") return;
+    for (const reference of [node.callee, ...node.arguments]) {
+      if (reference.type !== "Identifier") continue;
+      for (let scope = scopes.get(reference); scope; scope = scope.parent) {
+        const binding = scope.bindings.get(reference.name);
+        if (!binding) continue;
+        invoked.add(binding);
+        break;
+      }
+    }
   });
   const skipped = new Set<AnyNode>();
-  for (const [fn, name] of names) {
-    if (fn !== root && !invoked.has(name.name)) walkScriptLocal(fn, (node) => skipped.add(node));
+  for (const [fn, binding] of names) {
+    if (fn !== root && !invoked.has(binding)) walkScriptLocal(fn, (node) => skipped.add(node));
   }
   return skipped;
+}
+
+function bindingNames(pattern: AnyNode): string[] {
+  if (!pattern) return [];
+  if (pattern.type === "Identifier") return [pattern.name];
+  if (pattern.type === "AssignmentPattern") return bindingNames(pattern.left);
+  if (pattern.type === "RestElement") return bindingNames(pattern.argument);
+  if (pattern.type === "ArrayPattern") return pattern.elements.flatMap(bindingNames);
+  if (pattern.type === "ObjectPattern")
+    return pattern.properties.flatMap((item: AnyNode) => bindingNames(item.value ?? item.argument));
+  return [];
 }
 
 function assignsBinding(node: AnyNode, name: string): boolean {
