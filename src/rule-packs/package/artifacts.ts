@@ -172,16 +172,16 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             ...(sourceResolution ? sourceCandidates(path) : []),
             path,
             ...[
+              ...(sourceResolution ? [".ts", ".mts", ".cts", ".tsx"] : []),
               ".js",
               ".mjs",
               ".cjs",
               ".jsx",
-              ...(sourceResolution ? [".ts", ".mts", ".cts", ".tsx"] : []),
+              ...(sourceResolution ? ["/index.ts", "/index.mts", "/index.cts", "/index.tsx"] : []),
               "/index.js",
               "/index.mjs",
               "/index.cjs",
               "/index.jsx",
-              ...(sourceResolution ? ["/index.ts", "/index.mts", "/index.cts", "/index.tsx"] : []),
             ].map((ext) => path + ext),
           ]
       : [path];
@@ -251,7 +251,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     if (existsSync(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
   }
   if (manifest.main) enqueue(manifest.main, "runtime", true, root, true, true);
-  if (manifest.module) enqueue(manifest.module, "runtime", true, root, false, true);
+  if (manifest.module) enqueue(manifest.module, "runtime", true, root, true, true);
   if (typeof manifest.browser === "string")
     enqueue(manifest.browser, "runtime", true, root, false, true);
   else if (manifest.browser) {
@@ -535,12 +535,30 @@ function isDecoratorExpression(node: ts.Node, ancestor: ts.Node): boolean {
   return false;
 }
 
+function isNonAbruptElement(node: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(node)) return isNonAbruptElement(node.expression);
+  return (
+    ts.isLiteralExpression(node) ||
+    ts.isOmittedExpression(node) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteralLike(node.arguments[0]!))
+  );
+}
+
 function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
   if (ts.isCallChain(node)) return false;
   let expression: ts.Node = node;
   while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
   let aggregate: ts.CallExpression | undefined;
   if (dynamic && ts.isArrayLiteralExpression(expression.parent)) {
+    const elements = expression.parent.elements;
+    if (!elements.slice(0, elements.indexOf(expression as ts.Expression)).every(isNonAbruptElement))
+      return false;
     let array: ts.Node = expression.parent;
     while (ts.isParenthesizedExpression(array.parent)) array = array.parent;
     const call = array.parent;

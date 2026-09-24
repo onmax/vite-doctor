@@ -8,6 +8,8 @@ const optionalPeer = {
 
 test.each([
   'await Promise.all([import("peer")]);',
+  'await Promise.all([0, null, true, ("ready"), import("peer")]);',
+  'await Promise.all([import("node:fs"), import("peer")]);',
   'export {}; await (Promise.all([(import("peer"))]));',
 
   '(function () { require("peer"); }).call(this);',
@@ -86,6 +88,9 @@ test.each([
   'require = undefined; require?.("peer");',
   'require?.("peer");',
   'Promise.all([import("peer")]);',
+  'await Promise.all([(() => { throw new Error("stop") })(), import("peer")]);',
+  'await Promise.all([unknown, import("peer")]);',
+  'await Promise.all([...values, import("peer")]);',
   'await Promise.allSettled([import("peer")]);',
   'const Promise = custom; await Promise.all([import("peer")]);',
   'try { await Promise.all([import("peer")]); } catch {}',
@@ -370,4 +375,29 @@ test.each([
       },
     ),
   ).toEqual([]);
+});
+
+test.each(["dist/index", "dist"])("probes module entrypoint %s", async (module) => {
+  expect(
+    await diagnose(
+      { module, ...optionalPeer },
+      {
+        "dist/index.js": 'import "peer";',
+      },
+    ),
+  ).toHaveLength(1);
+});
+
+test.each(["chunk", "chunk/index"])("prefers TypeScript source at %s", async (target) => {
+  for (const required of [true, false]) {
+    const diagnostics = await diagnose(
+      { main: "index.ts", ...optionalPeer },
+      {
+        "index.ts": 'import "./chunk";',
+        [`${target}.ts`]: required ? 'import "peer";' : "export {};",
+        [`${target}.js`]: required ? "export {};" : 'import "peer";',
+      },
+    );
+    expect(diagnostics).toHaveLength(required ? 1 : 0);
+  }
 });
