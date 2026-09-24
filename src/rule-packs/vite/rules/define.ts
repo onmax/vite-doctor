@@ -631,7 +631,9 @@ function resolvesSecretAlias(
         const key = property.computed
           ? resolved?.type === "Literal"
             ? String(resolved.value)
-            : null
+            : resolved?.type === "TemplateLiteral" && resolved.expressions.length === 0
+              ? resolved.quasis[0].value.cooked
+              : null
           : propertyName(property.key);
         properties.set(key ?? property, { node: property, offset, key });
       }
@@ -1149,7 +1151,10 @@ function resolvesSecretAlias(
       }
       if (node.type === "Property") {
         const list = propertyLists.get(node);
-        const key = propertyName(node.key);
+        const key =
+          node.key?.type === "TemplateLiteral" && node.key.expressions.length === 0
+            ? node.key.quasis[0].value.cooked
+            : propertyName(node.key);
         if (list && key !== null && !list.includes(key)) continue;
         serializationKeys.set(node.value, key ?? "");
         if (list) propertyLists.set(node.value, list);
@@ -1368,7 +1373,8 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         if (key == null) break;
         if (object?.type === "ObjectExpression") {
           const match = readOptions(object).findLast(
-            (item) => item.type === "Property" && keyOf(item) === key,
+            (item) =>
+              item.type === "SpreadElement" || (item.type === "Property" && keyOf(item) === key),
           );
           if (match?.kind !== "init") break;
           node = match.value;
@@ -1402,7 +1408,11 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     if (node?.type !== "ObjectExpression" || visited.has(node)) return [];
     visited.add(node);
     const options = node.properties.flatMap((option: AnyNode) =>
-      option.type === "SpreadElement" ? readOptions(option.argument, visited) : [option],
+      option.type === "SpreadElement"
+        ? resolve(option.argument)?.type === "ObjectExpression"
+          ? readOptions(option.argument, visited)
+          : [option]
+        : [option],
     );
     visited.delete(node);
     return options;
@@ -1414,6 +1424,45 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     if (!node || seen.has(node)) return empty();
     seen.add(node);
     try {
+      if (node.type === "MemberExpression") {
+        const property = node.computed ? resolve(node.property) : node.property;
+        const key = node.computed
+          ? property?.type === "TemplateLiteral" && property.expressions.length === 0
+            ? property.quasis[0].value.cooked
+            : property?.type === "Literal"
+              ? String(property.value)
+              : null
+          : propertyName(property);
+        if (key === null) return empty();
+        const project = (object: AnyNode): Alternative[] => {
+          const value = resolve(object);
+          if (!value || seen.has(value)) return empty();
+          seen.add(value);
+          try {
+            if (value?.type === "ConditionalExpression")
+              return readConfig({
+                ...value,
+                consequent: { ...node, object: value.consequent },
+                alternate: { ...node, object: value.alternate },
+              });
+            if (value?.type !== "ObjectExpression") return empty();
+            const alternatives: Alternative[] = [];
+            for (const option of readOptions(value).toReversed()) {
+              if (option.type === "SpreadElement") {
+                alternatives.push(...readConfig({ ...node, object: option.argument }));
+              } else if (keyOf(option) === key) {
+                if (option.kind === "init" || option.kind === "get")
+                  alternatives.push(...readConfig(option.value));
+                break;
+              }
+            }
+            return alternatives.length ? alternatives : empty();
+          } finally {
+            seen.delete(value);
+          }
+        };
+        return project(node.object);
+      }
       if (node.type === "CallExpression" && mergeHelpers.has(node.callee.start)) {
         const left = readConfig(node.arguments[0]);
         const right = readConfig(node.arguments[1]);
@@ -1625,17 +1674,30 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   return entries;
 }
 
-function visitReturnValues(node: AnyNode, visit: (value: AnyNode) => void) {
-  if (!node || typeof node !== "object") return;
+function visitReturnValues(node: AnyNode, visit: (value: AnyNode) => void): boolean {
+  if (!node || typeof node !== "object") return false;
   if (["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type))
-    return;
+    return false;
   if (node.type === "ReturnStatement") {
     if (node.argument) visit(node.argument);
-    return;
+    return true;
+  }
+  if (["ThrowStatement", "BreakStatement", "ContinueStatement"].includes(node.type)) return true;
+  if (node.type === "BlockStatement") {
+    for (const statement of node.body) {
+      if (visitReturnValues(statement, visit)) return true;
+    }
+    return false;
+  }
+  if (node.type === "IfStatement") {
+    const consequent = visitReturnValues(node.consequent, visit);
+    const alternate = visitReturnValues(node.alternate, visit);
+    return consequent && alternate;
   }
   for (const [key, value] of Object.entries(node)) {
     if (key === "parent") continue;
     if (Array.isArray(value)) value.forEach((child) => visitReturnValues(child, visit));
     else if (value && typeof value === "object") visitReturnValues(value, visit);
   }
+  return false;
 }

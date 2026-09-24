@@ -1228,3 +1228,57 @@ test.each([
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+test.each([
+  ['return "public"; return process.env.PRIVATE_TOKEN', false],
+  ['{ return "public" } return process.env.PRIVATE_TOKEN', false],
+  ['if (flag) return "public"; else return "other"; return process.env.PRIVATE_TOKEN', false],
+  ['if (flag) return "public"; return process.env.PRIVATE_TOKEN', true],
+  ["throw new Error(); return process.env.PRIVATE_TOKEN", false],
+])("ignores unreachable helper returns: %s", async (body, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const read = () => { ${body} }; export default { define: { VALUE: JSON.stringify(read()) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each(['["other"]', '["public"]'])("filters template keys with %s", async (list) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts":
+        "export default { define: { VALUE: JSON.stringify({ [`public`]: process.env.PRIVATE_TOKEN }, " +
+        list +
+        ") } }",
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(list === '["public"]');
+});
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    ["{ get config() { return { define: { PRIVATE_TOKEN: {} } } } }", true],
+    ["{ get config() { return {} } }", false],
+    ["{ config: {}, ...(flag ? { config: { define: { PRIVATE_TOKEN: {} } } } : {}) }", true],
+    ["{ config: { define: { PRIVATE_TOKEN: {} } }, ...(flag ? { config: {} } : {}) }", true],
+    ["{ ...(flag ? { config: { define: { PRIVATE_TOKEN: {} } } } : {}), config: {} }", false],
+    ["{ config: { define: { PRIVATE_TOKEN: {} } }, ...runtimeOptions }", true],
+  ])(
+    `projects getters and unresolved spreads for ${rule.meta.id}: %s`,
+    async (argument, expected) => {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule,
+        files: {
+          "vite.config.ts": `const make = options => options.config; export default make(${argument})`,
+        },
+      });
+      expect(result.diagnostics.length > 0).toBe(expected);
+    },
+  );
+}
