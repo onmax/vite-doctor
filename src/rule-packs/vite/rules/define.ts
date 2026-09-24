@@ -107,13 +107,18 @@ export const noRuntimeObjectDefine = createRule({
         if ((node as { type?: string }).type !== "Program") return;
         const { bindingKeys } = readAliasInitializers(ctx.file.text);
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
-          if (
-            isLiteralPrimitive(entry.rawValue) ||
-            entry.rawValue.startsWith("JSON.stringify(") ||
-            (/^process\.env\.[^.]+$/.test(memberPath(entry.valueNode) ?? "") &&
-              bindingKeys.get(entry.valueNode.object.object.start) === "global:process")
-          )
-            continue;
+          function primitive(value: AnyNode): boolean {
+            if (value.type === "ConditionalExpression")
+              return primitive(value.consequent) && primitive(value.alternate);
+            const raw = ctx.file.text.slice(value.start, value.end);
+            return (
+              isLiteralPrimitive(raw) ||
+              raw.startsWith("JSON.stringify(") ||
+              (/^process\.env\.[^.]+$/.test(memberPath(value) ?? "") &&
+                bindingKeys.get(value.object.object.start) === "global:process")
+            );
+          }
+          if (primitive(entry.valueNode)) continue;
           ctx.report(
             diagnostics.VITE0004({
               why: `Vite define "${entry.key}" uses a non-primitive replacement value.`,
@@ -257,7 +262,9 @@ function readAliasInitializers(source: string) {
         definition?.type === "ImportBinding" &&
         definition.parent.type === "ImportDeclaration" &&
         ["node:process", "process"].includes(definition.parent.source.value as string) &&
-        ["ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(definition.node.type)
+        (["ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(definition.node.type) ||
+          (definition.node.type === "ImportSpecifier" &&
+            propertyName(definition.node.imported) === "default"))
       )
         bindingKeys.set(reference.identifier.range[0], "global:process");
       if (
@@ -933,17 +940,20 @@ function resolvesSecretAlias(
               if (pattern.type === "ObjectPattern") {
                 for (const property of pattern.properties) {
                   if (property.type !== "Property") continue;
-                  const key =
-                    !property.computed || property.key.type === "Literal"
-                      ? propertyName(property.key)
-                      : null;
+                  function keyOf(property: AnyNode, offset: number): string | null {
+                    if (!property.computed) return propertyName(property.key);
+                    const { value } = readValue([
+                      offset + property.key.range[0],
+                      offset + property.key.range[1],
+                    ]);
+                    return value?.type === "Literal" ? String(value.value) : null;
+                  }
+                  const key = keyOf(property, current.start - 1);
                   const match =
                     value?.type === "ObjectExpression" && key !== null
                       ? properties(range).findLast(
-                          ({ node: item }) =>
-                            item.type === "Property" &&
-                            (!item.computed || item.key.type === "Literal") &&
-                            propertyName(item.key) === key,
+                          ({ node: item, offset }) =>
+                            item.type === "Property" && keyOf(item, offset) === key,
                         )
                       : undefined;
                   if (match?.node.kind === "get") {
@@ -2132,6 +2142,22 @@ function visitReturnValues(
     !node.test.value
   )
     return false;
+  if (
+    ["WhileStatement", "ForStatement", "DoWhileStatement"].includes(node.type) &&
+    ((node.test?.type === "Literal" && node.test.value === true) ||
+      (node.type === "ForStatement" && !node.test))
+  ) {
+    visitReturnValues(node.body, visit, onUndefined);
+    function hasBreak(child: AnyNode): boolean {
+      if (!child || typeof child !== "object") return false;
+      if (child.type === "BreakStatement") return true;
+      return Object.entries(child).some(
+        ([key, value]) =>
+          key !== "parent" && (Array.isArray(value) ? value.some(hasBreak) : hasBreak(value)),
+      );
+    }
+    return !hasBreak(node.body);
+  }
   if (node.type === "IfStatement") {
     if (node.test.type === "Literal")
       return visitReturnValues(

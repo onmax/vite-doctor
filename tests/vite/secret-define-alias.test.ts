@@ -1707,6 +1707,10 @@ test.each([
 
 test.each([
   ["get value() {}", true],
+  ["get value() { while (true) {} }", false],
+  ["get value() { for (;;) {} }", false],
+  ["get value() { do {} while (true) }", false],
+  ["get value() { while (true) { break } }", true],
   ["get value() { return }", true],
   ['get value() { while (false) return process.env.PRIVATE_TOKEN; return "safe" }', false],
   ['get value() { if (false) return process.env.PRIVATE_TOKEN; return "safe" }', false],
@@ -1742,3 +1746,39 @@ test.each([
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+test.each([
+  [
+    'import { default as process } from "node:process"; export default { define: { VALUE: process.env.VALUE } }',
+    false,
+  ],
+  [
+    'import { mergeConfig } from "vite"; export default mergeConfig({ define: { VALUE: "base" } }, { define: { VALUE: process.env.OPTIONAL_OVERRIDE } })',
+    false,
+  ],
+  [
+    'import { mergeConfig } from "vite"; export default mergeConfig({ define: { VALUE: {} } }, { define: { VALUE: process.env.OPTIONAL_OVERRIDE } })',
+    true,
+  ],
+])("classifies effective primitive alternatives: %s", async (source, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noRuntimeObjectDefine,
+    files: { "vite.config.ts": source },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each(["process.env.PRIVATE_TOKEN", "process.env.PUBLIC_VERSION"])(
+  "resolves computed helper parameter keys: %s",
+  async (value) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `const key = "value"; const read = ({ [key]: value }) => value; export default { define: { VALUE: JSON.stringify(read({ [key]: ${value} })) } }`,
+      },
+    });
+    expect(result.diagnostics.length > 0).toBe(value.includes("PRIVATE"));
+  },
+);
