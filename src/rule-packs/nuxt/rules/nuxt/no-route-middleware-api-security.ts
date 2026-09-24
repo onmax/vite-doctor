@@ -73,16 +73,28 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
   // Manifest timestamps cannot prove module-provided middleware is still registered.
   if ((dirs?.middleware ?? []).some(hasUnconditionalAuthGuard)) return [];
   const candidates = [
-    ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({ file, route: undefined })),
+    ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({
+      file,
+      route: undefined,
+      method: undefined,
+    })),
     ...registered.filter((handler) => !handler.middleware),
   ];
   const sensitive =
     /(?:^|\/)(?:auth|sessions?|admin|accounts?|users?|me|profiles?|private|billing|settings)(?:[./-]|$)/i;
-  const isSensitive = (path: string): boolean =>
-    sensitive.test(path) &&
-    !/(?:^|\/)auth\/(?:login|callback|register|sign-up|signup|forgot-password|reset-password|verify-email)(?:\.(?:get|post))?(?:\.[cm]?[jt]s)?$|(?:^|\/)session\/create(?:\.post)?(?:\.[cm]?[jt]s)?$/i.test(
-      path,
-    );
+  const isSensitive = (path: string, method?: string): boolean => {
+    const endpoint = path.replace(/\.[cm]?[jt]s$/i, "");
+    const suffix = endpoint.match(/\.(get|post|put|patch|delete|head|options)$/i);
+    const route = suffix ? endpoint.slice(0, -suffix[0].length) : endpoint;
+    const verb = (method ?? suffix?.[1])?.toUpperCase();
+    const publicOperation =
+      (verb === "POST" &&
+        /(?:^|\/)(?:auth\/(?:login|register|sign-up|signup|forgot-password|reset-password)|session\/create)$/i.test(
+          route,
+        )) ||
+      (verb === "GET" && /(?:^|\/)auth\/(?:callback|verify-email)$/i.test(route));
+    return sensitive.test(path) && !publicOperation;
+  };
   return [
     ...new Set(
       candidates
@@ -90,8 +102,8 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
           (handler) =>
             existsSync(handler.file) &&
             (isSensitive(toPosixPath(relative(ctx.project.root, handler.file))) ||
-              isSensitive(handler.route ?? "")) &&
-            !isAuthProviderHandler(handler.file, handler.route) &&
+              isSensitive(handler.route ?? "", handler.method)) &&
+            !isAuthProviderHandler(ctx, handler.file, handler.route) &&
             !hasUnconditionalAuthGuard(handler.file),
         )
         .map((handler) => handler.file),
@@ -99,7 +111,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
   ];
 }
 
-function isAuthProviderHandler(file: string, route?: string): boolean {
+function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): boolean {
   if (
     !/(?:^|\/)auth\/\[\.\.\.[^/\]]+\](?:\.[cm]?[jt]s)?$/.test(toPosixPath(file)) &&
     !/(?:^|\/)auth\/(?:\*\*|\[\.\.\.[^/\]]+\])$/.test(route ?? "")
@@ -137,7 +149,7 @@ function isAuthProviderHandler(file: string, route?: string): boolean {
       body.callee.property.type === "Identifier" &&
       body.callee.property.name === "handler" &&
       body.callee.object.name !== event.name &&
-      isProviderBinding(file, parsed.program, body.callee.object.name) &&
+      isProviderBinding(ctx, file, parsed.program, body.callee.object.name) &&
       body.arguments.length === 1 &&
       isCurrentRequest(body.arguments[0], event.name) &&
       event.name !== "toWebRequest" &&
@@ -173,6 +185,29 @@ function hasSupportedRequestConverter(program: AnyNode): boolean {
     if (pattern.type === "RestElement") return bindsConverter(pattern.argument);
     return false;
   };
+  const hasHoistedConverter = (node: AnyNode): boolean => {
+    if (!node || typeof node !== "object") return false;
+    if (
+      [
+        "FunctionDeclaration",
+        "FunctionExpression",
+        "ArrowFunctionExpression",
+        "ClassDeclaration",
+        "ClassExpression",
+      ].includes(node.type)
+    )
+      return false;
+    if (
+      node.type === "VariableDeclaration" &&
+      node.kind === "var" &&
+      node.declarations.some((item: AnyNode) => bindsConverter(item.id))
+    )
+      return true;
+    return Object.values(node).some((value) =>
+      Array.isArray(value) ? value.some(hasHoistedConverter) : hasHoistedConverter(value),
+    );
+  };
+  if (hasHoistedConverter(program)) return false;
   return program.body.every((statement: AnyNode) => {
     if (statement.type === "ImportDeclaration") {
       return statement.specifiers.every(
@@ -223,15 +258,36 @@ function createsProvider(program: AnyNode, name: string, exported = false): bool
   });
 }
 
-function isProviderBinding(file: string, program: AnyNode, name: string): boolean {
+function isProviderBinding(
+  ctx: RuleContext,
+  file: string,
+  program: AnyNode,
+  name: string,
+): boolean {
   if (createsProvider(program, name)) return true;
   for (const node of program.body) {
-    if (node.type !== "ImportDeclaration" || !node.source.value.startsWith(".")) continue;
+    if (node.type !== "ImportDeclaration") continue;
     const binding = node.specifiers.find(
       (item: AnyNode) => item.type === "ImportSpecifier" && item.local.name === name,
     );
     if (!binding) continue;
-    const base = resolve(dirname(file), node.source.value);
+    const source = node.source.value as string;
+    const aliases: Record<string, string> = {
+      "~~": ctx.project.root,
+      "@@": ctx.project.root,
+      "~": ctx.project.nuxt!.appDir,
+      "@": ctx.project.nuxt!.appDir,
+      ...(ctx.project.nuxt?.manifest?.isCurrent ? ctx.project.nuxt.manifest.aliases : {}),
+    };
+    const alias = Object.keys(aliases)
+      .sort((a, b) => b.length - a.length)
+      .find((key) => source.startsWith(`${key}/`));
+    const base = source.startsWith(".")
+      ? resolve(dirname(file), source)
+      : alias
+        ? resolve(ctx.project.root, aliases[alias]!, source.slice(alias.length + 1))
+        : undefined;
+    if (!base) continue;
     const candidates = extname(base)
       ? [base]
       : ["ts", "js", "mts", "mjs", "cts", "cjs"].map((extension) => `${base}.${extension}`);

@@ -2443,6 +2443,7 @@ test.each([
           {
             file: "server/handlers/entry.ts",
             route: `/api/${endpoint.replace(/\.(get|post)?\.?ts$/, "")}`,
+            method: endpoint.includes(".get.") ? "get" : "post",
           },
         ],
       }),
@@ -2452,6 +2453,10 @@ test.each([
 });
 
 test.each([
+  "auth/register.get.ts",
+  "auth/register.delete.ts",
+  "auth/register.ts",
+  "auth/callback.post.ts",
   "auth/logout.post.ts",
   "auth/revoke.post.ts",
   "auth/mfa.post.ts",
@@ -2478,6 +2483,7 @@ test.each([
           {
             file: "server/handlers/entry.ts",
             route: `/api/${endpoint.replace(/\.(?:get|post|delete)?\.?ts$/, "")}`,
+            method: endpoint.match(/\.(get|post|delete)\.ts$/)?.[1],
           },
         ],
       }),
@@ -4022,7 +4028,13 @@ test.each([
   expect(result.diagnostics).toHaveLength(1);
 });
 
-test.each(["", "import { toWebRequest } from 'h3';", "import { toWebRequest } from '#imports';"])(
+test.each([
+  "",
+  "import { toWebRequest } from 'h3';",
+  "import { toWebRequest } from '#imports';",
+  "function unrelated() { var toWebRequest = () => new Request('https://example.com') }",
+  "if (true) { const toWebRequest = () => new Request('https://example.com') }",
+])(
   "standard auth provider catch-all delegates authorization to the provider: %s",
   async (converter) => {
     const result = await runRuleFixture({
@@ -4041,6 +4053,14 @@ test.each(["", "import { toWebRequest } from 'h3';", "import { toWebRequest } fr
 );
 
 test.each([
+  ...[
+    "if (true) { var toWebRequest = () => new Request('https://example.com') }",
+    "for (var toWebRequest of []) {}",
+    "try { var toWebRequest = () => new Request('https://example.com') } catch {}",
+  ].map(
+    (declaration) =>
+      `import { auth } from '../../utils/auth'; ${declaration}; export default defineEventHandler(event => auth.handler(toWebRequest(event)))`,
+  ),
   "import { auth } from '../../utils/auth'; export default defineEventHandler(function toWebRequest(event) { return auth.handler(toWebRequest(event)) })",
   "import { auth } from '../../utils/auth'; export default defineEventHandler((event, toWebRequest) => auth.handler(toWebRequest(event)))",
   "import { auth } from '../../utils/auth'; const toWebRequest = () => new Request('https://example.com'); export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
@@ -4071,3 +4091,45 @@ test.each([
     expect(result.diagnostics).toHaveLength(1);
   },
 );
+
+test.each(["~/utils/auth", "@/utils/auth", "~~/app/utils/auth", "@@/app/utils/auth"])(
+  "auth providers resolve Nuxt alias %s",
+  async (source) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        "server/api/auth/[...all].ts": `import { auth } from '${source}'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))`,
+        "app/utils/auth.ts":
+          "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
+      },
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test.each([true, false])("aliased auth providers require provenance: %s", async (supported) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/auth/[...all].ts":
+        "import { auth } from '~/utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+      "custom/utils/auth.ts": supported
+        ? "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})"
+        : "export const auth = { handler: () => ({ private: true }) }",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        nuxtVersion: "4",
+        vueVersion: "3.5",
+        appDir: "app",
+        aliases: { "~": "custom" },
+      }),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(supported ? 0 : 1);
+});
