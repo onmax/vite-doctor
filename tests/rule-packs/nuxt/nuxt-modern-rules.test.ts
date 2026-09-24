@@ -3915,3 +3915,25 @@ async function writeFileManifest(
     ),
   );
 }
+
+test.each([true, false])(
+  "Nuxt manifest preserves layer alias directories and setting: %s",
+  async (localLayerAliases) => {
+    await withFixture({}, {}, async (root) => {
+      const layerRoot = join(root, "layers/admin");
+      await writeManifest({
+        options: {
+          rootDir: root,
+          buildDir: ".nuxt",
+          modules: [],
+          experimental: { localLayerAliases },
+          _layers: [{ cwd: layerRoot, config: { srcDir: join(layerRoot, "src") } }],
+        },
+        async callHook() {},
+      });
+      const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+      expect(manifest.localLayerAliases).toBe(localLayerAliases);
+      expect(manifest.layers[0]).toMatchObject({ root: layerRoot, srcDir: join(layerRoot, "src") });
+    });
+  },
+);

@@ -56,13 +56,14 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             (source) => authMiddlewareName.test(source.path),
           );
           if (!middleware.length) return;
-          const serverMiddleware = projectSources(
-            root,
-            ctx.project.nuxt?.serverDirs.middleware ?? [],
-          );
-          const registered = (nuxt.manifest?.serverHandlers ?? []).filter(
-            (entry) => !entry.middleware,
-          );
+          const registrations = nuxt.manifest?.isCurrent
+            ? (nuxt.manifest.serverHandlers ?? [])
+            : [];
+          const serverMiddleware = projectSources(root, [
+            ...nuxt.serverDirs.middleware,
+            ...registrations.filter((entry) => entry.middleware).map((entry) => entry.file),
+          ]);
+          const registered = registrations.filter((entry) => !entry.middleware);
           const handlers = projectSources(root, [
             ...(ctx.project.nuxt?.serverDirs.api ?? []),
             ...(ctx.project.nuxt?.serverDirs.routes ?? []),
@@ -77,6 +78,16 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
               ),
           );
           for (const handler of handlers) {
+            const layer =
+              nuxt.localLayerAliases !== false
+                ? [...nuxt.layers]
+                    .filter(
+                      (layer) =>
+                        resolve(root, layer.root) !== root &&
+                        isWithin(resolve(root, layer.root), resolve(root, handler.path)),
+                    )
+                    .sort((a, b) => b.root.length - a.root.length)[0]
+                : undefined;
             const sources = [
               ...middleware,
               ...serverMiddleware,
@@ -86,6 +97,14 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                 "~": nuxt.appDir,
                 "@": nuxt.appDir,
                 ...nuxt.manifest?.aliases,
+                ...(layer
+                  ? {
+                      "~~": resolve(root, layer.root),
+                      "@@": resolve(root, layer.root),
+                      "~": resolve(root, layer.srcDir ?? layer.root),
+                      "@": resolve(root, layer.srcDir ?? layer.root),
+                    }
+                  : {}),
               }),
             ];
             const candidate = { handler, sources };
@@ -153,8 +172,9 @@ export function createOpenAICompatibleAuthorizationReviewer(
   if (!options.endpoint || !options.model || !options.apiKey)
     throw new Error("Authorization review requires an endpoint, model, and API key");
   const endpoint = new URL(options.endpoint);
-  if (endpoint.protocol !== "https:" && endpoint.protocol !== "http:")
-    throw new Error("Authorization review endpoint must use HTTP or HTTPS");
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname);
+  if (endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && loopback))
+    throw new Error("Authorization review endpoint must use HTTPS or loopback HTTP");
   return async (candidate) => {
     const evidence = JSON.stringify(candidate);
     const body = JSON.stringify({
@@ -277,7 +297,9 @@ function localImports(
     if (!base) continue;
     for (const candidate of extname(base)
       ? [base]
-      : [`${base}.ts`, `${base}.js`, `${base}/index.ts`]) {
+      : [base, `${base}/index`].flatMap((path) =>
+          ["ts", "js", "mts", "mjs", "cts", "cjs"].map((extension) => `${path}.${extension}`),
+        )) {
       if (existsSync(candidate)) {
         imported.push(candidate);
         break;

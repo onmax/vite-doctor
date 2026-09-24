@@ -145,6 +145,7 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
       "server/handlers/account.ts": "export default defineEventHandler(() => ({}))",
       "server/handlers/auth.ts": "export default defineEventHandler(() => ({}))",
       ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date().toISOString(),
         appDir: "app",
         layers: [{ root: "layers/admin/app", priority: 0 }],
         serverHandlers: [
@@ -183,3 +184,113 @@ test.each(["界".repeat(40_000), "x".repeat(119_700), '"'.repeat(40_000)])(
     expect(called).toBe(false);
   },
 );
+
+test.each([true, false])(
+  "uses registered evidence only from a current manifest: %s",
+  async (current) => {
+    const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      candidates.push(candidate);
+      return { status: "unknown", reason: "Collected", citations: [] };
+    });
+    await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "server/handlers/entry.ts": "export default defineEventHandler(() => ({}))",
+        "server/guards/global.ts": "export default defineEventHandler(requireUserSession)",
+        "nuxt.config.ts": "export default defineNuxtConfig({})",
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: current ? "2100-01-01T00:00:00Z" : "2000-01-01T00:00:00Z",
+          serverHandlers: [
+            { file: "server/handlers/entry.ts", route: "/api/account" },
+            { file: "server/guards/global.ts", middleware: true },
+          ],
+        }),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(candidates.map((candidate) => candidate.handler.path)).toEqual(
+      current
+        ? ["server/api/account.get.ts", "server/handlers/entry.ts"]
+        : ["server/api/account.get.ts"],
+    );
+    expect(candidates[0]!.sources.some((source) => source.path === "server/guards/global.ts")).toBe(
+      current,
+    );
+  },
+);
+
+test.each(
+  ["ts", "js", "mts", "mjs", "cts", "cjs"].flatMap((extension) => [
+    `guard.${extension}`,
+    `guard/index.${extension}`,
+  ]),
+)("collects extensionless guard evidence from %s", async (guard) => {
+  const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    candidates.push(candidate);
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "server/api/account.get.ts":
+        "import guard from '../guard'; export default defineEventHandler(guard)",
+      [`server/${guard}`]: "export default () => ({ private: true })",
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(candidates[0]!.sources.map((source) => source.path)).toContain(`server/${guard}`);
+});
+
+test.each(
+  ["~", "@", "~~", "@@"].flatMap((alias) => [
+    { alias, local: true },
+    { alias, local: false },
+  ]),
+)("resolves layer aliases: $alias, local=$local", async ({ alias, local }) => {
+  const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    candidates.push(candidate);
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  const layerGuard = `layers/admin/${alias.length === 1 ? "src/" : ""}guard.ts`;
+  await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": files["app/middleware/auth.ts"],
+      "layers/admin/server/api/account.ts": `import guard from '${alias}/guard'; export default defineEventHandler(guard)`,
+      [layerGuard]: "export default () => ({ private: true })",
+      "guard.ts": "export default () => ({ unrelated: true })",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        localLayerAliases: local,
+        layers: [{ root: "layers/admin", srcDir: "layers/admin/src", priority: 0 }],
+        aliases: { "~": ".", "@": ".", "~~": ".", "@@": "." },
+        serverHandlers: [{ file: "layers/admin/server/api/account.ts", route: "/api/account" }],
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(candidates).toHaveLength(1);
+  const paths = candidates[0]!.sources.map((source) => source.path);
+  expect(paths).toContain(local ? layerGuard : "guard.ts");
+  expect(paths).not.toContain(local ? "guard.ts" : layerGuard);
+});
+
+test.each([
+  ["https://example.test/v1", true],
+  ["http://localhost:8080/v1", true],
+  ["http://127.0.0.1:8080/v1", true],
+  ["http://[::1]:8080/v1", true],
+  ["http://example.test/v1", false],
+  ["http://localhost.example.test/v1", false],
+  ["ftp://localhost/v1", false],
+] as const)("validates provider transport for %s", (endpoint, allowed) => {
+  const create = () =>
+    createOpenAICompatibleAuthorizationReviewer({ endpoint, model: "model", apiKey: "key" });
+  if (allowed) expect(create).not.toThrow();
+  else expect(create).toThrow("HTTPS or loopback HTTP");
+});

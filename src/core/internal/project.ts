@@ -202,6 +202,7 @@ async function normalizeNuxtProject(
       (manifest?.components ?? []).map((component: any) => [component.name, component]),
     ),
     layers: manifest?.layers ?? [{ root, priority: 0 }],
+    localLayerAliases: manifest?.localLayerAliases,
     routeRules: manifest?.routeRules ?? readRouteRules(root),
     runtimeConfig: manifest?.runtimeConfig,
     serverDirs: await serverDirs(root),

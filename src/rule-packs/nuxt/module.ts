@@ -152,10 +152,12 @@ export async function writeManifest(
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({
         root: resolve(layer.cwd ?? layer.config?.rootDir ?? rootDir),
+        srcDir: resolve(layer.cwd ?? rootDir, layer.config?.srcDir ?? "."),
         name: layer.config?.name,
         priority: index,
       }),
     ),
+    localLayerAliases: nuxt.options.experimental?.localLayerAliases !== false,
     aliases: Object.fromEntries(
       Object.entries(nuxt.options.alias ?? {}).map(([key, value]) => [key, String(value)]),
     ),
