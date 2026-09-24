@@ -53,13 +53,30 @@ function isCredentialHeader(name: string | undefined): boolean {
 }
 
 function forwardsRequestCredentials(call: AnyNode): boolean {
-  const options = unwrapExpression(call.arguments?.[1]);
-  if (options?.type !== "ObjectExpression") return false;
-  for (const property of [...options.properties].reverse()) {
-    if (property.type === "SpreadElement") return false;
-    if (propertyName(property) === "headers") return hasCredentialHeaders(property.value, call);
+  return optionsForwardCredentials(call.arguments?.[1], call) === true;
+}
+
+function optionsForwardCredentials(
+  value: AnyNode,
+  call: AnyNode,
+  seen = new Set<AnyNode>(),
+): boolean | undefined {
+  value = unwrapExpression(value);
+  if (!value || seen.has(value)) return false;
+  seen = new Set(seen).add(value);
+  if (value.type === "Identifier")
+    return optionsForwardCredentials(localInitializer(value, call), call, seen);
+  if (value.type !== "ObjectExpression") return false;
+  for (const property of [...value.properties].reverse()) {
+    if (property.type === "SpreadElement") {
+      const forwarded = optionsForwardCredentials(property.argument, call, seen);
+      if (forwarded !== undefined) return forwarded;
+    } else {
+      const name = propertyName(property);
+      if (!name) return false;
+      if (name === "headers") return hasCredentialHeaders(property.value, call);
+    }
   }
-  return false;
 }
 
 function unwrapExpression(value: AnyNode): AnyNode {
@@ -101,20 +118,21 @@ function credentialHeaders(
         const tuple = unwrapExpression(entry);
         const name = tuple?.type === "ArrayExpression" && tuple.elements[0]?.value;
         if (typeof name !== "string") return;
-        if (isCredentialHeader(name)) headers.set(name.toLowerCase(), true);
+        if (isCredentialHeader(name))
+          headers.set(name.toLowerCase(), hasHeaderValue(tuple.elements[1]));
       }
       return headers;
     }
     return credentialHeaders(input, call, seen);
   }
   if (value.type === "CallExpression" && value.callee?.name === "useRequestHeaders") {
-    const selected = unwrapExpression(value.arguments[0]);
-    if (!selected)
+    const selected = resolveInitializer(value.arguments[0], call);
+    if (!value.arguments[0])
       return new Map([
         ["cookie", true],
         ["authorization", true],
       ]);
-    if (selected.type !== "ArrayExpression") return;
+    if (selected?.type !== "ArrayExpression") return;
     return new Map(
       selected.elements
         .filter((element: AnyNode) => isCredentialHeader(element?.value))
@@ -137,12 +155,27 @@ function credentialHeaders(
         headers.set("cookie", false);
         headers.set("authorization", false);
       } else if (isCredentialHeader(name)) {
-        const header = unwrapExpression(property.value);
-        headers.set(name.toLowerCase(), header != null && !("value" in header && !header.value));
+        headers.set(name.toLowerCase(), hasHeaderValue(property.value));
       }
     }
   }
   return headers;
+}
+
+function hasHeaderValue(value: AnyNode): boolean {
+  const header = unwrapExpression(value);
+  return header != null && !("value" in header && !header.value);
+}
+
+function resolveInitializer(value: AnyNode, call: AnyNode): AnyNode {
+  const seen = new Set<AnyNode>();
+  value = unwrapExpression(value);
+  while (value?.type === "Identifier") {
+    if (seen.has(value)) return;
+    seen.add(value);
+    value = unwrapExpression(localInitializer(value, call));
+  }
+  return value;
 }
 
 function bindsName(pattern: AnyNode, name: string): boolean {

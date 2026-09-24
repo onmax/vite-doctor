@@ -162,3 +162,38 @@ test("nested functions do not shadow credentials in their parent", async () => {
   );
   expect(result.diagnostics).toEqual([]);
 });
+
+test.each([
+  ["", "{ headers: new Headers([['cookie', '']]) }", true],
+  ["", "{ headers: new Headers([['Authorization', '' as string]]) }", true],
+  ["", "{ headers: useRequestHeaders(['cookie']), ...{ method: 'GET' } }", false],
+  [
+    "const options = { ...{ method: 'GET' } } as const",
+    "{ headers: useRequestHeaders(['cookie']), ...options }",
+    false,
+  ],
+  ["", "{ headers: useRequestHeaders(['cookie']), ...{ headers: {} } }", true],
+  ["", "{ headers: useRequestHeaders(['cookie']), ...{ [key]: {} } }", true],
+  [
+    "const options = { ...options }",
+    "{ headers: useRequestHeaders(['cookie']), ...options }",
+    true,
+  ],
+  [
+    "const names = ['cookie'] as const; const selected = names",
+    "{ headers: useRequestHeaders(selected) }",
+    false,
+  ],
+  ["const names = ['accept']", "{ headers: useRequestHeaders(names) }", true],
+  ["let names = ['cookie']; names = []", "{ headers: useRequestHeaders(names) }", true],
+  ["const names = names", "{ headers: useRequestHeaders(names) }", true],
+  ["", "{ headers: useRequestHeaders(unknownNames) }", true],
+])("credential evidence with %s and %s", async (setup, options, diagnosed) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">${setup}; await $fetch('/api/user', ${options})</script>`,
+  );
+  expect(result.diagnostics.some((item) => item.ruleId === forwardAuthHeadersSsr.meta.id)).toBe(
+    diagnosed,
+  );
+});
