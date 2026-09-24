@@ -141,7 +141,9 @@ export const noSecretDefine = createRule({
     return {
       ScriptNode(node) {
         if ((node as { type?: string }).type !== "Program") return;
-        const { initializers, memberReturns, localCalls } = readAliasInitializers(ctx.file.text);
+        const { initializers, memberReturns, localCalls, shadowedPromises } = readAliasInitializers(
+          ctx.file.text,
+        );
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           if (
             !SECRET_NAME_RE.test(entry.key) &&
@@ -152,6 +154,7 @@ export const noSecretDefine = createRule({
               initializers,
               memberReturns,
               localCalls,
+              shadowedPromises,
             )
           )
             continue;
@@ -177,6 +180,8 @@ export const noSecretDefine = createRule({
 function readAliasInitializers(source: string) {
   const initializers = new Map<number, [number, number][]>();
   const configHelpers = new Set<number>();
+  const mergeHelpers = new Set<number>();
+  const shadowedPromises = new Set<number>();
   const localCalls = new Set<number>();
   const memberReturns = new Map<
     number,
@@ -186,20 +191,32 @@ function readAliasInitializers(source: string) {
   try {
     parsed = parseForESLint(source, { range: true, sourceType: "module" });
   } catch {
-    return { initializers, memberReturns, configHelpers, localCalls };
+    return {
+      initializers,
+      memberReturns,
+      configHelpers,
+      mergeHelpers,
+      shadowedPromises,
+      localCalls,
+    };
   }
   const { scopeManager } = parsed;
   for (const scope of scopeManager.scopes) {
     for (const reference of scope.references) {
       const definition = reference.resolved?.defs[0];
+      if (reference.identifier.name === "Promise" && definition)
+        shadowedPromises.add(reference.identifier.range[0]);
       if (
         definition?.type === "ImportBinding" &&
         definition.parent.type === "ImportDeclaration" &&
         definition.parent.source.value === "vite" &&
         definition.node.type === "ImportSpecifier" &&
-        propertyName(definition.node.imported) === "defineConfig"
+        ["defineConfig", "mergeConfig"].includes(propertyName(definition.node.imported) ?? "")
       )
-        configHelpers.add(reference.identifier.range[0]);
+        (propertyName(definition.node.imported) === "mergeConfig"
+          ? mergeHelpers
+          : configHelpers
+        ).add(reference.identifier.range[0]);
       if (
         reference.resolved?.defs.length === 1 &&
         definition?.type === "FunctionName" &&
@@ -325,7 +342,7 @@ function readAliasInitializers(source: string) {
         : "";
     memberReturns.set(member.range[0], { range: value.range, getter: getters.has(value), prefix });
   }
-  return { initializers, memberReturns, configHelpers, localCalls };
+  return { initializers, memberReturns, configHelpers, mergeHelpers, shadowedPromises, localCalls };
 }
 
 function resolvesSecretAlias(
@@ -335,6 +352,7 @@ function resolvesSecretAlias(
   initializers: Map<number, [number, number][]>,
   memberReturns: Map<number, { range: [number, number]; getter: boolean; prefix: string }>,
   localCalls: Set<number>,
+  shadowedPromises: Set<number>,
 ): boolean {
   type Range = [number, number];
   type Trace = {
@@ -343,6 +361,7 @@ function resolvesSecretAlias(
     invoked: boolean;
     awaited: boolean;
     args: Range[];
+    following?: Range[][];
     bindings: Map<number, Range[]>;
   };
   const pending: Trace[] = [
@@ -364,11 +383,13 @@ function resolvesSecretAlias(
     const awaitedReferences = new Set<number>();
     const invokedReferences = new Set<number>();
     const callArguments = new Map<unknown, [number, number][]>();
+    const followingCalls = new Map<unknown, Range[][]>();
     if (current.invoked || current.awaited) {
       const statement = parsed.ast.body[0];
       if (statement?.type === "ExpressionStatement") {
         if (current.invoked) invokedNodes.add(statement.expression);
         callArguments.set(statement.expression, current.args);
+        followingCalls.set(statement.expression, current.following ?? []);
         if (current.awaited) awaitedNodes.add(statement.expression);
       }
     }
@@ -379,6 +400,7 @@ function resolvesSecretAlias(
         if (node.expression) {
           if (invokedNodes.has(node)) invokedNodes.add(node.expression);
           callArguments.set(node.expression, callArguments.get(node) ?? []);
+          followingCalls.set(node.expression, followingCalls.get(node) ?? []);
           if (awaitedNodes.has(node)) awaitedNodes.add(node.expression);
           nodes.push(node.expression);
         }
@@ -400,33 +422,94 @@ function resolvesSecretAlias(
           const body = node.body as AnyNode;
           const args = callArguments.get(node) ?? [];
           const params = node.params as AnyNode[];
+          const bindings = new Map<string, Range[]>();
+          function bind(pattern: AnyNode, range?: Range) {
+            if (pattern.type === "AssignmentPattern") {
+              if (!range || source.slice(...range) === "undefined")
+                range = [
+                  current.start + pattern.right.range[0] - 1,
+                  current.start + pattern.right.range[1] - 1,
+                ];
+              bind(pattern.left, range);
+            } else if (pattern.type === "Identifier") {
+              bindings.set(pattern.name, range ? [range] : []);
+            } else if (pattern.type === "ObjectPattern" || pattern.type === "ArrayPattern") {
+              let value: AnyNode;
+              let offset = 0;
+              const visited = new Set<number>();
+              while (range && !visited.has(range[0])) {
+                visited.add(range[0]);
+                offset = range[0] - 1;
+                try {
+                  const parsed = parseForESLint(`(${source.slice(...range)})`, { range: true });
+                  const statement = parsed.ast.body[0];
+                  value =
+                    statement?.type === "ExpressionStatement" ? statement.expression : undefined;
+                } catch {
+                  break;
+                }
+                if (value?.type !== "Identifier") break;
+                const ranges =
+                  current.bindings.get(offset + value.range[0]) ??
+                  initializers.get(offset + value.range[0]);
+                if (ranges?.length !== 1) break;
+                range = ranges[0];
+              }
+              if (pattern.type === "ObjectPattern") {
+                for (const property of pattern.properties) {
+                  if (property.type !== "Property") continue;
+                  const key =
+                    !property.computed || property.key.type === "Literal"
+                      ? propertyName(property.key)
+                      : null;
+                  const match =
+                    value?.type === "ObjectExpression" && key !== null
+                      ? value.properties.findLast(
+                          (item: AnyNode) =>
+                            item.type === "Property" &&
+                            (!item.computed || item.key.type === "Literal") &&
+                            propertyName(item.key) === key,
+                        )
+                      : undefined;
+                  bind(
+                    property.value,
+                    match
+                      ? [offset + match.value.range[0], offset + match.value.range[1]]
+                      : undefined,
+                  );
+                }
+              } else {
+                pattern.elements.forEach((element: AnyNode, index: number) => {
+                  const match =
+                    value?.type === "ArrayExpression" ? value.elements[index] : undefined;
+                  if (element)
+                    bind(
+                      element,
+                      match ? [offset + match.range[0], offset + match.range[1]] : undefined,
+                    );
+                });
+              }
+            }
+          }
+          params.forEach((param, index) => bind(param, args[index]));
           for (const scope of parsed.scopeManager.scopes) {
             for (const reference of scope.references) {
               const definition = reference.resolved?.defs[0];
               if (definition?.type !== "Parameter" || definition.node !== node) continue;
-              const index = params.findIndex(
-                (param) =>
-                  (param.type === "AssignmentPattern" ? param.left : param) === definition.name,
-              );
-              if (index < 0) continue;
-              const param = params[index]!;
-              const argument = args[index];
-              const useDefault = !argument || source.slice(...argument) === "undefined";
-              const range: Range | undefined =
-                useDefault && param.type === "AssignmentPattern"
-                  ? [
-                      current.start + param.right.range[0] - 1,
-                      current.start + param.right.range[1] - 1,
-                    ]
-                  : argument;
               current.bindings.set(
                 current.start + reference.identifier.range[0] - 1,
-                range ? [range] : [],
+                bindings.get(reference.identifier.name) ?? [],
               );
             }
           }
           const visit = (value: AnyNode) => {
             if (awaitedNodes.has(node)) awaitedNodes.add(value);
+            const following = followingCalls.get(node) ?? [];
+            if (following.length) {
+              invokedNodes.add(value);
+              callArguments.set(value, following[0]!);
+              followingCalls.set(value, following.slice(1));
+            }
             nodes.push(value);
           };
           if (body.type !== "BlockStatement") visit(body);
@@ -436,7 +519,10 @@ function resolvesSecretAlias(
       }
       if (node.type === "AwaitExpression") awaitedNodes.add(node.argument);
       if (node.type === "CallExpression") {
-        if (memberPath(node.callee as AnyNode) === "Promise.resolve") {
+        if (
+          memberPath(node.callee as AnyNode) === "Promise.resolve" &&
+          !shadowedPromises.has(current.start + node.callee.object.range[0] - 1)
+        ) {
           if (awaitedNodes.has(node)) {
             const argument = (node.arguments as AnyNode[])[0];
             if (argument) {
@@ -446,13 +532,23 @@ function resolvesSecretAlias(
           }
           continue;
         }
-        if (memberPath(node.callee as AnyNode) === "Promise.reject") continue;
+        if (
+          memberPath(node.callee as AnyNode) === "Promise.reject" &&
+          !shadowedPromises.has(current.start + node.callee.object.range[0] - 1)
+        )
+          continue;
         callArguments.set(
           node.callee,
           (node.arguments as AnyNode[]).map((argument) => [
             current.start + argument.range[0] - 1,
             current.start + argument.range[1] - 1,
           ]),
+        );
+        followingCalls.set(
+          node.callee,
+          invokedNodes.has(node)
+            ? [callArguments.get(node) ?? [], ...(followingCalls.get(node) ?? [])]
+            : [],
         );
         invokedNodes.add(node.callee);
         if (awaitedNodes.has(node)) awaitedNodes.add(node.callee);
@@ -465,7 +561,7 @@ function resolvesSecretAlias(
         const member = memberReturns.get(current.start + node.range[0] - 1);
         if (member && (invokedNodes.has(node) || member.getter)) {
           const awaited = awaitedNodes.has(node);
-          const identity = `${member.range[0]}:member:${awaited}:${JSON.stringify(callArguments.get(node))}:${JSON.stringify([...current.bindings])}`;
+          const identity = `${member.range[0]}:member:${awaited}:${JSON.stringify(callArguments.get(node))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(node))}`;
           if (!seen.has(identity)) {
             seen.add(identity);
             pending.push({
@@ -474,6 +570,7 @@ function resolvesSecretAlias(
               invoked: true,
               awaited,
               args: callArguments.get(node) ?? [],
+              following: followingCalls.get(node),
               bindings: new Map(current.bindings),
             });
           }
@@ -502,6 +599,11 @@ function resolvesSecretAlias(
       )
         return true;
       if (node.type === "ConditionalExpression") {
+        for (const branch of [node.consequent, node.alternate]) {
+          if (invokedNodes.has(node)) invokedNodes.add(branch);
+          callArguments.set(branch, callArguments.get(node) ?? []);
+          followingCalls.set(branch, followingCalls.get(node) ?? []);
+        }
         if (awaitedNodes.has(node)) {
           awaitedNodes.add(node.consequent);
           awaitedNodes.add(node.alternate);
@@ -511,6 +613,9 @@ function resolvesSecretAlias(
       }
       if (node.type === "SequenceExpression") {
         const last = (node.expressions as unknown[]).at(-1);
+        if (invokedNodes.has(node)) invokedNodes.add(last);
+        callArguments.set(last, callArguments.get(node) ?? []);
+        followingCalls.set(last, followingCalls.get(node) ?? []);
         if (awaitedNodes.has(node)) awaitedNodes.add(last);
         nodes.push(last);
         continue;
@@ -535,7 +640,7 @@ function resolvesSecretAlias(
         for (const range of ranges ?? []) {
           const invoked = invokedReferences.has(reference.identifier.range[0]);
           const awaited = awaitedReferences.has(reference.identifier.range[0]);
-          const identity = `${range[0]}:${invoked}:${awaited}:${JSON.stringify(callArguments.get(reference.identifier))}:${JSON.stringify([...current.bindings])}`;
+          const identity = `${range[0]}:${invoked}:${awaited}:${JSON.stringify(callArguments.get(reference.identifier))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(reference.identifier))}`;
           if (seen.has(identity)) continue;
           seen.add(identity);
           const initializer = source.slice(...range);
@@ -545,6 +650,7 @@ function resolvesSecretAlias(
             invoked,
             awaited,
             args: callArguments.get(reference.identifier) ?? [],
+            following: followingCalls.get(reference.identifier),
             bindings: new Map(current.bindings),
           });
         }
@@ -558,7 +664,8 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   const text = ctx.file.text;
   const entries: Array<{ key: string; rawValue: string; valueStart: number; range: SourceRange }> =
     [];
-  const { initializers, configHelpers } = readAliasInitializers(text);
+  const { initializers, configHelpers, mergeHelpers, shadowedPromises } =
+    readAliasInitializers(text);
   const nodesByRange = new Map<string, AnyNode>();
   walkScriptLocal(program, (node) => {
     nodesByRange.set(`${node.start}:${node.end}`, node);
@@ -600,51 +707,62 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     const node = resolve(input);
     if (!node || seen.has(node)) return;
     seen.add(node);
-    if (node.type === "AwaitExpression") {
-      readConfig(node.argument);
-    } else if (
-      node.type === "CallExpression" &&
-      (node.callee.name === "defineConfig" ||
-        configHelpers.has(node.callee.start) ||
-        memberPath(node.callee) === "Promise.resolve")
-    ) {
-      readConfig(node.arguments[0]);
-    } else if (
-      ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
-    ) {
-      if (node.body.type !== "BlockStatement") readConfig(node.body);
-      else visitReturnValues(node.body, readConfig);
-    } else if (node.type === "ConditionalExpression") {
-      readConfig(node.consequent);
-      readConfig(node.alternate);
-    } else if (node.type === "ObjectExpression") {
-      const option = readOptions(node).findLast(
-        (option) => option.type === "Property" && keyOf(option) === "define",
-      );
-      if (option) {
-        const values = resolve(option.value);
-        if (values?.type !== "ObjectExpression") return;
-        const properties = new Map<string, AnyNode>();
-        for (const property of readOptions(values)) {
-          if (property.type !== "Property") continue;
-          const key = keyOf(property);
-          if (key !== null) properties.set(key, property);
-        }
-        for (const [key, property] of properties) {
-          const valueStart = property.value.start;
-          entries.push({
-            key,
-            rawValue: text.slice(valueStart, property.value.end),
-            valueStart,
-            range: ctx.helpers.rangeFromOffsets(
-              ctx.file.path,
-              text,
-              property.key.start,
-              property.key.end,
-            ),
-          });
+    try {
+      if (node.type === "CallExpression" && mergeHelpers.has(node.callee.start)) {
+        const offset = entries.length;
+        readConfig(node.arguments[0]);
+        readConfig(node.arguments[1]);
+        const merged = new Map(entries.splice(offset).map((entry) => [entry.key, entry]));
+        entries.push(...merged.values());
+      } else if (node.type === "AwaitExpression") {
+        readConfig(node.argument);
+      } else if (
+        node.type === "CallExpression" &&
+        (node.callee.name === "defineConfig" ||
+          configHelpers.has(node.callee.start) ||
+          (memberPath(node.callee) === "Promise.resolve" &&
+            !shadowedPromises.has(node.callee.object.start)))
+      ) {
+        readConfig(node.arguments[0]);
+      } else if (
+        ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
+      ) {
+        if (node.body.type !== "BlockStatement") readConfig(node.body);
+        else visitReturnValues(node.body, readConfig);
+      } else if (node.type === "ConditionalExpression") {
+        readConfig(node.consequent);
+        readConfig(node.alternate);
+      } else if (node.type === "ObjectExpression") {
+        const option = readOptions(node).findLast(
+          (option) => option.type === "Property" && keyOf(option) === "define",
+        );
+        if (option) {
+          const values = resolve(option.value);
+          if (values?.type !== "ObjectExpression") return;
+          const properties = new Map<string, AnyNode>();
+          for (const property of readOptions(values)) {
+            if (property.type !== "Property") continue;
+            const key = keyOf(property);
+            if (key !== null) properties.set(key, property);
+          }
+          for (const [key, property] of properties) {
+            const valueStart = property.value.start;
+            entries.push({
+              key,
+              rawValue: text.slice(valueStart, property.value.end),
+              valueStart,
+              range: ctx.helpers.rangeFromOffsets(
+                ctx.file.path,
+                text,
+                property.key.start,
+                property.key.end,
+              ),
+            });
+          }
         }
       }
+    } finally {
+      seen.delete(node);
     }
   }
   for (const statement of (program as AnyNode).body) {

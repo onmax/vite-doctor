@@ -635,3 +635,116 @@ test.each([
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+test.each([
+  ["const read = ({ value }) => value;", "read({ value: process.env.PRIVATE_TOKEN })", true],
+  [
+    "const read = ({ value }) => value;",
+    "read({ other: process.env.PRIVATE_TOKEN, value: 'public' })",
+    false,
+  ],
+  ["const factory = () => (value = process.env.PRIVATE_TOKEN) => value;", "factory()()", true],
+  [
+    "const factory = () => (value = process.env.PRIVATE_TOKEN) => value;",
+    "factory()('public')",
+    false,
+  ],
+  ["const factory = () => value => value;", "factory()(process.env.PRIVATE_TOKEN)", true],
+  [
+    "const Promise = { resolve: () => 'public' };",
+    "await Promise.resolve(process.env.PRIVATE_TOKEN)",
+    false,
+  ],
+  [
+    "const Promise = { reject: value => value };",
+    "await Promise.reject(process.env.PRIVATE_TOKEN)",
+    true,
+  ],
+])("traces invoked values: %s %s", async (setup, value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: { "vite.config.ts": `${setup}\nexport default { define: { __CONFIG__: ${value} } }` },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ["{ define: { __CONFIG__: process.env.PRIVATE_TOKEN } }", "{}", true],
+  ["{}", "{ define: { __CONFIG__: process.env.PRIVATE_TOKEN } }", true],
+  [
+    "{ define: { __CONFIG__: process.env.PRIVATE_TOKEN } }",
+    "{ define: { __CONFIG__: 'public' } }",
+    false,
+  ],
+])("reads effective merged config: %s %s", async (base, override, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `import { mergeConfig as merge } from 'vite'; export default merge(${base}, ${override})`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ["const factory = () => () => 'public'", "factory()(process.env.PRIVATE_TOKEN)", false],
+  [
+    "const factory = () => flag ? (value = process.env.PRIVATE_TOKEN) => value : () => 'public'",
+    "factory()()",
+    true,
+  ],
+  [
+    "const factory = () => () => (value = process.env.PRIVATE_TOKEN) => value",
+    "factory()()()",
+    true,
+  ],
+  [
+    "const read = ({ nested: { value: renamed = process.env.PRIVATE_TOKEN } } = { nested: {} }) => renamed",
+    "read()",
+    true,
+  ],
+  [
+    "const read = ({ value = process.env.PRIVATE_TOKEN }) => value",
+    "read({ value: 'public' })",
+    false,
+  ],
+  [
+    "const input = { value: process.env.PRIVATE_TOKEN }; const read = ({ value }) => value",
+    "read(input)",
+    true,
+  ],
+])("preserves call binding semantics: %s %s", async (setup, value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: { "vite.config.ts": `${setup}; export default { define: { __CONFIG__: ${value} } }` },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test("applies a reused config at each merge position", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `import { mergeConfig } from 'vite';
+const base = { define: { __CONFIG__: 'public' } };
+const override = { define: { __CONFIG__: process.env.PRIVATE_TOKEN } };
+export default mergeConfig(base, mergeConfig(override, base));`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("checks runtime object replacements in merged configs", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noRuntimeObjectDefine,
+    files: {
+      "vite.config.ts": `import { mergeConfig } from 'vite'; export default mergeConfig({}, { define: { VALUE: {} } });`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
