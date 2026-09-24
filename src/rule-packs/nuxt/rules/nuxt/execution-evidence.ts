@@ -968,6 +968,7 @@ function resolveLocalValue(
   node: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   seen = new Set<AnyNode>(),
+  path: string[] = [],
 ): AnyNode {
   node = unwrapExpression(node);
   if (!node || seen.has(node)) return null;
@@ -979,29 +980,42 @@ function resolveLocalValue(
     let scope = binding;
     while (parents.get(scope)) scope = parents.get(scope);
     if (hasPriorAliasWrite(node, binding, scope, parents)) return null;
+    const bindingPath = patternPath(binding.id, node.name) ?? [];
+    const projectedPath = [...bindingPath, ...path];
     let memberWritten = false;
     walkScriptLocal(scope, (write) => {
       if (write.type !== "AssignmentExpression" || write.start >= node.start) return;
       let target = unwrapExpression(write.left);
       if (target?.type !== "MemberExpression") return;
-      while (target?.type === "MemberExpression") target = unwrapExpression(target.object);
+      const writtenPath: (string | undefined)[] = [];
+      while (target?.type === "MemberExpression") {
+        const key = target.computed ? target.property?.value : target.property?.name;
+        writtenPath.unshift(key === undefined ? undefined : String(key));
+        target = unwrapExpression(target.object);
+      }
       if (
         target?.type === "Identifier" &&
-        resolveLocalBinding(write, target.name, parents) === binding
+        resolveLocalBinding(write, target.name, parents) === binding &&
+        !writtenPath.some(
+          (key, index) =>
+            key !== undefined && projectedPath[index] !== undefined && key !== projectedPath[index],
+        )
       )
         memberWritten = true;
     });
     if (memberWritten) return null;
-    let value = resolveLocalValue(binding.init, parents, seen);
-    for (const key of patternPath(binding.id, node.name) ?? [])
-      value = localObjectProperty(value, key);
+    let value = resolveLocalValue(binding.init, parents, seen, projectedPath);
+    for (const key of bindingPath) value = localObjectProperty(value, key);
     return value;
   }
   if (node.type === "MemberExpression") {
     const key = node.computed ? node.property?.value : node.property?.name;
     return key === undefined
       ? null
-      : localObjectProperty(resolveLocalValue(node.object, parents, seen), String(key));
+      : localObjectProperty(
+          resolveLocalValue(node.object, parents, seen, [String(key), ...path]),
+          String(key),
+        );
   }
   return node;
 }
@@ -1232,15 +1246,34 @@ function hasPriorAliasWrite(
         writtenPath.unshift(String(key));
         root = unwrapExpression(root.object);
       }
+      const aliases = new Set<AnyNode>();
+      while (root?.type === "Identifier") {
+        const alias = resolveLocalBinding(root, root.name, parents);
+        if (alias === binding) {
+          if (hasPriorAliasWrite(write, binding, owner, parents, root)) return;
+          break;
+        }
+        if (
+          alias?.type !== "VariableDeclarator" ||
+          alias.id.type !== "Identifier" ||
+          aliases.has(alias) ||
+          alias.start >= write.start ||
+          !writeDominatesReference(alias, write, owner, parents) ||
+          hasPriorAliasWrite(root, alias, owner, parents)
+        )
+          return;
+        aliases.add(alias);
+        root = unwrapExpression(alias.init);
+      }
       replacesMember =
         root?.type === "Identifier" &&
-        root.name === name &&
+        resolveLocalBinding(root, root.name, parents) === binding &&
         writtenPath.length > 0 &&
         writtenPath.every((key, index) => storedPath[index] === key);
     }
     if (
-      (patternBinds(target, name) || replacesMember) &&
-      resolveLocalBinding(write, name, parents) === binding &&
+      ((patternBinds(target, name) && resolveLocalBinding(write, name, parents) === binding) ||
+        replacesMember) &&
       writeDominatesReference(write, reference, owner, parents)
     )
       reassigned = true;

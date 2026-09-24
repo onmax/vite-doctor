@@ -1297,6 +1297,31 @@ test("preserves stored member flow before a later replacement", async () => {
 });
 
 test.each([
+  ["const alias = result; alias.generatedAt = 'stable'", 0],
+  ["const alias = result; const next = alias; next.generatedAt = 'stable'", 0],
+  ["const alias = result; alias['generatedAt'] = 'stable'", 0],
+  ["const alias = result; alias.label = 'stable'", 1],
+  ["const alias = result; if (flag) alias.generatedAt = 'stable'", 1],
+  ["const alias = result; function event() { alias.generatedAt = 'stable' }", 1],
+  ["let alias = result; alias = {}; alias.generatedAt = 'stable'", 1],
+  ["let alias = result; const next = alias; alias = {}; next.generatedAt = 'stable'", 0],
+])("respects stored member replacements through object aliases: %s", async (replacement, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function label() { const result = {}; result.generatedAt = Date.now(); ${replacement}; return result.generatedAt }; const displayed = label()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test("preserves stored member flow when an alias captured a replaced object", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function label() { let result = {}; const alias = result; result = {}; result.generatedAt = Date.now(); alias.generatedAt = 'stable'; return result.generatedAt }; const displayed = label()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
   ["label", 0],
   ["generatedAt", 1],
 ])("preserves eager callback result projection %s", async (property, count) => {
@@ -1349,6 +1374,27 @@ const displayed = label()
 </script><template>{{ displayed }}</template>`,
   );
   expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  ["helpers.label = 'changed'", 0],
+  ["helpers['label'] = 'changed'", 0],
+  ["helpers.nested.label = 'changed'", 0],
+  ["helpers.nested.stable = value => value", 1],
+  ["helpers.nested = { stable: value => value }", 1],
+  ["helpers.nested[key] = value => value", 1],
+])("isolates local method replacements from sibling writes: %s", async (write, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>
+function clock() { return Date.now() }
+const helpers = { nested: { stable(value) { return 'Ready' } } }
+${write}
+function label() { return helpers.nested.stable(clock()) }
+const displayed = label()
+</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
 });
 
 test.each(["@update:model-value", "v-on:custom-event"])(
