@@ -149,7 +149,10 @@ function undisposedResource(program: AnyNode): string | null {
     node?.computed ? node.property?.value : node?.property?.name;
   const cleaned = new Set<AnyNode>();
   const visited = new Set<AnyNode>();
-  let disposers: AnyNode[] = [undefined];
+  type Disposer = { callback: AnyNode; path: Map<object, boolean> };
+  let currentPath = new Map<object, boolean>();
+  const resourcePaths = new Map<AnyNode, Map<object, boolean>>();
+  let disposers: Disposer[] = [{ callback: undefined, path: new Map() }];
   const identity = (node: AnyNode, environment = values): AnyNode => {
     node = unwrapResourceExpression(node);
     if (node?.type === "ThisExpression") return environment.get(thisBinding);
@@ -374,7 +377,8 @@ function undisposedResource(program: AnyNode): string | null {
     module: boolean,
   ): Completion {
     const exits: Set<AnyNode>[] = [];
-    const exitedDisposers: AnyNode[] = [];
+    const exitedDisposers: Disposer[] = [];
+    const thrownExits = new Set<Set<AnyNode>>();
     let normal = false;
     let abrupt = false;
     const returns: AnyNode[] = [];
@@ -441,6 +445,7 @@ function undisposedResource(program: AnyNode): string | null {
           const value = {};
           returned.set(node, value);
           if (loopDepth) repeated.add(value);
+          resourcePaths.set(value, new Map(currentPath));
           resources.push({
             value,
             kind,
@@ -462,7 +467,10 @@ function undisposedResource(program: AnyNode): string | null {
       const callee = globalAlias ? `window.${propertyKey(node.callee)}` : memberPath(node.callee);
       if (module && callee === "import.meta.hot.dispose") {
         const callback = identity(node.arguments[0], environment);
-        disposers = callbackChoices.get(callback) ?? [callback];
+        disposers = (callbackChoices.get(callback) ?? [callback]).map((callback) => ({
+          callback,
+          path: new Map(currentPath),
+        }));
         return;
       }
       const method =
@@ -501,6 +509,7 @@ function undisposedResource(program: AnyNode): string | null {
               ? identity(signal.object, environment)
               : undefined;
           listeners.push({ receiver, event, handler, capture: options, controller, value: node });
+          resourcePaths.set(node, new Map(currentPath));
           resources.push({
             value: node,
             kind: "listener",
@@ -562,6 +571,7 @@ function undisposedResource(program: AnyNode): string | null {
       if (completion.abrupt) {
         abrupt = true;
         exits.push(new Set(cleaned));
+        thrownExits.add(exits[exits.length - 1]);
       }
       return completion.normal;
     };
@@ -585,7 +595,9 @@ function undisposedResource(program: AnyNode): string | null {
       disposers = [...new Set([...left.disposers, ...right.disposers])];
       for (const value of cleaned) if (!right.cleaned.has(value)) cleaned.delete(value);
       for (const key of new Set([...left.values.keys(), ...right.values.keys()])) {
-        if (left.values.get(key) !== right.values.get(key)) environment.set(key, {});
+        if (!left.values.has(key)) environment.set(key, right.values.get(key));
+        else if (right.values.has(key) && left.values.get(key) !== right.values.get(key))
+          environment.set(key, {});
       }
       for (const object of new Set([...left.properties.keys(), ...right.properties.keys()])) {
         const a = left.properties.get(object) ?? new Map();
@@ -601,14 +613,34 @@ function undisposedResource(program: AnyNode): string | null {
       right: AnyNode,
       expression?: AnyNode,
       includeAbrupt = false,
+      catches = false,
     ): boolean => {
       const resourceStart = resources.length;
       const before = snapshot();
+      const parentPath = currentPath;
+      const choice = {};
+      const selectPath = (side: boolean) => {
+        if (!module || includeAbrupt) return;
+        currentPath = new Map(parentPath).set(choice, side);
+        disposers = disposers.map((disposer) => ({
+          callback: disposer.callback,
+          path: new Map(disposer.path).set(choice, side),
+        }));
+      };
+      selectPath(true);
+      const firstExit = exits.length;
+      const beforeAbrupt = abrupt;
       const leftContinues = walk(left);
+      const leftExits = exits.slice(firstExit);
+      const leftAbrupt = abrupt;
+      abrupt = beforeAbrupt;
       const leftValue = identity(left, environment);
       const afterLeft = snapshot();
       restore(before);
+      selectPath(false);
       const rightContinues = walk(right);
+      abrupt ||= leftAbrupt && (!catches || leftExits.some((exit) => !thrownExits.has(exit)));
+      currentPath = parentPath;
       const rightValue = identity(right, environment);
       const afterRight = snapshot();
       if (expression && leftContinues && rightContinues) {
@@ -628,7 +660,18 @@ function undisposedResource(program: AnyNode): string | null {
           returned.set(expression, value);
         }
       }
-      if (includeAbrupt || (leftContinues && rightContinues)) merge(afterLeft, afterRight);
+      const caughtThrowOnly =
+        catches &&
+        !leftContinues &&
+        leftExits.length > 0 &&
+        leftExits.every((exit) => thrownExits.has(exit));
+      if (catches) {
+        for (const exit of leftExits) {
+          if (thrownExits.has(exit)) exits.splice(exits.indexOf(exit), 1);
+        }
+      }
+      if (caughtThrowOnly) restore(afterRight);
+      else if (includeAbrupt || (leftContinues && rightContinues)) merge(afterLeft, afterRight);
       else if (leftContinues) restore(afterLeft);
       return leftContinues || rightContinues;
     };
@@ -792,6 +835,20 @@ function undisposedResource(program: AnyNode): string | null {
         if (!walk(node.left)) return false;
         if (memberPath(node.left) === "import.meta.hot" && node.operator === "&&")
           return walk(node.right);
+        const left = identity(node.left, environment);
+        const known = left?.type === "Literal" || left === "undefined";
+        if (known) {
+          const value = left === "undefined" ? undefined : left.value;
+          const useRight =
+            node.operator === "&&"
+              ? Boolean(value)
+              : node.operator === "||"
+                ? !value
+                : value == null;
+          if (useRight && !walk(node.right)) return false;
+          returned.set(node, useRight ? identity(node.right, environment) : left);
+          return true;
+        }
         return branch(node.right, null);
       }
       if (node.type === "TryStatement") {
@@ -801,6 +858,7 @@ function undisposedResource(program: AnyNode): string | null {
           node.handler?.body ?? { type: "ThrowStatement" },
           undefined,
           true,
+          Boolean(node.handler),
         );
         if (!node.finalizer) return continues;
         const beforeFinally = new Set(cleaned);
@@ -850,13 +908,18 @@ function undisposedResource(program: AnyNode): string | null {
           return false;
       }
       if (bindsValue && visit(node) === false) return false;
+      if (node.type === "SequenceExpression")
+        returned.set(node, identity(node.expressions.at(-1), environment));
       if (node.type === "ReturnStatement" || node.type === "ThrowStatement") {
         if (module) exitedDisposers.push(...disposers);
         exits.push(new Set(cleaned));
         if (node.type === "ReturnStatement") {
           normal = true;
           returns.push(identity(node.argument, environment));
-        } else abrupt = true;
+        } else {
+          abrupt = true;
+          thrownExits.add(exits[exits.length - 1]);
+        }
         return false;
       }
       return true;
@@ -885,7 +948,7 @@ function undisposedResource(program: AnyNode): string | null {
     [...properties].map(([key, entries]) => [key, new Map(entries)]),
   );
   let disposalLeak: string | undefined;
-  const outcomes = disposers.map((disposer) => {
+  const outcomes = disposers.map(({ callback: disposer, path: disposerPath }) => {
     const resourceStart = resources.length;
     cleaned.clear();
     for (const value of initialCleaned) cleaned.add(value);
@@ -906,6 +969,16 @@ function undisposedResource(program: AnyNode): string | null {
       .slice(resourceStart)
       .find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))?.kind;
     resources.splice(resourceStart);
+    for (const resource of resources) {
+      const createdPath = resourcePaths.get(resource.value);
+      if (
+        createdPath &&
+        [...createdPath].some(
+          ([choice, side]) => disposerPath.has(choice) && disposerPath.get(choice) !== side,
+        )
+      )
+        cleaned.add(resource.value);
+    }
     return new Set(cleaned);
   });
   for (const value of cleaned)

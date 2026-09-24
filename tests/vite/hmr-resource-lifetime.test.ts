@@ -1570,6 +1570,96 @@ for (const [name, source, leaks] of [
     "const Worker = function() { this.timer = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
     false,
   ],
+  [
+    "branch resources match their disposers",
+    "if (flag) { const timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer)) } else { const socket = new WebSocket(url); import.meta.hot.dispose(() => socket.close()) }",
+    false,
+  ],
+  [
+    "branch leak remains visible",
+    "if (flag) { const timer = setInterval(refresh); import.meta.hot.dispose(() => {}) } else { const socket = new WebSocket(url); import.meta.hot.dispose(() => socket.close()) }",
+    true,
+  ],
+  [
+    "shared resource must be cleaned on both branches",
+    "const timer = setInterval(refresh); if (flag) { import.meta.hot.dispose(() => clearInterval(timer)) } else { import.meta.hot.dispose(() => {}) }",
+    true,
+  ],
+  [
+    "caught throw cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { throw Error() } catch { clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "catch rethrow skips cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { throw Error() } catch { throw Error() }; clearInterval(timer) })",
+    true,
+  ],
+  [
+    "sequence initializer cleanup",
+    "const timer = (prepare(), setInterval(refresh)); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "logical false && setInterval(refresh)",
+    "false && setInterval(refresh); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "logical true || setInterval(refresh)",
+    "true || setInterval(refresh); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "logical 1 ?? setInterval(refresh)",
+    "1 ?? setInterval(refresh); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "logical 0 && setInterval(refresh)",
+    "0 && setInterval(refresh); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "logical null ?? setInterval(refresh)",
+    "null ?? setInterval(refresh); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "logical true && setInterval(refresh)",
+    "true && setInterval(refresh); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "caught helper throw cleanup",
+    "const timer = setInterval(refresh); function fail() { throw Error() }; import.meta.hot.dispose(() => { try { fail() } catch { clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "caught exception in cleanup helper returns normally",
+    "const timer = setInterval(refresh); function recover() { try { throw Error() } catch {} }; import.meta.hot.dispose(() => { recover(); clearInterval(timer) })",
+    false,
+  ],
+  [
+    "return from try still requires cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { if (flag) return; throw Error() } catch { clearInterval(timer) } })",
+    true,
+  ],
+  [
+    "nested branch resources and disposers",
+    "if (flag) { if (other) { const timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer)) } else { const socket = new WebSocket(url); import.meta.hot.dispose(() => socket.close()) } } else { const timer = setTimeout(refresh); import.meta.hot.dispose(() => clearTimeout(timer)) }",
+    false,
+  ],
+  [
+    "logical initializer cleanup",
+    "const timer = true && setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "sequence early resource still leaks",
+    "const timer = (setInterval(refresh), setInterval(refresh)); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({
