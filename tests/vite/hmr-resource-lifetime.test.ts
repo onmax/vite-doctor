@@ -2812,3 +2812,115 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "unawaited rejection before setup",
+    "async function fail(){ throw Error() }; fail(); setInterval(refresh); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "unawaited rejection before cleanup",
+    "async function fail(){ throw Error() }; const timer = setInterval(refresh); import.meta.hot.dispose(() => { fail(); clearInterval(timer) })",
+    false,
+  ],
+  [
+    "awaited rejection prevents cleanup",
+    "async function fail(){ throw Error() }; const timer = setInterval(refresh); import.meta.hot.dispose(async () => { await fail(); clearInterval(timer) })",
+    true,
+  ],
+  [
+    "flatMap setup",
+    "[1].flatMap(() => { setInterval(refresh); return [] }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "flatMap returned handles",
+    "const timers = [1].flatMap(() => [setInterval(refresh)]); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  ...["find", "findIndex", "findLast", "findLastIndex"].map(
+    (method) =>
+      [
+        `${method} visits holes`,
+        `[,].${method}(() => { setInterval(refresh); return false }); import.meta.hot.dispose(() => {})`,
+        true,
+      ] as const,
+  ),
+  ...["find", "findLast"].flatMap((method) => [
+    [
+      `${method} returns handle`,
+      `const timer = [setInterval(refresh)].${method}(() => true); import.meta.hot.dispose(() => clearInterval(timer))`,
+      false,
+    ] as const,
+    [
+      `${method} Boolean returns handle`,
+      `const timer = [setInterval(refresh)].${method}(Boolean); import.meta.hot.dispose(() => clearInterval(timer))`,
+      false,
+    ] as const,
+    [
+      `${method} uncertain selection`,
+      `const timers = [setInterval(refresh), setInterval(refresh)]; const timer = timers.${method}(() => flag); import.meta.hot.dispose(() => clearInterval(timer))`,
+      true,
+    ] as const,
+  ]),
+  [
+    "spread helper cleanup",
+    "const timer = setInterval(refresh); function cleanup(handle) { clearInterval(handle) }; import.meta.hot.dispose(() => cleanup(...[timer]))",
+    false,
+  ],
+  [
+    "spread direct cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(...[timer]))",
+    false,
+  ],
+  [
+    "hot data cleanup",
+    "import.meta.hot.data.timer = setInterval(refresh); import.meta.hot.dispose(data => clearInterval(data.timer))",
+    false,
+  ],
+  [
+    "hot data destructured cleanup",
+    "import.meta.hot.data.timer = setInterval(refresh); import.meta.hot.dispose(({timer}) => clearInterval(timer))",
+    false,
+  ],
+  [
+    "sort comparator setup",
+    "[2,1].sort(() => { setInterval(refresh); return 0 }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "sort comparator cleans its resources",
+    "[2,1].sort(() => { const timer = setInterval(refresh); clearInterval(timer); return 0 }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "sort repeated comparator leaks",
+    "let timer; [3,2,1].sort(() => { timer = setInterval(refresh); return 0 }); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "nested spread cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(...[...[timer]]))",
+    false,
+  ],
+  [
+    "sort singleton skips comparator",
+    "[1].sort(() => { setInterval(refresh); return 0 }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "sort retains array identity",
+    "const timers = []; const same = timers.sort(); same.push(setInterval(refresh)); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}

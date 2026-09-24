@@ -139,6 +139,7 @@ function undisposedResource(program: AnyNode): string | null {
   const lexicalReceivers = new Map<AnyNode, AnyNode>();
   const lexicalEnvironments = new Map<AnyNode, Map<AnyNode, AnyNode>>();
   const promises = new Map<AnyNode, AnyNode>();
+  const promiseCompletions = new Map<AnyNode, Completion>();
   const arrayChoices = new Map<AnyNode, { array: AnyNode; path: Map<object, boolean> }[]>();
   const alternatives = new Map<AnyNode, AnyNode[]>();
   const callbackChoices = new Map<AnyNode, AnyNode[]>();
@@ -230,6 +231,19 @@ function undisposedResource(program: AnyNode): string | null {
         : environment.get(binding)
       : (binding ?? memberPath(node) ?? node);
   };
+  const expand = (
+    items: AnyNode[],
+    environment: Map<AnyNode, AnyNode>,
+    seen = new Set<AnyNode>(),
+  ): AnyNode[] =>
+    items.flatMap((item) => {
+      if (item?.type !== "SpreadElement") return [item];
+      const spread = identity(item.argument, environment);
+      if (spread?.type !== "ArrayExpression" || seen.has(spread)) return [item];
+      return expand(arrayElements(spread), environment, new Set([...seen, spread])).map(
+        (value) => value ?? { type: "Identifier", name: "undefined" },
+      );
+    });
   const receiverIdentity = (node: AnyNode, environment: Map<AnyNode, AnyNode>): AnyNode => {
     node = unwrapResourceExpression(node);
     return identity(node, environment);
@@ -438,7 +452,8 @@ function undisposedResource(program: AnyNode): string | null {
     if (target.async) {
       const promise = {};
       promises.set(promise, completion.value);
-      return { ...completion, value: promise };
+      promiseCompletions.set(promise, completion);
+      return { normal: true, abrupt: false, value: promise };
     }
     return completion;
   }
@@ -460,6 +475,15 @@ function undisposedResource(program: AnyNode): string | null {
     });
     const visit = (node: AnyNode, receiver?: AnyNode): boolean | undefined => {
       if (node.type === "CallExpression") {
+        if (node.arguments.some((argument: AnyNode) => argument?.type === "SpreadElement")) {
+          const expanded = expand(node.arguments, environment);
+          if (!expanded.some((argument: AnyNode) => argument?.type === "SpreadElement")) {
+            const call = { ...node, arguments: expanded };
+            const normal = visit(call, receiver);
+            returned.set(node, returned.get(call));
+            return normal;
+          }
+        }
         const target = identity(node.callee, environment);
         if (
           target?.type === "MemberExpression" &&
@@ -589,6 +613,20 @@ function undisposedResource(program: AnyNode): string | null {
           path: new Map(currentPath),
         }));
         return;
+      }
+      if (calleeValue === "Boolean") {
+        const value = identity(node.arguments[0], environment);
+        if (
+          value === undefined ||
+          value?.type === "Literal" ||
+          promises.has(value) ||
+          resources.some((resource) => resource.value === value)
+        )
+          returned.set(node, {
+            type: "Literal",
+            value: value?.type === "Literal" ? Boolean(value.value) : value !== undefined,
+          });
+        return true;
       }
       const method =
         node.callee.type === "Identifier" ? node.callee.name : propertyKey(node.callee);
@@ -725,6 +763,28 @@ function undisposedResource(program: AnyNode): string | null {
         else if (method === "reverse") {
           elements.reverse();
           result = array;
+        } else if (method === "sort") {
+          const sortable = elements.filter(
+            (element) => element && !(element.type === "Literal" && element.value === undefined),
+          );
+          if (sortable.length > 1 && args[0]) {
+            const resourceStart = resources.length;
+            loopDepth++;
+            const completion = inspect(args[0], [{}, {}], environment, module);
+            loopDepth--;
+            for (const resource of resources.slice(resourceStart))
+              if (cleaned.has(resource.value)) repeated.delete(resource.value);
+            if (completion.abrupt) {
+              abrupt = true;
+              exits.push(new Set(cleaned));
+              thrownExits.add(exits[exits.length - 1]);
+              throwStates.set(exits[exits.length - 1], snapshot());
+            }
+            if (!completion.normal) return false;
+          }
+          if (sortable.length > 1)
+            elements.splice(0, elements.length, { type: "SpreadElement", argument: {} });
+          result = array;
         } else if (
           method === "splice" &&
           args
@@ -770,6 +830,7 @@ function undisposedResource(program: AnyNode): string | null {
         [
           "forEach",
           "map",
+          "flatMap",
           "filter",
           "some",
           "every",
@@ -781,25 +842,21 @@ function undisposedResource(program: AnyNode): string | null {
           "reduceRight",
         ].includes(method!)
       ) {
-        const expand = (items: AnyNode[], seen = new Set<AnyNode>()): AnyNode[] =>
-          items.flatMap((item) => {
-            if (item?.type !== "SpreadElement") return [item];
-            const spread = identity(item.argument, environment);
-            if (spread?.type !== "ArrayExpression" || seen.has(spread)) return [item];
-            return expand(arrayElements(spread), new Set([...seen, spread])).map(
-              (value) => value ?? { type: "Identifier", name: "undefined" },
-            );
-          });
         const elements: AnyNode[] = [];
         let knownSelection = true;
         let accumulator = identity(node.arguments[1], environment);
         let hasAccumulator = node.arguments.length > 1;
+        const searching = ["find", "findIndex", "findLast", "findLastIndex"].includes(method!);
+        let selected: AnyNode = {
+          type: "Literal",
+          value: method?.endsWith("Index") ? -1 : undefined,
+        };
         const reducing = method === "reduce" || method === "reduceRight";
-        const entries = [...expand(arrayElements(array)).entries()];
+        const entries = [...expand(arrayElements(array), environment).entries()];
         if (["reduceRight", "findLast", "findLastIndex"].includes(method!)) entries.reverse();
         let optionalTail: ReturnType<typeof snapshot> | undefined;
         for (const [index, element] of entries) {
-          if (!element || element.type === "SpreadElement") continue;
+          if ((!element && !searching) || element?.type === "SpreadElement") continue;
           if (reducing && !hasAccumulator) {
             accumulator = identity(element, environment);
             hasAccumulator = true;
@@ -808,7 +865,11 @@ function undisposedResource(program: AnyNode): string | null {
           const call = {
             type: "CallExpression",
             callee: identity(node.arguments[0], environment),
-            arguments: [identity(element, environment), { type: "Literal", value: index }, array],
+            arguments: [
+              identity(element ?? undefined, environment),
+              { type: "Literal", value: index },
+              array,
+            ],
           };
           if (reducing) call.arguments.unshift(accumulator);
           if (
@@ -822,7 +883,15 @@ function undisposedResource(program: AnyNode): string | null {
           ) {
             const known = result?.type === "Literal" || promises.has(result);
             const truthy = promises.has(result) || Boolean(result?.value);
-            if (known && (method === "every" ? !truthy : truthy)) break;
+            if (known && (method === "every" ? !truthy : truthy)) {
+              if (searching)
+                selected = optionalTail
+                  ? {}
+                  : method?.endsWith("Index")
+                    ? { type: "Literal", value: index }
+                    : identity(element, environment);
+              break;
+            }
             if (!known) {
               if (optionalTail) merge(optionalTail, snapshot());
               optionalTail = snapshot();
@@ -832,11 +901,14 @@ function undisposedResource(program: AnyNode): string | null {
             if (result?.type === "Literal") {
               if (result.value) elements.push(identity(element, environment));
             } else knownSelection = false;
+          } else if (method === "flatMap" && result?.type === "ArrayExpression") {
+            elements.push(...arrayElements(result).filter((element) => element != null));
           } else elements.push(result);
         }
         if (optionalTail) merge(optionalTail, snapshot());
+        if (searching) returned.set(node, optionalTail ? {} : selected);
         if (reducing) returned.set(node, accumulator);
-        if (method === "map" || (method === "filter" && knownSelection))
+        if (method === "map" || method === "flatMap" || (method === "filter" && knownSelection))
           returned.set(node, { type: "ArrayExpression", elements });
         return true;
       }
@@ -1606,6 +1678,17 @@ function undisposedResource(program: AnyNode): string | null {
         if (!walk(node.arguments)) return false;
         return visit(node) !== false;
       }
+      if (node.type === "AwaitExpression") {
+        if (!walk(node.argument)) return false;
+        const completion = promiseCompletions.get(identity(node.argument, environment));
+        if (completion?.abrupt) {
+          abrupt = true;
+          exits.push(new Set(cleaned));
+          thrownExits.add(exits[exits.length - 1]);
+          throwStates.set(exits[exits.length - 1], snapshot());
+        }
+        return completion?.normal ?? true;
+      }
       const bindsValue =
         node.type === "VariableDeclarator" ||
         node.type === "AssignmentExpression" ||
@@ -1700,6 +1783,19 @@ function undisposedResource(program: AnyNode): string | null {
       callbacks.get(disposer) && !lexicalEnvironments.has(disposer)
         ? callbacks.get(disposer)
         : disposer,
+      [
+        identity({
+          type: "MemberExpression",
+          object: {
+            type: "MemberExpression",
+            object: { type: "MetaProperty", meta: { name: "import" }, property: { name: "meta" } },
+            property: { name: "hot" },
+            computed: false,
+          },
+          property: { name: "data" },
+          computed: false,
+        }),
+      ],
     );
     if (
       resources.some((resource) => resource.value === disposer && resource.kind === "subscription")
