@@ -1545,3 +1545,68 @@ test("traces generator advancement in the template", async () => {
   );
   expect(result.diagnostics).toHaveLength(1);
 });
+
+test.each([
+  ["if (false) initialize()", 0],
+  ["false && initialize()", 0],
+  ["true || initialize()", 0],
+  ["true ? null : initialize()", 0],
+  ["function setup() { if (false) initialize() }; setup()", 0],
+  ["function setup() { initialize() }; if (false) setup()", 0],
+  ["if (true) initialize()", 1],
+  ["if (flag) initialize()", 1],
+])("respects setup call reachability: %s", async (calls, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>let displayed; function initialize() { displayed = Date.now() }; ${calls}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["yield 'stable'; yield Date.now()", 0],
+  ["yield Date.now(); yield 'stable'", 1],
+  ["if (false) yield 'stable'; yield Date.now()", 1],
+  ["if (true) yield 'stable'; yield Date.now()", 0],
+  ["const time = Date.now(); yield 'stable'; yield time", 0],
+  ["const time = Date.now(); yield time; yield 'stable'", 1],
+  ["if (flag) yield 'stable'; yield Date.now()", 1],
+])("attributes the first generator advancement: %s", async (body, count) => {
+  for (const template of [false, true]) {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>function* clock() { ${body} }; ${template ? "" : "const displayed = clock().next().value"}</script><template>{{ ${template ? "clock().next().value" : "displayed"} }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(count);
+  }
+});
+
+test.each([
+  ["clock.call(null)", "return Date.now()", "displayed", 1],
+  ["clock.apply(null, [])", "return Date.now()", "displayed", 1],
+  ["clock.call(null, 'stable')", "return value", "displayed", 0],
+  ["clock.apply(null, ['stable'])", "return value", "displayed", 0],
+  ["clock.call(null)", "return value", "displayed", 1],
+  ["clock.apply(null, [])", "return value", "displayed", 1],
+  ["new clock()", "return { generatedAt: Date.now() }", "displayed.generatedAt", 1],
+  ["new clock()", "return Date.now()", "displayed", 0],
+])("traces local invocation results: %s / %s", async (call, body, rendered, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock(value = Date.now()) { ${body} }; const displayed = ${call}</script><template>{{ ${rendered} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["const helpers = { call(value = Date.now()) { return value } }", "helpers.call('stable')", 0],
+  ["function clock() { return Date.now() }", "clock.call(null)", 1],
+  ["function clock() { return Date.now() }", "clock.apply(null, [])", 1],
+  ["const helpers = { clock() { return Date.now() } }", "helpers.clock.call(null)", 1],
+])("traces template helper invocations: %s / %s", async (script, expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ ${expression} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

@@ -141,6 +141,7 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
     walkScriptLocal(ctx.file.scriptAst, (call) => {
       if (call.type !== "CallExpression" || resolveLocalValue(call.callee, parents) !== fn) return;
       if (ctx.helpers.isClientOnlyExecutionContext(call, ctx.file.text)) return;
+      if (isInactivePath(call, containingFunction(call, parents), parents)) return;
       const caller = containingFunction(call, parents);
       if (caller) {
         if (executes(caller, new Set(seen))) found = true;
@@ -202,6 +203,15 @@ function functionFlowsToTemplate(
   const capturedReferences = new WeakMap<AnyNode, AnyNode>();
   const matchesCallee = (callee: AnyNode): boolean => {
     const original = callee;
+    if (invocationMethod(callee)) {
+      let target = resolveLocalValue(callee.object, parents, new Set(), [], ctx.file.scriptAst);
+      const aliases = new Set<AnyNode>();
+      while (target?.type === "Identifier" && !aliases.has(target)) {
+        aliases.add(target);
+        target = resolveLocalValue(target, parents);
+      }
+      if (target === fn) callee = callee.object;
+    }
     if (!memberPath.length && callee?.type === "MemberExpression") {
       let value = resolveLocalValue(callee, parents, new Set(), [], ctx.file.scriptAst);
       const captured = value;
@@ -253,6 +263,26 @@ function functionFlowsToTemplate(
     return false;
   };
   const reachesCall = (call: AnyNode, template = false): boolean => {
+    if (call.type === "NewExpression") {
+      let returnsObject = false;
+      walkScriptLocal(fn.body, (statement) => {
+        if (statement.type !== "ReturnStatement" || containingFunction(statement, parents) !== fn)
+          return;
+        const value = resolveLocalValue(statement.argument, parents);
+        if (
+          [
+            "ObjectExpression",
+            "ArrayExpression",
+            "FunctionExpression",
+            "ArrowFunctionExpression",
+            "NewExpression",
+          ].includes(value?.type) &&
+          contributesToReturn(source, fn, parents, new Set(), statement.argument)
+        )
+          returnsObject = true;
+      });
+      if (!returnsObject) return false;
+    }
     const captured = capturedReferences.get(getter ? call : call.callee);
     const reference = captured ?? (template ? { start: Infinity } : call);
     const assignment = parents.get(fn);
@@ -317,7 +347,8 @@ function functionFlowsToTemplate(
         callee = callee.parent;
       const call = getter ? callee : callee.parent;
       return (
-        (getter || (call?.type === "CallExpression" && call.callee === callee)) &&
+        (getter ||
+          (["CallExpression", "NewExpression"].includes(call?.type) && call.callee === callee)) &&
         matchesCallee(callee) &&
         reachesCall(call, true) &&
         projectionIncludes(source, fn, call, parents) &&
@@ -326,6 +357,7 @@ function functionFlowsToTemplate(
             call,
             (node) => node.parent,
             () => !resolveLocalBinding(ctx.file.scriptAst, "Array", parents),
+            () => reachesFirstYield(source, fn, parents),
           )) &&
         (!fn.async ||
           asyncResultIsConsumed(
@@ -358,7 +390,9 @@ function functionFlowsToTemplate(
       );
 
     if (
-      (getter ? node.type === "MemberExpression" : node.type === "CallExpression") &&
+      (getter
+        ? node.type === "MemberExpression"
+        : ["CallExpression", "NewExpression"].includes(node.type)) &&
       (callback || matchesCallee(getter ? node : node.callee)) &&
       reachesCall(node)
     ) {
@@ -368,6 +402,7 @@ function functionFlowsToTemplate(
           node,
           (node) => parents.get(node),
           (call) => !resolveLocalBinding(call, "Array", parents),
+          () => reachesFirstYield(source, fn, parents),
         )
       )
         return false;
@@ -492,9 +527,22 @@ function parameterValue(
 ): AnyNode {
   const index = fn.params?.indexOf(pattern) ?? -1;
   if (index >= 0) {
-    if (call.arguments.slice(0, index + 1).some((arg: AnyNode) => arg.type === "SpreadElement"))
+    const method =
+      resolveLocalValue(call.callee, parents, new Set(), [], fn) === fn
+        ? null
+        : invocationMethod(call.callee);
+    const args =
+      method === "call"
+        ? call.arguments.slice(1)
+        : method === "apply"
+          ? call.arguments[1]?.type === "ArrayExpression"
+            ? call.arguments[1].elements
+            : null
+          : call.arguments;
+    if (!args) return undefined;
+    if (args.slice(0, index + 1).some((arg: AnyNode) => arg?.type === "SpreadElement"))
       return undefined;
-    return call.arguments[index] ?? null;
+    return args[index] ?? null;
   }
   const parent = parents.get(pattern);
   if (parent?.type === "AssignmentPattern" && parent.left === pattern) {
@@ -733,12 +781,55 @@ function parameterContributesToReturn(
   return contributes;
 }
 
+function invocationMethod(callee: AnyNode): string | null {
+  if (callee?.type !== "MemberExpression") return null;
+  const method = callee.computed ? callee.property?.value : callee.property?.name;
+  return method === "call" || method === "apply" ? method : null;
+}
+
+function isInactivePath(
+  node: AnyNode,
+  owner: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): boolean {
+  for (let current = node; current && current !== owner; current = parents.get(current)) {
+    if (expressionBranchIsInactive(parents.get(current), current)) return true;
+  }
+  return false;
+}
+
+function reachesFirstYield(
+  source: AnyNode,
+  fn: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): boolean {
+  const yields: AnyNode[] = [];
+  walkScriptLocal(fn.body, (node) => {
+    if (
+      node.type === "YieldExpression" &&
+      containingFunction(node, parents) === fn &&
+      !isInactivePath(node, fn, parents)
+    )
+      yields.push(node);
+  });
+  return yields.some(
+    (yielded) =>
+      contributesToReturn(source, fn, parents, new Set(), yielded.argument) &&
+      !yields.some(
+        (prior) =>
+          !prior.delegate &&
+          prior.end <= yielded.start &&
+          writeDominatesReference(prior, yielded, fn, parents),
+      ),
+  );
+}
+
 function expressionBranchIsInactive(parent: AnyNode, current: AnyNode): boolean {
   const selector = unwrapExpression(
-    parent?.type === "ConditionalExpression" ? parent.test : parent?.left,
+    ["ConditionalExpression", "IfStatement"].includes(parent?.type) ? parent.test : parent?.left,
   );
   if (selector?.type !== "Literal") return false;
-  if (parent.type === "ConditionalExpression")
+  if (["ConditionalExpression", "IfStatement"].includes(parent.type))
     return current === (selector.value ? parent.alternate : parent.consequent);
   return (
     parent.type === "LogicalExpression" &&
@@ -869,6 +960,7 @@ function isConsumedIterator(
   node: AnyNode,
   parentOf: (node: AnyNode) => AnyNode,
   hasNativeArray: (node: AnyNode) => boolean,
+  reachesFirst: () => boolean,
 ): boolean {
   const parent = parentOf(node);
   const nextCall = parent && parentOf(parent);
@@ -883,7 +975,7 @@ function isConsumedIterator(
     value.object === nextCall &&
     (value.computed ? value.property?.value : value.property?.name) === "value"
   )
-    return true;
+    return reachesFirst();
   return (
     (parent?.type === "VariableDeclarator" &&
       parent.init === node &&
@@ -1185,7 +1277,7 @@ function contributesToReturn(
           binding &&
           resolveLocalBinding(reference, reference.name, parents) === binding &&
           !hasPriorAliasWrite(reference, binding, owner, parents, parent) &&
-          contributesToReturn(reference, owner, parents, seen)
+          contributesToReturn(reference, owner, parents, seen, sink)
         )
           returned = true;
       });
@@ -1217,7 +1309,7 @@ function contributesToReturn(
       });
       if (selectsReturn) return !returnsSameLiteral(owner, parents);
     }
-    if (parent?.type === "YieldExpression" && owner.generator) return true;
+    if (parent?.type === "YieldExpression" && owner.generator) return !sink;
     if (parent?.type === "ReturnStatement") {
       let scope = parent;
       while (
@@ -1391,7 +1483,10 @@ function writeDominatesReference(
     const parent = parents.get(node);
     if (referenceAncestors.has(node)) return true;
     if (parent?.type === "IfStatement" || parent?.type === "ConditionalExpression") {
-      if (node !== parent.test && !referenceAncestors.has(node)) return false;
+      if (node !== parent.test && !referenceAncestors.has(node)) {
+        const test = unwrapExpression(parent.test);
+        if (test?.type !== "Literal" || expressionBranchIsInactive(parent, node)) return false;
+      }
     }
     if (
       [
