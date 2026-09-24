@@ -227,6 +227,15 @@ test.each([
   ["", "{ headers: { Authorization: void 0 } }", true],
   ["", "{ headers: [['cookie', undefined]] }", true],
   ["", "{ headers: new Headers([['cookie', void 0]]) }", true],
+  ["const cookie = ''", "{ headers: { cookie } }", true],
+  ["const cookie = undefined", "{ headers: { cookie } }", true],
+  ["const cookie = void 0", "{ headers: { cookie } }", true],
+  ["const cookie = null", "{ headers: [['cookie', cookie]] }", true],
+  ["const token = '' as const; const auth = token", "{ headers: { Authorization: auth } }", true],
+  ["const cookie = ''", "{ headers: new Headers([['cookie', cookie]]) }", true],
+  ["const cookie = 'session=123'", "{ headers: { cookie } }", false],
+  ["const cookie = getCookie()", "{ headers: { cookie } }", false],
+  ["const undefined = 'session=123'; const cookie = undefined", "{ headers: { cookie } }", false],
 ])("review credential regression with %s and %s", async (setup, options, diagnosed) => {
   const result = await runNuxtAppRuleFixture(
     forwardAuthHeadersSsr,

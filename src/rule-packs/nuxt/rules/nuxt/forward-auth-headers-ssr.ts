@@ -121,7 +121,7 @@ function credentialHeaders(
       const name = tuple?.type === "ArrayExpression" && tuple.elements[0]?.value;
       if (typeof name !== "string") return;
       if (isCredentialHeader(name))
-        headers.set(name.toLowerCase(), hasHeaderValue(tuple.elements[1]));
+        headers.set(name.toLowerCase(), hasHeaderValue(tuple.elements[1], call));
     }
     return headers;
   }
@@ -155,15 +155,19 @@ function credentialHeaders(
         headers.set("cookie", false);
         headers.set("authorization", false);
       } else if (isCredentialHeader(name)) {
-        headers.set(name.toLowerCase(), hasHeaderValue(property.value));
+        headers.set(name.toLowerCase(), hasHeaderValue(property.value, call));
       }
     }
   }
   return headers;
 }
 
-function hasHeaderValue(value: AnyNode): boolean {
+function hasHeaderValue(value: AnyNode, call: AnyNode, seen = new Set<AnyNode>()): boolean {
   const header = unwrapExpression(value);
+  if (header?.type === "Identifier" && !seen.has(header)) {
+    const initializer = localInitializer(header, call);
+    if (initializer) return hasHeaderValue(initializer, call, new Set(seen).add(header));
+  }
   return (
     header != null &&
     !(header.type === "Identifier" && header.name === "undefined") &&
