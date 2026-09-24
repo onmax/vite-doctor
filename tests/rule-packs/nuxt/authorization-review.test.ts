@@ -34,6 +34,12 @@ test("opt-in authorization review reports cited server gaps", async () => {
 
   expect(result.diagnostics.map((item) => item.code)).toContain("NUXT0074");
   expect(result.diagnostics.find((item) => item.code === "NUXT0074")?.related).toHaveLength(1);
+  expect(result.diagnostics.find((item) => item.code === "NUXT0074")?.range).toEqual({
+    start: 0,
+    end: files["server/api/account.get.ts"].length,
+    line: 1,
+    column: 1,
+  });
 });
 
 test.each([
@@ -1049,20 +1055,26 @@ test.each(["analytics.ts", "auth.ts", "admin/access.ts"])(
   },
 );
 
-test.each(["present", "oversized", "inactive"])(
+test.each(["present", "oversized", "inactive", "custom-server"])(
   "collects active layer server middleware: %s",
   async (state) => {
     let calls = 0;
-    const guard = "extensions/admin/server/middleware/auth.ts";
+    const serverDir =
+      state === "custom-server" ? "extensions/admin/backend" : "extensions/admin/server";
+    const guard = `${serverDir}/middleware/auth.ts`;
     const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
       calls++;
-      expect(candidate.sources.some((source) => source.path === guard)).toBe(state === "present");
+      expect(candidate.sources.some((source) => source.path === guard)).toBe(
+        state === "present" || state === "custom-server",
+      );
+      expect(candidate.sources.some((source) => source.path.includes("app/server"))).toBe(false);
       return { status: "unknown", reason: "Collected", citations: [] };
     });
     const result = await runProjectFixture({
       framework: "nuxt",
       files: {
         ...files,
+        "extensions/admin/app/server/middleware/auth.ts": " ".repeat(17000),
         [guard]:
           "export default defineEventHandler(event => requireAuth(event))" +
           (state === "oversized" ? " ".repeat(17000) : ""),
@@ -1071,7 +1083,14 @@ test.each(["present", "oversized", "inactive"])(
           layers:
             state === "inactive"
               ? [{ root: ".", srcDir: "app", priority: 0 }]
-              : [{ root: "extensions/admin", priority: 0 }],
+              : [
+                  {
+                    root: "extensions/admin",
+                    srcDir: "extensions/admin/app",
+                    serverDir,
+                    priority: 0,
+                  },
+                ],
         }),
       },
       rules: extension.rulePacks![0]!.rules,

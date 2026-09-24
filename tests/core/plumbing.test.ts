@@ -1,3 +1,4 @@
+import { createNuxtAuthorizationReviewExtension } from "../../src/rule-packs/nuxt/review/authorization.ts";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -1176,3 +1177,63 @@ function pluginWith(...rules: any[]) {
 function git(root: string, ...args: string[]) {
   execFileSync("git", args, { cwd: root, stdio: "ignore" });
 }
+
+test.each(["changed", "since"])(
+  "authorization citations respect %s line eligibility",
+  async (mode) => {
+    await withFixture(
+      {
+        "nuxt.config.ts": "export default defineNuxtConfig({})",
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        "server/api/account.get.ts":
+          "export default defineEventHandler(() => {\r\n  return { private: false }\r\n})",
+      },
+      async (root) => {
+        git(root, "init");
+        git(root, "add", ".");
+        git(
+          root,
+          "-c",
+          "user.name=Doctor",
+          "-c",
+          "user.email=doctor@example.com",
+          "commit",
+          "-m",
+          "fixture",
+        );
+        const handler = "server/api/account.get.ts";
+        const source =
+          "export default defineEventHandler(() => {\r\n  return { private: true }\r\n})";
+        writeFileSync(join(root, handler), source);
+        for (const line of [1, 2]) {
+          const result = await runDoctor({
+            root,
+            framework: "nuxt",
+            ...(mode === "changed" ? { changed: true } : { since: "HEAD" }),
+            extensions: [
+              createNuxtAuthorizationReviewExtension(async () => ({
+                status: "report",
+                reason: "Private data has no server guard.",
+                citations: [
+                  { path: handler, line },
+                  { path: "app/middleware/auth.ts", line: 1 },
+                ],
+              })),
+            ],
+          });
+          const diagnostics = result.diagnostics.filter((item) => item.code === "NUXT0074");
+          expect(diagnostics).toHaveLength(line === 2 ? 1 : 0);
+          if (line === 2) {
+            expect(diagnostics[0]!.range).toEqual({
+              start: source.indexOf("  return"),
+              end: source.lastIndexOf("\r\n"),
+              line: 2,
+              column: 1,
+            });
+          }
+        }
+      },
+    );
+  },
+);

@@ -130,10 +130,13 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
               ...nuxt.serverDirs.middleware,
               ...appMiddlewareFiles(
                 nuxt.manifest?.isCurrent
-                  ? nuxt.layers.flatMap((layer) => [
-                      resolve(root, layer.root, "server/middleware"),
-                      resolve(root, layer.srcDir ?? layer.root, "server/middleware"),
-                    ])
+                  ? nuxt.layers.map((layer) =>
+                      resolve(
+                        root,
+                        layer.serverDir ?? resolve(root, layer.root, "server"),
+                        "middleware",
+                      ),
+                    )
                   : [],
               ),
             ]),
@@ -261,12 +264,18 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
               continue;
             }
             const citations = validCitations(candidate, review.citations);
+            const handlerCitation = citations.find((citation) => citation.path === handler.path);
             if (
               review.status !== "report" ||
-              !citations.some((citation) => citation.path === handler.path) ||
+              !handlerCitation ||
               !citations.some((citation) => citation.path !== handler.path)
             )
               continue;
+            const lines = handler.text.split("\n");
+            const start = lines
+              .slice(0, handlerCitation.line - 1)
+              .reduce((offset, line) => offset + line.length + 1, 0);
+            const end = start + lines[handlerCitation.line - 1]!.replace(/\r$/, "").length;
             ctx.report(
               diagnostics.NUXT0074({
                 why: `This auth-sensitive server route may rely on app route middleware for authorization. ${review.reason.trim().slice(0, 300)}`,
@@ -277,6 +286,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                 severity: "warn",
                 category: "middleware",
                 file: resolve(root, handler.path),
+                range: { start, end, line: handlerCitation.line, column: 1 },
                 confidence: "heuristic-low",
                 related: citations
                   .filter((citation) => citation.path !== handler.path)

@@ -162,6 +162,10 @@ export async function writeManifest(
           layerDirectories[index]?.appMiddleware ??
             resolve(srcDir, nuxt.options.dir?.middleware || "middleware"),
         ),
+        serverDir: resolve(
+          layerDirectories[index]?.server ??
+            resolve(layer.cwd ?? rootDir, layer.config?.serverDir ?? "server"),
+        ),
         name: layer.config?.name,
         priority: index,
       }),

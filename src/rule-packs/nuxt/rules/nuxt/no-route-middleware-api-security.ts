@@ -299,7 +299,7 @@ function isProviderBinding(
     };
     const alias = Object.keys(aliases)
       .sort((a, b) => b.length - a.length)
-      .find((key) => source.startsWith(`${key}/`));
+      .find((key) => source === key || source.startsWith(`${key}/`));
     const base = source.startsWith(".")
       ? resolve(dirname(file), source)
       : alias

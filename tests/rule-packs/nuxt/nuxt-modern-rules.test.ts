@@ -3961,6 +3961,7 @@ test.each([true, false])(
                 rootDir: layerRoot,
                 srcDir: join(layerRoot, "src"),
                 dir: { middleware: "guards" },
+                serverDir: join(layerRoot, "backend"),
               },
             },
           ],
@@ -3973,6 +3974,7 @@ test.each([true, false])(
         root: layerRoot,
         srcDir: join(layerRoot, "src"),
         appMiddlewareDir: join(layerRoot, "src/guards"),
+        serverDir: join(layerRoot, "backend"),
       });
     });
   },
@@ -4203,8 +4205,12 @@ test.each([
       "app/middleware/auth.ts":
         "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
       "server/api/auth/[...all].ts":
-        "import auth from '~/utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+        "import auth from '#auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
       "app/utils/auth.ts": provider,
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        aliases: { "#auth": "app/utils/auth.ts" },
+      }),
     },
   });
   expect(result.diagnostics).toHaveLength(count);
