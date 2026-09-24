@@ -30,6 +30,9 @@ test.each([
   "{ query: { headers: useRequestHeaders(['cookie']) } }",
   "{ headers: useRequestHeaders(['accept-language']) }",
   "{ headers: useRequestHeaders([]) }",
+  "{ headers: useRequestHeaders(['cookie']), ...requestOptions }",
+  "{ headers: useRequestHeaders(['cookie']), headers: unrelated }",
+  "{ headers: new Headers({ Accept: 'application/json' }) }",
   "{ headers: unrelated }",
   "{ headers: { ...unrelated } }",
   "{ headers: { ...useRequestHeaders(['accept']) } }",
@@ -46,6 +49,9 @@ const user = await $fetch('/api/user', ${options})
 
 test.each([
   "{ headers: useRequestHeaders() }",
+  "{ ...requestOptions, headers: useRequestHeaders(['cookie']) }",
+  "{ headers: new Headers({ cookie }) }",
+  "{ headers: new Headers(useRequestHeaders(['cookie'])) }",
   "{ headers: useRequestHeaders(['cookie']) }",
   "{ headers: useRequestHeaders(['authorization']) }",
   "{ headers: { cookie } }",

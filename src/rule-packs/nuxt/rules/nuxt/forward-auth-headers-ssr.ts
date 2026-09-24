@@ -55,10 +55,11 @@ function isCredentialHeader(name: string | undefined): boolean {
 function forwardsRequestCredentials(call: AnyNode): boolean {
   const options = call.arguments?.[1];
   if (options?.type !== "ObjectExpression") return false;
-  const headers = options.properties.find(
-    (property: AnyNode) => propertyName(property) === "headers",
-  );
-  return hasCredentialHeaders(headers?.value, call);
+  for (const property of [...options.properties].reverse()) {
+    if (property.type === "SpreadElement") return false;
+    if (propertyName(property) === "headers") return hasCredentialHeaders(property.value, call);
+  }
+  return false;
 }
 
 function hasCredentialHeaders(value: AnyNode, call: AnyNode, seen = new Set<AnyNode>()): boolean {
@@ -66,6 +67,9 @@ function hasCredentialHeaders(value: AnyNode, call: AnyNode, seen = new Set<AnyN
   seen.add(value);
   if (value.type === "Identifier") {
     return hasCredentialHeaders(localInitializer(value, call), call, seen);
+  }
+  if (value.type === "NewExpression" && value.callee?.name === "Headers") {
+    return hasCredentialHeaders(value.arguments[0], call, seen);
   }
   if (value?.type === "CallExpression" && value.callee?.name === "useRequestHeaders") {
     const selected = value.arguments[0];
