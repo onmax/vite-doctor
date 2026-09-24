@@ -3935,13 +3935,26 @@ test.each([true, false])(
           buildDir: ".nuxt",
           modules: [],
           experimental: { localLayerAliases },
-          _layers: [{ cwd: layerRoot, config: { srcDir: join(layerRoot, "src") } }],
+          _layers: [
+            {
+              cwd: layerRoot,
+              config: {
+                rootDir: layerRoot,
+                srcDir: join(layerRoot, "src"),
+                dir: { middleware: "guards" },
+              },
+            },
+          ],
         },
         async callHook() {},
       });
       const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
       expect(manifest.localLayerAliases).toBe(localLayerAliases);
-      expect(manifest.layers[0]).toMatchObject({ root: layerRoot, srcDir: join(layerRoot, "src") });
+      expect(manifest.layers[0]).toMatchObject({
+        root: layerRoot,
+        srcDir: join(layerRoot, "src"),
+        appMiddlewareDir: join(layerRoot, "src/guards"),
+      });
     });
   },
 );

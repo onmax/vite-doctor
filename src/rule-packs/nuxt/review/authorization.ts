@@ -61,21 +61,47 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
         async onProjectEnd() {
           const root = ctx.project.root;
           const nuxt = ctx.project.nuxt!;
-          const middleware = projectSources(
-            root,
-            appMiddlewareFiles(
-              root,
-              nuxt.manifest?.isCurrent
-                ? [
-                    ...nuxt.appRoots,
-                    ...nuxt.layers.flatMap((layer) => {
-                      const srcDir = resolve(root, layer.srcDir ?? layer.root);
-                      return [srcDir, resolve(srcDir, "app")];
-                    }),
-                  ]
-                : [],
-            ),
-          ).filter((source) => authMiddlewareName.test(source.path));
+          const middlewareDirs = nuxt.manifest?.isCurrent
+            ? nuxt.layers.map((layer) =>
+                resolve(
+                  root,
+                  layer.appMiddlewareDir ??
+                    resolve(
+                      root,
+                      layer.srcDir ??
+                        (resolve(root, layer.root) === root ? nuxt.appDir : layer.root),
+                      "middleware",
+                    ),
+                ),
+              )
+            : [];
+          if (
+            !nuxt.manifest?.isCurrent ||
+            !nuxt.layers.some((layer) => resolve(root, layer.root) === root)
+          )
+            middlewareDirs.push(resolve(nuxt.appDir, "middleware"));
+          const middlewareFiles = appMiddlewareFiles(middlewareDirs).filter((file) =>
+            authMiddlewareName.test(relative(root, file)),
+          );
+          const middleware = projectSources(root, middlewareFiles);
+          const collectedMiddleware = new Set(
+            middleware.map((source) => resolve(root, source.path)),
+          );
+          const omittedMiddleware = middlewareFiles.filter(
+            (file) => !collectedMiddleware.has(file),
+          );
+          if (omittedMiddleware.length) {
+            ctx.project.evidenceGaps = [
+              ...(ctx.project.evidenceGaps ?? []),
+              {
+                source: "vite-doctor/nuxt-authorization-review",
+                message:
+                  "Authorization review requires all auth-like app middleware. Some files exceed 16 KB or cannot be collected; no handlers were reviewed.",
+                files: omittedMiddleware.map((file) => relative(root, file).replaceAll("\\", "/")),
+              },
+            ];
+            return;
+          }
           if (!middleware.length) return;
           const registrations = nuxt.manifest?.isCurrent
             ? (nuxt.manifest.serverHandlers ?? [])
@@ -296,7 +322,7 @@ function isWithin(root: string, file: string): boolean {
   return path !== ".." && !path.startsWith("../") && !path.startsWith("..\\");
 }
 
-function appMiddlewareFiles(root: string, appRoots: string[]): string[] {
+function appMiddlewareFiles(directories: string[]): string[] {
   const files: string[] = [];
   const visit = (directory: string) => {
     if (!existsSync(directory)) return;
@@ -306,10 +332,8 @@ function appMiddlewareFiles(root: string, appRoots: string[]): string[] {
       else if (/\.[cm]?[jt]s$/.test(file)) files.push(file);
     }
   };
-  visit(resolve(root, "app/middleware"));
-  visit(resolve(root, "middleware"));
-  for (const appRoot of appRoots) visit(resolve(appRoot, "middleware"));
-  return files;
+  for (const directory of new Set(directories)) visit(directory);
+  return [...new Set(files)];
 }
 
 function localImports(

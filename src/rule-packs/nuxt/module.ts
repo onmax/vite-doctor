@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { defineNuxtModule } from "nuxt/kit";
+import { defineNuxtModule, getLayerDirectories } from "nuxt/kit";
 import type { NuxtModule } from "nuxt/schema";
 import { join, relative, resolve } from "pathe";
 import type {
@@ -136,6 +136,7 @@ export async function writeManifest(
   const resolvedAutoImports = evidence?.autoImportContext?.getImports
     ? await evidence.autoImportContext.getImports()
     : toArray(nuxt.options.imports?.imports);
+  const layerDirectories = nuxt.options._layers ? getLayerDirectories(nuxt) : [];
   const manifest = {
     nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
     nuxtVersion: nuxt._version ?? nuxt.version ?? "4",
@@ -153,6 +154,10 @@ export async function writeManifest(
       (layer: any, index: number) => ({
         root: resolve(layer.cwd ?? layer.config?.rootDir ?? rootDir),
         srcDir: resolve(layer.cwd ?? rootDir, layer.config?.srcDir ?? "."),
+        appMiddlewareDir: resolve(
+          layerDirectories[index]?.appMiddleware ??
+            resolve(srcDir, nuxt.options.dir?.middleware || "middleware"),
+        ),
         name: layer.config?.name,
         priority: index,
       }),

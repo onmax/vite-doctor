@@ -149,7 +149,7 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
       ".nuxt/doctor.manifest.json": JSON.stringify({
         generatedAt: new Date().toISOString(),
         appDir: "app",
-        layers: [{ root: "layers/admin", srcDir: "layers/admin", priority: 0 }],
+        layers: [{ root: "layers/admin", srcDir: "layers/admin/app", priority: 0 }],
         serverHandlers: [
           { file: "server/handlers/entry.ts", route: "/api/account" },
           { file: "server/handlers/entry.ts", route: "/api/profile" },
@@ -328,7 +328,14 @@ test.each([
         "server/api/account.get.ts": files["server/api/account.get.ts"],
         ".nuxt/doctor.manifest.json": JSON.stringify({
           generatedAt: current ? "2100-01-01T00:00:00.000Z" : "2000-01-01T00:00:00.000Z",
-          layers: [{ root: "layers/admin", srcDir, priority: 0 }],
+          layers: [
+            {
+              root: "layers/admin",
+              srcDir,
+              appMiddlewareDir: `${srcDir}/${middlewareDir}`,
+              priority: 0,
+            },
+          ],
         }),
       },
       rules: extension.rulePacks![0]!.rules,
@@ -409,4 +416,71 @@ test.each([true, false])("manifest aliases require current evidence: %s", async 
   expect(candidates[0]!.sources.some((source) => source.path === "server/old/guard.ts")).toBe(
     current,
   );
+});
+
+test.each([false, true])(
+  "omitted app middleware makes evidence incomplete: other middleware=%s",
+  async (otherMiddleware) => {
+    let calls = 0;
+    const extension = createNuxtAuthorizationReviewExtension(async () => {
+      calls++;
+      return { status: "suppress", reason: "Guard", citations: [] };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "app/middleware/auth.ts": files["app/middleware/auth.ts"] + " ".repeat(16_001),
+        ...(otherMiddleware ? { "app/middleware/admin.ts": files["app/middleware/auth.ts"] } : {}),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(calls).toBe(0);
+    expect(result.project.evidenceGaps).toContainEqual(
+      expect.objectContaining({
+        source: "vite-doctor/nuxt-authorization-review",
+        files: ["app/middleware/auth.ts"],
+      }),
+    );
+    expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+  },
+);
+
+test.each([
+  ["layers/admin", "middleware"],
+  ["layers/admin/app", "middleware"],
+  ["layers/admin/src", "middleware"],
+  ["layers/admin/src", "app/middleware"],
+  ["layers/admin/src", "guards"],
+])("collects only resolved layer middleware: %s/%s", async (srcDir, middlewareDir) => {
+  const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    candidates.push(candidate);
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  const activePath = `${srcDir}/${middlewareDir}/auth.ts`;
+  const inactivePath = `${srcDir}/${middlewareDir === "middleware" ? "app/middleware" : "middleware"}/private.ts`;
+  await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      "server/api/account.get.ts": files["server/api/account.get.ts"],
+      [activePath]: files["app/middleware/auth.ts"],
+      [inactivePath]: files["app/middleware/auth.ts"],
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        layers: [
+          {
+            root: "layers/admin",
+            srcDir,
+            appMiddlewareDir: `${srcDir}/${middlewareDir}`,
+            priority: 0,
+          },
+        ],
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(candidates).toHaveLength(1);
+  expect(candidates[0]!.sources.map((source) => source.path)).toContain(activePath);
+  expect(candidates[0]!.sources.map((source) => source.path)).not.toContain(inactivePath);
 });

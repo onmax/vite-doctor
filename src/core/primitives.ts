@@ -182,7 +182,13 @@ export interface NuxtProjectInfo {
     string,
     { name: string; file: string; mode?: "client" | "server" | "all"; sourceLayer?: string }
   >;
-  layers: Array<{ name?: string; root: string; srcDir?: string; priority: number }>;
+  layers: Array<{
+    name?: string;
+    root: string;
+    srcDir?: string;
+    appMiddlewareDir?: string;
+    priority: number;
+  }>;
   localLayerAliases?: boolean;
   routeRules?: Record<string, unknown>;
   runtimeConfig?: unknown;
@@ -252,7 +258,13 @@ export interface NuxtDoctorManifest {
   };
   autoImports: unknown[];
   components: unknown[];
-  layers: Array<{ root: string; srcDir?: string; name?: string; priority: number }>;
+  layers: Array<{
+    root: string;
+    srcDir?: string;
+    appMiddlewareDir?: string;
+    name?: string;
+    priority: number;
+  }>;
   localLayerAliases?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
