@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { relative } from "pathe";
 import { parseSync } from "oxc-parser";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
@@ -88,6 +88,7 @@ function unguardedSensitiveHandlers(ctx: any): string[] {
       candidates
         .filter(
           (handler) =>
+            existsSync(handler.file) &&
             (sensitive.test(toPosixPath(relative(ctx.project.root, handler.file))) ||
               sensitive.test(handler.route ?? "")) &&
             !hasAuthGuard(readProjectFile(handler.file)),

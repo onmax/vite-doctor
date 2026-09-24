@@ -2499,6 +2499,30 @@ test.each([
   },
 );
 
+test("missing registered handlers do not produce security diagnostics", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+      "server/handlers/current.ts": `export default defineEventHandler(() => ({}))`,
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        nuxtVersion: "4",
+        vueVersion: "3.5",
+        appDir: "app",
+        serverHandlers: [
+          { file: "server/handlers/account.ts", route: "/api/account" },
+          { file: "server/handlers/current.ts", route: "/api/profile" },
+        ],
+      }),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.related?.map((item) => item.file)).toEqual([
+    expect.stringContaining("server/handlers/current.ts"),
+  ]);
+});
+
 test.each([
   ["async (event) => { await requireAuth(event) }", undefined, 0],
   ["async (event) => { if (event.path === '/api/admin') await requireAuth(event) }", undefined, 1],
