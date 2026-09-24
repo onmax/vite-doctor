@@ -1109,3 +1109,64 @@ export default mergeConfig({ define: { VALUE: process.env.PRIVATE_TOKEN } }, { d
     expect(result.diagnostics).toHaveLength(0);
   },
 );
+
+test.each([
+  ["const settings = { value: process.env.PRIVATE_TOKEN };", "settings.missing", false],
+  ["const values = [process.env.PRIVATE_TOKEN];", "values[1]", false],
+  ["const values = [, process.env.PRIVATE_TOKEN];", "values[0]", false],
+  [
+    "const holder = { value: process.env.PRIVATE_TOKEN, read() { return this.value } };",
+    "holder.read()",
+    true,
+  ],
+  [
+    'const holder = { value: "public", other: process.env.PRIVATE_TOKEN, read() { return this.value } };',
+    "holder.read()",
+    false,
+  ],
+  ["", "{ get toJSON() { return () => process.env.PRIVATE_TOKEN } }", true],
+  ["", '{ get toJSON() { return () => "public" } }', false],
+  ["const replacement = process.env.PRIVATE_TOKEN;", '"public" || replacement', false],
+  ["const replacement = process.env.PRIVATE_TOKEN;", "false && replacement", false],
+  ["const replacement = process.env.PRIVATE_TOKEN;", '"public" ?? replacement', false],
+  ["const replacement = process.env.PRIVATE_TOKEN;", "null ?? replacement", true],
+  ["const replacement = process.env.PRIVATE_TOKEN;", "true && replacement", true],
+  ["const replacement = process.env.PRIVATE_TOKEN;", '"" || replacement', true],
+])("resolves reviewed value semantics: %s %s", async (setup, value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${setup} export default { define: { VALUE: JSON.stringify(${value}) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each(["[key]", "[...keys]", '[...keys, "other"]'])(
+  "resolves JSON property list %s",
+  async (list) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `const key = "value"; const keys = [key]; export default { define: { VALUE: JSON.stringify({ value: process.env.PRIVATE_TOKEN }, ${list}) } }`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  },
+);
+
+test.each([noSecretDefine, noRuntimeObjectDefine])(
+  "reads CommonJS Vite helpers: $meta.id",
+  async (rule) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: {
+        "vite.config.cjs": `const { defineConfig: config, mergeConfig } = require("vite"); module.exports = config(mergeConfig({}, { define: { VALUE: process.env.PRIVATE_TOKEN } }));`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  },
+);
