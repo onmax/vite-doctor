@@ -197,7 +197,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             const candidate = { handler, sources };
             let review: AuthorizationReviewResult;
             try {
-              review = await reviewer(candidate);
+              review = parseReviewResult(await reviewer(candidate));
             } catch {
               review = {
                 status: "unknown",
@@ -331,19 +331,24 @@ function parseReviewResult(value: unknown): AuthorizationReviewResult {
   if (
     typeof result.reason !== "string" ||
     !result.reason.trim() ||
-    !Array.isArray(result.citations)
+    !Array.isArray(result.citations) ||
+    (result.incomplete !== undefined && typeof result.incomplete !== "boolean")
   )
     throw new Error("Invalid authorization review evidence");
+  const citations = result.citations.filter(
+    (citation): citation is { path: string; line: number } =>
+      citation &&
+      typeof citation === "object" &&
+      typeof citation.path === "string" &&
+      Number.isInteger(citation.line),
+  );
+  if (citations.length !== result.citations.length)
+    throw new Error("Invalid authorization review citations");
   return {
     status: result.status as AuthorizationReviewResult["status"],
     reason: result.reason,
-    citations: result.citations.filter(
-      (citation): citation is { path: string; line: number } =>
-        citation &&
-        typeof citation === "object" &&
-        typeof citation.path === "string" &&
-        Number.isInteger(citation.line),
-    ),
+    incomplete: result.incomplete as boolean | undefined,
+    citations,
   };
 }
 

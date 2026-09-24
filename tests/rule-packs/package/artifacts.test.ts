@@ -4,7 +4,7 @@ import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { readPackageArtifacts } from "../../../src/rule-packs/package/artifacts.js";
 
-function inventory(manifest: object, files: Record<string, string>) {
+function inventory(manifest: unknown, files: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), "doctor-artifacts-"));
   try {
     for (const [file, text] of Object.entries({
@@ -224,6 +224,23 @@ test("includes adjacent declarations, browser and binary entrypoints, and typesV
   expect(result.missing).toEqual([]);
 });
 
+test("follows npm-compatible binary arrays and records missing executables", () => {
+  const result = inventory(
+    { bin: ["cli.js", "missing.js"] },
+    {
+      "cli.js": 'import "./command.js";',
+      "command.js": 'import "cli-peer";',
+    },
+  )!;
+  expect(result.references).toHaveLength(1);
+  expect(result.references[0]).toMatchObject({
+    packageName: "cli-peer",
+    kind: "runtime",
+    required: true,
+  });
+  expect(result.missing).toEqual(["missing.js"]);
+});
+
 test.each([
   null,
   [],
@@ -232,9 +249,26 @@ test.each([
   { dependencies: { h3: false } },
   { browser: { "./index.js": true } },
   { bin: { cli: 42 } },
+  { bin: ["cli.js", false] },
+  { typesVersions: { "*": { "*": "index.d.ts" } } },
   { imports: [] },
   { typesVersions: { "*": { "*": [42] } } },
   { peerDependenciesMeta: { h3: { optional: "true" } } },
 ])("rejects malformed package manifest %j", (manifest) => {
   expect(() => inventory({}, { "package.json": JSON.stringify(manifest) })).toThrow(TypeError);
 });
+
+test.each([true, false])(
+  "only scans the last binary with a shared basename (shadowed file exists: %s)",
+  (exists) => {
+    const result = inventory(
+      { bin: ["a/cli.js", "b/cli.js"] },
+      {
+        ...(exists ? { "a/cli.js": 'import "shadowed-peer";' } : {}),
+        "b/cli.js": 'import "active-peer";',
+      },
+    )!;
+    expect(result.references.map((ref) => ref.packageName)).toEqual(["active-peer"]);
+    expect(result.missing).toEqual([]);
+  },
+);
