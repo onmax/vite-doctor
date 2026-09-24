@@ -473,7 +473,15 @@ function undisposedResource(program: AnyNode): string | null {
     if (target.async) {
       const promise = {};
       promises.set(promise, completion.value);
-      promiseCompletions.set(promise, completion);
+      let settled = completion;
+      const seen = new Set<AnyNode>();
+      while (settled.normal && settled.value && !seen.has(settled.value)) {
+        seen.add(settled.value);
+        const adopted = promiseCompletions.get(settled.value);
+        if (!adopted) break;
+        settled = { ...adopted, abrupt: settled.abrupt || adopted.abrupt };
+      }
+      promiseCompletions.set(promise, settled);
       return { normal: true, abrupt: false, value: promise };
     }
     return completion;
@@ -640,6 +648,8 @@ function undisposedResource(program: AnyNode): string | null {
         if (
           value === undefined ||
           value?.type === "Literal" ||
+          value?.type === "ArrayExpression" ||
+          value?.type === "ObjectExpression" ||
           promises.has(value) ||
           resources.some((resource) => resource.value === value)
         )
@@ -786,7 +796,10 @@ function undisposedResource(program: AnyNode): string | null {
           result = array;
         } else if (method === "sort") {
           const sortable = elements.filter(
-            (element) => element && !(element.type === "Literal" && element.value === undefined),
+            (element) =>
+              element &&
+              identity(element, environment) !== "undefined" &&
+              !(element.type === "Literal" && element.value === undefined),
           );
           if (sortable.length > 1 && args[0]) {
             const resourceStart = resources.length;
@@ -803,8 +816,6 @@ function undisposedResource(program: AnyNode): string | null {
             }
             if (!completion.normal) return false;
           }
-          if (sortable.length > 1)
-            elements.splice(0, elements.length, { type: "SpreadElement", argument: {} });
           result = array;
         } else if (
           method === "splice" &&

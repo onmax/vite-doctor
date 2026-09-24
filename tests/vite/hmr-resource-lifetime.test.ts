@@ -2663,6 +2663,11 @@ for (const [name, source, leaks] of [
     false,
   ],
   [
+    "nested async rejection prevents cleanup",
+    "async function fail() { throw Error() }; async function outer() { return fail() }; const timer = setInterval(refresh); import.meta.hot.dispose(async () => { await outer(); clearInterval(timer) })",
+    true,
+  ],
+  [
     "removal pop()",
     "const timers = [setInterval(refresh)]; timers.pop(); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
     true,
@@ -2884,6 +2889,11 @@ for (const [name, source, leaks] of [
       false,
     ] as const,
     [
+      `${method} Boolean returns nested handle`,
+      `const timer = setInterval(refresh); const selected = [[timer]].${method}(Boolean); import.meta.hot.dispose(() => selected.forEach(clearInterval))`,
+      false,
+    ] as const,
+    [
       `${method} uncertain selection`,
       `const timers = [setInterval(refresh), setInterval(refresh)]; const timer = timers.${method}(() => flag); import.meta.hot.dispose(() => clearInterval(timer))`,
       true,
@@ -2932,6 +2942,16 @@ for (const [name, source, leaks] of [
   [
     "sort singleton skips comparator",
     "[1].sort(() => { setInterval(refresh); return 0 }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "sort skips undefined comparator",
+    "[undefined, 1].sort(() => { setInterval(refresh); return 0 }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "sort retains timer handles",
+    "const timers = [setInterval(refresh), setInterval(refresh)]; timers.sort(); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
     false,
   ],
   [
