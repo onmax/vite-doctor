@@ -1493,6 +1493,14 @@ for (const [name, source, leaks] of [
         true,
       ] as const,
   ),
+  ...["1 + 1", "1 < 2", "1 in {}"].map(
+    (value) =>
+      [
+        `derived binary return ${value} prevents registration`,
+        `let timer; class Base {}; class Worker extends Base { constructor() { super(); timer = setInterval(refresh); return ${value} } }; new Worker(); import.meta.hot.dispose(() => clearInterval(timer))`,
+        true,
+      ] as const,
+  ),
   ...["", "undefined", "void 0"].map(
     (value) =>
       [
@@ -1501,6 +1509,67 @@ for (const [name, source, leaks] of [
         false,
       ] as const,
   ),
+  [
+    "function constructor leaks",
+    "function Worker() { this.timer = setInterval(refresh) }; new Worker(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "function constructor cleanup",
+    "function Worker() { this.timer = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
+  [
+    "static method leaks",
+    "class Worker { static start() { setInterval(refresh) } }; Worker.start(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "static method cleanup",
+    "class Worker { static start() { return setInterval(refresh) } }; const timer = Worker.start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  ["disposal creates timer", "import.meta.hot.dispose(() => setInterval(refresh))", true],
+  [
+    "disposal replaces timer",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { clearInterval(timer); setInterval(refresh) })",
+    true,
+  ],
+  [
+    "disposal cleans its timer",
+    "import.meta.hot.dispose(() => { const timer = setInterval(refresh); clearInterval(timer) })",
+    false,
+  ],
+  [
+    "disposal creates listener",
+    'import.meta.hot.dispose(() => window.addEventListener("click", refresh))',
+    true,
+  ],
+  [
+    "try catch guaranteed cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { clearInterval(timer) } catch { clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "try catch incomplete cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { clearInterval(timer) } catch {} })",
+    true,
+  ],
+  [
+    "disposal loop creates timer",
+    "import.meta.hot.dispose(() => { for (const item of items) setInterval(refresh) })",
+    true,
+  ],
+  [
+    "alternative disposers clean their own timers",
+    "import.meta.hot.dispose(flag ? () => { const timer = setInterval(refresh); clearInterval(timer) } : () => { const timer = setInterval(refresh); clearInterval(timer) })",
+    false,
+  ],
+  [
+    "function expression constructor cleanup",
+    "const Worker = function() { this.timer = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({

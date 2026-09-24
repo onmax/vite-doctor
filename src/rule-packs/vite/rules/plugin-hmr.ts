@@ -437,7 +437,7 @@ function undisposedResource(program: AnyNode): string | null {
                 : node.type === "CallExpression" && path?.endsWith(".subscribe")
                   ? "subscription"
                   : null;
-        if (module && kind) {
+        if (kind) {
           const value = {};
           returned.set(node, value);
           if (loopDepth) repeated.add(value);
@@ -485,7 +485,7 @@ function undisposedResource(program: AnyNode): string | null {
             : (eventValue?.value ?? eventValue);
         const handler = receiverIdentity(node.arguments[1], environment);
         const options = capture(node.arguments[2], environment);
-        if (module && method === "addEventListener") {
+        if (method === "addEventListener") {
           const listenerOptions = identity(node.arguments[2], environment);
           const signal = identity(
             {
@@ -650,11 +650,30 @@ function undisposedResource(program: AnyNode): string | null {
       }
       if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
         if (node.id) environment.set(resolve(node.id), node);
+        if (!properties.has(node)) properties.set(node, new Map());
+        for (const field of node.body.body) {
+          if (field.static && field.type === "MethodDefinition" && field.kind === "method") {
+            const key = field.computed
+              ? identity(field.key, environment)?.value
+              : (field.key?.name ?? field.key?.value);
+            if (key !== undefined) properties.get(node)!.set(key, field.value);
+          }
+        }
       }
       if (node.type === "NewExpression") {
         if (!walk(node.callee)) return false;
-        const target = identity(node.callee, environment);
-        if (["ClassDeclaration", "ClassExpression"].includes(target?.type)) {
+        const value = identity(node.callee, environment);
+        const target = callbacks.get(value) ?? value;
+        if (
+          [
+            "ClassDeclaration",
+            "ClassExpression",
+            "FunctionDeclaration",
+            "FunctionExpression",
+          ].includes(target?.type) &&
+          !target.async &&
+          !target.generator
+        ) {
           if (!walk(node.arguments)) return false;
           const constructing = new Set<AnyNode>();
           const construct = (
@@ -730,7 +749,13 @@ function undisposedResource(program: AnyNode): string | null {
             const primitive =
               !returnsUndefined &&
               !replacement.regex &&
-              ["Literal", "UnaryExpression", "TemplateLiteral"].includes(replacement.type);
+              [
+                "Literal",
+                "UnaryExpression",
+                "TemplateLiteral",
+                "BinaryExpression",
+                "UpdateExpression",
+              ].includes(replacement.type);
             if (derived && primitive) return { normal: false, abrupt: true };
             if (!returnsUndefined && !primitive) instance = replacement;
             return { ...completion, value: instance };
@@ -769,7 +794,7 @@ function undisposedResource(program: AnyNode): string | null {
           return walk(node.right);
         return branch(node.right, null);
       }
-      if (node.type === "TryStatement" && node.finalizer) {
+      if (node.type === "TryStatement") {
         const firstExit = exits.length;
         const continues = branch(
           node.block,
@@ -777,6 +802,7 @@ function undisposedResource(program: AnyNode): string | null {
           undefined,
           true,
         );
+        if (!node.finalizer) return continues;
         const beforeFinally = new Set(cleaned);
         const finalizerExit = exits.length;
         const finallyContinues = walk(node.finalizer);
@@ -793,14 +819,13 @@ function undisposedResource(program: AnyNode): string | null {
           "WhileStatement",
           "DoWhileStatement",
           "SwitchStatement",
-          "TryStatement",
         ].includes(node.type)
       ) {
         exits.push(new Set(cleaned));
         abrupt = true;
-        if (module) {
+        {
           const before = snapshot();
-          const loop = !["SwitchStatement", "TryStatement"].includes(node.type);
+          const loop = node.type !== "SwitchStatement";
           if (loop) loopDepth++;
           for (const [key, child] of Object.entries(node)) {
             if (key !== "__doctorParent") walk(child);
@@ -859,7 +884,9 @@ function undisposedResource(program: AnyNode): string | null {
   const initialProperties = new Map(
     [...properties].map(([key, entries]) => [key, new Map(entries)]),
   );
+  let disposalLeak: string | undefined;
   const outcomes = disposers.map((disposer) => {
+    const resourceStart = resources.length;
     cleaned.clear();
     for (const value of initialCleaned) cleaned.add(value);
     values.clear();
@@ -875,13 +902,19 @@ function undisposedResource(program: AnyNode): string | null {
       resources.some((resource) => resource.value === disposer && resource.kind === "subscription")
     )
       cleaned.add(disposer);
+    disposalLeak ??= resources
+      .slice(resourceStart)
+      .find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))?.kind;
+    resources.splice(resourceStart);
     return new Set(cleaned);
   });
   for (const value of cleaned)
     if (outcomes.some((outcome) => !outcome.has(value))) cleaned.delete(value);
   return (
+    disposalLeak ??
     resources.find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))
-      ?.kind ?? null
+      ?.kind ??
+    null
   );
 }
 
