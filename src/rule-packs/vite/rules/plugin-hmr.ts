@@ -212,7 +212,7 @@ function undisposedResource(program: AnyNode): string | null {
       );
       return property ? capture(property.value, environment) : false;
     }
-    return typeof node.value === "boolean" ? node.value : node;
+    return node.type === "Literal" ? Boolean(node.value) : node;
   };
   function bindResource(
     pattern: AnyNode,
@@ -379,7 +379,7 @@ function undisposedResource(program: AnyNode): string | null {
         environment.set(binding, local.get(binding));
     }
     visited.delete(target);
-    return completion;
+    return target.async ? { ...completion, value: {} } : completion;
   }
   function evaluate(
     root: AnyNode,
@@ -600,9 +600,18 @@ function undisposedResource(program: AnyNode): string | null {
         !replacedMethod &&
         ["forEach", "map"].includes(method!)
       ) {
+        const expand = (items: AnyNode[], seen = new Set<AnyNode>()): AnyNode[] =>
+          items.flatMap((item) => {
+            if (item?.type !== "SpreadElement") return [item];
+            const spread = identity(item.argument, environment);
+            if (spread?.type !== "ArrayExpression" || seen.has(spread)) return [item];
+            return expand(spread.elements, new Set([...seen, spread])).map(
+              (value) => value ?? { type: "Identifier", name: "undefined" },
+            );
+          });
         const elements: AnyNode[] = [];
-        for (const [index, element] of array.elements.entries()) {
-          if (!element) continue;
+        for (const [index, element] of expand(array.elements).entries()) {
+          if (!element || element.type === "SpreadElement") continue;
           const call = {
             type: "CallExpression",
             callee: node.arguments[0],
@@ -651,7 +660,18 @@ function undisposedResource(program: AnyNode): string | null {
     const merge = (left: ReturnType<typeof snapshot>, right: ReturnType<typeof snapshot>) => {
       restore(left);
       disposers = [...new Set([...left.disposers, ...right.disposers])];
-      for (const value of cleaned) if (!right.cleaned.has(value)) cleaned.delete(value);
+      const absent = (value: AnyNode, state: ReturnType<typeof snapshot>) =>
+        [...(resourcePaths.get(value) ?? [])].some(
+          ([condition, side]) => state.path.has(condition) && state.path.get(condition) !== side,
+        );
+      for (const value of new Set([...left.cleaned, ...right.cleaned])) {
+        if (
+          (left.cleaned.has(value) || absent(value, left)) &&
+          (right.cleaned.has(value) || absent(value, right))
+        )
+          cleaned.add(value);
+        else cleaned.delete(value);
+      }
       for (const key of new Set([...left.values.keys(), ...right.values.keys()])) {
         if (!left.values.has(key)) environment.set(key, right.values.get(key));
         else if (right.values.has(key) && left.values.get(key) !== right.values.get(key)) {
@@ -665,39 +685,21 @@ function undisposedResource(program: AnyNode): string | null {
               (choice) => callbackChoices.get(choice) ?? [choice],
             ),
           );
+          const handles = choices.filter((choice) =>
+            resources.some((resource) => resource.value === choice),
+          );
           if (
-            choices.every(
-              (choice, index) =>
-                (choice === undefined
-                  ? [left, right]
-                      .filter((state) => state.values.get(key) === undefined)
-                      .every((state) =>
-                        choices
-                          .filter((other) => other !== undefined)
-                          .every((other) =>
-                            [...(resourcePaths.get(other) ?? [])].some(
-                              ([condition, side]) =>
-                                state.path.has(condition) && state.path.get(condition) !== side,
-                            ),
-                          ),
-                      )
-                  : resources.some((resource) => resource.value === choice)) &&
-                choices
-                  .slice(index + 1)
-                  .every(
-                    (other) =>
-                      choice === undefined ||
-                      other === undefined ||
-                      choice === other ||
-                      [...(resourcePaths.get(choice) ?? [])].some(
-                        ([condition, side]) =>
-                          resourcePaths.get(other)?.has(condition) &&
-                          resourcePaths.get(other)?.get(condition) !== side,
-                      ),
-                  ),
+            handles.length &&
+            handles.every((handle) =>
+              [left, right].every(
+                (state) =>
+                  (alternatives.get(state.values.get(key)) ?? [state.values.get(key)]).includes(
+                    handle,
+                  ) || absent(handle, state),
+              ),
             )
           )
-            alternatives.set(value, choices);
+            alternatives.set(value, handles);
           environment.set(key, value);
         }
       }
@@ -955,8 +957,9 @@ function undisposedResource(program: AnyNode): string | null {
       if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
         if (!walk(node.test)) return false;
         const test = identity(node.test, environment);
-        if (typeof test?.value === "boolean" || memberPath(node.test) === "import.meta.hot") {
-          const selected = test?.value === false ? node.alternate : node.consequent;
+        if (test?.type === "Literal" || memberPath(node.test) === "import.meta.hot") {
+          const selected =
+            test?.type === "Literal" && !test.value ? node.alternate : node.consequent;
           const continues = walk(selected);
           if (node.type === "ConditionalExpression")
             returned.set(node, identity(selected, environment));
@@ -971,7 +974,7 @@ function undisposedResource(program: AnyNode): string | null {
           node.test,
         );
       }
-      if (node.type === "LabeledStatement" && node.body.type === "BlockStatement") {
+      if (node.type === "LabeledStatement") {
         const breaks: { exit: Set<AnyNode>; state: ReturnType<typeof snapshot> }[] = [];
         labels.set(node.label.name, breaks);
         const continues = walk(node.body);
@@ -1051,33 +1054,39 @@ function undisposedResource(program: AnyNode): string | null {
       ) {
         const pretest = node.type === "WhileStatement" || node.type === "ForStatement";
         if (pretest) {
-          if (!walk(node.init) || !walk(node.test)) return false;
-          if (identity(node.test, environment)?.value === false) return true;
+          if (!walk(node.init)) return false;
+          const resourceStart = resources.length;
+          if (!walk(node.test)) return false;
+          const test = identity(node.test, environment);
+          if (test?.type === "Literal" && !test.value) return true;
+          for (const resource of resources.slice(resourceStart)) repeated.add(resource.value);
         }
         const loop = node.type !== "SwitchStatement";
         controls.push(loop);
+        const nontermination = new Set(cleaned);
         if (loop) {
-          exits.push(new Set(cleaned));
+          exits.push(nontermination);
           abrupt = true;
         }
         {
           const before = snapshot();
           const resourceStart = resources.length;
           const firstExit = exits.length;
+          let bodyStopped = false;
           if (loop) loopDepth++;
           if (loop) {
             for (const [key, child] of Object.entries(node)) {
               if (key !== "__doctorParent" && !(pretest && ["init", "test"].includes(key)))
-                walk(child);
+                if (!walk(child) && key === "body") bodyStopped = true;
             }
           } else {
             walk(node.discriminant);
-            let combined = snapshot();
+            let combined = node.cases.some((item: AnyNode) => !item.test) ? undefined : snapshot();
             for (const item of node.cases) {
               restore(before);
               walk(item.test);
               walk(item.consequent);
-              merge(combined, snapshot());
+              if (combined) merge(combined, snapshot());
               combined = snapshot();
             }
           }
@@ -1090,7 +1099,8 @@ function undisposedResource(program: AnyNode): string | null {
                 cleaned.has(resource.value) &&
                 exits.slice(firstExit).every((exit) => exit.has(resource.value)),
             );
-          merge(before, snapshot());
+          if (bodyStopped) exits.splice(exits.indexOf(nontermination), 1);
+          if (loop) merge(before, snapshot());
           if (loop) {
             for (const resource of iterationCleaned) {
               repeated.delete(resource.value);
@@ -1158,8 +1168,14 @@ function undisposedResource(program: AnyNode): string | null {
       if (exits.some((exit) => !exit.has(value))) cleaned.delete(value);
     }
     if (module) disposers = [...new Set([...disposers, ...exitedDisposers])];
-    const value =
-      returns.length && returns.every((value) => value === returns[0]) ? returns[0] : undefined;
+    let value = returns[0];
+    if (!returns.every((item) => item === value)) {
+      value = {};
+      callbackChoices.set(
+        value,
+        returns.flatMap((item) => callbackChoices.get(item) ?? [item]),
+      );
+    }
     return { normal, abrupt, value };
   }
   evaluate(program, values, true);
@@ -1265,6 +1281,7 @@ function resourceBindings(program: AnyNode): (node: AnyNode) => AnyNode {
       isFunction ||
       [
         "BlockStatement",
+        "ClassExpression",
         "CatchClause",
         "ForStatement",
         "ForOfStatement",
@@ -1277,6 +1294,7 @@ function resourceBindings(program: AnyNode): (node: AnyNode) => AnyNode {
         if (node.type === "FunctionExpression") bind(node.id, scope);
         for (const param of node.params) bind(param, scope);
       }
+      if (node.type === "ClassExpression") bind(node.id, scope);
       if (node.type === "CatchClause") bind(node.param, scope);
     }
     scopes.set(node, scope);

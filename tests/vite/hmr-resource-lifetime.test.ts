@@ -2042,3 +2042,96 @@ for (const [name, source, leaks] of [
     ).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "exhaustive switch cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (mode) { default: clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "nullable listener capture",
+    "window.addEventListener('resize', refresh, null); import.meta.hot.dispose(() => window.removeEventListener('resize', refresh))",
+    false,
+  ],
+  [
+    "empty spread callback",
+    "[...[]].forEach(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "nonempty spread callback",
+    "[...[1]].forEach(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "sparse spread callback",
+    "[...[,]].forEach(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "async map returns promises",
+    "const timers = [1].map(async () => setInterval(refresh)); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "labeled loop continuation",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { outer: for (;;) { break outer }; clearInterval(timer) })",
+    false,
+  ],
+  ...["||=", "&&=", "??="].map(
+    (operator) =>
+      [
+        `unknown ${operator} cleanup`,
+        `let timer = externalTimer; timer ${operator} setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))`,
+        false,
+      ] as const,
+  ),
+  [
+    "branch-local cleanup",
+    "if (enabled) { const timer = setInterval(refresh); clearInterval(timer) }; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "class expression shadow",
+    "const timer = setInterval(refresh); const C = class timer {}; import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  ...["0", "null", "''"].map(
+    (value) =>
+      [
+        `false-like condition ${value}`,
+        `if (${value}) setInterval(refresh); import.meta.hot.dispose(() => {})`,
+        false,
+      ] as const,
+  ),
+  [
+    "returned callback alternatives",
+    "const timer = setInterval(refresh); function make() { if (flag) return () => clearInterval(timer); return () => clearInterval(timer) }; import.meta.hot.dispose(make())",
+    false,
+  ],
+  [
+    "returned callback alternative leak",
+    "const timer = setInterval(refresh); function make() { if (flag) return () => clearInterval(timer); return () => {} }; import.meta.hot.dispose(make())",
+    true,
+  ],
+  [
+    "repeated for test resources",
+    "let timer; let i = 0; for (; (timer = setInterval(refresh), i++ < 2);) {}; import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "repeated while test resources",
+    "let timer; let i = 0; while ((timer = setInterval(refresh), i++ < 2)) {}; import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
