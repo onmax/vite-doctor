@@ -197,3 +197,53 @@ test.each([
     diagnosed,
   );
 });
+
+test.each([
+  "options.headers = {}",
+  "delete options.headers",
+  "const alias = options; alias.headers = {}",
+  "const alias = options.headers; delete alias.cookie",
+  "const alias = { ...options }; alias.headers.cookie = ''",
+  "Object.assign(options, { headers: {} })",
+  "mutate(options)",
+])("mutated or escaped options do not prove credentials: %s", async (mutation) => {
+  for (const options of ["options", "{ ...options }"]) {
+    const result = await runNuxtAppRuleFixture(
+      forwardAuthHeadersSsr,
+      `<script setup lang="ts">const options = { headers: useRequestHeaders(['cookie']) }; ${mutation}; await $fetch('/api/user', ${options})</script>`,
+    );
+    expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
+  }
+});
+
+test.each([
+  ["const options = { headers: useRequestHeaders(['cookie']) }", "options", false],
+  ["const options = { headers: useRequestHeaders(['cookie']) }", "{ ...options }", false],
+  ["", "{ headers: [['cookie', cookie]] }", false],
+  ["const headers = [['Authorization', token]] as const", "{ headers }", false],
+  ["const headers = [['cookie', cookie]]", "{ headers: new Headers(headers) }", false],
+  ["", "{ headers: [['cookie', '']] }", true],
+  ["", "{ headers: { cookie: undefined } }", true],
+  ["", "{ headers: { Authorization: void 0 } }", true],
+  ["", "{ headers: [['cookie', undefined]] }", true],
+  ["", "{ headers: new Headers([['cookie', void 0]]) }", true],
+])("review credential regression with %s and %s", async (setup, options, diagnosed) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">${setup}; await $fetch('/api/user', ${options})</script>`,
+  );
+  expect(result.diagnostics.some((item) => item.ruleId === forwardAuthHeadersSsr.meta.id)).toBe(
+    diagnosed,
+  );
+});
+
+test.each([
+  "case 1: const headers = { Accept: 'application/json' }; await $fetch('/api/user', { headers }); break",
+  "case 1: await $fetch('/api/user', { headers }); break; case 2: const headers = {}",
+])("switch lexical bindings shadow outer headers: %s", async (cases) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">const headers = useRequestHeaders(['cookie']); switch (value) { ${cases} }</script>`,
+  );
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
+});

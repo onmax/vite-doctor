@@ -65,7 +65,7 @@ function optionsForwardCredentials(
   if (!value || seen.has(value)) return false;
   seen = new Set(seen).add(value);
   if (value.type === "Identifier")
-    return optionsForwardCredentials(localInitializer(value, call), call, seen);
+    return optionsForwardCredentials(unmodifiedOptionsInitializer(value, call), call, seen);
   if (value.type !== "ObjectExpression") return false;
   for (const property of [...value.properties].reverse()) {
     if (property.type === "SpreadElement") {
@@ -112,18 +112,18 @@ function credentialHeaders(
   }
   if (value.type === "NewExpression" && value.callee?.name === "Headers") {
     const input = unwrapExpression(value.arguments[0]);
-    if (input?.type === "ArrayExpression") {
-      const headers = new Map<string, boolean>();
-      for (const entry of input.elements) {
-        const tuple = unwrapExpression(entry);
-        const name = tuple?.type === "ArrayExpression" && tuple.elements[0]?.value;
-        if (typeof name !== "string") return;
-        if (isCredentialHeader(name))
-          headers.set(name.toLowerCase(), hasHeaderValue(tuple.elements[1]));
-      }
-      return headers;
-    }
     return credentialHeaders(input, call, seen);
+  }
+  if (value.type === "ArrayExpression") {
+    const headers = new Map<string, boolean>();
+    for (const entry of value.elements) {
+      const tuple = unwrapExpression(entry);
+      const name = tuple?.type === "ArrayExpression" && tuple.elements[0]?.value;
+      if (typeof name !== "string") return;
+      if (isCredentialHeader(name))
+        headers.set(name.toLowerCase(), hasHeaderValue(tuple.elements[1]));
+    }
+    return headers;
   }
   if (value.type === "CallExpression" && value.callee?.name === "useRequestHeaders") {
     const selected = resolveInitializer(value.arguments[0], call);
@@ -164,7 +164,12 @@ function credentialHeaders(
 
 function hasHeaderValue(value: AnyNode): boolean {
   const header = unwrapExpression(value);
-  return header != null && !("value" in header && !header.value);
+  return (
+    header != null &&
+    !(header.type === "Identifier" && header.name === "undefined") &&
+    !(header.type === "UnaryExpression" && header.operator === "void") &&
+    !("value" in header && !header.value)
+  );
 }
 
 function resolveInitializer(value: AnyNode, call: AnyNode): AnyNode {
@@ -222,6 +227,8 @@ function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
   const anchorStart = identifier.start ?? identifier.range?.[0];
   while (scope) {
     const statements = Array.isArray(scope.body) ? [...scope.body] : [];
+    if (scope.type === "SwitchStatement")
+      statements.push(...scope.cases.flatMap((branch: AnyNode) => branch.consequent));
     const loopDeclaration = scope.init ?? scope.left;
     if (loopDeclaration?.type === "VariableDeclaration") statements.push(loopDeclaration);
     for (const statement of statements) {
@@ -253,4 +260,39 @@ function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
     if (scope.params?.some((param: AnyNode) => bindsName(param, identifier.name))) return;
     scope = scope.__doctorParent ?? scope.parent;
   }
+}
+
+function unmodifiedOptionsInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
+  const initializer = localInitializer(identifier, call);
+  if (!initializer) return;
+  let scope = initializer.__doctorParent ?? initializer.parent;
+  while (scope && scope.type !== "Program" && scope.type !== "BlockStatement")
+    scope = scope.__doctorParent ?? scope.parent;
+  if (!scope) return;
+  // Escaped objects and closure writes make initializer evidence unreliable.
+  function hasUnsafeReference(
+    node: AnyNode,
+    parent?: AnyNode,
+    key?: string,
+    enclosingCall?: AnyNode,
+  ): boolean {
+    if (!node || typeof node !== "object") return false;
+    if (node.type === "CallExpression") enclosingCall = node;
+    if (node.type === "Identifier" && node.name === identifier.name) {
+      if (parent?.type === "VariableDeclarator" && key === "id") return false;
+      if (parent?.type === "Property" && key === "key" && !parent.computed) return false;
+      if (parent?.type === "MemberExpression" && key === "property" && !parent.computed)
+        return false;
+      if (parent?.type === "SpreadElement" && enclosingCall === call) return false;
+      if (unwrapExpression(call.arguments[1]) === node) return false;
+      return true;
+    }
+    return Object.entries(node).some(([childKey, child]) => {
+      if (childKey === "parent" || childKey.startsWith("__")) return false;
+      return Array.isArray(child)
+        ? child.some((item) => hasUnsafeReference(item, node, childKey, enclosingCall))
+        : hasUnsafeReference(child, node, childKey, enclosingCall);
+    });
+  }
+  return hasUnsafeReference(scope) ? undefined : initializer;
 }
