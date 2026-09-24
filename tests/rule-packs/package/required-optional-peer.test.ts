@@ -7,6 +7,13 @@ const optionalPeer = {
 };
 
 test.each([
+  'new (function () { require("peer"); })();',
+  'new (function () { require("peer"); });',
+  'new (function (peer = require("peer")) {})();',
+  'new (class { constructor() { require("peer"); } })();',
+  'new (class { constructor(peer = require("peer")) {} })();',
+  '(function () { try { require("peer"); } finally { (() => { return; })(); } })();',
+
   'await Promise.all([import("peer")]);',
   'await Promise.all([0, null, true, ("ready"), import("peer")]);',
   'await Promise.all([import("node:fs"), import("peer")]);',
@@ -85,6 +92,12 @@ test.each([
 });
 
 test.each([
+  '(function () { try { require("peer"); } finally { return; } })();',
+  '(function () { try { require("peer"); } finally { if (enabled) return; } })();',
+  'new (function (peer = require("peer")) {})(1);',
+  'new (class { constructor(peer = require("peer")) {} })(1);',
+  'const Adapter = class { constructor() { require("peer"); } };',
+  'function deferred() { new (class { constructor() { require("peer"); } })(); }',
   'require = undefined; require?.("peer");',
   'require?.("peer");',
   'Promise.all([import("peer")]);',
@@ -399,5 +412,40 @@ test.each(["chunk", "chunk/index"])("prefers TypeScript source at %s", async (ta
       },
     );
     expect(diagnostics).toHaveLength(required ? 1 : 0);
+  }
+});
+
+test.each(["chunk", "chunk/index"])(
+  "skips explicit module-kind extensions at %s",
+  async (target) => {
+    for (const extension of ["mts", "cts"]) {
+      for (const required of [true, false]) {
+        expect(
+          await diagnose(
+            { main: "index.ts", ...optionalPeer },
+            {
+              "index.ts": 'import "./chunk";',
+              [`${target}.${extension}`]: required ? "export {};" : 'import "peer";',
+              [`${target}.js`]: required ? 'import "peer";' : "export {};",
+            },
+          ),
+        ).toHaveLength(required ? 1 : 0);
+      }
+    }
+  },
+);
+
+test("prefers TSX when substituting a JSX import", async () => {
+  for (const required of [true, false]) {
+    expect(
+      await diagnose(
+        { main: "index.ts", ...optionalPeer },
+        {
+          "index.ts": 'import "./chunk.jsx";',
+          "chunk.tsx": required ? 'import "peer";' : "export {};",
+          "chunk.ts": required ? "export {};" : 'import "peer";',
+        },
+      ),
+    ).toHaveLength(required ? 1 : 0);
   }
 });

@@ -172,12 +172,12 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             ...(sourceResolution ? sourceCandidates(path) : []),
             path,
             ...[
-              ...(sourceResolution ? [".ts", ".mts", ".cts", ".tsx"] : []),
+              ...(sourceResolution ? [".ts", ".tsx"] : []),
               ".js",
               ".mjs",
               ".cjs",
               ".jsx",
-              ...(sourceResolution ? ["/index.ts", "/index.mts", "/index.cts", "/index.tsx"] : []),
+              ...(sourceResolution ? ["/index.ts", "/index.tsx"] : []),
               "/index.js",
               "/index.mjs",
               "/index.cjs",
@@ -370,8 +370,8 @@ function typeCandidates(path: string) {
 }
 
 function sourceCandidates(path: string): string[] {
-  if (/\.jsx?$/.test(path))
-    return [path.replace(/\.jsx?$/, ".ts"), path.replace(/\.jsx?$/, ".tsx")];
+  if (path.endsWith(".jsx")) return [path.replace(/\.jsx$/, ".tsx"), path.replace(/\.jsx$/, ".ts")];
+  if (path.endsWith(".js")) return [path.replace(/\.js$/, ".ts"), path.replace(/\.js$/, ".tsx")];
   if (/\.[cm]js$/.test(path)) return [path.replace(/js$/, "ts")];
   return [];
 }
@@ -602,8 +602,11 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) &&
         !isWithin(node, parent.expression)) ||
       (ts.isTryStatement(parent) &&
-        parent.catchClause &&
-        (isWithin(node, parent.tryBlock) || isWithin(node, parent.catchClause))) ||
+        ((parent.catchClause &&
+          (isWithin(node, parent.tryBlock) || isWithin(node, parent.catchClause))) ||
+          (parent.finallyBlock &&
+            !isWithin(node, parent.finallyBlock) &&
+            hasAbruptCompletion(parent.finallyBlock, false)))) ||
       (ts.isBinaryExpression(parent) &&
         [
           ts.SyntaxKind.AmpersandAmpersandToken,
@@ -623,11 +626,11 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
   return true;
 }
 
-function hasAbruptCompletion(statement: ts.Statement): boolean {
+function hasAbruptCompletion(statement: ts.Statement, includeThrow = true): boolean {
   let abrupt = false;
   function visit(node: ts.Node) {
     if (ts.isFunctionLike(node)) return;
-    if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) abrupt = true;
+    if (ts.isReturnStatement(node) || (includeThrow && ts.isThrowStatement(node))) abrupt = true;
     if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) {
       let target = node.parent;
       while (target) {
@@ -653,12 +656,17 @@ function hasAbruptCompletion(statement: ts.Statement): boolean {
 
 function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): boolean {
   if (
-    !(ts.isFunctionExpression(node) || ts.isArrowFunction(node)) ||
+    !(
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isConstructorDeclaration(node)
+    ) ||
     node.asteriskToken ||
     node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
   )
     return false;
-  let expression: ts.Node = node;
+  let expression: ts.Node = ts.isConstructorDeclaration(node) ? node.parent : node;
+  if (ts.isConstructorDeclaration(node) && !ts.isClassExpression(expression)) return false;
   while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
   let method: string | undefined;
   if (
@@ -671,12 +679,18 @@ function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): bo
     while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
   }
   const call = expression.parent;
-  if (!ts.isCallExpression(call) || ts.isCallChain(call) || call.expression !== expression)
+  if (
+    !(ts.isCallExpression(call) || ts.isNewExpression(call)) ||
+    ts.isCallChain(call) ||
+    call.expression !== expression ||
+    (ts.isConstructorDeclaration(node) && !ts.isNewExpression(call)) ||
+    (ts.isNewExpression(call) && (method || ts.isArrowFunction(node)))
+  )
     return false;
-  if (isWithin(load, node.body)) return true;
+  if (node.body && isWithin(load, node.body)) return true;
   const index = node.parameters.findIndex((parameter) => isWithin(load, parameter));
-  if (index < 0 || call.arguments.some(ts.isSpreadElement)) return false;
-  let args: readonly ts.Expression[] = call.arguments;
+  if (index < 0 || call.arguments?.some(ts.isSpreadElement)) return false;
+  let args: readonly ts.Expression[] = call.arguments ?? [];
   if (method === "call") args = args.slice(1);
   if (method === "apply") {
     let list = args[1];
