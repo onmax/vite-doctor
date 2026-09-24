@@ -2416,7 +2416,7 @@ test("a guard in one API handler does not hide an unguarded sensitive handler", 
   expect(diagnostic?.message).not.toContain("feedback.get.ts");
 });
 
-test.each(["auth/login.post.ts", "auth/callback.get.ts", "auth/[...all].ts", "session.get.ts"])(
+test.each(["auth/login.post.ts", "auth/callback.get.ts", "session/create.post.ts"])(
   "public authentication endpoint %s does not require a server guard",
   async (endpoint) => {
     const result = await runRuleFixture({
@@ -2444,6 +2444,43 @@ test.each(["auth/login.post.ts", "auth/callback.get.ts", "auth/[...all].ts", "se
   },
 );
 
+test.each([
+  "auth/logout.post.ts",
+  "auth/revoke.post.ts",
+  "auth/mfa.post.ts",
+  "auth/[...all].ts",
+  "session.delete.ts",
+  "session.get.ts",
+])("unguarded protected authentication endpoint %s is reported", async (endpoint) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+      [`server/api/${endpoint}`]: `export default defineEventHandler(() => ({}))`,
+      "server/handlers/entry.ts": `export default defineEventHandler(() => ({}))`,
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        nuxtVersion: "4",
+        vueVersion: "3.5",
+        appDir: "app",
+        serverHandlers: [
+          {
+            file: "server/handlers/entry.ts",
+            route: `/api/${endpoint.replace(/\.(?:get|post|delete)?\.?ts$/, "")}`,
+          },
+        ],
+      }),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.related?.map((item) => item.file)).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining(`server/api/${endpoint}`),
+      expect.stringContaining("server/handlers/entry.ts"),
+    ]),
+  );
+});
+
 test("path-scoped server middleware does not hide unrelated sensitive handlers", async () => {
   const result = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,
@@ -2464,6 +2501,19 @@ test("path-scoped server middleware does not hide unrelated sensitive handlers",
 
 test.each([
   ["(event) => requireAuth(event)", 0],
+  ["async (event) => { const config = useRuntimeConfig(); await requireAuth(event) }", 0],
+  ["async (event) => { logRequest(event); await requireAuth(event) }", 0],
+  [
+    "async (event) => { const config = useRuntimeConfig(); const session = await requireAuth(event) }",
+    0,
+  ],
+  ["(event) => { logRequest(event); return requireAuth(event) }", 0],
+  [
+    "async (event) => { logRequest(event); if (event.path === '/api/account') return; await requireAuth(event) }",
+    1,
+  ],
+  ["async (event) => { logRequest(event); return; await requireAuth(event) }", 1],
+  ["async (event) => { logRequest(event); try { await requireAuth(event) } catch {} }", 1],
   ["async (event) => { await requireUserSession(event) }", 0],
   ["(event) => { return requireAuth(event) }", 0],
   ["async (event) => { return await requireAuth(event) }", 0],

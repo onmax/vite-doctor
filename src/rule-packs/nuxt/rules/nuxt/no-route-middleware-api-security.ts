@@ -76,15 +76,20 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
     ...registered.filter((handler) => !handler.middleware),
   ];
   const sensitive =
-    /(?:^|\/)(?:admin|account|user|users|me|profile|private|billing|settings)(?:[./-]|$)/i;
+    /(?:^|\/)(?:auth|session|admin|account|user|users|me|profile|private|billing|settings)(?:[./-]|$)/i;
+  const isSensitive = (path: string): boolean =>
+    sensitive.test(path) &&
+    !/(?:^|\/)auth\/(?:login|callback)(?:\.(?:get|post))?(?:\.[cm]?[jt]s)?$|(?:^|\/)session\/create(?:\.post)?(?:\.[cm]?[jt]s)?$/i.test(
+      path,
+    );
   return [
     ...new Set(
       candidates
         .filter(
           (handler) =>
             existsSync(handler.file) &&
-            (sensitive.test(toPosixPath(relative(ctx.project.root, handler.file))) ||
-              sensitive.test(handler.route ?? "")) &&
+            (isSensitive(toPosixPath(relative(ctx.project.root, handler.file))) ||
+              isSensitive(handler.route ?? "")) &&
             !hasAuthGuard(readProjectFile(handler.file)),
         )
         .map((handler) => handler.file),
@@ -108,31 +113,39 @@ function hasUnconditionalMiddlewareGuard(file: string): boolean {
       return false;
     const handler = factory.arguments[0];
     if (!["ArrowFunctionExpression", "FunctionExpression"].includes(handler?.type)) return false;
-    let expression = handler.body;
-    if (expression.type === "BlockStatement") {
-      // A guard after branching or an early return cannot prove all-path coverage.
-      const first = expression.body[0];
-      expression =
-        first?.type === "ReturnStatement"
-          ? first.argument
-          : first?.type === "ExpressionStatement" && first.expression.type === "AwaitExpression"
-            ? first.expression
-            : first?.type === "VariableDeclaration" &&
-                first.declarations[0]?.init?.type === "AwaitExpression"
-              ? first.declarations[0].init
-              : null;
+    const isGuard = (expression: AnyNode): boolean => {
+      if (expression?.type === "AwaitExpression") expression = expression.argument;
+      return (
+        expression?.type === "CallExpression" &&
+        expression.callee.type === "Identifier" &&
+        /^(?:requireUserSession|requireMcpAdminToken|requireAuth|authGuard|protectRoute)$/.test(
+          expression.callee.name,
+        ) &&
+        handler.params[0]?.type === "Identifier" &&
+        expression.arguments[0]?.type === "Identifier" &&
+        expression.arguments[0].name === handler.params[0].name
+      );
+    };
+    if (handler.body.type !== "BlockStatement") return isGuard(handler.body);
+    for (const statement of handler.body.body) {
+      if (statement.type === "ReturnStatement") return isGuard(statement.argument);
+      if (statement.type === "ExpressionStatement") {
+        if (statement.expression.type === "AwaitExpression" && isGuard(statement.expression))
+          return true;
+      } else if (statement.type === "VariableDeclaration") {
+        if (
+          statement.declarations.some(
+            (declaration: AnyNode) =>
+              declaration.init?.type === "AwaitExpression" && isGuard(declaration.init),
+          )
+        )
+          return true;
+      } else if (statement.type !== "EmptyStatement") {
+        // Stop before control flow that could bypass or catch a later guard.
+        return false;
+      }
     }
-    if (expression?.type === "AwaitExpression") expression = expression.argument;
-    return (
-      expression?.type === "CallExpression" &&
-      expression.callee.type === "Identifier" &&
-      /^(?:requireUserSession|requireMcpAdminToken|requireAuth|authGuard|protectRoute)$/.test(
-        expression.callee.name,
-      ) &&
-      handler.params[0]?.type === "Identifier" &&
-      expression.arguments[0]?.type === "Identifier" &&
-      expression.arguments[0].name === handler.params[0].name
-    );
+    return false;
   } catch {
     return false;
   }
