@@ -147,8 +147,7 @@ function undisposedResource(program: AnyNode): string | null {
     node?.computed ? node.property?.value : node?.property?.name;
   const cleaned = new Set<AnyNode>();
   const visited = new Set<AnyNode>();
-  let callback: AnyNode;
-  let callbackValue: AnyNode;
+  let disposers: AnyNode[] = [undefined];
   const identity = (node: AnyNode, environment = values): AnyNode => {
     node = unwrapResourceExpression(node);
     if (node?.type === "ThisExpression") return environment.get(thisBinding);
@@ -300,7 +299,11 @@ function undisposedResource(program: AnyNode): string | null {
         resources.some((resource) => resource.value === value && resource.kind === "subscription")
       )
         cleaned.add(value);
-      target = callbacks.get(value) ?? value;
+      target = lexicalReceivers.has(value) ? value : (callbacks.get(value) ?? value);
+    }
+    if (lexicalReceivers.has(target)) {
+      receiver = lexicalReceivers.get(target);
+      target = callbacks.get(target) ?? target;
     }
     if (
       target?.type === "CallExpression" &&
@@ -341,10 +344,7 @@ function undisposedResource(program: AnyNode): string | null {
       return { normal: true, abrupt: false };
     visited.add(target);
     const local = new Map(environment);
-    local.set(
-      thisBinding,
-      target.type === "ArrowFunctionExpression" ? lexicalReceivers.get(target) : receiver,
-    );
+    local.set(thisBinding, receiver);
     for (const [index, param] of target.params.entries()) {
       if (param.type === "RestElement")
         bindResource(
@@ -404,8 +404,7 @@ function undisposedResource(program: AnyNode): string | null {
         if (init) {
           const value = identity(init, environment);
           environment.set(binding, value);
-          if (["ArrowFunctionExpression", "FunctionExpression"].includes(init.type))
-            callbacks.set(value, init);
+          if (init.type === "FunctionExpression") callbacks.set(value, init);
         } else if (node.type === "VariableDeclarator" && !environment.has(binding)) {
           environment.set(binding, undefined);
         }
@@ -458,12 +457,7 @@ function undisposedResource(program: AnyNode): string | null {
       const globalAlias = ["window", "globalThis", "self"].includes(calleeGlobal);
       const callee = globalAlias ? `window.${propertyKey(node.callee)}` : memberPath(node.callee);
       if (module && callee === "import.meta.hot.dispose") {
-        const argument = unwrapResourceExpression(node.arguments[0]);
-        callbackValue = identity(argument, environment);
-        callback =
-          argument?.type === "Identifier" || argument?.type === "MemberExpression"
-            ? (callbacks.get(callbackValue) ?? callbackValue)
-            : argument;
+        disposers = [identity(node.arguments[0], environment)];
         return;
       }
       const method =
@@ -559,11 +553,13 @@ function undisposedResource(program: AnyNode): string | null {
       return completion.normal;
     };
     const snapshot = () => ({
+      disposers: [...disposers],
       cleaned: new Set(cleaned),
       values: new Map(environment),
       properties: new Map([...properties].map(([key, entries]) => [key, new Map(entries)])),
     });
     const restore = (state: ReturnType<typeof snapshot>) => {
+      disposers = [...state.disposers];
       cleaned.clear();
       for (const value of state.cleaned) cleaned.add(value);
       environment.clear();
@@ -573,6 +569,7 @@ function undisposedResource(program: AnyNode): string | null {
     };
     const merge = (left: ReturnType<typeof snapshot>, right: ReturnType<typeof snapshot>) => {
       restore(left);
+      disposers = [...new Set([...left.disposers, ...right.disposers])];
       for (const value of cleaned) if (!right.cleaned.has(value)) cleaned.delete(value);
       for (const key of new Set([...left.values.keys(), ...right.values.keys()])) {
         if (left.values.get(key) !== right.values.get(key)) environment.set(key, {});
@@ -586,7 +583,12 @@ function undisposedResource(program: AnyNode): string | null {
         }
       }
     };
-    const branch = (left: AnyNode, right: AnyNode, expression?: AnyNode): boolean => {
+    const branch = (
+      left: AnyNode,
+      right: AnyNode,
+      expression?: AnyNode,
+      includeAbrupt = false,
+    ): boolean => {
       const resourceStart = resources.length;
       const before = snapshot();
       const leftContinues = walk(left);
@@ -607,7 +609,7 @@ function undisposedResource(program: AnyNode): string | null {
           returned.set(expression, value);
         }
       }
-      if (leftContinues && rightContinues) merge(afterLeft, afterRight);
+      if (includeAbrupt || (leftContinues && rightContinues)) merge(afterLeft, afterRight);
       else if (leftContinues) restore(afterLeft);
       return leftContinues || rightContinues;
     };
@@ -618,18 +620,56 @@ function undisposedResource(program: AnyNode): string | null {
       if (
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
       ) {
-        if (node.type === "ArrowFunctionExpression")
-          lexicalReceivers.set(node, environment.get(thisBinding));
+        if (node.type === "ArrowFunctionExpression") {
+          const closure = {};
+          lexicalReceivers.set(closure, environment.get(thisBinding));
+          callbacks.set(closure, node);
+          returned.set(node, closure);
+        }
         visit(node);
         return true;
+      }
+      if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
+        if (node.id) environment.set(resolve(node.id), node);
+      }
+      if (node.type === "NewExpression") {
+        const target = identity(node.callee, environment);
+        if (["ClassDeclaration", "ClassExpression"].includes(target?.type)) {
+          if (!walk(node.arguments)) return false;
+          const instance = {};
+          returned.set(node, instance);
+          properties.set(instance, new Map());
+          const local = new Map(environment);
+          local.set(thisBinding, instance);
+          for (const field of target.body.body) {
+            if (field.static) continue;
+            const key = field.computed
+              ? identity(field.key, local)?.value
+              : (field.key?.name ?? field.key?.value);
+            if (field.type === "PropertyDefinition") {
+              if (field.value) evaluate(field.value, local, module);
+              if (key !== undefined)
+                properties.get(instance)!.set(key, identity(field.value, local));
+            } else if (key !== undefined && field.kind !== "constructor") {
+              properties.get(instance)!.set(key, field.value);
+            }
+          }
+          const constructor = target.body.body.find(
+            (field: AnyNode) => field.kind === "constructor",
+          );
+          return (
+            !constructor ||
+            inspect(constructor.value, node.arguments, environment, module, instance).normal
+          );
+        }
       }
       if (node.type === "PropertyDefinition" && !node.static)
         return !node.computed || walk(node.key);
       if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
         if (!walk(node.test)) return false;
         const test = identity(node.test, environment);
-        if (typeof test?.value === "boolean") {
-          const selected = test.value ? node.consequent : node.alternate;
+        if (typeof test?.value === "boolean" || memberPath(node.test) === "import.meta.hot") {
+          const selected = test?.value === false ? node.alternate : node.consequent;
           const continues = walk(selected);
           if (node.type === "ConditionalExpression")
             returned.set(node, identity(selected, environment));
@@ -643,7 +683,25 @@ function undisposedResource(program: AnyNode): string | null {
       }
       if (node.type === "LogicalExpression") {
         if (!walk(node.left)) return false;
+        if (memberPath(node.left) === "import.meta.hot" && node.operator === "&&")
+          return walk(node.right);
         return branch(node.right, null);
+      }
+      if (node.type === "TryStatement" && node.finalizer) {
+        const firstExit = exits.length;
+        const continues = branch(
+          node.block,
+          node.handler?.body ?? { type: "ThrowStatement" },
+          undefined,
+          true,
+        );
+        const beforeFinally = new Set(cleaned);
+        const finalizerExit = exits.length;
+        const finallyContinues = walk(node.finalizer);
+        for (const exit of exits.slice(firstExit, finalizerExit)) {
+          for (const value of cleaned) if (!beforeFinally.has(value)) exit.add(value);
+        }
+        return continues && finallyContinues;
       }
       if (
         [
@@ -670,7 +728,10 @@ function undisposedResource(program: AnyNode): string | null {
         }
         return true;
       }
-      const bindsValue = node.type === "VariableDeclarator" || node.type === "AssignmentExpression";
+      const bindsValue =
+        node.type === "VariableDeclarator" ||
+        node.type === "AssignmentExpression" ||
+        (node.type === "CallExpression" && memberPath(node.callee) === "import.meta.hot.dispose");
       if (!bindsValue && visit(node) === false) return false;
       for (const [key, child] of Object.entries(node)) {
         if (key !== "__doctorParent" && !walk(child)) return false;
@@ -703,13 +764,31 @@ function undisposedResource(program: AnyNode): string | null {
     return { normal, abrupt, value };
   }
   evaluate(program, values, true);
-  inspect(callback);
-  if (
-    resources.some(
-      (resource) => resource.value === callbackValue && resource.kind === "subscription",
+  const initialCleaned = new Set(cleaned);
+  const initialValues = new Map(values);
+  const initialProperties = new Map(
+    [...properties].map(([key, entries]) => [key, new Map(entries)]),
+  );
+  const outcomes = disposers.map((disposer) => {
+    cleaned.clear();
+    for (const value of initialCleaned) cleaned.add(value);
+    values.clear();
+    for (const [key, value] of initialValues) values.set(key, value);
+    properties.clear();
+    for (const [key, entries] of initialProperties) properties.set(key, new Map(entries));
+    inspect(
+      callbacks.get(disposer) && !lexicalReceivers.has(disposer)
+        ? callbacks.get(disposer)
+        : disposer,
+    );
+    if (
+      resources.some((resource) => resource.value === disposer && resource.kind === "subscription")
     )
-  )
-    cleaned.add(callbackValue);
+      cleaned.add(disposer);
+    return new Set(cleaned);
+  });
+  for (const value of cleaned)
+    if (outcomes.some((outcome) => !outcome.has(value))) cleaned.delete(value);
   return (
     resources.find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))
       ?.kind ?? null

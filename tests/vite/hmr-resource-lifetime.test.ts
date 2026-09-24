@@ -1300,6 +1300,91 @@ for (const [name, source, leaks] of [
     "const state = { timer: setInterval(refresh), cleanup: () => clearInterval(this.timer) }; import.meta.hot.dispose(() => state.cleanup())",
     true,
   ],
+  [
+    "conditional disposer registration",
+    "const timer = setInterval(refresh); if (enabled) import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "both registration paths clean up",
+    "const timer = setInterval(refresh); if (enabled) import.meta.hot.dispose(() => clearInterval(timer)); else import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "conditional replacement loses cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer)); if (enabled) import.meta.hot.dispose(() => save())",
+    true,
+  ],
+  [
+    "finally disposes after unknown call",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { save() } finally { clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "finally disposes after return",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { return } finally { clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "finally disposes after throw",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { throw Error() } finally { clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "conditional finally cleanup leaks",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { save() } finally { if (enabled) clearInterval(timer) } })",
+    true,
+  ],
+  [
+    "constructed field leaks",
+    "class Worker { timer = setInterval(refresh) }; new Worker(); import.meta.hot.dispose(() => save())",
+    true,
+  ],
+  [
+    "constructed field disposed",
+    "class Worker { timer = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
+  [
+    "constructed instances are distinct",
+    "class Worker { timer = setInterval(refresh) }; const a = new Worker(); const b = new Worker(); import.meta.hot.dispose(() => clearInterval(b.timer))",
+    true,
+  ],
+  [
+    "two receivers retain arrow closures",
+    "const a = { start() { this.timer = setInterval(refresh); this.cleanup = () => clearInterval(this.timer) } }; const b = { start: a.start }; a.start(); b.start(); import.meta.hot.dispose(() => { a.cleanup(); b.cleanup() })",
+    false,
+  ],
+  [
+    "finally early return leaks",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { save() } finally { if (skip) return; clearInterval(timer) } })",
+    true,
+  ],
+  [
+    "cleanup after returning try is unreachable",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { return } finally { save() }; clearInterval(timer) })",
+    true,
+  ],
+  [
+    "finally repeats cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { clearInterval(timer); return } finally { clearInterval(timer) } })",
+    false,
+  ],
+  [
+    "hot conditional guard",
+    "const timer = setInterval(refresh); if (import.meta.hot) import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "hot logical guard",
+    "const timer = setInterval(refresh); import.meta.hot && import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "uninitialized class field",
+    "class Worker { empty; timer = setInterval(refresh) }; const worker = new Worker(); import.meta.hot.dispose(() => clearInterval(worker.timer))",
+    false,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({
