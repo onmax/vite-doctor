@@ -249,6 +249,31 @@ function readAliasInitializers(source: string) {
       return resolveImmutable(definition.node.init, seen);
     return node;
   }
+  const mutableArrays = new Set<AnyNode>();
+  function invalidateArray(node: AnyNode, memberWrite = false) {
+    if (!node) return;
+    while (memberWrite && node.type === "MemberExpression") node = node.object;
+    const value = resolveImmutable(node);
+    if (value.type === "ArrayExpression") mutableArrays.add(value);
+  }
+  walkScriptLocal(parsed.ast, (node) => {
+    if (node.type === "AssignmentExpression") invalidateArray(node.left, true);
+    else if (
+      node.type === "UpdateExpression" ||
+      (node.type === "UnaryExpression" && node.operator === "delete")
+    )
+      invalidateArray(node.argument, true);
+    else if (node.type === "CallExpression") {
+      if (node.callee.type === "MemberExpression") invalidateArray(node.callee.object);
+      const serializesArray =
+        memberPath(node.callee) === "JSON.stringify" &&
+        !references.get(node.callee.object.range[0])?.resolved &&
+        node.arguments.length === 1;
+      if (!serializesArray)
+        for (const argument of node.arguments)
+          if (argument.type !== "SpreadElement") invalidateArray(argument);
+    }
+  });
   for (const scope of scopeManager.scopes) {
     for (const reference of scope.references) {
       const definition = reference.resolved?.defs[0];
@@ -334,7 +359,8 @@ function readAliasInitializers(source: string) {
         }
       }
       if (id.type === "Identifier") {
-        initializers.set(reference.identifier.range[0], [init.range]);
+        if (!mutableArrays.has(resolveImmutable(init)))
+          initializers.set(reference.identifier.range[0], [init.range]);
       } else if (
         id.type === "ObjectPattern" &&
         init.type === "MemberExpression" &&
@@ -977,6 +1003,8 @@ function resolvesSecretAlias(
                     offset + property.key.range[0],
                     offset + property.key.range[1],
                   ]);
+                  if (value?.type === "TemplateLiteral" && value.expressions.length === 0)
+                    return value.quasis[0].value.cooked;
                   return value?.type === "Literal" ? String(value.value) : null;
                 }
                 const consumed = new Set<string>();
@@ -1959,14 +1987,33 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
                       (item) => item.type === "Property" && keyOf(item) === key,
                     )
                   : undefined;
-              bind(property.value, match?.value);
+              const projected = match ? effectiveProperty(match).value : undefined;
+              if (projected && mergedNodes.has(projected)) {
+                const start = -nodesByRange.size - 1;
+                projected.start = start;
+                projected.end = start;
+                nodesByRange.set(`${start}:${start}`, projected);
+              }
+              bind(property.value, projected);
             }
           } else if (pattern.type === "ArrayPattern") {
             pattern.elements.forEach((element: AnyNode, index: number) => {
-              if (element)
+              if (element?.type === "RestElement" && value?.type === "ArrayExpression") {
+                const start = -nodesByRange.size - 1;
+                const rest = {
+                  type: "ArrayExpression",
+                  elements: expandArguments(value.elements).slice(index),
+                  start,
+                  end: start,
+                };
+                nodesByRange.set(`${start}:${start}`, rest);
+                bind(element.argument, rest);
+              } else if (element)
                 bind(
                   element,
-                  value?.type === "ArrayExpression" ? value.elements[index] : undefined,
+                  value?.type === "ArrayExpression"
+                    ? expandArguments(value.elements)[index]
+                    : undefined,
                 );
             });
           }
@@ -2240,6 +2287,22 @@ function visitReturnValues(
     return terminates && !hasExitingBreak(node.body, new Set([node.label.name]), false);
   }
   if (node.type === "SwitchStatement") {
+    if (
+      node.discriminant.type === "Literal" &&
+      node.cases.every((branch: AnyNode) => branch.test === null || branch.test.type === "Literal")
+    ) {
+      let index = node.cases.findIndex(
+        (branch: AnyNode) => branch.test?.value === node.discriminant.value && branch.test !== null,
+      );
+      if (index < 0) index = node.cases.findIndex((branch: AnyNode) => branch.test === null);
+      if (index < 0) return false;
+      const body = {
+        type: "BlockStatement",
+        body: node.cases.slice(index).flatMap((branch: AnyNode) => branch.consequent),
+      };
+      const terminates = visitReturnValues(body, visit, onUndefined);
+      return terminates && !hasExitingBreak(body, new Set());
+    }
     let nextTerminates = false;
     let allTerminate = true;
     for (const branch of [...node.cases].reverse()) {

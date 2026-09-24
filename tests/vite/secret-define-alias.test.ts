@@ -1941,3 +1941,77 @@ test.each([
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    "const make = ([, ...configs]) => configs[0]; export default make([{}, { define: { PRIVATE_TOKEN: {} } }])",
+    "const make = ({ config }) => ({ ...config }); export default make({ get config() { return { define: { PRIVATE_TOKEN: {} } } } })",
+    "const make = ({ config }) => ({ ...config }); export default make({ get config() { if (process.env.MODE) return { define: { PRIVATE_TOKEN: {} } }; return {} } })",
+  ])(`projects config factory arguments for ${rule.meta.id}: %s`, async (source) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": source },
+    });
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+  });
+}
+
+test.each([
+  [
+    'const read = () => { switch ("a") { case "b": return process.env.PRIVATE_TOKEN; default: return "safe" } }; const replacement = read()',
+    false,
+  ],
+  [
+    'const read = () => { switch ("a") { default: return process.env.PRIVATE_TOKEN; case "a": return "safe" } }; const replacement = read()',
+    false,
+  ],
+  [
+    'const read = () => { switch ("a") { case "a": break; default: return process.env.PRIVATE_TOKEN }; return "safe" }; const replacement = read()',
+    false,
+  ],
+  [
+    'const read = () => { switch ("a") { case "a": case "b": return process.env.PRIVATE_TOKEN; default: return "safe" } }; const replacement = read()',
+    true,
+  ],
+  [
+    'const read = (value) => value; const args = [process.env.PRIVATE_TOKEN]; args[0] = "safe"; const replacement = read(...args)',
+    false,
+  ],
+  [
+    'const read = (value) => value; const args = [process.env.PRIVATE_TOKEN]; const alias = args; alias[0] = "safe"; const replacement = read(...args)',
+    false,
+  ],
+  [
+    'const read = (value) => value; const args = [process.env.PRIVATE_TOKEN]; args.fill("safe"); const replacement = read(...args)',
+    false,
+  ],
+  [
+    'const key = `publicValue`; const read = ({ [key]: removed, ...rest }) => rest.value; const replacement = read({ publicValue: "safe", value: process.env.PRIVATE_TOKEN })',
+    true,
+  ],
+])(
+  "respects effective serialization arguments and branches: %s",
+  async (declarations, expected) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
+      },
+    });
+    expect(result.diagnostics.length > 0).toBe(expected);
+  },
+);
+
+test("preserves immutable arrays passed directly to JSON.stringify", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts":
+        "const replacement = [process.env.PRIVATE_TOKEN]; export default { define: { VALUE: JSON.stringify(replacement) } }",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
