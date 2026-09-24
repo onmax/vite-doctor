@@ -813,6 +813,9 @@ test.each([
   ["", '<button @click="clock">{{ clock() }}</button>', 1],
   ["const displayed = clock()", '<button @click="clock">{{ displayed }}</button>', 1],
   ["", '<button @click="clock">Stable</button>', 0],
+  ["", '<button v-on:click="clock">{{ clock() }}</button>', 1],
+  ["const displayed = clock()", '<button v-on:click.prevent="clock">{{ displayed }}</button>', 1],
+  ["", '<button v-on:click="clock">Stable</button>', 0],
 ])("traces assigned and event-shared helpers: %s %s", async (setup, template, count) => {
   const result = await runNuxtAppRuleFixture(
     noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
@@ -839,4 +842,31 @@ test("preserves client guards in helpers shared with event bindings", async () =
     <template><button @click="clock">{{ clock() }}</button></template>`,
   );
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["await (async () => Date.now())()", 1],
+  ["(async () => Date.now())()", 0],
+  ["await Promise.all([(async () => Date.now())()])", 1],
+  ["Promise.all([(async () => Date.now())()])", 0],
+  ["await (async () => { Date.now(); return 'stable' })()", 0],
+])("traces consumed async IIFEs: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>const displayed = ${expression}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["[1] as const", 1],
+  ["([1] satisfies number[])", 1],
+  ["([1] as number[])!", 1],
+  ["[] as const", 0],
+])("traces typed array callback receivers: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">const source = ${expression}; const displayed = source.map(() => Date.now())</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
 });

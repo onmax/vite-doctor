@@ -18,7 +18,7 @@ export type NuxtExecutionEvidence =
 
 const TEMPLATE_BLOCK_RE = /<template[^>]*>([\s\S]*?)<\/template>/;
 const TEMPLATE_DIRECTIVE_RE_G = /[@:]\w+(?:\.[\w.]+)?\s*=\s*["']([^"']+)["']/g;
-const TEMPLATE_EVENT_RE_G = /@\w+(?:\.[\w.]+)?\s*=\s*["']([^"']+)["']/g;
+const TEMPLATE_EVENT_RE_G = /(?:@|v-on:)\w+(?:\.[\w.]+)?\s*=\s*["']([^"']+)["']/g;
 const IDENT_RE_G = /\b[A-Za-z_$][\w$]*\b/g;
 const CLIENT_CALLBACK_RE =
   /^(useEventListener|addEventListener|onKeyDown|onKeyUp|onKeyStroke|onClickOutside|onLongPress|usePointerSwipe|useSwipe|useIntersectionObserver|useResizeObserver|useMutationObserver|defineShortcuts)$/;
@@ -119,7 +119,8 @@ function functionFlowsToTemplate(
     const owner = containingFunction(callbackCall, parents);
     if (
       !owner &&
-      callbackCall.callee.type === "MemberExpression" &&
+      (callbackCall.callee.type === "MemberExpression" ||
+        unwrapExpression(callbackCall.callee) === fn) &&
       isLikelyRenderedTimeExpression(ctx, callbackCall)
     )
       return true;
@@ -349,17 +350,40 @@ function arrayElementCount(array: AnyNode, includeHoles: boolean): number {
   return count;
 }
 
+function unwrapExpression(node: AnyNode): AnyNode {
+  while (
+    [
+      "ParenthesizedExpression",
+      "TSAsExpression",
+      "TSSatisfiesExpression",
+      "TSNonNullExpression",
+      "TSTypeAssertion",
+    ].includes(node?.type)
+  )
+    node = node.expression;
+  return node;
+}
+
 function resultCallbackCall(
   fn: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   expression = fn,
 ): AnyNode {
-  if (fn.generator || fn.async) return null;
+  if (fn.generator) return null;
   while (parents.get(expression)?.type === "ParenthesizedExpression")
     expression = parents.get(expression);
   const call = parents.get(expression);
   if (call?.type !== "CallExpression") return null;
-  if (call.callee === expression) return call;
+  if (call.callee === expression)
+    return !fn.async ||
+      asyncResultIsConsumed(
+        call,
+        (node) => parents.get(node),
+        (node) => !resolveLocalBinding(node, "Promise", parents),
+      )
+      ? call
+      : null;
+  if (fn.async) return null;
   if (call.arguments[0] !== expression) return null;
   if (call.callee?.type === "Identifier" && call.callee.name === "computed") {
     const binding = resolveLocalBinding(call, "computed", parents);
@@ -387,10 +411,10 @@ function resultCallbackCall(
       "reduceRight",
     ].includes(call.callee.property?.name)
   ) {
-    const receiver = call.callee.object;
+    const receiver = unwrapExpression(call.callee.object);
     const binding =
       receiver?.type === "Identifier" ? resolveLocalBinding(call, receiver.name, parents) : null;
-    const value = binding ? binding.init : receiver;
+    const value = unwrapExpression(binding ? binding.init : receiver);
     if (value?.type === "ArrayExpression") {
       const method = call.callee.property.name;
       const count = arrayElementCount(value, ["find", "findIndex"].includes(method));
