@@ -4015,3 +4015,17 @@ test.each([
   });
   expect(result.diagnostics).toHaveLength(1);
 });
+
+test("standard auth provider catch-all delegates authorization to the provider", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/auth/[...all].ts":
+        "export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});

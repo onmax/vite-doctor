@@ -781,3 +781,39 @@ test.each([false, true, "commented"])(
     expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
   },
 );
+
+test.each([
+  "import guard = require('./policy'); export default guard",
+  "export default async event => (await import(`./policy`)).default(event)",
+  "import guard from '~/utils/policy'; export default defineNuxtRouteMiddleware(guard)",
+])("collects static dependencies from handler and middleware: %s", async (source) => {
+  for (const availability of ["present", "missing", "oversized"]) {
+    const middleware = source.includes("defineNuxtRouteMiddleware");
+    const policy = middleware ? "app/utils/policy.ts" : "server/api/policy.ts";
+    let calls = 0;
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      calls++;
+      expect(candidate.sources.map((item) => item.path)).toContain(policy);
+      return { status: "unknown", reason: "Evidence collected", citations: [] };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        [middleware ? "app/middleware/auth.ts" : "server/api/account.get.ts"]: source,
+        ...(availability === "missing"
+          ? {}
+          : {
+              [policy]:
+                availability === "oversized"
+                  ? " ".repeat(16_001)
+                  : "export default event => requireAuth(event)",
+            }),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(calls).toBe(availability === "present" ? 1 : 0);
+    if (availability !== "present")
+      expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+  }
+});

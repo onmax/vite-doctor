@@ -157,32 +157,36 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             ];
           }
           for (const handler of handlers) {
-            const layer = [...nuxt.layers]
-              .filter(
-                (layer) =>
-                  resolve(root, layer.root) !== root &&
-                  isWithin(resolve(root, layer.root), resolve(root, handler.path)),
-              )
-              .sort((a, b) => b.root.length - a.root.length)[0];
             const imports = localImports(
               root,
-              handler,
-              {
-                "~~": root,
-                "@@": root,
-                "~": nuxt.appDir,
-                "@": nuxt.appDir,
-                ...(nuxt.manifest?.isCurrent ? nuxt.manifest.aliases : {}),
-                ...(layer && nuxt.localLayerAliases === true
-                  ? {
-                      "~~": resolve(root, layer.root),
-                      "@@": resolve(root, layer.root),
-                      "~": resolve(root, layer.srcDir ?? layer.root),
-                      "@": resolve(root, layer.srcDir ?? layer.root),
-                    }
-                  : {}),
+              [handler, ...middleware, ...serverMiddleware],
+              (source) => {
+                const layer = [...nuxt.layers]
+                  .filter(
+                    (layer) =>
+                      resolve(root, layer.root) !== root &&
+                      isWithin(resolve(root, layer.root), resolve(root, source.path)),
+                  )
+                  .sort((a, b) => b.root.length - a.root.length)[0];
+                return {
+                  aliases: {
+                    "~~": root,
+                    "@@": root,
+                    "~": nuxt.appDir,
+                    "@": nuxt.appDir,
+                    ...(nuxt.manifest?.isCurrent ? nuxt.manifest.aliases : {}),
+                    ...(layer && nuxt.localLayerAliases === true
+                      ? {
+                          "~~": resolve(root, layer.root),
+                          "@@": resolve(root, layer.root),
+                          "~": resolve(root, layer.srcDir ?? layer.root),
+                          "@": resolve(root, layer.srcDir ?? layer.root),
+                        }
+                      : {}),
+                  },
+                  unknownLayerAliases: Boolean(layer && nuxt.localLayerAliases === undefined),
+                };
               },
-              Boolean(layer && nuxt.localLayerAliases === undefined),
             );
             if (imports.omitted.length) {
               ctx.project.evidenceGaps = [
@@ -393,15 +397,18 @@ function appMiddlewareFiles(directories: string[]): string[] {
 
 function localImports(
   root: string,
-  source: AuthorizationReviewSource,
-  aliases: Record<string, string>,
-  unknownLayerAliases = false,
+  seeds: AuthorizationReviewSource[],
+  resolveAliases: (source: AuthorizationReviewSource) => {
+    aliases: Record<string, string>;
+    unknownLayerAliases: boolean;
+  },
 ): { sources: AuthorizationReviewSource[]; omitted: string[] } {
-  const queue = [source];
+  const queue = [...seeds];
   const sources: AuthorizationReviewSource[] = [];
   const omitted: string[] = [];
-  const visited = new Set([resolve(root, source.path)]);
+  const visited = new Set(seeds.map((source) => resolve(root, source.path)));
   for (const current of queue) {
+    const { aliases, unknownLayerAliases } = resolveAliases(current);
     const file = resolve(root, current.path);
     const parsed = parseSync(file, current.text);
     if (parsed.errors.length) {
@@ -416,13 +423,20 @@ function localImports(
         node.type === "ExportAllDeclaration" ||
         node.type === "ImportExpression"
           ? node.source
-          : node.type === "CallExpression" &&
-              node.callee.type === "Identifier" &&
-              node.callee.name === "require"
-            ? node.arguments[0]
-            : undefined;
+          : node.type === "TSImportEqualsDeclaration" &&
+              node.moduleReference.type === "TSExternalModuleReference"
+            ? node.moduleReference.expression
+            : node.type === "CallExpression" &&
+                node.callee.type === "Identifier" &&
+                node.callee.name === "require"
+              ? node.arguments[0]
+              : undefined;
       if (source?.type === "Literal" && typeof source.value === "string")
         specifiers.push(source.value);
+      else if (source?.type === "TemplateLiteral" && source.expressions.length === 0) {
+        const value = source.quasis[0]?.value.cooked;
+        if (typeof value === "string") specifiers.push(value);
+      }
     });
     for (const specifier of specifiers) {
       if (unknownLayerAliases && /^(?:~{1,2}|@{1,2})(?:\/|$)/.test(specifier)) {

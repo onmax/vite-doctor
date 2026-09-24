@@ -91,11 +91,54 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
             existsSync(handler.file) &&
             (isSensitive(toPosixPath(relative(ctx.project.root, handler.file))) ||
               isSensitive(handler.route ?? "")) &&
+            !isAuthProviderHandler(handler.file, handler.route) &&
             !hasUnconditionalAuthGuard(handler.file),
         )
         .map((handler) => handler.file),
     ),
   ];
+}
+
+function isAuthProviderHandler(file: string, route?: string): boolean {
+  if (
+    !/(?:^|\/)auth\/\[\.\.\.[^/\]]+\](?:\.[cm]?[jt]s)?$/.test(toPosixPath(file)) &&
+    !/(?:^|\/)auth\/(?:\*\*|\[\.\.\.[^/\]]+\])$/.test(route ?? "")
+  )
+    return false;
+  try {
+    const parsed = parseSync(file, readProjectFile(file));
+    if (parsed.errors.length) return false;
+    const declaration: AnyNode = parsed.program.body.find(
+      (node) => node.type === "ExportDefaultDeclaration",
+    );
+    const factory = declaration?.declaration;
+    if (
+      factory?.type !== "CallExpression" ||
+      factory.callee.type !== "Identifier" ||
+      factory.callee.name !== "defineEventHandler"
+    )
+      return false;
+    const callback = factory.arguments[0];
+    if (callback?.type !== "ArrowFunctionExpression" && callback?.type !== "FunctionExpression")
+      return false;
+    let body = callback.body;
+    if (body.type === "BlockStatement") {
+      if (body.body.length !== 1 || body.body[0].type !== "ReturnStatement") return false;
+      body = body.body[0].argument;
+    }
+    if (body?.type === "AwaitExpression") body = body.argument;
+    return (
+      body?.type === "CallExpression" &&
+      body.callee.type === "MemberExpression" &&
+      !body.callee.computed &&
+      body.callee.object.type === "Identifier" &&
+      body.callee.object.name === "auth" &&
+      body.callee.property.type === "Identifier" &&
+      body.callee.property.name === "handler"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function hasUnconditionalAuthGuard(file: string): boolean {
