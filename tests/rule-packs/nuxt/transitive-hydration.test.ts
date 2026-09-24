@@ -431,3 +431,49 @@ const displayed = { ...values() }
     expect(result.diagnostics).toHaveLength(0);
   },
 );
+
+test.each([
+  ["const displayed = clock()", '<input v-model="displayed">'],
+  ["const displayed = Date.now()", '<input v-model="displayed">'],
+])("traces v-model reads: %s", async (script, template) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { return Date.now() }; ${script}</script><template>${template}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  ["{ label: 'stable', generatedAt: Date.now() }", "label", 0],
+  ["{ label: 'stable', generatedAt: Date.now() }", "generatedAt", 1],
+  ["{ label: 'stable', generatedAt: clock() }", "label", 0],
+  ["{ label: 'stable', generatedAt: clock() }", "generatedAt", 1],
+])("matches template-called helper projections: %s.%s", async (value, property, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { return Date.now() }; function details() { return ${value} }</script><template>{{ details().${property} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["let value; [value] = [clock()]; return value", 1],
+  ["let value; ({ value } = { value: clock() }); return value", 1],
+  ["let value; [value] = ['stable', clock()]; return value", 0],
+  ["let value; ({ value } = { value: 'stable', unused: clock() }); return value", 0],
+  ["let value; [value] = [clock()]; value = 'stable'; return value", 0],
+])("traces destructuring assignments: %s", async (body, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { return Date.now() }; function label() { ${body} }; const displayed = label()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test("ignores callbacks on replaced array bindings", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { return Date.now() }; let source = [1]; source = { map: () => ['stable'] }; const displayed = source.map(() => clock())</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});

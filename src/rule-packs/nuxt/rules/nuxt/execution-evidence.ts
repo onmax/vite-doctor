@@ -90,18 +90,23 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
 
   const declarator = nearestVariableDeclarator(node);
   const name = declarator?.id?.type === "Identifier" ? declarator.id.name : "";
-  if (name && getTemplateBoundIdentifiers(ctx).has(name)) return true;
+  if (name && getRenderedReferences(ctx).some((reference) => reference.name === name)) return true;
   if (name && new RegExp(`{{[^}]*\\b${escapeRegExp(name)}\\b[^}]*}}`).test(template)) return true;
   if (isHydratingStateValue(node)) return true;
   const owner = nearestFunctionOrProgram(node);
   return Boolean(
     owner &&
     (!owner.generator || contributesToReturn(node, owner, getScriptParents(ctx))) &&
-    functionFlowsToTemplate(ctx, owner, new Set()),
+    functionFlowsToTemplate(ctx, owner, new Set(), node),
   );
 }
 
-function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNode>): boolean {
+function functionFlowsToTemplate(
+  ctx: RuleContext,
+  fn: AnyNode,
+  seen: Set<AnyNode>,
+  source: AnyNode,
+): boolean {
   const parents = getScriptParents(ctx);
   if (seen.has(fn)) return false;
   seen.add(fn);
@@ -109,7 +114,7 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
   if (callbackCall) {
     const owner = containingFunction(callbackCall, parents);
     if (owner && contributesToReturn(callbackCall, owner, parents))
-      return functionFlowsToTemplate(ctx, owner, seen);
+      return functionFlowsToTemplate(ctx, owner, seen, callbackCall);
   }
   const binding = functionBinding(fn, parents);
   const functionName = binding.id?.type === "Identifier" ? binding.id.name : null;
@@ -122,6 +127,7 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
         reference.name === functionName &&
         reference.parent?.type === "CallExpression" &&
         reference.parent.callee === reference &&
+        projectionIncludes(source, fn, reference.parent, parents) &&
         (!fn.generator || isConsumedIterator(reference.parent, (node) => node.parent)),
     )
   )
@@ -158,7 +164,7 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
         owner &&
         owner !== fn &&
         contributesToReturn(node, owner, parents) &&
-        functionFlowsToTemplate(ctx, owner, new Set(seen))
+        functionFlowsToTemplate(ctx, owner, new Set(seen), node)
       )
         return true;
     }
@@ -205,11 +211,17 @@ function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): An
     ].includes(call.callee.property?.name)
   ) {
     const receiver = call.callee.object;
-    const value =
-      receiver?.type === "Identifier"
-        ? resolveLocalBinding(call, receiver.name, parents)?.init
-        : receiver;
-    if (value?.type === "ArrayExpression") return call;
+    const binding =
+      receiver?.type === "Identifier" ? resolveLocalBinding(call, receiver.name, parents) : null;
+    const value = binding ? binding.init : receiver;
+    if (value?.type === "ArrayExpression") {
+      let scope = containingFunction(call, parents);
+      if (!scope) {
+        scope = call;
+        while (parents.get(scope)) scope = parents.get(scope);
+      }
+      if (!binding || !hasPriorAliasWrite(call, binding, scope, parents)) return call;
+    }
   }
   return null;
 }
@@ -242,7 +254,9 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
       for (const attribute of node.startTag.attributes) {
         if (
           attribute.directive &&
-          ["bind", "if", "else-if", "show", "text", "html", "for"].includes(attribute.key.name.name)
+          ["bind", "model", "if", "else-if", "show", "text", "html", "for"].includes(
+            attribute.key.name.name,
+          )
         )
           visit(attribute.value);
       }
@@ -282,7 +296,11 @@ function projectionIncludes(
       path.unshift(String(key));
     }
   }
-  const bindingPath = patternPath(variable.id, reference.name);
+  const bindingPath = ["VariableDeclarator", "AssignmentExpression", "AssignmentPattern"].includes(
+    variable.type,
+  )
+    ? patternPath(variable.id ?? variable.left, reference.name)
+    : [];
   if (!bindingPath) return false;
   for (const key of bindingPath) {
     if (!path.length) break;
@@ -357,20 +375,22 @@ function contributesToReturn(
       (parent?.type === "AssignmentExpression" && parent.right === current)
     ) {
       const identifier = parent.id ?? parent.left;
-      if (identifier?.type !== "Identifier") return false;
-      const binding =
-        parent.type === "AssignmentExpression"
-          ? resolveLocalBinding(parent, identifier.name, parents)
-          : parent;
-      if (!binding) return false;
       let returned = false;
       walkScriptLocal(owner.body, (reference) => {
         if (
-          reference.type === "Identifier" &&
-          reference !== identifier &&
-          reference.name === identifier.name &&
-          reference.start > parent.start &&
-          resolveLocalBinding(reference, identifier.name, parents) === binding &&
+          reference.type !== "Identifier" ||
+          reference.start <= parent.start ||
+          !patternBinds(identifier, reference.name) ||
+          !projectionIncludes(node, parent, reference, parents)
+        )
+          return;
+        const binding =
+          parent.type === "AssignmentExpression"
+            ? resolveLocalBinding(parent, reference.name, parents)
+            : parent;
+        if (
+          binding &&
+          resolveLocalBinding(reference, reference.name, parents) === binding &&
           !hasPriorAliasWrite(reference, binding, owner, parents, parent) &&
           contributesToReturn(reference, owner, parents, seen)
         )
@@ -439,7 +459,7 @@ function hasPriorAliasWrite(
     if (
       write.start >= reference.start ||
       write.start <= source.start ||
-      containingFunction(write, parents) !== owner
+      containingFunction(write, parents) !== (owner.type === "Program" ? null : owner)
     )
       return;
     const target =
