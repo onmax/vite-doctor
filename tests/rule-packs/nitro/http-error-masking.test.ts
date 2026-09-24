@@ -2625,3 +2625,36 @@ test("enclosing synchronous handler adopts rejected return", async () => {
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
 });
+
+test.each([
+  "await (true ? Promise.reject(createError({ statusCode: 404 })) : null)",
+  "await (0, Promise.reject(createError({ statusCode: 404 })))",
+  "await (false || Promise.reject(createError({ statusCode: 404 })))",
+  "await (true && Promise.reject(createError({ statusCode: 404 })))",
+  "await (null ?? Promise.reject(createError({ statusCode: 404 })))",
+  "await (unknownValue ?? Promise.reject(createError({ statusCode: 404 })))",
+])("adopts the result of a composite await: %s", async (expression) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(async () => { try { ${expression} } catch { throw new Error() } })`,
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+});
+
+test.each([
+  ["for (const code of [404]) throw createError({ statusCode: code })", 1],
+  ["for (const code of [500]) throw createError({ statusCode: code })", 0],
+  ["for (const code of []) throw createError({ statusCode: code })", 0],
+])("binds literal values inside protected for-of loops: %s", async (statement, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => { try { ${statement} } catch { throw new Error() } })`,
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});

@@ -882,8 +882,59 @@ function evaluateOutcomes(
     assignment.type === "AwaitExpression" &&
     call.type !== "CallExpression" &&
     call.type !== "NewExpression"
-  )
+  ) {
+    if (call.type === "ConditionalExpression")
+      return conditionPaths(call.test, normal, bindings, conditions).flatMap(({ path, value }) =>
+        path.outcome === "normal"
+          ? outcomes(
+              { ...assignment, argument: value ? call.consequent : call.alternate },
+              path,
+              bindings,
+              conditions,
+            )
+          : [path],
+      );
+    if (call.type === "SequenceExpression") {
+      let paths: Path[] = [normal];
+      for (const expression of call.expressions.slice(0, -1))
+        paths = paths.flatMap((current) =>
+          current.outcome === "normal"
+            ? outcomes(expression, current, bindings, conditions)
+            : [current],
+        );
+      return paths.flatMap((current) =>
+        current.outcome === "normal"
+          ? outcomes(
+              { ...assignment, argument: call.expressions.at(-1) },
+              current,
+              bindings,
+              conditions,
+            )
+          : [current],
+      );
+    }
+    if (call.type === "LogicalExpression" && call.operator === "??")
+      return outcomes(call.left, normal, bindings, conditions).flatMap((path) => {
+        if (path.outcome !== "normal") return [path];
+        const value = path.value;
+        const right =
+          value && "literal" in value && value.literal != null
+            ? []
+            : outcomes({ ...assignment, argument: call.right }, path, bindings, conditions);
+        return value && ("error" in value || value.literal != null)
+          ? [path]
+          : value
+            ? right
+            : [path, ...right];
+      });
+    if (call.type === "LogicalExpression")
+      return conditionPaths(call.left, normal, bindings, conditions).flatMap(({ path, value }) =>
+        path.outcome === "normal" && value === (call.operator === "&&")
+          ? outcomes({ ...assignment, argument: call.right }, path, bindings, conditions)
+          : [path],
+      );
     return outcomes(call, normal, bindings, conditions);
+  }
   if (!argumentValues && (call.type === "CallExpression" || call.type === "NewExpression")) {
     let paths = outcomes(
       call.callee,
@@ -1384,64 +1435,79 @@ function loopOutcomes(
     );
   }
   const result: Path[] = [];
-  const pending =
+  const initial =
     node.type === "ForStatement" && node.init
       ? outcomes(node.init, path, bindings, conditions)
       : node.type === "ForInStatement" || node.type === "ForOfStatement"
         ? outcomes(node.right, path, bindings, conditions)
         : [path];
+  const pending = initial.map((current) => ({ current, index: 0 }));
   const seen = new Set<string>();
-  const iteration = {
-    type: "IfStatement",
-    test:
-      node.test ??
-      (node.type === "ForStatement"
-        ? { type: "Literal", value: true }
-        : { type: "Identifier", name: "" }),
-    consequent:
-      node.type === "ForInStatement" || node.type === "ForOfStatement"
-        ? {
-            type: "BlockStatement",
-            body: [
-              node.left.type === "VariableDeclaration"
-                ? {
-                    ...node.left,
-                    declarations: node.left.declarations.map((declaration: AnyNode) => ({
-                      ...declaration,
-                      init: { type: "Identifier", name: "" },
-                    })),
-                  }
-                : {
-                    type: "AssignmentExpression",
-                    operator: "=",
-                    left: node.left,
-                    right: { type: "Identifier", name: "" },
-                  },
-              node.body,
-            ],
-          }
-        : node.body,
-    alternate: { type: "BreakStatement" },
-  } as AnyNode;
+  const iteration = (element: AnyNode) =>
+    ({
+      type: "IfStatement",
+      test:
+        node.test ??
+        (node.type === "ForStatement"
+          ? { type: "Literal", value: true }
+          : { type: "Identifier", name: "" }),
+      consequent:
+        node.type === "ForInStatement" || node.type === "ForOfStatement"
+          ? {
+              type: "BlockStatement",
+              body: [
+                node.left.type === "VariableDeclaration"
+                  ? {
+                      ...node.left,
+                      declarations: node.left.declarations.map((declaration: AnyNode) => ({
+                        ...declaration,
+                        init: element,
+                      })),
+                    }
+                  : {
+                      type: "AssignmentExpression",
+                      operator: "=",
+                      left: node.left,
+                      right: element,
+                    },
+                node.body,
+              ],
+            }
+          : node.body,
+      alternate: { type: "BreakStatement" },
+    }) as AnyNode;
   let first = node.type === "DoWhileStatement";
   while (pending.length) {
-    const current = pending.pop()!;
+    const { current, index } = pending.pop()!;
     if (current.outcome !== "normal") {
       result.push(current);
       continue;
     }
-    const key = loopStateKey(current);
+    const key = pathKey([loopStateKey(current), index]);
     if (!first && seen.has(key)) continue;
     if (!first) seen.add(key);
-    const paths = outcomes(first ? node.body : iteration, current, bindings, conditions);
+    const right = unwrapExpression(node.right);
+    const elements =
+      node.type === "ForOfStatement" && current.arrayIteratorElements !== null
+        ? (current.arrayIteratorElements ??
+          (right?.type === "ArrayExpression" ? right.elements : undefined))
+        : undefined;
+    const element = elements?.[index] ?? { type: "Identifier", name: "" };
+    const paths = outcomes(first ? node.body : iteration(element), current, bindings, conditions);
     first = false;
     for (const next of paths) {
       if (next.label && !labels.has(next.label)) result.push(next);
       else if (next.outcome === "break")
         result.push({ ...next, outcome: "normal", label: undefined });
-      else if (next.outcome === "normal" || next.outcome === "continue")
-        pending.push(...outcomes(node.update, next, bindings, conditions));
-      else result.push(next);
+      else if (next.outcome === "normal" || next.outcome === "continue") {
+        const updated = outcomes(node.update, next, bindings, conditions);
+        if (elements?.length && index + 1 >= elements.length)
+          result.push(...updated.map((current) => ({ ...current, outcome: "normal" as const })));
+        else
+          pending.push(
+            ...updated.map((current) => ({ current, index: elements?.length ? index + 1 : 0 })),
+          );
+      } else result.push(next);
     }
   }
   return result;
