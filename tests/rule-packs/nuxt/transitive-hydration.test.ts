@@ -362,3 +362,72 @@ ${script}
   );
   expect(result.diagnostics).toHaveLength(1);
 });
+
+test.each([
+  ["let value; value = clock(); return value", 1],
+  ["let value = 'stable'; value = clock(); return value", 1],
+  ["let value; value = clock(); value = 'stable'; return value", 0],
+  ["let value; value = clock(); return 'stable'", 0],
+])("traces later assignments: %s", async (body, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>
+function clock() { return Date.now() }
+function label() { ${body} }
+</script><template>{{ label() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["const displayed = [1].map(() => clock())", 1],
+  ["const displayed = [1].flatMap(() => [clock()])", 1],
+  ["const displayed = (() => clock())()", 1],
+  ["function label() { return [1].map(() => clock()) }; const displayed = label()", 1],
+  ["const displayed = [1].map(() => { clock(); return 'stable' })", 0],
+  ["const displayed = () => clock()", 0],
+  ["const displayed = (() => { [1].map(() => clock()); return 'stable' })()", 0],
+  ["const source = [1]; const displayed = source.map(() => clock())", 1],
+  ["const source = { map: fn => 'stable' }; const displayed = source.map(() => clock())", 0],
+  ["const displayed = setTimeout(() => clock())", 0],
+  ["function computed(getter) { return 'stable' }; const displayed = computed(() => clock())", 0],
+  ["const computed = getter => 'stable'; const displayed = computed(() => clock())", 0],
+  ["import { computed } from 'vue'; const displayed = computed(() => clock())", 1],
+])("traces eager callback results: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>
+function clock() { return Date.now() }
+${script}
+</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each(["return Date.now()", "return clock()", "yield 'stable'; return clock()"])(
+  "ignores generator completion values: %s",
+  async (body) => {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>
+function clock() { return Date.now() }
+function* values() { ${body} }
+</script><template>{{ [...values()] }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test.each(["{{ { ...values() } }}", "{{ displayed }}"])(
+  "ignores generator object spread: %s",
+  async (template) => {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>
+function* values() { yield Date.now() }
+const displayed = { ...values() }
+</script><template>${template}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);

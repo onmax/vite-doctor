@@ -94,15 +94,26 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
   if (name && new RegExp(`{{[^}]*\\b${escapeRegExp(name)}\\b[^}]*}}`).test(template)) return true;
   if (isHydratingStateValue(node)) return true;
   const owner = nearestFunctionOrProgram(node);
-  return Boolean(owner && functionFlowsToTemplate(ctx, owner, new Set()));
+  return Boolean(
+    owner &&
+    (!owner.generator || contributesToReturn(node, owner, getScriptParents(ctx))) &&
+    functionFlowsToTemplate(ctx, owner, new Set()),
+  );
 }
 
 function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNode>): boolean {
   const parents = getScriptParents(ctx);
+  if (seen.has(fn)) return false;
+  seen.add(fn);
+  const callbackCall = resultCallbackCall(fn, parents);
+  if (callbackCall) {
+    const owner = containingFunction(callbackCall, parents);
+    if (owner && contributesToReturn(callbackCall, owner, parents))
+      return functionFlowsToTemplate(ctx, owner, seen);
+  }
   const binding = functionBinding(fn, parents);
   const functionName = binding.id?.type === "Identifier" ? binding.id.name : null;
-  if (!functionName || seen.has(fn)) return false;
-  seen.add(fn);
+  if (!functionName) return false;
   const renderedReferences = getRenderedReferences(ctx);
   if (
     resolveLocalBinding(ctx.file.scriptAst, functionName, parents) === binding &&
@@ -121,13 +132,9 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
     if (
       ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
     ) {
-      const call = parents.get(node);
-      const computedGetter =
-        call?.type === "CallExpression" &&
-        call.callee?.name === "computed" &&
-        call.arguments[0] === node;
+      const call = resultCallbackCall(node, parents);
+      if (!call || (owner && !contributesToReturn(call, owner, parents))) variable = null;
       owner = node;
-      if (!computedGetter) variable = null;
     }
     if (node.type === "VariableDeclarator") return visit(node.init, owner, node);
     if (
@@ -164,10 +171,54 @@ function functionFlowsToTemplate(ctx: RuleContext, fn: AnyNode, seen: Set<AnyNod
   return visit(ctx.file.scriptAst, null, null);
 }
 
+function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): AnyNode {
+  if (fn.generator || fn.async) return null;
+  let expression = fn;
+  while (parents.get(expression)?.type === "ParenthesizedExpression")
+    expression = parents.get(expression);
+  const call = parents.get(expression);
+  if (call?.type !== "CallExpression") return null;
+  if (call.callee === expression) return call;
+  if (call.arguments[0] !== expression) return null;
+  if (call.callee?.type === "Identifier" && call.callee.name === "computed") {
+    const binding = resolveLocalBinding(call, "computed", parents);
+    return !binding ||
+      (binding.type === "ImportSpecifier" &&
+        binding.imported?.name === "computed" &&
+        ["vue", "#imports"].includes(parents.get(binding)?.source?.value))
+      ? call
+      : null;
+  }
+  if (
+    call.callee?.type === "MemberExpression" &&
+    !call.callee.computed &&
+    [
+      "map",
+      "flatMap",
+      "filter",
+      "some",
+      "every",
+      "find",
+      "findIndex",
+      "reduce",
+      "reduceRight",
+    ].includes(call.callee.property?.name)
+  ) {
+    const receiver = call.callee.object;
+    const value =
+      receiver?.type === "Identifier"
+        ? resolveLocalBinding(call, receiver.name, parents)?.init
+        : receiver;
+    if (value?.type === "ArrayExpression") return call;
+  }
+  return null;
+}
+
 function isConsumedIterator(node: AnyNode, parentOf: (node: AnyNode) => AnyNode): boolean {
   const parent = parentOf(node);
   return (
-    parent?.type === "SpreadElement" ||
+    (parent?.type === "SpreadElement" &&
+      ["ArrayExpression", "CallExpression", "NewExpression"].includes(parentOf(parent)?.type)) ||
     (["ForOfStatement", "VForExpression"].includes(parent?.type) && parent.right === node) ||
     (parent?.type === "CallExpression" &&
       parent.arguments[0] === node &&
@@ -302,18 +353,25 @@ function contributesToReturn(
       return false;
     if (
       (parent?.type === "VariableDeclarator" && parent.init === current) ||
-      (parent?.type === "AssignmentPattern" && parent.right === current)
+      (parent?.type === "AssignmentPattern" && parent.right === current) ||
+      (parent?.type === "AssignmentExpression" && parent.right === current)
     ) {
       const identifier = parent.id ?? parent.left;
       if (identifier?.type !== "Identifier") return false;
+      const binding =
+        parent.type === "AssignmentExpression"
+          ? resolveLocalBinding(parent, identifier.name, parents)
+          : parent;
+      if (!binding) return false;
       let returned = false;
       walkScriptLocal(owner.body, (reference) => {
         if (
           reference.type === "Identifier" &&
           reference !== identifier &&
           reference.name === identifier.name &&
-          resolveLocalBinding(reference, identifier.name, parents) === parent &&
-          !hasPriorAliasWrite(reference, parent, owner, parents) &&
+          reference.start > parent.start &&
+          resolveLocalBinding(reference, identifier.name, parents) === binding &&
+          !hasPriorAliasWrite(reference, binding, owner, parents, parent) &&
           contributesToReturn(reference, owner, parents, seen)
         )
           returned = true;
@@ -356,7 +414,7 @@ function contributesToReturn(
         )
       )
         scope = parents.get(scope);
-      return scope === owner;
+      return scope === owner && !owner.generator;
     }
     if (parent === owner)
       return (
@@ -373,13 +431,14 @@ function hasPriorAliasWrite(
   binding: AnyNode,
   owner: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
+  source = binding,
 ): boolean {
   const identifier = binding.id ?? binding.left;
   let reassigned = false;
   walkScriptLocal(owner.body, (write) => {
     if (
       write.start >= reference.start ||
-      write.start < binding.start ||
+      write.start <= source.start ||
       containingFunction(write, parents) !== owner
     )
       return;
