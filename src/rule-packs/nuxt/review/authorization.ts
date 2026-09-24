@@ -123,19 +123,36 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             return;
           }
           const registered = registrations.filter((entry) => !entry.middleware);
-          const handlers = projectSources(root, [
-            ...(ctx.project.nuxt?.serverDirs.api ?? []),
-            ...(ctx.project.nuxt?.serverDirs.routes ?? []),
-            ...registered.map((entry) => resolve(root, entry.file)),
-          ]).filter(
-            (source) =>
-              sensitivePath.test(source.path) ||
+          const handlerFiles = [
+            ...new Set(
+              [
+                ...(ctx.project.nuxt?.serverDirs.api ?? []),
+                ...(ctx.project.nuxt?.serverDirs.routes ?? []),
+                ...registered.map((entry) => resolve(root, entry.file)),
+              ].map((file) => resolve(root, file)),
+            ),
+          ].filter(
+            (file) =>
+              sensitivePath.test(relative(root, file)) ||
               registered.some(
                 (entry) =>
-                  resolve(root, entry.file) === resolve(root, source.path) &&
-                  sensitivePath.test(entry.route ?? ""),
+                  resolve(root, entry.file) === file && sensitivePath.test(entry.route ?? ""),
               ),
           );
+          const handlers = projectSources(root, handlerFiles);
+          const collectedHandlers = new Set(handlers.map((source) => resolve(root, source.path)));
+          const omittedHandlers = handlerFiles.filter((file) => !collectedHandlers.has(file));
+          if (omittedHandlers.length) {
+            ctx.project.evidenceGaps = [
+              ...(ctx.project.evidenceGaps ?? []),
+              {
+                source: "vite-doctor/nuxt-authorization-review",
+                message:
+                  "Some auth-sensitive server handlers exceed 16 KB or cannot be collected and were not reviewed.",
+                files: omittedHandlers.map((file) => relative(root, file).replaceAll("\\", "/")),
+              },
+            ];
+          }
           for (const handler of handlers) {
             const layer = [...nuxt.layers]
               .filter(

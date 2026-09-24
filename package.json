@@ -117,7 +117,7 @@
     "vite-plus": "catalog:build"
   },
   "peerDependencies": {
-    "nuxt": ">=4",
+    "nuxt": ">=4.1.0",
     "vite": "*"
   },
   "peerDependenciesMeta": {

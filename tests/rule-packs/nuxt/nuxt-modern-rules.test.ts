@@ -3290,7 +3290,7 @@ test("Nuxt module exposes native Doctor config", async () => {
   expect(await nuxtDoctorModule.getMeta?.()).toEqual({
     name: "vite-doctor",
     configKey: "doctor",
-    compatibility: { nuxt: ">=4" },
+    compatibility: { nuxt: ">=4.1.0" },
     docs: "https://vite-doctor.onmax.me/nuxt",
   });
 });

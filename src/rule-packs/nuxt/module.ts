@@ -97,7 +97,7 @@ const nuxtDoctorModule: NuxtModule<NuxtDoctorModuleOptions> = defineNuxtModule({
   meta: {
     name: "vite-doctor",
     configKey: "doctor",
-    compatibility: { nuxt: ">=4" },
+    compatibility: { nuxt: ">=4.1.0" },
     docs: "https://vite-doctor.onmax.me/nuxt",
   },
   setup: setupNuxtDoctor,

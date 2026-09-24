@@ -54,18 +54,43 @@ test("unknown reviews and fabricated citations produce no diagnostic", async () 
   expect(fabricated.diagnostics.some((item) => item.code === "NUXT0074")).toBe(false);
 });
 
-test("oversized source is not sent to the reviewer", async () => {
-  let called = false;
-  const extension = createNuxtAuthorizationReviewExtension(async () => {
-    called = true;
-    return { status: "unknown", reason: "No evidence", citations: [] };
+test.each([
+  ["server/api/account.get.ts", false],
+  ["server/routes/private.get.ts", false],
+  ["server/handlers/entry.ts", true],
+])("omitted sensitive handler makes evidence incomplete: %s", async (path, registered) => {
+  const reviewed: string[] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    reviewed.push(candidate.handler.path);
+    return { status: "suppress", reason: "Guard", citations: [] };
   });
-  await runProjectFixture({
+  const result = await runProjectFixture({
     framework: "nuxt",
-    files: { ...files, "server/api/account.get.ts": "x".repeat(16_001) },
+    files: {
+      ...files,
+      [path]: "x".repeat(16_001),
+      "server/api/profile.get.ts": files["server/api/account.get.ts"],
+      "server/api/public.get.ts": "x".repeat(16_001),
+      ...(registered
+        ? {
+            ".nuxt/doctor.manifest.json": JSON.stringify({
+              generatedAt: "2100-01-01T00:00:00.000Z",
+              serverHandlers: [{ file: path, route: "/api/account" }],
+            }),
+          }
+        : {}),
+    },
     rules: extension.rulePacks![0]!.rules,
   });
-  expect(called).toBe(false);
+  expect(reviewed).not.toContain(path);
+  expect(reviewed).toContain("server/api/profile.get.ts");
+  expect(result.project.evidenceGaps).toContainEqual(
+    expect.objectContaining({
+      source: "vite-doctor/nuxt-authorization-review",
+      files: [path],
+    }),
+  );
+  expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
 });
 
 test("OpenAI-compatible reviewer accepts structured JSON", async () => {
@@ -162,6 +187,13 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
     rules: extension.rulePacks![0]!.rules,
   });
   expect(paths.sort()).toEqual(["server/handlers/account.ts", "server/handlers/entry.ts"]);
+  expect(result.project.evidenceGaps).toContainEqual(
+    expect.objectContaining({
+      source: "vite-doctor/nuxt-authorization-review",
+      files: ["server/handlers/missing.ts"],
+    }),
+  );
+  expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
   expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(2);
 });
 
