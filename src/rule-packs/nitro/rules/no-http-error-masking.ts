@@ -75,7 +75,7 @@ interface Path {
   conditions: ReadonlyMap<string, boolean>;
   bindings?: Bindings;
   functions?: ReadonlyMap<string, AnyNode>;
-  calls?: ReadonlySet<AnyNode>;
+  calls?: readonly AnyNode[];
 }
 
 type Bindings = ReadonlyMap<string, Outcome>;
@@ -153,7 +153,11 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       "throw";
     return [{ ...normal, outcome }];
   }
-  if (node.type === "ReturnStatement") return [{ ...path, outcome: "exit" }];
+  if (node.type === "ReturnStatement")
+    return outcomes(node.argument, normal, bindings, conditions).map((current) => ({
+      ...current,
+      outcome: current.outcome === "normal" ? "exit" : current.outcome,
+    }));
   if (node.type === "BreakStatement" || node.type === "ContinueStatement")
     return [
       {
@@ -271,7 +275,13 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
         ? bindings.get(test.arguments[0].name)
         : undefined;
     const known =
-      typeof caught === "number" ? true : test.type === "Literal" ? Boolean(test.value) : undefined;
+      typeof caught === "number"
+        ? true
+        : test.type === "Literal"
+          ? Boolean(test.value)
+          : test.type === "Identifier"
+            ? path.conditions.get(test.name)
+            : undefined;
     if (known !== undefined)
       return outcomes(
         known !== negated ? node.consequent : node.alternate,
@@ -323,9 +333,10 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     call.type === "CallExpression" &&
     isFunction(callee) &&
     (!callee.async || assignment.type === "AwaitExpression") &&
-    !callee.generator &&
-    !path.calls?.has(callee)
+    !callee.generator
   ) {
+    // An exhausted analysis budget is not evidence that the call returns.
+    if ((path.calls?.length ?? 0) >= 16) return [];
     const local = new Map(bindings);
     const shadows = new Set<string>();
     const nested = new Set<AnyNode>();
@@ -344,11 +355,23 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       localConditions.delete(name);
     }
     callee.params.forEach((param: AnyNode, index: number) => {
-      if (param.type !== "Identifier") return;
-      const arg = call.arguments[index];
+      const target = param.type === "AssignmentPattern" ? param.left : param;
+      if (target.type !== "Identifier") return;
+      const supplied = call.arguments[index];
+      const defaulted = !supplied && param.type === "AssignmentPattern";
+      const arg = defaulted ? param.right : supplied;
+      const values = defaulted ? local : bindings;
+      const booleans = defaulted ? localConditions : path.conditions;
       const status =
-        httpStatus(arg) ?? (arg?.type === "Identifier" ? bindings.get(arg.name) : undefined);
-      if (status !== undefined) local.set(param.name, status);
+        httpStatus(arg) ?? (arg?.type === "Identifier" ? values.get(arg.name) : undefined);
+      if (status !== undefined) local.set(target.name, status);
+      const boolean =
+        arg?.type === "Literal" && typeof arg.value === "boolean"
+          ? arg.value
+          : arg?.type === "Identifier"
+            ? booleans.get(arg.name)
+            : undefined;
+      if (boolean !== undefined) localConditions.set(target.name, boolean);
     });
     return outcomes(
       callee.body,
@@ -357,7 +380,7 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
         bindings: local,
         functions,
         conditions: localConditions,
-        calls: new Set([...(path.calls ?? []), callee]),
+        calls: [...(path.calls ?? []), callee],
       },
       local,
       conditions,
@@ -541,6 +564,11 @@ function stableConditions(node: AnyNode): Set<string> {
   });
   walkScriptLocal(node, (child) => {
     if (skipped.has(child)) return;
+    if (child.type === "CallExpression") {
+      for (const argument of child.arguments)
+        if (argument.type === "Identifier")
+          uses.set(argument.name, (uses.get(argument.name) ?? 0) + 1);
+    }
     if (
       child.type === "IfStatement" ||
       child.type === "WhileStatement" ||

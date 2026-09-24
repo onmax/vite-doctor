@@ -39,6 +39,66 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "finite recursive masking",
+    "throw createError({ statusCode: 404 })",
+    "function replace(again) { if (again) return replace(false); throw new Error() }; replace(true)",
+    true,
+  ],
+  [
+    "local false boolean argument",
+    "if (!missing) throw createError({ statusCode: 404 })",
+    "function preserve(flag, value) { if (!flag) throw value }; preserve(missing, error); throw new Error()",
+    false,
+  ],
+  [
+    "earlier parameter default",
+    "throw createError({ statusCode: 404 })",
+    "function preserve(first, value = first) { if (isError(value)) throw value }; preserve(error); throw new Error()",
+    false,
+  ],
+  [
+    "returned awaited local throw",
+    "async function missing() { throw createError({ statusCode: 404 }) }; return await missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "returned synchronous local throw",
+    "function missing() { throw createError({ statusCode: 404 }) }; return missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "local boolean argument",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "function preserve(flag, value) { if (flag) throw value }; preserve(missing, error); throw new Error()",
+    false,
+  ],
+  [
+    "default caught argument",
+    "throw createError({ statusCode: 404 })",
+    "function preserve(value = error) { if (isError(value)) throw value }; preserve(); throw new Error()",
+    false,
+  ],
+  [
+    "explicit argument overrides default",
+    "throw createError({ statusCode: 404 })",
+    "function preserve(value = error) { if (isError(value)) throw value }; preserve(unknown); throw new Error()",
+    true,
+  ],
+  [
+    "finite preserving recursion",
+    "throw createError({ statusCode: 404 })",
+    "function preserve(value, again) { if (again) return preserve(value, false); if (isError(value)) throw value }; preserve(error, true); throw new Error()",
+    false,
+  ],
+  [
+    "recursive bound does not return",
+    "throw createError({ statusCode: 404 })",
+    "function recur() { recur() }; recur(); throw new Error()",
+    false,
+  ],
+  [
     "awaited local throw",
     "async function missing() { throw createError({ statusCode: 404 }) }; await missing()",
     "throw new Error()",
