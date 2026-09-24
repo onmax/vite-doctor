@@ -290,6 +290,36 @@ function readAliasInitializers(source: string) {
         changed = true;
       } else if (
         mutation?.type === "CallExpression" &&
+        mutation.callee.property?.name === "unshift"
+      ) {
+        elements.unshift(...mutation.arguments.map((argument: AnyNode) => argument.range));
+        changed = true;
+      } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "pop") {
+        elements.pop();
+        changed = true;
+      } else if (
+        mutation?.type === "CallExpression" &&
+        mutation.callee.property?.name === "shift"
+      ) {
+        elements.shift();
+        changed = true;
+      } else if (
+        mutation?.type === "CallExpression" &&
+        mutation.callee.property?.name === "splice" &&
+        mutation.arguments.length >= 2 &&
+        mutation.arguments.slice(0, 2).every((argument: AnyNode) => argument.type === "Literal") &&
+        mutation.arguments
+          .slice(0, 2)
+          .every((argument: AnyNode) => Number.isInteger(argument.value))
+      ) {
+        elements.splice(
+          mutation.arguments[0].value,
+          mutation.arguments[1].value,
+          ...mutation.arguments.slice(2).map((argument: AnyNode) => argument.range),
+        );
+        changed = true;
+      } else if (
+        mutation?.type === "CallExpression" &&
         mutation.callee.property?.name === "fill" &&
         mutation.arguments.length === 1
       ) {
@@ -301,7 +331,7 @@ function readAliasInitializers(source: string) {
     }
     return changed ? elements.filter((range) => range != null) : [value.range];
   }
-  walkScriptLocal(parsed.ast, (node) => {
+  const visitMutation = (node: AnyNode) => {
     if (node.type === "AssignmentExpression") recordArrayMutation(node.left, true, node);
     else if (
       node.type === "UpdateExpression" ||
@@ -317,7 +347,21 @@ function readAliasInitializers(source: string) {
         for (const argument of node.arguments)
           if (argument.type !== "SpreadElement") recordArrayMutation(argument, false, node);
     }
-  });
+  };
+  function collectMutations(node: AnyNode) {
+    if (!node) return;
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
+    )
+      return;
+    visitMutation(node);
+    for (const key of parsed.visitorKeys[node.type] ?? []) {
+      const child = node[key];
+      if (Array.isArray(child)) child.forEach(collectMutations);
+      else if (child) collectMutations(child);
+    }
+  }
+  collectMutations(parsed.ast);
   for (const scope of scopeManager.scopes) {
     for (const reference of scope.references) {
       const definition = reference.resolved?.defs[0];
@@ -1961,8 +2005,37 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
               if (option.type === "SpreadElement") {
                 alternatives.push(...readConfig({ ...node, object: option.argument }));
               } else if (keyOf(option) === key) {
-                if (option.kind === "init" || option.kind === "get")
-                  alternatives.push(...readConfig(option.value));
+                if (option.kind === "get") {
+                  const previous = new Map<number, [number, number][] | undefined>();
+                  const bindReceiver = (child: AnyNode) => {
+                    if (
+                      !child ||
+                      [
+                        "FunctionExpression",
+                        "FunctionDeclaration",
+                        "ArrowFunctionExpression",
+                      ].includes(child.type)
+                    )
+                      return;
+                    if (child.type === "ThisExpression") {
+                      previous.set(child.start, initializers.get(child.start));
+                      initializers.set(child.start, [[value.start, value.end]]);
+                    }
+                    for (const part of Object.values(child)) {
+                      if (Array.isArray(part)) part.forEach(bindReceiver);
+                      else if (part && typeof part === "object") bindReceiver(part);
+                    }
+                  };
+                  bindReceiver(option.value.body);
+                  try {
+                    alternatives.push(...readConfig(option.value));
+                  } finally {
+                    for (const [position, ranges] of previous) {
+                      if (ranges) initializers.set(position, ranges);
+                      else initializers.delete(position);
+                    }
+                  }
+                } else if (option.kind === "init") alternatives.push(...readConfig(option.value));
                 break;
               }
             }

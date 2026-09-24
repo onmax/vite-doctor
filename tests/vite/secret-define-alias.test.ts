@@ -2021,6 +2021,19 @@ test.each([
   ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.push("safe")', true],
   ['const replacement = [process.env.PRIVATE_TOKEN]; replacement[0] = "safe"', false],
   ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.fill("safe")', false],
+  ["const replacement = []; replacement.unshift(process.env.PRIVATE_TOKEN)", true],
+  ["const replacement = [process.env.PRIVATE_TOKEN]; replacement.pop()", false],
+  ["const replacement = [process.env.PRIVATE_TOKEN]; replacement.shift()", false],
+  ['const replacement = ["safe"]; replacement.splice(0, 1, process.env.PRIVATE_TOKEN)', true],
+  ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.splice(0, 1, "safe")', false],
+  [
+    'const replacement = [process.env.PRIVATE_TOKEN]; function clean() { replacement[0] = "safe" }',
+    true,
+  ],
+  [
+    'const replacement = ["safe"]; function taint() { replacement[0] = process.env.PRIVATE_TOKEN }',
+    false,
+  ],
 ])("tracks effective values in mutated arrays: %s", async (declarations, expected) => {
   const result = await runRuleFixture({
     framework: "vite",
@@ -2030,6 +2043,18 @@ test.each([
     },
   });
   expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test("binds the receiver of an exported config getter", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts":
+        "const holder = { config: { define: { PRIVATE_TOKEN: process.env.PRIVATE_TOKEN } }, get current() { return this.config } }; export default holder.current",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
 });
 
 test("binds array-rest values in serialization helpers", async () => {
