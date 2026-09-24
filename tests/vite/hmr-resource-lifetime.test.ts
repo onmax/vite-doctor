@@ -136,3 +136,105 @@ import.meta.hot.dispose(() => saveState())`,
   });
   expect(result.diagnostics).toEqual([]);
 });
+
+for (const [name, setup, callback, leaks] of [
+  ["delegated helper", "function cleanup() { clearInterval(handle) }", "() => cleanup()", false],
+  [
+    "transitive helper",
+    "const cleanup = () => finish(); function finish() { clearInterval(handle) }",
+    "() => cleanup()",
+    false,
+  ],
+  ["nested helper", "", "() => { function cleanup() { clearInterval(handle) }; cleanup() }", false],
+  ["recursive helper without cleanup", "function cleanup() { cleanup() }", "() => cleanup()", true],
+  [
+    "recursive helper with cleanup",
+    "function cleanup() { clearInterval(handle); cleanup() }",
+    "() => cleanup()",
+    false,
+  ],
+  ["shadowed helper", "function cleanup() { clearInterval(handle) }", "cleanup => cleanup()", true],
+  ["window cleanup", "", "() => window.clearInterval(handle)", false],
+  ["global cleanup", "", "() => globalThis.clearInterval(handle)", false],
+  ["shadowed global", "", "window => window.clearInterval(handle)", true],
+  ["shadowed cleanup function", "", "clearInterval => clearInterval(handle)", true],
+  [
+    "lexical helper scope",
+    "function cleanup() { clearInterval(handle) }",
+    "handle => cleanup()",
+    false,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: {
+        "src/main.ts": `const handle = setInterval(refresh, 1000)
+${setup}
+import.meta.hot.accept()
+import.meta.hot.dispose(${callback})`,
+      },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
+
+for (const [setup, cleanup] of [
+  ["setInterval(refresh, 1000)", "clearInterval(handle)"],
+  ["setTimeout(refresh, 1000)", "globalThis.clearTimeout(handle)"],
+  ["new WebSocket(url)", "handle.close()"],
+  ["events.subscribe(refresh)", "handle.unsubscribe()"],
+]) {
+  for (const callback of [
+    `handle => { ${cleanup} }`,
+    `() => { const handle = other; ${cleanup} }`,
+    `() => { { const handle = other; ${cleanup} } }`,
+    `({ handle }) => { ${cleanup} }`,
+    `() => { try {} catch (handle) { ${cleanup} } }`,
+    `() => { { var handle = other }; ${cleanup} }`,
+  ]) {
+    test(`shadowed ${setup}: ${callback}`, async () => {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule: requireDisposeForSideEffects,
+        files: {
+          "src/main.ts": `const handle = ${setup}
+import.meta.hot.accept()
+import.meta.hot.dispose(${callback})`,
+        },
+      });
+      expect(result.diagnostics.length).toBe(1);
+    });
+  }
+}
+
+for (const callback of ["unsubscribe", "() => unsubscribe()", "() => { unsubscribe() }"]) {
+  test(`callable subscription: ${callback}`, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: {
+        "src/main.ts": `const unsubscribe = store.subscribe(refresh)
+import.meta.hot.accept()
+import.meta.hot.dispose(${callback})`,
+      },
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+}
+
+for (const qualifier of ["window", "globalThis", "self"]) {
+  test(`${qualifier} clears a timeout`, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: {
+        "src/main.ts": `const timer = setTimeout(refresh, 1000)
+import.meta.hot.accept()
+import.meta.hot.dispose(() => ${qualifier}.clearTimeout(timer))`,
+      },
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+}

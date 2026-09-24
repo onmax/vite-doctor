@@ -120,15 +120,16 @@ export const requireDisposeForSideEffects = createRule({
 });
 
 function undisposedResource(program: AnyNode): string | null {
-  const resources: Array<{ name: string; kind: string; cleanup: string; method: boolean }> = [];
-  const callbacks = new Map<string, AnyNode>();
+  const resolve = resourceBindings(program);
+  const resources: Array<{ binding: AnyNode; kind: string; cleanup: string; method: boolean }> = [];
+  const callbacks = new Map<AnyNode, AnyNode>();
   let callback: AnyNode;
   walkEvaluation(program, (node) => {
-    if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id.name, node);
+    if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     if (node.type === "VariableDeclarator" && node.id?.type === "Identifier") {
       const init = node.init;
       if (["ArrowFunctionExpression", "FunctionExpression"].includes(init?.type)) {
-        callbacks.set(node.id.name, init);
+        callbacks.set(node.id, init);
       }
       const callee = memberPath(init?.callee);
       const kind =
@@ -143,7 +144,7 @@ function undisposedResource(program: AnyNode): string | null {
                 : null;
       if (kind)
         resources.push({
-          name: node.id.name,
+          binding: node.id,
           kind,
           cleanup:
             kind === "interval"
@@ -160,29 +161,136 @@ function undisposedResource(program: AnyNode): string | null {
       callback = node.arguments[0];
     }
   });
-  if (callback?.type === "Identifier") callback = callbacks.get(callback.name);
-  const cleanups: AnyNode[] = [];
-  if (
-    ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
-      callback?.type,
+  const cleaned = new Set<AnyNode>();
+  const visited = new Set<AnyNode>();
+  function inspect(target: AnyNode): void {
+    if (target?.type === "Identifier") {
+      const binding = resolve(target);
+      if (
+        resources.some(
+          (resource) => resource.binding === binding && resource.kind === "subscription",
+        )
+      )
+        cleaned.add(binding!);
+      target = callbacks.get(binding!);
+    }
+    if (!target || visited.has(target)) return;
+    if (
+      !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
+        target.type,
+      )
     )
-  ) {
-    walkEvaluation(callback.body, (node) => {
-      if (node.type === "CallExpression") cleanups.push(node);
+      return;
+    visited.add(target);
+    walkEvaluation(target.body, (node) => {
+      if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
+      if (
+        node.type === "VariableDeclarator" &&
+        node.id?.type === "Identifier" &&
+        ["ArrowFunctionExpression", "FunctionExpression"].includes(node.init?.type)
+      )
+        callbacks.set(node.id, node.init);
+    });
+    walkEvaluation(target.body, (node) => {
+      if (node.type !== "CallExpression") return;
+      for (const resource of resources) {
+        const callee = memberPath(node.callee);
+        const receiver = resource.method ? node.callee.object : node.arguments[0];
+        const matches = resource.method
+          ? node.callee.property?.name === resource.cleanup && !node.callee.computed
+          : [
+              resource.cleanup,
+              `window.${resource.cleanup}`,
+              `globalThis.${resource.cleanup}`,
+              `self.${resource.cleanup}`,
+            ].includes(callee ?? "");
+        const global = resource.method ? null : (node.callee.object ?? node.callee);
+        if (
+          matches &&
+          receiver?.type === "Identifier" &&
+          resolve(receiver) === resource.binding &&
+          (!global || !resolve(global))
+        )
+          cleaned.add(resource.binding);
+      }
+      inspect(node.callee);
     });
   }
-  return (
-    resources.find(
-      (resource) =>
-        !cleanups.some((call) =>
-          resource.method
-            ? memberPath(call.callee) === `${resource.name}.${resource.cleanup}`
-            : memberPath(call.callee) === resource.cleanup &&
-              call.arguments[0]?.type === "Identifier" &&
-              call.arguments[0].name === resource.name,
-        ),
-    )?.kind ?? null
-  );
+  inspect(callback);
+  return resources.find((resource) => !cleaned.has(resource.binding))?.kind ?? null;
+}
+
+type ResourceScope = {
+  parent?: ResourceScope;
+  bindings: Map<string, AnyNode>;
+  functionScope: boolean;
+};
+
+function resourceBindings(program: AnyNode): (node: AnyNode) => AnyNode {
+  const scopes = new WeakMap<AnyNode, ResourceScope>();
+  function bind(pattern: AnyNode, scope: ResourceScope): void {
+    if (!pattern) return;
+    if (pattern.type === "Identifier") scope.bindings.set(pattern.name, pattern);
+    else if (pattern.type === "RestElement") bind(pattern.argument, scope);
+    else if (pattern.type === "AssignmentPattern") bind(pattern.left, scope);
+    else if (pattern.type === "ArrayPattern")
+      for (const item of pattern.elements) bind(item, scope);
+    else if (pattern.type === "ObjectPattern")
+      for (const item of pattern.properties)
+        bind(item.type === "RestElement" ? item.argument : item.value, scope);
+  }
+  function index(node: AnyNode, scope: ResourceScope): void {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) index(child, scope);
+      return;
+    }
+    if (typeof node.type !== "string") return;
+    if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration")
+      bind(node.id, scope);
+    const isFunction = [
+      "ArrowFunctionExpression",
+      "FunctionExpression",
+      "FunctionDeclaration",
+    ].includes(node.type);
+    if (
+      isFunction ||
+      [
+        "BlockStatement",
+        "CatchClause",
+        "ForStatement",
+        "ForOfStatement",
+        "ForInStatement",
+        "SwitchStatement",
+      ].includes(node.type)
+    ) {
+      scope = { parent: scope, bindings: new Map(), functionScope: isFunction };
+      if (isFunction) {
+        if (node.type === "FunctionExpression") bind(node.id, scope);
+        for (const param of node.params) bind(param, scope);
+      }
+      if (node.type === "CatchClause") bind(node.param, scope);
+    }
+    scopes.set(node, scope);
+    if (node.type === "VariableDeclaration") {
+      let owner = scope;
+      if (node.kind === "var") while (!owner.functionScope && owner.parent) owner = owner.parent;
+      for (const declaration of node.declarations) bind(declaration.id, owner);
+    }
+    if (node.type === "ImportDeclaration")
+      for (const specifier of node.specifiers) bind(specifier.local, scope);
+    for (const [key, child] of Object.entries(node)) {
+      if (key !== "__doctorParent") index(child, scope);
+    }
+  }
+  index(program, { bindings: new Map(), functionScope: true });
+  return (node) => {
+    if (node?.type !== "Identifier") return undefined;
+    for (let scope = scopes.get(node); scope; scope = scope.parent) {
+      if (scope.bindings.has(node.name)) return scope.bindings.get(node.name);
+    }
+    return undefined;
+  };
 }
 
 function walkEvaluation(node: AnyNode, visit: (node: AnyNode) => void): void {
