@@ -615,7 +615,7 @@ test.each([{ node: [] }, { node: [null] }, { node: [{ browser: "peer" }, null] }
 );
 
 test.each(["node-addons", "module-sync"])(
-  "selects built-in Node condition %s",
+  "uses the fallback without evidence for runtime-dependent condition %s",
   async (condition) => {
     for (const source of ['import "#adapter";', 'require("#adapter");']) {
       expect(
@@ -627,10 +627,70 @@ test.each(["node-addons", "module-sync"])(
           },
           { "index.js": source, "safe.js": "export {};" },
         ),
-      ).toMatchObject([{ code: "PKG0003" }]);
+      ).toEqual([]);
     }
   },
 );
+
+test.each([
+  'await (() => import("peer"))();',
+  'await (async () => import("peer"))();',
+  'await (() => { return import("peer"); })();',
+  'await (async () => { await import("peer"); })();',
+])("follows an awaited immediate invocation: %s", async (source) => {
+  expect(
+    await diagnose({ main: "index.mjs", ...optionalPeer }, { "index.mjs": source }),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each([
+  '(() => import("peer"))();',
+  'await (() => { import("peer"); })();',
+  '(() => { return import("peer"); })();',
+  '(async () => { await import("peer"); })();',
+])("keeps unawaited immediate loads deferred: %s", async (source) => {
+  expect(await diagnose({ main: "index.mjs", ...optionalPeer }, { "index.mjs": source })).toEqual(
+    [],
+  );
+});
+
+test("skips invalid self-export array targets", async () => {
+  expect(
+    await diagnose(
+      {
+        name: "fixture",
+        exports: { ".": "./index.js", "./adapter": ["../invalid.js", "./adapter.js"] },
+        ...optionalPeer,
+      },
+      { "index.js": 'import "fixture/adapter";', "adapter.js": 'import "peer";' },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each([
+  ["index.mjs", undefined],
+  ["index.js", "module"],
+  ["index.cjs", "module"],
+])("classifies module.require by format: %s (%s)", async (entry, type) => {
+  expect(
+    await diagnose(
+      { main: entry, ...(type && { type }), ...optionalPeer },
+      { [entry]: 'module.require("peer");' },
+    ),
+  ).toHaveLength(entry.endsWith(".cjs") ? 1 : 0);
+});
+
+test("uses the nearest package type for module.require", async () => {
+  expect(
+    await diagnose(
+      { main: "dist/index.js", ...optionalPeer },
+      {
+        "dist/package.json": JSON.stringify({ type: "module" }),
+        "dist/index.js": 'module.require("peer");',
+      },
+    ),
+  ).toEqual([]);
+});
 
 test.each([
   ['(function require(peer = require("peer")) {})()', 0],

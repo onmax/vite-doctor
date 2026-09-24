@@ -7,6 +7,7 @@ import type { ProjectInfo, SourceRange } from "../../core/primitives.js";
 
 export interface PackageManifest {
   name?: string;
+  type?: string;
   private?: boolean;
   main?: string;
   module?: string;
@@ -71,6 +72,7 @@ function parsePackageManifest(value: unknown): PackageManifest {
   if (!isRecord(value)) throw new TypeError("package.json must contain an object");
   const fields: Record<string, (entry: unknown) => boolean> = {
     name: isString,
+    type: isString,
     private: (entry) => typeof entry === "boolean",
     main: isString,
     module: isString,
@@ -144,6 +146,18 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       !rel.startsWith("../") &&
       !rel.split("/").includes("node_modules")
     );
+  }
+
+  function commonjsModule(path: string): boolean {
+    if (/\.c(?:js|ts)$/.test(path)) return true;
+    if (/\.m(?:js|ts)$/.test(path)) return false;
+    for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
+      const manifestPath = resolve(directory, "package.json");
+      if (existsSync(manifestPath))
+        return JSON.parse(readFileSync(manifestPath, "utf8")).type !== "module";
+      if (directory === rootPath) break;
+    }
+    return true;
   }
 
   function commonjsFile(path: string): string | undefined {
@@ -313,13 +327,15 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
         if (replacement && replacement.startsWith(".") && resolve(root, original) === current.path)
           enqueue(replacement, "runtime", true, root, false, true);
     }
+    const commonjs = commonjsModule(current.path);
+    const text = readFileSync(current.path, "utf8");
     const source = ts.createSourceFile(
       current.path,
-      readFileSync(current.path, "utf8"),
+      commonjs ? text : `${text}\nexport {};`,
       ts.ScriptTarget.Latest,
       true,
     );
-    for (const edge of importEdges(source, current.kind)) {
+    for (const edge of importEdges(source, current.kind, commonjs)) {
       const required = current.required && edge.required;
       const executionRequired = required && !edge.resolutionOnly;
       for (const { specifier, kind } of resolvePackageImport(
@@ -359,6 +375,8 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             aliases,
             kind,
             edge.probe === "commonjs" ? "require" : "import",
+            new Set(),
+            root,
           )) {
             if (target.specifier.startsWith("."))
               enqueue(
@@ -429,12 +447,24 @@ function externalPackageName(specifier: string): string | null {
     : specifier.split("/")[0]!;
 }
 
+function validExportTarget(value: string, root: string): boolean {
+  return (
+    value.startsWith("./") &&
+    !value
+      .slice(2)
+      .split(/[\\/]/)
+      .some((segment) => /^(\.|\.\.|node_modules)$/i.test(segment)) &&
+    !relative(root, resolve(root, value)).startsWith("../")
+  );
+}
+
 function resolvePackageImport(
   specifier: string,
   imports: PackageManifest["imports"],
   kind: PackageReference["kind"],
   mode: "import" | "require",
   seen = new Set<string>(),
+  selfRoot?: string,
 ): { specifier: string; kind: PackageReference["kind"] }[] {
   if (!specifier.startsWith("#")) return [{ specifier, kind }];
   if (seen.has(specifier)) return [];
@@ -461,14 +491,17 @@ function resolvePackageImport(
     targetKind = kind,
   ): { specifier: string; kind: PackageReference["kind"] }[] | undefined {
     if (value === null) return [];
-    if (typeof value === "string")
+    if (typeof value === "string") {
+      if (selfRoot && !validExportTarget(value, selfRoot)) return undefined;
       return resolvePackageImport(
         value.replaceAll("*", wildcard),
         imports,
         targetKind,
         mode,
         new Set(seen),
+        selfRoot,
       );
+    }
     if (Array.isArray(value)) {
       let selected: ReturnType<typeof flatten> = value.length ? undefined : [];
       for (const entry of value) {
@@ -484,8 +517,6 @@ function resolvePackageImport(
         if (
           condition !== "default" &&
           condition !== "node" &&
-          condition !== "node-addons" &&
-          condition !== "module-sync" &&
           condition !== mode &&
           !(types && targetKind === "types")
         )
@@ -499,7 +530,11 @@ function resolvePackageImport(
   return flatten(target) ?? [];
 }
 
-function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEdge[] {
+function importEdges(
+  source: ts.SourceFile,
+  kind: "runtime" | "types",
+  commonjs: boolean,
+): ImportEdge[] {
   const edges: ImportEdge[] = [];
   function add(
     literal: ts.Node | undefined,
@@ -560,6 +595,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
           ts.isIdentifier(node.expression.expression) &&
           node.expression.expression.text === "module" &&
           node.expression.name.text === "require" &&
+          commonjs &&
           !shadowsName(node, "module"))
       )
         add(node.arguments[0], false, isUnconditional(node, false), "commonjs");
@@ -740,13 +776,39 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     expression = call;
     while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
   }
-  if (dynamic && !ts.isAwaitExpression(expression.parent)) return false;
+  if (dynamic && !ts.isAwaitExpression(expression.parent)) {
+    let returned: ts.Node = expression;
+    if (ts.isReturnStatement(returned.parent)) returned = returned.parent;
+    const body = returned.parent;
+    const immediate = ts.isBlock(body) ? body.parent : body;
+    if (
+      !(ts.isFunctionExpression(immediate) || ts.isArrowFunction(immediate)) ||
+      !isImmediateInvocation(immediate, node, true)
+    )
+      return false;
+    let callee: ts.Node = immediate;
+    while (ts.isParenthesizedExpression(callee.parent)) callee = callee.parent;
+    const invocation = callee.parent;
+    if (!ts.isCallExpression(invocation) || !ts.isAwaitExpression(invocation.parent)) return false;
+    awaitedCalls.add(invocation);
+  }
+  if (dynamic) {
+    for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
+      if (!ts.isArrowFunction(ancestor) && !ts.isFunctionExpression(ancestor)) continue;
+      if (!isImmediateInvocation(ancestor, node, true)) break;
+      let callee: ts.Node = ancestor;
+      while (ts.isParenthesizedExpression(callee.parent)) callee = callee.parent;
+      const invocation = callee.parent;
+      if (ts.isCallExpression(invocation) && ts.isAwaitExpression(invocation.parent))
+        awaitedCalls.add(invocation);
+    }
+  }
   for (let parent = node.parent; parent; parent = parent.parent) {
     if (
       (ts.isFunctionLike(parent) &&
         !isDecoratorExpression(node, parent) &&
         !(parent.name && isWithin(node, parent.name)) &&
-        !isImmediateInvocation(parent, node)) ||
+        !isImmediateInvocation(parent, node, dynamic)) ||
       (ts.isPropertyDeclaration(parent) &&
         !isDecoratorExpression(node, parent) &&
         !(parent.name && isWithin(node, parent.name)) &&
@@ -894,15 +956,18 @@ function hasAbruptCompletion(statement: ts.Statement, includeThrow = true): bool
   return abrupt;
 }
 
-function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): boolean {
+function isImmediateInvocation(
+  node: ts.SignatureDeclaration,
+  load: ts.Node,
+  allowAwaitedAsync = false,
+): boolean {
   if (
     !(
       ts.isFunctionExpression(node) ||
       ts.isArrowFunction(node) ||
       ts.isConstructorDeclaration(node)
     ) ||
-    node.asteriskToken ||
-    node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+    node.asteriskToken
   )
     return false;
   let expression: ts.Node = ts.isConstructorDeclaration(node) ? node.parent : node;
@@ -919,6 +984,11 @@ function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): bo
     while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
   }
   const call = expression.parent;
+  if (
+    node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+    !(allowAwaitedAsync && ts.isCallExpression(call) && ts.isAwaitExpression(call.parent))
+  )
+    return false;
   if (
     !(ts.isCallExpression(call) || ts.isNewExpression(call)) ||
     ts.isCallChain(call) ||
