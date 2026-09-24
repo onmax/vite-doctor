@@ -1511,10 +1511,24 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   function effectiveProperty(property: AnyNode): AnyNode {
     if (property.kind !== "get") return property;
     const values: AnyNode[] = [];
-    visitReturnValues(property.value.body, (value) => values.push(value));
-    return values.length === 1
-      ? { ...property, kind: "init", value: resolve(values[0]) }
-      : property;
+    const undefinedValue = {
+      type: "UnaryExpression",
+      operator: "void",
+      argument: { type: "Literal", value: 0 },
+    };
+    mergedNodes.add(undefinedValue);
+    const onUndefined = () => values.push(undefinedValue);
+    if (
+      !visitReturnValues(property.value.body, (value) => values.push(resolve(value)), onUndefined)
+    )
+      onUndefined();
+    if (!values.length) return property;
+    const value = values.reduce((consequent, alternate) => {
+      const alternative = { type: "ConditionalExpression", consequent, alternate };
+      mergedNodes.add(alternative);
+      return alternative;
+    });
+    return { ...property, kind: "init", value };
   }
   const mergedNodes = new Set<AnyNode>();
   function mergeValue(base: AnyNode, override: AnyNode): AnyNode {
@@ -1585,6 +1599,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     if (!node) return [];
     if (!mergedNodes.has(node))
       return [{ rawValue: text.slice(node.start, node.end), valueStart: node.start }];
+    if (node.type === "UnaryExpression" && node.operator === "void") return [];
     if (node.type === "ConditionalExpression")
       return [...traceValues(node.consequent), ...traceValues(node.alternate)];
     return node.type === "ArrayExpression"
@@ -1807,7 +1822,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         };
         return project(node.object);
       }
-      if (node.type === "CallExpression" && mergeHelpers.has(node.callee.start)) {
+      if (node.type === "CallExpression" && mergeHelpers.has(resolve(node.callee)?.start)) {
         const left = readConfig(node.arguments[0]);
         const right = readConfig(node.arguments[1]);
         return left.flatMap((base) =>
@@ -1944,7 +1959,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         return readConfig(node.argument);
       } else if (
         node.type === "CallExpression" &&
-        (configHelpers.has(node.callee.start) ||
+        (configHelpers.has(resolve(node.callee)?.start) ||
           (memberPath(node.callee) === "Promise.resolve" &&
             !shadowedPromises.has(node.callee.object.start)))
       ) {
@@ -2097,6 +2112,7 @@ function visitReturnValues(
   node: AnyNode,
   visit: (value: AnyNode) => void,
   onUndefined: () => void = () => {},
+  labels: string[] = [],
 ): boolean {
   if (!node || typeof node !== "object") return false;
   if (["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type))
@@ -2148,15 +2164,25 @@ function visitReturnValues(
       (node.type === "ForStatement" && !node.test))
   ) {
     visitReturnValues(node.body, visit, onUndefined);
-    function hasBreak(child: AnyNode): boolean {
-      if (!child || typeof child !== "object") return false;
-      if (child.type === "BreakStatement") return true;
-      return Object.entries(child).some(
-        ([key, value]) =>
-          key !== "parent" && (Array.isArray(value) ? value.some(hasBreak) : hasBreak(value)),
-      );
+    return !hasExitingBreak(node.body, new Set(labels));
+  }
+  if (node.type === "LabeledStatement") {
+    const terminates = visitReturnValues(node.body, visit, onUndefined, [
+      ...labels,
+      node.label.name,
+    ]);
+    return terminates && !hasExitingBreak(node.body, new Set([node.label.name]), false);
+  }
+  if (node.type === "SwitchStatement") {
+    let nextTerminates = false;
+    let allTerminate = true;
+    for (const branch of [...node.cases].reverse()) {
+      const body = { type: "BlockStatement", body: branch.consequent };
+      const terminates = visitReturnValues(body, visit, onUndefined);
+      nextTerminates = !hasExitingBreak(body, new Set()) && (terminates || nextTerminates);
+      allTerminate &&= nextTerminates;
     }
-    return !hasBreak(node.body);
+    return node.cases.some((branch: AnyNode) => branch.test === null) && allTerminate;
   }
   if (node.type === "IfStatement") {
     if (node.test.type === "Literal")
@@ -2176,4 +2202,44 @@ function visitReturnValues(
     else if (value && typeof value === "object") visitReturnValues(value, visit, onUndefined);
   }
   return false;
+}
+
+function hasExitingBreak(node: AnyNode, labels: Set<string>, unlabeled = true): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type))
+    return false;
+  if (node.type === "BreakStatement") return node.label ? labels.has(node.label.name) : unlabeled;
+  if (node.type === "IfStatement" && node.test.type === "Literal")
+    return hasExitingBreak(node.test.value ? node.consequent : node.alternate, labels, unlabeled);
+  if (
+    ["WhileStatement", "ForStatement"].includes(node.type) &&
+    node.test?.type === "Literal" &&
+    !node.test.value
+  )
+    return false;
+  if (node.type === "BlockStatement") {
+    for (const statement of node.body) {
+      if (hasExitingBreak(statement, labels, unlabeled)) return true;
+      if (visitReturnValues(statement, () => {})) break;
+    }
+    return false;
+  }
+  if (
+    [
+      "WhileStatement",
+      "ForStatement",
+      "DoWhileStatement",
+      "ForInStatement",
+      "ForOfStatement",
+      "SwitchStatement",
+    ].includes(node.type)
+  )
+    unlabeled = false;
+  return Object.entries(node).some(
+    ([key, value]) =>
+      key !== "parent" &&
+      (Array.isArray(value)
+        ? value.some((child) => hasExitingBreak(child, labels, unlabeled))
+        : hasExitingBreak(value, labels, unlabeled)),
+  );
 }

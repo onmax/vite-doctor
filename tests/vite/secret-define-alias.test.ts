@@ -1782,3 +1782,85 @@ test.each(["process.env.PRIVATE_TOKEN", "process.env.PUBLIC_VERSION"])(
     expect(result.diagnostics.length > 0).toBe(value.includes("PRIVATE"));
   },
 );
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    'import { defineConfig } from "vite"; const wrap = defineConfig; export default wrap({ define: { PRIVATE_TOKEN: {} } })',
+    'import { mergeConfig } from "vite"; const merge = mergeConfig; export default merge({}, { define: { PRIVATE_TOKEN: {} } })',
+  ])("follows imported configuration helper aliases: %s", async (source) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": source },
+    });
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+  });
+}
+
+test.each([
+  ["return", true],
+  ["", true],
+  ['if (process.env.MODE) return "safe"', true],
+  ['return "safe"', false],
+])("preserves nullish merge getter completion: %s", async (body, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `import { mergeConfig } from "vite"; export default mergeConfig({ define: { VALUE: { value: process.env.PRIVATE_TOKEN } } }, { define: { VALUE: { get value() { ${body} } } } })`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ['switch (process.env.MODE) { case "a": return "public"; default: return "safe" }', false],
+  ['switch (process.env.MODE) { case "a": break; default: return "safe" }', true],
+  ['switch (process.env.MODE) { case "a": return "public" }', true],
+  [
+    'switch (process.env.MODE) { case "a": case "b": return "public"; default: return "safe" }',
+    false,
+  ],
+])("tracks switch completion in invoked helpers: %s", async (body, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `function read() { ${body}; return process.env.PRIVATE_TOKEN } export default { define: { VALUE: JSON.stringify(read()) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ["while (true) { for (;;) { break } }", false],
+  ["while (true) { switch (process.env.MODE) { default: break } }", false],
+  ["while (true) { inner: { break inner } }", false],
+  ["while (true) { if (false) break }", false],
+  ["while (true) { continue; break }", false],
+  ["while (true) { if (process.env.MODE) break }", true],
+  ["outer: while (true) { for (;;) { break outer } }", true],
+])("tracks loop break ownership in getter defaults: %s", async (body, expected) => {
+  for (const source of [
+    `const source = { get value() { ${body} } }; const { value: replacement = process.env.PRIVATE_TOKEN } = source; export default { define: { VALUE: JSON.stringify(replacement) } }`,
+    `const read = ({ value = process.env.PRIVATE_TOKEN }) => value; export default { define: { VALUE: JSON.stringify(read({ get value() { ${body} } })) } }`,
+  ]) {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: { "vite.config.ts": source },
+    });
+    expect(result.diagnostics.length > 0).toBe(expected);
+  }
+});
+
+test("does not trace unrelated secrets through an undefined merge getter", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `import { mergeConfig } from "vite"; const unrelated = process.env.PRIVATE_TOKEN; export default mergeConfig({ define: { VALUE: {} } }, { define: { VALUE: { get value() { if (process.env.MODE) return "safe" } } } })`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
