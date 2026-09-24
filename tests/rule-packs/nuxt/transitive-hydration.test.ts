@@ -932,3 +932,58 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  [
+    "async function clock() { return Date.now() }; async function label() { return clock() }; const displayed = await label()",
+    "displayed",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; async function label() { return clock() }; const displayed = label()",
+    "displayed",
+    0,
+  ],
+  [
+    "const helpers = { label() { return Date.now() } }; const label = helpers.label; const displayed = label()",
+    "displayed",
+    1,
+  ],
+  ["const helpers = { label() { return Date.now() } }; const label = helpers.label", "label()", 1],
+  ["const displayed = Array.from([1], () => Date.now())", "displayed", 1],
+  ["const displayed = Array.from([], () => Date.now())", "displayed", 0],
+  [
+    "const Array = { from: () => [] }; const displayed = Array.from([1], () => Date.now())",
+    "displayed",
+    0,
+  ],
+  [
+    "function clock() { return Date.now() }; const displayed = Array.from([1], clock)",
+    "displayed",
+    1,
+  ],
+  [
+    "let clock; clock = () => Date.now(); const now = clock; clock = () => 'stable'; const displayed = now()",
+    "displayed",
+    1,
+  ],
+  ["let clock; clock = () => Date.now(); const now = clock; clock = () => 'stable'", "now()", 1],
+  ["let clock; clock = () => Date.now(); clock = () => 'stable'; const now = clock", "now()", 0],
+  ["let clock; const now = clock; clock = () => Date.now()", "now()", 0],
+  [
+    "const helpers = { get details() { return { generatedAt: Date.now(), label: 'stable' } } }; const details = helpers.details; const view = details; const alias = view",
+    "alias.generatedAt",
+    1,
+  ],
+  [
+    "const helpers = { get details() { return { generatedAt: Date.now(), label: 'stable' } } }; const details = helpers.details; const view = details",
+    "view.label",
+    0,
+  ],
+])("preserves reviewed hydration flow: %s rendered as %s", async (script, expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ ${expression} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

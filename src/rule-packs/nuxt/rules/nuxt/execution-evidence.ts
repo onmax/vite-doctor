@@ -139,38 +139,51 @@ function functionFlowsToTemplate(
     if (key === undefined) return false;
     memberPath.unshift(String(key));
   }
+  const capturedReferences = new WeakMap<AnyNode, AnyNode>();
   const matchesCallee = (callee: AnyNode): boolean => {
-    for (const key of [...memberPath].reverse()) {
-      if (callee?.type !== "MemberExpression") return false;
-      const accessed = callee.computed ? callee.property?.value : callee.property?.name;
-      if (String(accessed) !== key) return false;
-      callee = callee.object;
-    }
+    const original = callee;
+    const path = [...memberPath];
     const visited = new Set<AnyNode>();
-    while (callee?.type === "Identifier") {
+    let captured: AnyNode;
+    while (callee) {
+      callee = unwrapExpression(callee);
+      if (callee?.type === "MemberExpression") {
+        const accessed = callee.computed ? callee.property?.value : callee.property?.name;
+        if (!path.length || String(accessed) !== path.pop()) return false;
+        callee = callee.object;
+        continue;
+      }
+      if (callee?.type !== "Identifier") return false;
       const local = resolveLocalBinding(
         parents.has(callee) ? callee : ctx.file.scriptAst,
         callee.name,
         parents,
       );
-      if (local === binding) return true;
+      if (local === binding) {
+        if (path.length) return false;
+        if (captured) capturedReferences.set(original, captured);
+        return true;
+      }
       if (!local || visited.has(local) || local.type !== "VariableDeclarator") return false;
       visited.add(local);
       const reference = parents.has(callee) ? callee : { start: Infinity };
       const owner = containingFunction(local, parents) ?? ctx.file.scriptAst;
       if (hasPriorAliasWrite(reference, local, owner, parents)) return false;
-      callee = unwrapExpression(local.init);
+      if (!memberPath.length || path.length) captured = local;
+      callee = local.init;
     }
     return false;
   };
   const reachesCall = (call: AnyNode, template = false): boolean => {
+    const captured = capturedReferences.get(getter ? call : call.callee);
+    const reference = captured ?? (template ? { start: Infinity } : call);
     const assignment = parents.get(fn);
     if (
       assignment?.type === "AssignmentExpression" &&
-      ((!template && assignment.start >= call.start) ||
+      (assignment.start >= reference.start ||
         !writeDominatesReference(
           assignment,
-          template ? { start: Infinity } : call,
+          reference,
           containingFunction(assignment, parents) ?? ctx.file.scriptAst,
           parents,
         ))
@@ -185,7 +198,6 @@ function functionFlowsToTemplate(
       const argument = parameterValue(current, fn, call, parents);
       if (argument && !isUndefinedValue(argument)) return false;
     }
-    const reference = template ? { start: Infinity } : call;
     let replaced = false;
     walkScriptLocal(ctx.file.scriptAst, (write) => {
       if (
@@ -262,8 +274,10 @@ function functionFlowsToTemplate(
       return visit(node.right, owner, node);
     const callback =
       node.type === "CallExpression" &&
-      matchesCallee(node.arguments[0]) &&
-      resultCallbackCall(fn, parents, node.arguments[0]) === node;
+      node.arguments.some(
+        (argument: AnyNode) =>
+          matchesCallee(argument) && resultCallbackCall(fn, parents, argument) === node,
+      );
 
     if (
       (getter ? node.type === "MemberExpression" : node.type === "CallExpression") &&
@@ -417,6 +431,16 @@ function resultCallbackCall(
       ? call
       : null;
   if (fn.async) return null;
+  if (
+    call.callee?.type === "MemberExpression" &&
+    call.callee.object?.name === "Array" &&
+    !resolveLocalBinding(call, "Array", parents) &&
+    (call.callee.computed ? call.callee.property?.value : call.callee.property?.name) === "from" &&
+    call.arguments[1] === expression
+  ) {
+    const input = unwrapExpression(call.arguments[0]);
+    return input?.type === "ArrayExpression" && arrayElementCount(input, true) > 0 ? call : null;
+  }
   if (call.arguments[0] !== expression) return null;
   if (call.callee?.type === "Identifier" && call.callee.name === "computed") {
     const binding = resolveLocalBinding(call, "computed", parents);
@@ -481,7 +505,17 @@ function asyncResultIsConsumed(
     if (parent.type === "UnaryExpression" && parent.operator === "void") return false;
     if (!awaited) {
       if (parent.type === "AwaitExpression") awaited = true;
-      else if (
+      else if (parent.type === "ReturnStatement" || parent.type === "ArrowFunctionExpression") {
+        let owner = parent;
+        while (
+          owner &&
+          !["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+            owner.type,
+          )
+        )
+          owner = parentOf(owner);
+        return Boolean(owner?.async);
+      } else if (
         ![
           "ParenthesizedExpression",
           "SequenceExpression",
