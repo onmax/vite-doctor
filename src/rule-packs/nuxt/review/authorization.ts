@@ -52,17 +52,18 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
         async onProjectEnd() {
           const root = ctx.project.root;
           const nuxt = ctx.project.nuxt!;
-          const middleware = projectSources(root, appMiddlewareFiles(root, nuxt.appRoots)).filter(
-            (source) => authMiddlewareName.test(source.path),
-          );
+          const middleware = projectSources(
+            root,
+            appMiddlewareFiles(root, [
+              ...nuxt.appRoots,
+              ...nuxt.layers.map((layer) => resolve(root, layer.srcDir ?? layer.root)),
+            ]),
+          ).filter((source) => authMiddlewareName.test(source.path));
           if (!middleware.length) return;
           const registrations = nuxt.manifest?.isCurrent
             ? (nuxt.manifest.serverHandlers ?? [])
             : [];
-          const serverMiddleware = projectSources(root, [
-            ...nuxt.serverDirs.middleware,
-            ...registrations.filter((entry) => entry.middleware).map((entry) => entry.file),
-          ]);
+          const serverMiddleware = projectSources(root, nuxt.serverDirs.middleware);
           const registered = registrations.filter((entry) => !entry.middleware);
           const handlers = projectSources(root, [
             ...(ctx.project.nuxt?.serverDirs.api ?? []),
@@ -78,34 +79,36 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
               ),
           );
           for (const handler of handlers) {
-            const layer =
-              nuxt.localLayerAliases !== false
-                ? [...nuxt.layers]
-                    .filter(
-                      (layer) =>
-                        resolve(root, layer.root) !== root &&
-                        isWithin(resolve(root, layer.root), resolve(root, handler.path)),
-                    )
-                    .sort((a, b) => b.root.length - a.root.length)[0]
-                : undefined;
+            const layer = [...nuxt.layers]
+              .filter(
+                (layer) =>
+                  resolve(root, layer.root) !== root &&
+                  isWithin(resolve(root, layer.root), resolve(root, handler.path)),
+              )
+              .sort((a, b) => b.root.length - a.root.length)[0];
             const sources = [
               ...middleware,
               ...serverMiddleware,
-              ...localImports(root, handler, {
-                "~~": root,
-                "@@": root,
-                "~": nuxt.appDir,
-                "@": nuxt.appDir,
-                ...nuxt.manifest?.aliases,
-                ...(layer
-                  ? {
-                      "~~": resolve(root, layer.root),
-                      "@@": resolve(root, layer.root),
-                      "~": resolve(root, layer.srcDir ?? layer.root),
-                      "@": resolve(root, layer.srcDir ?? layer.root),
-                    }
-                  : {}),
-              }),
+              ...localImports(
+                root,
+                handler,
+                {
+                  "~~": root,
+                  "@@": root,
+                  "~": nuxt.appDir,
+                  "@": nuxt.appDir,
+                  ...nuxt.manifest?.aliases,
+                  ...(layer && nuxt.localLayerAliases === true
+                    ? {
+                        "~~": resolve(root, layer.root),
+                        "@@": resolve(root, layer.root),
+                        "~": resolve(root, layer.srcDir ?? layer.root),
+                        "@": resolve(root, layer.srcDir ?? layer.root),
+                      }
+                    : {}),
+                },
+                Boolean(layer && nuxt.localLayerAliases === undefined),
+              ),
             ];
             const candidate = { handler, sources };
             const review = await reviewer(candidate);
@@ -281,11 +284,13 @@ function localImports(
   root: string,
   source: AuthorizationReviewSource,
   aliases: Record<string, string>,
+  unknownLayerAliases = false,
 ): AuthorizationReviewSource[] {
   const file = resolve(root, source.path);
   const imported: string[] = [];
   for (const match of source.text.matchAll(/\bfrom\s*["']([^"']+)["']/g)) {
     const specifier = match[1]!;
+    if (unknownLayerAliases && /^(?:~{1,2}|@{1,2})(?:\/|$)/.test(specifier)) continue;
     const alias = Object.keys(aliases)
       .sort((a, b) => b.length - a.length)
       .find((key) => specifier === key || specifier.startsWith(`${key}/`));

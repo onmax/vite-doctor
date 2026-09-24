@@ -186,7 +186,7 @@ test.each(["界".repeat(40_000), "x".repeat(119_700), '"'.repeat(40_000)])(
 );
 
 test.each([true, false])(
-  "uses registered evidence only from a current manifest: %s",
+  "excludes manifest-only middleware even with a current manifest: %s",
   async (current) => {
     const candidates: Parameters<AuthorizationReviewer>[0][] = [];
     const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
@@ -216,7 +216,7 @@ test.each([true, false])(
         : ["server/api/account.get.ts"],
     );
     expect(candidates[0]!.sources.some((source) => source.path === "server/guards/global.ts")).toBe(
-      current,
+      false,
     );
   },
 );
@@ -249,6 +249,7 @@ test.each(
   ["~", "@", "~~", "@@"].flatMap((alias) => [
     { alias, local: true },
     { alias, local: false },
+    { alias, local: undefined },
   ]),
 )("resolves layer aliases: $alias, local=$local", async ({ alias, local }) => {
   const candidates: Parameters<AuthorizationReviewer>[0][] = [];
@@ -276,6 +277,11 @@ test.each(
   });
   expect(candidates).toHaveLength(1);
   const paths = candidates[0]!.sources.map((source) => source.path);
+  if (local === undefined) {
+    expect(paths).not.toContain(layerGuard);
+    expect(paths).not.toContain("guard.ts");
+    return;
+  }
   expect(paths).toContain(local ? layerGuard : "guard.ts");
   expect(paths).not.toContain(local ? "guard.ts" : layerGuard);
 });
@@ -293,4 +299,27 @@ test.each([
     createOpenAICompatibleAuthorizationReviewer({ endpoint, model: "model", apiKey: "key" });
   if (allowed) expect(create).not.toThrow();
   else expect(create).toThrow("HTTPS or loopback HTTP");
+});
+
+test("collects route middleware from a layer's custom source directory", async () => {
+  const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    candidates.push(candidate);
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      "layers/admin/src/middleware/auth.ts": files["app/middleware/auth.ts"],
+      "server/api/account.get.ts": files["server/api/account.get.ts"],
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        layers: [{ root: "layers/admin", srcDir: "layers/admin/src", priority: 0 }],
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(candidates).toHaveLength(1);
+  expect(candidates[0]!.sources.map((source) => source.path)).toContain(
+    "layers/admin/src/middleware/auth.ts",
+  );
 });

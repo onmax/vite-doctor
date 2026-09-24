@@ -112,15 +112,16 @@ function hasUnconditionalMiddlewareGuard(file: string): boolean {
     )
       return false;
     const handler = factory.arguments[0];
+    const guardName =
+      /^(?:requireUserSession|requireMcpAdminToken|requireAuth|authGuard|protectRoute)$/;
+    if (handler?.type === "Identifier") return guardName.test(handler.name);
     if (!["ArrowFunctionExpression", "FunctionExpression"].includes(handler?.type)) return false;
     const isGuard = (expression: AnyNode): boolean => {
       if (expression?.type === "AwaitExpression") expression = expression.argument;
       return (
         expression?.type === "CallExpression" &&
         expression.callee.type === "Identifier" &&
-        /^(?:requireUserSession|requireMcpAdminToken|requireAuth|authGuard|protectRoute)$/.test(
-          expression.callee.name,
-        ) &&
+        guardName.test(expression.callee.name) &&
         handler.params[0]?.type === "Identifier" &&
         expression.arguments[0]?.type === "Identifier" &&
         expression.arguments[0].name === handler.params[0].name

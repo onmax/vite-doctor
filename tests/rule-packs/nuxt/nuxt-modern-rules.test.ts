@@ -2500,6 +2500,10 @@ test("path-scoped server middleware does not hide unrelated sensitive handlers",
 });
 
 test.each([
+  ["requireAuth", 0],
+  ["requireUserSession", 0],
+  ["getUserSession", 1],
+  ["unknownGuard", 1],
   ["(event) => requireAuth(event)", 0],
   ["async (event) => { const config = useRuntimeConfig(); await requireAuth(event) }", 0],
   ["async (event) => { logRequest(event); await requireAuth(event) }", 0],
