@@ -141,8 +141,14 @@ export const noSecretDefine = createRule({
     return {
       ScriptNode(node) {
         if ((node as { type?: string }).type !== "Program") return;
-        const { initializers, memberReturns, localCalls, shadowedPromises, serializationHooks } =
-          readAliasInitializers(ctx.file.text);
+        const {
+          initializers,
+          memberReturns,
+          localCalls,
+          shadowedPromises,
+          serializationHooks,
+          bindingKeys,
+        } = readAliasInitializers(ctx.file.text);
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           if (
             !SECRET_NAME_RE.test(entry.key) &&
@@ -155,6 +161,7 @@ export const noSecretDefine = createRule({
               localCalls,
               shadowedPromises,
               serializationHooks,
+              bindingKeys,
             )
           )
             continue;
@@ -206,6 +213,26 @@ function readAliasInitializers(source: string) {
     };
   }
   const { scopeManager } = parsed;
+  const references = new Map(
+    scopeManager.scopes.flatMap((scope) =>
+      scope.references.map((reference) => [reference.identifier.range[0], reference] as const),
+    ),
+  );
+  function resolveImmutable(node: AnyNode, seen = new Set<AnyNode>()): AnyNode {
+    if (node.type !== "Identifier" || seen.has(node)) return node;
+    seen.add(node);
+    const reference = references.get(node.range[0]);
+    const definition = reference?.resolved?.defs[0];
+    if (
+      reference?.resolved?.defs.length === 1 &&
+      definition?.type === "Variable" &&
+      definition.parent.kind === "const" &&
+      definition.node.id.type === "Identifier" &&
+      definition.node.init
+    )
+      return resolveImmutable(definition.node.init, seen);
+    return node;
+  }
   for (const scope of scopeManager.scopes) {
     for (const reference of scope.references) {
       const definition = reference.resolved?.defs[0];
@@ -251,7 +278,9 @@ function readAliasInitializers(source: string) {
         !definition.node.init
       )
         continue;
-      const { id, init } = definition.node;
+      const { id } = definition.node;
+      const init =
+        id.type === "ObjectPattern" ? resolveImmutable(definition.node.init) : definition.node.init;
       if (id.type === "Identifier") {
         initializers.set(reference.identifier.range[0], [init.range]);
       } else if (
@@ -406,6 +435,7 @@ function resolvesSecretAlias(
   localCalls: Set<number>,
   shadowedPromises: Set<number>,
   serializationHooks: Map<number, { range: [number, number]; prefix: string }>,
+  bindingKeys: Map<number, string>,
 ): boolean {
   type Range = [number, number];
   type Trace = {
@@ -571,6 +601,42 @@ function resolvesSecretAlias(
           ))
       )
         continue;
+      const replacerRange = replacers.get(node);
+      if (
+        serializedNodes.has(node) &&
+        replacerRange &&
+        !replaced.has(node) &&
+        !invokedNodes.has(node) &&
+        ![
+          "Identifier",
+          "CallExpression",
+          "AwaitExpression",
+          "ConditionalExpression",
+          "SequenceExpression",
+        ].includes(node.type) &&
+        !(
+          node.type === "ObjectExpression" &&
+          serializationHooks.has(current.start + node.range[0] - 1)
+        )
+      ) {
+        pending.push({
+          ...current,
+          value: source.slice(...replacerRange),
+          start: replacerRange[0],
+          invoked: true,
+          serialized: true,
+          replacer: replacerRange,
+          replacerApplied: true,
+          serializationKey: serializationKeys.get(node),
+          propertyList: propertyLists.get(node),
+          args: [
+            literalRange(serializationKeys.get(node) ?? ""),
+            [current.start + node.range[0] - 1, current.start + node.range[1] - 1],
+          ],
+          bindings: new Map(current.bindings),
+        });
+        continue;
+      }
       if (
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
       ) {
@@ -710,44 +776,6 @@ function resolvesSecretAlias(
         }
         continue;
       }
-      const replacerRange = replacers.get(node);
-      if (
-        serializedNodes.has(node) &&
-        replacerRange &&
-        !replaced.has(node) &&
-        ![
-          "Identifier",
-          "CallExpression",
-          "AwaitExpression",
-          "ConditionalExpression",
-          "SequenceExpression",
-          "ArrowFunctionExpression",
-          "FunctionExpression",
-          "FunctionDeclaration",
-        ].includes(node.type) &&
-        !(
-          node.type === "ObjectExpression" &&
-          serializationHooks.has(current.start + node.range[0] - 1)
-        )
-      ) {
-        pending.push({
-          ...current,
-          value: source.slice(...replacerRange),
-          start: replacerRange[0],
-          invoked: true,
-          serialized: true,
-          replacer: replacerRange,
-          replacerApplied: true,
-          serializationKey: serializationKeys.get(node),
-          propertyList: propertyLists.get(node),
-          args: [
-            literalRange(serializationKeys.get(node) ?? ""),
-            [current.start + node.range[0] - 1, current.start + node.range[1] - 1],
-          ],
-          bindings: new Map(current.bindings),
-        });
-        continue;
-      }
       if (node.type === "ObjectExpression" && serializedNodes.has(node)) {
         const hook = serializationHooks.get(current.start + node.range[0] - 1);
         if (hook) {
@@ -810,7 +838,11 @@ function resolvesSecretAlias(
         invokedNodes.add(node.value);
       if (node.type === "AwaitExpression") awaitedNodes.add(node.argument);
       if (node.type === "CallExpression") {
-        if (memberPath(node.callee) === "JSON.stringify" && node.arguments[0]) {
+        if (
+          memberPath(node.callee) === "JSON.stringify" &&
+          node.arguments[0] &&
+          bindingKeys.get(current.start + node.callee.object.range[0] - 1) === "global:JSON"
+        ) {
           const argument = node.arguments[0];
           serializedNodes.add(argument);
           serializationKeys.set(argument, "");
@@ -973,6 +1005,12 @@ function resolvesSecretAlias(
       if (node.type === "ConditionalExpression") {
         let branches = [node.consequent, node.alternate];
         const test = node.test;
+        const resolvedTest = readValue(
+          [current.start + test.range[0] - 1, current.start + test.range[1] - 1],
+          current.bindings,
+        )?.node;
+        if (resolvedTest?.type === "Literal")
+          branches = [resolvedTest.value ? node.consequent : node.alternate];
         if (
           test.type === "BinaryExpression" &&
           ["===", "!==", "==", "!="].includes(test.operator)

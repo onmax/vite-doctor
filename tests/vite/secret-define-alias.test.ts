@@ -1011,3 +1011,45 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
     expect(result.diagnostics).toHaveLength(1);
   });
 }
+
+test.each([
+  [
+    "const env = process.env; const { PRIVATE_TOKEN: replacement } = env;",
+    "JSON.stringify(replacement)",
+    true,
+  ],
+  [
+    "const env = import.meta.env; const alias = env; const { PRIVATE_TOKEN: replacement } = alias;",
+    "JSON.stringify(replacement)",
+    true,
+  ],
+  [
+    "const env = process.env; const { PUBLIC_VALUE: replacement } = env;",
+    "JSON.stringify(replacement)",
+    false,
+  ],
+  ["const JSON = { stringify: () => process.env.PRIVATE_TOKEN };", "JSON.stringify({})", true],
+  [
+    'const JSON = { stringify: () => "public" };',
+    "JSON.stringify(process.env.PRIVATE_TOKEN)",
+    false,
+  ],
+  ["", 'JSON.stringify(true ? "public" : process.env.PRIVATE_TOKEN)', false],
+  ["", 'JSON.stringify(false ? process.env.PRIVATE_TOKEN : "public")', false],
+  ["const enabled = true;", 'JSON.stringify(enabled ? process.env.PRIVATE_TOKEN : "public")', true],
+  ["", "JSON.stringify({ toJSON() { return () => {} } }, () => process.env.PRIVATE_TOKEN)", true],
+  ["", "JSON.stringify(() => {}, () => process.env.PRIVATE_TOKEN)", true],
+  ["", "JSON.stringify({ toJSON() { return () => process.env.PRIVATE_TOKEN } })", false],
+  [
+    "",
+    "JSON.stringify({ toJSON() { return () => process.env.PRIVATE_TOKEN } }, (key, value) => value)",
+    false,
+  ],
+])("handles reviewed secret flow: %s %s", async (setup, value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: { "vite.config.ts": `${setup} export default { define: { VALUE: ${value} } }` },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
