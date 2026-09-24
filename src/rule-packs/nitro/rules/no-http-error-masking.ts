@@ -79,11 +79,18 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
   const normal = { ...path, outcome: "normal" as const, label: undefined };
   if (!node) return [normal];
   if (node.type === "BlockStatement") {
-    let paths: Path[] = [normal];
+    const locals = blockBindings(node);
+    const scopedBindings = new Map(bindings);
+    const scopedConditions = new Map(normal.conditions);
+    for (const name of locals) {
+      scopedBindings.delete(name);
+      scopedConditions.delete(name);
+    }
+    let paths: Path[] = [{ ...normal, conditions: scopedConditions }];
     for (const statement of node.body) {
       const next = paths.flatMap((current) =>
         current.outcome === "normal"
-          ? outcomes(statement, current, bindings, conditions)
+          ? outcomes(statement, current, scopedBindings, conditions)
           : [current],
       );
       paths = [
@@ -99,7 +106,14 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
         ).values(),
       ];
     }
-    return paths;
+    return paths.map((current) => {
+      const restored = new Map(current.conditions);
+      for (const name of locals) {
+        restored.delete(name);
+        if (path.conditions.has(name)) restored.set(name, path.conditions.get(name)!);
+      }
+      return { ...current, conditions: restored };
+    });
   }
   if (node.type === "ThrowStatement") {
     const outcome =
@@ -136,7 +150,13 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
   if (node.type === "SwitchStatement") {
     const cases: AnyNode[] = node.cases;
     const fallback = cases.findIndex((item) => !item.test);
-    let entries = cases.map((_, index) => index);
+    const seen = new Set<unknown>();
+    let entries = cases.flatMap((item, index) => {
+      if (item.test?.type !== "Literal") return [index];
+      if (seen.has(item.test.value)) return [];
+      seen.add(item.test.value);
+      return [index];
+    });
     if (
       node.discriminant.type === "Literal" &&
       cases.every((item) => !item.test || item.test.type === "Literal")
@@ -159,6 +179,20 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
           : current,
       );
     });
+  }
+  if (node.type === "VariableDeclaration") {
+    const next = new Map(path.conditions);
+    for (const declaration of node.declarations) {
+      if (declaration.id.type !== "Identifier") continue;
+      next.delete(declaration.id.name);
+      if (
+        declaration.init?.type === "Literal" &&
+        typeof declaration.init.value === "boolean" &&
+        conditions.has(declaration.id.name)
+      )
+        next.set(declaration.id.name, declaration.init.value);
+    }
+    return [{ ...normal, conditions: next }];
   }
   const assignment = node.type === "ExpressionStatement" ? node.expression : node;
   if (assignment.type === "AssignmentExpression" && assignment.left.type === "Identifier") {
@@ -304,6 +338,7 @@ function stableConditions(node: AnyNode): Set<string> {
   const uses = new Map<string, number>();
   const unstable = new Set<string>();
   const assignments = new Set<AnyNode>();
+  const declarations = new Set<string>();
   walkScriptLocal(node, (child) => {
     if (child.type === "ExpressionStatement") assignments.add(child.expression);
     if (child.type === "ForStatement" && child.update) assignments.add(child.update);
@@ -318,6 +353,17 @@ function stableConditions(node: AnyNode): Set<string> {
       let test = child.test;
       while (test.type === "UnaryExpression" && test.operator === "!") test = test.argument;
       if (test.type === "Identifier") uses.set(test.name, (uses.get(test.name) ?? 0) + 1);
+    }
+    if (
+      child.type === "VariableDeclarator" &&
+      child.id.type === "Identifier" &&
+      child.init?.type === "Literal" &&
+      typeof child.init.value === "boolean"
+    ) {
+      if (declarations.has(child.id.name)) unstable.add(child.id.name);
+      declarations.add(child.id.name);
+      uses.set(child.id.name, (uses.get(child.id.name) ?? 0) + 1);
+      return;
     }
     if (child.type === "VariableDeclarator" || child.type === "CatchClause") {
       walkScriptLocal(child.id ?? child.param, (binding) => {
@@ -354,11 +400,37 @@ function httpStatus(node: AnyNode): number | undefined {
   if (node?.type !== "CallExpression" || node.callee?.name !== "createError") return;
   const options = node.arguments?.[0];
   if (options?.type !== "ObjectExpression") return;
+  const statuses = new Map<string, number | undefined>();
   for (const property of options.properties ?? []) {
+    if (property.type === "SpreadElement" || property.computed) {
+      statuses.set("statusCode", undefined);
+      statuses.set("status", undefined);
+      continue;
+    }
     const key = property.key?.name ?? property.key?.value;
-    if ((key === "statusCode" || key === "status") && typeof property.value?.value === "number")
-      return property.value.value;
+    if (key === "statusCode" || key === "status")
+      statuses.set(
+        key,
+        typeof property.value?.value === "number" ? property.value.value : undefined,
+      );
   }
+  if (statuses.has("statusCode")) return statuses.get("statusCode");
+  return statuses.get("status");
+}
+
+function blockBindings(node: AnyNode): Set<string> {
+  const names = new Set<string>();
+  for (const statement of node.body) {
+    if (statement.type === "VariableDeclaration" && statement.kind !== "var") {
+      for (const declaration of statement.declarations)
+        walkScriptLocal(declaration.id, (binding) => {
+          if (binding.type === "Identifier") names.add(binding.name);
+        });
+    } else if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
+      if (statement.id) names.add(statement.id.name);
+    }
+  }
+  return names;
 }
 
 function stableCatchBinding(handler: AnyNode): string | undefined {
@@ -369,7 +441,11 @@ function stableCatchBinding(handler: AnyNode): string | undefined {
   walkScriptLocal(handler.body, (node) => {
     if (nested.has(node)) return;
     if (
-      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+        node.type,
+      ) ||
+      (node.type === "BlockStatement" && blockBindings(node).has(name)) ||
+      (node.type === "CatchClause" && node.param?.name === name)
     ) {
       walkScriptLocal(node, (child) => nested.add(child));
       return;

@@ -39,6 +39,115 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "trailing protected status spread",
+    "throw createError({ statusCode: 404, ...options })",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "trailing catch status spread",
+    "throw createError({ statusCode: 404 })",
+    "throw createError({ statusCode: 500, ...options })",
+    false,
+  ],
+  [
+    "leading status spread",
+    "throw createError({ ...options, statusCode: 404 })",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "duplicate status override",
+    "throw createError({ statusCode: 404, statusCode: 500 })",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "unknown status override",
+    "throw createError({ statusCode: 404, statusCode: status })",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "computed status override",
+    "throw createError({ statusCode: 404, [key]: 500 })",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "statusCode precedence",
+    "throw createError({ status: 404, statusCode: 500 })",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "shadow before outer guard",
+    "throw createError({ statusCode: 404 })",
+    "{ const error = other }; if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "shadow assignment before outer guard",
+    "throw createError({ statusCode: 404 })",
+    "{ let error = other; error = changed }; if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "outer catch assignment",
+    "throw createError({ statusCode: 404 })",
+    "{ error = other }; if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "shadow guard does not preserve",
+    "throw createError({ statusCode: 404 })",
+    "{ const error = other; if (isError(error)) throw error }; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "boolean true initializer",
+    "throw createError({ statusCode: 404 })",
+    "const preserve = true; if (preserve) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "boolean false initializer",
+    "throw createError({ statusCode: 404 })",
+    "let preserve = false; if (!preserve) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "boolean initializer reassigned",
+    "throw createError({ statusCode: 404 })",
+    "let preserve = true; preserve = false; if (preserve) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "boolean initializer block lifetime",
+    "throw createError({ statusCode: 404 })",
+    "{ const preserve = true; if (!preserve) throw error }; if (preserve) throw error; throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "duplicate switch case",
+    'switch (kind) { case "missing": break; case "missing": throw createError({ statusCode: 404 }) }',
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "duplicate catch switch case",
+    "throw createError({ statusCode: 404 })",
+    'switch (kind) { case "missing": break; case "missing": throw createError({ statusCode: 500 }) }',
+    false,
+  ],
+  [
+    "duplicate switch fallthrough",
+    'switch (kind) { case "missing": log(); case "missing": throw createError({ statusCode: 404 }) }',
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+
+  [
     "switch client error",
     'switch (kind) { case "missing": throw createError({ statusCode: 404 }) }',
     "throw createError({ statusCode: 500 })",
