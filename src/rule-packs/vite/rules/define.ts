@@ -358,7 +358,7 @@ function readAliasInitializers(source: string) {
   const calls: AnyNode[] = [];
   function collect(node: AnyNode) {
     if (!node) return;
-    nodesByRange.set(node.range.join(":"), node);
+    if (node.type !== "TemplateElement") nodesByRange.set(node.range.join(":"), node);
     if (node.type === "MemberExpression") members.push(node);
     if (node.type === "CallExpression") calls.push(node);
     for (const key of parsed.visitorKeys[node.type] ?? []) {
@@ -369,12 +369,63 @@ function readAliasInitializers(source: string) {
   }
   collect(parsed.ast);
   const getters = new Set<AnyNode>();
+  function staticKey(property: AnyNode, seen = new Set<AnyNode>()): string | null {
+    if (!property.computed) return propertyName(property.key);
+    const key = resolve(property.key, new Set(seen));
+    if (key?.type === "TemplateLiteral" && key.expressions.length === 0)
+      return key.quasis[0].value.cooked;
+    return key?.type === "Literal" ? String(key.value) : null;
+  }
+  function projectBinding(
+    pattern: AnyNode,
+    input: AnyNode,
+    name: string,
+    seen: Set<AnyNode>,
+  ): AnyNode {
+    const value = resolve(input, new Set(seen));
+    if (pattern.type === "Identifier") return pattern.name === name ? value : undefined;
+    if (pattern.type === "ObjectPattern" && value?.type === "ObjectExpression") {
+      for (const property of pattern.properties) {
+        if (property.type !== "Property") continue;
+        const key = staticKey(property, seen);
+        if (key === null) continue;
+        const match = readProperties(value, new Set(seen)).findLast(
+          (item) => item.type === "Property" && staticKey(item, seen) === key,
+        );
+        if (match?.kind !== "init") continue;
+        const projected = projectBinding(property.value, match.value, name, seen);
+        if (projected) return projected;
+      }
+    }
+    if (pattern.type === "ArrayPattern" && value?.type === "ArrayExpression") {
+      for (const [index, element] of pattern.elements.entries()) {
+        if (value.elements[index]?.type === "SpreadElement") break;
+        if (!element) continue;
+        const projected = projectBinding(element, value.elements[index], name, seen);
+        if (projected) return projected;
+      }
+    }
+  }
   function resolve(node: AnyNode, seen = new Set<AnyNode>()): AnyNode {
     if (!node || seen.has(node)) return;
     seen.add(node);
     if (node.type === "Identifier") {
       const ranges = initializers.get(node.range[0]);
       if (ranges?.length === 1) return resolve(nodesByRange.get(ranges[0]!.join(":")), seen);
+      const reference = references.get(node.range[0]);
+      const definition = reference?.resolved?.defs[0];
+      if (
+        reference?.resolved?.defs.length === 1 &&
+        definition?.type === "Variable" &&
+        definition.parent.kind === "const" &&
+        ["ObjectPattern", "ArrayPattern"].includes(definition.node.id.type)
+      ) {
+        const value = projectBinding(definition.node.id, definition.node.init, node.name, seen);
+        if (value?.range) {
+          initializers.set(node.range[0], [value.range]);
+          return value;
+        }
+      }
     }
     if (node.type === "MemberExpression") {
       const object = resolve(node.object, seen);
@@ -382,11 +433,7 @@ function readAliasInitializers(source: string) {
       const name = key?.type === "Literal" ? String(key.value) : !node.computed ? key?.name : null;
       if (object?.type === "ObjectExpression" && name !== null) {
         const property = readProperties(object, new Set(seen)).findLast(
-          (property: AnyNode) =>
-            property.type === "Property" &&
-            (property.computed
-              ? resolve(property.key, new Set(seen))?.value
-              : propertyName(property.key)) === name,
+          (property: AnyNode) => property.type === "Property" && staticKey(property, seen) === name,
         );
         if (property) {
           if (property.kind === "get") getters.add(property.value);
@@ -404,13 +451,11 @@ function readAliasInitializers(source: string) {
       return readProperties(spread, new Set([...seen, spread]));
     });
   }
+  for (const reference of references.values()) resolve(reference.identifier);
   for (const object of nodesByRange.values()) {
     if (object.type !== "ObjectExpression") continue;
     const hook = readProperties(object, new Set([object])).findLast(
-      (property) =>
-        property.type === "Property" &&
-        (property.computed ? resolve(property.key)?.value : propertyName(property.key)) ===
-          "toJSON",
+      (property) => property.type === "Property" && staticKey(property) === "toJSON",
     );
     const value = hook && ["init", "get"].includes(hook.kind) && resolve(hook.value);
     if (
@@ -1394,7 +1439,19 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     if (nullish(override)) return base;
     if (nullish(base)) return override;
     let result: AnyNode;
-    if (
+    if (base?.type === "ConditionalExpression" && mergedNodes.has(base)) {
+      result = {
+        ...base,
+        consequent: mergeValue(base.consequent, override, getterResult),
+        alternate: mergeValue(base.alternate, override, getterResult),
+      };
+    } else if (override?.type === "ConditionalExpression" && mergedNodes.has(override)) {
+      result = {
+        ...override,
+        consequent: mergeValue(base, override.consequent, getterResult),
+        alternate: mergeValue(base, override.alternate, getterResult),
+      };
+    } else if (
       getterResult &&
       ![
         "Literal",
@@ -1728,9 +1785,19 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             });
           }
         }
-        callee.params.forEach((parameter: AnyNode, index: number) =>
-          bind(parameter, node.arguments[index]),
-        );
+        callee.params.forEach((parameter: AnyNode, index: number) => {
+          if (parameter.type === "RestElement") {
+            const start = -nodesByRange.size - 1;
+            const value = {
+              type: "ArrayExpression",
+              elements: node.arguments.slice(index),
+              start,
+              end: start,
+            };
+            nodesByRange.set(`${start}:${start}`, value);
+            bind(parameter.argument, value);
+          } else bind(parameter, node.arguments[index]);
+        });
         try {
           return readConfig(callee);
         } finally {

@@ -1444,3 +1444,93 @@ test.each([
     expect(result.diagnostics.length > 0).toBe(expected);
   }
 });
+
+test.each([
+  [
+    "const source = { value: process.env.PRIVATE_TOKEN }; const { value: replacement } = source",
+    true,
+  ],
+  ["const source = [process.env.PRIVATE_TOKEN]; const [replacement] = source", true],
+  [
+    "const source = { nested: [process.env.PRIVATE_TOKEN] }; const { nested: [replacement] } = source",
+    true,
+  ],
+  [
+    "const source = { value: process.env.PUBLIC_VERSION }; const { value: replacement } = source",
+    false,
+  ],
+  ["const source = [process.env.PUBLIC_VERSION]; const [replacement] = source", false],
+  [
+    "const source = { value: process.env.PRIVATE_TOKEN }; const { value: first } = source; const [replacement] = [first]",
+    true,
+  ],
+])("traces destructured local values: %s", async (declarations, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ["[`toJSON`]() { return process.env.PRIVATE_TOKEN }", true],
+  ["[hook]() { return process.env.PRIVATE_TOKEN }", true],
+  ["get [`toJSON`]() { return () => process.env.PRIVATE_TOKEN }", true],
+  ["[`toJSON`]() { return process.env.PUBLIC_VERSION }", false],
+  ["[`other`]() { return process.env.PRIVATE_TOKEN }", false],
+])("recognizes static serialization hooks: %s", async (property, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts":
+        "const hook = `toJSON`; export default { define: { VALUE: JSON.stringify({ " +
+        property +
+        " }) } }",
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    ["(...configs) => configs[0]", "{ define: { PRIVATE_TOKEN: {} } }"],
+    ["(first, ...configs) => configs[1]", "{}, {}, { define: { PRIVATE_TOKEN: {} } }"],
+    ["(...[config]) => config", "{ define: { PRIVATE_TOKEN: {} } }"],
+  ])(`discovers rest parameter configs for ${rule.meta.id}: %s`, async (factory, args) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: {
+        "vite.config.ts": `const make = ${factory}; export default make(${args})`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  });
+}
+
+test.each([
+  ['{ public: "safe" }', true],
+  ['{ value: "safe" }', false],
+])(
+  "preserves dynamic getter alternatives through another merge: %s",
+  async (override, expected) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `import { mergeConfig } from 'vite'; export default mergeConfig(
+      mergeConfig(
+        { define: { VALUE: { nested: { value: process.env.PRIVATE_TOKEN } } } },
+        { define: { VALUE: { get nested() { return process.env.OPTIONAL_OVERRIDE } } } },
+      ),
+      { define: { VALUE: { nested: ${override} } } },
+    )`,
+      },
+    });
+    expect(result.diagnostics.length > 0).toBe(expected);
+  },
+);
