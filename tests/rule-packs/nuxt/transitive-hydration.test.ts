@@ -551,3 +551,29 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["{ value = clock() } = {}", "{}", "value", 1],
+  ["{ value = clock() } = {}", "{ value: undefined }", "value", 1],
+  ["{ value = clock() } = {}", "{ value: void 0 }", "value", 1],
+  ["{ value = clock() } = {}", "", "value", 1],
+  ["{ value = clock() }", "{}", "value", 1],
+  ["[value = clock()] = []", "[]", "value", 1],
+  ["[value = clock()] = []", "[undefined]", "value", 1],
+  ["[value = clock()] = []", "[void 0]", "value", 1],
+  ["[value = clock()] = []", "", "value", 1],
+  ["{ nested: { value = clock() } = {} } = {}", "{ nested: {} }", "value", 1],
+  ["{ value } = { value: clock() }", "{ value: 'stable' }", "value", 0],
+  ["[value] = [clock()]", "['stable']", "value", 0],
+])(
+  "preserves nested parameter defaults: %s with %s",
+  async (parameter, argument, returned, count) => {
+    for (const templateCall of [false, true]) {
+      const result = await runNuxtAppRuleFixture(
+        noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+        `<script setup>function clock() { return Date.now() }; function label(${parameter}) { return ${returned} }; ${templateCall ? "" : `const displayed = label(${argument})`}</script><template>{{ ${templateCall ? `label(${argument})` : "displayed"} }}</template>`,
+      );
+      expect(result.diagnostics).toHaveLength(count);
+    }
+  },
+);

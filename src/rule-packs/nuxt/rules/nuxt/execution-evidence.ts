@@ -137,9 +137,13 @@ function functionFlowsToTemplate(
     return callee?.type === "Identifier" && callee.name === functionName;
   };
   const reachesCall = (call: AnyNode, template = false): boolean => {
-    for (let current = source; current && current !== fn; current = parents.get(current)) {
+    for (
+      let current = source, child = source;
+      current && current !== fn;
+      child = current, current = parents.get(current)
+    ) {
       const index = fn.params?.indexOf(current) ?? -1;
-      if (index < 0 || current.type !== "AssignmentPattern") continue;
+      if (index < 0 || current.type !== "AssignmentPattern" || current.right !== child) continue;
       const argument = call.arguments[index];
       if (
         argument &&
@@ -464,10 +468,9 @@ function contributesToReturn(
           !projectionIncludes(node, parent, reference, parents)
         )
           return;
-        const binding =
-          parent.type === "AssignmentExpression"
-            ? resolveLocalBinding(parent, reference.name, parents)
-            : parent;
+        const binding = ["AssignmentExpression", "AssignmentPattern"].includes(parent.type)
+          ? resolveLocalBinding(parent, reference.name, parents)
+          : parent;
         if (
           binding &&
           resolveLocalBinding(reference, reference.name, parents) === binding &&
@@ -533,7 +536,7 @@ function hasPriorAliasWrite(
   parents: WeakMap<AnyNode, AnyNode>,
   source = binding,
 ): boolean {
-  const identifier = binding.id ?? binding.left;
+  const name = reference.name ?? binding.id?.name ?? binding.left?.name;
   let reassigned = false;
   walkScriptLocal(owner.body, (write) => {
     if (
@@ -551,8 +554,8 @@ function hasPriorAliasWrite(
             ? write.left
             : null;
     if (
-      patternBinds(target, identifier.name) &&
-      resolveLocalBinding(write, identifier.name, parents) === binding &&
+      patternBinds(target, name) &&
+      resolveLocalBinding(write, name, parents) === binding &&
       writeDominatesReference(write, reference, owner, parents)
     )
       reassigned = true;
