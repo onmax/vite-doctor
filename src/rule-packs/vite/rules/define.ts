@@ -376,35 +376,66 @@ function readAliasInitializers(source: string) {
       return key.quasis[0].value.cooked;
     return key?.type === "Literal" ? String(key.value) : null;
   }
+  function arrayElements(value: AnyNode, seen: Set<AnyNode>): AnyNode[] {
+    if (seen.has(value)) return [];
+    return value.elements.flatMap((element: AnyNode) => {
+      if (element?.type !== "SpreadElement") return [element];
+      const spread = resolve(element.argument, new Set(seen));
+      return spread?.type === "ArrayExpression"
+        ? arrayElements(spread, new Set([...seen, value]))
+        : [element];
+    });
+  }
   function projectBinding(
     pattern: AnyNode,
     input: AnyNode,
     name: string,
     seen: Set<AnyNode>,
-  ): AnyNode {
+  ): AnyNode[] {
     const value = resolve(input, new Set(seen));
-    if (pattern.type === "Identifier") return pattern.name === name ? value : undefined;
+    if (pattern.type === "AssignmentPattern") {
+      const missing =
+        !value ||
+        (value.type === "Identifier" &&
+          value.name === "undefined" &&
+          !references.get(value.range[0])?.resolved) ||
+        (value.type === "UnaryExpression" && value.operator === "void");
+      return projectBinding(pattern.left, missing ? pattern.right : value, name, seen);
+    }
+    if (pattern.type === "Identifier") return pattern.name === name && value ? [value] : [];
     if (pattern.type === "ObjectPattern" && value?.type === "ObjectExpression") {
-      for (const property of pattern.properties) {
-        if (property.type !== "Property") continue;
+      return pattern.properties.flatMap((property: AnyNode) => {
+        if (property.type !== "Property") return [];
         const key = staticKey(property, seen);
-        if (key === null) continue;
+        if (key === null) return [];
         const match = readProperties(value, new Set(seen)).findLast(
           (item) => item.type === "Property" && staticKey(item, seen) === key,
         );
-        if (match?.kind !== "init") continue;
-        const projected = projectBinding(property.value, match.value, name, seen);
-        if (projected) return projected;
-      }
+        if (match && match.kind !== "init") return [];
+        return projectBinding(property.value, match?.value, name, seen);
+      });
     }
     if (pattern.type === "ArrayPattern" && value?.type === "ArrayExpression") {
-      for (const [index, element] of pattern.elements.entries()) {
-        if (value.elements[index]?.type === "SpreadElement") break;
-        if (!element) continue;
-        const projected = projectBinding(element, value.elements[index], name, seen);
-        if (projected) return projected;
-      }
+      const elements = arrayElements(value, new Set(seen));
+      const firstSpread = elements.findIndex((element) => element?.type === "SpreadElement");
+      return pattern.elements.flatMap((element: AnyNode, index: number) => {
+        if (!element) return [];
+        const start = firstSpread >= 0 ? Math.min(index, firstSpread) : index;
+        const candidates =
+          element.type === "RestElement" || (firstSpread >= 0 && index >= firstSpread)
+            ? [...elements.slice(start), undefined]
+            : [elements[index]];
+        return candidates.flatMap((candidate) =>
+          projectBinding(
+            element.type === "RestElement" ? element.argument : element,
+            candidate?.type === "SpreadElement" ? candidate.argument : candidate,
+            name,
+            seen,
+          ),
+        );
+      });
     }
+    return [];
   }
   function resolve(node: AnyNode, seen = new Set<AnyNode>()): AnyNode {
     if (!node || seen.has(node)) return;
@@ -420,10 +451,13 @@ function readAliasInitializers(source: string) {
         definition.parent.kind === "const" &&
         ["ObjectPattern", "ArrayPattern"].includes(definition.node.id.type)
       ) {
-        const value = projectBinding(definition.node.id, definition.node.init, node.name, seen);
-        if (value?.range) {
-          initializers.set(node.range[0], [value.range]);
-          return value;
+        const values = projectBinding(definition.node.id, definition.node.init, node.name, seen);
+        if (values.length) {
+          initializers.set(
+            node.range[0],
+            values.map((value) => value.range),
+          );
+          if (values.length === 1) return values[0];
         }
       }
     }
@@ -1429,11 +1463,11 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     const values: AnyNode[] = [];
     visitReturnValues(property.value.body, (value) => values.push(value));
     return values.length === 1
-      ? { ...property, kind: "init", value: resolve(values[0]), getterResult: true }
+      ? { ...property, kind: "init", value: resolve(values[0]) }
       : property;
   }
   const mergedNodes = new Set<AnyNode>();
-  function mergeValue(base: AnyNode, override: AnyNode, getterResult = false): AnyNode {
+  function mergeValue(base: AnyNode, override: AnyNode): AnyNode {
     base = resolve(base);
     override = resolve(override);
     if (nullish(override)) return base;
@@ -1442,23 +1476,25 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     if (base?.type === "ConditionalExpression" && mergedNodes.has(base)) {
       result = {
         ...base,
-        consequent: mergeValue(base.consequent, override, getterResult),
-        alternate: mergeValue(base.alternate, override, getterResult),
+        consequent: mergeValue(base.consequent, override),
+        alternate: mergeValue(base.alternate, override),
       };
     } else if (override?.type === "ConditionalExpression" && mergedNodes.has(override)) {
       result = {
         ...override,
-        consequent: mergeValue(base, override.consequent, getterResult),
-        alternate: mergeValue(base, override.alternate, getterResult),
+        consequent: mergeValue(base, override.consequent),
+        alternate: mergeValue(base, override.alternate),
       };
     } else if (
-      getterResult &&
       ![
         "Literal",
         "ObjectExpression",
         "ArrayExpression",
         "FunctionExpression",
         "ArrowFunctionExpression",
+        "TemplateLiteral",
+        "BinaryExpression",
+        "UnaryExpression",
       ].includes(override?.type)
     ) {
       result = { type: "ConditionalExpression", consequent: base, alternate: override };
@@ -1485,7 +1521,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
           previous?.kind === "init" && property.kind === "init"
             ? {
                 ...property,
-                value: mergeValue(previous.value, property.value, property.getterResult),
+                value: mergeValue(previous.value, property.value),
               }
             : property,
         );
@@ -1785,18 +1821,27 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             });
           }
         }
+        function expandArguments(args: AnyNode[], seen = new Set<AnyNode>()): AnyNode[] {
+          return args.flatMap((argument) => {
+            if (argument?.type !== "SpreadElement") return [argument];
+            const value = resolve(argument.argument);
+            if (value?.type !== "ArrayExpression" || seen.has(value)) return [argument];
+            return expandArguments(value.elements, new Set([...seen, value]));
+          });
+        }
+        const args = expandArguments(node.arguments);
         callee.params.forEach((parameter: AnyNode, index: number) => {
           if (parameter.type === "RestElement") {
             const start = -nodesByRange.size - 1;
             const value = {
               type: "ArrayExpression",
-              elements: node.arguments.slice(index),
+              elements: args.slice(index),
               start,
               end: start,
             };
             nodesByRange.set(`${start}:${start}`, value);
             bind(parameter.argument, value);
-          } else bind(parameter, node.arguments[index]);
+          } else bind(parameter, args[index]);
         });
         try {
           return readConfig(callee);
@@ -1934,6 +1979,10 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     if (statement.type === "ExportDefaultDeclaration")
       entries.push(
         ...readConfig(statement.declaration).flatMap((alternative) => alternative.entries),
+      );
+    else if (statement.type === "TSExportAssignment")
+      entries.push(
+        ...readConfig(statement.expression).flatMap((alternative) => alternative.entries),
       );
     else if (statement.type === "ExportNamedDeclaration" && !statement.source) {
       for (const specifier of statement.specifiers) {

@@ -1534,3 +1534,72 @@ test.each([
     expect(result.diagnostics.length > 0).toBe(expected);
   },
 );
+
+test.each([
+  ["const { value: replacement = process.env.PRIVATE_TOKEN } = {}", true],
+  ["const [replacement = process.env.PRIVATE_TOKEN] = []", true],
+  ["const [replacement = process.env.PRIVATE_TOKEN] = [,]", true],
+  [
+    "const absent = undefined; const { value: replacement = process.env.PRIVATE_TOKEN } = { value: absent }",
+    true,
+  ],
+  ["const [replacement = process.env.PRIVATE_TOKEN] = [void 0]", true],
+  ["const { value: replacement = process.env.PRIVATE_TOKEN } = { value: null }", false],
+  ['const [replacement = process.env.PRIVATE_TOKEN] = ["public"]', false],
+  [
+    'const undefined = "public"; const [replacement = process.env.PRIVATE_TOKEN] = [undefined]',
+    false,
+  ],
+  ["const { nested: { value: replacement } = { value: process.env.PRIVATE_TOKEN } } = {}", true],
+  ["const source = [...[process.env.PRIVATE_TOKEN]]; const [replacement] = source", true],
+  [
+    'const source = ["public"]; const [, replacement] = [...source, process.env.PRIVATE_TOKEN]',
+    true,
+  ],
+  ['const [replacement] = [...["public"], process.env.PRIVATE_TOKEN]', false],
+  ["const [replacement] = [...unknown, process.env.PRIVATE_TOKEN]", true],
+  ['const [, ...replacement] = ["public", process.env.PRIVATE_TOKEN]', true],
+  ['const [, ...replacement] = [process.env.PRIVATE_TOKEN, "public"]', false],
+])("projects effective destructuring values: %s", async (declarations, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    [
+      "vite.config.ts",
+      "const options = [{ define: { PRIVATE_TOKEN: {} } }]; const make = config => config; export default make(...options)",
+    ],
+    [
+      "vite.config.ts",
+      "const options = [{ define: { PRIVATE_TOKEN: {} } }]; const make = (...configs) => configs[1]; export default make({}, ...[...options])",
+    ],
+    ["vite.config.cts", "export = { define: { PRIVATE_TOKEN: {} } }"],
+  ])("reads effective factory arguments and exports: %s %s", async (file, source) => {
+    const result = await runRuleFixture({ framework: "vite", rule, files: { [file]: source } });
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+  });
+}
+
+test.each([
+  ["process.env.OPTIONAL_OVERRIDE", true],
+  ['"public"', false],
+  ["null", true],
+  ["undefined", true],
+])("preserves runtime-nullish merge bases: %s", async (override, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `import { mergeConfig } from 'vite'; export default mergeConfig({ define: { VALUE: process.env.PRIVATE_TOKEN } }, { define: { VALUE: ${override} } })`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
