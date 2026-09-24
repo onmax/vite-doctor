@@ -1603,3 +1603,50 @@ test.each([
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+test.each([
+  ["get value() { return process.env.PRIVATE_TOKEN }", true],
+  ['get value() { return "public" }', false],
+  ["set value(input) { consume(process.env.PRIVATE_TOKEN) }", false],
+])("projects getter-backed destructuring: %s", async (property, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const source = { ${property} }; const { value: replacement } = source; export default { define: { VALUE: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    [
+      "const make = ({ ...config }) => config; export default make({ define: { PRIVATE_TOKEN: {} } })",
+      true,
+    ],
+    [
+      "const make = ({ ignored, ...config }) => config; export default make({ ignored: true, define: { PRIVATE_TOKEN: {} } })",
+      true,
+    ],
+    [
+      "const make = ({ define, ...config }) => config; export default make({ define: { PRIVATE_TOKEN: {} } })",
+      false,
+    ],
+    [
+      "const factory = { config: { define: { PRIVATE_TOKEN: {} } }, make() { return this.config } }; export default factory.make()",
+      true,
+    ],
+    [
+      "const factory = { config: { define: { PRIVATE_TOKEN: {} } }, make() { return this.config } }; const make = factory.make; export default make()",
+      false,
+    ],
+  ])("projects factory bindings for " + rule.meta.id + ": %s", async (source, expected) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": source },
+    });
+    expect(result.diagnostics.length > 0).toBe(expected);
+  });
+}

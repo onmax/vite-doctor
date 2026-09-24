@@ -411,6 +411,13 @@ function readAliasInitializers(source: string) {
         const match = readProperties(value, new Set(seen)).findLast(
           (item) => item.type === "Property" && staticKey(item, seen) === key,
         );
+        if (match?.kind === "get") {
+          const values: AnyNode[] = [];
+          visitReturnValues(match.value.body, (returned) =>
+            values.push(...projectBinding(property.value, returned, name, seen)),
+          );
+          return values;
+        }
         if (match && match.kind !== "init") return [];
         return projectBinding(property.value, match?.value, name, seen);
       });
@@ -1578,7 +1585,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
       )
         node = node.expression;
       else if (node.type === "SequenceExpression") node = node.expressions.at(-1);
-      else if (node.type === "Identifier") {
+      else if (node.type === "Identifier" || node.type === "ThisExpression") {
         const ranges = initializers.get(node.start);
         if (ranges?.length !== 1) break;
         node = nodesByRange.get(ranges[0]!.join(":"));
@@ -1800,9 +1807,26 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
               initializers.set(position, value ? [[value.start, value.end]] : []);
             }
           } else if (pattern.type === "ObjectPattern") {
+            const consumed = new Set<string>();
             for (const property of pattern.properties) {
+              if (property.type === "RestElement") {
+                if (value?.type !== "ObjectExpression") continue;
+                const start = -nodesByRange.size - 1;
+                const rest = {
+                  type: "ObjectExpression",
+                  properties: readOptions(value).filter(
+                    (item) => item.type !== "Property" || !consumed.has(keyOf(item) ?? ""),
+                  ),
+                  start,
+                  end: start,
+                };
+                nodesByRange.set(`${start}:${start}`, rest);
+                bind(property.argument, rest);
+                continue;
+              }
               if (property.type !== "Property") continue;
               const key = keyOf(property);
+              if (key !== null) consumed.add(key);
               const match =
                 value?.type === "ObjectExpression"
                   ? readOptions(value).findLast(
@@ -1843,6 +1867,25 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             bind(parameter.argument, value);
           } else bind(parameter, args[index]);
         });
+        if (callee.type !== "ArrowFunctionExpression" && node.callee.type === "MemberExpression") {
+          const receiver = resolve(node.callee.object);
+          const bindThis = (child: AnyNode) => {
+            if (!child || ["FunctionExpression", "FunctionDeclaration"].includes(child.type))
+              return;
+            if (child.type === "ThisExpression" && receiver) {
+              previous.set(child.start, initializers.get(child.start));
+              initializers.set(child.start, [[receiver.start, receiver.end]]);
+            }
+            for (const value of Object.values(child)) {
+              if (Array.isArray(value))
+                value.forEach((item) => {
+                  if (item && typeof item === "object") bindThis(item);
+                });
+              else if (value && typeof value === "object") bindThis(value);
+            }
+          };
+          bindThis(callee.body);
+        }
         try {
           return readConfig(callee);
         } finally {
