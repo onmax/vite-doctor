@@ -791,3 +791,52 @@ function label() { if (Date.now()) { ${effect}; return "Label" } return "Label" 
     expect(result.diagnostics).toHaveLength(1);
   },
 );
+
+test.each([
+  ["const displayed = details()", "displayed.label", 0],
+  ["const displayed = details()", "displayed.generatedAt", 1],
+  ["let displayed; displayed = details()", "displayed.label", 0],
+  ["let displayed; displayed = details()", "displayed.generatedAt", 1],
+  ["const { label: displayed } = details()", "displayed", 0],
+  ["const { generatedAt: displayed } = details()", "displayed", 1],
+])("preserves returned projections: %s %s", async (assignment, rendered, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function details() { return { label: 'stable', generatedAt: Date.now() } }
+    ${assignment}</script><template>{{ ${rendered} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["let displayed; displayed = clock()", "{{ displayed }}", 1],
+  ["", '<button @click="clock">{{ clock() }}</button>', 1],
+  ["const displayed = clock()", '<button @click="clock">{{ displayed }}</button>', 1],
+  ["", '<button @click="clock">Stable</button>', 0],
+])("traces assigned and event-shared helpers: %s %s", async (setup, template, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { return Date.now() }; ${setup}</script><template>${template}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each(["0", "const ignored = 1 + 1", "void 0", "const ignored = true ? 1 : 2"])(
+  "ignores inert statements in equal-return helpers: %s",
+  async (statement) => {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>function label() { if (Date.now()) { ${statement}; return 'Label' } return 'Label' }</script><template>{{ label() }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test("preserves client guards in helpers shared with event bindings", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { if (import.meta.client) return Date.now(); return 'stable' }</script>
+    <template><button @click="clock">{{ clock() }}</button></template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});

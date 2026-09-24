@@ -82,7 +82,11 @@ export function isTopLevelVueScriptSetupCall(ctx: RuleContext, node: AnyNode) {
 export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) {
   const text = ctx.file.text;
   if (/<\s*(NuxtTime|ClientOnly)\b/.test(text)) return false;
-  if (ctx.helpers.isClientOnlyExecutionContext(node, text)) return false;
+  // Event bindings do not exclude SSR calls to the same helper. Preserve source offsets for guards.
+  const executionSource = text.replace(TEMPLATE_BLOCK_RE, (template) =>
+    template.replace(TEMPLATE_EVENT_RE_G, (event) => " ".repeat(event.length)),
+  );
+  if (ctx.helpers.isClientOnlyExecutionContext(node, executionSource)) return false;
   const source = sourceForNode(node, text);
   if (!source) return false;
   const template = getTemplateSource(ctx);
@@ -222,6 +226,8 @@ function functionFlowsToTemplate(
       owner = node;
     }
     if (node.type === "VariableDeclarator") return visit(node.init, owner, node);
+    if (node.type === "AssignmentExpression" && node.operator === "=")
+      return visit(node.right, owner, node);
     const callback =
       node.type === "CallExpression" &&
       matchesCallee(node.arguments[0]) &&
@@ -256,9 +262,12 @@ function functionFlowsToTemplate(
         (!owner || contributesToReturn(node, owner, parents)) &&
         renderedReferences.some(
           (reference) =>
-            patternBinds(variable.id, reference.name) &&
-            resolveLocalBinding(ctx.file.scriptAst, reference.name, parents) === variable &&
-            projectionIncludes(node, variable, reference, parents),
+            patternBinds(variable.id ?? variable.left, reference.name) &&
+            resolveLocalBinding(ctx.file.scriptAst, reference.name, parents) ===
+              (variable.type === "AssignmentExpression"
+                ? resolveLocalBinding(variable, reference.name, parents)
+                : variable) &&
+            projectionIncludes(node, variable, reference, parents, [source, fn]),
         )
       )
         return true;
@@ -508,28 +517,31 @@ function projectionIncludes(
   variable: AnyNode,
   reference: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
+  returnedSource?: [AnyNode, AnyNode],
 ): boolean {
   const path: string[] = [];
-  for (let current = node; current && current !== variable; current = parents.get(current)) {
-    const parent = parents.get(current);
-    if (parent?.type === "ArrayExpression") {
-      const index = parent.elements.indexOf(current);
+  for (const [start, end] of [...(returnedSource ? [returnedSource] : []), [node, variable]]) {
+    for (let current = start; current && current !== end; current = parents.get(current)) {
+      const parent = parents.get(current);
+      if (parent?.type === "ArrayExpression") {
+        const index = parent.elements.indexOf(current);
+        if (
+          parent.elements
+            .slice(0, index + 1)
+            .some((element: AnyNode) => element?.type === "SpreadElement")
+        )
+          return true;
+        path.unshift(String(index));
+      }
       if (
-        parent.elements
-          .slice(0, index + 1)
-          .some((element: AnyNode) => element?.type === "SpreadElement")
-      )
-        return true;
-      path.unshift(String(index));
-    }
-    if (
-      parent?.type === "Property" &&
-      parent.value === current &&
-      parents.get(parent)?.type === "ObjectExpression"
-    ) {
-      const key = parent.computed ? parent.key?.value : (parent.key?.name ?? parent.key?.value);
-      if (key === undefined) return true;
-      path.unshift(String(key));
+        parent?.type === "Property" &&
+        parent.value === current &&
+        parents.get(parent)?.type === "ObjectExpression"
+      ) {
+        const key = parent.computed ? parent.key?.value : (parent.key?.name ?? parent.key?.value);
+        if (key === undefined) return true;
+        path.unshift(String(key));
+      }
     }
   }
   const bindingPath = ["VariableDeclarator", "AssignmentExpression", "AssignmentPattern"].includes(
@@ -681,6 +693,19 @@ function contributesToReturn(
   return false;
 }
 
+function isInertExpression(node: AnyNode): boolean {
+  if (!node) return true;
+  if (node.type === "Literal") return true;
+  if (node.type === "UnaryExpression" && node.operator !== "delete")
+    return isInertExpression(node.argument);
+  if (["BinaryExpression", "LogicalExpression"].includes(node.type))
+    return isInertExpression(node.left) && isInertExpression(node.right);
+  if (node.type === "ConditionalExpression")
+    return [node.test, node.consequent, node.alternate].every(isInertExpression);
+  if (node.type === "SequenceExpression") return node.expressions.every(isInertExpression);
+  return false;
+}
+
 function returnsSameLiteral(owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>): boolean {
   const alwaysReturns = (statement: AnyNode): boolean => {
     if (statement?.type === "ReturnStatement") return true;
@@ -697,10 +722,10 @@ function returnsSameLiteral(owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>):
   walkScriptLocal(owner.body, (statement) => {
     if (containingFunction(statement, parents) !== owner) return;
     if (
-      statement.type === "ExpressionStatement" ||
+      (statement.type === "ExpressionStatement" && !isInertExpression(statement.expression)) ||
       (statement.type === "VariableDeclarator" &&
         statement.init &&
-        statement.init.type !== "Literal") ||
+        !isInertExpression(statement.init)) ||
       ["AssignmentExpression", "UpdateExpression", "ThrowStatement"].includes(statement.type)
     )
       same = false;
