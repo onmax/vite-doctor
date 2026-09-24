@@ -8,6 +8,12 @@ const optionalPeer = {
 
 test.each([
   'do { require("peer"); } while (false);',
+  'do {} while (require("peer"));',
+  'do { continue; } while (require("peer"));',
+  '(function (peer = require("peer")) {})();',
+  '((peer = require("peer")) => peer)();',
+  '((unused, peer = require("peer")) => peer)(1);',
+  '((peer = require("peer")) => peer)(void 0);',
   'export {}; await (import("peer"));',
   'export {}; await (((import("peer"))));',
   '(() => require("peer"))();',
@@ -56,6 +62,9 @@ test.each([
   'const load = () => require("peer");',
   '((peer = require("peer")) => peer)({});',
   'consume(() => require("peer"));',
+  '((peer = require("peer")) => peer)(...args);',
+  'if (enabled) ((peer = require("peer")) => peer)();',
+  'do { if (enabled) break; } while (require("peer"));',
   '(function* () { require("peer"); })();',
   '(async () => { await ready; require("peer"); })();',
   'if (enabled) (() => require("peer"))();',
@@ -226,3 +235,20 @@ test.each([
   expect(diagnostics[0]?.code).toBe("PKG0003");
   expect(diagnostics[0]?.file).toContain("browser.js");
 });
+
+test.each(['import "./server.js";', 'export const load = () => import("./server.js");'])(
+  "propagates local import requiredness to browser replacements: %s",
+  async (source) => {
+    const diagnostics = await diagnose(
+      { main: "index.js", browser: { "./server.js": "./browser.js" }, ...optionalPeer },
+      {
+        "index.js": source,
+        "server.js": "export {};",
+        "browser.js": 'import "peer";',
+      },
+    );
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      source.startsWith("import") ? ["PKG0003"] : [],
+    );
+  },
+);

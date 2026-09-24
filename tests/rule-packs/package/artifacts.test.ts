@@ -266,3 +266,15 @@ test("does not substitute TypeScript chunks for missing JavaScript runtime impor
   expect(result.references).toEqual([]);
   expect(result.missing).toEqual(["chunk.js"]);
 });
+
+test.each(["chunk.ts", "chunk.mts", "chunk.cts", "chunk.tsx", "chunk/index.ts"])(
+  "does not probe TypeScript file %s for extensionless JavaScript requires",
+  (file) => {
+    const result = inventory(
+      { main: "index.js" },
+      { "index.js": 'require("./chunk");', [file]: 'import "peer";' },
+    )!;
+    expect(result.references).toEqual([]);
+    expect(result.missing).toEqual(["chunk"]);
+  },
+);

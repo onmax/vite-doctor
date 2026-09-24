@@ -173,19 +173,13 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
               ".js",
               ".mjs",
               ".cjs",
-              ".ts",
-              ".mts",
-              ".cts",
               ".jsx",
-              ".tsx",
+              ...(sourceResolution ? [".ts", ".mts", ".cts", ".tsx"] : []),
               "/index.js",
               "/index.mjs",
               "/index.cjs",
-              "/index.ts",
-              "/index.mts",
-              "/index.cts",
               "/index.jsx",
-              "/index.tsx",
+              ...(sourceResolution ? ["/index.ts", "/index.mts", "/index.cts", "/index.tsx"] : []),
             ].map((ext) => path + ext),
           ]
       : [path];
@@ -259,12 +253,8 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   if (typeof manifest.browser === "string")
     enqueue(manifest.browser, "runtime", true, root, false, true);
   else if (manifest.browser) {
-    const requiredRoots = new Set(
-      queue.filter((entry) => entry.required).map((entry) => entry.path),
-    );
-    for (const [original, entry] of Object.entries(manifest.browser))
-      if (entry && entry.startsWith("."))
-        enqueue(entry, "runtime", requiredRoots.has(resolve(root, original)), root, false, true);
+    for (const entry of Object.values(manifest.browser))
+      if (entry && entry.startsWith(".")) enqueue(entry, "runtime", false, root, false, true);
   }
   for (const entry of [manifest.types, manifest.typings])
     if (entry) enqueue(entry, "types", false, root, false);
@@ -281,6 +271,11 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     const key = `${current.path}:${current.kind}:${current.required}`;
     if (visited.has(key)) continue;
     visited.add(key);
+    if (current.required && manifest.browser && typeof manifest.browser === "object") {
+      for (const [original, replacement] of Object.entries(manifest.browser))
+        if (replacement && replacement.startsWith(".") && resolve(root, original) === current.path)
+          enqueue(replacement, "runtime", true, root, false, true);
+    }
     const source = ts.createSourceFile(
       current.path,
       readFileSync(current.path, "utf8"),
@@ -534,7 +529,9 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       (ts.isConditionalExpression(parent) && !isWithin(node, parent.condition)) ||
       (ts.isSwitchStatement(parent) && !isWithin(node, parent.expression)) ||
       (ts.isWhileStatement(parent) && !isWithin(node, parent.expression)) ||
-      (ts.isDoStatement(parent) && !isWithin(node, parent.statement)) ||
+      (ts.isDoStatement(parent) &&
+        !isWithin(node, parent.statement) &&
+        hasAbruptCompletion(parent.statement)) ||
       (ts.isForStatement(parent) &&
         !(parent.initializer && isWithin(node, parent.initializer)) &&
         !(parent.condition && isWithin(node, parent.condition))) ||
@@ -561,17 +558,36 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
   return true;
 }
 
+function hasAbruptCompletion(statement: ts.Statement): boolean {
+  let abrupt = false;
+  function visit(node: ts.Node) {
+    if (ts.isFunctionLike(node)) return;
+    if (ts.isBreakStatement(node) || ts.isReturnStatement(node) || ts.isThrowStatement(node))
+      abrupt = true;
+    ts.forEachChild(node, visit);
+  }
+  visit(statement);
+  return abrupt;
+}
+
 function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): boolean {
   if (
     !(ts.isFunctionExpression(node) || ts.isArrowFunction(node)) ||
-    !isWithin(load, node.body) ||
     node.asteriskToken ||
     node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
   )
     return false;
   let expression: ts.Node = node;
   while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
-  return ts.isCallExpression(expression.parent) && expression.parent.expression === expression;
+  const call = expression.parent;
+  if (!ts.isCallExpression(call) || call.expression !== expression) return false;
+  if (isWithin(load, node.body)) return true;
+  const index = node.parameters.findIndex(
+    (parameter) => parameter.initializer && isWithin(load, parameter.initializer),
+  );
+  if (index < 0 || call.arguments.some(ts.isSpreadElement)) return false;
+  const argument = call.arguments[index];
+  return !argument || (ts.isVoidExpression(argument) && ts.isNumericLiteral(argument.expression));
 }
 
 function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
