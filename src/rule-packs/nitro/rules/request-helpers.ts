@@ -1,3 +1,4 @@
+import { isNumber, isString } from "../../../core/internal/value-schema.js";
 import {
   type AnyNode,
   createRule,
@@ -198,7 +199,7 @@ function hasValidationOfVariable(scope: AnyNode, variable: string, source: strin
   let found = false;
   walkScriptLocal(scope, (node) => {
     if (found || node.type !== "CallExpression") return;
-    if (typeof node.start === "number" && node.start <= after) return;
+    if (isNumber(node.start) && node.start <= after) return;
     if (
       isDirectValidatorCall(node, variable) ||
       isSchemaMethodValidatorCall(node, variable, source)
@@ -249,7 +250,7 @@ function methodExpressionName(
 
 function staticString(node: AnyNode, source: string) {
   if (!node) return null;
-  if (node.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node.type === "Literal" && isString(node.value)) return node.value;
   if (node.type === "TemplateLiteral" && node.expressions?.length === 0)
     return node.quasis?.[0]?.value?.cooked ?? node.quasis?.[0]?.value?.raw ?? null;
   const text = sourceForNode(node, source);
@@ -315,16 +316,15 @@ function findVariableDeclarationBefore(anchor: AnyNode, name: string) {
 }
 
 function findDeclarationInScopeBefore(scope: AnyNode, child: AnyNode, name: string) {
-  let match: any = null;
-  for (const statement of scope.body ?? []) {
-    if (statement === child) break;
+  for (const statement of [...(scope.body ?? [])].reverse()) {
+    if (statement === child) continue;
     const statementStart = statement.start ?? statement.range?.[0] ?? 0;
     const childStart = child.start ?? child.range?.[0] ?? 0;
-    if (statementStart >= childStart) break;
+    if (statementStart >= childStart) continue;
     const declaration = variableDeclarationFromStatement(statement, name);
-    if (declaration) match = declaration;
+    if (declaration) return declaration;
   }
-  return match;
+  return null;
 }
 
 function variableDeclarationFromStatement(statement: AnyNode, name: string) {

@@ -1,3 +1,4 @@
+import { isString } from "./value-schema.js";
 import { readFileSync } from "node:fs";
 import { relative } from "pathe";
 import type {
@@ -16,6 +17,8 @@ import type { ScanFileEntry } from "./source-inventory.js";
 import { createCacheKey, markSession, type ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
+import { isAstNode } from "./ast-node.js";
+import { parseCachedFileFacts } from "./file-facts-schema.js";
 
 const FILE_FACTS_VERSION = 2;
 
@@ -43,10 +46,10 @@ async function parseSourceFile(
     "fileFacts",
     `${FILE_FACTS_VERSION}:${absolute}:${hash}`,
   );
-  const cachedFacts = session.cache.get<FileFacts>(cacheKey);
+  const cachedFacts = parseCachedFileFacts(session.cache.get(cacheKey));
   const isVueSfc = absolute.endsWith(".vue");
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
-  const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor as any, text) : undefined;
+  const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor, text) : undefined;
   const scriptText = isVueSfc ? (script?.text ?? "") : text;
   const scriptAst = scriptText.trim() ? parseScript(absolute, scriptText, script?.lang) : null;
   const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text) : null;
@@ -100,7 +103,7 @@ function isModuleNotFound(error: unknown): boolean {
   return (
     error instanceof Error &&
     "code" in error &&
-    (error as Error & { code?: string }).code === "ERR_MODULE_NOT_FOUND"
+    Reflect.get(error, "code") === "ERR_MODULE_NOT_FOUND"
   );
 }
 
@@ -160,7 +163,7 @@ function createFileFacts(
         });
       } else if (node.type === "ImportExpression") {
         dynamicImports.push({
-          source: typeof node.source?.value === "string" ? node.source.value : null,
+          source: isString(node.source?.value) ? node.source.value : null,
           range: nodeRange(session, file.path, text, node),
         });
       } else if (node.type === "CallExpression") {
@@ -177,7 +180,7 @@ function createFileFacts(
         }
         if (name === "import") {
           dynamicImports.push({
-            source: typeof node.arguments?.[0]?.value === "string" ? node.arguments[0].value : null,
+            source: isString(node.arguments?.[0]?.value) ? node.arguments[0].value : null,
             range: nodeRange(session, file.path, text, node),
           });
         }
@@ -224,12 +227,12 @@ function collectDeclarationExports(
   session: ScanSession,
   file: string,
   text: string,
-  node: any,
+  node: unknown,
   exports: ExportFact[],
 ) {
-  if (!node || typeof node !== "object") return;
+  if (!isAstNode(node)) return;
   if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") {
-    if (node.id?.name)
+    if (isAstNode(node.id) && isString(node.id.name))
       exports.push({
         name: node.id.name,
         localName: node.id.name,
@@ -237,8 +240,8 @@ function collectDeclarationExports(
         range: nodeRange(session, file, text, node),
       });
   } else if (node.type === "VariableDeclaration") {
-    for (const declaration of node.declarations ?? []) {
-      if (declaration.id?.name)
+    for (const declaration of Array.isArray(node.declarations) ? node.declarations : []) {
+      if (isAstNode(declaration) && isAstNode(declaration.id) && isString(declaration.id.name))
         exports.push({
           name: declaration.id.name,
           localName: declaration.id.name,
@@ -247,7 +250,7 @@ function collectDeclarationExports(
         });
     }
   } else if (node.type === "TSTypeAliasDeclaration" || node.type === "TSInterfaceDeclaration") {
-    if (node.id?.name)
+    if (isAstNode(node.id) && isString(node.id.name))
       exports.push({
         name: node.id.name,
         localName: node.id.name,
@@ -258,30 +261,26 @@ function collectDeclarationExports(
 }
 
 function walkAstFacts(node: unknown, visit: (node: unknown) => void) {
-  if (!node || typeof node !== "object") return;
-  const typed = node as { type?: string };
-  if (!typed.type) return;
-  visit(typed);
-  for (const key of getNodeVisitorKeys(typed as Record<string, unknown>)) {
-    const value = (typed as Record<string, unknown>)[key];
+  if (!isAstNode(node)) return;
+  visit(node);
+  for (const key of getNodeVisitorKeys(node)) {
+    const value = node[key];
     if (Array.isArray(value)) {
       for (const child of value) walkAstFacts(child, visit);
-    } else if (value && typeof value === "object") {
+    } else if (isAstNode(value)) {
       walkAstFacts(value, visit);
     }
   }
 }
 
 function walkTemplateFacts(node: unknown, visit: (node: unknown) => void) {
-  if (!node || typeof node !== "object") return;
-  const typed = node as { type?: string };
-  if (!typed.type) return;
-  visit(typed);
-  for (const key of getTemplateVisitorKeys(typed as Record<string, unknown>)) {
-    const value = (typed as Record<string, unknown>)[key];
+  if (!isAstNode(node)) return;
+  visit(node);
+  for (const key of getTemplateVisitorKeys(node)) {
+    const value = node[key];
     if (Array.isArray(value)) {
       for (const child of value) walkTemplateFacts(child, visit);
-    } else if (value && typeof value === "object") {
+    } else if (isAstNode(value)) {
       walkTemplateFacts(value, visit);
     }
   }
@@ -290,7 +289,7 @@ function walkTemplateFacts(node: unknown, visit: (node: unknown) => void) {
 function nodeRange(session: ScanSession, file: string, source: string, node: any) {
   const start = node?.start ?? node?.range?.[0];
   const end = node?.end ?? node?.range?.[1] ?? start;
-  return typeof start === "number"
+  return Number.isInteger(start)
     ? session.helpers.rangeFromOffsets(file, source, start, end)
     : undefined;
 }

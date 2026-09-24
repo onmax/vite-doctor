@@ -1,3 +1,4 @@
+import { isString } from "./value-schema.js";
 import { execFile } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "pathe";
@@ -104,7 +105,7 @@ export async function collectGitChangeInventory(
   }
 
   const base = since ? await resolveMergeBase(root, since) : head.stdout.trim();
-  if (typeof base !== "string") return base;
+  if (!isString(base)) return base;
 
   const tracked = await runGit(root, [
     "diff",
@@ -309,11 +310,16 @@ function parseHunks(patch: string): GitChangeHunk[] {
 
 function rangesFromHunks(hunks: GitChangeHunk[]): ChangedLineRange[] {
   const ranges = hunks
-    .filter((hunk) => hunk.current.lineCount > 0)
-    .map((hunk) => ({
-      startLine: hunk.current.startLine,
-      endLine: hunk.current.startLine + hunk.current.lineCount - 1,
-    }))
+    .flatMap((hunk) =>
+      hunk.current.lineCount > 0
+        ? [
+            {
+              startLine: hunk.current.startLine,
+              endLine: hunk.current.startLine + hunk.current.lineCount - 1,
+            },
+          ]
+        : [],
+    )
     .sort((left, right) => left.startLine - right.startLine || left.endLine - right.endLine);
 
   const merged: ChangedLineRange[] = [];
@@ -392,12 +398,13 @@ function unavailableInventory(
   message: string,
   ref?: string,
 ): UnavailableGitChangeInventory {
-  return {
+  const inventory: UnavailableGitChangeInventory = {
     status: "unavailable",
     reason,
     message,
-    ...(ref ? { ref } : {}),
   };
+  if (ref) inventory.ref = ref;
+  return inventory;
 }
 
 function commandFailureMessage(prefix: string, result: CommandResult): string {
@@ -412,8 +419,7 @@ function runGit(root: string, args: string[]): Promise<CommandResult> {
         ok: !error,
         stdout,
         stderr,
-        errorCode:
-          error && "code" in error && typeof error.code === "string" ? error.code : undefined,
+        errorCode: error && "code" in error && isString(error.code) ? error.code : undefined,
       });
     });
   });

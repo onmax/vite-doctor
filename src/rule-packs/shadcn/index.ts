@@ -1,13 +1,5 @@
 import { defineRulePack } from "../../core/index.js";
-import {
-  noArbitraryValues,
-  noInlineStyles,
-  noRawColors,
-  noRestyle,
-  noUnknownClasses,
-  requireStaticClasses,
-  shadcnRules,
-} from "./rules/index.js";
+import { noArbitraryValues, noInlineStyles, noRawColors, shadcnRules } from "./rules/index.js";
 
 export * from "./rules/index.js";
 export { diagnostics, shadcnDiagnosticRegistry } from "./diagnostics.js";

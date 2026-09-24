@@ -4,7 +4,6 @@ import type {
   DoctorFramework,
   DoctorReportFormat,
   ProjectInfo,
-  RuntimePackageName,
   RuntimeTarget,
 } from "./core/index.js";
 import { detectProject, evaluateRuleApplicability } from "./core/index.js";
@@ -241,10 +240,12 @@ function inferTarget(project: ProjectInfo): MigrationReport["target"] {
 
 function parseExplicitTargets(targets: string[]): MigrationReport["target"] {
   return targetFromRequested(
-    targets
-      .flatMap((target) => target.split(","))
-      .map((target) => target.trim())
-      .filter(Boolean),
+    targets.flatMap((target) =>
+      target.split(",").flatMap((entry) => {
+        const trimmed = entry.trim();
+        return trimmed ? [trimmed] : [];
+      }),
+    ),
     "explicit",
   );
 }
@@ -292,7 +293,16 @@ function dependencyChanges(
 ): MigrationDependencyStage["changes"] {
   const changes: MigrationDependencyStage["changes"] = [];
   for (const target of requested) {
-    const [runtimeName, targetMajor] = target.split("@") as [RuntimePackageName, string];
+    const [runtimeName, targetMajor] = target.split("@");
+    if (
+      !targetMajor ||
+      (runtimeName !== "nuxt" &&
+        runtimeName !== "nitro" &&
+        runtimeName !== "h3" &&
+        runtimeName !== "vue")
+    ) {
+      throw new Error(`Invalid migration target "${target}".`);
+    }
     const current = project.runtimeGraph?.packages[runtimeName];
     const packageName =
       runtimeName === "nitro" && current?.name === "nitropack" ? "nitro" : runtimeName;

@@ -1,4 +1,4 @@
-import { AnyNode, createRule } from "./shared.js";
+import { booleanRuleOption, AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 interface Options {
@@ -17,7 +17,9 @@ export const preferPropsDestructureDefaults = createRule({
     frameworkVersions: { vue: ">=3.5" },
   },
   create(ctx) {
-    const options = (ctx.options ?? {}) as Options;
+    const options: Options = {
+      allowWithDefaults: booleanRuleOption(ctx.options, "allowWithDefaults"),
+    };
     if (options.allowWithDefaults || !ctx.file.text.includes("<script setup")) return;
 
     return {

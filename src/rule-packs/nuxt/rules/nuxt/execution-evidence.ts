@@ -1,4 +1,6 @@
 import type { RuleContext } from "../../../../core/index.js";
+import { isAstNode } from "../../../../core/internal/ast-node.js";
+import { isRecord, isString, isStringSet } from "../../../../core/internal/value-schema.js";
 import {
   findAncestor,
   nearestFunctionOrProgram,
@@ -33,7 +35,7 @@ export function isClientOnlyPath(path: string) {
 }
 
 export function classifyExecutionEvidence(ctx: RuleContext, node: AnyNode): NuxtExecutionEvidence {
-  if (!node || typeof node !== "object") return computeExecutionEvidence(ctx, node);
+  if (!isAstNode(node)) return computeExecutionEvidence(ctx, node);
   const cache = getEvidenceCache(ctx);
   const hit = cache.get(node);
   if (hit) return hit;
@@ -121,7 +123,8 @@ function computeExecutionEvidence(ctx: RuleContext, node: AnyNode): NuxtExecutio
 
 function getEvidenceCache(ctx: RuleContext): WeakMap<AnyNode, NuxtExecutionEvidence> {
   const key = `nuxt:evidence:${ctx.file.hash}`;
-  let cache = ctx.cache.get<WeakMap<AnyNode, NuxtExecutionEvidence>>(key);
+  const cached = ctx.cache.get(key);
+  let cache = cached instanceof WeakMap ? cached : undefined;
   if (!cache) {
     cache = new WeakMap();
     ctx.cache.set(key, cache);
@@ -131,8 +134,8 @@ function getEvidenceCache(ctx: RuleContext): WeakMap<AnyNode, NuxtExecutionEvide
 
 function getTemplateSource(ctx: RuleContext): string {
   const key = `nuxt:template:${ctx.file.hash}`;
-  const cached = ctx.cache.get<string>(key);
-  if (cached !== undefined) return cached;
+  const cached = ctx.cache.get(key);
+  if (isString(cached)) return cached;
   const value = ctx.file.text.match(TEMPLATE_BLOCK_RE)?.[1] ?? "";
   ctx.cache.set(key, value);
   return value;
@@ -140,8 +143,8 @@ function getTemplateSource(ctx: RuleContext): string {
 
 function getTemplateBoundIdentifiers(ctx: RuleContext): Set<string> {
   const key = `nuxt:template-refs:${ctx.file.hash}`;
-  const cached = ctx.cache.get<Set<string>>(key);
-  if (cached) return cached;
+  const cached = ctx.cache.get(key);
+  if (isStringSet(cached)) return cached;
   const set = new Set<string>();
   for (const match of getTemplateSource(ctx).matchAll(TEMPLATE_DIRECTIVE_RE_G)) {
     for (const id of (match[1] ?? "").matchAll(IDENT_RE_G)) set.add(id[0]);
@@ -162,8 +165,9 @@ function isCallFlowClientCallable(ctx: RuleContext, node: AnyNode) {
 
 function getCallFlowEvidence(ctx: RuleContext) {
   const key = `nuxt:call-flow:${ctx.file.hash}`;
-  const cached = ctx.cache.get<{ clientCallable: Set<string> }>(key);
-  if (cached) return cached;
+  const cached = ctx.cache.get(key);
+  if (isRecord(cached) && isStringSet(cached.clientCallable))
+    return { clientCallable: cached.clientCallable };
   const graph = buildCallFlowEvidence(ctx);
   ctx.cache.set(key, graph);
   return graph;
@@ -279,11 +283,11 @@ function collectDirectCalledFunctionNames(
 ): Set<string> {
   const called = new Set<string>();
   const visit = (current: AnyNode, isRoot = false) => {
-    if (!current || typeof current !== "object") return;
     if (Array.isArray(current)) {
       for (const child of current) visit(child);
       return;
     }
+    if (!isAstNode(current)) return;
     if (
       !isRoot &&
       (current.type === "FunctionDeclaration" ||

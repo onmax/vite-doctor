@@ -33,7 +33,11 @@ export const requireSafetyCommentForTypeAssertion = createRule({
         if (
           !isTypeAssertion(node) ||
           isConstAssertion(node) ||
-          hasSafetyComment(ctx.file.text, (ctx.file.scriptAst?.comments as AnyNode[]) ?? [], node)
+          hasSafetyComment(
+            ctx.file.text,
+            Array.isArray(ctx.file.scriptAst?.comments) ? ctx.file.scriptAst.comments : [],
+            node,
+          )
         ) {
           return;
         }

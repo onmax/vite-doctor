@@ -1,4 +1,4 @@
-import { AnyNode, createRule } from "./shared.js";
+import { booleanRuleOption, AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 interface Options {
@@ -40,7 +40,9 @@ const props = defineProps<Props>()
     requires: { sfc: true, script: true, vue: true },
   },
   create(ctx) {
-    const options = (ctx.options ?? {}) as Options;
+    const options: Options = {
+      allowRuntimeValidators: booleanRuleOption(ctx.options, "allowRuntimeValidators"),
+    };
     if (options.allowRuntimeValidators || !isTypeScriptScriptSetup(ctx.file.text)) return;
 
     return {

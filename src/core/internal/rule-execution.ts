@@ -1,3 +1,4 @@
+import { isNumber, isRecord } from "./value-schema.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "pathe";
 import type { Diagnostic, DoctorRule, RuleContext, SourceFileHandle } from "../primitives.js";
@@ -124,9 +125,10 @@ function createRuleContext(
     getFileText(target) {
       return readFileSync(resolve(session.root, target), "utf8");
     },
-    getJson<T = unknown>(target: string): T | null {
+    getJson<T>(target: string, parse: (value: unknown) => T): T | null {
       try {
-        return JSON.parse(readFileSync(resolve(session.root, target), "utf8")) as T;
+        const value: unknown = JSON.parse(readFileSync(resolve(session.root, target), "utf8"));
+        return parse(value);
       } catch {
         return null;
       }
@@ -135,12 +137,13 @@ function createRuleContext(
     helpers: session.helpers,
     range(nodeOrStart, end) {
       if (!nodeOrStart) return undefined;
-      if (typeof nodeOrStart === "number")
+      if (isNumber(nodeOrStart))
         return session.helpers.rangeFromOffsets(file.path, file.text, nodeOrStart, end);
-      const node = nodeOrStart as { start?: number; end?: number; range?: [number, number] };
-      const start = node.start ?? node.range?.[0];
-      const stop = node.end ?? node.range?.[1] ?? start;
-      return typeof start === "number"
+      if (!isRecord(nodeOrStart)) return undefined;
+      const range = Array.isArray(nodeOrStart.range) ? nodeOrStart.range : [];
+      const start = isNumber(nodeOrStart.start) ? nodeOrStart.start : range[0];
+      const stop = isNumber(nodeOrStart.end) ? nodeOrStart.end : (range[1] ?? start);
+      return isNumber(start)
         ? session.helpers.rangeFromOffsets(file.path, file.text, start, stop)
         : undefined;
     },

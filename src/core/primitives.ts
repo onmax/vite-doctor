@@ -155,7 +155,7 @@ export interface SfcHandle {
   hash: string;
   descriptor: unknown;
   blockHashes: SfcBlockHashes;
-  getTemplateAst(): Record<string, unknown> | null;
+  getTemplateAst(): unknown;
   getScriptAst(kind?: "script" | "scriptSetup" | "merged"): Record<string, unknown> | null;
   getTemplateTokens(): unknown;
   offsetToPosition(offset: number): SourceRange;
@@ -194,6 +194,7 @@ export interface NuxtProjectInfo {
   doctorConfig?: DoctorSerializableConfig;
   manifestPath?: string;
   modules?: Array<{ name: string; version?: string; doctorPlugin?: string }>;
+  configuredModules?: string[];
   moduleSources?: NuxtModuleSource[];
   manifest?: {
     importsDirs: string[];
@@ -435,7 +436,7 @@ export interface WorkspaceGraph {
 }
 
 export interface RuleCache {
-  get<T = unknown>(key: string): T | undefined;
+  get(key: string): unknown;
   set<T = unknown>(key: string, value: T): void;
 }
 
@@ -513,7 +514,7 @@ export interface RuleContext {
   options: unknown;
   report(diagnostic: NosticsDiagnostic, metadata: DoctorDiagnosticMetadata): void;
   getFileText(file: string): string;
-  getJson<T = unknown>(file: string): T | null;
+  getJson<T>(file: string, parse: (value: unknown) => T): T | null;
   cache: RuleCache;
   helpers: DoctorHelpers;
   range(nodeOrStart: unknown, end?: number): SourceRange | undefined;

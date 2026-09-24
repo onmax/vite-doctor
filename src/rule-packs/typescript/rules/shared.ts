@@ -1,5 +1,7 @@
 import { codeForRuleId, diagnosticForCode, type RuleContext } from "../../../core/index.js";
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
+import { isAstNode } from "../../../core/internal/ast-node.js";
+import { isRecord, isString } from "../../../core/internal/value-schema.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../diagnostics.js";
 
 export type AnyNode = any;
@@ -7,11 +9,10 @@ export type AnyNode = any;
 export function isTypeScriptSource(ctx: RuleContext): boolean {
   if (/\.(?:[cm]?ts|tsx)$/i.test(ctx.file.relativePath)) return true;
   if (!ctx.file.isVueSfc) return false;
-  const descriptor = (ctx.sfc ?? ctx.file.sfc)?.descriptor as
-    | { script?: { lang?: string }; scriptSetup?: { lang?: string } }
-    | undefined;
-  return [descriptor?.script, descriptor?.scriptSetup].some((block) =>
-    /^(?:ts|tsx)$/i.test(block?.lang ?? ""),
+  const descriptor = (ctx.sfc ?? ctx.file.sfc)?.descriptor;
+  if (!isRecord(descriptor)) return false;
+  return [descriptor.script, descriptor.scriptSetup].some(
+    (block) => isRecord(block) && isString(block.lang) && /^(?:ts|tsx)$/i.test(block.lang),
   );
 }
 
@@ -80,15 +81,20 @@ export function unwrapParentheses(node: AnyNode): AnyNode {
 }
 
 export function collectTypeIdentifiers(node: AnyNode, names = new Set<string>()): Set<string> {
-  if (!node || typeof node !== "object") return names;
   if (Array.isArray(node)) {
     for (const child of node) collectTypeIdentifiers(child, names);
     return names;
   }
-  if (node.type === "TSTypeReference" && node.typeName?.type === "Identifier") {
+  if (!isAstNode(node)) return names;
+  if (
+    node.type === "TSTypeReference" &&
+    isAstNode(node.typeName) &&
+    node.typeName.type === "Identifier" &&
+    isString(node.typeName.name)
+  ) {
     names.add(node.typeName.name);
   }
-  if (node.type === "Identifier" && parentOf(node)?.type === "TSTypeQuery") {
+  if (node.type === "Identifier" && parentOf(node)?.type === "TSTypeQuery" && isString(node.name)) {
     names.add(node.name);
   }
   for (const [key, value] of Object.entries(node)) {

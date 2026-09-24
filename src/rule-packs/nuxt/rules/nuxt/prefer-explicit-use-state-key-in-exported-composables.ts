@@ -1,3 +1,4 @@
+import { isString } from "../../../../core/internal/value-schema.js";
 import { AnyNode, createRule, isInsideExportedFunction, report } from "./shared.js";
 
 export const preferExplicitUseStateKeyInExportedComposables = createRule({
@@ -15,7 +16,7 @@ export const preferExplicitUseStateKeyInExportedComposables = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useState")) return;
-        if (typeof node.arguments?.[0]?.value === "string") return;
+        if (isString(node.arguments?.[0]?.value)) return;
         if (!isInsideExportedFunction(ctx.file.text, node.start)) return;
         report(
           ctx,

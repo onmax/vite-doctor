@@ -1,4 +1,6 @@
+import { isNumber, isString, isRecord } from "../../../../core/internal/value-schema.js";
 import { relative, resolve } from "pathe";
+import { object, optional, parse, record, string } from "valibot";
 import { AnyNode, bindingNames, createRule, report } from "./shared.js";
 import type { RuleContext } from "../../../../core/index.js";
 
@@ -16,6 +18,13 @@ const NUXT_CONFIG_FILES = [
   "nuxt.config.mjs",
   "nuxt.config.mts",
 ];
+
+const packageJsonSchema = object({
+  dependencies: optional(record(string(), string())),
+  devDependencies: optional(record(string(), string())),
+  optionalDependencies: optional(record(string(), string())),
+  peerDependencies: optional(record(string(), string())),
+});
 
 export const preferUseEventListener = createRule({
   meta: {
@@ -52,7 +61,7 @@ export const preferUseEventListener = createRule({
 });
 
 function projectHasVueUse(ctx: RuleContext) {
-  const pkg = ctx.getJson<any>("package.json");
+  const pkg = ctx.getJson("package.json", (value) => parse(packageJsonSchema, value));
   const deps = {
     ...pkg?.dependencies,
     ...pkg?.devDependencies,
@@ -240,7 +249,7 @@ function nodeName(node: AnyNode): string | null {
 function nodeSource(node: AnyNode, source: string) {
   const start = node?.start ?? node?.range?.[0];
   const end = node?.end ?? node?.range?.[1];
-  return typeof start === "number" && typeof end === "number" ? source.slice(start, end) : "";
+  return isNumber(start) && isNumber(end) ? source.slice(start, end) : "";
 }
 
 function isFunctionLike(node: AnyNode) {
@@ -250,18 +259,18 @@ function isFunctionLike(node: AnyNode) {
 }
 
 function walkScope(node: AnyNode, visit: (node: AnyNode) => void, root = node) {
-  if (!node || typeof node !== "object") return;
+  if (!isRecord(node) && !Array.isArray(node)) return;
   if (Array.isArray(node)) {
     for (const child of node) walkScope(child, visit, root);
     return;
   }
-  if (typeof node.type === "string") visit(node);
+  if (isString(node.type)) visit(node);
   if (node !== root && isFunctionLike(node)) return;
   for (const [key, value] of Object.entries(node)) {
     if (key === "__doctorParent") continue;
     if (Array.isArray(value)) {
       for (const child of value) walkScope(child, visit, root);
-    } else if (value && typeof value === "object") {
+    } else if (isRecord(value)) {
       walkScope(value, visit, root);
     }
   }

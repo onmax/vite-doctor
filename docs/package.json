@@ -18,8 +18,10 @@
   "dependencies": {
     "@nuxt/content": "catalog:frontend",
     "@nuxt/fonts": "catalog:frontend",
+    "@nuxt/icon": "^2.4.1",
     "@nuxt/kit": "catalog:frontend",
     "@nuxt/ui": "catalog:frontend",
+    "@nuxtjs/color-mode": "^4.0.1",
     "@oxc-parser/binding-wasm32-wasi": "catalog:analysis",
     "@oxc-project/types": "catalog:analysis",
     "@resvg/resvg-js": "catalog:frontend",

@@ -1,3 +1,4 @@
+import { isString, isRecord } from "../../core/internal/value-schema.js";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { defineNuxtModule } from "nuxt/kit";
 import type { NuxtModule } from "nuxt/schema";
@@ -35,13 +36,16 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   nuxt.options ??= {};
   nuxt.options.doctor = options;
 
-  const evidence = {
-    pages: [] as Array<{ path?: string; file?: string; name?: string }>,
+  const evidence: NuxtDoctorEvidence & {
+    pages: NonNullable<NuxtDoctorEvidence["pages"]>;
+    prerenderRoutes: Set<string>;
+    componentDirs: unknown[];
+    importDirs: unknown[];
+  } = {
+    pages: [],
     prerenderRoutes: new Set<string>(),
-    buildManifest: undefined as EvidenceBuildManifest | undefined,
-    componentDirs: [] as unknown[],
-    importDirs: [] as unknown[],
-    autoImportContext: undefined as NuxtAutoImportContext | undefined,
+    componentDirs: [],
+    importDirs: [],
   };
 
   nuxt.hook?.("imports:context", (context: NuxtAutoImportContext) => {
@@ -128,15 +132,14 @@ export async function writeManifest(
   const moduleSources: NuxtModuleSource[] = [];
   await nuxt.callHook?.("doctor:extendSources", moduleSources);
   const modules = toArray(nuxt.options.modules).map((entry: any) => ({
-    name:
-      typeof entry === "string" ? entry : (entry?.meta?.name ?? entry?.name ?? "anonymous-module"),
+    name: isString(entry) ? entry : (entry?.meta?.name ?? entry?.name ?? "anonymous-module"),
     version: entry?.meta?.version,
     doctorPlugin: entry?.doctor?.plugin,
   }));
   const resolvedAutoImports = evidence?.autoImportContext?.getImports
     ? await evidence.autoImportContext.getImports()
     : toArray(nuxt.options.imports?.imports);
-  const manifest = {
+  const manifest: NuxtDoctorManifest = {
     nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
     nuxtVersion: nuxt._version ?? nuxt.version ?? "4",
     vueVersion: nuxt.options.vue?.version ?? "3.5",
@@ -186,7 +189,7 @@ export async function writeManifest(
     pluginFiles: normalizePluginFiles(rootDir, toArray(nuxt.options.plugins)),
     appScanRoots: [appDir],
     sharedScanRoots: [resolve(rootDir, "shared/utils"), resolve(rootDir, "shared/types")],
-  } as NuxtDoctorManifest;
+  };
   await nuxt.callHook?.("doctor:context", { nuxt, manifest });
   const manifestPath = join(buildDir, "doctor.manifest.json");
   const signature = JSON.stringify(manifest);
@@ -227,33 +230,37 @@ function flattenPages(pages: any[]): any[] {
 
 function toArray<T = unknown>(value: T[] | Record<string, T> | undefined | null): T[] {
   if (Array.isArray(value)) return value;
-  if (value && typeof value === "object") return Object.values(value);
+  if (isRecord(value)) return Object.values(value);
   return [];
 }
 
 function normalizeDirs(rootDir: string, dirs: unknown[]): string[] {
-  return dirs
-    .map((dir: any) => (typeof dir === "string" ? dir : dir?.path))
-    .filter(Boolean)
-    .map((dir: string) => resolve(rootDir, dir));
+  return dirs.flatMap((dir: any) => {
+    const path = isString(dir) ? dir : dir?.path;
+    return path ? [resolve(rootDir, path)] : [];
+  });
 }
 
 function normalizeAutoImports(imports: unknown[]) {
-  return imports
-    .map((entry: any) => ({
-      name: entry?.name,
-      as: entry?.as,
-      from: entry?.from,
-      type: entry?.type === true || undefined,
-    }))
-    .filter((entry) => entry.name && entry.from);
+  return imports.flatMap((entry: any) =>
+    entry?.name && entry?.from
+      ? [
+          {
+            name: entry.name,
+            as: entry.as,
+            from: entry.from,
+            type: entry.type === true || undefined,
+          },
+        ]
+      : [],
+  );
 }
 
 function serializeImportTransform(transform: any) {
   const serialize = (patterns: unknown[]) =>
-    patterns
-      .filter((pattern): pattern is RegExp => pattern instanceof RegExp)
-      .map(({ source, flags }) => ({ source, flags }));
+    patterns.flatMap((pattern) =>
+      pattern instanceof RegExp ? [{ source: pattern.source, flags: pattern.flags }] : [],
+    );
   return {
     include: serialize(toArray(transform?.include)),
     exclude: serialize(toArray(transform?.exclude)),
@@ -261,10 +268,10 @@ function serializeImportTransform(transform: any) {
 }
 
 function normalizePluginFiles(rootDir: string, plugins: unknown[]): string[] {
-  return plugins
-    .map((plugin: any) => (typeof plugin === "string" ? plugin : (plugin?.src ?? plugin?.file)))
-    .filter(Boolean)
-    .map((file: string) => resolve(rootDir, file));
+  return plugins.flatMap((plugin: any) => {
+    const file = isString(plugin) ? plugin : (plugin?.src ?? plugin?.file);
+    return file ? [resolve(rootDir, file)] : [];
+  });
 }
 
 function normalizeModuleSource(source: NuxtModuleSource): NuxtModuleSource {
@@ -290,10 +297,10 @@ function serializableDoctorConfig(config: DoctorConfig = {}): DoctorConfig | und
 }
 
 function redactRuntimeConfig(config: unknown): unknown {
-  if (!config || typeof config !== "object") return config;
+  if (!isRecord(config) && !Array.isArray(config)) return config;
   return JSON.parse(
     JSON.stringify(config, (_key, value) => {
-      if (typeof value === "string" && value.length > 0) return "<redacted>";
+      if (isString(value) && value.length > 0) return "<redacted>";
       return value;
     }),
   );

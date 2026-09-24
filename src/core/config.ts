@@ -57,5 +57,5 @@ export async function loadDoctorConfig(options: LoadDoctorConfigOptions): Promis
     extend: false,
     name: "doctor",
   });
-  return defu(result.config ?? {}, options.defaults ?? {}) as DoctorConfig;
+  return defu(result.config ?? {}, options.defaults ?? {});
 }

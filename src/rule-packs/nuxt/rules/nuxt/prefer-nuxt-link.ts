@@ -1,3 +1,4 @@
+import { isNumber, isString } from "../../../../core/internal/value-schema.js";
 import { AnyNode, createRule, getElementName } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
@@ -21,7 +22,7 @@ export const preferNuxtLink = createRule({
 
         const href = getStaticAttrNode(node, "href");
         const hrefValue = href?.value?.value;
-        if (typeof hrefValue !== "string" || !isInternalNavigationHref(hrefValue)) return;
+        if (!isString(hrefValue) || !isInternalNavigationHref(hrefValue)) return;
 
         ctx.report(
           diagnostics.NUXT0050({
@@ -63,7 +64,7 @@ function isInternalNavigationHref(value: string) {
 function staticNuxtLinkFix(text: string, node: AnyNode) {
   const start = node.start ?? node.range?.[0];
   const end = node.end ?? node.range?.[1];
-  if (typeof start !== "number" || typeof end !== "number") return null;
+  if (!isNumber(start) || !isNumber(end)) return null;
 
   const snippet = text.slice(start, end);
   const replacement = snippet

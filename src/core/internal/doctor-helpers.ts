@@ -1,4 +1,6 @@
+import { isBigint, isBoolean, isNumber, isRecord, isString } from "./value-schema.js";
 import type { DoctorHelpers } from "../primitives.js";
+import { isAstNode, isSourceOffset, stringLiteralValue } from "./ast-node.js";
 import { getNodeVisitorKeys } from "./visitor-keys.js";
 
 export function createHelpers(): DoctorHelpers {
@@ -30,7 +32,9 @@ export function createHelpers(): DoctorHelpers {
       return getCalleeName(node);
     },
     isCall(node, name) {
-      return (node as any)?.type === "CallExpression" && (!name || getCalleeName(node) === name);
+      return (
+        isAstNode(node) && node.type === "CallExpression" && (!name || getCalleeName(node) === name)
+      );
     },
     report(ctx, node, diagnostic, metadata) {
       ctx.report(diagnostic, {
@@ -40,23 +44,26 @@ export function createHelpers(): DoctorHelpers {
       });
     },
     hasVueDirective(node, name, argument) {
-      return ((node as any)?.startTag?.attributes ?? []).some(
-        (attr: any) =>
-          attr.directive &&
-          attr.key?.name?.name === name &&
-          (!argument || attr.key?.argument?.name === argument),
-      );
+      return templateAttributes(node).some((attr) => {
+        const key = field(attr, "key");
+        return (
+          field(attr, "directive") === true &&
+          field(field(key, "name"), "name") === name &&
+          (!argument || field(field(key, "argument"), "name") === argument)
+        );
+      });
     },
     hasVueAttribute(node, name) {
-      return ((node as any)?.startTag?.attributes ?? []).some(
-        (attr: any) => !attr.directive && attr.key?.name === name,
+      return templateAttributes(node).some(
+        (attr) => field(attr, "directive") !== true && field(field(attr, "key"), "name") === name,
       );
     },
     getStaticVueAttributeValue(node, name) {
-      const attr = ((node as any)?.startTag?.attributes ?? []).find(
-        (item: any) => !item.directive && item.key?.name === name,
+      const attr = templateAttributes(node).find(
+        (item) => field(item, "directive") !== true && field(field(item, "key"), "name") === name,
       );
-      return attr?.value?.value ?? null;
+      const value = field(field(attr, "value"), "value");
+      return isString(value) ? value : null;
     },
     isNuxtServerFile(relativePath) {
       return relativePath.startsWith("server/") || relativePath.startsWith("app/server/");
@@ -68,6 +75,25 @@ export function createHelpers(): DoctorHelpers {
       );
     },
   };
+}
+
+function field(value: unknown, key: string): unknown {
+  return isRecord(value) ? value[key] : undefined;
+}
+
+function templateAttributes(node: unknown): unknown[] {
+  const attributes = field(field(node, "startTag"), "attributes");
+  return Array.isArray(attributes) ? attributes : [];
+}
+
+function nodeStart(node: unknown): number {
+  const start = field(node, "start");
+  return isSourceOffset(start) ? start : 0;
+}
+
+function nodeEnd(node: unknown): number {
+  const end = field(node, "end");
+  return isSourceOffset(end) ? end : 0;
 }
 
 const CLIENT_LIFECYCLE_CALLEES = new Set([
@@ -153,8 +179,8 @@ function isClientOnlyExecutionContext(
 function getDoctorParents(node: unknown): any[] {
   const parents = [];
   const seen = new Set<unknown>();
-  let current = (node as any)?.__doctorParent;
-  while (current && typeof current === "object" && !seen.has(current)) {
+  let current = isAstNode(node) ? node.__doctorParent : undefined;
+  while (isAstNode(current) && !seen.has(current)) {
     seen.add(current);
     parents.push(current);
     current = current.__doctorParent;
@@ -163,29 +189,39 @@ function getDoctorParents(node: unknown): any[] {
 }
 
 function isClientGuardAncestor(parent: unknown, node: unknown, source: string): boolean {
-  const value = parent as any;
-  if (value?.type !== "IfStatement" && value?.type !== "ConditionalExpression") return false;
   if (
-    (node as any) !== value.consequent &&
-    !isDescendantOf((node as any)?.__doctorParent, value.consequent)
+    !isAstNode(parent) ||
+    (parent.type !== "IfStatement" && parent.type !== "ConditionalExpression")
+  )
+    return false;
+  const consequent = parent.consequent;
+  if (
+    node !== consequent &&
+    !isDescendantOf(isAstNode(node) ? node.__doctorParent : undefined, consequent)
   )
     return false;
   return (
-    isClientGuardText(source.slice(value.test?.start ?? 0, value.test?.end ?? 0)) ||
-    isClientGuardText(source.slice(value.start ?? 0, value.consequent?.start ?? value.end ?? 0))
+    isClientGuardText(source.slice(nodeStart(parent.test), nodeEnd(parent.test))) ||
+    isClientGuardText(
+      source.slice(
+        nodeStart(parent),
+        isAstNode(consequent) ? nodeStart(consequent) : nodeEnd(parent),
+      ),
+    )
   );
 }
 
 function isShortCircuitedByClientGuard(parent: unknown, node: unknown, source: string): boolean {
-  const value = parent as any;
-  if (value?.type !== "LogicalExpression" || value.operator !== "&&") return false;
-  if (!isDescendantOf((node as any)?.__doctorParent, value.right)) return false;
-  return isClientGuardText(source.slice(value.left?.start ?? 0, value.left?.end ?? 0));
+  if (!isAstNode(parent) || parent.type !== "LogicalExpression" || parent.operator !== "&&")
+    return false;
+  if (!isDescendantOf(isAstNode(node) ? node.__doctorParent : undefined, parent.right))
+    return false;
+  return isClientGuardText(source.slice(nodeStart(parent.left), nodeEnd(parent.left)));
 }
 
 function isDescendantOf(node: unknown, ancestor: unknown): boolean {
-  let current = node as any;
-  while (current && typeof current === "object") {
+  let current = node;
+  while (isAstNode(current)) {
     if (current === ancestor) return true;
     current = current.__doctorParent;
   }
@@ -204,56 +240,65 @@ function isClientGuardText(text: string): boolean {
 }
 
 function isFunctionLike(node: unknown): boolean {
-  return ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
-    (node as any)?.type,
+  return (
+    isAstNode(node) &&
+    ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
   );
 }
 
 function isClientOnlyCallback(functionNode: unknown, source: string): boolean {
-  const parent = (functionNode as any)?.__doctorParent;
-  if (!parent || parent.type !== "CallExpression") return false;
+  const parent = isAstNode(functionNode) ? functionNode.__doctorParent : undefined;
+  if (!isAstNode(parent) || parent.type !== "CallExpression") return false;
   const callee = getCalleeName(parent);
   if (!callee) return false;
   if (CLIENT_LIFECYCLE_CALLEES.has(callee) || CLIENT_EVENT_CALLEES.has(callee)) return true;
   if (callee.endsWith(".addEventListener")) return true;
   if (isNuxtClientHookCallback(functionNode, parent, source)) return true;
 
-  const before = source.slice(Math.max(0, parent.start - 80), parent.start);
+  const start = isSourceOffset(parent.start) ? parent.start : 0;
+  const before = source.slice(Math.max(0, start - 80), start);
   return /@[\w:-]+\s*=|v-on:[\w:-]+\s*=/.test(before);
 }
 
 function isNuxtClientHookCallback(functionNode: unknown, call: unknown, source: string): boolean {
-  const value = call as any;
-  const callee = getCalleeName(value);
+  if (!isAstNode(call) || !Array.isArray(call.arguments)) return false;
+  const callee = getCalleeName(call);
   if (!callee?.endsWith(".hook") && !callee?.endsWith(".hookOnce")) return false;
-  if (value.arguments?.[1] !== functionNode) return false;
-  const first = value.arguments?.[0];
+  if (call.arguments[1] !== functionNode) return false;
+  const first = call.arguments[0];
   const hookName =
-    first?.type === "Literal" && typeof first.value === "string"
-      ? first.value
-      : source.slice(first?.start ?? 0, first?.end ?? 0).replace(/^['"]|['"]$/g, "");
+    stringLiteralValue(first) ??
+    source.slice(nodeStart(first), nodeEnd(first)).replace(/^['"]|['"]$/g, "");
   return /^(app:mounted|page:loading:end|page:finish|page:transition:finish)$/.test(hookName);
 }
 
 function isComputedSetter(functionNode: unknown): boolean {
-  const property = (functionNode as any)?.__doctorParent;
-  if (property?.type !== "Property") return false;
-  if ((property.key?.name ?? property.key?.value) !== "set") return false;
+  const property = isAstNode(functionNode) ? functionNode.__doctorParent : undefined;
+  if (!isAstNode(property) || property.type !== "Property") return false;
+  if (getNodeName(property.key) !== "set") return false;
   const objectExpression = property.__doctorParent;
-  const call = objectExpression?.__doctorParent;
-  return objectExpression?.type === "ObjectExpression" && getCalleeName(call) === "computed";
+  const call = isAstNode(objectExpression) ? objectExpression.__doctorParent : undefined;
+  return (
+    isAstNode(objectExpression) &&
+    objectExpression.type === "ObjectExpression" &&
+    getCalleeName(call) === "computed"
+  );
 }
 
 function isClientOnlyObjectCallback(functionNode: unknown): boolean {
-  const property = (functionNode as any)?.__doctorParent;
-  const key = property?.key?.name ?? property?.key?.value;
-  if (property?.type !== "Property" || key !== "handler") return false;
+  const property = isAstNode(functionNode) ? functionNode.__doctorParent : undefined;
+  if (
+    !isAstNode(property) ||
+    property.type !== "Property" ||
+    getNodeName(property.key) !== "handler"
+  )
+    return false;
   return getDoctorParents(property).some((parent) => getCalleeName(parent) === "defineShortcuts");
 }
 
 function isDeferredCallback(functionNode: unknown): boolean {
-  const parent = (functionNode as any)?.__doctorParent;
-  if (!parent || parent.type !== "CallExpression") return false;
+  const parent = isAstNode(functionNode) ? functionNode.__doctorParent : undefined;
+  if (!isAstNode(parent) || parent.type !== "CallExpression") return false;
   const callee = getCalleeName(parent);
   return !!callee && DEFERRED_CALLBACK_CALLEES.has(callee);
 }
@@ -266,11 +311,10 @@ function isReturnedComposableFunction(functionNode: unknown): boolean {
   if (!outerName?.startsWith("use")) return false;
   if (
     getDoctorParents(functionNode).some((parent) => {
-      const value = parent as any;
       return (
-        value?.type === "ReturnStatement" ||
-        (value?.type === "Property" &&
-          ((value.key?.name ?? value.key?.value) === name || value.value === functionNode))
+        parent?.type === "ReturnStatement" ||
+        (parent?.type === "Property" &&
+          (getNodeName(parent.key) === name || parent.value === functionNode))
       );
     })
   )
@@ -278,15 +322,20 @@ function isReturnedComposableFunction(functionNode: unknown): boolean {
 
   let returned = false;
   walkAst(outer, (node) => {
-    const value = node as any;
-    if (value?.type !== "ReturnStatement" || value.argument?.type !== "ObjectExpression") return;
-    returned ||= value.argument.properties?.some((property: any) => {
-      return (
-        property?.type === "Property" &&
-        ((property.key?.name ?? property.key?.value) === name ||
-          (property.value?.type === "Identifier" && property.value.name === name))
-      );
-    });
+    if (!isAstNode(node) || node.type !== "ReturnStatement") return;
+    const argument = node.argument;
+    if (
+      !isAstNode(argument) ||
+      argument.type !== "ObjectExpression" ||
+      !Array.isArray(argument.properties)
+    )
+      return;
+    returned ||= argument.properties.some(
+      (property) =>
+        isAstNode(property) &&
+        property.type === "Property" &&
+        (getNodeName(property.key) === name || getNodeName(property.value) === name),
+    );
   });
   return returned;
 }
@@ -308,23 +357,23 @@ function isOnlyCalledFromClientOnlyContextInner(
   source: string,
   seen: Set<string>,
 ): boolean {
-  if (!root || typeof root !== "object") return false;
+  if (!isAstNode(root)) return false;
   if (seen.has(name)) return false;
   seen.add(name);
   const declarationNames = collectDeclarations(root);
   const declarationRange = getFunctionDeclarationRange(declaration);
-  const calls: any[] = [];
+  const calls: unknown[] = [];
   walkAst(root, (node) => {
-    const value = node as any;
-    if (value?.type === "CallExpression" && getCalleeName(node) === name) calls.push(node);
+    if (!isAstNode(node)) return;
+    if (node.type === "CallExpression" && getCalleeName(node) === name) calls.push(node);
     if (
-      value?.type === "Identifier" &&
-      value.name === name &&
-      !isInsideDeclaration(value, declaration) &&
-      !isInsideRange(value, declarationRange) &&
-      !declarationNames.has(value.name)
+      node.type === "Identifier" &&
+      node.name === name &&
+      !isInsideDeclaration(node, declaration) &&
+      !isInsideRange(node, declarationRange) &&
+      !declarationNames.has(name)
     )
-      calls.push(value);
+      calls.push(node);
   });
   const externalCalls = calls.filter(
     (call) => !isInsideDeclaration(call, declaration) && !isInsideRange(call, declarationRange),
@@ -332,8 +381,9 @@ function isOnlyCalledFromClientOnlyContextInner(
   if (!externalCalls.length) return false;
   return externalCalls.every((call) => {
     if (isClientOnlyExecutionContext(call, source, seen)) return true;
-    const parent = (call as any).__doctorParent;
-    const callee = parent?.type === "CallExpression" ? getCalleeName(parent) : null;
+    const parent = isAstNode(call) ? call.__doctorParent : undefined;
+    const callee =
+      isAstNode(parent) && parent.type === "CallExpression" ? getCalleeName(parent) : null;
     if (
       callee &&
       TIMER_CALLBACK_CALLEES.has(callee) &&
@@ -358,20 +408,24 @@ function collectDeclarations(root: unknown): Set<string> {
 }
 
 function getDeclaredName(node: unknown): string | null {
-  const value = node as any;
-  if (value?.type === "FunctionDeclaration") return value.id?.name ?? null;
-  if (value?.type === "VariableDeclarator" && value.id?.type === "Identifier") return value.id.name;
-  if (value?.type === "Identifier") {
-    const parent = value.__doctorParent;
-    if (parent?.type === "FunctionDeclaration" && parent.id === value) return value.name;
-    if (parent?.type === "VariableDeclarator" && parent.id === value) return value.name;
+  if (!isAstNode(node)) return null;
+  if (node.type === "FunctionDeclaration" || node.type === "VariableDeclarator")
+    return getNodeName(node.id);
+  if (node.type === "Identifier") {
+    const parent = node.__doctorParent;
+    if (
+      isAstNode(parent) &&
+      (parent.type === "FunctionDeclaration" || parent.type === "VariableDeclarator") &&
+      parent.id === node
+    )
+      return getNodeName(node);
   }
   return null;
 }
 
 function isInsideDeclaration(node: unknown, declaration: unknown): boolean {
-  let current = node as any;
-  while (current && typeof current === "object") {
+  let current: unknown = node;
+  while (isAstNode(current)) {
     if (current === declaration) return true;
     if (current.__doctorParent === declaration) return true;
     current = current.__doctorParent;
@@ -380,25 +434,25 @@ function isInsideDeclaration(node: unknown, declaration: unknown): boolean {
 }
 
 function getFunctionDeclarationRange(declaration: unknown): { start: number; end: number } | null {
-  const node = declaration as any;
-  if (typeof node?.start === "number" && typeof node?.end === "number")
-    return { start: node.start, end: node.end };
-  const parent = node?.__doctorParent;
-  if (parent?.type === "VariableDeclarator") {
+  if (!isAstNode(declaration)) return null;
+  if (isSourceOffset(declaration.start) && isSourceOffset(declaration.end))
+    return { start: declaration.start, end: declaration.end };
+  const parent = declaration.__doctorParent;
+  if (isAstNode(parent) && parent.type === "VariableDeclarator") {
     const statement = parent.__doctorParent;
-    if (typeof statement?.start === "number" && typeof statement?.end === "number")
+    if (isAstNode(statement) && isSourceOffset(statement.start) && isSourceOffset(statement.end))
       return { start: statement.start, end: statement.end };
   }
   return null;
 }
 
 function isInsideRange(node: unknown, range: { start: number; end: number } | null): boolean {
-  const value = node as any;
   return (
     !!range &&
-    typeof value?.start === "number" &&
-    value.start >= range.start &&
-    value.start <= range.end
+    isAstNode(node) &&
+    isSourceOffset(node.start) &&
+    node.start >= range.start &&
+    node.start <= range.end
   );
 }
 
@@ -407,19 +461,17 @@ function walkAst(node: unknown, visit: (node: unknown) => void) {
   const seen = new WeakSet<object>();
   while (stack.length) {
     const current = stack.pop();
-    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    if (!isAstNode(current) || seen.has(current)) continue;
     seen.add(current);
-    const typed = current as any;
-    if (!typed.type) continue;
-    visit(typed);
-    const keys = getNodeVisitorKeys(typed);
+    visit(current);
+    const keys = getNodeVisitorKeys(current);
     for (let keyIndex = keys.length - 1; keyIndex >= 0; keyIndex--) {
-      const value = typed[keys[keyIndex]];
+      const value = current[keys[keyIndex]];
       if (Array.isArray(value)) {
         for (let childIndex = value.length - 1; childIndex >= 0; childIndex--) {
           stack.push(value[childIndex]);
         }
-      } else if (value && typeof value === "object") {
+      } else if (isAstNode(value)) {
         stack.push(value);
       }
     }
@@ -427,28 +479,26 @@ function walkAst(node: unknown, visit: (node: unknown) => void) {
 }
 
 function getFunctionLikeName(functionNode: unknown): string | null {
-  const node = functionNode as any;
-  if (!node || typeof node !== "object") return null;
-  if (node.type === "FunctionDeclaration" && node.id?.type === "Identifier") return node.id.name;
-  const parent = node.__doctorParent;
-  if (parent?.type === "VariableDeclarator" && parent.id?.type === "Identifier")
-    return parent.id.name;
-  if (
-    parent?.type === "Property" &&
-    (parent.key?.type === "Identifier" || parent.key?.type === "Literal")
-  )
-    return String(parent.key.name ?? parent.key.value);
+  if (!isAstNode(functionNode)) return null;
+  if (functionNode.type === "FunctionDeclaration" && isAstNode(functionNode.id)) {
+    if (functionNode.id.type === "Identifier" && isString(functionNode.id.name))
+      return functionNode.id.name;
+  }
+  const parent = functionNode.__doctorParent;
+  if (!isAstNode(parent)) return null;
+  if (parent.type === "VariableDeclarator" && isAstNode(parent.id)) {
+    if (parent.id.type === "Identifier" && isString(parent.id.name)) return parent.id.name;
+  }
+  if (parent.type === "Property" && isAstNode(parent.key)) {
+    if (parent.key.type === "Identifier" && isString(parent.key.name)) return parent.key.name;
+    if (parent.key.type === "Literal") return stringLiteralValue(parent.key);
+  }
   return null;
 }
 
 function getObjectPropertyKeyName(functionNode: unknown): string | null {
-  const parent = (functionNode as any).__doctorParent;
-  if (
-    parent?.type === "Property" &&
-    (parent.key?.type === "Identifier" || parent.key?.type === "Literal")
-  )
-    return String(parent.key.name ?? parent.key.value);
-  return null;
+  const parent = isAstNode(functionNode) ? functionNode.__doctorParent : undefined;
+  return isAstNode(parent) && parent.type === "Property" ? getNodeName(parent.key) : null;
 }
 
 function isTemplateEventHandlerReference(source: string, name: string): boolean {
@@ -458,50 +508,58 @@ function isTemplateEventHandlerReference(source: string, name: string): boolean 
 
 function isTypeOnlyContext(node: unknown): boolean {
   return getDoctorParents(node).some((parent) => {
-    const type = parent?.type;
+    if (!isAstNode(parent)) return false;
+    const type = parent.type;
     return (
-      typeof type === "string" &&
-      (type.startsWith("TS") ||
-        type === "TypeAnnotation" ||
-        type === "TypeAlias" ||
-        type === "InterfaceDeclaration")
+      type.startsWith("TS") ||
+      type === "TypeAnnotation" ||
+      type === "TypeAlias" ||
+      type === "InterfaceDeclaration"
     );
   });
 }
 
 function hasLocalBindingBefore(node: unknown, source: string): boolean {
-  const value = node as any;
-  if (value?.type !== "Identifier" || typeof value.name !== "string") return false;
-  const parent = value.__doctorParent;
-  if (parent?.type === "VariableDeclarator" && parent.id === value) return true;
-  if (parent?.type === "FunctionDeclaration" && parent.id === value) return true;
-  if (parent?.type === "Property" && parent.key === value && !parent.computed) return true;
+  if (!isAstNode(node) || node.type !== "Identifier" || !isString(node.name)) return false;
+  const parent = node.__doctorParent;
+  if (
+    isAstNode(parent) &&
+    (parent.type === "VariableDeclarator" || parent.type === "FunctionDeclaration") &&
+    parent.id === node
+  )
+    return true;
+  if (isAstNode(parent) && parent.type === "Property" && parent.key === node && !parent.computed)
+    return true;
 
-  const name = value.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const before = source.slice(0, value.start);
+  const name = node.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const before = source.slice(0, nodeStart(node));
   return new RegExp(
     String.raw`(?:\b(?:const|let|var)\s+${name}\b|[,(]\s*${name}\s*(?::[^)=]+)?=>|\(\s*${name}\s*(?::[^)]*)?\)\s*=>|function[^(]*\([^)]*\b${name}\b|[,(]\s*\{[^)]*\b${name}\b[^)]*\}\s*(?::[^)=]+)?=>|function[^(]*\([^)]*\{[^)]*\b${name}\b)`,
   ).test(before);
 }
 
 function isTypeofOperand(node: unknown): boolean {
-  const parent = (node as any)?.__doctorParent;
-  return parent?.type === "UnaryExpression" && parent.operator === "typeof";
+  const parent = isAstNode(node) ? node.__doctorParent : undefined;
+  return isAstNode(parent) && parent.type === "UnaryExpression" && parent.operator === "typeof";
 }
 
 function getNodeName(node: unknown): string | null {
-  const value = node as any;
-  if (!value) return null;
-  if (value.type === "Identifier") return value.name;
-  if (value.type === "Literal") return String(value.value);
-  if (value.type === "StaticMemberExpression" || value.type === "MemberExpression") {
-    const object = getNodeName(value.object);
-    const property = getNodeName(value.property);
+  if (!isAstNode(node)) return null;
+  if (node.type === "Identifier") return isString(node.name) ? node.name : null;
+  if (node.type === "Literal") {
+    const value = node.value;
+    return isString(value) || isNumber(value) || isBoolean(value) || isBigint(value)
+      ? String(value)
+      : null;
+  }
+  if (node.type === "StaticMemberExpression" || node.type === "MemberExpression") {
+    const object = getNodeName(node.object);
+    const property = getNodeName(node.property);
     return object && property ? `${object}.${property}` : (object ?? property);
   }
   return null;
 }
 
 function getCalleeName(node: unknown): string | null {
-  return getNodeName((node as any)?.callee);
+  return getNodeName(node instanceof Object ? Reflect.get(node, "callee") : undefined);
 }

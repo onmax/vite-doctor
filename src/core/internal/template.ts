@@ -1,4 +1,4 @@
-const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
+import { isAstNode } from "./ast-node.js";
 
 export async function parseTemplate(
   file: string,
@@ -6,24 +6,19 @@ export async function parseTemplate(
 ): Promise<Record<string, unknown> | null> {
   try {
     const [{ parseForESLint }, tsParser] = await Promise.all([
-      optionalImport<typeof import("vue-eslint-parser")>("vue-eslint-parser"),
-      optionalImport<typeof import("@typescript-eslint/parser")>("@typescript-eslint/parser"),
+      import("vue-eslint-parser"),
+      import("@typescript-eslint/parser"),
     ]);
-    const parser = defaultExport(tsParser);
     const result = parseForESLint(source, {
       filePath: file,
       sourceType: "module",
       ecmaVersion: "latest",
       parserOptions: {
-        parser: parser as any,
+        parser: tsParser,
       },
     });
-    return (result.ast.templateBody as unknown as Record<string, unknown>) ?? null;
+    return isAstNode(result.ast.templateBody) ? result.ast.templateBody : null;
   } catch {
     return null;
   }
-}
-
-function defaultExport<T>(mod: T): T {
-  return ((mod as { default?: T }).default ?? mod) as T;
 }

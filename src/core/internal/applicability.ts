@@ -16,18 +16,16 @@ export function evaluateRuleApplicability(
   rule: DoctorRule,
   project: ProjectInfo,
 ): ApplicabilityResult {
-  const requirements = {
+  const requirements: Partial<Record<RuntimePackageName, string>> = {
     ...rule.meta.frameworkVersions,
     ...rule.meta.applicability?.runtimes,
-  } as Partial<Record<RuntimePackageName, string>>;
-  const results = Object.entries(requirements).map(([runtime, range]) =>
-    evaluateRuntimeRange(
-      project,
-      runtime as RuntimePackageName,
-      range,
-      rule.meta.applicability?.includePrerelease,
-    ),
-  );
+  };
+  const results = (["nuxt", "nitro", "h3", "vue"] as const).flatMap((runtime) => {
+    const range = requirements[runtime];
+    return range
+      ? [evaluateRuntimeRange(project, runtime, range, rule.meta.applicability?.includePrerelease)]
+      : [];
+  });
 
   const compatibilityRange = rule.meta.applicability?.nuxtCompatibility;
   if (compatibilityRange) {
@@ -59,9 +57,7 @@ export function evaluatePackActivation(pack: RulePack, project: ProjectInfo): Ap
   );
   if (hasPackageOrModuleConstraints) {
     const moduleNames = new Set((project.nuxt?.modules ?? []).map((module) => module.name));
-    const packageNames = new Set(
-      Object.keys((project.inventory?.packages ?? {}) as Record<string, unknown>),
-    );
+    const packageNames = new Set(Object.keys(project.inventory?.packages ?? {}));
     const matched =
       pack.activation.packages?.some((name) => moduleNames.has(name) || packageNames.has(name)) ||
       pack.activation.modules?.some((name) => moduleNames.has(name));

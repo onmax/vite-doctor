@@ -1,3 +1,4 @@
+import { isNumber } from "../../../../core/internal/value-schema.js";
 import type { RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule, report } from "./shared.js";
 import { asyncDataRuleOptions, getObjectPropertyValue, hasObjectProperty } from "./async-data.js";
@@ -45,7 +46,6 @@ export const previewModeGlobalRefresh = createRule({
 function isBroadPreviewEnablement(ctx: RuleContext, node: AnyNode): boolean {
   const start = node.start ?? node.range?.[0];
   const end = node.end ?? node.range?.[1];
-  const source =
-    typeof start === "number" && typeof end === "number" ? ctx.file.text.slice(start, end) : "";
+  const source = isNumber(start) && isNumber(end) ? ctx.file.text.slice(start, end) : "";
   return /import\.meta\.dev|\b(beta|staging)\b|=>\s*true\b|return\s+true\b/.test(source);
 }

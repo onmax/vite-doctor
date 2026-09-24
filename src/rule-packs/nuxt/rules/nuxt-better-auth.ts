@@ -11,6 +11,7 @@ export const requireStandardAuthHandlerMount = createRule({
     requires: { nuxt: true, crossFile: true },
   },
   create(ctx) {
+    if (!ctx.project.nuxt?.configuredModules?.includes("nuxt-better-auth")) return {};
     return {
       NuxtManifest(manifest) {
         const hasHandler = [...manifest.serverDirs.api, ...manifest.serverDirs.routes].some(
@@ -41,7 +42,6 @@ export const nuxtBetterAuthRulePack = defineRulePack({
   version: "0.0.0",
   activation: {
     nuxt: ">=4",
-    packages: ["better-auth", "nuxt-better-auth"],
     modules: ["nuxt-better-auth"],
   },
   rules,

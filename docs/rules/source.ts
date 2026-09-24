@@ -1,7 +1,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "pathe";
-import { createRequire } from "node:module";
+import * as parserRuntime from "oxc-parser";
 import { fileURLToPath } from "node:url";
+import { isAstNode, stringLiteralValue } from "../../src/core/internal/ast-node.js";
+import { isBigint, isBoolean, isNumber, isString } from "../../src/core/internal/value-schema.js";
 import { ruleDocumentationMetadata } from "./metadata.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
@@ -74,11 +76,9 @@ export interface RulesReport {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const require = createRequire(import.meta.url);
 
 let cachedRules: RuleDocument[] | null = null;
 let cachedDiagnostics: DiagnosticDocument[] | null = null;
-let parser: typeof import("oxc-parser") | null = null;
 
 export function getRuleDocuments() {
   if (!cachedRules) cachedRules = collectRuleDocuments();
@@ -97,18 +97,19 @@ export function getRuleReports() {
     all: rules,
   };
 
-  return Object.fromEntries(
-    Object.entries(byFramework).map(([key, items]) => [
-      key,
-      {
-        catalogVersion: 1,
-        rules: items.map(toCatalogRule),
-      },
-    ]),
-  ) as unknown as Record<
-    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "all",
-    RulesReport
-  >;
+  const report = (items: RuleDocument[]): RulesReport => ({
+    catalogVersion: 1,
+    rules: items.map(toCatalogRule),
+  });
+  return {
+    vue: report(byFramework.vue),
+    vite: report(byFramework.vite),
+    nitro: report(byFramework.nitro),
+    nuxt: report(byFramework.nuxt),
+    typescript: report(byFramework.typescript),
+    shadcn: report(byFramework.shadcn),
+    all: report(byFramework.all),
+  };
 }
 
 export function getDiagnosticDocuments() {
@@ -314,7 +315,7 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
           recommendedReplacement: readString(meta, "recommendedReplacement"),
           examples: readExamples(meta),
           category: readString(meta, "category"),
-          severity: (readString(meta, "severity") || "warn") as RuleSeverity,
+          severity: readSeverity(meta),
           fixable: readFixable(meta),
           docsUrl: readString(meta, "docsUrl"),
           sourceUrl: githubSourceUrl(source),
@@ -343,12 +344,11 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
 }
 
 function loadParser() {
-  parser ??= require("oxc-parser") as typeof import("oxc-parser");
-  return parser;
+  return parserRuntime;
 }
 
 function applyDocumentationMetadata<T extends Omit<RuleDocument, "path" | "key">>(rule: T): T {
-  const metadata = ruleDocumentationMetadata[rule.id as keyof typeof ruleDocumentationMetadata];
+  const metadata = Object.entries(ruleDocumentationMetadata).find(([id]) => id === rule.id)?.[1];
   const documented = {
     ...rule,
     description: rule.description || metadata?.description || "",
@@ -620,12 +620,13 @@ function readPackName(ast: any) {
 
 function readString(object: any, key: string) {
   const value = findProperty(object, key)?.value;
-  return typeof value?.value === "string" ? value.value.replace(/\s+/g, " ").trim() : "";
+  return stringLiteralValue(value)?.replace(/\s+/g, " ").trim() ?? "";
 }
 
 function readText(object: any, key: string) {
   const value = findProperty(object, key)?.value;
-  if (typeof value?.value === "string") return value.value;
+  const literal = stringLiteralValue(value);
+  if (literal !== null) return literal;
   if (value?.type !== "TemplateLiteral") return "";
   return (
     value.quasis?.map((quasi: any) => quasi.value?.cooked ?? quasi.value?.raw ?? "").join("") ?? ""
@@ -647,16 +648,19 @@ function readExamples(object: any): RuleExample[] {
 }
 
 function readFixable(object: any): RuleFix {
-  const value = findProperty(object, "fixable")?.value?.value;
-  return typeof value === "string" ? (value as RuleFix) : "no";
+  const value = readString(object, "fixable");
+  return value === "safe" || value === "suggestion" ? value : "no";
+}
+
+function readSeverity(object: any): RuleSeverity {
+  const value = readString(object, "severity");
+  return value === "error" || value === "info" ? value : "warn";
 }
 
 function readStringArray(object: any, key: string) {
   const value = findProperty(object, key)?.value;
   if (value?.type !== "ArrayExpression") return [];
-  return value.elements
-    .map((element: any) => (typeof element?.value === "string" ? element.value : ""))
-    .filter(Boolean);
+  return value.elements.map((element: any) => stringLiteralValue(element) ?? "").filter(Boolean);
 }
 
 function validatedInputReplacement(opts: any) {
@@ -696,7 +700,8 @@ function findProperty(object: any, name: string) {
 function propertyName(property: any) {
   if (property?.type !== "Property" || property.computed) return null;
   if (property.key?.type === "Identifier") return property.key.name;
-  if (typeof property.key?.value === "string") return property.key.value;
+  const literal = stringLiteralValue(property.key);
+  if (literal !== null) return literal;
   return null;
 }
 
@@ -705,9 +710,9 @@ function walk(
   visitorKeys: typeof import("oxc-parser").visitorKeys,
   visit: (node: any) => void,
 ) {
-  if (!node || typeof node !== "object") return;
+  if (!isAstNode(node)) return;
   visit(node);
-  const keys = visitorKeys[node.type as keyof typeof visitorKeys] ?? [];
+  const keys = Reflect.get(visitorKeys, node.type) ?? [];
   for (const key of keys) {
     const value = node[key];
     if (Array.isArray(value)) {
@@ -741,9 +746,8 @@ function slugSegment(value: string) {
 }
 
 function stringifyValue(value: unknown) {
-  if (typeof value === "string") return value;
   if (value == null) return "";
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+  if (isString(value) || isNumber(value) || isBoolean(value) || isBigint(value)) {
     return String(value);
   }
   return JSON.stringify(value);

@@ -239,6 +239,9 @@ importers:
       typescript:
         specifier: catalog:analysis
         version: 6.0.3
+      valibot:
+        specifier: ^1.4.2
+        version: 1.4.2(typescript@6.0.3)
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@latest
         version: '@voidzero-dev/vite-plus-core@0.3.1(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(typescript@6.0.3)(yaml@2.9.0)'
@@ -318,12 +321,18 @@ importers:
       '@nuxt/fonts':
         specifier: catalog:frontend
         version: 0.14.0(@voidzero-dev/vite-plus-core@0.3.1(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(typescript@6.0.3)(yaml@2.9.0))(db0@0.3.4(better-sqlite3@12.9.0))(esbuild@0.28.1)(ioredis@5.11.1(supports-color@10.2.2))(magic-string@1.1.0)(magicast@0.5.4)(oxc-parser@0.143.0)(rolldown@1.2.2)(rollup@4.62.4)
+      '@nuxt/icon':
+        specifier: ^2.4.1
+        version: 2.4.1(@voidzero-dev/vite-plus-core@0.3.1(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(typescript@6.0.3)(yaml@2.9.0))(magic-string@0.30.21)(magicast@0.5.4)(oxc-parser@0.143.0)(rolldown@1.2.2)(unplugin@3.3.0(@voidzero-dev/vite-plus-core@0.3.1(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(typescript@6.0.3)(yaml@2.9.0))(esbuild@0.28.1)(rolldown@1.2.2)(rollup@4.62.4))(vue@3.5.40(typescript@6.0.3))
       '@nuxt/kit':
         specifier: catalog:frontend
         version: 4.5.1(magic-string@1.1.0)(magicast@0.5.4)(oxc-parser@0.143.0)(rolldown@1.2.2)(unplugin@3.3.0(@voidzero-dev/vite-plus-core@0.3.1(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(typescript@6.0.3)(yaml@2.9.0))(esbuild@0.28.1)(rolldown@1.2.2)(rollup@4.62.4))
       '@nuxt/ui':
         specifier: ^4.10.0
         version: 4.10.0(a4ed76e847e61270ea5b32fe6f629cd4)
+      '@nuxtjs/color-mode':
+        specifier: ^4.0.1
+        version: 4.0.1(magic-string@0.30.21)(magicast@0.5.4)(oxc-parser@0.143.0)(rolldown@1.2.2)(unplugin@3.3.0(@voidzero-dev/vite-plus-core@0.3.1(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(typescript@6.0.3)(yaml@2.9.0))(esbuild@0.28.1)(rolldown@1.2.2)(rollup@4.62.4))
       '@oxc-parser/binding-wasm32-wasi':
         specifier: catalog:analysis
         version: 0.143.0

@@ -31,7 +31,6 @@ defineOgImage(
 );
 
 useHead({
-  titleTemplate: "%s",
   meta: [
     { name: "theme-color", content: "#059669" },
     { name: "application-name", content: "Doctor" },

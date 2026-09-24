@@ -6,13 +6,13 @@ import {
   type RuleContext,
 } from "../../../../core/index.js";
 import { doctorInternalDiagnostics } from "../../../../core/internal-diagnostic-handles.js";
+import { isAstNode } from "../../../../core/internal/ast-node.js";
+import { isRecord } from "../../../../core/internal/value-schema.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../../diagnostics.js";
 
 export { createRule };
 
 export type AnyNode = any;
-
-const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
 
 export const BROWSER_GLOBALS = new Set([
   "window",
@@ -22,13 +22,16 @@ export const BROWSER_GLOBALS = new Set([
   "navigator",
 ]);
 
-export const delegatedMessages: Record<string, string> = {
-  "vue/reactivity/no-ref-as-operand": "Refs used as script operands must be unwrapped with .value.",
-};
+export const delegatedMessages = new Map([
+  [
+    "vue/reactivity/no-ref-as-operand",
+    "Refs used as script operands must be unwrapped with .value.",
+  ],
+]);
 
-export const delegatedSuggestions: Record<string, string> = {
-  "vue/reactivity/no-ref-as-operand": "Use .value in script expressions.",
-};
+export const delegatedSuggestions = new Map([
+  ["vue/reactivity/no-ref-as-operand", "Use .value in script expressions."],
+]);
 
 export function report(
   ctx: RuleContext,
@@ -101,17 +104,17 @@ export function nearestFunctionAncestor(node: AnyNode): AnyNode {
 }
 
 export function walkScriptLocal(node: AnyNode, visit: (node: AnyNode) => void) {
-  if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
     for (const child of node) walkScriptLocal(child, visit);
     return;
   }
-  if (typeof node.type === "string") visit(node);
+  if (!(node instanceof Object)) return;
+  if (isAstNode(node)) visit(node);
   for (const [key, value] of Object.entries(node)) {
     if (key === "__doctorParent") continue;
     if (Array.isArray(value)) {
       for (const child of value) walkScriptLocal(child, visit);
-    } else if (value && typeof value === "object") {
+    } else if (value instanceof Object) {
       walkScriptLocal(value, visit);
     }
   }
@@ -129,14 +132,14 @@ export function createEslintVueRule(options: {
       return {
         async SFC() {
           const [{ Linter }, vuePlugin, vueParser, tsParser] = await Promise.all([
-            optionalImport<typeof import("eslint")>("eslint"),
-            optionalImport<typeof import("eslint-plugin-vue")>("eslint-plugin-vue"),
-            optionalImport<typeof import("vue-eslint-parser")>("vue-eslint-parser"),
-            optionalImport<typeof import("@typescript-eslint/parser")>("@typescript-eslint/parser"),
+            import("eslint"),
+            import("eslint-plugin-vue"),
+            import("vue-eslint-parser"),
+            import("@typescript-eslint/parser"),
           ]);
-          const vuePluginRuntime = defaultExport(vuePlugin);
-          const vueParserRuntime = defaultExport(vueParser);
-          const tsParserRuntime = defaultExport(tsParser);
+          const vuePluginRuntime = vuePlugin.default ?? vuePlugin;
+          const vueParserRuntime = vueParser.default ?? vueParser;
+          const tsParserRuntime = tsParser.default ?? tsParser;
           const linter = new Linter({ configType: "flat" });
           const messages = linter.verify(
             ctx.file.text,
@@ -145,7 +148,7 @@ export function createEslintVueRule(options: {
                 name: "vite-doctor/eslint-plugin-vue",
                 files: ["**/*.vue"],
                 languageOptions: {
-                  parser: vueParserRuntime as any,
+                  parser: vueParserRuntime,
                   ecmaVersion: "latest",
                   sourceType: "module",
                   parserOptions: {
@@ -154,7 +157,7 @@ export function createEslintVueRule(options: {
                     sourceType: "module",
                   },
                 },
-                plugins: { vue: vuePluginRuntime as any },
+                plugins: { vue: vuePluginRuntime },
                 rules: { [options.eslintId]: eslintRuleConfig(ctx.options) },
               },
             ],
@@ -170,8 +173,8 @@ export function createEslintVueRule(options: {
               throw doctorInternalDiagnostics.DOC0013({ ruleId: options.doctorId, code });
             ctx.report(
               diagnostic({
-                why: delegatedMessages[options.doctorId] ?? message.message,
-                fix: delegatedSuggestions[options.doctorId] ?? message.message,
+                why: delegatedMessages.get(options.doctorId) ?? message.message,
+                fix: delegatedSuggestions.get(options.doctorId) ?? message.message,
               }),
               {
                 ruleId: options.doctorId,
@@ -202,10 +205,6 @@ export function createEslintVueRule(options: {
   });
 }
 
-function defaultExport<T>(mod: T): T {
-  return ((mod as { default?: T }).default ?? mod) as T;
-}
-
 function eslintRuleConfig(options: unknown): "error" | ["error", ...unknown[]] {
   if (Array.isArray(options)) return ["error", ...options];
   return options ? ["error", options] : "error";
@@ -230,4 +229,7 @@ export function offsetFromLineColumn(source: string, line: number, column: numbe
     currentLine++;
   }
   return Math.min(source.length, offset + column - 1);
+}
+export function booleanRuleOption(options: unknown, key: string): boolean {
+  return isRecord(options) && options[key] === true;
 }

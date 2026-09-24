@@ -1,3 +1,5 @@
+import { isAstNode } from "./internal/ast-node.js";
+
 export type AnyNode = any;
 
 const FN_OR_PROG_TYPES = new Set([
@@ -26,17 +28,17 @@ export function nearestFunctionOrProgram(node: AnyNode): AnyNode {
 }
 
 export function walkScriptLocal(node: AnyNode, visit: (node: AnyNode) => void) {
-  if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
     for (const child of node) walkScriptLocal(child, visit);
     return;
   }
-  if (typeof node.type === "string") visit(node);
+  if (!(node instanceof Object)) return;
+  if (isAstNode(node)) visit(node);
   for (const [key, value] of Object.entries(node)) {
     if (key === "__doctorParent") continue;
     if (Array.isArray(value)) {
       for (const child of value) walkScriptLocal(child, visit);
-    } else if (value && typeof value === "object") {
+    } else if (value instanceof Object) {
       walkScriptLocal(value, visit);
     }
   }
@@ -45,5 +47,5 @@ export function walkScriptLocal(node: AnyNode, visit: (node: AnyNode) => void) {
 export function sourceForNode(node: AnyNode, source: string) {
   const start = node.start ?? node.range?.[0];
   const end = node.end ?? node.range?.[1];
-  return typeof start === "number" && typeof end === "number" ? source.slice(start, end) : "";
+  return Number.isInteger(start) && Number.isInteger(end) ? source.slice(start, end) : "";
 }

@@ -18,20 +18,20 @@ const VUEUSE_BROWSER_COMPOSABLES = new Set([
   "useWindowSize",
 ]);
 
-const VUEUSE_TIMER_REPLACEMENTS = {
-  setTimeout: "useTimeoutFn",
-  "window.setTimeout": "useTimeoutFn",
-  setInterval: "useIntervalFn",
-  "window.setInterval": "useIntervalFn",
-  requestAnimationFrame: "useRafFn",
-  "window.requestAnimationFrame": "useRafFn",
-} satisfies Record<string, string>;
+const VUEUSE_TIMER_REPLACEMENTS = new Map([
+  ["setTimeout", "useTimeoutFn"],
+  ["window.setTimeout", "useTimeoutFn"],
+  ["setInterval", "useIntervalFn"],
+  ["window.setInterval", "useIntervalFn"],
+  ["requestAnimationFrame", "useRafFn"],
+  ["window.requestAnimationFrame", "useRafFn"],
+]);
 
-const VUEUSE_OBSERVER_REPLACEMENTS: Record<string, string> = {
-  IntersectionObserver: "useIntersectionObserver",
-  ResizeObserver: "useResizeObserver",
-  MutationObserver: "useMutationObserver",
-};
+const VUEUSE_OBSERVER_REPLACEMENTS = new Map([
+  ["IntersectionObserver", "useIntersectionObserver"],
+  ["ResizeObserver", "useResizeObserver"],
+  ["MutationObserver", "useMutationObserver"],
+]);
 
 export const preferUseWindowSize = createRule({
   meta: {
@@ -46,6 +46,7 @@ export const preferUseWindowSize = createRule({
   create(ctx) {
     return {
       ScriptNode(node: AnyNode) {
+        if (node.type !== "MemberExpression" && node.type !== "StaticMemberExpression") return;
         const name = ctx.helpers.getNodeName(node);
         if (name !== "window.innerWidth" && name !== "window.innerHeight") return;
         if (ctx.helpers.isTypeOnlyContext(node)) return;
@@ -81,7 +82,8 @@ export const preferUseBreakpoints = createRule({
   create(ctx) {
     return {
       ScriptNode(node: AnyNode) {
-        const name = ctx.helpers.getNodeName(node);
+        if (node.type !== "CallExpression") return;
+        const name = ctx.helpers.getCalleeName(node);
         if (name !== "window.matchMedia" && name !== "matchMedia") return;
         ctx.helpers.report(
           ctx,
@@ -191,7 +193,7 @@ export const preferUseObservers = createRule({
         if (!shouldCheckVueUsePreference(ctx, node)) return;
         if (node.type !== "NewExpression") return;
         const observer = ctx.helpers.getNodeName(node.callee);
-        const replacement = observer ? VUEUSE_OBSERVER_REPLACEMENTS[observer] : null;
+        const replacement = observer ? VUEUSE_OBSERVER_REPLACEMENTS.get(observer) : null;
         if (!replacement || isWithinVueUseComposable(node)) return;
         ctx.helpers.report(
           ctx,
@@ -226,10 +228,7 @@ export const preferUseTimers = createRule({
       ScriptNode(node: AnyNode) {
         if (!shouldCheckVueUsePreference(ctx, node)) return;
         const callee = ctx.helpers.getCalleeName(node);
-        const replacement =
-          callee && Object.hasOwn(VUEUSE_TIMER_REPLACEMENTS, callee)
-            ? VUEUSE_TIMER_REPLACEMENTS[callee as keyof typeof VUEUSE_TIMER_REPLACEMENTS]
-            : null;
+        const replacement = callee ? VUEUSE_TIMER_REPLACEMENTS.get(callee) : null;
         if (!replacement || isWithinVueUseComposable(node)) return;
         ctx.helpers.report(
           ctx,
@@ -263,6 +262,7 @@ export const preferUseStorage = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (!shouldCheckVueUsePreference(ctx, node)) return;
+        if (node.type !== "Identifier") return;
         const name = ctx.helpers.getNodeName(node);
         if (name !== "localStorage" && name !== "sessionStorage") return;
         if (ctx.helpers.isTypeofOperand?.(node) || isWithinVueUseComposable(node)) return;
@@ -305,7 +305,11 @@ export const preferUseScrollAndElement = createRule({
         const callee = ctx.helpers.getCalleeName(node);
         let replacement: string | null = null;
 
-        if (name === "window.scrollX" || name === "window.scrollY") replacement = "useScroll";
+        if (
+          (node.type === "MemberExpression" || node.type === "StaticMemberExpression") &&
+          (name === "window.scrollX" || name === "window.scrollY")
+        )
+          replacement = "useScroll";
         if (
           callee === "window.scrollTo" ||
           callee === "window.scrollBy" ||

@@ -1,4 +1,4 @@
-import { AnyNode, createRule, walkScriptLocal } from "./shared.js";
+import { booleanRuleOption, AnyNode, createRule, walkScriptLocal } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 interface Options {
@@ -16,7 +16,9 @@ export const preferComposableRefReturn = createRule({
     requires: { script: true, vue: true },
   },
   create(ctx) {
-    const options = (ctx.options ?? {}) as Options;
+    const options: Options = {
+      allowReactiveObjectReturn: booleanRuleOption(ctx.options, "allowReactiveObjectReturn"),
+    };
     if (options.allowReactiveObjectReturn) return;
 
     return {

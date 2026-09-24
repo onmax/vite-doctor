@@ -1,3 +1,4 @@
+import { isString } from "../../../core/internal/value-schema.js";
 import { createRule, type RuleContext } from "../../../core/index.js";
 import {
   isOutermostTypeAssertion,
@@ -150,7 +151,7 @@ function deserializerObjectName(ctx: RuleContext, node: AnyNode): string | null 
 
 function memberPropertyName(node: AnyNode): string | null {
   const name = node.computed ? node.property?.value : node.property?.name;
-  return typeof name === "string" ? name : null;
+  return isString(name) ? name : null;
 }
 
 function containingFunction(node: AnyNode): AnyNode {

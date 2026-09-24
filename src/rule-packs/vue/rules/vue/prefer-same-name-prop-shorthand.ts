@@ -1,3 +1,4 @@
+import { isNumber } from "../../../../core/internal/value-schema.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
@@ -48,12 +49,7 @@ export const preferSameNamePropShorthand = createRule({
 
         const keyEnd = node.key?.range?.[1];
         const attributeEnd = node.range?.[1];
-        if (
-          typeof keyEnd !== "number" ||
-          typeof attributeEnd !== "number" ||
-          keyEnd >= attributeEnd
-        )
-          return;
+        if (!isNumber(keyEnd) || !isNumber(attributeEnd) || keyEnd >= attributeEnd) return;
 
         ctx.report(
           diagnostics.VUE0023({

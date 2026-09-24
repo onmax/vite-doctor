@@ -1,3 +1,4 @@
+import { isString, isRecord } from "./value-schema.js";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "pathe";
 import type {
@@ -387,7 +388,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
 
 function runCycleAndDuplicateExportRules(session: ScanSession, graph: WorkspaceGraph) {
   for (const scc of graph.sccs.filter((item) => item.length > 1)) {
-    const files = scc.map((id) => graph.files.get(id)?.path).filter(Boolean) as string[];
+    const files = scc.map((id) => graph.files.get(id)?.path).filter(isString);
     pushDiagnostic(session, {
       ruleId: "workspace/dead-code/circular-dependency",
       severity: "warn",
@@ -402,9 +403,7 @@ function runCycleAndDuplicateExportRules(session: ScanSession, graph: WorkspaceG
     });
   }
   for (const [name, exports] of graph.reverseIndex.exportsByName) {
-    const files = [
-      ...new Set(exports.map((item) => findExportFile(graph, item)).filter(Boolean)),
-    ] as string[];
+    const files = [...new Set(exports.map((item) => findExportFile(graph, item)).filter(isString))];
     if (name === "default" || name === "*" || files.length < 2) continue;
     pushDiagnostic(session, {
       ruleId: "workspace/dead-code/duplicate-export",
@@ -664,10 +663,10 @@ function isGeneratedOrAssetImport(specifier: string): boolean {
 
 function allPackageNames(json: Record<string, unknown>): string[] {
   return [
-    ...Object.keys((json.dependencies as Record<string, unknown> | undefined) ?? {}),
-    ...Object.keys((json.optionalDependencies as Record<string, unknown> | undefined) ?? {}),
-    ...Object.keys((json.devDependencies as Record<string, unknown> | undefined) ?? {}),
-    ...Object.keys((json.peerDependencies as Record<string, unknown> | undefined) ?? {}),
+    ...Object.keys(isRecord(json.dependencies) ? json.dependencies : {}),
+    ...Object.keys(isRecord(json.optionalDependencies) ? json.optionalDependencies : {}),
+    ...Object.keys(isRecord(json.devDependencies) ? json.devDependencies : {}),
+    ...Object.keys(isRecord(json.peerDependencies) ? json.peerDependencies : {}),
   ];
 }
 
@@ -678,7 +677,7 @@ function packageEntryCandidates(
 ): string[] {
   const candidates = new Set<string>();
   for (const value of [json.main, json.module, json.types, json.typings]) {
-    if (typeof value !== "string") continue;
+    if (!isString(value)) continue;
     for (const file of sourceCandidatesForPackageEntry(packageRoot, value)) candidates.add(file);
   }
   collectPackageExportEntries(packageRoot, json.exports, candidates);
@@ -694,12 +693,12 @@ function collectPackageExportEntries(
   value: unknown,
   candidates: Set<string>,
 ): void {
-  if (typeof value === "string") {
+  if (isString(value)) {
     for (const file of sourceCandidatesForPackageEntry(packageRoot, value)) candidates.add(file);
     return;
   }
-  if (!value || typeof value !== "object") return;
-  for (const item of Object.values(value as Record<string, unknown>)) {
+  if (!isRecord(value) && !Array.isArray(value)) return;
+  for (const item of Object.values(value)) {
     collectPackageExportEntries(packageRoot, item, candidates);
   }
 }

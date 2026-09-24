@@ -1,5 +1,6 @@
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
 import { diagnostics } from "../../../diagnostics.js";
+import { isAstNode } from "../../../core/internal/ast-node.js";
 import {
   isLiteralPrimitive,
   isViteConfigFile,
@@ -99,7 +100,7 @@ export const noRuntimeObjectDefine = createRule({
     if (!isViteConfigFile(ctx.file.relativePath)) return;
     return {
       ScriptNode(node) {
-        if ((node as { type?: string }).type !== "Program") return;
+        if (!isAstNode(node) || node.type !== "Program") return;
         for (const entry of readDefineEntriesFromCurrentFile(ctx)) {
           if (isLiteralPrimitive(entry.rawValue) || entry.rawValue.startsWith("JSON.stringify("))
             continue;
@@ -135,7 +136,7 @@ export const noSecretDefine = createRule({
     if (!isViteConfigFile(ctx.file.relativePath)) return;
     return {
       ScriptNode(node) {
-        if ((node as { type?: string }).type !== "Program") return;
+        if (!isAstNode(node) || node.type !== "Program") return;
         for (const entry of readDefineEntriesFromCurrentFile(ctx)) {
           if (!SECRET_NAME_RE.test(entry.key) && !SECRET_NAME_RE.test(entry.rawValue)) continue;
           ctx.report(

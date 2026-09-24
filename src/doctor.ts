@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import {
   defineDoctorExtension,
   runDoctor,
@@ -105,7 +106,15 @@ function readPackageJson(root: string): {
   devDependencies?: Record<string, string>;
 } | null {
   try {
-    return JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    const value: unknown = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    const result = v.safeParse(
+      v.object({
+        dependencies: v.optional(v.record(v.string(), v.string())),
+        devDependencies: v.optional(v.record(v.string(), v.string())),
+      }),
+      value,
+    );
+    return result.success ? result.output : null;
   } catch {
     return null;
   }

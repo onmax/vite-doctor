@@ -1,3 +1,4 @@
+import { isNumber, isStringMap } from "../../../../core/internal/value-schema.js";
 import {
   codeForRuleId,
   createRule,
@@ -121,8 +122,8 @@ export function resolveLocalCalleeName(ctx: RuleContext, node: AnyNode): string 
 
 function getLocalAliasMap(ctx: RuleContext): Map<string, string> {
   const key = `nuxt:local-callee-aliases:${ctx.file.hash}`;
-  const cached = ctx.cache.get<Map<string, string>>(key);
-  if (cached) return cached;
+  const cached = ctx.cache.get(key);
+  if (isStringMap(cached)) return cached;
   const aliases = new Map<string, string>();
   walkScriptLocal(ctx.file.scriptAst, (node) => {
     if (node.type !== "VariableDeclarator" || node.id?.type !== "Identifier") return;
@@ -248,7 +249,7 @@ export function getStaticAttr(node: AnyNode, name: string) {
 export function simpleTagRenameFix(text: string, node: AnyNode, replacement: string) {
   const start = node.start;
   const end = node.end;
-  if (typeof start !== "number" || typeof end !== "number") return null;
+  if (!isNumber(start) || !isNumber(end)) return null;
   const snippet = text.slice(start, end);
   const replaced = snippet
     .replaceAll("RouterView", replacement)

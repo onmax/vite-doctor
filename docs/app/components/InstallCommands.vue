@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useClipboard } from "@vueuse/core";
+
 const props = withDefaults(
   defineProps<{
     command?: string;
@@ -58,6 +60,7 @@ type PackageManager = (typeof packageManagers.value)[number]["value"];
 const activeCommandTab = ref<(typeof commandTabs)[number]["value"]>("humans");
 const activePackageManager = ref<PackageManager>("pnpm");
 const copied = ref<string | null>(null);
+const { copy: copyToClipboard } = useClipboard({ legacy: true });
 const selectedPackageManager = computed(
   () =>
     packageManagers.value.find((manager) => manager.value === activePackageManager.value) ??
@@ -83,25 +86,10 @@ const copyLabel = computed(() =>
 );
 
 async function copy(value: string, key: string) {
-  let didCopy = false;
-
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      didCopy = true;
-    }
-  } catch {}
-
-  if (!didCopy) {
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    didCopy = document.execCommand("copy");
-    textarea.remove();
+    await copyToClipboard(value);
+  } catch {
+    return;
   }
 
   copied.value = key;

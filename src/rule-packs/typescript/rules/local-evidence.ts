@@ -1,3 +1,4 @@
+import { isBigint, isBoolean, isNumber, isString } from "../../../core/internal/value-schema.js";
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
 import { parameterType, type AnyNode } from "./shared.js";
 
@@ -40,7 +41,7 @@ export function arrayMethod(node: AnyNode): { object: AnyNode; name: string } | 
       : node.property?.type === "Literal"
         ? node.property.value
         : null;
-  return typeof name === "string" ? { object: expression(node.object), name } : null;
+  return isString(name) ? { object: expression(node.object), name } : null;
 }
 
 export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = true } = {}) {
@@ -101,7 +102,9 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
       return;
     }
     if (
-      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type) &&
+      ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(
+        node.type,
+      ) &&
       node.importKind === "type"
     ) {
       outer.types.add(node.local.name);
@@ -356,8 +359,10 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
     if (!node) return;
     if (node.type === "Literal") {
       if (node.value === null) return "null";
-      if (["number", "boolean", "string", "bigint"].includes(typeof node.value))
-        return typeof node.value;
+      if (isNumber(node.value)) return "number";
+      if (isBoolean(node.value)) return "boolean";
+      if (isString(node.value)) return "string";
+      if (isBigint(node.value)) return "bigint";
       return;
     }
     if (node.type === "UnaryExpression" && ["+", "-", "~", "!"].includes(node.operator)) {
@@ -371,17 +376,17 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
     const target = binding(node);
     if (!target || (owner && target.owner !== owner) || target.written || seen.has(target)) return;
     if (target.annotation) {
-      const types: Record<string, string> = {
-        TSStringKeyword: "string",
-        TSNumberKeyword: "number",
-        TSBooleanKeyword: "boolean",
-        TSBigIntKeyword: "bigint",
-        TSSymbolKeyword: "symbol",
-        TSNullKeyword: "null",
-      };
+      const types = new Map([
+        ["TSStringKeyword", "string"],
+        ["TSNumberKeyword", "number"],
+        ["TSBooleanKeyword", "boolean"],
+        ["TSBigIntKeyword", "bigint"],
+        ["TSSymbolKeyword", "symbol"],
+        ["TSNullKeyword", "null"],
+      ]);
       if (target.annotation.type === "TSLiteralType")
         return primitive(target.annotation.literal, owner, seen);
-      return types[target.annotation.type];
+      return types.get(target.annotation.type);
     }
     if (target.kind === "const" && target.node.start < node.start)
       return primitive(target.init, owner, new Set([...seen, target]));

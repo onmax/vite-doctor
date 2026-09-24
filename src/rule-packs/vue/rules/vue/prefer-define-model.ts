@@ -1,4 +1,5 @@
-import { AnyNode, createRule } from "./shared.js";
+import { isString } from "../../../../core/internal/value-schema.js";
+import { booleanRuleOption, AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 interface Options {
@@ -17,7 +18,9 @@ export const preferDefineModel = createRule({
     frameworkVersions: { vue: ">=3.4" },
   },
   create(ctx) {
-    const options = (ctx.options ?? {}) as Options;
+    const options: Options = {
+      allowDefaultModelValue: booleanRuleOption(ctx.options, "allowDefaultModelValue"),
+    };
     if (!ctx.file.text.includes("<script setup")) return;
 
     const props = new Map<string, AnyNode>();
@@ -69,7 +72,7 @@ function propNamesFromDefineProps(node: AnyNode): Array<{ name: string; node: An
   if (!arg) return [];
   if (arg.type === "ArrayExpression")
     return (arg.elements ?? [])
-      .filter((element: AnyNode) => typeof element?.value === "string")
+      .filter((element: AnyNode) => isString(element?.value))
       .map((element: AnyNode) => ({ name: element.value, node: element }));
   if (arg.type !== "ObjectExpression") return [];
   return (arg.properties ?? [])
@@ -77,15 +80,13 @@ function propNamesFromDefineProps(node: AnyNode): Array<{ name: string; node: An
       name: property.key?.name ?? property.key?.value,
       node: property,
     }))
-    .filter((item: { name?: string }) => typeof item.name === "string");
+    .filter((item: { name?: string }) => isString(item.name));
 }
 
 function emitNamesFromDefineEmits(node: AnyNode): string[] {
   const arg = node.arguments?.[0];
   if (!arg || arg.type !== "ArrayExpression") return [];
-  return (arg.elements ?? [])
-    .map((element: AnyNode) => element?.value)
-    .filter((value: unknown): value is string => typeof value === "string");
+  return (arg.elements ?? []).map((element: AnyNode) => element?.value).filter(isString);
 }
 
 function hasDefaultOption(node: AnyNode): boolean {

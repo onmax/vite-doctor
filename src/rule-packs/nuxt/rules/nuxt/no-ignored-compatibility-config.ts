@@ -1,3 +1,4 @@
+import { isString } from "../../../../core/internal/value-schema.js";
 import { type AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
@@ -77,6 +78,6 @@ function unwrapParent(node: AnyNode): AnyNode {
 
 function propertyName(node: AnyNode): string | null {
   if (node.key?.type === "Identifier") return node.key.name;
-  if (typeof node.key?.value === "string") return node.key.value;
+  if (isString(node.key?.value)) return node.key.value;
   return null;
 }

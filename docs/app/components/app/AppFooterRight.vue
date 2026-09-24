@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { isString } from "../../../../src/core/internal/value-schema.js";
+
 interface FooterLink {
   icon: string;
   to: string;
@@ -9,12 +11,10 @@ interface FooterLink {
 const appConfig = useAppConfig();
 
 const links = computed<FooterLink[]>(() => {
-  const socialLabels: Record<string, string> = {
-    x: "Onmax on X",
-  };
+  const socialLabels = new Map([["x", "Onmax on X"]]);
 
   const socialLinks = Object.entries(appConfig.socials || {}).flatMap(([key, url]) => {
-    if (typeof url !== "string" || !url) {
+    if (!isString(url) || !url) {
       return [];
     }
 
@@ -23,7 +23,7 @@ const links = computed<FooterLink[]>(() => {
         icon: `i-simple-icons-${key}`,
         to: url,
         target: "_blank" as const,
-        "aria-label": socialLabels[key] || `${key} social link`,
+        "aria-label": socialLabels.get(key) || `${key} social link`,
       },
     ];
   });

@@ -1,3 +1,4 @@
+import { isNumber, isString } from "../../../core/internal/value-schema.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { resolve } from "pathe";
@@ -31,7 +32,7 @@ export async function readViteConfigFacts(ctx: RuleContext): Promise<ViteConfigF
     "vitest.config.{ts,js,mjs,cjs,mts,cts}",
   ]) {
     for await (const entry of glob(pattern, { cwd: ctx.project.root })) {
-      if (typeof entry === "string") files.add(resolve(ctx.project.root, entry));
+      if (isString(entry)) files.add(resolve(ctx.project.root, entry));
     }
   }
   return [...files].sort().map((file) => {
@@ -50,7 +51,7 @@ export async function readProjectSources(
 ): Promise<Array<{ file: string; text: string }>> {
   const files: Array<{ file: string; text: string }> = [];
   for await (const entry of glob(SOURCE_GLOB, { cwd: ctx.project.root, exclude: SOURCE_EXCLUDE })) {
-    if (typeof entry !== "string") continue;
+    if (!isString(entry)) continue;
     const file = resolve(ctx.project.root, entry);
     if (!statSync(file, { throwIfNoEntry: false })?.isFile()) continue;
     files.push({ file, text: readFileSync(file, "utf8") });
@@ -72,7 +73,7 @@ export function isLikelySsrFile(path: string): boolean {
 
 export function staticString(node: AnyNode): string | null {
   if (!node) return null;
-  if (typeof node.value === "string") return node.value;
+  if (isString(node.value)) return node.value;
   if (node.type === "TemplateLiteral" && node.expressions?.length === 0)
     return String(node.quasis?.[0]?.value?.cooked ?? node.quasis?.[0]?.value?.raw ?? "");
   return null;
@@ -82,7 +83,7 @@ export function propertyName(node: AnyNode): string | null {
   if (!node) return null;
   if (node.type === "Identifier") return node.name;
   if (node.type === "PrivateIdentifier") return node.name;
-  if (typeof node.value === "string" || typeof node.value === "number") return String(node.value);
+  if (isString(node.value) || isNumber(node.value)) return String(node.value);
   return null;
 }
 
@@ -181,7 +182,10 @@ function objectBodyAfterKey(text: string, key: string): { start: number; body: s
 
 function findDeclarationFiles(root: string): string[] {
   const candidates = ["vite-env.d.ts", "env.d.ts", "src/vite-env.d.ts", "src/env.d.ts"];
-  return candidates.map((file) => resolve(root, file)).filter((file) => existsSync(file));
+  return candidates.flatMap((file) => {
+    const path = resolve(root, file);
+    return existsSync(path) ? [path] : [];
+  });
 }
 
 function escapeRegExp(value: string): string {

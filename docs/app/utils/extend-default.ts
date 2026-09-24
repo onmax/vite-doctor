@@ -1,10 +1,8 @@
+import { isBoolean, isRecord } from "../../../src/core/internal/value-schema.js";
 type MergeTarget = Record<string, unknown> | unknown[];
 
 function isMergeTarget(value: unknown): value is MergeTarget {
-  return (
-    Array.isArray(value) ||
-    (typeof value === "object" && value !== null && value.constructor === Object)
-  );
+  return Array.isArray(value) || (isRecord(value) && value.constructor === Object);
 }
 
 function mergeInto(target: MergeTarget, source: unknown, deep: boolean): MergeTarget {
@@ -14,14 +12,14 @@ function mergeInto(target: MergeTarget, source: unknown, deep: boolean): MergeTa
 
   for (const [key, value] of Object.entries(source)) {
     if (deep && isMergeTarget(value)) {
-      const current = (target as Record<string, unknown>)[key];
+      const current = Reflect.get(target, key);
       const nextTarget = isMergeTarget(current) ? current : Array.isArray(value) ? [] : {};
 
-      (target as Record<string, unknown>)[key] = mergeInto(nextTarget, value, deep);
+      Reflect.set(target, key, mergeInto(nextTarget, value, deep));
       continue;
     }
 
-    (target as Record<string, unknown>)[key] = value;
+    Reflect.set(target, key, value);
   }
 
   return target;
@@ -31,7 +29,7 @@ export default function extend(...args: unknown[]): MergeTarget {
   let deep = false;
   let index = 0;
 
-  if (typeof args[0] === "boolean") {
+  if (isBoolean(args[0])) {
     deep = args[0];
     index = 1;
   }

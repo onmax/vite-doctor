@@ -1,8 +1,10 @@
+import { isString, isRecord } from "./value-schema.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "pathe";
 import { valid } from "semver";
 import { parseScript } from "./script.js";
+import { isAstNode } from "./ast-node.js";
 import type {
   DoctorFramework,
   NuxtCompatibilityInfo,
@@ -66,7 +68,7 @@ export function resolveRuntimeGraph(root: string, framework: DoctorFramework): R
 export function resolveNuxtCompatibility(
   root: string,
   graph: RuntimeGraph,
-  manifest: NuxtDoctorManifest | null,
+  manifest: Partial<NuxtDoctorManifest> | null,
 ): NuxtCompatibilityInfo | undefined {
   if (!graph.packages.nuxt) return undefined;
   const config = readNuxtConfig(root);
@@ -118,7 +120,7 @@ export function resolveNuxtCompatibility(
   };
 }
 
-export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest | null) {
+export function isNuxtManifestCurrent(root: string, manifest: Partial<NuxtDoctorManifest> | null) {
   if (!manifest?.generatedAt || !Number.isFinite(Date.parse(manifest.generatedAt))) return false;
   const config = readNuxtConfig(root);
   const configModifiedAt = config ? configModifiedTime(config.file) : undefined;
@@ -191,8 +193,8 @@ function resolveRuntimePackage(
     try {
       const packageJsonPath = resolvePackageJson(require, requestedName);
       const manifest = readPackageManifest(packageJsonPath);
-      const name = typeof manifest?.name === "string" ? manifest.name : undefined;
-      const version = typeof manifest?.version === "string" ? manifest.version : undefined;
+      const name = isString(manifest?.name) ? manifest.name : undefined;
+      const version = isString(manifest?.version) ? manifest.version : undefined;
       const identity = packageIdentity(runtime, requestedName, name);
       if (!name || !version || !valid(version)) {
         return unknownRuntime(runtime, requestedName, owner, declaration, {
@@ -284,9 +286,9 @@ function packageDeclaration(
     "optionalDependencies",
   ]) {
     const dependencies = manifest?.[key];
-    if (dependencies && typeof dependencies === "object") {
-      const value = (dependencies as Record<string, unknown>)[name];
-      if (typeof value === "string") return value;
+    if (isRecord(dependencies)) {
+      const value = dependencies[name];
+      if (isString(value)) return value;
     }
   }
   return undefined;
@@ -358,7 +360,7 @@ type CompatibilityValue =
   | { state: "unknown"; reason: string };
 
 function readExportedCompatibilityVersion(file: string, text: string): CompatibilityValue {
-  const program = parseScript(file, text) as { body?: AnyRuntimeNode[] } | null;
+  const program = parseScript(file, text);
   if (!program) {
     return /\bfuture\s*:[\s\S]{0,200}\bcompatibilityVersion\s*:/.test(text)
       ? {
@@ -367,7 +369,8 @@ function readExportedCompatibilityVersion(file: string, text: string): Compatibi
         }
       : { state: "absent" };
   }
-  const exported = program.body?.find((node) => node.type === "ExportDefaultDeclaration");
+  const body = Array.isArray(program.body) ? program.body : [];
+  const exported = body.find((node) => isAstNode(node) && node.type === "ExportDefaultDeclaration");
   if (!exported) return { state: "absent" };
   let config = unwrapExpression(exported.declaration);
   if (config?.type === "CallExpression" && config.callee?.name === "defineNuxtConfig") {
@@ -447,7 +450,8 @@ function objectProperty(
 
 function readPackageManifest(file: string): Record<string, unknown> | null {
   try {
-    return JSON.parse(readFileSync(resolve(file), "utf8")) as Record<string, unknown>;
+    const value: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
+    return isRecord(value) ? value : null;
   } catch {
     return null;
   }

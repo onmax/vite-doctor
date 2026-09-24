@@ -1,3 +1,4 @@
+import { isString } from "./value-schema.js";
 import type { DoctorRunOptions } from "../config.js";
 
 export function applyDoctorOptions(
@@ -15,15 +16,39 @@ export function applyDoctorOptions(
   if (flags.fix) options.fix = true;
   if (flags.unsafeFix) options.unsafeFix = true;
   if (flags.maxWarnings !== undefined) options.maxWarnings = Number(flags.maxWarnings);
-  options.framework =
-    (stringFlag(flags.framework) as DoctorRunOptions["framework"]) ?? options.framework;
+  options.framework = frameworkFlag(flags.framework) ?? options.framework;
   options.rules = stringFlag(flags.rules) ?? options.rules;
-  options.severity =
-    (stringFlag(flags.severity) as DoctorRunOptions["severity"]) ?? options.severity;
+  options.severity = severityFlag(flags.severity) ?? options.severity;
   options.extends = parseExtendsFlag(flags.extends) ?? options.extends;
   options.since = stringFlag(flags.since) ?? options.since;
   options.baseline = stringFlag(flags.baseline) ?? options.baseline;
-  options.format = (stringFlag(flags.format) as DoctorRunOptions["format"]) ?? options.format;
+  options.format = formatFlag(flags.format) ?? options.format;
+}
+
+function frameworkFlag(value: unknown): DoctorRunOptions["framework"] {
+  if (!isString(value)) return undefined;
+  switch (value) {
+    case "auto":
+    case "vue":
+    case "vite":
+    case "nitro":
+    case "nuxt":
+      return value;
+    default:
+      throw new Error(`Unknown framework ${JSON.stringify(value)}.`);
+  }
+}
+
+function severityFlag(value: unknown): DoctorRunOptions["severity"] {
+  if (!isString(value)) return undefined;
+  if (value === "error" || value === "warn" || value === "info") return value;
+  throw new Error(`Unknown severity ${JSON.stringify(value)}.`);
+}
+
+function formatFlag(value: unknown): DoctorRunOptions["format"] {
+  return value === "text" || value === "json" || value === "sarif" || value === "agent"
+    ? value
+    : undefined;
 }
 
 function parseExtends(value: string | undefined): DoctorRunOptions["extends"] {
@@ -35,9 +60,9 @@ function parseExtends(value: string | undefined): DoctorRunOptions["extends"] {
 }
 
 function parseExtendsFlag(value: unknown): DoctorRunOptions["extends"] | undefined {
-  return typeof value === "string" ? parseExtends(value) : undefined;
+  return isString(value) ? parseExtends(value) : undefined;
 }
 
 export function stringFlag(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
+  return isString(value) ? value : undefined;
 }

@@ -1,16 +1,15 @@
+import { isNumber } from "./value-schema.js";
 import { createHash } from "node:crypto";
 import type { SfcBlockHashes, SfcHandle, SourceRange } from "../primitives.js";
 import { parseScript, type ScriptParseLang } from "./script.js";
 import { parseTemplate } from "./template.js";
-
-const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
 
 export async function parseSfcFile(
   file: string,
   source: string,
   hash = sha256(source),
 ): Promise<SfcHandle> {
-  const { parse } = await optionalImport<typeof import("@vue/compiler-sfc")>("@vue/compiler-sfc");
+  const { parse } = await import("@vue/compiler-sfc");
   const { descriptor } = parse(source, { filename: file, sourceMap: false });
   const blockHashes: SfcBlockHashes = {
     template: descriptor.template ? sha256(descriptor.template.content) : undefined,
@@ -26,7 +25,7 @@ export async function parseSfcFile(
     descriptor,
     blockHashes,
     getTemplateAst() {
-      return (descriptor.template?.ast as unknown as Record<string, unknown>) ?? null;
+      return descriptor.template?.ast ?? null;
     },
     getScriptAst() {
       const script = createVueScriptForParsing(descriptor, source);
@@ -58,7 +57,7 @@ export function createVueScriptForParsing(
   const text = source.split("").map((char) => (char === "\n" || char === "\r" ? char : " "));
   for (const block of blocks) {
     const start = block.loc?.start?.offset;
-    if (typeof start !== "number" || !block.content) continue;
+    if (!isNumber(start) || !block.content) continue;
     for (let index = 0; index < block.content.length; index++) {
       text[start + index] = block.content[index]!;
     }

@@ -185,7 +185,7 @@ export function normalizeDiagnostic(input: DoctorDiagnosticNormalizationInput): 
     sources: diagnostic.sources,
     message: diagnostic.why,
     suggestion: diagnostic.fix,
-  } as Diagnostic;
+  };
 }
 
 type DoctorDiagnosticNormalizationInput = Partial<Diagnostic> & {
@@ -201,6 +201,7 @@ export function normalizeDiagnosticFromRuleCode(
     ruleId: string;
     severity: Diagnostic["severity"];
     category: string;
+    file: string;
     message?: string;
     why?: string;
     suggestion?: string;
@@ -225,7 +226,7 @@ export function normalizeDiagnosticFromRuleCode(
     sources: diagnostic.sources,
     message: diagnostic.why,
     suggestion: diagnostic.fix,
-  } as Diagnostic;
+  };
 }
 
 function nearestAnchor(source: string, offset: number): string {
@@ -272,7 +273,7 @@ export function pushDiagnostic(
 }
 
 export function reportRuntimeInventoryUnknown(session: ScanSession): void {
-  const expected =
+  const expected: Array<"nuxt" | "nitro" | "h3" | "vue"> =
     session.project.framework === "nuxt"
       ? ["nuxt", "nitro", "h3"]
       : session.project.framework === "nitro"
@@ -280,12 +281,10 @@ export function reportRuntimeInventoryUnknown(session: ScanSession): void {
         : session.project.framework === "vue"
           ? ["vue"]
           : [];
-  const unresolved = expected
-    .map(
-      (runtime) =>
-        session.project.runtimeGraph?.packages[runtime as "nuxt" | "nitro" | "h3" | "vue"],
-    )
-    .filter((item) => item?.state === "unknown");
+  const unresolved = expected.flatMap((runtime) => {
+    const item = session.project.runtimeGraph?.packages[runtime];
+    return item?.state === "unknown" ? [item] : [];
+  });
   const details = [
     ...unresolved.map(
       (item) => `${item?.owner} -> ${item?.runtime}: ${item?.reason ?? "unresolved"}`,

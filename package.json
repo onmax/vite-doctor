@@ -89,6 +89,7 @@
     "semver": "catalog:prod",
     "std-env": "catalog:prod",
     "typescript": "catalog:analysis",
+    "valibot": "^1.4.2",
     "vue-eslint-parser": "catalog:analysis"
   },
   "devDependencies": {

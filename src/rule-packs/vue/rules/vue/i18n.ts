@@ -1,5 +1,7 @@
+import { isBoolean, isRecord, isString } from "../../../../core/internal/value-schema.js";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "pathe";
+import { isAstNode } from "../../../../core/internal/ast-node.js";
 import { AnyNode, createRule } from "./shared.js";
 import { parseScript } from "./script.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -73,7 +75,8 @@ export const noUntranslatedText = createRule({
   },
   create(ctx) {
     const cacheKey = `vue-i18n:project-has-i18n:${ctx.project.root}`;
-    let hasI18n = ctx.cache.get<boolean>(cacheKey);
+    const cached = ctx.cache.get(cacheKey);
+    let hasI18n = isBoolean(cached) ? cached : undefined;
     if (hasI18n === undefined) {
       hasI18n = projectHasI18n(ctx.project.root);
       ctx.cache.set(cacheKey, hasI18n);
@@ -134,9 +137,13 @@ function projectHasI18n(root: string): boolean {
 }
 
 function projectHasI18nPackage(root: string): boolean {
-  const pkg = readJson(resolve(root, "package.json")) as any;
-  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies, ...pkg?.peerDependencies };
-  return Object.keys(deps).some((name) => I18N_PACKAGE_NAMES.has(name));
+  const pkg = readJson(resolve(root, "package.json"));
+  if (!isRecord(pkg)) return false;
+  for (const value of [pkg.dependencies, pkg.devDependencies, pkg.peerDependencies]) {
+    if (isRecord(value) && Object.keys(value).some((name) => I18N_PACKAGE_NAMES.has(name)))
+      return true;
+  }
+  return false;
 }
 
 function collectLocaleMessages(root: string): LocaleMessage[] {
@@ -215,7 +222,8 @@ class BunGlobCompat {
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
   try {
-    return JSON.parse(text);
+    const value: unknown = JSON.parse(text);
+    return isRecord(value) ? value : null;
   } catch {
     return null;
   }
@@ -223,21 +231,23 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
 
 function parseModuleMessages(file: string, text: string): Record<string, unknown> | null {
   const ast = parseScript(file, text);
-  let found: Record<string, unknown> | null = null;
+  const found: Record<string, unknown>[] = [];
   walkAny(ast, (node: AnyNode) => {
-    if (found) return;
+    if (found.length) return;
     if (node.type === "ExportDefaultDeclaration") {
-      found = evaluateStaticObject(node.declaration);
+      const messages = evaluateStaticObject(node.declaration);
+      if (messages) found.push(messages);
     }
     if (
       node.type === "CallExpression" &&
       ["defineI18nLocale", "defineI18nConfig"].includes(node.callee?.name)
     ) {
       const argument = node.arguments?.[0];
-      found = evaluateStaticObject(argument);
+      const messages = evaluateStaticObject(argument);
+      if (messages) found.push(messages);
     }
   });
-  return found;
+  return found[0] ?? null;
 }
 
 function evaluateStaticObject(node: AnyNode): Record<string, unknown> | null {
@@ -281,9 +291,9 @@ function flattenMessages(
   const entries: Array<[string, string]> = [];
   for (const [key, value] of Object.entries(object)) {
     const path = prefix ? `${prefix}.${key}` : key;
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      entries.push(...flattenMessages(value as Record<string, unknown>, path));
-    } else if (typeof value === "string") {
+    if (isRecord(value)) {
+      entries.push(...flattenMessages(value, path));
+    } else if (isString(value)) {
       entries.push([path, value]);
     }
   }
@@ -399,14 +409,13 @@ function readJson(file: string): unknown {
 }
 
 function walkAny(node: unknown, visit: (node: AnyNode) => void) {
-  if (!node || typeof node !== "object") return;
-  const typed = node as AnyNode;
-  if (typeof typed.type === "string") visit(typed);
-  for (const [key, value] of Object.entries(typed)) {
+  if (!(node instanceof Object)) return;
+  if (isAstNode(node)) visit(node);
+  for (const [key, value] of Object.entries(node)) {
     if (key === "__doctorParent") continue;
     if (Array.isArray(value)) {
       for (const child of value) walkAny(child, visit);
-    } else if (value && typeof value === "object") {
+    } else if (value instanceof Object) {
       walkAny(value, visit);
     }
   }

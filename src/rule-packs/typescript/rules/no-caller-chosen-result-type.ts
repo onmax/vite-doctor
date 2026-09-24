@@ -1,4 +1,6 @@
+import { isString } from "../../../core/internal/value-schema.js";
 import { createRule } from "../../../core/index.js";
+import { isAstNode } from "../../../core/internal/ast-node.js";
 import { collectTypeIdentifiers, parentOf, report, type AnyNode } from "./shared.js";
 
 const ruleId = "typescript/evidence/no-caller-chosen-result-type";
@@ -56,7 +58,7 @@ export const noCallerChosenResultType = createRule({
         const resultTypes = collectUnprovenResultTypeIdentifiers(returnType);
         for (const parameter of typeParameters) {
           const name = parameter.name?.name ?? parameter.name;
-          if (typeof name !== "string" || !resultTypes.has(name) || inputTypes.has(name)) continue;
+          if (!isString(name) || !resultTypes.has(name) || inputTypes.has(name)) continue;
           report(
             ctx,
             parameter,
@@ -75,22 +77,37 @@ function collectInputEvidenceIdentifiers(
   names = new Set<string>(),
   polarity = 1,
 ): Set<string> {
-  if (!node || typeof node !== "object") return names;
   if (Array.isArray(node)) {
     for (const child of node) collectInputEvidenceIdentifiers(child, names, polarity);
     return names;
   }
+  if (!isAstNode(node)) return names;
   if (functionTypes.has(node.type)) {
-    for (const parameter of node.params ?? []) {
+    for (const parameter of Array.isArray(node.params) ? node.params : []) {
       collectInputEvidenceIdentifiers(parameter, names, -polarity);
     }
-    collectInputEvidenceIdentifiers(node.returnType?.typeAnnotation, names, polarity);
+    collectInputEvidenceIdentifiers(
+      isAstNode(node.returnType) ? node.returnType.typeAnnotation : undefined,
+      names,
+      polarity,
+    );
     return names;
   }
-  if (polarity > 0 && node.type === "TSTypeReference" && node.typeName?.type === "Identifier") {
+  if (
+    polarity > 0 &&
+    node.type === "TSTypeReference" &&
+    isAstNode(node.typeName) &&
+    node.typeName.type === "Identifier" &&
+    isString(node.typeName.name)
+  ) {
     names.add(node.typeName.name);
   }
-  if (polarity > 0 && node.type === "Identifier" && parentOf(node)?.type === "TSTypeQuery") {
+  if (
+    polarity > 0 &&
+    node.type === "Identifier" &&
+    parentOf(node)?.type === "TSTypeQuery" &&
+    isString(node.name)
+  ) {
     names.add(node.name);
   }
   for (const [key, value] of Object.entries(node)) {
@@ -104,24 +121,32 @@ function collectUnprovenResultTypeIdentifiers(
   node: AnyNode,
   names = new Set<string>(),
 ): Set<string> {
-  if (!node || typeof node !== "object") return names;
   if (Array.isArray(node)) {
     for (const child of node) collectUnprovenResultTypeIdentifiers(child, names);
     return names;
   }
+  if (!isAstNode(node)) return names;
   if (functionTypes.has(node.type)) {
-    const callableResults = collectUnprovenResultTypeIdentifiers(node.returnType?.typeAnnotation);
+    const callableResults = collectUnprovenResultTypeIdentifiers(
+      isAstNode(node.returnType) ? node.returnType.typeAnnotation : undefined,
+    );
     const callableInputs = new Set<string>();
-    for (const parameter of node.params ?? []) collectTypeIdentifiers(parameter, callableInputs);
+    for (const parameter of Array.isArray(node.params) ? node.params : [])
+      collectTypeIdentifiers(parameter, callableInputs);
     for (const name of callableResults) {
       if (!callableInputs.has(name)) names.add(name);
     }
     return names;
   }
-  if (node.type === "TSTypeReference" && node.typeName?.type === "Identifier") {
+  if (
+    node.type === "TSTypeReference" &&
+    isAstNode(node.typeName) &&
+    node.typeName.type === "Identifier" &&
+    isString(node.typeName.name)
+  ) {
     names.add(node.typeName.name);
   }
-  if (node.type === "Identifier" && parentOf(node)?.type === "TSTypeQuery") {
+  if (node.type === "Identifier" && parentOf(node)?.type === "TSTypeQuery" && isString(node.name)) {
     names.add(node.name);
   }
   for (const [key, value] of Object.entries(node)) {
@@ -148,7 +173,7 @@ function expandInputEvidence(inputTypes: Set<string>, typeParameters: AnyNode[])
   const parametersByName = new Map<string, AnyNode>();
   for (const parameter of typeParameters) {
     const name = parameter.name?.name ?? parameter.name;
-    if (typeof name === "string") parametersByName.set(name, parameter);
+    if (isString(name)) parametersByName.set(name, parameter);
   }
 
   const pending = [...inputTypes];

@@ -1,4 +1,5 @@
 import { parseSync } from "oxc-parser";
+import { isAstNode } from "../../../../core/internal/ast-node.js";
 
 type ScriptParseLang = "js" | "jsx" | "ts" | "tsx";
 
@@ -11,8 +12,8 @@ export function parseScript(
     const result = parseSync(file, source, {
       sourceType: "module",
       lang,
-    } as any);
-    return result.program as unknown as Record<string, unknown>;
+    });
+    return isAstNode(result.program) ? result.program : null;
   } catch {
     return null;
   }

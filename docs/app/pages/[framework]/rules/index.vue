@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { FRAMEWORK_META, FRAMEWORKS, type Framework } from "../../../utils/rule-metadata";
+import { FRAMEWORK_META, parseFramework } from "../../../utils/rule-metadata";
 
 definePageMeta({
   layout: "docs",
-  validate: (route) => FRAMEWORKS.includes(String(route.params.framework) as Framework),
+  validate: (route) => parseFramework(route.params.framework) !== null,
 });
 
 const route = useRoute();
-const framework = computed(() => String(route.params.framework) as Framework);
+const framework = computed(() => {
+  const value = parseFramework(route.params.framework);
+  if (!value) throw createError({ statusCode: 404, statusMessage: "Unknown framework" });
+  return value;
+});
 const meta = computed(() => FRAMEWORK_META[framework.value]);
 
 useHead(() => ({

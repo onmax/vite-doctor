@@ -32,56 +32,73 @@ export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; ic
   },
 };
 
-export const FRAMEWORKS = Object.keys(FRAMEWORK_META) as Framework[];
+export const FRAMEWORKS: Framework[] = ["vue", "vite", "nuxt", "nitro", "typescript", "shadcn"];
 
-const CATEGORY_LABELS: Record<string, string> = {
-  "app-config": "App config",
-  architecture: "Architecture",
-  assets: "Assets",
-  auth: "Authentication",
-  "browser-api": "Browser APIs",
-  cache: "Caching",
-  composables: "Composables",
-  computed: "Computed",
-  content: "Content",
-  context: "Context",
-  configuration: "Configuration",
-  fetch: "Data fetching",
-  fetching: "Data fetching",
-  hydration: "Hydration & SSR",
-  hmr: "HMR",
-  images: "Images",
-  imports: "Imports",
-  layers: "Layers",
-  lifecycle: "Lifecycle",
-  links: "Links",
-  middleware: "Middleware",
-  plugin: "Plugins",
-  plugins: "Plugins",
-  project: "Project",
-  reactivity: "Reactivity",
-  request: "Request",
-  routing: "Routing",
-  runtime: "Runtime config",
-  "runtime-config": "Runtime config",
-  scripts: "Scripts",
-  security: "Security",
-  seo: "SEO",
-  server: "Server",
-  shared: "Shared",
-  ssr: "SSR safety",
-  state: "State",
-  style: "Style",
-  template: "Template",
-  ui: "UI",
-  worker: "Workers",
-  workers: "Workers",
-  watch: "Watchers",
-  watchers: "Watchers",
-};
+export function parseFramework(value: unknown): Framework | null {
+  const name = String(value);
+  switch (name) {
+    case "vue":
+    case "vite":
+    case "nuxt":
+    case "nitro":
+    case "typescript":
+    case "shadcn":
+      return name;
+    default:
+      return null;
+  }
+}
+
+const CATEGORY_LABELS = new Map(
+  Object.entries({
+    "app-config": "App config",
+    architecture: "Architecture",
+    assets: "Assets",
+    auth: "Authentication",
+    "browser-api": "Browser APIs",
+    cache: "Caching",
+    composables: "Composables",
+    computed: "Computed",
+    content: "Content",
+    context: "Context",
+    configuration: "Configuration",
+    fetch: "Data fetching",
+    fetching: "Data fetching",
+    hydration: "Hydration & SSR",
+    hmr: "HMR",
+    images: "Images",
+    imports: "Imports",
+    layers: "Layers",
+    lifecycle: "Lifecycle",
+    links: "Links",
+    middleware: "Middleware",
+    plugin: "Plugins",
+    plugins: "Plugins",
+    project: "Project",
+    reactivity: "Reactivity",
+    request: "Request",
+    routing: "Routing",
+    runtime: "Runtime config",
+    "runtime-config": "Runtime config",
+    scripts: "Scripts",
+    security: "Security",
+    seo: "SEO",
+    server: "Server",
+    shared: "Shared",
+    ssr: "SSR safety",
+    state: "State",
+    style: "Style",
+    template: "Template",
+    ui: "UI",
+    worker: "Workers",
+    workers: "Workers",
+    watch: "Watchers",
+    watchers: "Watchers",
+  }),
+);
 
 export function categoryLabel(slug: string) {
-  return CATEGORY_LABELS[slug] ?? slug.replace(/-/g, " ");
+  return CATEGORY_LABELS.get(slug) ?? slug.replace(/-/g, " ");
 }
 
 export function packLabel(pack: string) {

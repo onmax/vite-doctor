@@ -1,3 +1,4 @@
+import { isString } from "../../../core/internal/value-schema.js";
 import { type AnyNode, createRule, report } from "./shared.js";
 
 export const noV2Imports = createRule({
@@ -22,7 +23,7 @@ export const noV2Imports = createRule({
     return {
       ImportDeclaration(node: AnyNode) {
         const source = node.source?.value;
-        if (typeof source !== "string") return;
+        if (!isString(source)) return;
         const replacement = v3Replacement(source, node);
         if (!replacement) return;
         report(

@@ -9,6 +9,7 @@ import {
   type RuleContext,
 } from "../../../core/index.js";
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
+import { isRecord } from "../../../core/internal/value-schema.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../diagnostics.js";
 
 const ruleName = (id: string) => `shadcn/${id.slice("shadcn/".length)}`;
@@ -54,12 +55,17 @@ export function createShadcnRule(options: {
                   sourceType: "module",
                 },
                 plugins: { shadcn: plugin },
-                settings: { shadcn: (ctx.options as any)?.settings },
+                settings: { shadcn: isRecord(ctx.options) ? ctx.options.settings : undefined },
                 rules: {
                   [ruleName(options.id)]:
                     ctx.options === undefined
                       ? "error"
-                      : ["error", (ctx.options as any)?.options ?? ctx.options],
+                      : [
+                          "error",
+                          isRecord(ctx.options)
+                            ? (ctx.options.options ?? ctx.options)
+                            : ctx.options,
+                        ],
                 },
               },
             ],

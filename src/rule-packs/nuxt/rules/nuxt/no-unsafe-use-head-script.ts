@@ -1,4 +1,5 @@
 import { AnyNode, createRule, report } from "./shared.js";
+import { isAstNode, stringLiteralValue } from "../../../../core/internal/ast-node.js";
 
 const NON_EXECUTABLE_SCRIPT_TYPES = new Set([
   "application/importmap+json",
@@ -38,20 +39,27 @@ export const noUnsafeUseHeadScript = createRule({
 });
 
 function hasExecutableScriptHeadEntry(node: AnyNode): boolean {
-  if (!node || typeof node !== "object" || node.type !== "ObjectExpression") return false;
-  return (node.properties ?? []).some((property: AnyNode) => {
+  if (!isAstNode(node) || node.type !== "ObjectExpression") return false;
+  const properties = Array.isArray(node.properties) ? node.properties : [];
+  return properties.some((property: AnyNode) => {
     if (property?.type !== "Property" || propertyKeyName(property) !== "script") return false;
     return hasExecutableScriptValue(property.value);
   });
 }
 
 function hasExecutableScriptValue(node: AnyNode): boolean {
-  if (!node || typeof node !== "object") return false;
+  if (!isAstNode(node)) return false;
   if (node.type === "ParenthesizedExpression") return hasExecutableScriptValue(node.expression);
   if (node.type === "ArrayExpression")
-    return (node.elements ?? []).some((element: AnyNode) => hasExecutableScriptValue(element));
+    return (Array.isArray(node.elements) ? node.elements : []).some((element: AnyNode) =>
+      hasExecutableScriptValue(element),
+    );
   if (node.type === "CallExpression" && calleePropertyName(node) === "map")
-    return hasExecutableScriptValue(node.arguments?.[0]?.body);
+    return hasExecutableScriptValue(
+      Array.isArray(node.arguments) && isAstNode(node.arguments[0])
+        ? node.arguments[0].body
+        : undefined,
+    );
   if (node.type !== "ObjectExpression") return true;
   const type = staticPropertyString(node, "type")?.toLowerCase();
   return !type || !NON_EXECUTABLE_SCRIPT_TYPES.has(type);
@@ -61,7 +69,8 @@ function staticPropertyString(node: AnyNode, name: string): string | null {
   for (const property of node.properties ?? []) {
     if (property?.type !== "Property" || propertyKeyName(property) !== name) continue;
     const value = property.value;
-    if (value?.type === "Literal" && typeof value.value === "string") return value.value;
+    const text = stringLiteralValue(value);
+    if (text !== null) return text;
   }
   return null;
 }

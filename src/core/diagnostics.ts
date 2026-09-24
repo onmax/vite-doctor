@@ -17,12 +17,9 @@ export interface DoctorDiagnosticParams {
 
 export type DoctorDiagnosticHandle = DiagnosticHandle<DoctorDiagnosticParams, {}>;
 
-export type DoctorDiagnosticRegistry<
-  Code extends string = string,
-  RuleId extends string = string,
-> = {
-  codesByRuleId: Record<RuleId, Code>;
-  diagnostics: { readonly [Key in Code]: DoctorDiagnosticHandle };
+export type DoctorDiagnosticRegistry = {
+  codesByRuleId: Record<string, string>;
+  diagnostics: Readonly<Record<string, DoctorDiagnosticHandle>>;
 };
 
 export interface DoctorDiagnosticsHost {
@@ -62,36 +59,36 @@ export function diagnosticForCode(
   return code ? diagnostics[code] : undefined;
 }
 
-export function defineDoctorDiagnostics<const Entries extends readonly DoctorDiagnosticCodeEntry[]>(
-  entries: Entries,
-): DoctorDiagnosticRegistry<Entries[number]["code"], Entries[number]["ruleId"]> {
-  type Code = Entries[number]["code"];
-  type RuleId = Entries[number]["ruleId"];
-  const codes = Object.fromEntries(
-    entries.map((entry) => [
-      entry.code,
-      {
-        why: (params: DoctorDiagnosticParams) => params.why,
-        fix: (params: DoctorDiagnosticParams) => params.fix,
-        ...(entry.docs === undefined ? {} : { docs: entry.docs }),
-      },
-    ]),
-  ) as Record<
-    Code,
+export function defineDoctorDiagnostics(
+  entries: readonly DoctorDiagnosticCodeEntry[],
+): DoctorDiagnosticRegistry {
+  const codes: Record<
+    string,
     {
       why: (params: DoctorDiagnosticParams) => string;
       fix: (params: DoctorDiagnosticParams) => string;
       docs?: string | false;
     }
-  >;
+  > = {};
+  const codesByRuleId: Record<string, string> = {};
+  for (const entry of entries) {
+    const definition: {
+      why: (params: DoctorDiagnosticParams) => string;
+      fix: (params: DoctorDiagnosticParams) => string;
+      docs?: string | false;
+    } = {
+      why: (params: DoctorDiagnosticParams) => params.why,
+      fix: (params: DoctorDiagnosticParams) => params.fix,
+    };
+    if (entry.docs !== undefined) definition.docs = entry.docs;
+    codes[entry.code] = definition;
+    codesByRuleId[entry.ruleId] = entry.code;
+  }
   return {
-    codesByRuleId: Object.fromEntries(entries.map((entry) => [entry.ruleId, entry.code])) as Record<
-      RuleId,
-      Code
-    >,
+    codesByRuleId,
     diagnostics: defineNosticsDiagnostics({
       docsBase: (code) => `${DOCTOR_DIAGNOSTICS_DOCS_BASE}/${String(code)}`,
       codes,
-    }) as unknown as { readonly [Key in Code]: DoctorDiagnosticHandle },
+    }),
   };
 }

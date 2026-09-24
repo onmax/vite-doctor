@@ -29,14 +29,17 @@ export interface NuxtProjectInventory {
 
 export function createNuxtProjectInventory(
   root: string,
-  manifest: NuxtDoctorManifest | null,
+  manifest: Partial<NuxtDoctorManifest> | null,
   manifestPath?: string,
   fallbackImportsDirs: string[] = [],
+  fallbackKeyedComposables: string[] = [],
 ): NuxtProjectInventory {
   return {
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
-    keyedComposables: (manifest?.keyedComposables ?? []).map(String),
+    keyedComposables: [
+      ...new Set([...(manifest?.keyedComposables ?? []).map(String), ...fallbackKeyedComposables]),
+    ],
     aliases: manifest?.aliases ?? {},
     autoImportTransform: manifest?.autoImportTransform,
     appScanRoots: (manifest?.appScanRoots ?? [manifest?.appDir ?? "app"]).map((dir) =>
@@ -59,15 +62,19 @@ export function createNuxtProjectInventory(
 }
 
 export function normalizeNuxtModuleSources(sources: NuxtModuleSource[]): NuxtModuleSource[] {
-  return sources
-    .filter((source) => source.module && source.root)
-    .map((source) => ({
-      ...source,
-      root: resolve(source.root),
-      packageDir: source.packageDir ? resolve(source.packageDir) : undefined,
-      runtimeDirs: source.runtimeDirs?.map((dir) => resolve(dir)),
-      appDirs: source.appDirs?.map((dir) => resolve(dir)),
-    }));
+  return sources.flatMap((source) =>
+    source.module && source.root
+      ? [
+          {
+            ...source,
+            root: resolve(source.root),
+            packageDir: source.packageDir ? resolve(source.packageDir) : undefined,
+            runtimeDirs: source.runtimeDirs?.map((dir) => resolve(dir)),
+            appDirs: source.appDirs?.map((dir) => resolve(dir)),
+          },
+        ]
+      : [],
+  );
 }
 
 export function relativeNuxtScanRoot(projectRoot: string, root: string): string {

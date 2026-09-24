@@ -335,6 +335,19 @@ export function reportStatus(result: DoctorRunResult): "clean" | "findings" | "i
 }
 
 function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
+  const location: {
+    path: string;
+    line?: number;
+    column?: number;
+    start?: number;
+    end?: number;
+  } = { path: relative(result.root, diagnostic.file) };
+  if (diagnostic.range) {
+    location.line = diagnostic.range.line;
+    location.column = diagnostic.range.column;
+    location.start = diagnostic.range.start;
+    location.end = diagnostic.range.end;
+  }
   return {
     fingerprint: diagnostic.fingerprint,
     code: diagnostic.code,
@@ -345,17 +358,7 @@ function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
     message: diagnostic.why,
     remediation: diagnostic.diagnostic.fix,
     docs: diagnosticReferenceUrl(diagnostic.code),
-    location: {
-      path: relative(result.root, diagnostic.file),
-      ...(diagnostic.range
-        ? {
-            line: diagnostic.range.line,
-            column: diagnostic.range.column,
-            start: diagnostic.range.start,
-            end: diagnostic.range.end,
-          }
-        : {}),
-    },
+    location,
     evidence: diagnostic.evidence?.map((item) => ({
       kind: item.kind,
       summary: item.summary,

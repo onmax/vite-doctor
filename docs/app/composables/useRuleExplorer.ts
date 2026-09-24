@@ -152,7 +152,9 @@ export function useRuleExplorer(options: {
   }
 
   function handleToggle(ruleId: string, event: Event) {
-    setRuleOpen(ruleId, (event.currentTarget as HTMLDetailsElement).open);
+    if (event.currentTarget instanceof HTMLDetailsElement) {
+      setRuleOpen(ruleId, event.currentTarget.open);
+    }
   }
 
   function expandAll() {

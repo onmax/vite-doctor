@@ -1,4 +1,6 @@
+import { isString } from "./value-schema.js";
 import { existsSync, readFileSync } from "node:fs";
+import * as v from "valibot";
 import { glob } from "node:fs/promises";
 import { join, resolve } from "pathe";
 import type {
@@ -17,18 +19,23 @@ import {
   resolveNuxtCompatibility,
   resolveRuntimeGraph,
 } from "./runtime-graph.js";
+import { parseNuxtManifest } from "./nuxt-manifest-schema.js";
+
+const packageJsonSchema = v.object({
+  name: v.optional(v.string()),
+  scripts: v.optional(v.record(v.string(), v.string())),
+  dependencies: v.optional(v.record(v.string(), v.string())),
+  devDependencies: v.optional(v.record(v.string(), v.string())),
+});
 
 export async function detectProject(
   root: string,
   requested: "auto" | DoctorFramework = "auto",
   runtimeTarget?: RuntimeTarget,
 ): Promise<ProjectInfo> {
-  const packageJson = readJson<{
-    name?: string;
-    scripts?: Record<string, string>;
-    dependencies?: Record<string, string>;
-    devDependencies?: Record<string, string>;
-  }>(join(root, "package.json"));
+  const packageJson = readJson(join(root, "package.json"), (value) =>
+    v.parse(packageJsonSchema, value),
+  );
   const deps = { ...packageJson?.dependencies, ...packageJson?.devDependencies };
   const nuxtVersion = deps.nuxt ?? deps["@nuxt/kit"];
   const viteVersion = deps.vite;
@@ -55,7 +62,7 @@ export async function detectProject(
   const detectedGraph = resolveRuntimeGraph(root, framework);
   const manifest =
     framework === "nuxt"
-      ? readJson<NuxtDoctorManifest>(join(root, ".nuxt/doctor.manifest.json"))
+      ? readJson(join(root, ".nuxt/doctor.manifest.json"), parseNuxtManifest)
       : null;
   const targeted = applyRuntimeTarget(
     detectedGraph,
@@ -104,7 +111,7 @@ async function detectProjectLanguages(
       "**/generated/**",
     ],
   })) {
-    if (typeof entry !== "string") continue;
+    if (!isString(entry)) continue;
     if (/\.(?:ts|tsx|mts|cts)$/.test(entry)) hasTypeScript = true;
     if (/\.(?:js|jsx|mjs|cjs)$/.test(entry)) hasJavaScript = true;
     if (entry.endsWith(".vue")) {
@@ -169,7 +176,7 @@ async function detectNuxt(
       root,
       version,
       deps,
-      readJson<NuxtDoctorManifest>(manifestPath),
+      readJson(manifestPath, parseNuxtManifest),
       manifestPath,
     );
   }
@@ -180,15 +187,16 @@ async function normalizeNuxtProject(
   root: string,
   version: string,
   deps: Record<string, string | undefined>,
-  manifest: NuxtDoctorManifest | null,
+  manifest: Partial<NuxtDoctorManifest> | null,
   manifestPath?: string,
 ): Promise<NuxtProjectInfo> {
+  const appRoots = manifest?.layers?.length
+    ? manifest.layers.map((layer) => resolve(root, layer.root)).sort()
+    : await detectNuxtAppRoots(root);
   return {
     version: cleanVersion(manifest?.nuxtVersion ?? version),
     appDir: resolve(root, manifest?.appDir ?? (existsSync(join(root, "app")) ? "app" : ".")),
-    appRoots: manifest?.layers?.length
-      ? manifest.layers.map((layer) => resolve(root, layer.root)).sort()
-      : await detectNuxtAppRoots(root),
+    appRoots,
     autoImportEnabled: manifest ? manifest.autoImportEnabled === true : true,
     autoImportsAuthoritative:
       manifest?.autoImportEnabled !== undefined && isNuxtManifestCurrent(root, manifest),
@@ -208,8 +216,17 @@ async function normalizeNuxtProject(
     doctorConfig: manifest?.doctorConfig,
     manifestPath,
     modules: mergeDetectedModules(manifest?.modules ?? [], deps, root),
+    configuredModules:
+      manifest?.modules?.map((module) => module.name) ??
+      appRoots.flatMap(readConfiguredNuxtModules),
     moduleSources: normalizeNuxtModuleSources(manifest?.moduleSources ?? []),
-    manifest: createNuxtProjectInventory(root, manifest, manifestPath, readNuxtImportsDirs(root)),
+    manifest: createNuxtProjectInventory(
+      root,
+      manifest,
+      manifestPath,
+      appRoots.flatMap(readNuxtImportsDirs),
+      appRoots.flatMap(readNuxtKeyedComposables),
+    ),
   };
 }
 
@@ -223,9 +240,10 @@ async function detectNuxtAppRoots(root: string): Promise<string[]> {
   return [...new Set(configs.map((file) => resolve(file, "..")))].sort();
 }
 
-function readJson<T>(file: string): T | null {
+function readJson<T>(file: string, parse: (value: unknown) => T): T | null {
   try {
-    return JSON.parse(readFileSync(file, "utf8")) as T;
+    const value: unknown = JSON.parse(readFileSync(file, "utf8"));
+    return parse(value);
   } catch {
     return null;
   }
@@ -246,7 +264,20 @@ function readNuxtImportsDirs(root: string): string[] {
   const importsBlock = config?.match(/\bimports\s*:\s*\{[\s\S]*?\n\s*\}/)?.[0];
   const dirsBlock = importsBlock?.match(/\bdirs\s*:\s*\[([\s\S]*?)\]/)?.[1];
   if (!dirsBlock) return [];
-  return [...dirsBlock.matchAll(/["'`]([^"'`]+)["'`]/g)].map((match) => match[1]!).filter(Boolean);
+  return [...dirsBlock.matchAll(/["'`]([^"'`]+)["'`]/g)].flatMap((match) =>
+    match[1] ? [match[1]] : [],
+  );
+}
+
+function readNuxtKeyedComposables(root: string): string[] {
+  const config =
+    readFileSyncIfExists(join(root, "nuxt.config.ts")) ??
+    readFileSyncIfExists(join(root, "nuxt.config.js")) ??
+    readFileSyncIfExists(join(root, "nuxt.config.mjs"));
+  const entries = config?.match(/\bkeyedComposables\s*:\s*\[([\s\S]*?)\]/)?.[1];
+  return entries
+    ? [...entries.matchAll(/\bname\s*:\s*["'`]([^"'`]+)["'`]/g)].map((match) => match[1]!)
+    : [];
 }
 
 async function serverDirs(root: string) {
@@ -271,7 +302,7 @@ async function globFiles(root: string, patterns: string[]): Promise<string[]> {
   const files = new Set<string>();
   for (const pattern of patterns) {
     for await (const entry of glob(pattern, { cwd: root })) {
-      if (typeof entry === "string") files.add(resolve(root, entry));
+      if (isString(entry)) files.add(resolve(root, entry));
     }
   }
   return [...files].sort();
@@ -326,6 +357,16 @@ function mergeDetectedModules(
   }
   if (extendsDocus(root)) detected.set("docus", detected.get("docus") ?? { name: "docus" });
   return [...detected.values()];
+}
+
+function readConfiguredNuxtModules(root: string): string[] {
+  const config =
+    readFileSyncIfExists(join(root, "nuxt.config.ts")) ??
+    readFileSyncIfExists(join(root, "nuxt.config.js")) ??
+    readFileSyncIfExists(join(root, "nuxt.config.mjs")) ??
+    readFileSyncIfExists(join(root, "nuxt.config.mts"));
+  const modules = config?.match(/\bmodules\s*:\s*\[([\s\S]*?)\]/)?.[1];
+  return modules ? [...modules.matchAll(/["'`]([^"'`]+)["'`]/g)].map((match) => match[1]!) : [];
 }
 
 function extendsDocus(root: string): boolean {

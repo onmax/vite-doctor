@@ -13,6 +13,7 @@ import {
 import { vueRulePack } from "../../../src/rule-packs/vue/rules.ts";
 import nuxtContentRulePack from "../../../src/rule-packs/nuxt/rules/nuxt-content.ts";
 import docusRulePack from "../../../src/rule-packs/nuxt/rules/docus.ts";
+import { requireStandardAuthHandlerMount } from "../../../src/rule-packs/nuxt/rules/nuxt-better-auth.ts";
 import { preferUButton, preferUFormControls } from "../../../src/rule-packs/nuxt/rules/nuxt-ui.ts";
 import {
   noBrowserGlobalInUniversalCode,
@@ -84,10 +85,12 @@ import {
 } from "../../../src/rule-packs/vue/rules/vue/index.ts";
 import {
   preferUseEventListener,
+  preferUseBreakpoints,
   preferUseObservers,
   preferUseScrollAndElement,
   preferUseStorage,
   preferUseTimers,
+  preferUseWindowSize,
 } from "../../../src/rule-packs/nuxt/rules/vueuse.ts";
 
 const cases = [
@@ -2272,6 +2275,25 @@ target.value?.getBoundingClientRect()
   ]);
 });
 
+test("VueUse preference rules do not diagnose API names in string literals", async () => {
+  const source = `<script setup lang="ts">
+const names = ['window.innerWidth', 'window.matchMedia', 'localStorage', 'window.scrollX']
+</script>`;
+  for (const rule of [
+    preferUseWindowSize,
+    preferUseBreakpoints,
+    preferUseStorage,
+    preferUseScrollAndElement,
+  ]) {
+    const result = await runRuleFixture({
+      rule,
+      framework: "nuxt",
+      files: { "app/components/Panel.vue": source },
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  }
+});
+
 test("VueUse preference rules skip existing composables and non-runtime files", async () => {
   const timers = await runRuleFixture({
     rule: preferUseTimers,
@@ -3315,6 +3337,29 @@ test("Nuxt Doctor rule payloads use JSON report helpers", () => {
   );
   expect(explanation.id).toBe("nuxt/fetch/no-raw-fetch-in-setup");
   expect(explainRule(nuxtRulePacks(), "nuxt/does-not-exist", "json")).toBe("");
+});
+
+test("Better Auth handler rule requires an active Nuxt module", async () => {
+  const dependencies = { "nuxt-better-auth": "1.0.0" };
+  const files = { "app/pages/index.vue": "<template><div>Home</div></template>" };
+  const installed = await runRuleFixture({
+    rule: requireStandardAuthHandlerMount,
+    framework: "nuxt",
+    dependencies,
+    files,
+  });
+  const configured = await runRuleFixture({
+    rule: requireStandardAuthHandlerMount,
+    framework: "nuxt",
+    dependencies,
+    files: {
+      ...files,
+      "nuxt.config.ts": "export default defineNuxtConfig({ modules: ['nuxt-better-auth'] })",
+    },
+  });
+
+  expect(installed.diagnostics).toHaveLength(0);
+  expect(configured.diagnostics.map((diagnostic) => diagnostic.code)).toContain("NUXT0003");
 });
 
 test("explicit Nuxt module sources are scanned with module metadata", async () => {

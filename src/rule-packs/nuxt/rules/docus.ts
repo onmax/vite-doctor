@@ -1,3 +1,4 @@
+import { isString } from "../../../core/internal/value-schema.js";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "pathe";
 import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
@@ -223,6 +224,6 @@ function isTopLevelDefineAppConfigProperty(node: AnyNode): boolean {
 
 function staticPropertyKey(node: AnyNode): string | null {
   if (node.key?.type === "Identifier") return node.key.name;
-  if (typeof node.key?.value === "string") return node.key.value;
+  if (isString(node.key?.value)) return node.key.value;
   return null;
 }

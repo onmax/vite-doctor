@@ -1,4 +1,5 @@
 import { dirname, resolve } from "pathe";
+import { isStringSet } from "../../../core/internal/value-schema.js";
 import { createRule, type RuleContext } from "../../../core/index.js";
 import { memberPath, readProjectSources, staticString, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
@@ -165,8 +166,8 @@ function isFixturePath(path: string): boolean {
 
 async function browserWorkerEntries(ctx: RuleContext) {
   const cacheKey = "vite:browser-worker-entries";
-  const cached = ctx.cache.get<Set<string>>(cacheKey);
-  if (cached) return cached;
+  const cached = ctx.cache.get(cacheKey);
+  if (isStringSet(cached)) return cached;
   const entries = new Set<string>();
   for (const source of await readProjectSources(ctx)) {
     if (isServerSidePath(source.file)) continue;

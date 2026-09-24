@@ -35,8 +35,8 @@ const DEFAULT_CONFIG: DoctorConfig = {
 
 class MemoryRuleCache implements RuleCache {
   private values = new Map<string, unknown>();
-  get<T = unknown>(key: string): T | undefined {
-    return this.values.get(key) as T | undefined;
+  get(key: string): unknown {
+    return this.values.get(key);
   }
   set<T = unknown>(key: string, value: T): void {
     this.values.set(key, value);
@@ -51,8 +51,8 @@ class PersistentRuleCache extends MemoryRuleCache {
     this.dir = resolve(root, config.cache?.dir ?? ".vite-doctor/cache");
   }
 
-  override get<T = unknown>(key: string): T | undefined {
-    const memory = super.get<T>(key);
+  override get(key: string): unknown {
+    const memory = super.get(key);
     if (memory !== undefined) return memory;
     if (!key.startsWith("fileFacts:")) return undefined;
     try {
@@ -60,7 +60,7 @@ class PersistentRuleCache extends MemoryRuleCache {
         readFileSync(resolve(this.dir, `${safeCacheKey(key)}.json`), "utf8"),
       );
       super.set(key, value);
-      return value as T;
+      return value;
     } catch {
       return undefined;
     }

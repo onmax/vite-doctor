@@ -1,3 +1,5 @@
+import * as v from "valibot";
+import { isNumber, isString } from "../../../../core/internal/value-schema.js";
 import type { RuleContext } from "../../../../core/index.js";
 import {
   findAncestor,
@@ -44,6 +46,13 @@ export interface AsyncDataRuleOptions {
   allowPreviewBroadEnablementWithExplicitCallbacks?: boolean;
 }
 
+const asyncDataOptionsSchema = v.object({
+  readonlyPaths: v.optional(v.array(v.string())),
+  writeLikePathSegments: v.optional(v.array(v.string())),
+  sideEffectCallees: v.optional(v.array(v.string())),
+  allowPreviewBroadEnablementWithExplicitCallbacks: v.optional(v.boolean()),
+});
+
 export interface AsyncDataCall {
   node: AnyNode;
   name: string;
@@ -65,7 +74,8 @@ export interface SideEffectMatch {
 }
 
 export function asyncDataRuleOptions(ctx: RuleContext): AsyncDataRuleOptions {
-  return (ctx.options ?? {}) as AsyncDataRuleOptions;
+  const parsed = v.safeParse(asyncDataOptionsSchema, ctx.options ?? {});
+  return parsed.success ? parsed.output : {};
 }
 
 export function replayableSeverity(
@@ -107,7 +117,7 @@ export function getStaticString(node: AnyNode): string | null {
   if (!unwrapped) return null;
   if (
     (unwrapped.type === "Literal" || unwrapped.type === "StringLiteral") &&
-    typeof unwrapped.value === "string"
+    isString(unwrapped.value)
   )
     return unwrapped.value;
   if (unwrapped.type === "TemplateLiteral" && (unwrapped.expressions?.length ?? 0) === 0) {
@@ -425,7 +435,7 @@ function isInsideDeferredCallback(root: AnyNode, node: AnyNode): boolean {
 
 function hasDeferredCallbackPrefix(ctx: RuleContext, node: AnyNode): boolean {
   const start = node.start ?? node.range?.[0];
-  if (typeof start !== "number") return false;
+  if (!isNumber(start)) return false;
   const before = ctx.file.text.slice(Math.max(0, start - 160), start);
   return /(?:onMounted|onBeforeMount|watch|watchEffect|useEventListener|addEventListener)\s*\([^;\n]*=>\s*$/s.test(
     before,

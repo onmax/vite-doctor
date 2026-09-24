@@ -42,7 +42,6 @@ test("Nuxt all-issues fixture reports Nuxt and ecosystem rule packs", async () =
   expect(diagnosticKeys(result, nuxtFixture)).toEqual([
     "nitro/context/no-navigateto-in-nitro:server/api/user.ts",
     "nitro/context/no-usenuxtapp-in-nitro:server/api/user.ts",
-    "nuxt-better-auth/require-standard-auth-handler-mount:app/aaa-security.ts",
     "nuxt-content/no-querycontent-legacy-api:app/pages/account.vue",
     "nuxt-scripts/no-raw-third-party-script-tag:diagnostics/RawScript.vue",
     "nuxt-ui/prefer-u-button:app/pages/account.vue",

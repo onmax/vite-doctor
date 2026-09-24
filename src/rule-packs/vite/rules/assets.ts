@@ -1,3 +1,4 @@
+import { isString } from "../../../core/internal/value-schema.js";
 import { createRule } from "../../../core/index.js";
 import { staticString, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
@@ -46,7 +47,7 @@ export const noSrcAbsolutePublicUrl = createRule({
     return {
       TemplateNode(node: AnyNode) {
         const value = node.type === "VAttribute" ? node.value?.value : null;
-        if (typeof value !== "string" || !value.startsWith("/src/")) return;
+        if (!isString(value) || !value.startsWith("/src/")) return;
         ctx.report(
           diagnostics.VITE0003({
             why: `Source asset "${value}" is referenced as a public URL.`,

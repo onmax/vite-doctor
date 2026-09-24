@@ -27,6 +27,10 @@ export default defineNuxtConfig({
 
   modules: ["vite-doctor/nuxt"],
 
+  optimization: {
+    keyedComposables: [{ name: "useRuleAsyncData", argumentLength: 2 }],
+  },
+
   css: ["~/assets/css/main.css"],
 
   icon: {
@@ -110,4 +114,4 @@ export default defineNuxtConfig({
   future: { compatibilityVersion: 4 },
 
   compatibilityDate: "2026-05-11",
-} as any);
+});

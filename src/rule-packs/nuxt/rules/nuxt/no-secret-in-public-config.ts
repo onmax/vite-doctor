@@ -1,3 +1,4 @@
+import { isString } from "../../../../core/internal/value-schema.js";
 import { AnyNode, createRule, report } from "./shared.js";
 
 export const noSecretInPublicConfig = createRule({
@@ -16,7 +17,7 @@ export const noSecretInPublicConfig = createRule({
       ScriptNode(node: AnyNode) {
         if (node.type !== "Property") return;
         const key = node.key?.name ?? node.key?.value;
-        if (typeof key === "string" && /(secret|token|password|private|key)$/i.test(key)) {
+        if (isString(key) && /(secret|token|password|private|key)$/i.test(key)) {
           const nearby = ctx.file.text.slice(Math.max(0, node.start - 120), node.start);
           if (nearby.includes("public")) {
             report(

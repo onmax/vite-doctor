@@ -1,4 +1,6 @@
 import { AnyNode, createRule, report } from "./shared.js";
+import { isAstNode } from "../../../../core/internal/ast-node.js";
+import { isString } from "../../../../core/internal/value-schema.js";
 
 const UNTRUSTED_IDENTIFIERS = new Set(["route", "params", "query", "user", "content", "markdown"]);
 
@@ -32,12 +34,15 @@ export const preferUseHeadSafeForUntrustedValues = createRule({
 });
 
 function hasUntrustedHeadValue(node: AnyNode): boolean {
-  if (!node || typeof node !== "object") return false;
   if (Array.isArray(node)) return node.some(hasUntrustedHeadValue);
-  if (node.type === "Identifier" && UNTRUSTED_IDENTIFIERS.has(node.name)) return true;
+  if (!isAstNode(node)) return false;
+  if (node.type === "Identifier" && isString(node.name) && UNTRUSTED_IDENTIFIERS.has(node.name))
+    return true;
   if (
     (node.type === "MemberExpression" || node.type === "StaticMemberExpression") &&
-    node.object?.type === "Identifier" &&
+    isAstNode(node.object) &&
+    node.object.type === "Identifier" &&
+    isString(node.object.name) &&
     UNTRUSTED_IDENTIFIERS.has(node.object.name)
   )
     return true;

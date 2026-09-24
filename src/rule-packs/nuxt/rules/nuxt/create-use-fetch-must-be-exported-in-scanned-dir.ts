@@ -1,4 +1,5 @@
 import { AnyNode, createRule, report } from "./shared.js";
+import { join, relative } from "pathe";
 
 export const createUseFetchMustBeExportedInScannedDir = createRule({
   meta: {
@@ -18,9 +19,10 @@ export const createUseFetchMustBeExportedInScannedDir = createRule({
         const exported = /export\s+(const|function)\s+use[A-Z]\w+/.test(
           ctx.file.text.slice(Math.max(0, node.start - 120), node.start),
         );
-        const scanned =
-          ctx.file.relativePath.startsWith("app/composables/") &&
-          !/^app\/composables\/[^/]+\/.+/.test(ctx.file.relativePath);
+        const scanned = [
+          ctx.project.nuxt?.appDir,
+          ...(ctx.project.nuxt?.appRoots ?? []).map((root) => join(root, "app")),
+        ].some((appDir) => appDir && /^composables\/[^/]+$/.test(relative(appDir, ctx.file.path)));
         if (exported && scanned) return;
         report(
           ctx,

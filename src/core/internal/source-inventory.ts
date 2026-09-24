@@ -1,3 +1,4 @@
+import { isString } from "./value-schema.js";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { matchesGlob } from "node:path";
@@ -109,7 +110,7 @@ async function selectAllFiles(
   const include = config.include ?? defaultIncludeForProject(project);
   for (const pattern of include) {
     for await (const entry of glob(pattern, { cwd: root, exclude })) {
-      if (typeof entry !== "string") continue;
+      if (!isString(entry)) continue;
       const absolute = resolve(root, entry);
       if (isScannableFile(absolute)) files.set(absolute, createAppFileEntry(root, entry));
     }
@@ -120,7 +121,7 @@ async function selectAllFiles(
     const moduleExclude = [...DEFAULT_EXCLUDE, ...(source.exclude ?? [])];
     for (const pattern of include) {
       for await (const entry of glob(pattern, { cwd: source.root, exclude: moduleExclude })) {
-        if (typeof entry !== "string") continue;
+        if (!isString(entry)) continue;
         const absolute = resolve(source.root, entry);
         if (!isScannableFile(absolute)) continue;
         files.set(absolute, {

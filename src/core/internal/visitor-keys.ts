@@ -1,9 +1,11 @@
 import * as oxcParser from "oxc-parser";
+import { isAstNode } from "./ast-node.js";
 
 type VisitorKeyMap = Record<string, readonly string[]>;
 
-const parserVisitorKeys = isVisitorKeyMap((oxcParser as { visitorKeys?: unknown }).visitorKeys)
-  ? (oxcParser as { visitorKeys: VisitorKeyMap }).visitorKeys
+const parserVisitorKeyCandidate: unknown = Reflect.get(oxcParser, "visitorKeys");
+const parserVisitorKeys = isVisitorKeyMap(parserVisitorKeyCandidate)
+  ? parserVisitorKeyCandidate
   : {};
 const ignoredFallbackKeys = new Set([
   "__doctorParent",
@@ -48,19 +50,15 @@ export function getTemplateVisitorKeys(
 }
 
 function isVisitorKeyMap(value: unknown): value is VisitorKeyMap {
-  if (!value || typeof value !== "object") return false;
+  if (!(value instanceof Object)) return false;
   return Object.values(value).every(
-    (keys) => Array.isArray(keys) && keys.every((key) => typeof key === "string"),
+    (keys) =>
+      Array.isArray(keys) &&
+      keys.every((key) => Object.prototype.toString.call(key) === "[object String]"),
   );
 }
 
 function isTraversableChild(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
   if (Array.isArray(value)) return value.some(isAstNode);
   return isAstNode(value);
-}
-
-function isAstNode(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  return typeof (value as { type?: unknown }).type === "string";
 }

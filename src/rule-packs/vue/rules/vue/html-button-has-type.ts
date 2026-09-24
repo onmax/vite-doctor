@@ -1,3 +1,4 @@
+import { isNumber } from "../../../../core/internal/value-schema.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
@@ -42,13 +43,12 @@ export const htmlButtonHasType = createRule({
             category: "template",
             file: ctx.file.path,
             range: ctx.range(node.startTag ?? node),
-            fix:
-              typeof insertAt === "number"
-                ? {
-                    kind: "suggestion",
-                    edits: [{ range: { start: insertAt, end: insertAt }, text: ' type="button"' }],
-                  }
-                : null,
+            fix: isNumber(insertAt)
+              ? {
+                  kind: "suggestion",
+                  edits: [{ range: { start: insertAt, end: insertAt }, text: ' type="button"' }],
+                }
+              : null,
           },
         );
       },

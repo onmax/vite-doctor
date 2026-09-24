@@ -1,3 +1,5 @@
+import { isNumber, isRecord } from "./core/internal/value-schema.js";
+import { parseDoctorConfig } from "./core/internal/config-schema.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { cac } from "cac";
 import { consola } from "consola";
@@ -122,7 +124,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
   try {
     cli.parse(["node", "vite-doctor", ...args], { run: false });
     const result = await cli.runMatchedCommand();
-    if (typeof result === "number") exitCode = result;
+    if (isNumber(result)) exitCode = result;
     return exitCode;
   } catch (error) {
     const format = await requestedPresentation(args);
@@ -211,11 +213,11 @@ async function loadCliConfig(
   const declarativeConfig = resolve(root, "doctor.config.json");
   if (!existsSync(declarativeConfig)) return undefined;
   try {
-    const value = JSON.parse(readFileSync(declarativeConfig, "utf8")) as unknown;
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
+    const value: unknown = JSON.parse(readFileSync(declarativeConfig, "utf8"));
+    if (!isRecord(value)) {
       throw new Error("doctor.config.json must contain a JSON object.");
     }
-    return value as DoctorConfig;
+    return parseDoctorConfig(value);
   } catch (error) {
     throw createCliConfigError(declarativeConfig, error);
   }
@@ -226,18 +228,22 @@ async function presentationFormat<Format extends DoctorReportFormat>(
   supported: ReadonlySet<Format>,
 ): Promise<Format> {
   const explicit = stringFlag(value);
-  if (explicit && !reportFormats.has(explicit as DoctorReportFormat)) {
+  if (explicit && !isReportFormat(explicit)) {
     throw new Error(
       `Unknown report format ${JSON.stringify(explicit)}. Expected ${[...supported].join(", ")}.`,
     );
   }
-  if (explicit && !supported.has(explicit as Format)) {
+  if (explicit && ![...supported].some((format) => format === explicit)) {
     throw new Error(
       `Report format ${JSON.stringify(explicit)} is not available here. Expected ${[...supported].join(", ")}.`,
     );
   }
-  return (await selectDoctorPresentation(explicit as DoctorReportFormat | undefined))
-    .format as Format;
+  const selected = await selectDoctorPresentation(
+    explicit && isReportFormat(explicit) ? explicit : undefined,
+  );
+  const format = [...supported].find((candidate) => candidate === selected.format);
+  if (!format) throw new Error(`Report format ${selected.format} is not available here.`);
+  return format;
 }
 
 async function requestedPresentation(args: string[]): Promise<DoctorReportFormat> {
@@ -247,10 +253,14 @@ async function requestedPresentation(args: string[]): Promise<DoctorReportFormat
     else if (args[index]?.startsWith("--format="))
       explicit = args[index]!.slice("--format=".length);
   }
-  if (explicit && reportFormats.has(explicit as DoctorReportFormat)) {
-    return (await selectDoctorPresentation(explicit as DoctorReportFormat)).format;
+  if (explicit && isReportFormat(explicit)) {
+    return (await selectDoctorPresentation(explicit)).format;
   }
   return (await selectDoctorPresentation()).format;
+}
+
+function isReportFormat(value: string): value is DoctorReportFormat {
+  return value === "text" || value === "json" || value === "sarif" || value === "agent";
 }
 
 async function writeCliError(

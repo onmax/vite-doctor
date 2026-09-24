@@ -44,7 +44,6 @@ const pageForToc = computed(() => ({
     },
   },
 }));
-const tocPage = computed(() => pageForToc.value as any);
 </script>
 
 <template>
@@ -88,7 +87,7 @@ const tocPage = computed(() => pageForToc.value as any);
     </UPageBody>
 
     <template #right>
-      <DocsAsideRight :page="tocPage" />
+      <DocsAsideRight :page="pageForToc" />
     </template>
   </UPage>
 </template>
