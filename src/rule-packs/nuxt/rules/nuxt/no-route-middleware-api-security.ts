@@ -1,5 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "pathe";
+import { readFileSync } from "node:fs";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
 import { createNuxtRuntimeEvidence } from "./evidence.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -28,21 +27,29 @@ export const noRouteMiddlewareApiSecurity = createRule({
       relativePath.startsWith("app/middleware/") ||
       relativePath.includes("/middleware/");
     if (!isMiddlewareFile || !isAuthLikeMiddleware(relativePath, ctx.file.text)) return;
-    if (hasServerSideAuthGuard(ctx)) return;
+    const unguarded = unguardedSensitiveHandlers(ctx);
+    if (!unguarded.length) return;
 
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
         ctx.report(
           diagnostics.NUXT0037({
-            why: "Route middleware only protects app navigation. API/server routes need their own server-side auth checks.",
-            fix: "Add auth checks inside server/api or server/routes handlers.",
+            why: `Route middleware only protects app navigation. These auth-sensitive server handlers have no visible server guard: ${unguarded.map((file) => toPosixPath(file).replace(`${toPosixPath(ctx.project.root)}/`, "")).join(", ")}.`,
+            fix: "Add server-side auth checks to the listed handlers or protect them with server middleware.",
           }),
           {
             ruleId: "nuxt/middleware/no-route-middleware-api-security",
             severity: "warn",
             category: "middleware",
             file: ctx.file.path,
+            related: unguarded.map((file) => ({ file, message: "No visible server auth guard" })),
+            confidence: "heuristic-medium",
+            evidence: unguarded.map((file) => ({
+              kind: "facts",
+              summary: "Auth-sensitive handler lacks a recognized local auth guard.",
+              file,
+            })),
           },
         );
       },
@@ -59,21 +66,17 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
   );
 }
 
-function hasServerSideAuthGuard(ctx: any): boolean {
-  const files = new Set<string>();
-  for (const file of [
-    ...(ctx.project.nuxt?.serverDirs.api ?? []),
-    ...(ctx.project.nuxt?.serverDirs.routes ?? []),
-  ]) {
-    files.add(file);
-  }
-  for (const handler of ctx.project.nuxt?.serverHandlers ?? []) {
-    const relativePath = toPosixPath(handler.file ?? "");
-    if (relativePath) files.add(join(ctx.project.root, relativePath));
-  }
-  collectServerFiles(join(ctx.project.root, "server"), files);
-  collectServerFiles(join(ctx.project.root, "app/server"), files);
-  return [...files].some((file) => hasAuthGuard(readProjectFile(file)));
+function unguardedSensitiveHandlers(ctx: any): string[] {
+  const dirs = ctx.project.nuxt?.serverDirs;
+  if ((dirs?.middleware ?? []).some((file: string) => hasAuthGuard(readProjectFile(file))))
+    return [];
+  const files = new Set<string>([...(dirs?.api ?? []), ...(dirs?.routes ?? [])]);
+  return [...files].filter(
+    (file) =>
+      /(?:^|\/)(?:auth|admin|account|user|users|me|profile|session|private|billing|settings)(?:[./-]|$)/i.test(
+        toPosixPath(file),
+      ) && !hasAuthGuard(readProjectFile(file)),
+  );
 }
 
 function hasAuthGuard(text: string): boolean {
@@ -87,18 +90,5 @@ function readProjectFile(file: string): string {
     return readFileSync(file, "utf8");
   } catch {
     return "";
-  }
-}
-
-function collectServerFiles(dir: string, files: Set<string>): void {
-  if (!existsSync(dir)) return;
-  for (const entry of readdirSync(dir)) {
-    const path = join(dir, entry);
-    const stat = statSync(path);
-    if (stat.isDirectory()) {
-      collectServerFiles(path, files);
-    } else if (/\.[cm]?[jt]s$/.test(path)) {
-      files.add(path);
-    }
   }
 }

@@ -2395,6 +2395,27 @@ test("route middleware security rule reports only auth-like middleware without s
   expect(unguarded.diagnostics[0]?.severity).toBe("warn");
 });
 
+test("a guard in one API handler does not hide an unguarded sensitive handler", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+      "server/api/admin.get.ts": `export default defineEventHandler((event) => requireUserSession(event))`,
+      "server/api/account.get.ts": `export default defineEventHandler(() => ({ private: true }))`,
+      "server/api/feedback.get.ts": `export default defineEventHandler(() => [])`,
+    },
+  });
+
+  const diagnostic = result.diagnostics.find(
+    (item) => item.ruleId === noRouteMiddlewareApiSecurity.meta.id,
+  );
+  expect(diagnostic?.related?.map((item) => item.file)).toEqual([
+    expect.stringContaining("server/api/account.get.ts"),
+  ]);
+  expect(diagnostic?.message).not.toContain("feedback.get.ts");
+});
+
 test("module packs activate from dependencies", async () => {
   await withFixture(
     {
