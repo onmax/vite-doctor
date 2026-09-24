@@ -215,6 +215,7 @@ test.each(["界".repeat(40_000), "x".repeat(119_700), '"'.repeat(40_000)])(
       sources: [],
     });
     expect(result.status).toBe("unknown");
+    expect(result.incomplete).toBe(true);
     expect(called).toBe(false);
   },
 );
@@ -516,3 +517,93 @@ test.each([
   expect(candidates[0]!.sources.map((source) => source.path)).toContain(activePath);
   expect(candidates[0]!.sources.map((source) => source.path)).not.toContain(inactivePath);
 });
+
+test("oversized combined review evidence marks the handler incomplete", async () => {
+  let calls = 0;
+  const reviewer = createOpenAICompatibleAuthorizationReviewer({
+    endpoint: "https://example.test/v1/chat/completions",
+    model: "review-model",
+    apiKey: "test-key",
+    fetcher: async () => {
+      calls++;
+      throw new Error("Oversized request sent");
+    },
+  });
+  const extension = createNuxtAuthorizationReviewExtension(reviewer);
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      ...Object.fromEntries(
+        Array.from({ length: 8 }, (_, index) => [
+          `app/middleware/auth${index}.ts`,
+          files["app/middleware/auth.ts"] + " ".repeat(15_800),
+        ]),
+      ),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(calls).toBe(0);
+  expect(result.project.evidenceGaps).toContainEqual(
+    expect.objectContaining({
+      message: "Authorization review request exceeds 120 KB",
+      files: ["server/api/account.get.ts"],
+    }),
+  );
+  expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+});
+
+test("local imports beyond the source cap make review evidence incomplete", async () => {
+  let calls = 0;
+  const extension = createNuxtAuthorizationReviewExtension(async () => {
+    calls++;
+    return { status: "unknown", reason: "Missing guard", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "server/api/account.get.ts":
+        Array.from(
+          { length: 5 },
+          (_, index) => `import guard${index} from '../utils/guard${index}'`,
+        ).join("\n") + "\nexport default defineEventHandler(guard4)",
+      ...Object.fromEntries(
+        Array.from({ length: 5 }, (_, index) => [
+          `server/utils/guard${index}.ts`,
+          "export default event => requireAuth(event)",
+        ]),
+      ),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(calls).toBe(0);
+  expect(result.project.evidenceGaps).toContainEqual(
+    expect.objectContaining({
+      files: ["server/utils/guard4.ts"],
+    }),
+  );
+  expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+});
+
+test.each(["accounts", "profiles", "sessions"])(
+  "reviews plural sensitive route %s",
+  async (route) => {
+    const candidates: Parameters<AuthorizationReviewer>[0][] = [];
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      candidates.push(candidate);
+      return { status: "unknown", reason: "Collected", citations: [] };
+    });
+    await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts": files["app/middleware/auth.ts"],
+        [`server/api/${route}.get.ts`]: files["server/api/account.get.ts"],
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(candidates.map((candidate) => candidate.handler.path)).toEqual([
+      `server/api/${route}.get.ts`,
+    ]);
+  },
+);

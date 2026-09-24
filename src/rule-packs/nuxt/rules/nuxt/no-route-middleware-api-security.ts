@@ -77,7 +77,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
     ...registered.filter((handler) => !handler.middleware),
   ];
   const sensitive =
-    /(?:^|\/)(?:auth|session|admin|account|user|users|me|profile|private|billing|settings)(?:[./-]|$)/i;
+    /(?:^|\/)(?:auth|sessions?|admin|accounts?|users?|me|profiles?|private|billing|settings)(?:[./-]|$)/i;
   const isSensitive = (path: string): boolean =>
     sensitive.test(path) &&
     !/(?:^|\/)auth\/(?:login|callback)(?:\.(?:get|post))?(?:\.[cm]?[jt]s)?$|(?:^|\/)session\/create(?:\.post)?(?:\.[cm]?[jt]s)?$/i.test(
@@ -132,8 +132,7 @@ function hasUnconditionalMiddlewareGuard(file: string): boolean {
     for (const statement of handler.body.body) {
       if (statement.type === "ReturnStatement") return isGuard(statement.argument);
       if (statement.type === "ExpressionStatement") {
-        if (statement.expression.type === "AwaitExpression" && isGuard(statement.expression))
-          return true;
+        if (isGuard(statement.expression)) return true;
       } else if (statement.type === "VariableDeclaration") {
         if (
           statement.declarations.some(

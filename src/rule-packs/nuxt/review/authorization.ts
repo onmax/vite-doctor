@@ -16,6 +16,7 @@ export interface AuthorizationReviewCandidate {
 export interface AuthorizationReviewResult {
   status: "report" | "suppress" | "unknown";
   reason: string;
+  incomplete?: boolean;
   citations: Array<{ path: string; line: number }>;
 }
 
@@ -25,7 +26,7 @@ export type AuthorizationReviewer = (
 
 const ruleId = "nuxt/review/api-authorization-coverage";
 const sensitivePath =
-  /(?:^|\/)(?:auth|admin|account|user|users|me|profile|session|private|billing|settings)(?:[./-]|$)/i;
+  /(?:^|\/)(?:auth|admin|accounts?|users?|me|profiles?|sessions?|private|billing|settings)(?:[./-]|$)/i;
 const authMiddlewareName = /(?:auth|admin|protect|private|secure|session|login)/i;
 const maxSourceBytes = 16_000;
 
@@ -161,32 +162,51 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                   isWithin(resolve(root, layer.root), resolve(root, handler.path)),
               )
               .sort((a, b) => b.root.length - a.root.length)[0];
-            const sources = [
-              ...middleware,
-              ...serverMiddleware,
-              ...localImports(
-                root,
-                handler,
+            const imports = localImports(
+              root,
+              handler,
+              {
+                "~~": root,
+                "@@": root,
+                "~": nuxt.appDir,
+                "@": nuxt.appDir,
+                ...(nuxt.manifest?.isCurrent ? nuxt.manifest.aliases : {}),
+                ...(layer && nuxt.localLayerAliases === true
+                  ? {
+                      "~~": resolve(root, layer.root),
+                      "@@": resolve(root, layer.root),
+                      "~": resolve(root, layer.srcDir ?? layer.root),
+                      "@": resolve(root, layer.srcDir ?? layer.root),
+                    }
+                  : {}),
+              },
+              Boolean(layer && nuxt.localLayerAliases === undefined),
+            );
+            if (imports.omitted.length) {
+              ctx.project.evidenceGaps = [
+                ...(ctx.project.evidenceGaps ?? []),
                 {
-                  "~~": root,
-                  "@@": root,
-                  "~": nuxt.appDir,
-                  "@": nuxt.appDir,
-                  ...(nuxt.manifest?.isCurrent ? nuxt.manifest.aliases : {}),
-                  ...(layer && nuxt.localLayerAliases === true
-                    ? {
-                        "~~": resolve(root, layer.root),
-                        "@@": resolve(root, layer.root),
-                        "~": resolve(root, layer.srcDir ?? layer.root),
-                        "@": resolve(root, layer.srcDir ?? layer.root),
-                      }
-                    : {}),
+                  source: "vite-doctor/nuxt-authorization-review",
+                  message: `Authorization review for ${handler.path} omitted local imports because of source limits; the handler was not reviewed.`,
+                  files: imports.omitted,
                 },
-                Boolean(layer && nuxt.localLayerAliases === undefined),
-              ),
-            ];
+              ];
+              continue;
+            }
+            const sources = [...middleware, ...serverMiddleware, ...imports.sources];
             const candidate = { handler, sources };
             const review = await reviewer(candidate);
+            if (review.incomplete) {
+              ctx.project.evidenceGaps = [
+                ...(ctx.project.evidenceGaps ?? []),
+                {
+                  source: "vite-doctor/nuxt-authorization-review",
+                  message: review.reason,
+                  files: [handler.path],
+                },
+              ];
+              continue;
+            }
             const citations = validCitations(candidate, review.citations);
             if (
               review.status !== "report" ||
@@ -271,6 +291,7 @@ export function createOpenAICompatibleAuthorizationReviewer(
       return {
         status: "unknown",
         reason: "Authorization review request exceeds 120 KB",
+        incomplete: true,
         citations: [],
       };
     const response = await (options.fetcher ?? fetch)(endpoint, {
@@ -358,7 +379,7 @@ function localImports(
   source: AuthorizationReviewSource,
   aliases: Record<string, string>,
   unknownLayerAliases = false,
-): AuthorizationReviewSource[] {
+): { sources: AuthorizationReviewSource[]; omitted: string[] } {
   const file = resolve(root, source.path);
   const imported: string[] = [];
   for (const match of source.text.matchAll(/\bfrom\s*["']([^"']+)["']/g)) {
@@ -383,9 +404,16 @@ function localImports(
         break;
       }
     }
-    if (imported.length >= 4) break;
   }
-  return projectSources(root, imported);
+  const files = [...new Set(imported)];
+  const sources = projectSources(root, files.slice(0, 4));
+  const collected = new Set(sources.map((source) => resolve(root, source.path)));
+  return {
+    sources,
+    omitted: files
+      .filter((file) => !collected.has(file))
+      .map((file) => relative(root, file).replaceAll("\\", "/")),
+  };
 }
 
 function validCitations(

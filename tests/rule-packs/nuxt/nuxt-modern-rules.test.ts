@@ -2452,6 +2452,9 @@ test.each([
   "auth/[...all].ts",
   "session.delete.ts",
   "session.get.ts",
+  "accounts.get.ts",
+  "profiles.get.ts",
+  "sessions.get.ts",
 ])("unguarded protected authentication endpoint %s is reported", async (endpoint) => {
   const result = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,
@@ -2531,7 +2534,7 @@ test.each([
   ["(event) => { const session = requireAuth(event) }", 1],
   ["async (event) => { const session = await requireAuth(otherEvent) }", 1],
   ["(event) => { const guard = () => requireAuth(event) }", 1],
-  ["(event) => { requireAuth(event) }", 1],
+  ["(event) => { requireAuth(event) }", 0],
   ["(event) => getUserSession(event)", 1],
   ["(event) => isAuthorizedAdmin(event)", 1],
   ["(event) => requireAuth(otherEvent)", 1],
