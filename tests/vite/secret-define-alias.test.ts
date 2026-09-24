@@ -1282,3 +1282,71 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
     },
   );
 }
+
+test.each([
+  ['try { return process.env.PRIVATE_TOKEN } finally { return "public" }', false],
+  ["try { return process.env.PRIVATE_TOKEN } finally { throw new Error() }", false],
+  ["try { return process.env.PRIVATE_TOKEN } finally { const done = true }", true],
+  [
+    'try { throw new Error() } catch { return process.env.PRIVATE_TOKEN } finally { return "public" }',
+    false,
+  ],
+  ['try { return "public" } finally { return process.env.PRIVATE_TOKEN }', true],
+])("respects finally completion: %s", async (body, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const read = () => { ${body} }; export default { define: { VALUE: JSON.stringify(read()) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([noSecretDefine, noRuntimeObjectDefine])(
+  "recognizes Vitest config helpers for $meta.id",
+  async (rule) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: {
+        "vitest.config.ts": `import { defineConfig, mergeConfig } from 'vitest/config'; export default defineConfig(mergeConfig({}, { define: { VALUE: { value: process.env.PRIVATE_TOKEN } } }))`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  },
+);
+
+test.each([
+  'const undefined = "public"; const read = (value = process.env.PRIVATE_TOKEN) => value; export default { define: { VALUE: JSON.stringify(read(undefined)) } }',
+  'const undefined = "public"; const config = (value = process.env.PRIVATE_TOKEN) => ({ define: { VALUE: value } }); export default config(undefined)',
+])("respects shadowed undefined arguments: %s", async (source) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: { "vite.config.ts": source },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["{ token: process.env.PRIVATE_TOKEN }", '{ public: "safe" }', true],
+  ["{ value: process.env.PRIVATE_TOKEN }", '{ value: "safe" }', false],
+  ["{ nested: { value: process.env.PRIVATE_TOKEN } }", '{ nested: { public: "safe" } }', true],
+  ["{ nested: { value: process.env.PRIVATE_TOKEN } }", '{ nested: { value: "safe" } }', false],
+  ["{ value: { nested: process.env.PRIVATE_TOKEN }, value: {} }", '{ public: "safe" }', false],
+  ["{}", "{ value: { nested: process.env.PRIVATE_TOKEN }, value: {} }", false],
+  ["{ value: process.env.PRIVATE_TOKEN }", "{ value: null }", true],
+  ["[process.env.PRIVATE_TOKEN]", '["safe"]', true],
+  ["[process.env.PRIVATE_TOKEN]", '"safe"', true],
+  ["{ value: process.env.PRIVATE_TOKEN }", '"safe"', false],
+])("traces recursively merged define values: %s + %s", async (base, override, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `import { mergeConfig } from 'vite'; export default mergeConfig({ define: { VALUE: ${base} } }, { define: { VALUE: ${override} } })`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});

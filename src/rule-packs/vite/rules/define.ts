@@ -152,16 +152,18 @@ export const noSecretDefine = createRule({
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           if (
             !SECRET_NAME_RE.test(entry.key) &&
-            !resolvesSecretAlias(
-              entry.rawValue,
-              entry.valueStart,
-              ctx.file.text,
-              initializers,
-              memberReturns,
-              localCalls,
-              shadowedPromises,
-              serializationHooks,
-              bindingKeys,
+            !(entry.traceValues ?? [entry]).some((value) =>
+              resolvesSecretAlias(
+                value.rawValue,
+                value.valueStart,
+                ctx.file.text,
+                initializers,
+                memberReturns,
+                localCalls,
+                shadowedPromises,
+                serializationHooks,
+                bindingKeys,
+              ),
             )
           )
             continue;
@@ -248,7 +250,7 @@ function readAliasInitializers(source: string) {
       if (
         definition?.type === "ImportBinding" &&
         definition.parent.type === "ImportDeclaration" &&
-        definition.parent.source.value === "vite" &&
+        ["vite", "vitest/config"].includes(definition.parent.source.value as string) &&
         definition.node.type === "ImportNamespaceSpecifier"
       )
         namespaces.add(reference.identifier.range[0]);
@@ -257,7 +259,7 @@ function readAliasInitializers(source: string) {
       if (
         definition?.type === "ImportBinding" &&
         definition.parent.type === "ImportDeclaration" &&
-        definition.parent.source.value === "vite" &&
+        ["vite", "vitest/config"].includes(definition.parent.source.value as string) &&
         definition.node.type === "ImportSpecifier" &&
         ["defineConfig", "mergeConfig"].includes(propertyName(definition.node.imported) ?? "")
       )
@@ -291,7 +293,7 @@ function readAliasInitializers(source: string) {
         !references.get(init.callee.range[0])?.resolved &&
         init.arguments.length === 1 &&
         init.arguments[0]?.type === "Literal" &&
-        init.arguments[0].value === "vite"
+        ["vite", "vitest/config"].includes(init.arguments[0].value as string)
       ) {
         if (id.type === "Identifier") namespaces.add(reference.identifier.range[0]);
         if (id.type === "ObjectPattern") {
@@ -769,7 +771,12 @@ function resolvesSecretAlias(
           const bindings = new Map<string, Range[]>();
           function bind(pattern: AnyNode, range?: Range) {
             if (pattern.type === "AssignmentPattern") {
-              if (!range || source.slice(...range) === "undefined")
+              if (
+                !range ||
+                (source.slice(...range) === "undefined" &&
+                  (range[0] === undefinedRange[0] ||
+                    bindingKeys.get(range[0]) === "global:undefined"))
+              )
                 range = [
                   current.start + pattern.right.range[0] - 1,
                   current.start + pattern.right.range[1] - 1,
@@ -1339,14 +1346,101 @@ function resolvesSecretAlias(
 
 function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   const text = ctx.file.text;
-  const entries: Array<{ key: string; rawValue: string; valueStart: number; range: SourceRange }> =
-    [];
+  const entries: Array<{
+    key: string;
+    rawValue: string;
+    valueStart: number;
+    range: SourceRange;
+    valueNode: AnyNode;
+    traceValues?: Array<{ rawValue: string; valueStart: number }>;
+  }> = [];
   const { initializers, bindingKeys, configHelpers, mergeHelpers, shadowedPromises, localCalls } =
     readAliasInitializers(text);
   const nodesByRange = new Map<string, AnyNode>();
   walkScriptLocal(program, (node) => {
     if (node.type !== "TemplateElement") nodesByRange.set(`${node.start}:${node.end}`, node);
   });
+  function nullish(node: AnyNode) {
+    return (
+      (node?.type === "Literal" && node.value === null) ||
+      (node?.type === "Identifier" &&
+        node.name === "undefined" &&
+        bindingKeys.get(node.start) === "global:undefined") ||
+      (node?.type === "UnaryExpression" && node.operator === "void")
+    );
+  }
+  const mergedNodes = new Set<AnyNode>();
+  function mergeValue(base: AnyNode, override: AnyNode): AnyNode {
+    base = resolve(base);
+    override = resolve(override);
+    if (nullish(override)) return base;
+    if (nullish(base)) return override;
+    let result: AnyNode;
+    if (base?.type === "ArrayExpression" || override?.type === "ArrayExpression") {
+      result = {
+        type: "ArrayExpression",
+        elements: [
+          ...(base?.type === "ArrayExpression" ? base.elements : [base]),
+          ...(override?.type === "ArrayExpression" ? override.elements : [override]),
+        ],
+      };
+    } else if (base?.type === "ObjectExpression" && override?.type === "ObjectExpression") {
+      const properties = new Map<unknown, AnyNode>();
+      for (const property of readOptions(base))
+        properties.set(keyOf(property) ?? property, property);
+      const overrides = new Map<unknown, AnyNode>();
+      for (const property of readOptions(override))
+        overrides.set(keyOf(property) ?? property, property);
+      for (const [key, property] of overrides) {
+        if (property.kind === "init" && nullish(resolve(property.value))) continue;
+        const previous = properties.get(key);
+        properties.set(
+          key,
+          previous?.kind === "init" && property.kind === "init"
+            ? { ...property, value: mergeValue(previous.value, property.value) }
+            : property,
+        );
+      }
+      result = { type: "ObjectExpression", properties: [...properties.values()] };
+    } else return override;
+    mergedNodes.add(result);
+    return result;
+  }
+  function traceValues(node: AnyNode): Array<{ rawValue: string; valueStart: number }> {
+    if (!node) return [];
+    if (!mergedNodes.has(node))
+      return [{ rawValue: text.slice(node.start, node.end), valueStart: node.start }];
+    return node.type === "ArrayExpression"
+      ? node.elements.flatMap(traceValues)
+      : node.properties.flatMap((property: AnyNode) =>
+          property.type === "Property"
+            ? [...traceValues(property.key), ...traceValues(property.value)]
+            : traceValues(property.argument),
+        );
+  }
+  function mergeEntries(base: typeof entries, override: typeof entries): typeof entries {
+    const result = new Map(base.map((entry) => [entry.key, entry]));
+    for (const entry of override) {
+      if (nullish(resolve(entry.valueNode))) continue;
+      const previous = result.get(entry.key);
+      if (!previous) result.set(entry.key, entry);
+      else {
+        const valueNode = mergeValue(previous.valueNode, entry.valueNode);
+        result.set(entry.key, {
+          ...entry,
+          valueNode,
+          traceValues: traceValues(valueNode),
+          rawValue: mergedNodes.has(valueNode)
+            ? valueNode.type === "ArrayExpression"
+              ? "[]"
+              : "{}"
+            : text.slice(valueNode.start, valueNode.end),
+          valueStart: valueNode.start,
+        });
+      }
+    }
+    return [...result.values()];
+  }
   const seen = new Set<AnyNode>();
   function resolve(node: AnyNode, visited = new Set<AnyNode>()): AnyNode {
     while (node && !visited.has(node)) {
@@ -1477,29 +1571,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
               return [];
             return [
               {
-                entries: [
-                  ...new Map(
-                    [
-                      ...base.entries,
-                      ...override.entries.filter((entry) => {
-                        const value = resolve(
-                          nodesByRange.get(
-                            `${entry.valueStart}:${entry.valueStart + entry.rawValue.length}`,
-                          ),
-                        );
-                        return (
-                          !(value?.type === "Literal" && value.value === null) &&
-                          !(
-                            value?.type === "Identifier" &&
-                            value.name === "undefined" &&
-                            bindingKeys.get(value.start) === "global:undefined"
-                          ) &&
-                          !(value?.type === "UnaryExpression" && value.operator === "void")
-                        );
-                      }),
-                    ].map((entry) => [entry.key, entry]),
-                  ).values(),
-                ],
+                entries: mergeEntries(base.entries, override.entries),
                 predicates: new Map([...base.predicates, ...override.predicates]),
               },
             ];
@@ -1514,7 +1586,9 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
           if (pattern.type === "AssignmentPattern") {
             if (
               !value ||
-              (value.type === "Identifier" && value.name === "undefined") ||
+              (value.type === "Identifier" &&
+                value.name === "undefined" &&
+                bindingKeys.get(value.start) === "global:undefined") ||
               (value.type === "UnaryExpression" && value.operator === "void")
             )
               value = pattern.right;
@@ -1631,6 +1705,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             const valueStart = property.value.start;
             result.push({
               key,
+              valueNode: property.value,
               rawValue: text.slice(valueStart, property.value.end),
               valueStart,
               range: ctx.helpers.rangeFromOffsets(
@@ -1688,6 +1763,18 @@ function visitReturnValues(node: AnyNode, visit: (value: AnyNode) => void): bool
       if (visitReturnValues(statement, visit)) return true;
     }
     return false;
+  }
+  if (node.type === "TryStatement") {
+    const finalReturns: AnyNode[] = [];
+    const finalTerminates = visitReturnValues(node.finalizer, (value) => finalReturns.push(value));
+    if (finalTerminates) {
+      finalReturns.forEach(visit);
+      return true;
+    }
+    const bodyTerminates = visitReturnValues(node.block, visit);
+    const catchTerminates = node.handler ? visitReturnValues(node.handler.body, visit) : true;
+    finalReturns.forEach(visit);
+    return bodyTerminates && catchTerminates;
   }
   if (node.type === "IfStatement") {
     const consequent = visitReturnValues(node.consequent, visit);
