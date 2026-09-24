@@ -870,3 +870,65 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["await ((async () => Date.now()) as () => Promise<number>)()", 1],
+  ["await ((async () => Date.now())() satisfies Promise<number>)", 1],
+  ["((async () => Date.now())() satisfies Promise<number>)", 0],
+])("traces typed async IIFEs: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">const displayed = ${expression}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["let clock; clock = () => Date.now(); const displayed = clock()", 1],
+  ["let clock = () => 'stable'; clock = () => Date.now(); const displayed = clock()", 1],
+  ["let clock = () => 'stable'; const displayed = clock(); clock = () => Date.now()", 0],
+  ["let clock = () => 'stable'; if (false) clock = () => Date.now(); const displayed = clock()", 0],
+  ["let clock; clock = function () { return Date.now() }; const displayed = clock()", 1],
+  ["let clock; clock = () => Date.now(); clock = () => 'stable'; const displayed = clock()", 0],
+  ["function clock() { return Date.now() }; const now = clock; const displayed = now()", 1],
+  [
+    "function clock() { return Date.now() }; const now = clock; const alias = now; const displayed = alias()",
+    1,
+  ],
+  [
+    "function clock() { return Date.now() }; let now = clock; now = () => 'stable'; const displayed = now()",
+    0,
+  ],
+  [
+    "function clock() { return Date.now() }; const now = clock; function label(now) { return now() }; const displayed = label(() => 'stable')",
+    0,
+  ],
+])("traces assigned and aliased helpers: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["helpers.details.generatedAt", 1],
+  ["helpers.details.label", 0],
+])("projects rendered getter objects: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>const helpers = { get details() { return { generatedAt: Date.now(), label: 'stable' } } }</script><template>{{ ${expression} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["const now = clock", 1],
+  ["let now = clock; now = () => 'stable'", 0],
+])("traces template helper aliases: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { return Date.now() }; ${script}</script><template>{{ now() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

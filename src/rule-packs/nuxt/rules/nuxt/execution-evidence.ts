@@ -146,9 +146,36 @@ function functionFlowsToTemplate(
       if (String(accessed) !== key) return false;
       callee = callee.object;
     }
-    return callee?.type === "Identifier" && callee.name === functionName;
+    const visited = new Set<AnyNode>();
+    while (callee?.type === "Identifier") {
+      const local = resolveLocalBinding(
+        parents.has(callee) ? callee : ctx.file.scriptAst,
+        callee.name,
+        parents,
+      );
+      if (local === binding) return true;
+      if (!local || visited.has(local) || local.type !== "VariableDeclarator") return false;
+      visited.add(local);
+      const reference = parents.has(callee) ? callee : { start: Infinity };
+      const owner = containingFunction(local, parents) ?? ctx.file.scriptAst;
+      if (hasPriorAliasWrite(reference, local, owner, parents)) return false;
+      callee = unwrapExpression(local.init);
+    }
+    return false;
   };
   const reachesCall = (call: AnyNode, template = false): boolean => {
+    const assignment = parents.get(fn);
+    if (
+      assignment?.type === "AssignmentExpression" &&
+      ((!template && assignment.start >= call.start) ||
+        !writeDominatesReference(
+          assignment,
+          template ? { start: Infinity } : call,
+          containingFunction(assignment, parents) ?? ctx.file.scriptAst,
+          parents,
+        ))
+    )
+      return false;
     for (
       let current = source, child = source;
       current && current !== fn;
@@ -164,6 +191,7 @@ function functionFlowsToTemplate(
       if (
         write.type !== "AssignmentExpression" ||
         write.operator !== "=" ||
+        (assignment?.type === "AssignmentExpression" && write.start <= assignment.start) ||
         (binding.type !== "FunctionDeclaration" && write.start <= binding.start) ||
         write.start >= reference.start
       )
@@ -190,9 +218,12 @@ function functionFlowsToTemplate(
   if (
     resolveLocalBinding(ctx.file.scriptAst, functionName, parents) === binding &&
     renderedReferences.some((reference) => {
-      if (reference.name !== functionName) return false;
       let callee = reference;
-      while (callee.parent?.type === "MemberExpression" && callee.parent.object === callee)
+      while (
+        callee.parent?.type === "MemberExpression" &&
+        callee.parent.object === callee &&
+        !(getter && matchesCallee(callee))
+      )
         callee = callee.parent;
       const call = getter ? callee : callee.parent;
       return (
@@ -237,7 +268,6 @@ function functionFlowsToTemplate(
     if (
       (getter ? node.type === "MemberExpression" : node.type === "CallExpression") &&
       (callback || matchesCallee(getter ? node : node.callee)) &&
-      resolveLocalBinding(node, functionName, parents) === binding &&
       reachesCall(node)
     ) {
       if (
@@ -370,7 +400,10 @@ function resultCallbackCall(
   expression = fn,
 ): AnyNode {
   if (fn.generator) return null;
-  while (parents.get(expression)?.type === "ParenthesizedExpression")
+  while (
+    parents.get(expression) &&
+    unwrapExpression(parents.get(expression)) === unwrapExpression(expression)
+  )
     expression = parents.get(expression);
   const call = parents.get(expression);
   if (call?.type !== "CallExpression") return null;
@@ -452,6 +485,7 @@ function asyncResultIsConsumed(
         ![
           "ParenthesizedExpression",
           "SequenceExpression",
+          "TSSatisfiesExpression",
           "TSAsExpression",
           "TSNonNullExpression",
           "TSTypeAssertion",
@@ -858,6 +892,12 @@ function functionBinding(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>) {
     expression = object;
   }
   const parent = parents.get(expression);
+  if (
+    parent?.type === "AssignmentExpression" &&
+    parent.operator === "=" &&
+    parent.left.type === "Identifier"
+  )
+    return resolveLocalBinding(parent, parent.left.name, parents) ?? fn;
   return parent?.type === "VariableDeclarator" ? parent : fn;
 }
 
