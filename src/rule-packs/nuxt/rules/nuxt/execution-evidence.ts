@@ -18,7 +18,7 @@ export type NuxtExecutionEvidence =
 
 const TEMPLATE_BLOCK_RE = /<template[^>]*>([\s\S]*?)<\/template>/;
 const TEMPLATE_DIRECTIVE_RE_G = /[@:]\w+(?:\.[\w.]+)?\s*=\s*["']([^"']+)["']/g;
-const TEMPLATE_EVENT_RE_G = /(?:@|v-on:)\w+(?:\.[\w.]+)?\s*=\s*["']([^"']+)["']/g;
+const TEMPLATE_EVENT_RE_G = /(?:@|v-on:)[\w:-]+(?:\.[\w.]+)?\s*=\s*["']([^"']+)["']/g;
 const IDENT_RE_G = /\b[A-Za-z_$][\w$]*\b/g;
 const CLIENT_CALLBACK_RE =
   /^(useEventListener|addEventListener|onKeyDown|onKeyUp|onKeyStroke|onClickOutside|onLongPress|usePointerSwipe|useSwipe|useIntersectionObserver|useResizeObserver|useMutationObserver|defineShortcuts)$/;
@@ -121,7 +121,15 @@ function functionFlowsToTemplate(
       !owner &&
       (callbackCall.callee.type === "MemberExpression" ||
         unwrapExpression(callbackCall.callee) === fn) &&
-      isLikelyRenderedTimeExpression(ctx, callbackCall)
+      isLikelyRenderedTimeExpression(ctx, callbackCall) &&
+      getRenderedReferences(ctx).some((reference) => {
+        const variable = nearestVariableDeclarator(callbackCall);
+        return (
+          variable &&
+          patternBinds(variable.id, reference.name) &&
+          projectionIncludes(source, variable, reference, parents)
+        );
+      })
     )
       return true;
     if (owner && contributesToReturn(callbackCall, owner, parents))
@@ -170,6 +178,11 @@ function functionFlowsToTemplate(
       const owner = containingFunction(local, parents) ?? ctx.file.scriptAst;
       if (hasPriorAliasWrite(reference, local, owner, parents)) return false;
       if (!memberPath.length || path.length) captured = local;
+      const aliasPath = patternPath(local.id, callee.name);
+      if (!aliasPath) return false;
+      for (const key of aliasPath.toReversed()) {
+        if (path.pop() !== key) return false;
+      }
       callee = local.init;
     }
     return false;
@@ -732,6 +745,17 @@ function asyncResultIsConsumed(
           "TSInstantiationExpression",
         ].includes(parent.type)
       ) {
+        if (
+          parent.type === "CallExpression" &&
+          parent.arguments[0] === current &&
+          parent.callee?.type === "MemberExpression" &&
+          parent.callee.object?.name === "Promise" &&
+          (parent.callee.computed
+            ? parent.callee.property?.value
+            : parent.callee.property?.name) === "resolve" &&
+          hasNativePromise(parent)
+        )
+          continue;
         if (parent.type !== "ArrayExpression") return false;
         const aggregate = parentOf(parent);
         if (
@@ -831,10 +855,14 @@ function projectionIncludes(
   parents: WeakMap<AnyNode, AnyNode>,
   returnedSource?: [AnyNode, AnyNode],
 ): boolean {
-  const path: string[] = [];
+  const path: (string | null)[] = [];
   for (const [start, end] of [...(returnedSource ? [returnedSource] : []), [node, variable]]) {
     for (let current = start; current && current !== end; current = parents.get(current)) {
       const parent = parents.get(current);
+      if (["FunctionExpression", "ArrowFunctionExpression"].includes(current.type)) {
+        const call = resultCallbackCall(current, parents);
+        if (call && ["map", "from"].includes(call.callee.property?.name)) path.unshift(null);
+      }
       if (parent?.type === "ArrayExpression") {
         const index = parent.elements.indexOf(current);
         if (
@@ -843,6 +871,18 @@ function projectionIncludes(
             .some((element: AnyNode) => element?.type === "SpreadElement")
         )
           return true;
+        const aggregate = parents.get(parent);
+        if (
+          aggregate?.type === "CallExpression" &&
+          aggregate.arguments[0] === parent &&
+          aggregate.callee?.type === "MemberExpression" &&
+          aggregate.callee.object?.name === "Promise" &&
+          (aggregate.callee.computed
+            ? aggregate.callee.property?.value
+            : aggregate.callee.property?.name) === "allSettled" &&
+          !resolveLocalBinding(aggregate, "Promise", parents)
+        )
+          path.unshift("value");
         path.unshift(String(index));
       }
       if (
@@ -875,7 +915,8 @@ function projectionIncludes(
   if (!bindingPath) return false;
   for (const key of bindingPath) {
     if (!path.length) break;
-    if (path.shift() !== key) return false;
+    const projected = path.shift();
+    if (projected !== null && projected !== key) return false;
   }
   let current = reference;
   for (const key of path) {
@@ -883,7 +924,7 @@ function projectionIncludes(
     if (member?.type !== "MemberExpression" || member.object !== current) return true;
     const accessed = member.computed ? member.property?.value : member.property?.name;
     if (accessed === undefined) return true;
-    if (String(accessed) !== key) return false;
+    if (key !== null && String(accessed) !== key) return false;
     current = member;
   }
   return true;
@@ -923,6 +964,61 @@ function containingFunction(node: AnyNode, parents: WeakMap<AnyNode, AnyNode>): 
   return null;
 }
 
+function resolveLocalValue(
+  node: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+  seen = new Set<AnyNode>(),
+): AnyNode {
+  node = unwrapExpression(node);
+  if (!node || seen.has(node)) return null;
+  seen.add(node);
+  if (node.type === "Identifier") {
+    const binding = resolveLocalBinding(node, node.name, parents);
+    if (!binding) return null;
+    if (binding.type !== "VariableDeclarator") return binding;
+    let scope = binding;
+    while (parents.get(scope)) scope = parents.get(scope);
+    if (hasPriorAliasWrite(node, binding, scope, parents)) return null;
+    let memberWritten = false;
+    walkScriptLocal(scope, (write) => {
+      if (write.type !== "AssignmentExpression" || write.start >= node.start) return;
+      let target = unwrapExpression(write.left);
+      if (target?.type !== "MemberExpression") return;
+      while (target?.type === "MemberExpression") target = unwrapExpression(target.object);
+      if (
+        target?.type === "Identifier" &&
+        resolveLocalBinding(write, target.name, parents) === binding
+      )
+        memberWritten = true;
+    });
+    if (memberWritten) return null;
+    let value = resolveLocalValue(binding.init, parents, seen);
+    for (const key of patternPath(binding.id, node.name) ?? [])
+      value = localObjectProperty(value, key);
+    return value;
+  }
+  if (node.type === "MemberExpression") {
+    const key = node.computed ? node.property?.value : node.property?.name;
+    return key === undefined
+      ? null
+      : localObjectProperty(resolveLocalValue(node.object, parents, seen), String(key));
+  }
+  return node;
+}
+
+function localObjectProperty(value: AnyNode, key: string): AnyNode {
+  if (value?.type !== "ObjectExpression") return null;
+  for (const property of value.properties.toReversed()) {
+    const name = property.computed
+      ? property.key?.value
+      : (property.key?.name ?? property.key?.value);
+    if (property.type === "SpreadElement" || name === undefined) return null;
+    if (String(name) === key)
+      return property.kind === "get" ? null : unwrapExpression(property.value);
+  }
+  return null;
+}
+
 function contributesToReturn(
   node: AnyNode,
   owner: AnyNode,
@@ -942,12 +1038,7 @@ function contributesToReturn(
       return false;
     if (expressionBranchIsInactive(parent, current)) return false;
     if (parent?.type === "CallExpression" && parent.arguments.includes(current)) {
-      const callee = unwrapExpression(parent.callee);
-      const binding =
-        callee?.type === "Identifier" ? resolveLocalBinding(parent, callee.name, parents) : null;
-      const fn = unwrapExpression(
-        binding?.type === "VariableDeclarator" ? binding.init : (binding ?? callee),
-      );
+      const fn = resolveLocalValue(parent.callee, parents);
       if (
         ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
           fn?.type,
@@ -1079,7 +1170,14 @@ function returnsSameLiteral(owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>):
     )
       same = false;
     if (statement.type !== "ReturnStatement") return;
-    const value = statement.argument;
+    const argument = statement.argument;
+    const value =
+      !argument ||
+      (argument.type === "Identifier" &&
+        argument.name === "undefined" &&
+        !resolveLocalBinding(argument, "undefined", parents))
+        ? { type: "Literal", value: undefined }
+        : argument;
     if (value?.type !== "Literal" || value.regex) {
       same = false;
       return;

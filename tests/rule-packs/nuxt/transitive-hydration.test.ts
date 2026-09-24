@@ -1295,3 +1295,114 @@ test("preserves stored member flow before a later replacement", async () => {
   );
   expect(result.diagnostics).toHaveLength(1);
 });
+
+test.each([
+  ["label", 0],
+  ["generatedAt", 1],
+])("preserves eager callback result projection %s", async (property, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>const displayed = [1].map(() => ({ label: 'stable', generatedAt: Date.now() }))</script>
+<template>{{ displayed[0].${property} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  "const { clock } = helpers",
+  "const { clock: now } = helpers; const clock = now",
+  "const { ['clock']: clock } = helpers",
+])("resolves destructured helper methods: %s", async (declaration) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>const helpers = { clock() { return Date.now() } }; ${declaration}</script>
+<template>{{ clock() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  ["'Ready'", 0],
+  ["value", 1],
+])("tracks arguments consumed by local object methods returning %s", async (returned, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>
+function clock() { return Date.now() }
+const helpers = { stable(value) { return ${returned} } }
+function label() { return helpers.stable(clock()) }
+const displayed = label()
+</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test("does not use a replaced object method to discard hydration flow", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>
+function clock() { return Date.now() }
+const helpers = { stable(value) { return 'Ready' } }
+helpers.stable = value => value
+function label() { return helpers.stable(clock()) }
+const displayed = label()
+</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each(["@update:model-value", "v-on:custom-event"])(
+  "preserves SSR calls shared with %s",
+  async (event) => {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>function clock() { return Date.now() }</script>
+<template><Widget ${event}="clock">{{ clock() }}</Widget></template>`,
+    );
+    expect(result.diagnostics).toHaveLength(1);
+  },
+);
+
+test.each([
+  ["Promise.resolve(clock())", "displayed", 1],
+  ["Promise.allSettled([clock()])", "displayed[0].status", 0],
+  ["Promise.allSettled([clock()])", "displayed[0].value", 1],
+])("tracks adopted async output %s rendered as %s", async (expression, rendered, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>async function clock() { return Date.now() }
+const displayed = await ${expression}</script><template>{{ ${rendered} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each(["return", "return undefined"])(
+  "treats identical %s results as stable",
+  async (returned) => {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>function label() { if (Date.now()) ${returned}; return }</script>
+<template>{{ label() }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test("does not adopt output through a shadowed Promise.resolve", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>async function clock() { return Date.now() }
+const Promise = { resolve(value) { return 'stable' } }
+const displayed = await Promise.resolve(clock())</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("does not normalize a shadowed undefined return", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function label(undefined = 'unstable') { if (Date.now()) return undefined; return }</script>
+<template>{{ label() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
