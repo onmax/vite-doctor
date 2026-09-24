@@ -156,6 +156,21 @@ function undisposedResource(program: AnyNode): string | null {
   const conditions = new Map<AnyNode, object>();
   const resourcePaths = new Map<AnyNode, Map<object, boolean>>();
   let disposers: Disposer[] = [{ callback: undefined, path: new Map() }];
+  const arrayElements = (array: AnyNode): AnyNode[] => {
+    const stored = properties.get(array);
+    const length = stored?.get("length");
+    if (!stored?.has("length")) return array.elements;
+    if (
+      length?.type !== "Literal" ||
+      !Number.isSafeInteger(length.value) ||
+      length.value < 0 ||
+      length.value > array.elements.length + stored.size
+    )
+      return [{ type: "SpreadElement", argument: {} }];
+    return Array.from({ length: length.value }, (_, index) =>
+      stored.has(String(index)) ? stored.get(String(index)) : array.elements[index],
+    );
+  };
   const identity = (node: AnyNode, environment = values): AnyNode => {
     node = unwrapResourceExpression(node);
     if (node?.type === "ThisExpression") return environment.get(thisBinding);
@@ -168,12 +183,12 @@ function undisposedResource(program: AnyNode): string | null {
         if (stored?.has(key)) return stored.get(key);
         if (object?.type === "ArrayExpression" && /^(0|[1-9]\d*)$/.test(String(key))) {
           if (
-            object.elements
+            arrayElements(object)
               .slice(0, Number(key) + 1)
               .some((item: AnyNode) => item?.type === "SpreadElement")
           )
             return node;
-          return identity(object.elements[Number(key)], environment);
+          return identity(arrayElements(object)[Number(key)], environment);
         }
         if (object?.type === "ObjectExpression") {
           const property = object.properties.find(
@@ -256,7 +271,7 @@ function undisposedResource(program: AnyNode): string | null {
           if (element?.type === "RestElement")
             bind(element.argument, {
               type: "ArrayExpression",
-              elements: argument.elements
+              elements: arrayElements(argument)
                 .slice(index)
                 .map((_: AnyNode, offset: number) => read(argument, String(index + offset))),
             });
@@ -339,7 +354,7 @@ function undisposedResource(program: AnyNode): string | null {
         propertyKey(target) === "call"
           ? args.slice(1)
           : forwarded?.type === "ArrayExpression"
-            ? forwarded.elements
+            ? arrayElements(forwarded)
             : [],
         environment,
         module,
@@ -431,7 +446,7 @@ function undisposedResource(program: AnyNode): string | null {
     walkEvaluation(root, (node) => {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     });
-    const visit = (node: AnyNode) => {
+    const visit = (node: AnyNode, receiver?: AnyNode) => {
       if (node.type === "AssignmentExpression" && node.left.type === "MemberExpression") {
         const key = propertyKey(node.left);
         if (key !== undefined) {
@@ -630,6 +645,22 @@ function undisposedResource(program: AnyNode): string | null {
         node.callee.type === "MemberExpression"
           ? identity(node.callee.object, environment)
           : undefined;
+      if (array?.type === "ArrayExpression" && !replacedMethod && method === "push") {
+        const elements = arrayElements(array);
+        if (
+          elements.some((element) => element?.type === "SpreadElement") ||
+          node.arguments.some((argument: AnyNode) => argument.type === "SpreadElement")
+        )
+          return true;
+        if (!properties.has(array)) properties.set(array, new Map());
+        const stored = properties.get(array)!;
+        for (const [index, argument] of node.arguments.entries())
+          stored.set(String(elements.length + index), identity(argument, environment));
+        const length = { type: "Literal", value: elements.length + node.arguments.length };
+        stored.set("length", length);
+        returned.set(node, length);
+        return true;
+      }
       if (
         array?.type === "ArrayExpression" &&
         !replacedMethod &&
@@ -640,20 +671,20 @@ function undisposedResource(program: AnyNode): string | null {
             if (item?.type !== "SpreadElement") return [item];
             const spread = identity(item.argument, environment);
             if (spread?.type !== "ArrayExpression" || seen.has(spread)) return [item];
-            return expand(spread.elements, new Set([...seen, spread])).map(
+            return expand(arrayElements(spread), new Set([...seen, spread])).map(
               (value) => value ?? { type: "Identifier", name: "undefined" },
             );
           });
         const elements: AnyNode[] = [];
         let knownSelection = true;
-        for (const [index, element] of expand(array.elements).entries()) {
+        for (const [index, element] of expand(arrayElements(array)).entries()) {
           if (!element || element.type === "SpreadElement") continue;
           const call = {
             type: "CallExpression",
-            callee: node.arguments[0],
+            callee: identity(node.arguments[0], environment),
             arguments: [identity(element, environment), { type: "Literal", value: index }, array],
           };
-          if (visit(call) === false) return false;
+          if (visit(call, identity(node.arguments[1], environment)) === false) return false;
           const result = returned.get(call);
           if (method === "filter") {
             if (result?.type === "Literal") {
@@ -670,7 +701,7 @@ function undisposedResource(program: AnyNode): string | null {
           ? (superConstructors.get(environment.get(thisBinding))?.(
               node.arguments.map((arg: AnyNode) => identity(arg, environment)),
             ) ?? { normal: true, abrupt: false })
-          : inspect(node.callee, node.arguments, environment, module);
+          : inspect(node.callee, node.arguments, environment, module, receiver);
       if (completion.value) {
         returned.set(node, completion.value);
         if (node.callee.type === "Super") environment.set(thisBinding, completion.value);
@@ -714,8 +745,42 @@ function undisposedResource(program: AnyNode): string | null {
           cleaned.add(value);
         else cleaned.delete(value);
       }
-      const mergeValue = (a: AnyNode, b: AnyNode) => {
+      const mergedObjects = new Map<AnyNode, Map<AnyNode, AnyNode>>();
+      const mergeValue = (a: AnyNode, b: AnyNode): AnyNode => {
         if (a === b) return a;
+        if (a?.type === "ObjectExpression" && b?.type === "ObjectExpression") {
+          const previous = mergedObjects.get(a)?.get(b);
+          if (previous) return previous;
+          const value = { type: "ObjectExpression", properties: [] as AnyNode[] };
+          if (!mergedObjects.has(a)) mergedObjects.set(a, new Map());
+          mergedObjects.get(a)!.set(b, value);
+          const readMembers = (object: AnyNode, state: ReturnType<typeof snapshot>) => {
+            const entries = new Map<string, AnyNode>();
+            for (const property of object.properties) {
+              if (property.type !== "Property" || property.computed || property.kind !== "init")
+                continue;
+              entries.set(
+                String(property.key.name ?? property.key.value),
+                identity(property.value, state.values),
+              );
+            }
+            for (const [key, member] of state.properties.get(object) ?? [])
+              entries.set(key, member);
+            return entries;
+          };
+          const first = readMembers(a, left);
+          const second = readMembers(b, right);
+          for (const key of new Set([...first.keys(), ...second.keys()])) {
+            value.properties.push({
+              type: "Property",
+              kind: "init",
+              computed: false,
+              key: { type: "Literal", value: key },
+              value: mergeValue(first.get(key), second.get(key)),
+            });
+          }
+          return value;
+        }
         const value = {};
         callbackChoices.set(
           value,
@@ -1119,7 +1184,7 @@ function undisposedResource(program: AnyNode): string | null {
         const iterable = identity(node.right, environment);
         if (
           iterable?.type === "ArrayExpression" &&
-          !iterable.elements.some((item: AnyNode) => item?.type === "SpreadElement")
+          !arrayElements(iterable).some((item: AnyNode) => item?.type === "SpreadElement")
         ) {
           const control = {
             node,
@@ -1129,7 +1194,7 @@ function undisposedResource(program: AnyNode): string | null {
           };
           controls.push(control);
           let continues = true;
-          for (const element of iterable.elements) {
+          for (const element of arrayElements(iterable)) {
             bindResource(
               node.left.type === "VariableDeclaration" ? node.left.declarations[0].id : node.left,
               identity(element, environment),
@@ -1261,7 +1326,11 @@ function undisposedResource(program: AnyNode): string | null {
                 exits.slice(firstExit).every((exit) => exit.has(resource.value)),
             );
           if (bodyStopped) exits.splice(exits.indexOf(nontermination), 1);
-          if (loop) merge(before, snapshot());
+          if (loop && node.type !== "DoWhileStatement") merge(before, snapshot());
+          if (node.type === "DoWhileStatement" && !bodyStopped) {
+            nontermination.clear();
+            for (const value of cleaned) nontermination.add(value);
+          }
           if (loop) {
             for (const resource of iterationCleaned) {
               repeated.delete(resource.value);

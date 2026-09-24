@@ -2445,6 +2445,126 @@ for (const [name, source, leaks] of [
     "const a = setInterval(refresh); const b = setInterval(refresh); const state = {}; if (flag) state.timer = a; else state.timer = b; import.meta.hot.dispose(() => clearInterval(state.timer))",
     true,
   ],
+  [
+    "do while guarantees first cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { do { clearInterval(timer) } while (false) })",
+    false,
+  ],
+  [
+    "do while break after cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { do { clearInterval(timer); break } while (flag) })",
+    false,
+  ],
+  [
+    "do while conditional early break leaks",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { do { if (flag) break; clearInterval(timer) } while (false) })",
+    true,
+  ],
+  [
+    "do while conditional cleanup leaks",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { do { if (flag) clearInterval(timer) } while (false) })",
+    true,
+  ],
+  [
+    "pushed timer is cleaned",
+    "const timers = []; timers.push(setInterval(refresh)); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "pushed timers retain aliases and existing entries",
+    "const timers = [setInterval(refresh)]; const alias = timers; alias.push(setInterval(refresh), setTimeout(refresh)); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "pushed timer remains live without cleanup",
+    "const timers = []; timers.push(setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "pushed timer can be indexed",
+    "const timers = []; timers.push(setInterval(refresh)); import.meta.hot.dispose(() => clearInterval(timers[0]))",
+    false,
+  ],
+  [
+    "array forEach forwards thisArg",
+    "const owner = { timer: setInterval(refresh) }; import.meta.hot.dispose(() => [0].forEach(function () { clearInterval(this.timer) }, owner))",
+    false,
+  ],
+  [
+    "array map forwards thisArg",
+    "const owner = { timer: setInterval(refresh) }; import.meta.hot.dispose(() => [0].map(function () { clearInterval(this.timer) }, owner))",
+    false,
+  ],
+  [
+    "array filter forwards thisArg",
+    "const owner = { timer: setInterval(refresh) }; import.meta.hot.dispose(() => [0].filter(function () { clearInterval(this.timer) }, owner))",
+    false,
+  ],
+  [
+    "array arrow callback ignores thisArg",
+    "const owner = { timer: setInterval(refresh) }; import.meta.hot.dispose(() => [0].forEach(() => clearInterval(this.timer), owner))",
+    true,
+  ],
+  [
+    "pushed timer supports for of cleanup",
+    "const timers = []; timers.push(setInterval(refresh)); import.meta.hot.dispose(() => { for (const timer of timers) clearInterval(timer) })",
+    false,
+  ],
+  [
+    "pushed timer supports destructuring cleanup",
+    "const timers = []; timers.push(setInterval(refresh)); const [timer] = timers; import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "overwritten push does not retain handles",
+    "const timers = []; timers.push = () => {}; timers.push(setInterval(refresh)); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "conditional push of existing timer still leaks",
+    "const timer = setInterval(refresh); const timers = []; if (flag) timers.push(timer); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "array callback thisArg overrides method owner",
+    "const original = { timer: setInterval(refresh), cleanup() { clearInterval(this.timer) } }; const owner = { timer: setInterval(refresh) }; import.meta.hot.dispose(() => [0].forEach(original.cleanup, owner))",
+    true,
+  ],
+  [
+    "array callback without thisArg does not retain method owner",
+    "const owner = { timer: setInterval(refresh), cleanup() { clearInterval(this.timer) } }; import.meta.hot.dispose(() => [0].forEach(owner.cleanup))",
+    true,
+  ],
+  [
+    "large array length does not allocate analysis elements",
+    "const timers = []; timers.length = 4294967295; timers.push(setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "branch selected objects preserve resource members",
+    "let state; if (flag) state = { timer: setInterval(a) }; else state = { timer: setInterval(b) }; import.meta.hot.dispose(() => clearInterval(state.timer))",
+    false,
+  ],
+  [
+    "branch selected objects cannot hide separate live resources",
+    "const a = setInterval(refresh); const b = setInterval(refresh); let state; if (flag) state = { timer: a }; else state = { timer: b }; import.meta.hot.dispose(() => clearInterval(state.timer))",
+    true,
+  ],
+  [
+    "branch selected nested objects preserve resource members",
+    "let state; if (flag) state = { inner: { timer: setInterval(a) } }; else state = { inner: { timer: setInterval(b) } }; import.meta.hot.dispose(() => clearInterval(state.inner.timer))",
+    false,
+  ],
+  [
+    "branch selected objects preserve assigned members",
+    "let state; if (flag) { state = {}; state.timer = setInterval(a) } else { state = {}; state.timer = setInterval(b) }; import.meta.hot.dispose(() => clearInterval(state.timer))",
+    false,
+  ],
+  [
+    "branch selected cyclic objects preserve resource members",
+    "let state; if (flag) { state = { timer: setInterval(a) }; state.self = state } else { state = { timer: setInterval(b) }; state.self = state }; import.meta.hot.dispose(() => clearInterval(state.self.timer))",
+    false,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({
