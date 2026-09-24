@@ -503,3 +503,51 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["helpers = { label: () => 'stable' }", 0],
+  ["helpers.label = () => 'stable'", 0],
+  ["helpers.other = () => 'stable'", 1],
+  ["if (false) helpers.label = () => 'stable'", 1],
+])("respects object helper replacement: %s", async (write, count) => {
+  for (const templateCall of [false, true]) {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>let helpers = { label() { return Date.now() } }; ${write}; ${templateCall ? "" : "const displayed = helpers.label()"}</script><template>{{ ${templateCall ? "helpers.label()" : "displayed"} }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(count);
+  }
+});
+
+test.each([
+  ["'stable'", 0],
+  ["", 1],
+  ["undefined", 1],
+  ["void 0", 1],
+])("evaluates helper defaults only when needed: %s", async (argument, count) => {
+  for (const templateCall of [false, true]) {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>function clock() { return Date.now() }; function label(value = clock()) { return value }; ${templateCall ? "" : `const displayed = label(${argument})`}</script><template>{{ ${templateCall ? `label(${argument})` : "displayed"} }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(count);
+  }
+});
+
+test.each([
+  ["[].map(() => clock())", 0],
+  ["[, ,].map(() => clock())", 0],
+  ["[].find(() => clock())", 0],
+  ["[,].find(() => clock())", 1],
+  ["[1].reduce(() => clock())", 0],
+  ["[, 1].reduceRight(() => clock())", 0],
+  ["[1].reduce(() => clock(), 0)", 1],
+  ["[1, 2].reduceRight(() => clock())", 1],
+  ["[1].map(() => clock())", 1],
+])("requires array callbacks to execute: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { return Date.now() }; const displayed = ${expression}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

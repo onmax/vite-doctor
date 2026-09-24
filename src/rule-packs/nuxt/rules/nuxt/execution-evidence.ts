@@ -136,6 +136,47 @@ function functionFlowsToTemplate(
     }
     return callee?.type === "Identifier" && callee.name === functionName;
   };
+  const reachesCall = (call: AnyNode, template = false): boolean => {
+    for (let current = source; current && current !== fn; current = parents.get(current)) {
+      const index = fn.params?.indexOf(current) ?? -1;
+      if (index < 0 || current.type !== "AssignmentPattern") continue;
+      const argument = call.arguments[index];
+      if (
+        argument &&
+        argument.type !== "SpreadElement" &&
+        !(argument.type === "Identifier" && argument.name === "undefined") &&
+        !(argument.type === "UnaryExpression" && argument.operator === "void")
+      )
+        return false;
+    }
+    if (!memberPath.length) return true;
+    const reference = template ? { start: Infinity } : call;
+    let replaced = false;
+    walkScriptLocal(ctx.file.scriptAst, (write) => {
+      if (
+        write.type !== "AssignmentExpression" ||
+        write.start <= binding.start ||
+        write.start >= reference.start
+      )
+        return;
+      let target = write.left;
+      const path: string[] = [];
+      while (target?.type === "MemberExpression") {
+        const key = target.computed ? target.property?.value : target.property?.name;
+        if (key === undefined) return;
+        path.unshift(String(key));
+        target = target.object;
+      }
+      if (target?.name !== functionName || !path.every((key, index) => memberPath[index] === key))
+        return;
+      if (resolveLocalBinding(write, functionName, parents) !== binding) return;
+      const owner = containingFunction(write, parents);
+      if (owner !== (template ? null : containingFunction(call, parents))) return;
+      if (writeDominatesReference(write, reference, owner ?? ctx.file.scriptAst, parents))
+        replaced = true;
+    });
+    return !replaced;
+  };
   const renderedReferences = getRenderedReferences(ctx);
   if (
     resolveLocalBinding(ctx.file.scriptAst, functionName, parents) === binding &&
@@ -149,6 +190,7 @@ function functionFlowsToTemplate(
         call?.type === "CallExpression" &&
         call.callee === callee &&
         matchesCallee(callee) &&
+        reachesCall(call, true) &&
         projectionIncludes(source, fn, call, parents) &&
         (!fn.generator || isConsumedIterator(call, (node) => node.parent))
       );
@@ -169,7 +211,8 @@ function functionFlowsToTemplate(
     if (
       node.type === "CallExpression" &&
       matchesCallee(node.callee) &&
-      resolveLocalBinding(node, functionName, parents) === binding
+      resolveLocalBinding(node, functionName, parents) === binding &&
+      reachesCall(node)
     ) {
       if (fn.generator && !isConsumedIterator(node, (node) => parents.get(node))) return false;
       if (
@@ -238,6 +281,18 @@ function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): An
       receiver?.type === "Identifier" ? resolveLocalBinding(call, receiver.name, parents) : null;
     const value = binding ? binding.init : receiver;
     if (value?.type === "ArrayExpression") {
+      const method = call.callee.property.name;
+      const elements = value.elements ?? [];
+      const count = ["find", "findIndex"].includes(method)
+        ? elements.length
+        : elements.filter(Boolean).length;
+      const minimum =
+        ["reduce", "reduceRight"].includes(method) && call.arguments.length < 2 ? 2 : 1;
+      if (
+        count < minimum &&
+        !elements.some((element: AnyNode) => element?.type === "SpreadElement")
+      )
+        return null;
       let scope = containingFunction(call, parents);
       if (!scope) {
         scope = call;
