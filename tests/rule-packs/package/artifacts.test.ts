@@ -160,7 +160,7 @@ test("handles nested wildcard exports and exact ESM targets", () => {
   expect(result.missing).toEqual(["dist/exact"]);
 });
 
-test("uses the first resolvable package-map fallback", () => {
+test("keeps a missing valid export target instead of using a later fallback", () => {
   const result = inventory(
     { exports: { ".": ["./dist/missing.js", "./dist/index.js", "./dist/fallback.js"] } },
     {
@@ -168,7 +168,33 @@ test("uses the first resolvable package-map fallback", () => {
       "dist/fallback.js": 'import "unused-peer";',
     },
   )!;
+  expect(result.references).toEqual([]);
+  expect(result.missing).toEqual(["dist/missing.js"]);
+});
+
+test.each([
+  "external-package",
+  "../outside.js",
+  "./dist/../invalid.js",
+  "./node_modules/invalid.js",
+])("skips invalid export target %s before selecting a fallback", (target) => {
+  const result = inventory(
+    { exports: { ".": [target, "./dist/index.js", "./dist/fallback.js"] } },
+    {
+      "dist/index.js": 'import "reachable-peer";',
+      "dist/fallback.js": 'import "unused-peer";',
+    },
+  )!;
   expect(result.references.map((ref) => ref.packageName)).toEqual(["reachable-peer"]);
+  expect(result.missing).toEqual([]);
+});
+
+test("selects a non-script export target without scanning later fallbacks", () => {
+  const result = inventory(
+    { exports: ["./data.json", "./index.js"] },
+    { "data.json": "{}", "index.js": 'import "unused-peer";' },
+  )!;
+  expect(result.references).toEqual([]);
   expect(result.missing).toEqual([]);
 });
 

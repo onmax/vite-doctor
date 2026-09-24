@@ -220,27 +220,35 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     required: boolean,
     kind: "runtime" | "types" = "runtime",
     adjacentDeclaration = false,
-  ) {
-    if (typeof value === "string") enqueue(value, kind, required, root, false, adjacentDeclaration);
-    else if (Array.isArray(value)) {
-      const fallbackMissing = new Set(missing);
-      for (const item of value) {
-        const beforeQueue = queue.length;
-        targets(item, required, kind, adjacentDeclaration);
-        if (queue.length > beforeQueue) {
-          for (const entry of missing) if (!fallbackMissing.has(entry)) missing.delete(entry);
-          break;
-        }
-      }
-    } else if (value && typeof value === "object") {
-      for (const [condition, item] of Object.entries(value))
-        targets(
+  ): boolean {
+    if (typeof value === "string") {
+      if (!value.startsWith("./") || !inside(resolve(root, value))) return false;
+      if (
+        value
+          .slice(2)
+          .split(/[\\/]/)
+          .some((segment) => /^(\.|\.\.|node_modules)$/i.test(segment))
+      )
+        return false;
+      enqueue(value, kind, required, root, false, adjacentDeclaration);
+      return true;
+    }
+    if (Array.isArray(value))
+      return value.some((item) => targets(item, required, kind, adjacentDeclaration));
+    if (value && typeof value === "object") {
+      let selected = false;
+      for (const [condition, item] of Object.entries(value)) {
+        const resolved = targets(
           item,
           required,
           condition === "types" || condition.startsWith("types@") ? "types" : kind,
           adjacentDeclaration,
         );
+        selected ||= resolved;
+      }
+      return selected;
     }
+    return false;
   }
 
   if (manifest.exports !== undefined) {
@@ -603,6 +611,8 @@ function isNonCallable(node: ts.Expression): boolean {
   return (
     isUndefined(node) ||
     ts.isLiteralExpression(node) ||
+    ((ts.isObjectLiteralExpression(node) || ts.isArrayLiteralExpression(node)) &&
+      isNonAbruptElement(node)) ||
     node.kind === ts.SyntaxKind.NullKeyword ||
     node.kind === ts.SyntaxKind.TrueKeyword ||
     node.kind === ts.SyntaxKind.FalseKeyword
@@ -689,7 +699,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
   }
   if (dynamic && !ts.isAwaitExpression(expression.parent)) return false;
-  for (let parent = node.parent; parent && !ts.isSourceFile(parent); parent = parent.parent) {
+  for (let parent = node.parent; parent; parent = parent.parent) {
     if (
       (ts.isFunctionLike(parent) &&
         !isDecoratorExpression(node, parent) &&
@@ -732,7 +742,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
         !isWithin(node, parent.expression))
     )
       return false;
-    if (ts.isBlock(parent)) {
+    if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
       const index = parent.statements.findIndex((statement) => isWithin(node, statement));
       if (parent.statements.slice(0, index).some(isDefinitelyAbrupt)) return false;
     }
@@ -742,6 +752,18 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
 }
 
 function isDefinitelyAbrupt(statement: ts.Statement): boolean {
+  if (
+    ts.isWhileStatement(statement) ||
+    ts.isDoStatement(statement) ||
+    ts.isForStatement(statement)
+  ) {
+    let condition = ts.isForStatement(statement) ? statement.condition : statement.expression;
+    while (condition && ts.isParenthesizedExpression(condition)) condition = condition.expression;
+    return (
+      (!condition || condition.kind === ts.SyntaxKind.TrueKeyword) &&
+      !hasAbruptCompletion(statement.statement)
+    );
+  }
   if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
   if (ts.isBlock(statement)) return statement.statements.some(isDefinitelyAbrupt);
   if (ts.isIfStatement(statement))

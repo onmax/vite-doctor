@@ -7,6 +7,16 @@ const optionalPeer = {
 };
 
 test.each([
+  'while (true) { break; } require("peer");',
+  'do { break; } while (true); require("peer");',
+  'for (;;) { if (enabled) break; } require("peer");',
+  'while (enabled) {} require("peer");',
+  'for (; false;) {} require("peer");',
+  'outer: while (true) { while (true) { break outer; } } require("peer");',
+  'await import("peer").then(value => value, {});',
+  'await import("peer").then(value => value, []);',
+  'await import("peer").then(value => value, ({ value: [0, null, () => {}] }));',
+  'await import("peer").then(value => value, [, {}]);',
   '(function () { try { throw 0; } catch {} require("peer"); })();',
   '(function () { (() => { return; })(); require("peer"); })();',
 
@@ -109,6 +119,17 @@ test.each([
 });
 
 test.each([
+  '(function () { while (true) {} require("peer"); })();',
+  'while ((true)) {} require("peer");',
+  'do {} while (true); require("peer");',
+  'for (;;) {} require("peer");',
+  'for (; true;) {} require("peer");',
+  'while (true) { continue; } require("peer");',
+  'while (true) { while (enabled) { break; } } require("peer");',
+  'await import("peer").then(value => value, { value: unknown() });',
+  'await import("peer").then(value => value, [unknown()]);',
+  'await import("peer").then(value => value, { ...unknown });',
+  'await import("peer").then(value => value, [...unknown]);',
   '(function () { return; require("peer"); })();',
   '(function () { { return; } require("peer"); })();',
   '(function () { throw 0; require("peer"); })();',
