@@ -408,6 +408,10 @@ function functionFlowsToTemplate(
         call,
         parents,
         nativeInvocations.has(call.callee) ? invocationMethod(call.callee) : null,
+        call.arguments?.some(
+          (argument: AnyNode) =>
+            matchesCallee(argument) && resultCallbackCall(fn, parents, argument) === call,
+        ) ?? false,
       );
       if (argument && !isUndefinedValue(argument, parents, ctx.file.scriptAst)) return false;
     }
@@ -646,6 +650,10 @@ function isUndefinedValue(
 
 function constructorReturnsPrimitive(value: AnyNode, parents: WeakMap<AnyNode, AnyNode>): boolean {
   if (isUndefinedValue(value, parents)) return true;
+  if (value.type === "BinaryExpression" && value.operator === "in") {
+    const right = unwrapExpression(value.right);
+    if (right?.type === "Literal" && !right.regex) return false;
+  }
   if (
     ["BinaryExpression", "UnaryExpression", "UpdateExpression", "TemplateLiteral"].includes(
       value.type,
@@ -657,17 +665,42 @@ function constructorReturnsPrimitive(value: AnyNode, parents: WeakMap<AnyNode, A
     return constructorReturnsPrimitive(value.expressions.at(-1), parents);
   if (value.type === "AssignmentExpression" && value.operator === "=")
     return constructorReturnsPrimitive(value.right, parents);
-  if (value.type === "LogicalExpression")
+  if (value.type === "LogicalExpression") {
+    const selector = staticPrimitiveValue(value.left, parents);
+    if (selector.known) {
+      const selectsRight =
+        value.operator === "??"
+          ? selector.value == null
+          : value.operator === "&&"
+            ? Boolean(selector.value)
+            : !selector.value;
+      return constructorReturnsPrimitive(selectsRight ? value.right : value.left, parents);
+    }
     return (
       constructorReturnsPrimitive(value.left, parents) &&
       constructorReturnsPrimitive(value.right, parents)
     );
-  if (value.type === "ConditionalExpression")
+  }
+  if (value.type === "ConditionalExpression") {
+    const selector = staticPrimitiveValue(value.test, parents);
+    if (selector.known)
+      return constructorReturnsPrimitive(
+        selector.value ? value.consequent : value.alternate,
+        parents,
+      );
     return (
       constructorReturnsPrimitive(value.consequent, parents) &&
       constructorReturnsPrimitive(value.alternate, parents)
     );
+  }
   return false;
+}
+
+function staticPrimitiveValue(node: AnyNode, parents: WeakMap<AnyNode, AnyNode>) {
+  const value = unwrapExpression(node);
+  if (isUndefinedValue(value, parents)) return { known: true, value: undefined };
+  if (value?.type === "Literal" && !value.regex) return { known: true, value: value.value };
+  return { known: false, value: undefined };
 }
 
 function parameterValue(
@@ -676,9 +709,24 @@ function parameterValue(
   call: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   method: string | null,
+  callback = false,
 ): AnyNode {
   const index = fn.params?.indexOf(pattern) ?? -1;
   if (index >= 0) {
+    if (callback) {
+      const receiver = unwrapExpression(call.callee?.object);
+      const array =
+        receiver?.type === "ArrayExpression" ? receiver : resolveLocalValue(receiver, parents);
+      if (index !== 0 || array?.type !== "ArrayExpression") return undefined;
+      const elements = array.elements.filter(
+        (element: AnyNode) => element?.type !== "SpreadElement",
+      );
+      if (array.elements.some((element: AnyNode) => element?.type === "SpreadElement"))
+        return undefined;
+      return elements.some((element: AnyNode) => isUndefinedValue(element, parents))
+        ? null
+        : elements[0];
+    }
     const args =
       method === "call"
         ? call.arguments.slice(1)
@@ -694,7 +742,7 @@ function parameterValue(
   }
   const parent = parents.get(pattern);
   if (parent?.type === "AssignmentPattern" && parent.left === pattern) {
-    const value = parameterValue(parent, fn, call, parents, method);
+    const value = parameterValue(parent, fn, call, parents, method, callback);
     return value === undefined
       ? undefined
       : isUndefinedValue(value, parents)
@@ -702,7 +750,7 @@ function parameterValue(
         : value;
   }
   if (parent?.type === "Property" && parent.value === pattern) {
-    const value = parameterValue(parents.get(parent), fn, call, parents, method);
+    const value = parameterValue(parents.get(parent), fn, call, parents, method, callback);
     const key = parent.computed ? parent.key?.value : (parent.key?.name ?? parent.key?.value);
     if (value?.type !== "ObjectExpression" || key === undefined) return undefined;
     for (const property of [...value.properties].reverse()) {
@@ -716,7 +764,7 @@ function parameterValue(
     return null;
   }
   if (parent?.type === "ArrayPattern") {
-    const value = parameterValue(parent, fn, call, parents, method);
+    const value = parameterValue(parent, fn, call, parents, method, callback);
     const index = parent.elements.indexOf(pattern);
     if (value?.type !== "ArrayExpression" || index < 0) return undefined;
     if (value.elements.slice(0, index + 1).some((item: AnyNode) => item?.type === "SpreadElement"))

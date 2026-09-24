@@ -1989,11 +1989,27 @@ test.each([
   ],
   ["this.generatedAt = Date.now(); return 1 + 2", "new Clock()", "generatedAt", 1],
   ["this.generatedAt = Date.now(); return /stable/", "new Clock()", "generatedAt", 0],
+  ["this.generatedAt = Date.now(); return true ? 1 : {}", "new Clock()", "generatedAt", 1],
+  ["this.generatedAt = Date.now(); return 1 || {}", "new Clock()", "generatedAt", 1],
+  ["this.generatedAt = Date.now(); return 0 && {}", "new Clock()", "generatedAt", 1],
+  ["this.generatedAt = Date.now(); return 'key' in 1", "new Clock()", "generatedAt", 0],
   ["this.generatedAt = Date.now()", "Clock()", "generatedAt", 0],
 ])("projects constructor instance writes: %s %s %s", async (body, call, key, count) => {
   const result = await runNuxtAppRuleFixture(
     noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
     `<script setup lang="ts">function Clock() { ${body} }; const displayed = ${call}</script><template>{{ displayed.${key} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["[undefined].map(clock)", 1],
+  ["[1].map(clock)", 0],
+  ["[1, undefined].map(clock)", 1],
+])("respects array callback inputs for parameter defaults: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock(value = Date.now()) { return value }; const displayed = ${expression}</script><template>{{ displayed }}</template>`,
   );
   expect(result.diagnostics).toHaveLength(count);
 });
