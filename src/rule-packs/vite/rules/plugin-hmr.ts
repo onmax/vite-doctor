@@ -429,26 +429,33 @@ function undisposedResource(program: AnyNode): string | null {
       {
         const path = memberPath(node.callee);
         const target = identity(node.callee, environment);
-        const global = identity(target?.object ?? node.callee?.object, environment);
-        const callee =
-          typeof target === "string"
-            ? target
+        const callees = (callbackChoices.get(target) ?? [target]).map((choice) => {
+          const global = identity(choice?.object ?? node.callee?.object, environment);
+          return typeof choice === "string"
+            ? choice
             : ["window", "globalThis", "self"].includes(global)
-              ? propertyKey(target)
+              ? propertyKey(choice)
               : undefined;
-        const kind =
-          node.type === "CallExpression" && callee === "setInterval"
-            ? "interval"
-            : node.type === "CallExpression" && callee === "setTimeout"
-              ? "timeout"
-              : node.type === "NewExpression" && ["WebSocket", "EventSource"].includes(callee ?? "")
-                ? callee!
-                : node.type === "CallExpression" && path?.endsWith(".subscribe")
-                  ? "subscription"
-                  : null;
-        if (kind) {
+        });
+        const kinds = new Set(
+          callees.map((callee) =>
+            node.type === "CallExpression" && callee === "setInterval"
+              ? "interval"
+              : node.type === "CallExpression" && callee === "setTimeout"
+                ? "timeout"
+                : node.type === "NewExpression" &&
+                    ["WebSocket", "EventSource"].includes(callee ?? "")
+                  ? callee!
+                  : node.type === "CallExpression" && path?.endsWith(".subscribe")
+                    ? "subscription"
+                    : null,
+          ),
+        );
+        const created = [];
+        for (const kind of kinds) {
+          if (!kind) continue;
           const value = {};
-          returned.set(node, value);
+          created.push(value);
           if (loopDepth) repeated.add(value);
           resourcePaths.set(value, new Map(currentPath));
           resources.push({
@@ -464,6 +471,12 @@ function undisposedResource(program: AnyNode): string | null {
                     : "close",
             method: !["interval", "timeout"].includes(kind),
           });
+        }
+        if (created.length === 1) returned.set(node, created[0]);
+        else if (created.length) {
+          const value = {};
+          alternatives.set(value, created);
+          returned.set(node, value);
         }
       }
       if (node.type !== "CallExpression") return;
@@ -613,6 +626,12 @@ function undisposedResource(program: AnyNode): string | null {
             (value) => alternatives.get(value) ?? [value],
           );
           const value = {};
+          callbackChoices.set(
+            value,
+            [left.values.get(key), right.values.get(key)].flatMap(
+              (choice) => callbackChoices.get(choice) ?? [choice],
+            ),
+          );
           if (
             choices.every(
               (choice, index) =>
@@ -743,6 +762,7 @@ function undisposedResource(program: AnyNode): string | null {
       else if (leftContinues) restore(afterLeft);
       return leftContinues || rightContinues;
     };
+    const controls: boolean[] = [];
     const walk = (node: AnyNode): boolean => {
       if (!node || typeof node !== "object") return true;
       if (Array.isArray(node)) return node.every(walk);
@@ -963,19 +983,56 @@ function undisposedResource(program: AnyNode): string | null {
           "SwitchStatement",
         ].includes(node.type)
       ) {
-        exits.push(new Set(cleaned));
-        abrupt = true;
+        const loop = node.type !== "SwitchStatement";
+        controls.push(loop);
+        if (loop) {
+          exits.push(new Set(cleaned));
+          abrupt = true;
+        }
         {
           const before = snapshot();
-          const loop = node.type !== "SwitchStatement";
+          const resourceStart = resources.length;
+          const firstExit = exits.length;
           if (loop) loopDepth++;
-          for (const [key, child] of Object.entries(node)) {
-            if (key !== "__doctorParent") walk(child);
+          if (loop) {
+            for (const [key, child] of Object.entries(node)) {
+              if (key !== "__doctorParent") walk(child);
+            }
+          } else {
+            walk(node.discriminant);
+            let combined = snapshot();
+            for (const item of node.cases) {
+              restore(before);
+              walk(item.test);
+              walk(item.consequent);
+              merge(combined, snapshot());
+              combined = snapshot();
+            }
           }
           if (loop) loopDepth--;
+          controls.pop();
+          const iterationCleaned = resources
+            .slice(resourceStart)
+            .filter(
+              (resource) =>
+                cleaned.has(resource.value) &&
+                exits.slice(firstExit).every((exit) => exit.has(resource.value)),
+            );
           merge(before, snapshot());
+          if (loop) {
+            for (const resource of iterationCleaned) {
+              repeated.delete(resource.value);
+              cleaned.add(resource.value);
+              for (const exit of exits) exit.add(resource.value);
+            }
+          }
         }
         return true;
+      }
+      if (node.type === "BreakStatement" || node.type === "ContinueStatement") {
+        if (controls.at(-1) || node.type === "ContinueStatement" || node.label)
+          exits.push(new Set(cleaned));
+        return false;
       }
       const bindsValue =
         node.type === "VariableDeclarator" ||

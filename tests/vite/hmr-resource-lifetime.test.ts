@@ -1812,3 +1812,97 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "switch later return before cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (flag) { case 0: break; case 1: return }; clearInterval(timer) })",
+    true,
+  ],
+  [
+    "switch cleanup cannot cover another case",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (flag) { case 0: clearInterval(timer); break; case 1: return }; clearInterval(timer) })",
+    true,
+  ],
+
+  [
+    "iteration break before cleanup",
+    "for (const item of items) { const timer = setInterval(refresh); if (flag) break; clearInterval(timer) }; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "iteration continue before cleanup",
+    "for (const item of items) { const timer = setInterval(refresh); if (flag) continue; clearInterval(timer) }; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "iteration cleanup before break",
+    "for (const item of items) { const timer = setInterval(refresh); clearInterval(timer); break }; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "nested conditional creator",
+    "const create = flag ? custom : other ? globalThis.setTimeout : setInterval; create(refresh); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+
+  [
+    "conditional timer creator",
+    "const start = flag ? setInterval : custom; start(refresh); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "conditional timer creator cleanup",
+    "const start = flag ? setInterval : custom; const timer = start(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "branch assigned timer creator",
+    "let start; if (flag) start = setInterval; else start = custom; start(refresh); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "conditional socket creator",
+    "const Socket = flag ? WebSocket : custom; new Socket(url); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "conditional shadowed creator",
+    "const setInterval = () => {}; const start = flag ? setInterval : custom; start(refresh); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "switch before cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (0) { default: break }; clearInterval(timer) })",
+    false,
+  ],
+  [
+    "switch return before cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (flag) { case 1: return; default: break }; clearInterval(timer) })",
+    true,
+  ],
+  [
+    "iteration cleanup",
+    "for (const item of items) { const timer = setInterval(refresh); clearInterval(timer) }; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "conditional iteration cleanup",
+    "for (const item of items) { const timer = setInterval(refresh); if (flag) clearInterval(timer) }; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "iteration return before cleanup",
+    "function setup() { for (const item of items) { const timer = setInterval(refresh); if (flag) return; clearInterval(timer) } }; setup(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
