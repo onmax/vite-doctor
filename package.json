@@ -64,12 +64,9 @@
     "check": "vp check",
     "predoctor": "pnpm build",
     "doctor": "node dist/cli.mjs . --no-cache --max-warnings 0 --format text",
-    "release": "bumpp package.json --push --no-push-all",
-    "release:check": "vp fmt && pnpm build && vp lint && pnpm test && pnpm test:pack",
-    "release:pack": "mkdir -p artifacts && pnpm build && pnpm pack --pack-destination artifacts",
-    "release:publish": "npm publish --access public",
-    "release:publish:provenance": "npm publish --provenance --access public",
-    "prepare": "vp config"
+    "release:check": "vp fmt --check && pnpm build && vp lint && pnpm test && pnpm test:pack",
+    "prepare": "vp config",
+    "prepack": "pnpm build"
   },
   "dependencies": {
     "@shadcn/lint": "catalog:analysis",
@@ -107,7 +104,6 @@
     "@vue/test-utils": "catalog:test",
     "@vueuse/core": "catalog:frontend",
     "better-auth": "catalog:frontend",
-    "bumpp": "catalog:release",
     "happy-dom": "catalog:test",
     "nuxt": "catalog:frontend",
     "nuxt-better-auth": "catalog:frontend",

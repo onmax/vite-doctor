@@ -1,4 +1,5 @@
 import { isBuiltin } from "node:module";
+import { basename } from "node:path";
 import { existsSync, globSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "pathe";
 import ts from "typescript";
@@ -259,10 +260,12 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   }
   for (const entry of [manifest.types, manifest.typings])
     if (entry) enqueue(entry, "types", false, root, false);
-  if (typeof manifest.bin === "string") enqueue(manifest.bin, "runtime", false, root, false, true);
-  else if (manifest.bin)
-    for (const entry of Object.values(manifest.bin))
-      enqueue(entry, "runtime", false, root, false, true);
+  const bin = Array.isArray(manifest.bin)
+    ? Object.fromEntries(manifest.bin.map((entry) => [basename(entry), entry]))
+    : manifest.bin;
+  if (typeof bin === "string") enqueue(bin, "runtime", false, root, false, true);
+  else if (bin)
+    for (const entry of Object.values(bin)) enqueue(entry, "runtime", false, root, false, true);
   for (const version of Object.values(manifest.typesVersions ?? {}))
     for (const entries of Object.values(version))
       for (const entry of entries) enqueue(entry, "types", false, root, false);

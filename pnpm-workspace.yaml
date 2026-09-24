@@ -65,7 +65,6 @@ catalogs:
     zod: ^4.4.3
     zod-to-json-schema: ^3.25.2
   release:
-    bumpp: ^12.1.1
     pkg-pr-new: ^0.0.86
   test:
     "@nuxt/test-utils": ^4.1.0
