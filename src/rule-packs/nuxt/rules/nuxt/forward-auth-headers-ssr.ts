@@ -222,8 +222,14 @@ function hasHoistedBinding(node: AnyNode, name: string): boolean {
   });
 }
 
-function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
-  let scope = identifier.__doctorParent ?? identifier.parent ?? call.__doctorParent ?? call.parent;
+function localInitializer(identifier: AnyNode, call: AnyNode, scopes?: AnyNode[]): AnyNode {
+  let scope =
+    scopes?.[0] ??
+    identifier.__doctorParent ??
+    identifier.parent ??
+    call.__doctorParent ??
+    call.parent;
+  let scopeIndex = 0;
   const anchorStart = identifier.start ?? identifier.range?.[0];
   while (scope) {
     const statements = Array.isArray(scope.body) ? [...scope.body] : [];
@@ -258,8 +264,20 @@ function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
       return;
     if (scope.type === "CatchClause" && bindsName(scope.param, identifier.name)) return;
     if (scope.params?.some((param: AnyNode) => bindsName(param, identifier.name))) return;
-    scope = scope.__doctorParent ?? scope.parent;
+    scope = scopes ? scopes[++scopeIndex] : (scope.__doctorParent ?? scope.parent);
   }
+}
+
+function lexicalAncestors(node: AnyNode): AnyNode[] {
+  const ancestors: AnyNode[] = [];
+  for (
+    let parent = node.__doctorParent ?? node.parent;
+    parent;
+    parent = parent.__doctorParent ?? parent.parent
+  ) {
+    ancestors.push(parent);
+  }
+  return ancestors;
 }
 
 function unmodifiedInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
@@ -269,7 +287,14 @@ function unmodifiedInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
   while (scope && scope.type !== "Program" && scope.type !== "BlockStatement")
     scope = scope.__doctorParent ?? scope.parent;
   if (!scope) return;
-  // Escaped objects and closure writes make initializer evidence unreliable.
+  const callAncestors = lexicalAncestors(call);
+  const callExecutionScope = callAncestors.find(
+    (ancestor) => ancestor.params || ancestor.type === "Program",
+  );
+  const initializerExecutionScope = lexicalAncestors(initializer).find(
+    (ancestor) => ancestor.params || ancestor.type === "Program",
+  );
+  // Closure writes and repeated loop iterations can precede the inspected request.
   function hasUnsafeReference(node: AnyNode, ancestors: AnyNode[] = [], key?: string): boolean {
     if (!node || typeof node !== "object") return false;
     const parent = ancestors[0];
@@ -280,6 +305,27 @@ function unmodifiedInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
       if (parent?.type === "MemberExpression" && key === "property" && !parent.computed)
         return false;
       if (node === identifier) return false;
+      const referenceAncestors = [...ancestors, ...lexicalAncestors(scope)];
+      if (localInitializer(node, call, referenceAncestors) !== initializer) return false;
+      if ((node.start ?? node.range?.[0]) > (call.end ?? call.range?.[1])) {
+        const sharesLoop = callAncestors.some(
+          (ancestor) =>
+            [
+              "ForStatement",
+              "ForInStatement",
+              "ForOfStatement",
+              "WhileStatement",
+              "DoWhileStatement",
+            ].includes(ancestor.type) && referenceAncestors.includes(ancestor),
+        );
+        if (
+          !sharesLoop &&
+          initializerExecutionScope === callExecutionScope &&
+          referenceAncestors.find((ancestor) => ancestor.params || ancestor.type === "Program") ===
+            callExecutionScope
+        )
+          return false;
+      }
       if (isFetchArgument(node, ancestors)) return false;
       if (
         parent?.type === "MemberExpression" &&

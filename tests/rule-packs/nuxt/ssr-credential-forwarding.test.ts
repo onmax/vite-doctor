@@ -276,3 +276,74 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(0);
 });
+
+test.each([
+  "try {} catch (options) { consume(options) }",
+  "try {} catch ({ options }) { consume(options) }",
+  "{ const options = {}; consume(options) }",
+  "{ consume(options); let options }",
+  "for (const options of items) { consume(options) }",
+  "switch (value) { case 1: const options = {}; consume(options) }",
+  "function other() { consume(options); var options }",
+])("shadowed references preserve outer credentials: %s", async (statement) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">const options = { headers: useRequestHeaders(['cookie']) }; ${statement}; await $fetch('/api/user', options)</script>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["options.headers = {}", "options"],
+  ["delete headers.cookie", "{ headers }"],
+  ["consume(options)", "options"],
+  ["headers.set('cookie', '')", "{ headers }"],
+])("later mutations preserve completed request credentials: %s", async (mutation, options) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">${options === "options" ? "const options = { headers: useRequestHeaders(['cookie']) }" : "const headers = useRequestHeaders(['cookie'])"}; await $fetch('/api/user', ${options}); ${mutation}</script>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  "async function load() { await $fetch('/api/user', options); options.headers = {} }; await load(); await load()",
+  "clear(); await $fetch('/api/user', options); function clear() { options.headers = {} }",
+  "for (const item of items) { await $fetch('/api/user', options); options.headers = {} }",
+  "while (again()) { await $fetch('/api/user', options); options.headers = {} }",
+  "do { await $fetch('/api/user', options); options.headers = {} } while (again())",
+  "const clear = () => { options.headers = {} }; clear(); await $fetch('/api/user', options)",
+])("closure and loop writes retain diagnostics: %s", async (statement) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">const options = { headers: useRequestHeaders(['cookie']) }; ${statement}</script>`,
+  );
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
+});
+
+test("only requests after a credential mutation are diagnosed", async () => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">
+const options = { headers: useRequestHeaders(['cookie']) }
+await $fetch('/api/user', options)
+options.headers = {}
+await $fetch('/api/account', options)
+</script>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0].range?.line).toBe(5);
+});
+
+test("later closure shadows do not invalidate outer headers", async () => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">
+const headers = useRequestHeaders(['cookie'])
+other()
+await $fetch('/api/user', { headers })
+function other() { try {} catch (headers) { consume(headers) } }
+</script>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
