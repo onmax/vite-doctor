@@ -4448,7 +4448,7 @@ test.each([
   },
 );
 
-test("NUXT0037 retains configured handlers when only server inventory changes", async () => {
+test("NUXT0037 ignores stale registered handlers when server inventory changes", async () => {
   const result = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,
     framework: "nuxt",
@@ -4464,7 +4464,30 @@ test("NUXT0037 retains configured handlers when only server inventory changes", 
       }),
     },
   });
-  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(0);
+});
+
+test("NUXT0037 records an evidence gap for nonliteral changed middleware configuration", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts": "const source = 'src'; export default defineNuxtConfig({ srcDir: source })",
+      "src/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2000-01-01T00:00:00.000Z",
+        appDir: "app",
+      }),
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(0);
+  expect(
+    result.project.evidenceGaps?.some(
+      (gap) => gap.source === "vite-doctor/nuxt-middleware-api-security",
+    ),
+  ).toBe(true);
 });
 
 test("NUXT0037 does not treat differently cased methods as matching constraints", async () => {

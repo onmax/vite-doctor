@@ -34,6 +34,12 @@ test("opt-in authorization review reports cited server gaps", async () => {
 
   expect(result.diagnostics.map((item) => item.code)).toContain("NUXT0074");
   expect(result.diagnostics.find((item) => item.code === "NUXT0074")?.related).toHaveLength(1);
+  expect(result.diagnostics.find((item) => item.code === "NUXT0074")?.related?.[0]?.range).toEqual({
+    start: 0,
+    end: files["app/middleware/auth.ts"].length,
+    line: 1,
+    column: 1,
+  });
   expect(result.diagnostics.find((item) => item.code === "NUXT0074")?.range).toEqual({
     start: 0,
     end: files["server/api/account.get.ts"].length,
@@ -298,9 +304,14 @@ test.each([true, false])(
         ".nuxt/doctor.manifest.json": JSON.stringify({
           generatedAt: current ? "2100-01-01T00:00:00Z" : "2000-01-01T00:00:00Z",
           resolvedServerHandlers: [
-            { file: "server/api/account.get.ts", route: "/api/account" },
+            { file: "server/api/account.get.ts", route: "/api/account", method: "GET" },
             { file: "server/handlers/entry.ts", route: "/api/account" },
-            { file: "server/guards/global.ts", middleware: true },
+            {
+              file: "server/guards/global.ts",
+              middleware: true,
+              route: "/api/admin/**",
+              method: "POST",
+            },
           ],
         }),
       },
@@ -314,6 +325,12 @@ test.each([true, false])(
         candidate.sources.some((source) => source.path === "server/guards/global.ts"),
       ),
     ).toBe(current);
+    if (current) {
+      expect(candidates[0]?.handlerRoutes).toEqual([{ route: "/api/account", method: "GET" }]);
+      expect(candidates[0]?.serverMiddlewareRoutes).toEqual([
+        { path: "server/guards/global.ts", route: "/api/admin/**", method: "POST" },
+      ]);
+    }
   },
 );
 

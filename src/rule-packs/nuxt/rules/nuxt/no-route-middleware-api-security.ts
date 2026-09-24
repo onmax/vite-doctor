@@ -31,6 +31,18 @@ export const noRouteMiddlewareApiSecurity = createRule({
         const rootConfig = configurationCurrent
           ? undefined
           : rootMiddlewareConfiguration(ctx.project.root);
+        if (rootConfig === null) {
+          ctx.project.evidenceGaps = [
+            ...(ctx.project.evidenceGaps ?? []),
+            {
+              source: "vite-doctor/nuxt-middleware-api-security",
+              message:
+                "Nuxt middleware directories cannot be resolved from changed configuration. Regenerate the Doctor manifest before reviewing server authorization.",
+              files: [".nuxt/doctor.manifest.json"],
+            },
+          ];
+          return;
+        }
         const rootAppDir = rootConfig ? resolve(ctx.project.root, rootConfig.srcDir) : nuxt.appDir;
         const rootMiddlewareDir = configurationCurrent
           ? undefined
@@ -109,18 +121,23 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
   );
 }
 
-function rootMiddlewareConfiguration(root: string): { srcDir: string; middleware: string } {
+function rootMiddlewareConfiguration(root: string): { srcDir: string; middleware: string } | null {
   const config = ["ts", "js", "mjs", "cjs", "mts", "cts"]
     .map((extension) => join(root, `nuxt.config.${extension}`))
     .find(existsSync);
   const text = config ? readFileSync(config, "utf8") : "";
+  const srcDir = text.match(/(?:["'`])?\bsrcDir\b(?:["'`])?\s*:\s*["'`]([^"'`]+)["'`]/)?.[1];
+  const middleware = text.match(
+    /(?:["'`])?\bmiddleware\b(?:["'`])?\s*:\s*["'`]([^"'`]+)["'`]/,
+  )?.[1];
+  if (
+    (!srcDir && /(?:["'`])?\bsrcDir\b(?:["'`])?\s*:/.test(text)) ||
+    (!middleware && /(?:["'`])?\bmiddleware\b(?:["'`])?\s*:/.test(text))
+  )
+    return null;
   return {
-    srcDir:
-      text.match(/(?:["'`])?\bsrcDir\b(?:["'`])?\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] ??
-      (existsSync(join(root, "app")) ? "app" : "."),
-    middleware:
-      text.match(/(?:["'`])?\bmiddleware\b(?:["'`])?\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] ??
-      "middleware",
+    srcDir: srcDir ?? (existsSync(join(root, "app")) ? "app" : "."),
+    middleware: middleware ?? "middleware",
   };
 }
 
@@ -128,7 +145,8 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
   const dirs = ctx.project.nuxt?.serverDirs;
   const manifest = ctx.project.nuxt?.manifest;
   const resolvedHandlers = manifest?.isCurrent ? manifest.resolvedServerHandlers : undefined;
-  const registered = configurationCurrent ? (manifest?.serverHandlers ?? []) : [];
+  const registered =
+    manifest?.isCurrent && configurationCurrent ? (manifest.serverHandlers ?? []) : [];
   const middleware = resolvedHandlers
     ? resolvedHandlers.filter(
         (handler) => handler.middleware && hasUnconditionalAuthGuard(handler.file),
