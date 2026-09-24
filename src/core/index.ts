@@ -85,6 +85,7 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
       : { mode: "all", files: session.files.length },
   );
   result.fixes = fixes;
+  result.extends = options.extends ?? session.config.extends;
   markSession(session, "score", started);
   return result;
 }

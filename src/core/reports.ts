@@ -18,7 +18,10 @@ export function createTextReport(result: DoctorRunResult): string {
   lines.push(`Detected: ${frameworkLabel(result)}`);
   lines.push(`Project: ${result.root}`);
   if (status === "incomplete") {
-    lines.push("Status: incomplete, runtime evidence could not be resolved");
+    lines.push("Status: incomplete, required project evidence is missing");
+  }
+  for (const gap of result.project.evidenceGaps ?? []) {
+    lines.push(`Evidence missing: ${gap.message} ${gap.files.join(", ")}`);
   }
   for (const edge of result.project.runtimeGraph?.edges ?? []) {
     const runtime = result.project.runtimeGraph?.packages[edge.to];
@@ -125,6 +128,8 @@ export function createJsonReport(result: DoctorRunResult): string {
       timings: result.timings,
       phases: result.phases,
       graph: result.graph,
+      extends: result.extends,
+      evidenceGaps: result.project.evidenceGaps,
       runtimeGraph: result.project.runtimeGraph,
       nuxtCompatibility: result.project.nuxtCompatibility,
     },
@@ -149,6 +154,7 @@ export function createAgentReport(result: DoctorRunResult): string {
       serializeAgentDiagnostic(result, diagnostic),
     ),
     fixes: result.fixes,
+    evidenceGaps: result.project.evidenceGaps,
     commands: {
       explain: `vite-doctor explain <code> --framework ${result.framework} --format agent`,
       verify: agentRunCommand(result, true),
@@ -161,6 +167,7 @@ export function createAgentReport(result: DoctorRunResult): string {
           ? {
               action: "restore-evidence",
               instruction:
+                result.project.evidenceGaps?.map((gap) => gap.message).join(" ") ||
                 "Install project dependencies and run Doctor from the target package before relying on version-specific results.",
             }
           : {
@@ -172,8 +179,15 @@ export function createAgentReport(result: DoctorRunResult): string {
 }
 
 export function createSarifReport(result: DoctorRunResult): string {
+  const counts = new Map<string, number>();
+  for (const diagnostic of result.diagnostics)
+    counts.set(diagnostic.ruleId, (counts.get(diagnostic.ruleId) ?? 0) + 1);
+  const ruleId = (diagnostic: Diagnostic) =>
+    (counts.get(diagnostic.ruleId) ?? 0) > 1
+      ? `${diagnostic.ruleId}:${diagnostic.code}`
+      : diagnostic.ruleId;
   const rules = new Map<string, Diagnostic>();
-  for (const diagnostic of result.diagnostics) rules.set(diagnostic.ruleId, diagnostic);
+  for (const diagnostic of result.diagnostics) rules.set(ruleId(diagnostic), diagnostic);
   return `${JSON.stringify(
     {
       version: "2.1.0",
@@ -185,7 +199,7 @@ export function createSarifReport(result: DoctorRunResult): string {
               name: "Vite Doctor",
               semanticVersion: result.version,
               rules: [...rules.values()].map((diagnostic) => ({
-                id: diagnostic.ruleId,
+                id: ruleId(diagnostic),
                 name: diagnostic.code,
                 shortDescription: { text: diagnostic.code },
                 helpUri: diagnosticReferenceUrl(diagnostic.code),
@@ -199,8 +213,8 @@ export function createSarifReport(result: DoctorRunResult): string {
             },
           },
           results: result.diagnostics.map((diagnostic) => ({
-            ruleId: diagnostic.ruleId,
-            rule: { id: diagnostic.ruleId },
+            ruleId: ruleId(diagnostic),
+            rule: { id: ruleId(diagnostic) },
             level: sarifLevel(diagnostic.severity),
             message: { text: diagnostic.why },
             partialFingerprints: {
@@ -317,6 +331,7 @@ export function explainRule(
 }
 
 export function reportStatus(result: DoctorRunResult): "clean" | "findings" | "incomplete" {
+  if (result.project.evidenceGaps?.length) return "incomplete";
   const expectedRuntimes =
     result.framework === "nuxt"
       ? (["nuxt", "nitro", "h3"] as const)
@@ -417,6 +432,8 @@ function agentRunCommand(result: DoctorRunResult, focused = false): string {
     if (result.scope.base) args.push("--since", result.scope.base);
     else args.push("--changed");
   }
+  if (Array.isArray(result.extends) && result.extends.length)
+    args.push("--extends", result.extends.join(","));
   if (focused) args.push("--rules", "<rule>");
   args.push("--format", "agent");
   return args.join(" ");
