@@ -662,3 +662,51 @@ const displayed = ${expression}
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ['clock = () => "stable"', "{{ clock() }}", 0],
+  ['clock = () => "stable"; const displayed = clock()', "{{ displayed }}", 0],
+  ['const displayed = clock(); clock = () => "stable"', "{{ displayed }}", 1],
+  ['if (flag) clock = () => "stable"', "{{ clock() }}", 1],
+  ['clock ||= () => "stable"', "{{ clock() }}", 1],
+  ['function replace() { clock = () => "stable" }', "{{ clock() }}", 1],
+])("tracks standalone helper replacements: %s", async (statements, template, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>let clock = () => Date.now(); ${statements}</script><template>${template}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ['const Promise = { all: async () => "stable" };', "Promise.all", 0],
+  ['const Promise = { all: () => "stable" };', "Promise.all", 0],
+  ["", 'Promise["all"]', 1],
+  ['const all = "race";', "Promise[all]", 0],
+  ["", "Promise.all", 1],
+])("resolves native promise aggregation: %s %s", async (setup, aggregate, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>
+async function label() { return Date.now() }
+${setup}
+const displayed = await ${aggregate}([label()])
+</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ['if (Date.now()) return "Ready"; return "Ready"', 0],
+  ['if (Date.now()) { return "Ready" } else { return "Ready" }', 0],
+  ['if (Date.now()) return "Ready"; return "Waiting"', 1],
+  ['if (Date.now()) return "Ready"', 1],
+  ['if (Date.now()) return 1; return "1"', 1],
+  ['if (Date.now()) return value; return "Ready"', 1],
+])("requires conditions to change returned output: %s", async (body, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function label() { ${body} }</script><template>{{ label() }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

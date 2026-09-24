@@ -147,12 +147,12 @@ function functionFlowsToTemplate(
       const argument = parameterValue(current, fn, call, parents);
       if (argument && !isUndefinedValue(argument)) return false;
     }
-    if (!memberPath.length) return true;
     const reference = template ? { start: Infinity } : call;
     let replaced = false;
     walkScriptLocal(ctx.file.scriptAst, (write) => {
       if (
         write.type !== "AssignmentExpression" ||
+        write.operator !== "=" ||
         write.start <= binding.start ||
         write.start >= reference.start
       )
@@ -190,7 +190,12 @@ function functionFlowsToTemplate(
         reachesCall(call, true) &&
         projectionIncludes(source, fn, call, parents) &&
         (!fn.generator || isConsumedIterator(call, (node) => node.parent)) &&
-        (!fn.async || asyncResultIsConsumed(call, (node) => node.parent))
+        (!fn.async ||
+          asyncResultIsConsumed(
+            call,
+            (node) => node.parent,
+            () => !resolveLocalBinding(ctx.file.scriptAst, "Promise", parents),
+          ))
       );
     })
   )
@@ -213,7 +218,15 @@ function functionFlowsToTemplate(
       reachesCall(node)
     ) {
       if (fn.generator && !isConsumedIterator(node, (node) => parents.get(node))) return false;
-      if (fn.async && !asyncResultIsConsumed(node, (node) => parents.get(node))) return false;
+      if (
+        fn.async &&
+        !asyncResultIsConsumed(
+          node,
+          (node) => parents.get(node),
+          (aggregate) => !resolveLocalBinding(aggregate, "Promise", parents),
+        )
+      )
+        return false;
       if (
         variable &&
         (!owner || contributesToReturn(node, owner, parents)) &&
@@ -357,7 +370,11 @@ function resultCallbackCall(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): An
   return null;
 }
 
-function asyncResultIsConsumed(node: AnyNode, parentOf: (node: AnyNode) => AnyNode): boolean {
+function asyncResultIsConsumed(
+  node: AnyNode,
+  parentOf: (node: AnyNode) => AnyNode,
+  hasNativePromise: (node: AnyNode) => boolean,
+): boolean {
   let awaited = false;
   for (let current = node; current; current = parentOf(current)) {
     const parent = parentOf(current);
@@ -381,8 +398,12 @@ function asyncResultIsConsumed(node: AnyNode, parentOf: (node: AnyNode) => AnyNo
           aggregate?.type !== "CallExpression" ||
           aggregate.arguments[0] !== parent ||
           aggregate.callee?.type !== "MemberExpression" ||
-          aggregate.callee.object?.name !== "Promise" ||
-          aggregate.callee.property?.name !== "all"
+          aggregate.callee.object?.type !== "Identifier" ||
+          aggregate.callee.object.name !== "Promise" ||
+          (aggregate.callee.computed
+            ? aggregate.callee.property?.value
+            : aggregate.callee.property?.name) !== "all" ||
+          !hasNativePromise(aggregate)
         )
           return false;
         current = parent;
@@ -598,7 +619,7 @@ function contributesToReturn(
         )
           selectsReturn = true;
       });
-      if (selectsReturn) return true;
+      if (selectsReturn) return !returnsSameLiteral(owner, parents);
     }
     if (parent?.type === "YieldExpression" && owner.generator) return true;
     if (parent?.type === "ReturnStatement") {
@@ -620,6 +641,33 @@ function contributesToReturn(
       );
   }
   return false;
+}
+
+function returnsSameLiteral(owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>): boolean {
+  const alwaysReturns = (statement: AnyNode): boolean => {
+    if (statement?.type === "ReturnStatement") return true;
+    if (statement?.type === "BlockStatement") return alwaysReturns(statement.body.at(-1));
+    return (
+      statement?.type === "IfStatement" &&
+      alwaysReturns(statement.consequent) &&
+      alwaysReturns(statement.alternate)
+    );
+  };
+  if (!alwaysReturns(owner.body)) return false;
+  let first: AnyNode;
+  let same = true;
+  walkScriptLocal(owner.body, (statement) => {
+    if (statement.type !== "ReturnStatement" || containingFunction(statement, parents) !== owner)
+      return;
+    const value = statement.argument;
+    if (value?.type !== "Literal" || value.regex) {
+      same = false;
+      return;
+    }
+    if (first && !Object.is(first.value, value.value)) same = false;
+    first = value;
+  });
+  return same && !!first;
 }
 
 function hasPriorAliasWrite(
