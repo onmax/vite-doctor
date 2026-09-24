@@ -378,8 +378,31 @@ function evaluateOutcomes(
     }
     return paths;
   }
-  if (node.type === "ClassDeclaration") {
-    return outcomes(node.superClass, normal, bindings, conditions).map((current) => {
+  if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
+    let paths = outcomes(node.superClass, normal, bindings, conditions);
+    for (const member of node.body.body) {
+      if (member.computed)
+        paths = paths.flatMap((current) =>
+          current.outcome === "normal"
+            ? outcomes(member.key, current, bindings, conditions)
+            : [current],
+        );
+    }
+    for (const member of node.body.body) {
+      const initializer =
+        member.type === "StaticBlock"
+          ? { ...member, type: "BlockStatement" }
+          : member.static && member.type === "PropertyDefinition"
+            ? member.value
+            : undefined;
+      if (initializer)
+        paths = paths.flatMap((current) =>
+          current.outcome === "normal"
+            ? outcomes(initializer, current, bindings, conditions)
+            : [current],
+        );
+    }
+    return paths.map((current) => {
       if (current.outcome !== "normal") return current;
       const uninitialized = new Set(current.uninitialized);
       uninitialized.delete(current.resolveBinding(node.id));
@@ -395,10 +418,13 @@ function evaluateOutcomes(
     return targets
       .flatMap((target) =>
         target.outcome === "normal"
-          ? outcomes(assignment.right, target, bindings, conditions)
-          : [target],
+          ? outcomes(assignment.right, target, bindings, conditions).map((evaluated) => ({
+              target,
+              evaluated,
+            }))
+          : [{ target, evaluated: target }],
       )
-      .map((evaluated) => {
+      .map(({ target, evaluated }) => {
         if (evaluated.outcome !== "normal") return evaluated;
         if (
           assignment.left.type === "MemberExpression" &&
@@ -406,18 +432,19 @@ function evaluateOutcomes(
         ) {
           const member = assignment.left;
           const property = member.computed
-            ? knownLiteral(member.property, evaluated)
+            ? knownLiteral(member.property, target)
             : member.property.name;
           if (property === "statusCode" || property === "status") {
-            const values = new Map(evaluated.bindings);
-            const error = values.get(evaluated.resolveBinding(member.object));
+            const error = target.bindings?.get(target.resolveBinding(member.object));
             const errors = new Map(evaluated.errors);
             if (error)
               errors.set(
                 error.id,
                 assignment.operator === "=" &&
-                  typeof knownLiteral(assignment.right, evaluated) === "number"
-                  ? (knownLiteral(assignment.right, evaluated) as number)
+                  evaluated.value &&
+                  "literal" in evaluated.value &&
+                  typeof evaluated.value.literal === "number"
+                  ? evaluated.value.literal
                   : "throw",
               );
             return { ...evaluated, errors };
@@ -682,8 +709,16 @@ function evaluateOutcomes(
       parameterPaths = parameterPaths.flatMap((current) => {
         if (current.outcome !== "normal") return [current];
         const evaluated = defaulted ? outcomes(param.right, current, local, conditions) : [current];
-        return evaluated.map((result) => {
-          if (result.outcome !== "normal" || target.type !== "Identifier") return result;
+        return evaluated.flatMap((result) => {
+          if (result.outcome !== "normal") return [result];
+          if (target.type !== "Identifier")
+            return patternOutcomes(
+              target,
+              defaulted ? param.right : supplied,
+              result,
+              conditions,
+              defaulted ? result : path,
+            );
           const arg = defaulted ? param.right : supplied;
           const source = defaulted ? result : path;
           const value = defaulted ? result.value : argumentValues?.[index];
@@ -775,24 +810,51 @@ function patternOutcomes(
   source: AnyNode,
   path: Path,
   conditions: Set<string>,
+  parameterSource?: Path,
 ): Path[] {
   if (path.outcome !== "normal" || !pattern) return [path];
   source = unwrapExpression(source);
+  if (pattern.type === "Identifier" && parameterSource) {
+    const sourceBinding =
+      source?.type === "Identifier" ? parameterSource.resolveBinding(source) : undefined;
+    const error = parameterSource.bindings?.get(sourceBinding);
+    const literal = knownLiteral(source, parameterSource);
+    const binding = path.resolveBinding(pattern);
+    const values = new Map(path.bindings);
+    const literals = new Map(path.literals);
+    const booleans = new Map(path.conditions);
+    if (error) values.set(binding, error);
+    if (literal !== undefined) literals.set(binding, { literal });
+    if (typeof literal === "boolean") booleans.set(pattern.name, literal);
+    return [{ ...path, bindings: values, literals, conditions: booleans }];
+  }
   if (pattern.type === "AssignmentPattern") {
-    const missing = !source || isUndefinedArgument(source, path.resolveBinding);
+    const missing =
+      !source ||
+      (source.type === "Literal" && source.value === undefined) ||
+      isUndefinedArgument(source, path.resolveBinding);
     const known =
       source?.type === "Literal" ||
       source?.type === "ObjectExpression" ||
       source?.type === "ArrayExpression";
     const defaults = () =>
       outcomes(pattern.right, path, path.bindings ?? new Map(), conditions).flatMap((current) =>
-        patternOutcomes(pattern.left, pattern.right, current, conditions),
+        patternOutcomes(
+          pattern.left,
+          pattern.right,
+          current,
+          conditions,
+          parameterSource ? current : undefined,
+        ),
       );
     return missing
       ? defaults()
       : known
-        ? patternOutcomes(pattern.left, source, path, conditions)
-        : [...patternOutcomes(pattern.left, source, path, conditions), ...defaults()];
+        ? patternOutcomes(pattern.left, source, path, conditions, parameterSource)
+        : [
+            ...patternOutcomes(pattern.left, source, path, conditions, parameterSource),
+            ...defaults(),
+          ];
   }
   const entries: [AnyNode, AnyNode, AnyNode?][] = [];
   if (pattern.type === "ObjectPattern") {
@@ -804,9 +866,16 @@ function patternOutcomes(
       const properties = source?.type === "ObjectExpression" ? source.properties : undefined;
       const uncertain =
         !properties ||
-        properties.some((item: AnyNode) => item.type === "SpreadElement" || item.computed);
+        properties.some(
+          (item: AnyNode) =>
+            item.type === "SpreadElement" ||
+            (item.computed && knownLiteral(item.key, parameterSource ?? path) === undefined),
+        );
       const matching = properties?.findLast(
-        (item: AnyNode) => (item.key?.name ?? item.key?.value) === key,
+        (item: AnyNode) =>
+          (item.computed
+            ? knownLiteral(item.key, parameterSource ?? path)
+            : (item.key?.name ?? item.key?.value)) === key,
       );
       entries.push([
         property.value,
@@ -819,7 +888,14 @@ function patternOutcomes(
       if (element)
         entries.push([
           element,
-          source?.type === "ArrayExpression" ? source.elements[index] : source,
+          source?.type === "ArrayExpression"
+            ? source.elements[index]
+            : typeof knownLiteral(source, parameterSource ?? path) === "string"
+              ? {
+                  type: "Literal",
+                  value: Array.from(knownLiteral(source, parameterSource ?? path) as string)[index],
+                }
+              : { type: "UnknownExpression" },
         ]);
     }
   }
@@ -830,7 +906,9 @@ function patternOutcomes(
         const evaluated = key
           ? outcomes(key, current, current.bindings ?? new Map(), conditions)
           : [current];
-        return evaluated.flatMap((result) => patternOutcomes(target, value, result, conditions));
+        return evaluated.flatMap((result) =>
+          patternOutcomes(target, value, result, conditions, parameterSource),
+        );
       }),
     [path],
   );
@@ -1128,6 +1206,18 @@ function unwrapExpression(node: AnyNode): AnyNode {
 }
 
 function isH3Reference(node: AnyNode, name: string, resolve: Path["resolveBinding"]): boolean {
+  if (node?.type === "MemberExpression") {
+    const key = node.computed ? node.property.value : node.property.name;
+    if (key !== name || node.object.type !== "Identifier") return false;
+    const specifier = resolve(node.object)?.__doctorParent;
+    const declaration = specifier?.__doctorParent;
+    return (
+      specifier?.type === "ImportNamespaceSpecifier" &&
+      declaration?.type === "ImportDeclaration" &&
+      declaration.importKind !== "type" &&
+      declaration.source.value === "h3"
+    );
+  }
   if (node?.type !== "Identifier") return false;
   const binding = resolve(node);
   if (!binding) return node.name === name;

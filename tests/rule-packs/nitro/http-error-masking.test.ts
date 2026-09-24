@@ -2007,3 +2007,78 @@ test("evaluates computed destructuring keys", async () => {
   });
   expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
 });
+
+test.each([
+  ["namespace import", "throw h3.createError({ statusCode: 404 })", "throw new Error()", true],
+  [
+    "shadowed namespace",
+    "const h3 = { createError: () => new Error() }; throw h3.createError()",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "terminated static initialization",
+    "class Failure { static first = (() => { throw new Error() })(); static second = missing() }",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "class expression",
+    "const Failure = class { static value = missing() }",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "captured status key",
+    "missing()",
+    'let key = "statusCode"; error[key] = (key = "other", 403); if (error.statusCode === 404) throw error; throw new Error()',
+    true,
+  ],
+  [
+    "captured unrelated key",
+    "missing()",
+    'let key = "other"; error[key] = (key = "statusCode", 403); if (error.statusCode === 404) throw error; throw new Error()',
+    false,
+  ],
+  [
+    "computed destructuring",
+    'const key = "value"; const { [key]: value = missing() } = { [key]: 1 }',
+    "throw new Error()",
+    false,
+  ],
+  ["string iterable default", 'const [first, second = missing()] = "x"', "throw new Error()", true],
+  [
+    "namespace guard",
+    "throw h3.createError({ statusCode: 404 })",
+    "if (h3.isError(error)) throw error; throw new Error()",
+    false,
+  ],
+  ["static field", "class Failure { static value = missing() }", "throw new Error()", true],
+  ["static block", "class Failure { static { missing() } }", "throw new Error()", true],
+  ["instance field", "class Failure { value = missing() }", "throw new Error()", false],
+  [
+    "destructured object",
+    "missing()",
+    "function preserve({ value }) { if (isError(value)) throw value }; preserve({ value: error }); throw new Error()",
+    false,
+  ],
+  [
+    "destructured array",
+    "missing()",
+    "function preserve([value]) { if (isError(value)) throw value }; preserve([error]); throw new Error()",
+    false,
+  ],
+])("models %s in HTTP error paths", async (_name, protectedBody, catchBody, reports) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `import * as h3 from 'h3';
+      export default defineEventHandler(() => {
+        function missing() { throw createError({ statusCode: 404 }) }
+        try { ${protectedBody} } catch (error) { ${catchBody} }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+});
