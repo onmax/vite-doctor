@@ -107,14 +107,19 @@ function functionFlowsToTemplate(
   const parents = getScriptParents(ctx);
   const binding = functionBinding(fn, parents);
   const functionName = binding.id?.type === "Identifier" ? binding.id.name : null;
-  if (!functionName || seen.has(fn) || seen.size >= 4) return false;
+  if (!functionName || fn.generator || seen.has(fn) || seen.size >= 4) return false;
   seen.add(fn);
-  const renderedExpressions = [
-    ...template.matchAll(/{{([\s\S]*?)}}/g),
-    ...template.matchAll(
-      /(?:\s:|\sv-(?:bind\b|if\b|else-if\b|show\b|text\b|html\b))[^=]*=\s*["']([^"']+)["']/g,
-    ),
-  ].map((match) => match[1] ?? "");
+  const renderedExpressions = [...template.matchAll(/{{([\s\S]*?)}}/g)].map(
+    (match) => match[1] ?? "",
+  );
+  for (const match of template.matchAll(
+    /(?:\s:|\sv-(bind\b|if\b|else-if\b|show\b|text\b|html\b|for\b))[^=]*=\s*(["'])([\s\S]*?)\2/g,
+  )) {
+    const expression = match[3] ?? "";
+    renderedExpressions.push(
+      match[1] === "for" ? (expression.match(/\s+(?:in|of)\s+([\s\S]*)$/)?.[1] ?? "") : expression,
+    );
+  }
   const renderedIdentifier = (name: string) =>
     renderedExpressions.some((expression) =>
       new RegExp(`\\b${escapeRegExp(name)}\\b`).test(expression),
@@ -205,6 +210,23 @@ function contributesToReturn(
     ) {
       const identifier = parent.id ?? parent.left;
       if (identifier?.type !== "Identifier") return false;
+      let reassigned = false;
+      walkScriptLocal(owner.body, (write) => {
+        const target =
+          write.type === "AssignmentExpression"
+            ? write.left
+            : write.type === "UpdateExpression"
+              ? write.argument
+              : ["ForInStatement", "ForOfStatement"].includes(write.type)
+                ? write.left
+                : null;
+        if (
+          patternBinds(target, identifier.name) &&
+          resolveLocalBinding(write, identifier.name, parents) === parent
+        )
+          reassigned = true;
+      });
+      if (reassigned) return false;
       let returned = false;
       walkScriptLocal(owner.body, (reference) => {
         if (

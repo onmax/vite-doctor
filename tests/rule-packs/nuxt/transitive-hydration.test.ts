@@ -101,6 +101,8 @@ const displayed = label()
 
 test.each([
   "function label() { const value = clock(); return String(value) }",
+  "function label() { let value = clock(); return value }",
+  'function label() { const value = clock(); { let value = "old"; value = "stable" }; return value }',
   "function label() { const value = clock(); const alias = value; return String(alias) }",
   'function label(value = clock()) { var clock = () => "stable"; return value }',
 ])("follows returned local bindings: %s", async (script) => {
@@ -149,6 +151,51 @@ test.each([
     `<script setup lang="ts">
 function clock() { return Date.now() }
 ${script}
+</script><template><span>{{ label() }}</span></template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  `:title="label('short')"`,
+  `v-bind:title='label("short")'`,
+  `v-for="item in label('short')"`,
+  `v-for="(item, index) of label('short')"`,
+])("finds render calls with quoted arguments in %s", async (binding) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function label(format) { return Array(Date.now() % 2) }
+</script><template><span ${binding}>Label</span></template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  "function* clock() { return Date.now() }",
+  "const clock = function* () { return Date.now() }",
+  "function clock() { return Date.now() }; function* label() { return clock() }",
+])("does not execute generator bodies: %s", async (script) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">${script}</script>
+<template><span>{{ ${script.includes("function* label") ? "label()" : "clock()"} }}</span></template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  'let value = clock(); value = "stable"; return value',
+  'var value = clock(); value = "stable"; return value',
+  'let value = clock(); [value] = ["stable"]; return value',
+  'let value = clock(); ({ value } = { value: "stable" }); return value',
+  "let value = clock(); value++; return value",
+])("does not follow reassigned return aliases: %s", async (body) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+function label() { ${body} }
 </script><template><span>{{ label() }}</span></template>`,
   );
   expect(result.diagnostics).toHaveLength(0);
