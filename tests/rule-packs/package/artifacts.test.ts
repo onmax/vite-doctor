@@ -325,3 +325,18 @@ test.each([true, false])(
     expect(result.missing).toEqual([]);
   },
 );
+
+test.each(["mjs", "cjs", "jsx"])("does not probe legacy main with .%s", (extension) => {
+  const result = inventory(
+    { main: "dist/index" },
+    { [`dist/index.${extension}`]: 'import "peer";' },
+  );
+  expect(result?.missing).toEqual(["dist/index"]);
+  expect(result?.references).toEqual([]);
+});
+
+test.each(["dist/index", "dist"])("probes legacy main %s with .js", (main) => {
+  const result = inventory({ main }, { "dist/index.js": 'import "peer";' });
+  expect(result?.missing).toEqual([]);
+  expect(result?.references).toHaveLength(1);
+});

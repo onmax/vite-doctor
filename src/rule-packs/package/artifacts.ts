@@ -151,7 +151,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     kind: "runtime" | "types",
     required: boolean,
     from = root,
-    probe = true,
+    probe: boolean | "main" = true,
     adjacentDeclaration = false,
     sourceResolution = false,
   ) {
@@ -168,22 +168,29 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     const candidates = probe
       ? kind === "types"
         ? typeCandidates(path)
-        : [
-            ...(sourceResolution ? sourceCandidates(path) : []),
-            path,
-            ...[
-              ...(sourceResolution ? [".ts", ".tsx"] : []),
-              ".js",
-              ".mjs",
-              ".cjs",
-              ".jsx",
-              ...(sourceResolution ? ["/index.ts", "/index.tsx"] : []),
-              "/index.js",
-              "/index.mjs",
-              "/index.cjs",
-              "/index.jsx",
-            ].map((ext) => path + ext),
-          ]
+        : probe === "main"
+          ? [
+              path,
+              ...[".js", ".json", ".node", "/index.js", "/index.json", "/index.node"].map(
+                (ext) => path + ext,
+              ),
+            ]
+          : [
+              ...(sourceResolution ? sourceCandidates(path) : []),
+              path,
+              ...[
+                ...(sourceResolution ? [".ts", ".tsx"] : []),
+                ".js",
+                ".mjs",
+                ".cjs",
+                ".jsx",
+                ...(sourceResolution ? ["/index.ts", "/index.tsx"] : []),
+                "/index.js",
+                "/index.mjs",
+                "/index.cjs",
+                "/index.jsx",
+              ].map((ext) => path + ext),
+            ]
       : [path];
     const file = candidates.find(
       (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
@@ -250,7 +257,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   } else if (!manifest.main && !manifest.module) {
     if (existsSync(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
   }
-  if (manifest.main) enqueue(manifest.main, "runtime", true, root, true, true);
+  if (manifest.main) enqueue(manifest.main, "runtime", true, root, "main", true);
   if (manifest.module) enqueue(manifest.module, "runtime", true, root, true, true);
   if (typeof manifest.browser === "string")
     enqueue(manifest.browser, "runtime", true, root, false, true);
@@ -562,6 +569,18 @@ function isNonAbruptElement(node: ts.Expression): boolean {
   if (ts.isParenthesizedExpression(node)) return isNonAbruptElement(node.expression);
   return (
     ts.isLiteralExpression(node) ||
+    isUndefined(node) ||
+    node.kind === ts.SyntaxKind.ThisKeyword ||
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    (ts.isArrayLiteralExpression(node) && node.elements.every(isNonAbruptElement)) ||
+    (ts.isObjectLiteralExpression(node) &&
+      node.properties.every(
+        (property) =>
+          ts.isPropertyAssignment(property) &&
+          literalPropertyName(property.name) !== undefined &&
+          isNonAbruptElement(property.initializer),
+      )) ||
     ts.isOmittedExpression(node) ||
     node.kind === ts.SyntaxKind.TrueKeyword ||
     node.kind === ts.SyntaxKind.FalseKeyword ||
@@ -577,7 +596,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
   if (ts.isCallChain(node)) return false;
   let expression: ts.Node = node;
   while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
-  let aggregate: ts.CallExpression | undefined;
+  const awaitedCalls = new Set<ts.CallExpression>();
   if (dynamic && ts.isArrayLiteralExpression(expression.parent)) {
     const elements = expression.parent.elements;
     if (!elements.slice(0, elements.indexOf(expression as ts.Expression)).every(isNonAbruptElement))
@@ -596,10 +615,27 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       call.expression.name.text === "all" &&
       !shadowsName(call, "Promise")
     ) {
-      aggregate = call;
+      awaitedCalls.add(call);
       expression = call;
       while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
     }
+  }
+  while (dynamic && ts.isPropertyAccessExpression(expression.parent)) {
+    const member = expression.parent;
+    const call = member.parent;
+    if (
+      member.expression !== expression ||
+      member.name.text !== "then" ||
+      !ts.isCallExpression(call) ||
+      ts.isCallChain(call) ||
+      call.expression !== member ||
+      call.arguments.length > 1 ||
+      !call.arguments.every(isNonAbruptElement)
+    )
+      break;
+    awaitedCalls.add(call);
+    expression = call;
+    while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
   }
   if (dynamic && !ts.isAwaitExpression(expression.parent)) return false;
   for (let parent = node.parent; parent && !ts.isSourceFile(parent); parent = parent.parent) {
@@ -644,7 +680,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
         !isWithin(node, parent.expression))
     )
       return false;
-    if (dynamic && ts.isCallExpression(parent) && parent !== aggregate) return false;
+    if (dynamic && ts.isCallExpression(parent) && !awaitedCalls.has(parent)) return false;
   }
   return true;
 }
@@ -710,8 +746,8 @@ function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): bo
     (ts.isNewExpression(call) && (method || ts.isArrowFunction(node)))
   )
     return false;
+  if (!(call.arguments ?? []).every(isNonAbruptElement)) return false;
   if (ts.isNewExpression(call)) {
-    if (!(call.arguments ?? []).every(isNonAbruptElement)) return false;
     if (ts.isConstructorDeclaration(node)) {
       const owner = node.parent;
       if (
@@ -721,27 +757,17 @@ function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): bo
           (member) =>
             (member.name && ts.isComputedPropertyName(member.name)) ||
             ts.isClassStaticBlockDeclaration(member) ||
-            ts.isPropertyDeclaration(member) ||
+            (ts.isPropertyDeclaration(member) &&
+              member.initializer &&
+              !isNonAbruptElement(member.initializer)) ||
             (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length),
         )
       )
         return false;
     }
-    const index = node.parameters.findIndex((parameter) => isWithin(load, parameter));
-    for (const [offset, parameter] of node.parameters.entries()) {
-      if (offset === index) break;
-      if (!ts.isIdentifier(parameter.name)) return false;
-      if (
-        isUndefined(call.arguments?.[offset]) &&
-        parameter.initializer &&
-        !isNonAbruptElement(parameter.initializer)
-      )
-        return false;
-    }
   }
-  if (node.body && isWithin(load, node.body)) return true;
   const index = node.parameters.findIndex((parameter) => isWithin(load, parameter));
-  if (index < 0 || call.arguments?.some(ts.isSpreadElement)) return false;
+  if (call.arguments?.some(ts.isSpreadElement)) return false;
   let args: readonly ts.Expression[] = call.arguments ?? [];
   if (method === "call") args = args.slice(1);
   if (method === "apply") {
@@ -752,6 +778,18 @@ function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): bo
       args = list.elements;
     else return false;
   }
+  for (const [offset, parameter] of node.parameters.entries()) {
+    if (offset === index) break;
+    if (!ts.isIdentifier(parameter.name)) return false;
+    if (
+      isUndefined(args[offset]) &&
+      parameter.initializer &&
+      !isNonAbruptElement(parameter.initializer)
+    )
+      return false;
+  }
+  if (node.body && isWithin(load, node.body)) return true;
+  if (index < 0) return false;
   const parameter = node.parameters[index]!;
   const value = args[index];
   return bindingDefaultExecutes(
@@ -762,7 +800,7 @@ function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): bo
 }
 
 function isUndefined(value: ts.Expression | undefined): boolean {
-  if (!value) return true;
+  if (!value || ts.isOmittedExpression(value)) return true;
   while (ts.isParenthesizedExpression(value)) value = value.expression;
   return (
     (ts.isVoidExpression(value) && ts.isNumericLiteral(value.expression)) ||

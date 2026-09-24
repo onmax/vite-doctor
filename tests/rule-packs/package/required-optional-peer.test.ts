@@ -7,6 +7,14 @@ const optionalPeer = {
 };
 
 test.each([
+  'new (class { field; constructor() { require("peer"); } })();',
+  'new (class { field = 0; constructor() { require("peer"); } })();',
+  'await import("peer").then(module => module.default);',
+  'await import("peer").then().then(module => module.default);',
+  '(function (first = 0) { require("peer"); })();',
+  '(function (first = 0) { require("peer"); }).call(null);',
+  '(function (first = 0) { require("peer"); }).apply(null, []);',
+
   'new (function () { require("peer"); })();',
   'new (function () { require("peer"); });',
   'new (function (peer = require("peer")) {})();',
@@ -92,6 +100,18 @@ test.each([
 });
 
 test.each([
+  '(function (first = (() => { throw 0; })()) { require("peer"); })();',
+  '(function (first = (() => { throw 0; })()) { require("peer"); }).call(null);',
+  '(function (first = (() => { throw 0; })()) { require("peer"); }).apply(null, []);',
+  '(function (first = (() => { throw 0; })()) { require("peer"); }).apply(null, [,]);',
+  '(function () { require("peer"); })((() => { throw 0; })());',
+  '(function () { require("peer"); }).call(null, (() => { throw 0; })());',
+  '(function () { require("peer"); }).apply(null, [(() => { throw 0; })()]);',
+  '(function (first = (() => { throw 0; })(), peer = require("peer")) {})();',
+  'import("peer").then(module => module.default);',
+  'await import("peer").then(module => module.default, () => null);',
+  'await import("peer").then(module => module.default).catch(() => null);',
+  'try { await import("peer").then(module => module.default); } catch {}',
   '(function () { try { require("peer"); } finally { return; } })();',
   '(function () { try { require("peer"); } finally { if (enabled) return; } })();',
   'new (function () { require("peer"); })((() => { throw 0; })());',
