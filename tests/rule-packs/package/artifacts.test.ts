@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
@@ -453,4 +453,62 @@ test("keeps CommonJS directory resolution probes non-required", () => {
   )!;
   expect(result.missing).toEqual([]);
   expect(result.references).toMatchObject([{ packageName: "peer", required: false }]);
+});
+
+test("preserves exact self-reference export targets", () => {
+  const result = inventory(
+    { name: "example", exports: { ".": "./index.js", "./adapter": "./adapter" } },
+    { "index.js": 'import "example/adapter";', "adapter.js": 'import "peer";' },
+  )!;
+  expect(result.references).toEqual([]);
+  expect(result.missing).toContain("adapter");
+});
+
+test.each([
+  ['import "#adapter";', { import: "./adapter.js", default: "peer" }],
+  ['require("#adapter");', { import: "peer", require: "./adapter.js", default: "peer" }],
+  ['await import("#adapter");', { require: "peer", import: "./adapter.js", default: "peer" }],
+  ['import "#adapter";', { browser: "peer", node: { import: "./adapter.js" }, default: "peer" }],
+  ['require("#adapter");', { default: "./adapter.js", require: "peer" }],
+  ['import "#adapter";', { types: "peer", import: "./adapter.js" }],
+] as const)("selects applicable import-map conditions: %s %j", (source, conditions) => {
+  const result = inventory(
+    { main: "index.js", imports: { "#adapter": conditions } },
+    { "index.js": source, "adapter.js": 'import "selected-peer";' },
+  )!;
+  expect(result.references.map((ref) => ref.packageName)).toEqual(["selected-peer"]);
+});
+
+test.skipIf(process.platform === "win32")(
+  "reads symlinked CommonJS manifests before selecting executable targets",
+  () => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-manifest-link-"));
+    try {
+      const project = join(root, "project");
+      mkdirSync(join(project, "adapter"), { recursive: true });
+      writeFileSync(join(project, "package.json"), JSON.stringify({ main: "index.cjs" }));
+      writeFileSync(join(project, "index.cjs"), 'require("./adapter");');
+      writeFileSync(join(root, "manifest.json"), JSON.stringify({ main: "main.js" }));
+      symlinkSync(join(root, "manifest.json"), join(project, "adapter/package.json"));
+      writeFileSync(join(project, "adapter/main.js"), 'require("main-peer");');
+      writeFileSync(join(project, "adapter/index.js"), 'require("fallback-peer");');
+      expect(readPackageArtifacts(project)!.references.map((ref) => ref.packageName)).toEqual([
+        "main-peer",
+      ]);
+      rmSync(join(project, "adapter/main.js"));
+      writeFileSync(join(root, "outside.js"), 'require("outside-peer");');
+      symlinkSync(join(root, "outside.js"), join(project, "adapter/main.js"));
+      expect(readPackageArtifacts(project)!.references).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("does not fall through a blocked nested import-map condition", () => {
+  const result = inventory(
+    { main: "index.js", imports: { "#adapter": { node: { import: null }, default: "peer" } } },
+    { "index.js": 'import "#adapter";' },
+  )!;
+  expect(result.references).toEqual([]);
 });

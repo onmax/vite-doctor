@@ -154,7 +154,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     if (file) return file;
     if (!existsSync(path) || !statSync(path).isDirectory() || !inside(realpathSync(path))) return;
     const manifestPath = resolve(path, "package.json");
-    if (existsSync(manifestPath) && inside(realpathSync(manifestPath))) {
+    if (existsSync(manifestPath)) {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
       if (isRecord(manifest) && typeof manifest.main === "string" && manifest.main) {
         const main = resolve(path, manifest.main);
@@ -326,6 +326,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
         edge.specifier,
         manifest.imports,
         edge.kind,
+        edge.probe === "commonjs" ? "require" : "import",
       )) {
         if (specifier.startsWith(".")) {
           enqueue(
@@ -357,12 +358,15 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             `#self${specifier.slice(packageName.length)}`,
             aliases,
             kind,
+            edge.probe === "commonjs" ? "require" : "import",
           )) {
             if (target.specifier.startsWith("."))
               enqueue(
                 target.specifier,
                 target.kind,
                 executionRequired && target.kind === "runtime",
+                root,
+                exports === undefined ? "main" : false,
               );
           }
           continue;
@@ -429,6 +433,7 @@ function resolvePackageImport(
   specifier: string,
   imports: PackageManifest["imports"],
   kind: PackageReference["kind"],
+  mode: "import" | "require",
   seen = new Set<string>(),
 ): { specifier: string; kind: PackageReference["kind"] }[] {
   if (!specifier.startsWith("#")) return [{ specifier, kind }];
@@ -454,31 +459,40 @@ function resolvePackageImport(
   function flatten(
     value: unknown,
     targetKind = kind,
-  ): { specifier: string; kind: PackageReference["kind"] }[] {
+  ): { specifier: string; kind: PackageReference["kind"] }[] | undefined {
+    if (value === null) return [];
     if (typeof value === "string")
       return resolvePackageImport(
         value.replaceAll("*", wildcard),
         imports,
         targetKind,
+        mode,
         new Set(seen),
       );
     if (Array.isArray(value)) {
       for (const entry of value) {
         const targets = flatten(entry, targetKind);
-        if (targets.length) return targets;
+        if (targets?.length) return targets;
       }
       return [];
     }
-    if (value && typeof value === "object")
-      return Object.entries(value).flatMap(([condition, entry]) =>
-        flatten(
-          entry,
-          condition === "types" || condition.startsWith("types@") ? "types" : targetKind,
-        ),
-      );
-    return [];
+    if (isRecord(value)) {
+      for (const [condition, entry] of Object.entries(value)) {
+        const types = condition === "types" || condition.startsWith("types@");
+        if (
+          condition !== "default" &&
+          condition !== "node" &&
+          condition !== mode &&
+          !(types && targetKind === "types")
+        )
+          continue;
+        const targets = flatten(entry, types ? "types" : targetKind);
+        if (targets !== undefined) return targets;
+      }
+    }
+    return undefined;
   }
-  return flatten(target);
+  return flatten(target) ?? [];
 }
 
 function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEdge[] {
@@ -528,7 +542,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
     ) {
-      add(node.moduleReference.expression, node.isTypeOnly, true);
+      add(node.moduleReference.expression, node.isTypeOnly, true, "commonjs");
     } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
       add(node.argument.literal, true, false);
     } else if (ts.isCallExpression(node)) {
@@ -1010,6 +1024,27 @@ function shadowsRequire(node: ts.Node): boolean {
   return shadowsName(node, "require");
 }
 
+function bindingContains(declaration: ts.VariableDeclaration, node: ts.Node): boolean {
+  const blockScoped =
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    Boolean(declaration.parent.flags & ts.NodeFlags.BlockScoped);
+  for (let scope: ts.Node | undefined = declaration.parent; scope; scope = scope.parent) {
+    if (
+      ts.isSourceFile(scope) ||
+      ts.isFunctionLike(scope) ||
+      (blockScoped &&
+        (ts.isBlock(scope) ||
+          ts.isCatchClause(scope) ||
+          ts.isForStatement(scope) ||
+          ts.isForInStatement(scope) ||
+          ts.isForOfStatement(scope) ||
+          ts.isCaseBlock(scope)))
+    )
+      return isWithin(node, scope);
+  }
+  return false;
+}
+
 function shadowsName(node: ts.Node, identifier: string): boolean {
   function binds(name: ts.BindingName): boolean {
     return ts.isIdentifier(name)
@@ -1029,7 +1064,7 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
     let found = false;
     function search(child: ts.Node) {
       if (
-        (ts.isVariableDeclaration(child) && binds(child.name)) ||
+        (ts.isVariableDeclaration(child) && binds(child.name) && bindingContains(child, node)) ||
         ((ts.isFunctionDeclaration(child) || ts.isClassDeclaration(child)) &&
           child.name?.text === identifier) ||
         (ts.isImportClause(child) && child.name?.text === identifier) ||

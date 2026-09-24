@@ -7,6 +7,10 @@ const optionalPeer = {
 };
 
 test.each([
+  'try {} catch (Promise) {} await Promise.all([import("peer")]);',
+  'for (let Promise of []) {} await Promise.all([import("peer")]);',
+  'for (let Promise = 0; false;) {} await Promise.all([import("peer")]);',
+
   'while (true) { try { break; } finally { if (enabled) continue; } } require("peer");',
   'while (true) { try { continue; } finally { break; } } require("peer");',
   'await import("peer").finally(() => cleanup());',
