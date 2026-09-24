@@ -98,3 +98,58 @@ const displayed = label()
   );
   expect(result.diagnostics).toHaveLength(0);
 });
+
+test.each([
+  "function label() { const value = clock(); return String(value) }",
+  "function label() { const value = clock(); const alias = value; return String(alias) }",
+  'function label(value = clock()) { var clock = () => "stable"; return value }',
+])("follows returned local bindings: %s", async (script) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+${script}
+</script><template><span>{{ label() }}</span></template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each(['v-text="label()"', 'v-html="label()"'])("finds text output in %s", async (binding) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+function label() { return String(clock()) }
+</script><template><span ${binding} /></template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each(["item.clock()", "item?.clock()", '"clock()"'])(
+  "does not match unrelated template expressions: %s",
+  async (expression) => {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup lang="ts">
+function clock() { return Date.now() }
+const item = { clock: () => 'stable' }
+</script><template><span>{{ ${expression} }}</span></template>`,
+    );
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test.each([
+  'function label() { const value = clock(); return "stable" }',
+  'function label() { const value = clock(); return (() => { const value = "stable"; return value })() }',
+  'function label(value = clock()) { var clock = () => "stable"; return "stable" }',
+])("does not follow unused local bindings: %s", async (script) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">
+function clock() { return Date.now() }
+${script}
+</script><template><span>{{ label() }}</span></template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});

@@ -1,3 +1,4 @@
+import { parseSync } from "oxc-parser";
 import type { RuleContext } from "../../../../core/index.js";
 import {
   findAncestor,
@@ -110,7 +111,9 @@ function functionFlowsToTemplate(
   seen.add(fn);
   const renderedExpressions = [
     ...template.matchAll(/{{([\s\S]*?)}}/g),
-    ...template.matchAll(/(?:\s:|\sv-(?:bind\b|if\b|else-if\b|show\b))[^=]*=\s*["']([^"']+)["']/g),
+    ...template.matchAll(
+      /(?:\s:|\sv-(?:bind\b|if\b|else-if\b|show\b|text\b|html\b))[^=]*=\s*["']([^"']+)["']/g,
+    ),
   ].map((match) => match[1] ?? "");
   const renderedIdentifier = (name: string) =>
     renderedExpressions.some((expression) =>
@@ -118,9 +121,7 @@ function functionFlowsToTemplate(
     );
   if (
     resolveLocalBinding(ctx.file.scriptAst, functionName, parents) === binding &&
-    renderedExpressions.some((expression) =>
-      new RegExp(`\\b${escapeRegExp(functionName)}\\s*\\(`).test(expression),
-    )
+    renderedExpressions.some((expression) => expressionCallsHelper(expression, functionName))
   )
     return true;
   const visit = (node: AnyNode, owner: AnyNode, variable: AnyNode): boolean => {
@@ -162,7 +163,33 @@ function functionFlowsToTemplate(
   return visit(ctx.file.scriptAst, null, null);
 }
 
-function contributesToReturn(node: AnyNode, owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>) {
+function expressionCallsHelper(expression: string, name: string): boolean {
+  try {
+    const { program, errors } = parseSync("template.ts", `(${expression})`, { lang: "ts" });
+    if (errors.length) return false;
+    let found = false;
+    walkScriptLocal(program, (node) => {
+      if (
+        node.type === "CallExpression" &&
+        node.callee?.type === "Identifier" &&
+        node.callee.name === name
+      )
+        found = true;
+    });
+    return found;
+  } catch {
+    return false;
+  }
+}
+
+function contributesToReturn(
+  node: AnyNode,
+  owner: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+  seen = new Set<AnyNode>(),
+): boolean {
+  if (seen.has(node)) return false;
+  seen.add(node);
   for (let current = node; current && current !== owner; current = parents.get(current)) {
     const parent = parents.get(current);
     if (
@@ -172,7 +199,46 @@ function contributesToReturn(node: AnyNode, owner: AnyNode, parents: WeakMap<Any
       return false;
     if (parent?.type === "SequenceExpression" && parent.expressions.at(-1) !== current)
       return false;
-    if (parent?.type === "ReturnStatement") return true;
+    if (
+      (parent?.type === "VariableDeclarator" && parent.init === current) ||
+      (parent?.type === "AssignmentPattern" && parent.right === current)
+    ) {
+      const identifier = parent.id ?? parent.left;
+      if (identifier?.type !== "Identifier") return false;
+      let returned = false;
+      walkScriptLocal(owner.body, (reference) => {
+        if (
+          reference.type === "Identifier" &&
+          reference !== identifier &&
+          reference.name === identifier.name &&
+          resolveLocalBinding(reference, identifier.name, parents) === parent &&
+          contributesToReturn(reference, owner, parents, seen)
+        )
+          returned = true;
+      });
+      return returned;
+    }
+    if (parent?.type === "MemberExpression" && parent.property === current && !parent.computed)
+      return false;
+    if (parent?.type === "Property" && parent.key === current && !parent.computed) return false;
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+        parent?.type,
+      ) &&
+      parent !== owner
+    )
+      return false;
+    if (parent?.type === "ReturnStatement") {
+      let scope = parent;
+      while (
+        scope &&
+        !["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+          scope.type,
+        )
+      )
+        scope = parents.get(scope);
+      return scope === owner;
+    }
     if (parent === owner)
       return (
         owner.type === "ArrowFunctionExpression" &&
@@ -237,13 +303,13 @@ function resolveLocalBinding(
   name: string,
   parents: WeakMap<AnyNode, AnyNode>,
 ): AnyNode {
-  for (let scope = node; scope; scope = parents.get(scope)) {
+  for (let scope = node, child = null; scope; child = scope, scope = parents.get(scope)) {
     if (
       ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(scope.type)
     ) {
       const parameter = scope.params.find((param: AnyNode) => patternBinds(param, name));
       if (parameter) return parameter;
-      const local = findFunctionVar(scope.body, name);
+      const local = child === scope.body ? findFunctionVar(scope.body, name) : null;
       if (local) return local;
       if (scope.id?.name === name) return scope;
     }
