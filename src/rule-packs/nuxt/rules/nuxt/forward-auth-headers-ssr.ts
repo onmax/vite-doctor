@@ -61,8 +61,12 @@ function forwardsRequestCredentials(call: AnyNode): boolean {
   return hasCredentialHeaders(headers?.value, call);
 }
 
-function hasCredentialHeaders(value: AnyNode, call: AnyNode): boolean {
-  if (value?.type === "Identifier") value = localInitializer(value, call);
+function hasCredentialHeaders(value: AnyNode, call: AnyNode, seen = new Set<AnyNode>()): boolean {
+  if (!value || seen.has(value)) return false;
+  seen.add(value);
+  if (value.type === "Identifier") {
+    return hasCredentialHeaders(localInitializer(value, call), call, seen);
+  }
   if (value?.type === "CallExpression" && value.callee?.name === "useRequestHeaders") {
     const selected = value.arguments[0];
     return (
@@ -73,7 +77,11 @@ function hasCredentialHeaders(value: AnyNode, call: AnyNode): boolean {
   }
   return (
     value?.type === "ObjectExpression" &&
-    value.properties.some((property: AnyNode) => isCredentialHeader(propertyName(property)))
+    value.properties.some((property: AnyNode) =>
+      property.type === "SpreadElement"
+        ? hasCredentialHeaders(property.argument, call, seen)
+        : isCredentialHeader(propertyName(property)),
+    )
   );
 }
 
@@ -86,7 +94,7 @@ function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
         const declaration = statement.declarations.find(
           (item: AnyNode) => item.id?.type === "Identifier" && item.id.name === identifier.name,
         );
-        if (declaration) return declaration.init;
+        if (declaration) return statement.kind === "const" ? declaration.init : undefined;
       }
     }
     if (scope.params?.some((param: AnyNode) => param.name === identifier.name)) return;

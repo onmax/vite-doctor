@@ -31,6 +31,8 @@ test.each([
   "{ headers: useRequestHeaders(['accept-language']) }",
   "{ headers: useRequestHeaders([]) }",
   "{ headers: unrelated }",
+  "{ headers: { ...unrelated } }",
+  "{ headers: { ...useRequestHeaders(['accept']) } }",
 ])("unforwarded credentials remain diagnosed for %s", async (options) => {
   const result = await runNuxtAppRuleFixture(
     forwardAuthHeadersSsr,
@@ -51,6 +53,8 @@ test.each([
   "{ headers: { Authorization: token } }",
   "{ headers: { 'Authorization': token } }",
   "{ headers }",
+  "{ headers: { ...useRequestHeaders(['cookie']), Accept: 'application/json' } }",
+  "{ headers: { ...headers, Accept: 'application/json' } }",
 ])("credential headers satisfy the rule for %s", async (options) => {
   const result = await runNuxtAppRuleFixture(
     forwardAuthHeadersSsr,
@@ -64,4 +68,27 @@ const user = await $fetch('/api/user', ${options})
   expect(result.diagnostics.some((item) => item.ruleId === forwardAuthHeadersSsr.meta.id)).toBe(
     false,
   );
+});
+
+test.each(["let", "var"])("reassigned %s headers do not hide missing credentials", async (kind) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">
+${kind} headers = useRequestHeaders(['cookie'])
+headers = { Accept: 'application/json' }
+const user = await $fetch('/api/user', { headers })
+</script>`,
+  );
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
+});
+
+test("cyclic header spreads do not count as credential evidence", async () => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">
+const headers = { ...headers }
+const user = await $fetch('/api/user', { headers })
+</script>`,
+  );
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
 });
