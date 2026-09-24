@@ -327,3 +327,110 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "cleanup before reassignment",
+    "let timer = setInterval(refresh); clearInterval(timer); timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "alias retains displaced resource",
+    "let timer = setInterval(refresh); const previous = timer; timer = setInterval(refresh); import.meta.hot.dispose(() => { clearInterval(previous); clearInterval(timer) })",
+    false,
+  ],
+  [
+    "module handle alias",
+    "const timer = setInterval(refresh); const activeTimer = timer; import.meta.hot.dispose(() => clearInterval(activeTimer))",
+    false,
+  ],
+  [
+    "callback handle alias",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { const activeTimer = timer; clearInterval(activeTimer) })",
+    false,
+  ],
+  [
+    "reassigned callback",
+    "const timer = setInterval(refresh); let cleanup = () => clearInterval(timer); cleanup = saveState; import.meta.hot.dispose(cleanup)",
+    true,
+  ],
+  [
+    "callback reassigned after registration",
+    "const timer = setInterval(refresh); let cleanup = () => clearInterval(timer); import.meta.hot.dispose(cleanup); cleanup = saveState",
+    false,
+  ],
+  [
+    "EventSource leak",
+    "const stream = new EventSource(url); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "EventSource cleanup",
+    "const stream = new EventSource(url); import.meta.hot.dispose(() => stream.close())",
+    false,
+  ],
+  [
+    "listener leak",
+    "window.addEventListener('resize', refresh); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "listener cleanup",
+    "window.addEventListener('resize', refresh); import.meta.hot.dispose(() => window.removeEventListener('resize', refresh))",
+    false,
+  ],
+  [
+    "listener wrong event",
+    "window.addEventListener('resize', refresh); import.meta.hot.dispose(() => window.removeEventListener('scroll', refresh))",
+    true,
+  ],
+  [
+    "listener wrong capture",
+    "window.addEventListener('resize', refresh, true); import.meta.hot.dispose(() => window.removeEventListener('resize', refresh))",
+    true,
+  ],
+  [
+    "bare listener cleanup",
+    "addEventListener('resize', refresh); import.meta.hot.dispose(() => removeEventListener('resize', refresh))",
+    false,
+  ],
+  [
+    "listener wrong handler",
+    "window.addEventListener('resize', refresh); import.meta.hot.dispose(() => window.removeEventListener('resize', other))",
+    true,
+  ],
+  [
+    "listener wrong target",
+    "window.addEventListener('resize', refresh); import.meta.hot.dispose(() => document.removeEventListener('resize', refresh))",
+    true,
+  ],
+  [
+    "listener shadowed handler",
+    "window.addEventListener('resize', refresh); import.meta.hot.dispose(refresh => window.removeEventListener('resize', refresh))",
+    true,
+  ],
+  [
+    "reassigned cleanup helper",
+    "const timer = setInterval(refresh); let cleanup = () => clearInterval(timer); cleanup = saveState; import.meta.hot.dispose(() => cleanup())",
+    true,
+  ],
+  [
+    "callback alias",
+    "const timer = setInterval(refresh); const cleanup = () => clearInterval(timer); const finish = cleanup; import.meta.hot.dispose(finish)",
+    false,
+  ],
+  [
+    "listener capture options",
+    "window.addEventListener('resize', refresh, { capture: true }); import.meta.hot.dispose(() => window.removeEventListener('resize', refresh, true))",
+    false,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `function refresh() {}; import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
