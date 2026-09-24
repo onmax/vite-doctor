@@ -111,5 +111,7 @@ test.each([
   { typesVersions: { "*": { "*": "index.d.ts" } } },
   { peerDependenciesMeta: { h3: { optional: "yes" } } },
 ])("rejects malformed package metadata %j", async (manifest) => {
-  await expect(diagnose(manifest, {})).rejects.toThrow("Invalid package.json manifest");
+  await expect(diagnose(manifest, {})).rejects.toThrow(
+    `Invalid package.json field: ${Object.keys(manifest)[0]}`,
+  );
 });

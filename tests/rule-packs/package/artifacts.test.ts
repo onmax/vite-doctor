@@ -20,6 +20,22 @@ function inventory(manifest: object, files: Record<string, string>) {
   }
 }
 
+test.each([
+  { main: 42 },
+  { browser: { "./index.js": true } },
+  { dependencies: ["h3"] },
+  { typesVersions: { "*": { "*": "index.d.ts" } } },
+  { peerDependenciesMeta: { h3: { optional: "true" } } },
+])("rejects malformed package manifest fields: %j", (manifest) => {
+  expect(() => inventory(manifest, {})).toThrow("Invalid package.json field:");
+});
+
+test("rejects a non-object package manifest", () => {
+  expect(() => inventory({}, { "package.json": "null" })).toThrow(
+    "package.json must contain an object",
+  );
+});
+
 test("follows conditional exports, chunks and declarations without scanning source or unrelated output", () => {
   const result = inventory(
     {
