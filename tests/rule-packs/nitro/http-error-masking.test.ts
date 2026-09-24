@@ -39,6 +39,108 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "switch client error",
+    'switch (kind) { case "missing": throw createError({ statusCode: 404 }) }',
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "switch catch masking",
+    "throw createError({ statusCode: 404 })",
+    'switch (kind) { case "missing": throw createError({ statusCode: 500 }) }',
+    true,
+  ],
+  [
+    "switch fallthrough",
+    'switch ("missing") { case "missing": log(); default: throw createError({ statusCode: 404 }) }',
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "switch break",
+    'switch ("ok") { case "ok": break; default: throw createError({ statusCode: 404 }) }',
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "switch default before matching case",
+    'switch ("ok") { default: throw createError({ statusCode: 404 }); case "ok": break }',
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "switch no matching case",
+    'switch ("ok") { case "missing": throw createError({ statusCode: 404 }) }',
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "switch break followed by error",
+    'switch (kind) { case "ok": break } throw createError({ statusCode: 404 })',
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "labeled loop throw",
+    "outer: for (;;) { throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "nested labeled break",
+    "outer: for (;;) { for (;;) { break outer } throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "labeled break reaches following throw",
+    "outer: for (;;) { for (;;) { break outer } } throw createError({ statusCode: 400 })",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "nested labeled continue",
+    "outer: for (;;) { for (;;) { continue outer } throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "labeled continue reaches later iteration",
+    "outer: while (active) { if (missing) throw createError({ statusCode: 400 }); for (;;) { missing = true; continue outer } }",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "multiple loop labels",
+    "outer: inner: for (;;) { for (;;) { break outer } } throw createError({ statusCode: 400 })",
+    "throw createError({ statusCode: 500 })",
+    true,
+  ],
+  [
+    "labeled block break",
+    "outer: { break outer; throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "finalizer preserves labeled break",
+    "outer: for (;;) { for (;;) { try { break outer } finally { log() } } throw createError({ statusCode: 400 }) }",
+    "throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "uninvoked callback catch assignment",
+    "throw createError({ statusCode: 400 })",
+    "const mutate = () => { error = other }; if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
+    "uninvoked function catch assignment",
+    "throw createError({ statusCode: 400 })",
+    "function mutate() { error = other }; if (isError(error)) throw error; throw createError({ statusCode: 500 })",
+    false,
+  ],
+  [
     "negated H3 guard",
     "throw createError({ statusCode: 401 })",
     "if (!isError(error)) throw createError({ statusCode: 500 }); throw error",

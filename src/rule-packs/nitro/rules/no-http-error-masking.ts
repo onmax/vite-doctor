@@ -69,13 +69,14 @@ type Outcome = number | "normal" | "exit" | "throw" | "break" | "continue";
 
 interface Path {
   outcome: Outcome;
+  label?: string;
   conditions: ReadonlyMap<string, boolean>;
 }
 
 type Bindings = ReadonlyMap<string, Outcome>;
 
 function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set<string>): Path[] {
-  const normal = { ...path, outcome: "normal" as const };
+  const normal = { ...path, outcome: "normal" as const, label: undefined };
   if (!node) return [normal];
   if (node.type === "BlockStatement") {
     let paths: Path[] = [normal];
@@ -90,6 +91,7 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
           next.map((current) => [
             JSON.stringify([
               current.outcome,
+              current.label,
               [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
             ]),
             current,
@@ -111,9 +113,53 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     return [
       {
         ...path,
-        outcome: node.label ? "exit" : node.type === "BreakStatement" ? "break" : "continue",
+        outcome: node.type === "BreakStatement" ? "break" : "continue",
+        label: node.label?.name,
       },
     ];
+  if (node.type === "LabeledStatement") {
+    const labels = new Set<string>();
+    let body = node;
+    while (body.type === "LabeledStatement") {
+      labels.add(body.label.name);
+      body = body.body;
+    }
+    const paths = isLoop(body)
+      ? loopOutcomes(body, normal, bindings, conditions, labels)
+      : outcomes(body, normal, bindings, conditions);
+    return paths.map((current) =>
+      current.outcome === "break" && current.label && labels.has(current.label)
+        ? { ...current, outcome: "normal", label: undefined }
+        : current,
+    );
+  }
+  if (node.type === "SwitchStatement") {
+    const cases: AnyNode[] = node.cases;
+    const fallback = cases.findIndex((item) => !item.test);
+    let entries = cases.map((_, index) => index);
+    if (
+      node.discriminant.type === "Literal" &&
+      cases.every((item) => !item.test || item.test.type === "Literal")
+    ) {
+      const match = cases.findIndex(
+        (item) => item.test && item.test.value === node.discriminant.value,
+      );
+      entries = [match === -1 ? fallback : match];
+    } else if (fallback === -1) entries.push(-1);
+    return entries.flatMap((entry) => {
+      if (entry === -1) return [normal];
+      return outcomes(
+        { type: "BlockStatement", body: cases.slice(entry).flatMap((item) => item.consequent) },
+        normal,
+        bindings,
+        conditions,
+      ).map((current) =>
+        current.outcome === "break" && !current.label
+          ? { ...current, outcome: "normal" as const }
+          : current,
+      );
+    });
+  }
   const assignment = node.type === "ExpressionStatement" ? node.expression : node;
   if (assignment.type === "AssignmentExpression" && assignment.left.type === "Identifier") {
     const next = new Map(path.conditions);
@@ -127,16 +173,7 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       next.set(assignment.left.name, assignment.right.value);
     return [{ ...normal, conditions: next }];
   }
-  if (
-    [
-      "WhileStatement",
-      "DoWhileStatement",
-      "ForStatement",
-      "ForInStatement",
-      "ForOfStatement",
-    ].includes(node.type)
-  )
-    return loopOutcomes(node, normal, bindings, conditions);
+  if (isLoop(node)) return loopOutcomes(node, normal, bindings, conditions);
   if (node.type === "IfStatement") {
     let test = node.test;
     let negated = false;
@@ -186,7 +223,9 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     if (node.finalizer) {
       paths = paths.flatMap((current) =>
         outcomes(node.finalizer, current, bindings, conditions).map((final) =>
-          final.outcome === "normal" ? { ...final, outcome: current.outcome } : final,
+          final.outcome === "normal"
+            ? { ...final, outcome: current.outcome, label: current.label }
+            : final,
         ),
       );
     }
@@ -195,11 +234,22 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
   return [normal];
 }
 
+function isLoop(node: AnyNode): boolean {
+  return [
+    "WhileStatement",
+    "DoWhileStatement",
+    "ForStatement",
+    "ForInStatement",
+    "ForOfStatement",
+  ].includes(node.type);
+}
+
 function loopOutcomes(
   node: AnyNode,
   path: Path,
   bindings: Bindings,
   conditions: Set<string>,
+  labels = new Set<string>(),
 ): Path[] {
   const result: Path[] = [];
   const pending =
@@ -226,7 +276,9 @@ function loopOutcomes(
     const paths = outcomes(first ? node.body : iteration, current, bindings, conditions);
     first = false;
     for (const next of paths) {
-      if (next.outcome === "break") result.push({ ...next, outcome: "normal" });
+      if (next.label && !labels.has(next.label)) result.push(next);
+      else if (next.outcome === "break")
+        result.push({ ...next, outcome: "normal", label: undefined });
       else if (next.outcome === "normal" || next.outcome === "continue")
         pending.push(...outcomes(node.update, next, bindings, conditions));
       else result.push(next);
@@ -313,7 +365,15 @@ function stableCatchBinding(handler: AnyNode): string | undefined {
   if (handler.param?.type !== "Identifier") return;
   const name = handler.param.name;
   let stable = true;
+  const nested = new Set<AnyNode>();
   walkScriptLocal(handler.body, (node) => {
+    if (nested.has(node)) return;
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
+    ) {
+      walkScriptLocal(node, (child) => nested.add(child));
+      return;
+    }
     if (
       (node.type === "VariableDeclarator" && node.id?.name === name) ||
       (node.type === "AssignmentExpression" && node.left?.name === name) ||
