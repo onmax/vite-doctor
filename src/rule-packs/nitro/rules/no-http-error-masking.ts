@@ -104,6 +104,7 @@ interface Path {
   errors?: ReadonlyMap<number, Outcome>;
   literals?: ReadonlyMap<AnyNode, { literal: unknown }>;
   uninitialized?: ReadonlySet<AnyNode>;
+  arrayIteratorElements?: AnyNode[] | null;
 }
 
 type ErrorValue = { id: number; status: Outcome };
@@ -482,6 +483,26 @@ function evaluateOutcomes(
       )
       .map(({ target, evaluated }) => {
         if (evaluated.outcome !== "normal") return evaluated;
+        if (isArrayIterator(assignment.left, target)) {
+          const iterator = unwrapExpression(assignment.right);
+          const elements =
+            iterator?.generator && iterator.body?.type === "BlockStatement"
+              ? iterator.body.body.map((statement: AnyNode) =>
+                  statement.type === "ExpressionStatement" &&
+                  statement.expression.type === "YieldExpression"
+                    ? unwrapExpression(statement.expression.argument)
+                    : undefined,
+                )
+              : undefined;
+          evaluated = {
+            ...evaluated,
+            arrayIteratorElements: elements?.every(
+              (element: AnyNode) => element?.type === "Literal",
+            )
+              ? elements
+              : null,
+          };
+        }
         if (
           assignment.left.type === "MemberExpression" &&
           assignment.left.object.type === "Identifier"
@@ -700,13 +721,14 @@ function evaluateOutcomes(
     const expand = (args: AnyNode[]): AnyNode[] =>
       args.flatMap((arg) => {
         const operand = arg.type === "SpreadElement" ? unwrapExpression(arg.argument) : undefined;
-        return operand?.type === "ArrayExpression"
-          ? expand(
-              operand.elements.map(
-                (element: AnyNode) => element ?? { type: "Literal", value: undefined },
-              ),
-            )
-          : [arg];
+        if (operand?.type !== "ArrayExpression") return [arg];
+        if (normal.arrayIteratorElements === null) return [arg];
+        return expand(
+          normal.arrayIteratorElements ??
+            operand.elements.map(
+              (element: AnyNode) => element ?? { type: "Literal", value: undefined },
+            ),
+        );
       });
     call = { ...call, arguments: expand(call.arguments) };
   }
@@ -1317,6 +1339,25 @@ function unwrapExpression(node: AnyNode): AnyNode {
   )
     node = node.expression;
   return node;
+}
+
+function isArrayIterator(node: AnyNode, path: Path): boolean {
+  if (node?.type !== "MemberExpression" || !node.computed) return false;
+  const prototype = unwrapExpression(node.object);
+  return (
+    prototype?.type === "MemberExpression" &&
+    !prototype.computed &&
+    prototype.object?.type === "Identifier" &&
+    prototype.object.name === "Array" &&
+    !path.resolveBinding(prototype.object) &&
+    prototype.property.name === "prototype" &&
+    node.property?.type === "MemberExpression" &&
+    !node.property.computed &&
+    node.property.object?.type === "Identifier" &&
+    node.property.object.name === "Symbol" &&
+    !path.resolveBinding(node.property.object) &&
+    node.property.property.name === "iterator"
+  );
 }
 
 function isH3Reference(node: AnyNode, name: string, resolve: Path["resolveBinding"]): boolean {

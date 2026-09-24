@@ -2327,6 +2327,16 @@ test.each([
     "function fail(code = 404) { throw createError({ statusCode: code }) }; try { fail(...args) } catch { throw new Error() }",
     1,
   ],
+  [
+    "replaced array iterator",
+    "Array.prototype[Symbol.iterator] = function* () { yield 404 }; function fail(code) { throw createError({ statusCode: code }) }; try { fail(...[500]) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "replaced array iterator preserving server status",
+    "Array.prototype[Symbol.iterator] = function* () { yield 500 }; function fail(code) { throw createError({ statusCode: code }) }; try { fail(...[404]) } catch { throw new Error() }",
+    0,
+  ],
 ])("tracks reviewed spread arguments: %s", async (_name, body, count) => {
   const result = await runRuleFixture({
     framework: "nitro",
