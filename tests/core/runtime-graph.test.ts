@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -380,3 +380,45 @@ function nuxtGraph(options: {
 function packageManifest(name: string, version: string, dependencies?: Record<string, string>) {
   return JSON.stringify({ name, version, dependencies });
 }
+
+test.each(["edit", "delete", "create"])(
+  "invalidates manifest evidence when a layer config changes: %s",
+  async (change) => {
+    await withRuntimeGraph(
+      {
+        ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+        "nuxt.config.ts": "export default defineNuxtConfig({})",
+        "layers/admin/nuxt.config.ts": "export default defineNuxtConfig({})",
+      },
+      async (root) => {
+        const layerConfig = join(root, "layers/admin/nuxt.config.ts");
+        if (change === "create") rmSync(layerConfig);
+        mkdirSync(join(root, ".nuxt"), { recursive: true });
+        writeFileSync(
+          join(root, ".nuxt/doctor.manifest.json"),
+          JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            nuxtConfigMtimeMs: statSync(join(root, "nuxt.config.ts")).mtimeMs,
+            layers: [
+              {
+                root: "layers/admin",
+                nuxtConfigMtimeMs: change === "create" ? null : statSync(layerConfig).mtimeMs,
+                priority: 0,
+              },
+            ],
+          }),
+        );
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+        if (change === "delete") rmSync(layerConfig);
+        else {
+          writeFileSync(
+            layerConfig,
+            "export default defineNuxtConfig({ dir: { middleware: 'guards' } })",
+          );
+          utimesSync(layerConfig, new Date(), new Date(Date.now() + 2000));
+        }
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(false);
+      },
+    );
+  },
+);

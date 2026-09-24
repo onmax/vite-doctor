@@ -120,12 +120,17 @@ export function resolveNuxtCompatibility(
 
 export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest | null) {
   if (!manifest?.generatedAt || !Number.isFinite(Date.parse(manifest.generatedAt))) return false;
-  const config = readNuxtConfig(root);
-  const configModifiedAt = config ? configModifiedTime(config.file) : undefined;
-  if (configModifiedAt === undefined) return true;
-  return Number.isFinite(manifest.nuxtConfigMtimeMs)
-    ? manifest.nuxtConfigMtimeMs === configModifiedAt
-    : Date.parse(manifest.generatedAt) >= configModifiedAt;
+  const configs = [
+    { root, nuxtConfigMtimeMs: manifest.nuxtConfigMtimeMs },
+    ...(manifest.layers ?? []),
+  ];
+  return configs.every((entry) => {
+    const config = readNuxtConfig(resolve(root, entry.root));
+    const modifiedAt = config ? configModifiedTime(config.file) : undefined;
+    if (entry.nuxtConfigMtimeMs === null) return !config;
+    if (Number.isFinite(entry.nuxtConfigMtimeMs)) return entry.nuxtConfigMtimeMs === modifiedAt;
+    return modifiedAt === undefined || Date.parse(manifest.generatedAt!) >= modifiedAt;
+  });
 }
 
 function isSupportedNuxtCompatibility(value: unknown): value is 4 | 5 {

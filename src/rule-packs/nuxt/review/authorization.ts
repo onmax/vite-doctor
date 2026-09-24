@@ -397,7 +397,7 @@ function localImports(
 ): { sources: AuthorizationReviewSource[]; omitted: string[] } {
   const file = resolve(root, source.path);
   const imported: string[] = [];
-  for (const match of source.text.matchAll(/\bfrom\s*["']([^"']+)["']/g)) {
+  for (const match of source.text.matchAll(/\b(?:from\s*|require\s*\(\s*)["']([^"']+)["']/g)) {
     const specifier = match[1]!;
     if (unknownLayerAliases && /^(?:~{1,2}|@{1,2})(?:\/|$)/.test(specifier)) continue;
     const alias = Object.keys(aliases)

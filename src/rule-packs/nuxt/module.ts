@@ -153,6 +153,8 @@ export async function writeManifest(
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({
         root: resolve(layer.cwd ?? layer.config?.rootDir ?? rootDir),
+        nuxtConfigMtimeMs:
+          nuxtConfigModifiedAt(resolve(layer.cwd ?? layer.config?.rootDir ?? rootDir)) ?? null,
         srcDir: resolve(layer.cwd ?? rootDir, layer.config?.srcDir ?? "."),
         appMiddlewareDir: resolve(
           layerDirectories[index]?.appMiddleware ??

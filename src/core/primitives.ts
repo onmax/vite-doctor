@@ -260,6 +260,7 @@ export interface NuxtDoctorManifest {
   components: unknown[];
   layers: Array<{
     root: string;
+    nuxtConfigMtimeMs?: number | null;
     srcDir?: string;
     appMiddlewareDir?: string;
     name?: string;

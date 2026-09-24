@@ -657,3 +657,62 @@ test.each(["accounts", "profiles", "sessions"])(
     ]);
   },
 );
+
+test.each(["../guards/auth.cjs", "../guards/auth", "../guards"])(
+  "collects CommonJS guard evidence from %s",
+  async (specifier) => {
+    const guard = specifier === "../guards" ? "server/guards/index.cjs" : "server/guards/auth.cjs";
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      expect(candidate.sources.map((source) => source.path)).toContain(guard);
+      return {
+        status: "report",
+        reason: "The custom guard returns private data without authorization.",
+        citations: [
+          { path: candidate.handler.path, line: 1 },
+          { path: guard, line: 1 },
+        ],
+      };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts": files["app/middleware/auth.ts"],
+        "server/api/account.cjs": `const guard = require('${specifier}'); module.exports = defineEventHandler(guard)`,
+        [guard]: "module.exports = () => ({ private: true })",
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(result.diagnostics.map((item) => item.code)).toContain("NUXT0074");
+  },
+);
+
+test("rejects layer middleware evidence after the active layer config changes", async () => {
+  let calls = 0;
+  const extension = createNuxtAuthorizationReviewExtension(async () => {
+    calls++;
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      "layers/admin/nuxt.config.ts":
+        "export default defineNuxtConfig({ dir: { middleware: 'guards' } })",
+      "layers/admin/middleware/auth.ts": files["app/middleware/auth.ts"],
+      "server/api/account.get.ts": files["server/api/account.get.ts"],
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        layers: [
+          {
+            root: "layers/admin",
+            nuxtConfigMtimeMs: 0,
+            appMiddlewareDir: "layers/admin/middleware",
+            priority: 0,
+          },
+        ],
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(result.project.nuxt?.manifest?.isCurrent).toBe(false);
+  expect(calls).toBe(0);
+});
