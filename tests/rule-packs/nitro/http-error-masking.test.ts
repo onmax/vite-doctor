@@ -1562,3 +1562,107 @@ test("keeps the unmatched path for a possibly NaN switch identifier", async () =
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(true);
 });
+
+test.each([
+  [
+    "returned HTTP error",
+    "function make() { return createError({ statusCode: 404 }) }; throw make()",
+    true,
+  ],
+  [
+    "returned error alias",
+    "function make() { const error = createError({ statusCode: 404 }); return error }; throw make()",
+    true,
+  ],
+  ["returned native error", "function make() { return new Error() }; throw make()", false],
+  ["throwing default", "function load(value = notFound()) {}; load()", true],
+  [
+    "unreturned HTTP error",
+    "function make() { createError({ statusCode: 404 }) }; throw make()",
+    false,
+  ],
+  ["arrow return", "const make = () => createError({ statusCode: 404 }); throw make()", true],
+  ["skipped default", "function load(value = notFound()) {}; load(1)", false],
+  ["undefined default", "function load(value = notFound()) {}; load(undefined)", true],
+  ["target object", "notFound().value = 1", true],
+  ["target key", "const target = {}; target[notFound()] = 1", true],
+  ["target before RHS", "function fail() { throw new Error() }; fail().value = notFound()", false],
+  ["logical left", "const value = notFound() && true", true],
+  ["logical right", "const value = true && notFound()", true],
+  ["skipped logical right", "const value = false && notFound()", false],
+  ["skipped alternative", "const value = true || notFound()", false],
+  ["nullish right", "const value = null ?? notFound()", true],
+  ["skipped nullish right", "const value = false ?? notFound()", false],
+] as const)("models expression execution: %s", async (_name, source, expected) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        function notFound() { throw createError({ statusCode: 404 }) }
+        try { ${source} } catch { throw new Error() }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+});
+
+test.each([
+  ["const alias = error; alias.statusCode = 500; throw error", true],
+  ["const alias = error; error.statusCode = 500; throw alias", true],
+  ["const alias = error; { const error = new Error(); alias.statusCode = 500 }; throw error", true],
+  [
+    "let alias = error; alias = createError({ statusCode: 403 }); alias.statusCode = 500; throw error",
+    false,
+  ],
+  ["const alias = error; if (flag) { alias.statusCode = 500; return }; throw error", false],
+] as const)("preserves error identity: %s", async (source, expected) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        try { throw createError({ statusCode: 404 }) } catch (error) { ${source} }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+});
+
+test.each([
+  ['const key = "a"; switch (key) { case "b": MASK }', false],
+  ["const key = 1; switch (key) { case 1: const key = 2; MASK }", true],
+  ['const key = "a"; switch (key) { case "a": MASK }', true],
+  ['const key = "a"; switch (key) { case key: break; default: MASK }', false],
+  [
+    "const enabled = true; switch (2) { case 1: const enabled = false; break; case 2: if (enabled) { MASK } }",
+    false,
+  ],
+  ["switch (2) { case 1: const enabled = false; break; case 2: typeof enabled; MASK }", false],
+  ["switch (1) { case 1: const enabled = true; case 2: if (enabled) { MASK } }", true],
+] as const)("models enclosing switch values and scope: %s", async (source, expected) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        ${source.replace("MASK", "try { throw createError({ statusCode: 404 }) } catch { throw new Error() }")}
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+});
+
+test("preserves a returned HTTP error through a normal finalizer", async () => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        function make() { try { return createError({ statusCode: 404 }) } finally { cleanup() } }
+        try { throw make() } catch { throw new Error() }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(true);
+});
