@@ -171,7 +171,9 @@ function readAliasInitializers(source: string) {
     for (const reference of scope.references) {
       const definition = reference.resolved?.defs[0];
       if (
+        reference.resolved?.defs.length !== 1 ||
         definition?.type !== "Variable" ||
+        definition.parent.kind !== "const" ||
         definition.node.id.type !== "Identifier" ||
         !definition.node.init
       )
@@ -189,12 +191,42 @@ function resolvesSecretAlias(
   initializers: Map<number, [number, number]>,
   seen = new Set<number>(),
 ): boolean {
-  const unwrapped = value
-    .trim()
-    .replace(/^JSON\.stringify\s*\((.*)\)$/s, "$1")
-    .trim();
-  if (!/^[A-Za-z_$][\w$]*$/.test(unwrapped) || seen.size >= 4) return false;
-  const range = initializers.get(start + value.lastIndexOf(unwrapped));
+  if (seen.size >= 4) return false;
+  let parsed: ReturnType<typeof parseForESLint>;
+  try {
+    parsed = parseForESLint(`(${value})`, { range: true });
+  } catch {
+    return false;
+  }
+  const statement = parsed.ast.body[0];
+  if (statement?.type !== "ExpressionStatement") return false;
+  let expression = statement.expression;
+  while (true) {
+    if (
+      expression.type === "TSAsExpression" ||
+      expression.type === "TSTypeAssertion" ||
+      expression.type === "TSNonNullExpression" ||
+      expression.type === "TSSatisfiesExpression"
+    ) {
+      expression = expression.expression;
+    } else if (
+      expression.type === "CallExpression" &&
+      expression.callee.type === "MemberExpression" &&
+      !expression.callee.computed &&
+      expression.callee.object.type === "Identifier" &&
+      expression.callee.object.name === "JSON" &&
+      expression.callee.property.type === "Identifier" &&
+      expression.callee.property.name === "stringify" &&
+      expression.arguments[0]?.type !== "SpreadElement" &&
+      expression.arguments[0]
+    ) {
+      expression = expression.arguments[0];
+    } else {
+      break;
+    }
+  }
+  if (expression.type !== "Identifier") return false;
+  const range = initializers.get(start + expression.range[0] - 1);
   if (!range || seen.has(range[0])) return false;
   seen.add(range[0]);
   const initializer = source.slice(...range);

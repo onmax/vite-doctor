@@ -122,3 +122,50 @@ export default defineConfig(() => {
   });
   expect(result.diagnostics.some((item) => item.ruleId === noSecretDefine.meta.id)).toBe(expected);
 });
+
+test.each([
+  "let replacement = process.env.PRIVATE_TOKEN; replacement = process.env.PUBLIC_VERSION",
+  "let replacement = process.env.PUBLIC_VERSION; replacement = process.env.PRIVATE_TOKEN",
+  "var replacement = process.env.PRIVATE_TOKEN; var replacement = process.env.PUBLIC_VERSION",
+  "var replacement = process.env.PUBLIC_VERSION; var replacement = process.env.PRIVATE_TOKEN",
+])("does not infer a mutable alias from its initializer: %s", async (declarations) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declarations}
+export default { define: {
+  __CONFIG__: JSON.stringify(replacement),
+} }`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+for (const expression of [
+  "replacement as string",
+  "replacement!",
+  "<string>replacement",
+  "replacement satisfies string",
+  "(replacement as string)!",
+]) {
+  test.each(["PRIVATE_TOKEN", "PUBLIC_VERSION"])(
+    `follows TypeScript wrappers in aliases and define values: ${expression}, %s`,
+    async (source) => {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule: noSecretDefine,
+        files: {
+          "vite.config.ts": `const original = process.env.${source}
+const replacement = (original as string)!
+export default { define: {
+  __CONFIG__: JSON.stringify(${expression}),
+} }`,
+        },
+      });
+      expect(result.diagnostics.some((item) => item.ruleId === noSecretDefine.meta.id)).toBe(
+        source === "PRIVATE_TOKEN",
+      );
+    },
+  );
+}
