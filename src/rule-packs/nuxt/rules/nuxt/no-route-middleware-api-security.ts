@@ -67,8 +67,16 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
 
 function unguardedSensitiveHandlers(ctx: any): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
-  if (dirs?.middleware.some(hasUnconditionalMiddlewareGuard)) return [];
   const registered = ctx.project.nuxt?.manifest?.serverHandlers ?? [];
+  const middleware = [
+    ...(dirs?.middleware ?? []),
+    ...registered
+      .filter(
+        (handler: { middleware?: boolean; route?: string }) => handler.middleware && !handler.route,
+      )
+      .map((handler: { file: string }) => handler.file),
+  ];
+  if (middleware.some(hasUnconditionalMiddlewareGuard)) return [];
   const candidates = [
     ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({ file })),
     ...registered.filter((handler: { middleware?: boolean }) => !handler.middleware),
