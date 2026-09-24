@@ -238,3 +238,92 @@ import.meta.hot.dispose(() => ${qualifier}.clearTimeout(timer))`,
     expect(result.diagnostics).toEqual([]);
   });
 }
+
+for (const [setup, cleanup] of [
+  ["setInterval(refresh, 1000)", "clearInterval(value)"],
+  ["setTimeout(refresh, 1000)", "clearTimeout(value)"],
+  ["new WebSocket(url)", "value.close()"],
+  ["events.subscribe(refresh)", "value.unsubscribe()"],
+  ["events.subscribe(refresh)", "value()"],
+]) {
+  for (const [name, helpers, body, leaks] of [
+    ["parameter", `function cleanup(value) { ${cleanup} }`, "cleanup(handle)", false],
+    [
+      "forwarded parameter",
+      `function cleanup(value) { ${cleanup} }; function forward(value) { cleanup(value) }`,
+      "forward(handle)",
+      false,
+    ],
+    ["unrelated argument", `function cleanup(value) { ${cleanup} }`, "cleanup(other)", true],
+    [
+      "shadowed argument",
+      `function cleanup(value) { ${cleanup} }`,
+      "{ const handle = other; cleanup(handle) }",
+      true,
+    ],
+    [
+      "repeated helper",
+      `function cleanup(value) { ${cleanup} }`,
+      "cleanup(other); cleanup(handle)",
+      false,
+    ],
+    ["asserted handle", "", cleanup.replaceAll("value", "handle!"), false],
+    ["cast handle", "", cleanup.replaceAll("value", "(handle as any)"), false],
+  ] as const) {
+    test(`${setup}: ${name}`, async () => {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule: requireDisposeForSideEffects,
+        files: {
+          "src/main.ts": `const handle = ${setup}
+${helpers}
+import.meta.hot.accept()
+import.meta.hot.dispose(() => { ${body} })`,
+        },
+      });
+      expect(result.diagnostics.length > 0).toBe(leaks);
+    });
+  }
+}
+
+for (const [name, source, leaks] of [
+  [
+    "imported timer",
+    "import { setInterval } from 'scheduler'; const handle = setInterval(refresh); import.meta.hot.dispose(() => handle.cancel())",
+    false,
+  ],
+  [
+    "local timer",
+    "function setTimeout() { return scheduler.start() }; const handle = setTimeout(); import.meta.hot.dispose(() => handle.cancel())",
+    false,
+  ],
+  [
+    "overwritten timer",
+    "let timer = setInterval(refresh); timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "overwritten with non-resource",
+    "let timer = setInterval(refresh); timer = other; import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "assigned timer cleaned",
+    "let timer; timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "assigned timer leaked",
+    "let timer; timer = setInterval(refresh); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}

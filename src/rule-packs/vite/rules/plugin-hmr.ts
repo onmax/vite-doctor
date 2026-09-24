@@ -122,29 +122,44 @@ export const requireDisposeForSideEffects = createRule({
 function undisposedResource(program: AnyNode): string | null {
   const resolve = resourceBindings(program);
   const resources: Array<{ binding: AnyNode; kind: string; cleanup: string; method: boolean }> = [];
+  const overwritten = new Set<AnyNode>();
   const callbacks = new Map<AnyNode, AnyNode>();
   let callback: AnyNode;
   walkEvaluation(program, (node) => {
     if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
-    if (node.type === "VariableDeclarator" && node.id?.type === "Identifier") {
-      const init = node.init;
+    const handle =
+      node.type === "VariableDeclarator"
+        ? node.id
+        : node.type === "AssignmentExpression"
+          ? node.left
+          : null;
+    if (handle?.type === "Identifier") {
+      const binding = resolve(handle);
+      if (
+        node.type === "AssignmentExpression" &&
+        resources.some((resource) => resource.binding === binding)
+      )
+        overwritten.add(binding);
+      const init = unwrapResourceExpression(
+        node.type === "VariableDeclarator" ? node.init : node.right,
+      );
       if (["ArrowFunctionExpression", "FunctionExpression"].includes(init?.type)) {
-        callbacks.set(node.id, init);
+        callbacks.set(binding, init);
       }
       const callee = memberPath(init?.callee);
       const kind =
-        init?.type === "CallExpression" && callee === "setInterval"
+        init?.type === "CallExpression" && callee === "setInterval" && !resolve(init.callee)
           ? "interval"
-          : init?.type === "CallExpression" && callee === "setTimeout"
+          : init?.type === "CallExpression" && callee === "setTimeout" && !resolve(init.callee)
             ? "timeout"
-            : init?.type === "NewExpression" && callee === "WebSocket"
+            : init?.type === "NewExpression" && callee === "WebSocket" && !resolve(init.callee)
               ? "WebSocket"
               : init?.type === "CallExpression" && callee?.endsWith(".subscribe")
                 ? "subscription"
                 : null;
       if (kind)
         resources.push({
-          binding: node.id,
+          binding,
           kind,
           cleanup:
             kind === "interval"
@@ -163,9 +178,18 @@ function undisposedResource(program: AnyNode): string | null {
   });
   const cleaned = new Set<AnyNode>();
   const visited = new Set<AnyNode>();
-  function inspect(target: AnyNode): void {
+  function inspect(
+    target: AnyNode,
+    args: AnyNode[] = [],
+    aliases = new Map<AnyNode, AnyNode>(),
+  ): void {
+    const identity = (node: AnyNode) => {
+      const binding = resolve(unwrapResourceExpression(node));
+      return aliases.has(binding) ? aliases.get(binding) : binding;
+    };
+    target = unwrapResourceExpression(target);
     if (target?.type === "Identifier") {
-      const binding = resolve(target);
+      const binding = identity(target);
       if (
         resources.some(
           (resource) => resource.binding === binding && resource.kind === "subscription",
@@ -182,6 +206,14 @@ function undisposedResource(program: AnyNode): string | null {
     )
       return;
     visited.add(target);
+    const parameters = new Map(aliases);
+    for (const [index, param] of target.params.entries()) {
+      if (param.type === "Identifier") parameters.set(param, identity(args[index]));
+    }
+    const parameterIdentity = (node: AnyNode) => {
+      const binding = resolve(unwrapResourceExpression(node));
+      return parameters.has(binding) ? parameters.get(binding) : binding;
+    };
     walkEvaluation(target.body, (node) => {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
       if (
@@ -195,7 +227,9 @@ function undisposedResource(program: AnyNode): string | null {
       if (node.type !== "CallExpression") return;
       for (const resource of resources) {
         const callee = memberPath(node.callee);
-        const receiver = resource.method ? node.callee.object : node.arguments[0];
+        const receiver = unwrapResourceExpression(
+          resource.method ? node.callee.object : node.arguments[0],
+        );
         const matches = resource.method
           ? node.callee.property?.name === resource.cleanup && !node.callee.computed
           : [
@@ -208,16 +242,36 @@ function undisposedResource(program: AnyNode): string | null {
         if (
           matches &&
           receiver?.type === "Identifier" &&
-          resolve(receiver) === resource.binding &&
+          parameterIdentity(receiver) === resource.binding &&
           (!global || !resolve(global))
         )
           cleaned.add(resource.binding);
       }
-      inspect(node.callee);
+      inspect(node.callee, node.arguments, parameters);
     });
+    visited.delete(target);
   }
   inspect(callback);
-  return resources.find((resource) => !cleaned.has(resource.binding))?.kind ?? null;
+  return (
+    resources.find(
+      (resource) => overwritten.has(resource.binding) || !cleaned.has(resource.binding),
+    )?.kind ?? null
+  );
+}
+
+function unwrapResourceExpression(node: AnyNode): AnyNode {
+  while (
+    node &&
+    [
+      "TSAsExpression",
+      "TSTypeAssertion",
+      "TSNonNullExpression",
+      "TSSatisfiesExpression",
+      "ParenthesizedExpression",
+    ].includes(node.type)
+  )
+    node = node.expression;
+  return node;
 }
 
 type ResourceScope = {
