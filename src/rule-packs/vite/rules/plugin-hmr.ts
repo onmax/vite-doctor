@@ -135,6 +135,7 @@ function undisposedResource(program: AnyNode): string | null {
   const values = new Map<AnyNode, AnyNode>();
   const callbacks = new Map<AnyNode, AnyNode>();
   const properties = new Map<AnyNode, Map<string, AnyNode>>();
+  const members = new Map<AnyNode, Map<string, AnyNode>>();
   const propertyKey = (node: AnyNode): string | undefined =>
     node?.computed ? node.property?.value : node?.property?.name;
   const cleaned = new Set<AnyNode>();
@@ -155,6 +156,10 @@ function undisposedResource(program: AnyNode): string | null {
           );
           if (property) return identity(property.value, environment);
         }
+        if (!members.has(object)) members.set(object, new Map());
+        const paths = members.get(object)!;
+        if (!paths.has(key)) paths.set(key, { ...node, object });
+        return paths.get(key);
       }
       return node;
     }
@@ -223,7 +228,15 @@ function undisposedResource(program: AnyNode): string | null {
     visited.add(target);
     const local = new Map(environment);
     for (const [index, param] of target.params.entries()) {
-      if (param.type === "Identifier") local.set(param, identity(args[index], environment));
+      const argument = identity(args[index], environment);
+      if (param.type === "Identifier") local.set(param, argument);
+      else if (param.type === "AssignmentPattern" && param.left.type === "Identifier") {
+        const useDefault =
+          argument === undefined ||
+          argument === "undefined" ||
+          (argument?.type === "UnaryExpression" && argument.operator === "void");
+        local.set(param.left, useDefault ? identity(param.right, local) : argument);
+      }
     }
     evaluate(target.body, local, false);
     visited.delete(target);
@@ -306,11 +319,7 @@ function undisposedResource(program: AnyNode): string | null {
         return;
       }
       const method =
-        node.callee.type === "Identifier"
-          ? node.callee.name
-          : !node.callee.computed
-            ? node.callee.property?.name
-            : null;
+        node.callee.type === "Identifier" ? node.callee.name : propertyKey(node.callee);
       if (
         (method === "addEventListener" || method === "removeEventListener") &&
         !(node.callee.type === "Identifier" && resolve(node.callee))
@@ -325,14 +334,15 @@ function undisposedResource(program: AnyNode): string | null {
         const options = capture(node.arguments[2], environment);
         if (module && method === "addEventListener") {
           const listenerOptions = identity(node.arguments[2], environment);
-          const signalProperty =
-            listenerOptions?.type === "ObjectExpression"
-              ? listenerOptions.properties.find(
-                  (item: AnyNode) =>
-                    !item.computed && (item.key?.name ?? item.key?.value) === "signal",
-                )
-              : undefined;
-          const signal = identity(signalProperty?.value, environment);
+          const signal = identity(
+            {
+              type: "MemberExpression",
+              object: listenerOptions,
+              property: { type: "Identifier", name: "signal" },
+              computed: false,
+            },
+            environment,
+          );
           const controller =
             signal?.type === "MemberExpression" && propertyKey(signal) === "signal"
               ? identity(signal.object, environment)
@@ -369,7 +379,7 @@ function undisposedResource(program: AnyNode): string | null {
         if (resource.kind === "listener") continue;
         const receiver = resource.method ? node.callee.object : node.arguments[0];
         const matches = resource.method
-          ? node.callee.property?.name === resource.cleanup && !node.callee.computed
+          ? propertyKey(node.callee) === resource.cleanup
           : [
               resource.cleanup,
               `window.${resource.cleanup}`,

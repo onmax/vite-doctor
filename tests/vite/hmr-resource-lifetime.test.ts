@@ -674,3 +674,120 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "computed listener cleanup",
+    "document.body['addEventListener']('resize', refresh); import.meta.hot.dispose(() => document.body['removeEventListener']('resize', refresh))",
+    false,
+  ],
+  [
+    "computed abort cleanup",
+    "const controller = new AbortController(); window.addEventListener('resize', refresh, { signal: controller.signal }); import.meta.hot.dispose(() => controller['abort']())",
+    false,
+  ],
+  [
+    "void helper argument",
+    "const timer = setInterval(refresh); function cleanup(handle = timer) { clearInterval(handle) }; import.meta.hot.dispose(() => cleanup(void 0))",
+    false,
+  ],
+  [
+    "null helper argument",
+    "const timer = setInterval(refresh); function cleanup(handle = timer) { clearInterval(handle) }; import.meta.hot.dispose(() => cleanup(null))",
+    true,
+  ],
+  [
+    "shadowed undefined argument",
+    "const timer = setInterval(refresh); function cleanup(handle = timer) { clearInterval(handle) }; import.meta.hot.dispose(() => { const undefined = other; cleanup(undefined) })",
+    true,
+  ],
+  [
+    "assigned listener signal",
+    "const controller = new AbortController(); const options = {}; options.signal = controller.signal; window.addEventListener('resize', refresh, options); import.meta.hot.dispose(() => controller.abort())",
+    false,
+  ],
+  [
+    "replaced listener signal",
+    "const old = new AbortController(); const current = new AbortController(); const options = { signal: old.signal }; options.signal = current.signal; window.addEventListener('resize', refresh, options); import.meta.hot.dispose(() => old.abort())",
+    true,
+  ],
+  [
+    "effective listener signal",
+    "const old = new AbortController(); const current = new AbortController(); const options = { signal: old.signal }; options.signal = current.signal; window.addEventListener('resize', refresh, options); import.meta.hot.dispose(() => current.abort())",
+    false,
+  ],
+  [
+    "signal snapshot at registration",
+    "const old = new AbortController(); const current = new AbortController(); const options = { signal: old.signal }; window.addEventListener('resize', refresh, options); options.signal = current.signal; import.meta.hot.dispose(() => current.abort())",
+    true,
+  ],
+  [
+    "stable member target",
+    "document.body.addEventListener('resize', refresh); import.meta.hot.dispose(() => document.body.removeEventListener('resize', refresh))",
+    false,
+  ],
+  [
+    "stable member handler",
+    "window.addEventListener('resize', handlers.refresh); import.meta.hot.dispose(() => window.removeEventListener('resize', handlers.refresh))",
+    false,
+  ],
+  [
+    "changed member target",
+    "document.body.addEventListener('resize', refresh); document.body = other; import.meta.hot.dispose(() => document.body.removeEventListener('resize', refresh))",
+    true,
+  ],
+  [
+    "different member target",
+    "document.body.addEventListener('resize', refresh); import.meta.hot.dispose(() => document.head.removeEventListener('resize', refresh))",
+    true,
+  ],
+  [
+    "computed socket cleanup",
+    "const socket = new WebSocket(url); import.meta.hot.dispose(() => socket['close']())",
+    false,
+  ],
+  [
+    "computed subscription cleanup",
+    "const subscription = events.subscribe(refresh); import.meta.hot.dispose(() => subscription['unsubscribe']())",
+    false,
+  ],
+  [
+    "dynamic socket cleanup",
+    "const socket = new WebSocket(url); import.meta.hot.dispose(() => socket[close]())",
+    true,
+  ],
+  [
+    "default helper argument",
+    "const timer = setInterval(refresh); function cleanup(handle = timer) { clearInterval(handle) }; import.meta.hot.dispose(() => cleanup())",
+    false,
+  ],
+  [
+    "supplied helper argument",
+    "const timer = setInterval(refresh); function cleanup(handle = other) { clearInterval(handle) }; import.meta.hot.dispose(() => cleanup(timer))",
+    false,
+  ],
+  [
+    "overridden helper default",
+    "const timer = setInterval(refresh); function cleanup(handle = timer) { clearInterval(handle) }; import.meta.hot.dispose(() => cleanup(other))",
+    true,
+  ],
+  [
+    "undefined helper argument",
+    "const timer = setInterval(refresh); function cleanup(handle = timer) { clearInterval(handle) }; import.meta.hot.dispose(() => cleanup(undefined))",
+    false,
+  ],
+  [
+    "earlier parameter default",
+    "const timer = setInterval(refresh); function cleanup(first, handle = first) { clearInterval(handle) }; import.meta.hot.dispose(() => cleanup(timer))",
+    false,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `function refresh() {}; import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
