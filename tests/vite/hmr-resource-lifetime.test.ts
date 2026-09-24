@@ -424,6 +424,181 @@ for (const [name, source, leaks] of [
     "window.addEventListener('resize', refresh, { capture: true }); import.meta.hot.dispose(() => window.removeEventListener('resize', refresh, true))",
     false,
   ],
+  [
+    "aliased global target mismatch",
+    "const target = window; const other = document; target.addEventListener('resize', refresh); import.meta.hot.dispose(() => other.removeEventListener('resize', refresh))",
+    true,
+  ],
+  [
+    "aliased global target cleanup",
+    "const target = window; target.addEventListener('resize', refresh); import.meta.hot.dispose(() => window.removeEventListener('resize', refresh))",
+    false,
+  ],
+  [
+    "aliased unresolved handler mismatch",
+    "const handler = externalHandler; const other = otherHandler; window.addEventListener('resize', handler); import.meta.hot.dispose(() => window.removeEventListener('resize', other))",
+    true,
+  ],
+  [
+    "named capture object",
+    "const options = { capture: true }; window.addEventListener('resize', refresh, options); import.meta.hot.dispose(() => window.removeEventListener('resize', refresh, options))",
+    false,
+  ],
+  [
+    "named capture boolean",
+    "const options = true; window.addEventListener('resize', refresh, options); import.meta.hot.dispose(() => window.removeEventListener('resize', refresh, true))",
+    false,
+  ],
+  [
+    "named capture mismatch",
+    "const options = { capture: true }; window.addEventListener('resize', refresh, options); import.meta.hot.dispose(() => window.removeEventListener('resize', refresh, false))",
+    true,
+  ],
+  [
+    "shadowed listener functions",
+    "function addEventListener() {}; function removeEventListener() {}; addEventListener('resize', refresh); import.meta.hot.dispose(() => removeEventListener('resize', refresh))",
+    false,
+  ],
+  [
+    "imported listener functions",
+    "import { addEventListener, removeEventListener } from 'custom'; addEventListener('resize', refresh); import.meta.hot.dispose(() => removeEventListener('resize', refresh))",
+    false,
+  ],
+  [
+    "window setInterval(refresh) leak",
+    "const resource = window.setInterval(refresh); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "window setInterval(refresh) cleanup",
+    "const resource = window.setInterval(refresh); import.meta.hot.dispose(() => clearInterval(resource))",
+    false,
+  ],
+  [
+    "window setTimeout(refresh) leak",
+    "const resource = window.setTimeout(refresh); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "window setTimeout(refresh) cleanup",
+    "const resource = window.setTimeout(refresh); import.meta.hot.dispose(() => clearTimeout(resource))",
+    false,
+  ],
+  [
+    "window new WebSocket(url) leak",
+    "const resource = new window.WebSocket(url); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "window new WebSocket(url) cleanup",
+    "const resource = new window.WebSocket(url); import.meta.hot.dispose(() => resource.close())",
+    false,
+  ],
+  [
+    "window new EventSource(url) leak",
+    "const resource = new window.EventSource(url); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "window new EventSource(url) cleanup",
+    "const resource = new window.EventSource(url); import.meta.hot.dispose(() => resource.close())",
+    false,
+  ],
+  [
+    "shadowed window constructor",
+    "const window = custom; const resource = window.setInterval(refresh); import.meta.hot.dispose(() => saveState())",
+    false,
+  ],
+  [
+    "globalThis setInterval(refresh) leak",
+    "const resource = globalThis.setInterval(refresh); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "globalThis setInterval(refresh) cleanup",
+    "const resource = globalThis.setInterval(refresh); import.meta.hot.dispose(() => clearInterval(resource))",
+    false,
+  ],
+  [
+    "globalThis setTimeout(refresh) leak",
+    "const resource = globalThis.setTimeout(refresh); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "globalThis setTimeout(refresh) cleanup",
+    "const resource = globalThis.setTimeout(refresh); import.meta.hot.dispose(() => clearTimeout(resource))",
+    false,
+  ],
+  [
+    "globalThis new WebSocket(url) leak",
+    "const resource = new globalThis.WebSocket(url); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "globalThis new WebSocket(url) cleanup",
+    "const resource = new globalThis.WebSocket(url); import.meta.hot.dispose(() => resource.close())",
+    false,
+  ],
+  [
+    "globalThis new EventSource(url) leak",
+    "const resource = new globalThis.EventSource(url); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "globalThis new EventSource(url) cleanup",
+    "const resource = new globalThis.EventSource(url); import.meta.hot.dispose(() => resource.close())",
+    false,
+  ],
+  [
+    "shadowed globalThis constructor",
+    "const globalThis = custom; const resource = globalThis.setInterval(refresh); import.meta.hot.dispose(() => saveState())",
+    false,
+  ],
+  [
+    "self setInterval(refresh) leak",
+    "const resource = self.setInterval(refresh); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "self setInterval(refresh) cleanup",
+    "const resource = self.setInterval(refresh); import.meta.hot.dispose(() => clearInterval(resource))",
+    false,
+  ],
+  [
+    "self setTimeout(refresh) leak",
+    "const resource = self.setTimeout(refresh); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "self setTimeout(refresh) cleanup",
+    "const resource = self.setTimeout(refresh); import.meta.hot.dispose(() => clearTimeout(resource))",
+    false,
+  ],
+  [
+    "self new WebSocket(url) leak",
+    "const resource = new self.WebSocket(url); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "self new WebSocket(url) cleanup",
+    "const resource = new self.WebSocket(url); import.meta.hot.dispose(() => resource.close())",
+    false,
+  ],
+  [
+    "self new EventSource(url) leak",
+    "const resource = new self.EventSource(url); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "self new EventSource(url) cleanup",
+    "const resource = new self.EventSource(url); import.meta.hot.dispose(() => resource.close())",
+    false,
+  ],
+  [
+    "shadowed self constructor",
+    "const self = custom; const resource = self.setInterval(refresh); import.meta.hot.dispose(() => saveState())",
+    false,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({

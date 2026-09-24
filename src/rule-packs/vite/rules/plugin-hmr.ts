@@ -140,19 +140,22 @@ function undisposedResource(program: AnyNode): string | null {
   const identity = (node: AnyNode, environment = values): AnyNode => {
     node = unwrapResourceExpression(node);
     const binding = resolve(node);
-    return environment.has(binding) ? environment.get(binding) : binding;
+    return environment.has(binding)
+      ? environment.get(binding)
+      : (binding ?? memberPath(node) ?? node);
   };
   const receiverIdentity = (node: AnyNode, environment: Map<AnyNode, AnyNode>): AnyNode => {
     node = unwrapResourceExpression(node);
     return resolve(node) ? identity(node, environment) : memberPath(node);
   };
-  const capture = (node: AnyNode): unknown => {
+  const capture = (node: AnyNode, environment: Map<AnyNode, AnyNode>): unknown => {
+    node = identity(node, environment);
     if (!node) return false;
     if (node.type === "ObjectExpression") {
       const property = node.properties.find(
         (item: AnyNode) => (item.key?.name ?? item.key?.value) === "capture",
       );
-      return property ? capture(property.value) : false;
+      return property ? capture(property.value, environment) : false;
     }
     return typeof node.value === "boolean" ? node.value : node;
   };
@@ -203,7 +206,11 @@ function undisposedResource(program: AnyNode): string | null {
           environment.set(binding, value);
           if (["ArrowFunctionExpression", "FunctionExpression"].includes(init.type))
             callbacks.set(value, init);
-          const callee = memberPath(init.callee);
+          const path = memberPath(init.callee);
+          const global = init.callee?.object ?? init.callee;
+          const callee = !resolve(global)
+            ? path?.replace(/^(?:window|globalThis|self)\./, "")
+            : undefined;
           const kind =
             init.type === "CallExpression" && callee === "setInterval" && !resolve(init.callee)
               ? "interval"
@@ -213,7 +220,7 @@ function undisposedResource(program: AnyNode): string | null {
                     ["WebSocket", "EventSource"].includes(callee ?? "") &&
                     !resolve(init.callee)
                   ? callee!
-                  : init.type === "CallExpression" && callee?.endsWith(".subscribe")
+                  : init.type === "CallExpression" && path?.endsWith(".subscribe")
                     ? "subscription"
                     : null;
           if (module && kind)
@@ -249,7 +256,10 @@ function undisposedResource(program: AnyNode): string | null {
           : !node.callee.computed
             ? node.callee.property?.name
             : null;
-      if (method === "addEventListener" || method === "removeEventListener") {
+      if (
+        (method === "addEventListener" || method === "removeEventListener") &&
+        !(node.callee.type === "Identifier" && resolve(node.callee))
+      ) {
         const receiver =
           node.callee.type === "Identifier"
             ? (resolve(node.callee) ?? "window")
@@ -257,7 +267,7 @@ function undisposedResource(program: AnyNode): string | null {
         const event =
           node.arguments[0]?.value ?? identity(node.arguments[0], environment) ?? node.arguments[0];
         const handler = receiverIdentity(node.arguments[1], environment);
-        const options = capture(node.arguments[2]);
+        const options = capture(node.arguments[2], environment);
         if (module && method === "addEventListener") {
           listeners.push({ receiver, event, handler, capture: options, value: node });
           resources.push({
