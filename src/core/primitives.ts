@@ -207,6 +207,7 @@ export interface NuxtProjectInfo {
     appScanRoots: string[];
     sharedScanRoots: string[];
     hasManifest: boolean;
+    serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     pages?: Array<{ path?: string; file?: string; name?: string }>;
     prerenderRoutes?: string[];
     buildManifest?: {

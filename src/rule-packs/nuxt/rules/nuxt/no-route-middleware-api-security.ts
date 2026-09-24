@@ -19,10 +19,6 @@ export const noRouteMiddlewareApiSecurity = createRule({
   create(ctx) {
     const evidence = createNuxtRuntimeEvidence(ctx);
     if (evidence.isContentDocsFile()) return;
-    const hasServerHandlers =
-      [...(ctx.project.nuxt?.serverDirs.api ?? []), ...(ctx.project.nuxt?.serverDirs.routes ?? [])]
-        .length > 0;
-    if (!hasServerHandlers) return;
     const relativePath = toPosixPath(ctx.file.relativePath);
     if (/(?:^|\/)server\/middleware\//.test(relativePath)) return;
     const isMiddlewareFile =
@@ -72,13 +68,25 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
 function unguardedSensitiveHandlers(ctx: any): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
   if (dirs?.middleware.some(hasUnconditionalMiddlewareGuard)) return [];
-  const files = new Set<string>([...(dirs?.api ?? []), ...(dirs?.routes ?? [])]);
-  return [...files].filter(
-    (file) =>
-      /(?:^|\/)(?:auth|admin|account|user|users|me|profile|session|private|billing|settings)(?:[./-]|$)/i.test(
-        toPosixPath(relative(ctx.project.root, file)),
-      ) && !hasAuthGuard(readProjectFile(file)),
-  );
+  const registered = ctx.project.nuxt?.manifest?.serverHandlers ?? [];
+  const candidates = [
+    ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({ file })),
+    ...registered.filter((handler: { middleware?: boolean }) => !handler.middleware),
+  ];
+  const sensitive =
+    /(?:^|\/)(?:auth|admin|account|user|users|me|profile|session|private|billing|settings)(?:[./-]|$)/i;
+  return [
+    ...new Set<string>(
+      candidates
+        .filter(
+          (handler) =>
+            (sensitive.test(toPosixPath(relative(ctx.project.root, handler.file))) ||
+              sensitive.test(handler.route ?? "")) &&
+            !hasAuthGuard(readProjectFile(handler.file)),
+        )
+        .map((handler) => handler.file),
+    ),
+  ];
 }
 
 function hasUnconditionalMiddlewareGuard(file: string): boolean {
@@ -106,7 +114,10 @@ function hasUnconditionalMiddlewareGuard(file: string): boolean {
           ? first.argument
           : first?.type === "ExpressionStatement" && first.expression.type === "AwaitExpression"
             ? first.expression
-            : null;
+            : first?.type === "VariableDeclaration" &&
+                first.declarations[0]?.init?.type === "AwaitExpression"
+              ? first.declarations[0].init
+              : null;
     }
     if (expression?.type === "AwaitExpression") expression = expression.argument;
     return (

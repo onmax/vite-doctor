@@ -2442,6 +2442,10 @@ test.each([
   ["(event) => { if (event.path.startsWith('/api/admin')) return requireAuth(event) }", 1],
   ["async (event) => { if (event.path === '/api/account') return; await requireAuth(event) }", 1],
   ["async (event) => { try { await requireAuth(event) } catch {} }", 1],
+  ["async (event) => { const { user } = await requireUserSession(event) }", 0],
+  ["async (event) => { const session = await requireAuth(event) }", 0],
+  ["(event) => { const session = requireAuth(event) }", 1],
+  ["async (event) => { const session = await requireAuth(otherEvent) }", 1],
   ["(event) => { const guard = () => requireAuth(event) }", 1],
   ["(event) => { requireAuth(event) }", 1],
   ["(event) => getUserSession(event)", 1],
@@ -2459,6 +2463,41 @@ test.each([
   });
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["server/handlers/account.ts", "/api/data", false, false, 1],
+  ["server/handlers/data.ts", "/api/account", true, false, 1],
+  ["server/handlers/account.ts", "/api/account", true, true, 0],
+  ["server/handlers/data.ts", "/api/health", true, false, 0],
+])(
+  "registered handler coverage for %s at %s",
+  async (file, route, conventional, guarded, count) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+        [file]: guarded
+          ? `export default defineEventHandler((event) => requireAuth(event))`
+          : `export default defineEventHandler(() => ({}))`,
+        ...(conventional
+          ? { "server/api/health.ts": `export default defineEventHandler(() => ({}))` }
+          : {}),
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          nuxtVersion: "4",
+          vueVersion: "3.5",
+          appDir: "app",
+          serverHandlers: [{ file, route }],
+        }),
+      },
+    });
+    expect(result.diagnostics).toHaveLength(count);
+    if (count)
+      expect(result.diagnostics[0]?.related?.map((item) => item.file)).toEqual([
+        expect.stringContaining(file),
+      ]);
+  },
+);
 
 test("route middleware security ignores sensitive ancestor directory names", async () => {
   await withFixture(
