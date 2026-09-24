@@ -324,6 +324,13 @@ function functionFlowsToTemplate(
                 (variable.type === "AssignmentExpression"
                   ? resolveLocalBinding(variable, reference.name, parents)
                   : variable) &&
+              !hasPriorAliasWrite(
+                reference,
+                resolveLocalBinding(ctx.file.scriptAst, reference.name, parents),
+                ctx.file.scriptAst,
+                parents,
+                variable,
+              ) &&
               projectionIncludes(result, variable, reference, parents, [source, fn]),
           )
         )
@@ -524,9 +531,20 @@ function resultCallbackCall(
     ].includes(call.callee.property?.name)
   ) {
     const receiver = unwrapExpression(call.callee.object);
-    const binding =
-      receiver?.type === "Identifier" ? resolveLocalBinding(call, receiver.name, parents) : null;
-    const value = unwrapExpression(binding ? binding.init : receiver);
+    const bindings = new Set<AnyNode>();
+    let value = receiver;
+    let scope = containingFunction(call, parents);
+    if (!scope) {
+      scope = call;
+      while (parents.get(scope)) scope = parents.get(scope);
+    }
+    while (value?.type === "Identifier") {
+      const binding = resolveLocalBinding(value, value.name, parents);
+      if (!binding || bindings.has(binding) || hasPriorAliasWrite(call, binding, scope, parents))
+        return null;
+      bindings.add(binding);
+      value = unwrapExpression(binding.init);
+    }
     if (value?.type === "ArrayExpression") {
       const method = call.callee.property.name;
       const count = arrayElementCount(
@@ -539,13 +557,8 @@ function resultCallbackCall(
           ? 2
           : 1;
       if (count < minimum) return null;
-      let scope = containingFunction(call, parents);
-      if (!scope) {
-        scope = call;
-        while (parents.get(scope)) scope = parents.get(scope);
-      }
       let methodReplaced = false;
-      if (binding)
+      for (const binding of bindings)
         walkScriptLocal(scope.body, (write) => {
           const target =
             write.type === "AssignmentExpression" ? unwrapExpression(write.left) : null;
@@ -564,8 +577,7 @@ function resultCallbackCall(
           )
             methodReplaced = true;
         });
-      if (!methodReplaced && (!binding || !hasPriorAliasWrite(call, binding, scope, parents)))
-        return call;
+      if (!methodReplaced) return call;
     }
   }
   return null;
@@ -623,6 +635,7 @@ function parameterContributesToReturn(
       reference.type === "Identifier" &&
       patternBinds(parameter, reference.name) &&
       resolveLocalBinding(reference, reference.name, parents) === parameter &&
+      !hasPriorAliasWrite(reference, parameter, fn, parents) &&
       (!argumentSource ||
         projectionIncludes(argumentSource[0], argumentSource[1], reference, parents)) &&
       contributesToReturn(reference, fn, parents, new Set(seen))
@@ -737,6 +750,8 @@ function asyncResultIsConsumed(
           return false;
         current = parent;
       }
+    } else if (parent.type === "AssignmentExpression" && parent.right === current) {
+      return true;
     } else if (
       [
         "VariableDeclarator",
@@ -841,10 +856,21 @@ function projectionIncludes(
       }
     }
   }
+  let target = variable.id ?? variable.left;
+  if (variable.type === "AssignmentExpression") {
+    const storedPath: string[] = [];
+    while (target?.type === "MemberExpression") {
+      const key = target.computed ? target.property?.value : target.property?.name;
+      if (key === undefined) return false;
+      storedPath.unshift(String(key));
+      target = unwrapExpression(target.object);
+    }
+    path.unshift(...storedPath);
+  }
   const bindingPath = ["VariableDeclarator", "AssignmentExpression", "AssignmentPattern"].includes(
     variable.type,
   )
-    ? patternPath(variable.id ?? variable.left, reference.name)
+    ? patternPath(target, reference.name)
     : [];
   if (!bindingPath) return false;
   for (const key of bindingPath) {
@@ -939,7 +965,9 @@ function contributesToReturn(
       (parent?.type === "AssignmentPattern" && parent.right === current) ||
       (parent?.type === "AssignmentExpression" && parent.right === current)
     ) {
-      const identifier = parent.id ?? parent.left;
+      let identifier = parent.id ?? parent.left;
+      while (identifier?.type === "MemberExpression")
+        identifier = unwrapExpression(identifier.object);
       let returned = false;
       walkScriptLocal(owner.body, (reference) => {
         if (

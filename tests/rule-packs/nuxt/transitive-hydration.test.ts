@@ -1183,3 +1183,79 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["async function clock() { return Date.now() }; let displayed; displayed = await clock()", 1],
+  ["const source = [1]; const alias = source; const displayed = alias.map(() => Date.now())", 1],
+  ["const source = []; const alias = source; const displayed = alias.map(() => Date.now())", 0],
+  [
+    "let source = [1]; source = []; const alias = source; const displayed = alias.map(() => Date.now())",
+    0,
+  ],
+  [
+    "const source = [1]; const alias = source; source.map = () => []; const displayed = alias.map(() => Date.now())",
+    0,
+  ],
+  [
+    "function label() { const result = {}; result.generatedAt = Date.now(); return result.generatedAt }; const displayed = label()",
+    1,
+  ],
+  [
+    "function label() { const result = {}; result.generatedAt = Date.now(); return result.label }; const displayed = label()",
+    0,
+  ],
+  [
+    "async function clock() { return Date.now() }; const pending = clock(); let displayed = await pending; displayed = 'stable'",
+    0,
+  ],
+  [
+    "async function clock() { return Date.now() }; const pending = clock(); let displayed = await pending; if (flag) displayed = 'stable'",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; const pending = clock(); let displayed = await pending; function event() { displayed = 'stable' }",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; const displayed = await clock().then(value => { value = 'stable'; return value })",
+    0,
+  ],
+  [
+    "async function clock() { return Date.now() }; const displayed = await clock().then(value => { if (flag) value = 'stable'; return value })",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; const displayed = await clock().then(value => { return value; value = 'stable' })",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; const pending = clock(); let displayed; displayed = await pending",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; let displayed = await clock(); displayed = 'stable'",
+    0,
+  ],
+  [
+    "const source = [1]; const alias = source; const next = alias; const displayed = next.map(() => Date.now())",
+    1,
+  ],
+  [
+    "const source = [1]; const alias = source; alias.map = () => []; const displayed = alias.map(() => Date.now())",
+    0,
+  ],
+  [
+    "function label() { const result = { nested: {} }; result.nested.generatedAt = Date.now(); return result.nested.generatedAt }; const displayed = label()",
+    1,
+  ],
+  [
+    "function label() { const result = {}; result['generatedAt'] = Date.now(); return result.generatedAt }; const displayed = label()",
+    1,
+  ],
+])("respects reviewed value writes and member flow: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
