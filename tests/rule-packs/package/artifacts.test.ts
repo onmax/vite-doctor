@@ -4,7 +4,7 @@ import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { readPackageArtifacts } from "../../../src/rule-packs/package/artifacts.js";
 
-function inventory(manifest: object, files: Record<string, string>) {
+function inventory(manifest: unknown, files: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), "doctor-artifacts-"));
   try {
     for (const [file, text] of Object.entries({
@@ -19,6 +19,27 @@ function inventory(manifest: object, files: Record<string, string>) {
     rmSync(root, { recursive: true, force: true });
   }
 }
+
+test.each([
+  null,
+  [],
+  "package",
+  { main: 42 },
+  { private: "true" },
+  { browser: { "./index.js": 42 } },
+  { bin: { tool: null } },
+  { imports: [] },
+  { typesVersions: { "*": { "*": "types/index.d.ts" } } },
+  { typesVersions: { "*": { "*": [42] } } },
+  { dependencies: { peer: false } },
+  { optionalDependencies: [] },
+  { peerDependencies: { peer: null } },
+  { peerDependenciesMeta: { peer: null } },
+  { peerDependenciesMeta: { peer: { optional: "true" } } },
+  { devDependencies: { tool: 42 } },
+])("rejects malformed package manifests before artifact analysis: %j", (manifest) => {
+  expect(() => inventory(manifest, {})).toThrow("Invalid package manifest:");
+});
 
 test("follows conditional exports, chunks and declarations without scanning source or unrelated output", () => {
   const result = inventory(

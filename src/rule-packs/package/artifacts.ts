@@ -53,6 +53,51 @@ const runs = new WeakMap<ProjectInfo, PackageArtifacts | null>();
 const scriptExtension = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/;
 const declarationExtension = /\.d\.[cm]?ts$/;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function recordOf(value: unknown, valid: (entry: unknown) => boolean): boolean {
+  return isRecord(value) && Object.values(value).every(valid);
+}
+
+function isPackageManifest(value: unknown): value is PackageManifest {
+  if (!isRecord(value)) return false;
+  const fields: Record<string, (entry: unknown) => boolean> = {
+    name: isString,
+    private: (entry) => typeof entry === "boolean",
+    main: isString,
+    module: isString,
+    browser: (entry) =>
+      isString(entry) || recordOf(entry, (target) => isString(target) || target === false),
+    types: isString,
+    typings: isString,
+    imports: isRecord,
+    bin: (entry) => isString(entry) || recordOf(entry, isString),
+    typesVersions: (entry) =>
+      recordOf(entry, (version) =>
+        recordOf(version, (targets) => Array.isArray(targets) && targets.every(isString)),
+      ),
+    dependencies: (entry) => recordOf(entry, isString),
+    optionalDependencies: (entry) => recordOf(entry, isString),
+    peerDependencies: (entry) => recordOf(entry, isString),
+    peerDependenciesMeta: (entry) =>
+      recordOf(
+        entry,
+        (meta) =>
+          isRecord(meta) && (meta.optional === undefined || typeof meta.optional === "boolean"),
+      ),
+    devDependencies: (entry) => recordOf(entry, isString),
+  };
+  return Object.entries(fields).every(
+    ([key, valid]) => value[key] === undefined || valid(value[key]),
+  );
+}
+
 export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null {
   if (runs.has(project)) return runs.get(project)!;
   const inventory = readPackageArtifacts(project.root);
@@ -76,7 +121,9 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   root = realpathSync(root);
   const manifestPath = resolve(root, "package.json");
   if (!existsSync(manifestPath)) return null;
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as PackageManifest;
+  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
+  if (!isPackageManifest(manifest))
+    throw new TypeError(`Invalid package manifest: ${manifestPath}`);
   if (manifest.private) return null;
   const references: PackageReference[] = [];
   const missing = new Set<string>();
