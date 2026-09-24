@@ -4355,6 +4355,32 @@ test.each(["unguarded", "guarded", "scoped-guard", "method-guard", "empty"])(
   },
 );
 
+test("NUXT0037 ignores route middleware from stale layer inventory", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+      "layers/old/app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2000-01-01T00:00:00.000Z",
+        appDir: "layers/old/app",
+        layers: [
+          {
+            root: "layers/old",
+            srcDir: "layers/old/app",
+            appMiddlewareDir: "layers/old/app/middleware",
+            priority: 0,
+          },
+        ],
+      }),
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(0);
+});
+
 test.each([true, false])("provider aliases follow localLayerAliases: %s", async (enabled) => {
   const handler = "layers/admin/server/api/auth/[...all].ts";
   const result = await runRuleFixture({

@@ -23,14 +23,19 @@ export const noRouteMiddlewareApiSecurity = createRule({
         const nuxt = ctx.project.nuxt;
         if (!nuxt) return;
         const middlewareFiles = new Set<string>();
+        const rootAppDir =
+          nuxt.manifest?.hasManifest && !nuxt.manifest.isCurrent
+            ? resolve(ctx.project.root, existsSync(resolve(ctx.project.root, "app")) ? "app" : ".")
+            : nuxt.appDir;
+        const layers = nuxt.manifest?.hasManifest && !nuxt.manifest.isCurrent ? [] : nuxt.layers;
         for (const layer of [
-          { root: ctx.project.root, srcDir: nuxt.appDir, priority: -1 },
-          ...nuxt.layers,
+          { root: ctx.project.root, srcDir: rootAppDir, priority: -1 },
+          ...layers,
         ]) {
           const appDir =
             layer.srcDir ??
             (resolve(ctx.project.root, layer.root) === ctx.project.root
-              ? nuxt.appDir
+              ? rootAppDir
               : resolve(ctx.project.root, layer.root, "app"));
           const directory = resolve(
             ctx.project.root,
