@@ -694,6 +694,18 @@ function undisposedResource(program: AnyNode): string | null {
           alternatives.set(value, created);
           returned.set(node, value);
         }
+        if (module && kinds.has("timeout") && node.arguments[0]) {
+          const callback =
+            node.arguments[0].type === "Identifier"
+              ? identity(node.arguments[0], environment)
+              : node.arguments[0];
+          if (
+            callback?.type === "ArrowFunctionExpression" ||
+            callback?.type === "FunctionExpression" ||
+            callback?.type === "FunctionDeclaration"
+          )
+            inspect(callback, [], environment, false);
+        }
       }
       if (node.type !== "CallExpression") return;
       const calleeValue = identity(node.callee, environment);
@@ -742,15 +754,53 @@ function undisposedResource(program: AnyNode): string | null {
         const target = identity(node.arguments[0], environment);
         for (const argument of node.arguments.slice(1)) {
           const source = identity(argument, environment);
-          for (const [key, descriptor] of effectiveProperties(source, environment)) {
-            let value = descriptor.property.value;
-            if (descriptor.accessor && descriptor.property.kind === "get") {
-              const completion = inspect(value, [], environment, module, descriptor.receiver);
+          const descriptors = effectiveProperties(source, environment);
+          for (const key of new Set([
+            ...descriptors.keys(),
+            ...(properties.get(source)?.keys() ?? []),
+          ])) {
+            const descriptor = descriptors.get(key);
+            let value: AnyNode;
+            if (
+              !properties.get(source)?.has(key) &&
+              descriptor?.accessor &&
+              descriptor.property.kind === "get"
+            ) {
+              const completion = inspect(
+                descriptor.property.value,
+                [],
+                environment,
+                module,
+                descriptor.receiver,
+              );
               if (!completion.normal) return false;
               value = completion.value;
-            } else if (descriptor.property.kind !== "init") continue;
-            if (!properties.has(target)) properties.set(target, new Map());
-            properties.get(target)!.set(key, identity(value, environment));
+            } else if (!properties.get(source)?.has(key) && descriptor?.property.kind !== "init")
+              continue;
+            else
+              value = identity(
+                {
+                  type: "MemberExpression",
+                  object: source,
+                  property: { type: "Literal", value: key },
+                  computed: true,
+                },
+                environment,
+              );
+            if (
+              visit({
+                type: "AssignmentExpression",
+                operator: "=",
+                left: {
+                  type: "MemberExpression",
+                  object: target,
+                  property: { type: "Literal", value: key },
+                  computed: true,
+                },
+                right: value,
+              }) === false
+            )
+              return false;
           }
         }
         returned.set(node, target);
@@ -923,6 +973,24 @@ function undisposedResource(program: AnyNode): string | null {
             ),
           );
         }
+        return true;
+      }
+      if (
+        array?.type === "ArrayExpression" &&
+        !arrayChoices.has(array) &&
+        !replacedMethod &&
+        method === "slice"
+      ) {
+        const indices = node.arguments.map((argument: AnyNode) => identity(argument, environment));
+        if (
+          indices.every(
+            (index: AnyNode) => index?.type === "Literal" && Number.isInteger(index.value),
+          )
+        )
+          returned.set(node, {
+            type: "ArrayExpression",
+            elements: arrayElements(array).slice(indices[0]?.value, indices[1]?.value),
+          });
         return true;
       }
       if (arrayChoices.has(array) && !replacedMethod) {
@@ -1585,7 +1653,11 @@ function undisposedResource(program: AnyNode): string | null {
       if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
         if (!walk(node.test)) return false;
         const test = identity(node.test, environment);
-        if (test?.type === "Literal" || memberPath(node.test) === "import.meta.hot") {
+        if (
+          test?.type === "Literal" ||
+          memberPath(node.test) === "import.meta.hot" ||
+          resources.some((resource) => resource.value === test)
+        ) {
           const selected =
             test?.type === "Literal" && !test.value ? node.alternate : node.consequent;
           const continues = walk(selected);
@@ -1637,9 +1709,16 @@ function undisposedResource(program: AnyNode): string | null {
         if (memberPath(node.left) === "import.meta.hot" && node.operator === "&&")
           return walk(node.right);
         const left = identity(node.left, environment);
-        const known = left?.type === "Literal" || left === "undefined";
+        const known =
+          left?.type === "Literal" ||
+          left === "undefined" ||
+          resources.some((resource) => resource.value === left);
         if (known) {
-          const value = left === "undefined" ? undefined : left.value;
+          const value = resources.some((resource) => resource.value === left)
+            ? true
+            : left === "undefined"
+              ? undefined
+              : left.value;
           const useRight =
             node.operator === "&&"
               ? Boolean(value)

@@ -2803,6 +2803,46 @@ for (const [name, source, leaks] of [
     false,
   ],
   [
+    "Object.assign reads a replaced source member",
+    "const source = { timer: setInterval(refresh) }; source.timer = undefined; const target = {}; Object.assign(target, source); import.meta.hot.dispose(() => clearInterval(target.timer))",
+    true,
+  ],
+  [
+    "Object.assign reads an added source member",
+    "const source = {}; source.timer = setInterval(refresh); const target = {}; Object.assign(target, source); import.meta.hot.dispose(() => clearInterval(target.timer))",
+    false,
+  ],
+  [
+    "Object.assign invokes target setter that discards timer",
+    "const target = { set timer(value) {} }; const timer = setInterval(refresh); Object.assign(target, { timer }); import.meta.hot.dispose(() => clearInterval(target.timer))",
+    true,
+  ],
+  [
+    "Object.assign invokes target setter that cleans timer",
+    "const target = { set timer(value) { clearInterval(value) } }; Object.assign(target, { timer: setInterval(refresh) }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "truthy timer guard cleans timer",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (timer) clearInterval(timer) })",
+    false,
+  ],
+  [
+    "truthy timer logical guard cleans timer",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => timer && clearInterval(timer))",
+    false,
+  ],
+  [
+    "timer callback creates a resource before dispose",
+    "const pending = setTimeout(() => setInterval(refresh), 0); import.meta.hot.dispose(() => clearTimeout(pending))",
+    true,
+  ],
+  [
+    "sliced array retains timer handle",
+    "const timers = [setInterval(refresh)].slice(); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
     "deleting object member invalidates timer handle",
     "const state = { timer: setInterval(refresh) }; delete state.timer; import.meta.hot.dispose(() => clearInterval(state.timer))",
     true,
