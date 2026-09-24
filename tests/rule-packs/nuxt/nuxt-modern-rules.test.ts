@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "pathe";
@@ -2492,8 +2493,7 @@ test.each([
       }),
     },
   });
-  expect(result.diagnostics).toHaveLength(1);
-  expect(result.diagnostics[0]?.related?.map((item) => item.file)).toEqual(
+  expect(result.diagnostics.map((item) => item.file)).toEqual(
     expect.arrayContaining([
       expect.stringContaining(`server/api/${endpoint}`),
       expect.stringContaining("server/handlers/entry.ts"),
@@ -4093,7 +4093,9 @@ test.each([
           "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
       },
     });
-    expect(result.diagnostics).toHaveLength(1);
+    expect(
+      result.diagnostics.some((item) => item.file.endsWith("server/api/auth/[...all].ts")),
+    ).toBe(true);
   },
 );
 
@@ -4412,3 +4414,84 @@ test("Nuxt captures cached wildcard overlaps and nested cache exclusions", async
     );
   });
 });
+
+test("cached wildcard overlap respects route segment boundaries", async () => {
+  await withFixture({}, {}, async (root) => {
+    const hooks = new Map<string, (payload?: any) => unknown>();
+    const nuxt = {
+      _version: "4.5.1",
+      options: { rootDir: root, srcDir: "app", buildDir: ".nuxt", modules: [] },
+      hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
+      async callHook() {},
+    };
+    await nuxtDoctorModule({}, nuxt as any);
+    await hooks.get("nitro:init")!({
+      options: {
+        handlers: [{ handler: join(root, "custom/entry.ts"), route: "/api/ad/**" }],
+        routeRules: { "/api/admin": { cache: { maxAge: 60 } } },
+      },
+      scannedHandlers: [],
+      hooks: { hook() {} },
+    });
+    const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+    expect(manifest.resolvedServerHandlers.map((handler: any) => handler.route)).toEqual([
+      "/api/ad/**",
+    ]);
+  });
+});
+
+test.each(["changed", "since"])(
+  "NUXT0037 reports changed handlers with unchanged middleware: %s",
+  async (mode) => {
+    await withFixture(
+      {
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        "server/api/account.get.ts": "export default defineEventHandler(() => ({ public: true }))",
+      },
+      {},
+      async (root) => {
+        const git = (...args: string[]) => execFileSync("git", args, { cwd: root });
+        git("init");
+        git("add", ".");
+        git(
+          "-c",
+          "user.name=Doctor",
+          "-c",
+          "user.email=doctor@example.com",
+          "commit",
+          "-m",
+          "fixture",
+        );
+        writeFileSync(
+          join(root, "server/api/account.get.ts"),
+          "export default defineEventHandler(() => ({ private: true }))",
+        );
+        const result = await runDoctor({
+          root,
+          framework: "nuxt",
+          ...(mode === "changed" ? { changed: true } : { since: "HEAD" }),
+          extensions: [
+            defineDoctorExtension({
+              name: "nuxt-auth-scope",
+              rulePacks: [
+                defineRulePack({
+                  name: "nuxt-auth-scope",
+                  version: "1",
+                  rules: [noRouteMiddlewareApiSecurity],
+                  presets: { recommended: [noRouteMiddlewareApiSecurity.meta.id] },
+                }),
+              ],
+            }),
+          ],
+        });
+        expect(
+          result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037"),
+        ).toHaveLength(1);
+        expect(result.diagnostics.find((diagnostic) => diagnostic.code === "NUXT0037")?.file).toBe(
+          join(root, "server/api/account.get.ts"),
+        );
+      },
+    );
+  },
+);

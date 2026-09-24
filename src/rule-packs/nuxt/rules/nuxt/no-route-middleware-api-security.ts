@@ -1,9 +1,8 @@
 import type { RuleContext } from "../../../../core/primitives.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, extname, relative, resolve } from "pathe";
 import { parseSync } from "oxc-parser";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
-import { createNuxtRuntimeEvidence } from "./evidence.js";
 import { diagnostics } from "../../diagnostics.js";
 
 export const noRouteMiddlewareApiSecurity = createRule({
@@ -15,52 +14,69 @@ export const noRouteMiddlewareApiSecurity = createRule({
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/directory-structure/app/middleware#when-middleware-runs",
+    execution: "manifest",
     requires: { nuxt: true, crossFile: true },
   },
   create(ctx) {
-    const evidence = createNuxtRuntimeEvidence(ctx);
-    if (evidence.isContentDocsFile()) return;
-    const relativePath = toPosixPath(ctx.file.relativePath);
-    if (/(?:^|\/)server\/middleware\//.test(relativePath)) return;
-    if (
-      ctx.project.nuxt?.manifest?.isCurrent &&
-      ctx.project.nuxt.layers.some((layer) =>
-        toPosixPath(ctx.file.path).startsWith(
-          `${resolve(ctx.project.root, layer.serverDir ?? resolve(ctx.project.root, layer.root, "server"))}/`,
-        ),
-      )
-    )
-      return;
-    const isMiddlewareFile =
-      relativePath.startsWith("middleware/") ||
-      relativePath.startsWith("app/middleware/") ||
-      relativePath.includes("/middleware/");
-    if (!isMiddlewareFile || !isAuthLikeMiddleware(relativePath, ctx.file.text)) return;
-    const unguarded = unguardedSensitiveHandlers(ctx);
-    if (!unguarded.length) return;
-
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
-        ctx.report(
-          diagnostics.NUXT0037({
-            why: `Route middleware only protects app navigation. These auth-sensitive server handlers have no visible server guard: ${unguarded.map((file) => toPosixPath(file).replace(`${toPosixPath(ctx.project.root)}/`, "")).join(", ")}.`,
-            fix: "Add server-side auth checks to the listed handlers or protect them with server middleware.",
-          }),
-          {
-            ruleId: "nuxt/middleware/no-route-middleware-api-security",
-            severity: "warn",
-            category: "middleware",
-            file: ctx.file.path,
-            related: unguarded.map((file) => ({ file, message: "No visible server auth guard" })),
-            confidence: "heuristic-medium",
-            evidence: unguarded.map((file) => ({
-              kind: "facts",
-              summary: "Auth-sensitive handler lacks a recognized local auth guard.",
+      onProjectEnd() {
+        const nuxt = ctx.project.nuxt;
+        if (!nuxt) return;
+        const middlewareFiles = new Set<string>();
+        for (const layer of [
+          { root: ctx.project.root, srcDir: nuxt.appDir, priority: -1 },
+          ...nuxt.layers,
+        ]) {
+          const appDir =
+            layer.srcDir ??
+            (resolve(ctx.project.root, layer.root) === ctx.project.root
+              ? nuxt.appDir
+              : resolve(ctx.project.root, layer.root, "app"));
+          const directory = resolve(
+            ctx.project.root,
+            layer.appMiddlewareDir ?? resolve(ctx.project.root, appDir, "middleware"),
+          );
+          if (!existsSync(directory)) continue;
+          for (const entry of readdirSync(directory, { recursive: true })) {
+            const file = resolve(directory, String(entry));
+            if (/\.[cm]?[jt]s$/.test(file) && statSync(file).isFile()) middlewareFiles.add(file);
+          }
+        }
+        if (
+          ![...middlewareFiles].some((file) =>
+            isAuthLikeMiddleware(
+              toPosixPath(relative(ctx.project.root, file)),
+              readFileSync(file, "utf8"),
+            ),
+          )
+        )
+          return;
+        const unguarded = unguardedSensitiveHandlers(ctx);
+        for (const file of unguarded) {
+          const text = readFileSync(file, "utf8");
+          ctx.report(
+            diagnostics.NUXT0037({
+              why: `Route middleware only protects app navigation. This auth-sensitive server handler has no visible server guard: ${toPosixPath(relative(ctx.project.root, file))}.`,
+              fix: "Add server-side auth checks to the handler or protect it with server middleware.",
+            }),
+            {
+              ruleId: "nuxt/middleware/no-route-middleware-api-security",
+              severity: "warn",
+              category: "middleware",
               file,
-            })),
-          },
-        );
+              range: ctx.helpers.rangeFromOffsets(file, text, 0, Math.max(1, text.length)),
+              related: [{ file, message: "No visible server auth guard" }],
+              confidence: "heuristic-medium",
+              evidence: [
+                {
+                  kind: "facts",
+                  summary: "Auth-sensitive handler lacks a recognized local auth guard.",
+                  file,
+                },
+              ],
+            },
+          );
+        }
       },
     };
   },

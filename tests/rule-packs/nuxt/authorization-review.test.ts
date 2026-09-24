@@ -232,7 +232,7 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
       "server/handlers/account.ts": "export default defineEventHandler(() => ({}))",
       "server/handlers/auth.ts": "export default defineEventHandler(() => ({}))",
       ".nuxt/doctor.manifest.json": JSON.stringify({
-        generatedAt: new Date().toISOString(),
+        generatedAt: "2100-01-01T00:00:00.000Z",
         appDir: "app",
         layers: [{ root: "layers/admin", srcDir: "layers/admin/app", priority: 0 }],
         resolvedServerHandlers: [

@@ -83,7 +83,9 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
           !rule.cache &&
           !rules.some(
             ([route, parent]) =>
-              parent.cache && wildcard.test(route) && path.startsWith(route.replace(wildcard, "")),
+              parent.cache &&
+              wildcard.test(route) &&
+              path.startsWith(`${route.replace(wildcard, "")}/`),
           )
         )
           continue;
@@ -92,7 +94,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
           if (handler.route === path) break;
           if (
             !wildcard.test(handler.route) ||
-            !path.startsWith(handler.route.replace(wildcard, ""))
+            !path.startsWith(`${handler.route.replace(wildcard, "")}/`)
           )
             continue;
           evidence.resolvedServerHandlers!.splice(index, 0, { ...handler, route: path });
