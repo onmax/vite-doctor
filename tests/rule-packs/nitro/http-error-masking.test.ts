@@ -1399,3 +1399,99 @@ test.each([false, true])("respects enclosing for initializer %s", async (enter) 
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(enter);
 });
+
+test.each([
+  ["throwing case test", "switch (value) { case missing(): break }", "throw new Error()", true],
+  [
+    "matched case skips later tests",
+    'switch ("ok") { case "ok": break; case missing(): break }',
+    "throw new Error()",
+    false,
+  ],
+  [
+    "default waits for case tests",
+    "switch (value) { default: break; case missing(): break }",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "conditional replacement",
+    "throw createError({ statusCode: 404 })",
+    "throw isError(error) ? new Error() : error",
+    true,
+  ],
+  [
+    "conditional preservation",
+    "throw createError({ statusCode: 404 })",
+    "throw isError(error) ? error : new Error()",
+    false,
+  ],
+  [
+    "assignment preservation",
+    "throw createError({ statusCode: 404 })",
+    "let preserve; if (preserve = true) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "assignment replacement",
+    "throw createError({ statusCode: 404 })",
+    "let preserve; if (preserve = false) throw error; throw new Error()",
+    true,
+  ],
+  ["asserted local callee", "(missing as () => void)()", "throw new Error()", true],
+  [
+    "asserted preservation guard",
+    "throw createError({ statusCode: 404 })",
+    "if (isError(error) as boolean) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "asserted switch literal",
+    'switch ("ok" as string) { case "bad": throw createError({ statusCode: 404 }); case "ok": break }',
+    "throw new Error()",
+    false,
+  ],
+  [
+    "asserted switch case",
+    'switch ("ok") { case "bad" as string: throw createError({ statusCode: 404 }); case "ok": break }',
+    "throw new Error()",
+    false,
+  ],
+  [
+    "satisfies guard",
+    "throw createError({ statusCode: 404 })",
+    "if (isError(error) satisfies boolean) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "asserted guard callee",
+    "throw createError({ statusCode: 404 })",
+    "if ((isError as Function)(error)) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "asserted guard argument",
+    "throw createError({ statusCode: 404 })",
+    "if (isError(error as Error)) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "asserted error factory",
+    "throw (createError as Function)({ statusCode: 404 })",
+    "throw new (Error as ErrorConstructor)()",
+    true,
+  ],
+  ["asserted rethrow", "throw createError({ statusCode: 404 })", "throw error as Error", false],
+])("handles %s", async (_name, body, handler, expected) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => {
+        function missing() { throw createError({ statusCode: 404 }) }
+        try { ${body} } catch (error) { ${handler} }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+});

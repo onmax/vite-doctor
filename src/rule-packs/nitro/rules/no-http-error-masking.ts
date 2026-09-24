@@ -180,13 +180,27 @@ function outcomes(
     });
   }
   if (node.type === "ThrowStatement") {
-    return outcomes(node.argument, normal, bindings, conditions).map((current) => {
+    const argument = unwrapExpression(node.argument);
+    if (argument?.type === "ConditionalExpression")
+      return conditionPaths(argument.test, normal, bindings, conditions).flatMap(
+        ({ path, value }) =>
+          path.outcome === "normal"
+            ? outcomes(
+                {
+                  type: "ThrowStatement",
+                  argument: value ? argument.consequent : argument.alternate,
+                },
+                path,
+                bindings,
+                conditions,
+              )
+            : [path],
+      );
+    return outcomes(argument, normal, bindings, conditions).map((current) => {
       if (current.outcome !== "normal") return current;
       const outcome =
-        httpStatus(node.argument, current.resolveBinding) ??
-        (node.argument?.type === "Identifier"
-          ? current.bindings?.get(node.argument.name)
-          : undefined) ??
+        httpStatus(argument, current.resolveBinding) ??
+        (argument?.type === "Identifier" ? current.bindings?.get(argument.name) : undefined) ??
         "throw";
       return { ...current, outcome };
     });
@@ -223,29 +237,38 @@ function outcomes(
   if (node.type === "SwitchStatement") {
     const cases: AnyNode[] = node.cases;
     const fallback = cases.findIndex((item) => !item.test);
-    const seen = new Set<unknown>();
-    let entries = cases.flatMap((item, index) => {
-      if (item.test?.type !== "Literal") return [index];
-      if (seen.has(item.test.value)) return [];
-      seen.add(item.test.value);
-      return [index];
-    });
-    if (
-      node.discriminant.type === "Literal" &&
-      cases.every((item) => !item.test || item.test.type === "Literal")
-    ) {
-      const match = cases.findIndex(
-        (item) => item.test && item.test.value === node.discriminant.value,
-      );
-      entries = [match === -1 ? fallback : match];
-    } else if (fallback === -1) entries.push(-1);
-    return outcomes(node.discriminant, normal, bindings, conditions).flatMap((evaluated) => {
+    const discriminant = unwrapExpression(node.discriminant);
+    return outcomes(discriminant, normal, bindings, conditions).flatMap((evaluated) => {
       if (evaluated.outcome !== "normal") return [evaluated];
-      return entries.flatMap((entry) => {
-        if (entry === -1) return [evaluated];
+      let unmatched = [evaluated];
+      const entries: { path: Path; entry: number }[] = [];
+      const seen = new Set<unknown>();
+      for (const [index, item] of cases.entries()) {
+        if (!item.test) continue;
+        const test = unwrapExpression(item.test);
+        const remaining: Path[] = [];
+        for (const path of unmatched) {
+          for (const current of outcomes(test, path, bindings, conditions)) {
+            if (current.outcome !== "normal") {
+              entries.push({ path: current, entry: -1 });
+              continue;
+            }
+            const known = discriminant.type === "Literal" && test.type === "Literal";
+            const duplicate = test.type === "Literal" && seen.has(test.value);
+            if (!duplicate && (!known || discriminant.value === test.value))
+              entries.push({ path: current, entry: index });
+            if (!known || discriminant.value !== test.value) remaining.push(current);
+          }
+        }
+        if (test.type === "Literal") seen.add(test.value);
+        unmatched = remaining;
+      }
+      entries.push(...unmatched.map((path) => ({ path, entry: fallback })));
+      return entries.flatMap(({ path, entry }) => {
+        if (entry === -1) return [path];
         return outcomes(
           { type: "BlockStatement", body: cases.slice(entry).flatMap((item) => item.consequent) },
-          evaluated,
+          path,
           bindings,
           conditions,
         ).map((current) =>
@@ -351,7 +374,7 @@ function outcomes(
     });
   }
   if (isLoop(node)) return loopOutcomes(node, normal, bindings, conditions);
-  if (node.type === "IfStatement") {
+  if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
     return conditionPaths(node.test, normal, bindings, conditions).flatMap(({ path, value }) =>
       path.outcome === "normal"
         ? outcomes(value ? node.consequent : node.alternate, path, bindings, conditions)
@@ -433,8 +456,7 @@ function outcomes(
         : [current],
     );
   }
-  let callee = call.callee;
-  while (callee?.type === "ParenthesizedExpression") callee = callee.expression;
+  let callee = unwrapExpression(call.callee);
   if (callee?.type === "Identifier") callee = path.functions?.get(callee.name);
   if (
     call.type === "CallExpression" &&
@@ -752,8 +774,7 @@ function conditionPaths(
   conditions: Set<string>,
 ): { path: Path; value: boolean }[] {
   if (--path.budget.remaining < 0) throw analysisLimit;
-  if (node.type === "ParenthesizedExpression")
-    return conditionPaths(node.expression, path, bindings, conditions);
+  node = unwrapExpression(node);
   if (node.type === "UnaryExpression" && node.operator === "!")
     return conditionPaths(node.argument, path, bindings, conditions).map((result) => ({
       path: result.path,
@@ -767,30 +788,35 @@ function conditionPaths(
     );
   return outcomes(node, path, bindings, conditions).flatMap((current) => {
     if (current.outcome !== "normal") return [{ path: current, value: false }];
+    let valueNode = node;
+    while (valueNode.type === "AssignmentExpression" && valueNode.operator === "=")
+      valueNode = unwrapExpression(valueNode.right);
     const values = current.bindings ?? bindings;
+    const guard = unwrapExpression(valueNode.callee);
+    const guarded = unwrapExpression(valueNode.arguments?.[0]);
     const caught =
-      node.type === "CallExpression" &&
-      node.callee?.name === "isError" &&
-      !current.resolveBinding(node.callee) &&
-      node.arguments.length === 1 &&
-      node.arguments[0].type === "Identifier"
-        ? values.get(node.arguments[0].name)
+      valueNode.type === "CallExpression" &&
+      guard?.name === "isError" &&
+      !current.resolveBinding(guard) &&
+      valueNode.arguments.length === 1 &&
+      guarded?.type === "Identifier"
+        ? values.get(guarded.name)
         : undefined;
     const known =
       typeof caught === "number"
         ? true
-        : node.type === "Literal"
-          ? Boolean(node.value)
-          : node.type === "Identifier"
-            ? values.has(node.name)
+        : valueNode.type === "Literal"
+          ? Boolean(valueNode.value)
+          : valueNode.type === "Identifier"
+            ? values.has(valueNode.name)
               ? true
-              : current.conditions.get(node.name)
+              : current.conditions.get(valueNode.name)
             : undefined;
     if (known !== undefined) return [{ path: current, value: known }];
     return [true, false].map((value) => ({
       path:
-        node.type === "Identifier" && conditions.has(node.name)
-          ? { ...current, conditions: new Map(current.conditions).set(node.name, value) }
+        valueNode.type === "Identifier" && conditions.has(valueNode.name)
+          ? { ...current, conditions: new Map(current.conditions).set(valueNode.name, value) }
           : current,
       value,
     }));
@@ -815,7 +841,8 @@ function httpStatus(
   resolve: Path["resolveBinding"],
 ): number | "server-error" | undefined {
   node = unwrapExpression(node);
-  if (node?.callee?.type === "Identifier" && resolve(node.callee)) return;
+  const callee = unwrapExpression(node?.callee);
+  if (callee?.type === "Identifier" && resolve(callee)) return;
   if (
     ["NewExpression", "CallExpression"].includes(node?.type) &&
     [
@@ -827,10 +854,10 @@ function httpStatus(
       "URIError",
       "EvalError",
       "AggregateError",
-    ].includes(node.callee?.name)
+    ].includes(callee?.name)
   )
     return "server-error";
-  if (node?.type !== "CallExpression" || node.callee?.name !== "createError") return;
+  if (node?.type !== "CallExpression" || callee?.name !== "createError") return;
   const options = unwrapExpression(node.arguments?.[0]);
   if (!options || (options.type === "Literal" && typeof options.value === "string")) return 500;
   if (options.type !== "ObjectExpression") return;
