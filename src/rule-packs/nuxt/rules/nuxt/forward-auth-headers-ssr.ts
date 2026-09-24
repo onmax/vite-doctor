@@ -268,6 +268,11 @@ function localInitializer(identifier: AnyNode, call: AnyNode, scopes?: AnyNode[]
       return;
     if (scope.type === "CatchClause" && bindsName(scope.param, identifier.name)) return;
     if (scope.params?.some((param: AnyNode) => bindsName(param, identifier.name))) return;
+    if (
+      (scope.type === "FunctionExpression" || scope.type === "ClassExpression") &&
+      scope.id?.name === identifier.name
+    )
+      return;
     scope = scopes ? scopes[++scopeIndex] : (scope.__doctorParent ?? scope.parent);
   }
 }

@@ -112,6 +112,8 @@ const user = await $fetch('/api/user', { headers })
 });
 
 test.each([
+  "const headers = useRequestHeaders(['cookie']); const load = function headers() { return $fetch('/api/user', { headers }) }",
+  "const headers = useRequestHeaders(['cookie']); const load = class headers { load() { return $fetch('/api/user', { headers }) } }",
   "await $fetch('/api/user', { headers }); var headers = useRequestHeaders(['cookie'])",
   "await $fetch('/api/user', { headers }); const headers = useRequestHeaders(['cookie'])",
   "const headers = useRequestHeaders(['cookie']); try {} catch (headers) { await $fetch('/api/user', { headers }) }",
@@ -294,6 +296,8 @@ test.each([
   "for (const options of items) { consume(options) }",
   "switch (value) { case 1: const options = {}; consume(options) }",
   "function other() { consume(options); var options }",
+  "const other = function options() { consume(options) }",
+  "const Other = class options { method() { consume(options) } }",
 ])("shadowed references preserve outer credentials: %s", async (statement) => {
   const result = await runNuxtAppRuleFixture(
     forwardAuthHeadersSsr,
