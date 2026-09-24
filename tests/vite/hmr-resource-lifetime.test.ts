@@ -791,3 +791,104 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  ["unassigned interval", "setInterval(refresh); import.meta.hot.dispose(() => {})", true],
+  [
+    "member timer handle",
+    "state.timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(state.timer))",
+    false,
+  ],
+  ["unassigned socket", "new WebSocket(url); import.meta.hot.dispose(() => {})", true],
+  [
+    "invoked setup helper",
+    "let timer; function start() { timer = setInterval(refresh) }; start(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "cleaned setup helper",
+    "let timer; function start() { timer = setInterval(refresh) }; start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "conditional cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (shouldStop) clearInterval(timer) })",
+    true,
+  ],
+  [
+    "unreachable cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { return; clearInterval(timer) })",
+    true,
+  ],
+  [
+    "conditional early return",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (skip) return; clearInterval(timer) })",
+    true,
+  ],
+  [
+    "both cleanup branches",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (choice) clearInterval(timer); else clearInterval(timer) })",
+    false,
+  ],
+  [
+    "cleanup before early return",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (choice) { clearInterval(timer); return }; clearInterval(timer) })",
+    false,
+  ],
+  [
+    "short circuit cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => shouldStop && clearInterval(timer))",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
+
+for (const [name, source, leaks] of [
+  [
+    "getter listener target",
+    `let calls = 0; const targets = { get current() { return calls++ ? document : window } }; targets.current.addEventListener('resize', refresh); import.meta.hot.dispose(() => targets.current.removeEventListener('resize', refresh))`,
+    true,
+  ],
+  [
+    "stable object listener target",
+    `const targets = { current: window }; targets.current.addEventListener('resize', refresh); import.meta.hot.dispose(() => targets.current.removeEventListener('resize', refresh))`,
+    false,
+  ],
+  [
+    "replaced socket cleanup",
+    `const socket = new WebSocket(url); socket.close = saveState; import.meta.hot.dispose(() => socket['close']())`,
+    true,
+  ],
+  [
+    "replaced subscription cleanup",
+    `const sub = events.subscribe(refresh); sub.unsubscribe = saveState; import.meta.hot.dispose(() => sub.unsubscribe())`,
+    true,
+  ],
+  [
+    "replaced listener cleanup",
+    `window.addEventListener('resize', refresh); window.removeEventListener = saveState; import.meta.hot.dispose(() => window.removeEventListener('resize', refresh))`,
+    true,
+  ],
+  [
+    "replaced abort cleanup",
+    `const controller = new AbortController(); window.addEventListener('resize', refresh, { signal: controller.signal }); controller.abort = saveState; import.meta.hot.dispose(() => controller.abort())`,
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}

@@ -154,7 +154,10 @@ function undisposedResource(program: AnyNode): string | null {
           const property = object.properties.find(
             (item: AnyNode) => !item.computed && (item.key?.name ?? item.key?.value) === key,
           );
-          if (property) return identity(property.value, environment);
+          if (property)
+            return property.kind === "get" || property.kind === "set"
+              ? node
+              : identity(property.value, environment);
         }
         if (!members.has(object)) members.set(object, new Map());
         const paths = members.get(object)!;
@@ -185,7 +188,12 @@ function undisposedResource(program: AnyNode): string | null {
     }
     return typeof node.value === "boolean" ? node.value : node;
   };
-  function inspect(target: AnyNode, args: AnyNode[] = [], environment = values): void {
+  function inspect(
+    target: AnyNode,
+    args: AnyNode[] = [],
+    environment = values,
+    module = false,
+  ): void {
     target = unwrapResourceExpression(target);
     if (target?.type === "Identifier") {
       const value = identity(target, environment);
@@ -209,10 +217,10 @@ function undisposedResource(program: AnyNode): string | null {
           evaluate(
             { type: "CallExpression", callee: bound, arguments: boundArgs },
             environment,
-            false,
+            module,
           );
       } else {
-        inspect(bound, boundArgs, environment);
+        inspect(bound, boundArgs, environment, module);
       }
       visited.delete(target);
       return;
@@ -238,14 +246,17 @@ function undisposedResource(program: AnyNode): string | null {
         local.set(param.left, useDefault ? identity(param.right, local) : argument);
       }
     }
-    evaluate(target.body, local, false);
+    evaluate(target.body, local, module);
+    for (const binding of environment.keys()) {
+      if (local.has(binding)) environment.set(binding, local.get(binding));
+    }
     visited.delete(target);
   }
   function evaluate(root: AnyNode, environment: Map<AnyNode, AnyNode>, module: boolean): void {
     walkEvaluation(root, (node) => {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     });
-    walkEvaluation(root, (node) => {
+    const visit = (node: AnyNode) => {
       if (node.type === "AssignmentExpression" && node.left.type === "MemberExpression") {
         const key = propertyKey(node.left);
         if (key !== undefined) {
@@ -272,40 +283,44 @@ function undisposedResource(program: AnyNode): string | null {
           environment.set(binding, value);
           if (["ArrowFunctionExpression", "FunctionExpression"].includes(init.type))
             callbacks.set(value, init);
-          const path = memberPath(init.callee);
-          const global = init.callee?.object ?? init.callee;
-          const callee =
-            !resolve(global) &&
-            !(init.callee?.computed && typeof init.callee.property?.value !== "string")
-              ? path?.replace(/^(?:window|globalThis|self)\./, "")
-              : undefined;
-          const kind =
-            init.type === "CallExpression" && callee === "setInterval" && !resolve(init.callee)
-              ? "interval"
-              : init.type === "CallExpression" && callee === "setTimeout" && !resolve(init.callee)
-                ? "timeout"
-                : init.type === "NewExpression" &&
-                    ["WebSocket", "EventSource"].includes(callee ?? "") &&
-                    !resolve(init.callee)
-                  ? callee!
-                  : init.type === "CallExpression" && path?.endsWith(".subscribe")
-                    ? "subscription"
-                    : null;
-          if (module && kind)
-            resources.push({
-              value,
-              kind,
-              cleanup:
-                kind === "interval"
-                  ? "clearInterval"
-                  : kind === "timeout"
-                    ? "clearTimeout"
-                    : kind === "subscription"
-                      ? "unsubscribe"
-                      : "close",
-              method: !["interval", "timeout"].includes(kind),
-            });
+        } else if (node.type === "VariableDeclarator" && !environment.has(binding)) {
+          environment.set(binding, undefined);
         }
+      }
+      {
+        const path = memberPath(node.callee);
+        const global = node.callee?.object ?? node.callee;
+        const callee =
+          !resolve(global) &&
+          !(node.callee?.computed && typeof node.callee.property?.value !== "string")
+            ? path?.replace(/^(?:window|globalThis|self)\./, "")
+            : undefined;
+        const kind =
+          node.type === "CallExpression" && callee === "setInterval" && !resolve(node.callee)
+            ? "interval"
+            : node.type === "CallExpression" && callee === "setTimeout" && !resolve(node.callee)
+              ? "timeout"
+              : node.type === "NewExpression" &&
+                  ["WebSocket", "EventSource"].includes(callee ?? "") &&
+                  !resolve(node.callee)
+                ? callee!
+                : node.type === "CallExpression" && path?.endsWith(".subscribe")
+                  ? "subscription"
+                  : null;
+        if (module && kind)
+          resources.push({
+            value: node,
+            kind,
+            cleanup:
+              kind === "interval"
+                ? "clearInterval"
+                : kind === "timeout"
+                  ? "clearTimeout"
+                  : kind === "subscription"
+                    ? "unsubscribe"
+                    : "close",
+            method: !["interval", "timeout"].includes(kind),
+          });
       }
       if (node.type !== "CallExpression") return;
       const callee = memberPath(node.callee);
@@ -320,6 +335,9 @@ function undisposedResource(program: AnyNode): string | null {
       }
       const method =
         node.callee.type === "Identifier" ? node.callee.name : propertyKey(node.callee);
+      const replacedMethod =
+        node.callee.type === "MemberExpression" &&
+        properties.get(identity(node.callee.object, environment))?.has(method!);
       if (
         (method === "addEventListener" || method === "removeEventListener") &&
         !(node.callee.type === "Identifier" && resolve(node.callee))
@@ -355,7 +373,7 @@ function undisposedResource(program: AnyNode): string | null {
             method: true,
           });
         }
-        if (method === "removeEventListener") {
+        if (method === "removeEventListener" && !replacedMethod) {
           for (const listener of listeners) {
             if (
               receiver === listener.receiver &&
@@ -368,7 +386,7 @@ function undisposedResource(program: AnyNode): string | null {
           }
         }
       }
-      if (method === "abort") {
+      if (method === "abort" && !replacedMethod) {
         const controller = identity(node.callee.object, environment);
         for (const listener of listeners) {
           if (listener.controller && listener.controller === controller)
@@ -389,13 +407,104 @@ function undisposedResource(program: AnyNode): string | null {
         const global = resource.method ? null : (node.callee.object ?? node.callee);
         if (
           matches &&
+          !replacedMethod &&
           identity(receiver, environment) === resource.value &&
           (!global || !resolve(global))
         )
           cleaned.add(resource.value);
       }
-      if (!module) inspect(node.callee, node.arguments, environment);
+      inspect(node.callee, node.arguments, environment, module);
+    };
+    if (module) {
+      walkEvaluation(root, visit);
+      return;
+    }
+    const exits: Set<AnyNode>[] = [];
+    const snapshot = () => ({
+      cleaned: new Set(cleaned),
+      values: new Map(environment),
+      properties: new Map([...properties].map(([key, entries]) => [key, new Map(entries)])),
     });
+    const restore = (state: ReturnType<typeof snapshot>) => {
+      cleaned.clear();
+      for (const value of state.cleaned) cleaned.add(value);
+      environment.clear();
+      for (const [key, value] of state.values) environment.set(key, value);
+      properties.clear();
+      for (const [key, entries] of state.properties) properties.set(key, new Map(entries));
+    };
+    const merge = (left: ReturnType<typeof snapshot>, right: ReturnType<typeof snapshot>) => {
+      restore(left);
+      for (const value of cleaned) if (!right.cleaned.has(value)) cleaned.delete(value);
+      for (const key of new Set([...left.values.keys(), ...right.values.keys()])) {
+        if (left.values.get(key) !== right.values.get(key)) environment.set(key, {});
+      }
+      for (const object of new Set([...left.properties.keys(), ...right.properties.keys()])) {
+        const a = left.properties.get(object) ?? new Map();
+        const b = right.properties.get(object) ?? new Map();
+        if (!properties.has(object)) properties.set(object, new Map());
+        for (const key of new Set([...a.keys(), ...b.keys()])) {
+          if (a.get(key) !== b.get(key)) properties.get(object)!.set(key, {});
+        }
+      }
+    };
+    const branch = (left: AnyNode, right: AnyNode): boolean => {
+      const before = snapshot();
+      const leftContinues = walk(left);
+      const afterLeft = snapshot();
+      restore(before);
+      const rightContinues = walk(right);
+      const afterRight = snapshot();
+      if (leftContinues && rightContinues) merge(afterLeft, afterRight);
+      else if (leftContinues) restore(afterLeft);
+      return leftContinues || rightContinues;
+    };
+    const walk = (node: AnyNode): boolean => {
+      if (!node || typeof node !== "object") return true;
+      if (Array.isArray(node)) return node.every(walk);
+      if (typeof node.type !== "string") return true;
+      if (
+        ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
+      ) {
+        visit(node);
+        return true;
+      }
+      if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
+        if (!walk(node.test)) return false;
+        const test = identity(node.test, environment);
+        if (typeof test?.value === "boolean")
+          return walk(test.value ? node.consequent : node.alternate);
+        return branch(node.consequent, node.alternate);
+      }
+      if (node.type === "LogicalExpression") {
+        if (!walk(node.left)) return false;
+        return branch(node.right, null);
+      }
+      if (
+        [
+          "ForStatement",
+          "ForInStatement",
+          "ForOfStatement",
+          "WhileStatement",
+          "SwitchStatement",
+          "TryStatement",
+        ].includes(node.type)
+      )
+        return true;
+      visit(node);
+      for (const [key, child] of Object.entries(node)) {
+        if (key !== "__doctorParent" && !walk(child)) return false;
+      }
+      if (node.type === "ReturnStatement" || node.type === "ThrowStatement") {
+        exits.push(new Set(cleaned));
+        return false;
+      }
+      return true;
+    };
+    if (walk(root)) exits.push(new Set(cleaned));
+    for (const value of cleaned) {
+      if (exits.some((exit) => !exit.has(value))) cleaned.delete(value);
+    }
   }
   evaluate(program, values, true);
   inspect(callback);
