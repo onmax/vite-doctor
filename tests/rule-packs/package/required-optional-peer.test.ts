@@ -7,6 +7,16 @@ const optionalPeer = {
 };
 
 test.each([
+  'do { require("peer"); } while (false);',
+  'export {}; await (import("peer"));',
+  'export {}; await (((import("peer"))));',
+  '(() => require("peer"))();',
+  '(function () { require("peer"); })();',
+  '((() => require("peer")))();',
+  '(() => (() => require("peer"))())();',
+  'try {} finally { require("peer"); }',
+  'try {} catch {} finally { require("peer"); }',
+  'try { require("peer"); } finally {}',
   'while (require("peer")) {}',
   'for (require("peer");;) {}',
   'for (;require("peer");) {}',
@@ -43,6 +53,22 @@ test.each([
 });
 
 test.each([
+  'const load = () => require("peer");',
+  '((peer = require("peer")) => peer)({});',
+  'consume(() => require("peer"));',
+  '(function* () { require("peer"); })();',
+  '(async () => { await ready; require("peer"); })();',
+  'if (enabled) (() => require("peer"))();',
+  'try { (() => require("peer"))(); } catch {}',
+  '(() => { try { require("peer"); } catch {} })();',
+  '(() => () => require("peer"))();',
+  '(() => require("peer"))?.();',
+  'try {} catch { require("peer"); }',
+  'try { try {} finally { require("peer"); } } catch {}',
+  'function load() { try {} finally { require("peer"); } }',
+  'do { if (enabled) require("peer"); } while (false);',
+  'do { break; } while (require("peer"));',
+  '(import("peer")).catch(() => {});',
   'while (enabled) { require("peer"); }',
   'for (;enabled;require("peer")) {}',
   'for (const item of items) { require("peer"); }',
@@ -175,4 +201,28 @@ test("analyzes every array-form binary", async () => {
     { "first.js": 'import "first-peer";', "second.js": 'import "second-peer";' },
   );
   expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["PKG0001", "PKG0001"]);
+});
+
+test.each([
+  { main: "./index.js" },
+  { module: "./index.js" },
+  { exports: { ".": "./index.js" } },
+  {},
+])("checks browser replacements of default entrypoints: %j", async (entrypoint) => {
+  const diagnostics = await diagnose(
+    {
+      ...entrypoint,
+      browser: { "./index.js": "./browser.js", "./integration.js": "./adapter.js" },
+      ...optionalPeer,
+    },
+    {
+      "index.js": "export {};",
+      "browser.js": 'import "peer";',
+      "integration.js": "export {};",
+      "adapter.js": 'import "peer";',
+    },
+  );
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]?.code).toBe("PKG0003");
+  expect(diagnostics[0]?.file).toContain("browser.js");
 });

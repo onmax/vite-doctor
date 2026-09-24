@@ -258,9 +258,14 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     if (entry) enqueue(entry, "runtime", true, root, false, true);
   if (typeof manifest.browser === "string")
     enqueue(manifest.browser, "runtime", true, root, false, true);
-  else if (manifest.browser)
-    for (const entry of Object.values(manifest.browser))
-      if (entry && entry.startsWith(".")) enqueue(entry, "runtime", false, root, false, true);
+  else if (manifest.browser) {
+    const requiredRoots = new Set(
+      queue.filter((entry) => entry.required).map((entry) => entry.path),
+    );
+    for (const [original, entry] of Object.entries(manifest.browser))
+      if (entry && entry.startsWith("."))
+        enqueue(entry, "runtime", requiredRoots.has(resolve(root, original)), root, false, true);
+  }
   for (const entry of [manifest.types, manifest.typings])
     if (entry) enqueue(entry, "types", false, root, false);
   if (typeof manifest.bin === "string") enqueue(manifest.bin, "runtime", false, root, false, true);
@@ -514,10 +519,14 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
 }
 
 function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
-  if (dynamic && !ts.isAwaitExpression(node.parent)) return false;
+  let expression: ts.Node = node;
+  while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  if (dynamic && !ts.isAwaitExpression(expression.parent)) return false;
   for (let parent = node.parent; parent && !ts.isSourceFile(parent); parent = parent.parent) {
     if (
-      (ts.isFunctionLike(parent) && !(parent.name && isWithin(node, parent.name))) ||
+      (ts.isFunctionLike(parent) &&
+        !(parent.name && isWithin(node, parent.name)) &&
+        !isImmediateInvocation(parent, node)) ||
       (ts.isPropertyDeclaration(parent) &&
         !(parent.name && isWithin(node, parent.name)) &&
         !parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) ||
@@ -525,13 +534,15 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       (ts.isConditionalExpression(parent) && !isWithin(node, parent.condition)) ||
       (ts.isSwitchStatement(parent) && !isWithin(node, parent.expression)) ||
       (ts.isWhileStatement(parent) && !isWithin(node, parent.expression)) ||
-      ts.isDoStatement(parent) ||
+      (ts.isDoStatement(parent) && !isWithin(node, parent.statement)) ||
       (ts.isForStatement(parent) &&
         !(parent.initializer && isWithin(node, parent.initializer)) &&
         !(parent.condition && isWithin(node, parent.condition))) ||
       ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) &&
         !isWithin(node, parent.expression)) ||
-      ts.isTryStatement(parent) ||
+      (ts.isTryStatement(parent) &&
+        parent.catchClause &&
+        (isWithin(node, parent.tryBlock) || isWithin(node, parent.catchClause))) ||
       (ts.isBinaryExpression(parent) &&
         [
           ts.SyntaxKind.AmpersandAmpersandToken,
@@ -548,6 +559,19 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     if (dynamic && ts.isCallExpression(parent)) return false;
   }
   return true;
+}
+
+function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): boolean {
+  if (
+    !(ts.isFunctionExpression(node) || ts.isArrowFunction(node)) ||
+    !isWithin(load, node.body) ||
+    node.asteriskToken ||
+    node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+  )
+    return false;
+  let expression: ts.Node = node;
+  while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  return ts.isCallExpression(expression.parent) && expression.parent.expression === expression;
 }
 
 function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
