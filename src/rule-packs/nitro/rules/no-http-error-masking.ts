@@ -349,49 +349,13 @@ function outcomes(
   }
   if (isLoop(node)) return loopOutcomes(node, normal, bindings, conditions);
   if (node.type === "IfStatement") {
-    let test = node.test;
-    let negated = false;
-    while (test.type === "UnaryExpression" && test.operator === "!") {
-      negated = !negated;
-      test = test.argument;
-    }
-    const caught =
-      test.type === "CallExpression" &&
-      test.callee?.name === "isError" &&
-      !path.resolveBinding(test.callee) &&
-      test.arguments?.length === 1 &&
-      test.arguments[0]?.type === "Identifier"
-        ? bindings.get(test.arguments[0].name)
-        : undefined;
-    const known =
-      typeof caught === "number"
-        ? true
-        : test.type === "Literal"
-          ? Boolean(test.value)
-          : test.type === "Identifier"
-            ? path.conditions.get(test.name)
-            : undefined;
-    if (known !== undefined)
-      return outcomes(
-        known !== negated ? node.consequent : node.alternate,
-        normal,
-        bindings,
-        conditions,
-      );
-    const identifier = test;
-    const name =
-      identifier.type === "Identifier" && conditions.has(identifier.name)
-        ? identifier.name
-        : undefined;
-    return [true, false].flatMap((branch) => {
-      const value = negated ? !branch : branch;
-      if (name && path.conditions.has(name) && path.conditions.get(name) !== value) return [];
-      const next = name
-        ? { ...normal, conditions: new Map(path.conditions).set(name, value) }
-        : normal;
-      return outcomes(branch ? node.consequent : node.alternate, next, bindings, conditions);
-    });
+    return conditionPaths(node.test, normal, bindings, conditions).flatMap(({ path, value }) =>
+      path.outcome === "normal"
+        ? outcomes(value ? node.consequent : node.alternate, path, bindings, conditions)
+        : [path],
+    );
   }
+
   if (node.type === "TryStatement") {
     let paths = outcomes(node.block, normal, bindings, conditions);
     if (node.handler) {
@@ -414,9 +378,16 @@ function outcomes(
     }
     return paths;
   }
+  if (node.type === "MemberExpression") {
+    return outcomes(node.object, normal, bindings, conditions).flatMap((current) =>
+      current.outcome === "normal" && node.computed
+        ? outcomes(node.property, current, bindings, conditions)
+        : [current],
+    );
+  }
   const call = assignment.type === "AwaitExpression" ? assignment.argument : assignment;
   if (!argumentsEvaluated && (call.type === "CallExpression" || call.type === "NewExpression")) {
-    let paths = [normal as Path];
+    let paths = outcomes(call.callee, normal, bindings, conditions);
     for (const argument of call.arguments) {
       paths = paths.flatMap((current) =>
         current.outcome === "normal"
@@ -735,12 +706,76 @@ function stableConditions(node: AnyNode): Set<string> {
   );
 }
 
+function conditionPaths(
+  node: AnyNode,
+  path: Path,
+  bindings: Bindings,
+  conditions: Set<string>,
+): { path: Path; value: boolean }[] {
+  if (--path.budget.remaining < 0) throw analysisLimit;
+  if (node.type === "ParenthesizedExpression")
+    return conditionPaths(node.expression, path, bindings, conditions);
+  if (node.type === "UnaryExpression" && node.operator === "!")
+    return conditionPaths(node.argument, path, bindings, conditions).map((result) => ({
+      path: result.path,
+      value: !result.value,
+    }));
+  if (node.type === "LogicalExpression" && ["&&", "||"].includes(node.operator))
+    return conditionPaths(node.left, path, bindings, conditions).flatMap((result) =>
+      result.path.outcome === "normal" && result.value === (node.operator === "&&")
+        ? conditionPaths(node.right, result.path, bindings, conditions)
+        : [result],
+    );
+  return outcomes(node, path, bindings, conditions).flatMap((current) => {
+    if (current.outcome !== "normal") return [{ path: current, value: false }];
+    const values = current.bindings ?? bindings;
+    const caught =
+      node.type === "CallExpression" &&
+      node.callee?.name === "isError" &&
+      !current.resolveBinding(node.callee) &&
+      node.arguments.length === 1 &&
+      node.arguments[0].type === "Identifier"
+        ? values.get(node.arguments[0].name)
+        : undefined;
+    const known =
+      typeof caught === "number"
+        ? true
+        : node.type === "Literal"
+          ? Boolean(node.value)
+          : node.type === "Identifier"
+            ? values.has(node.name)
+              ? true
+              : current.conditions.get(node.name)
+            : undefined;
+    if (known !== undefined) return [{ path: current, value: known }];
+    return [true, false].map((value) => ({
+      path:
+        node.type === "Identifier" && conditions.has(node.name)
+          ? { ...current, conditions: new Map(current.conditions).set(node.name, value) }
+          : current,
+      value,
+    }));
+  });
+}
+
 function httpStatus(
   node: AnyNode,
   resolve: Path["resolveBinding"],
 ): number | "server-error" | undefined {
   if (node?.callee?.type === "Identifier" && resolve(node.callee)) return;
-  if (["NewExpression", "CallExpression"].includes(node?.type) && node.callee?.name === "Error")
+  if (
+    ["NewExpression", "CallExpression"].includes(node?.type) &&
+    [
+      "Error",
+      "TypeError",
+      "RangeError",
+      "ReferenceError",
+      "SyntaxError",
+      "URIError",
+      "EvalError",
+      "AggregateError",
+    ].includes(node.callee?.name)
+  )
     return "server-error";
   if (node?.type !== "CallExpression" || node.callee?.name !== "createError") return;
   const options = node.arguments?.[0];

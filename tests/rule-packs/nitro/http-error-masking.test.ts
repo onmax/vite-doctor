@@ -39,6 +39,85 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "compound preservation",
+    "throw createError({ statusCode: 404 })",
+    "if (error && isError(error)) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "compound alternative",
+    "throw createError({ statusCode: 404 })",
+    "if (!error || !isError(error)) throw new Error(); throw error",
+    false,
+  ],
+  [
+    "throwing condition",
+    "function missing() { throw createError({ statusCode: 404 }) }; if (missing()) {}",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "short circuit condition",
+    "function missing() { throw createError({ statusCode: 404 }) }; if (false && missing()) {}",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "callee throws first",
+    "function fail() { throw new Error() }; function missing() { throw createError({ statusCode: 404 }) }; fail()(missing())",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "member callee throws first",
+    "function fail() { throw new Error() }; function missing() { throw createError({ statusCode: 404 }) }; fail().consume(missing())",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "TypeError replacement",
+    "throw createError({ statusCode: 404 })",
+    "throw new TypeError()",
+    true,
+  ],
+  [
+    "RangeError replacement",
+    "throw createError({ statusCode: 404 })",
+    "throw new RangeError()",
+    true,
+  ],
+  [
+    "ReferenceError replacement",
+    "throw createError({ statusCode: 404 })",
+    "throw new ReferenceError()",
+    true,
+  ],
+  [
+    "SyntaxError replacement",
+    "throw createError({ statusCode: 404 })",
+    "throw new SyntaxError()",
+    true,
+  ],
+  ["URIError replacement", "throw createError({ statusCode: 404 })", "throw new URIError()", true],
+  [
+    "EvalError replacement",
+    "throw createError({ statusCode: 404 })",
+    "throw new EvalError()",
+    true,
+  ],
+  [
+    "AggregateError replacement",
+    "throw createError({ statusCode: 404 })",
+    "throw new AggregateError()",
+    true,
+  ],
+  [
+    "shadowed subclass",
+    "throw createError({ statusCode: 404 })",
+    "class TypeError {}; throw new TypeError()",
+    false,
+  ],
+  [
     "throw argument",
     "function missing() { throw createError({ statusCode: 404 }) }; throw missing()",
     "throw new Error()",
