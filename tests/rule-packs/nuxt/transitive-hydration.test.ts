@@ -1049,3 +1049,70 @@ const displayed = await label()</script><template>{{ displayed }}</template>`,
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  [
+    "async function clock() { return Date.now() }; const displayed = await clock().then(value => value)",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; const displayed = await clock().then(value => 'Ready')",
+    0,
+  ],
+  [
+    "async function clock() { return Date.now() }; const displayed = await clock().finally(() => 'Ready')",
+    1,
+  ],
+  ["function* clock() { yield Date.now() }; const [displayed] = clock()", 1],
+  ["function* clock() { yield Date.now() }; let displayed; [displayed] = clock()", 1],
+  ["function label() { return true ? 'Ready' : Date.now() }; const displayed = label()", 0],
+  ["function label() { return false && Date.now() }; const displayed = label()", 0],
+  ["function label() { return 'Ready' || Date.now() }; const displayed = label()", 0],
+  ["function label() { return 'Ready' ?? Date.now() }; const displayed = label()", 0],
+  ["function label() { return false ? 'Ready' : Date.now() }; const displayed = label()", 1],
+  ["function label() { return true && Date.now() }; const displayed = label()", 1],
+  ["function label() { return null ?? Date.now() }; const displayed = label()", 1],
+  [
+    "function clock() { return Date.now() }; function stable(value) { return 'Ready' }; function label() { return stable(clock()) }; const displayed = label()",
+    0,
+  ],
+  [
+    "function clock() { return Date.now() }; function identity(value) { return value }; function label() { return identity(clock()) }; const displayed = label()",
+    1,
+  ],
+  [
+    "function clock() { return Date.now() }; const stable = value => 'Ready'; function label() { return stable(clock()) }; const displayed = label()",
+    0,
+  ],
+])("respects reviewed result consumption: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["while (true) { try { return clock() } finally { break } } return 'stable'", 0],
+  [
+    "for (let i = 0; i < 1; i++) { try { return clock() } finally { continue } } return 'stable'",
+    0,
+  ],
+  ["outer: while (true) { try { return clock() } finally { break outer } } return 'stable'", 0],
+  [
+    "outer: for (let i = 0; i < 1; i++) { try { return clock() } finally { continue outer } } return 'stable'",
+    0,
+  ],
+  ["try { return clock() } finally { while (true) { break } }", 1],
+  ["try { return clock() } finally { for (let i = 0; i < 1; i++) { continue } }", 1],
+  ["try { return clock() } finally { inner: { break inner } }", 1],
+  ["while (true) { try { return clock() } finally { if (flag) break } } return 'stable'", 1],
+])("respects finally loop control: %s", async (body, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>async function clock() { return Date.now() }
+async function label() { ${body} }
+const displayed = await label()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

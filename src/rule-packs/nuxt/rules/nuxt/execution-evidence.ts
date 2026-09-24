@@ -499,7 +499,10 @@ function resultCallbackCall(
 
 function alwaysReplacesCompletion(node: AnyNode): boolean {
   if (!node) return false;
-  if (["ReturnStatement", "ThrowStatement"].includes(node.type)) return true;
+  if (
+    ["ReturnStatement", "ThrowStatement", "BreakStatement", "ContinueStatement"].includes(node.type)
+  )
+    return true;
   if (node.type === "BlockStatement") return node.body.some(alwaysReplacesCompletion);
   if (node.type === "IfStatement")
     return alwaysReplacesCompletion(node.consequent) && alwaysReplacesCompletion(node.alternate);
@@ -530,6 +533,44 @@ function returnIsOverridden(node: AnyNode, parentOf: (node: AnyNode) => AnyNode)
   return false;
 }
 
+function parameterContributesToReturn(
+  fn: AnyNode,
+  index: number,
+  parents: WeakMap<AnyNode, AnyNode>,
+  seen = new Set<AnyNode>(),
+): boolean {
+  const parameter =
+    fn.params[index] ?? fn.params.find((param: AnyNode) => param.type === "RestElement");
+  if (!parameter) return false;
+  let contributes = false;
+  walkScriptLocal(fn.body, (reference) => {
+    if (
+      reference.type === "Identifier" &&
+      patternBinds(parameter, reference.name) &&
+      resolveLocalBinding(reference, reference.name, parents) === parameter &&
+      contributesToReturn(reference, fn, parents, new Set(seen))
+    )
+      contributes = true;
+  });
+  return contributes;
+}
+
+function expressionBranchIsInactive(parent: AnyNode, current: AnyNode): boolean {
+  const selector = unwrapExpression(
+    parent?.type === "ConditionalExpression" ? parent.test : parent?.left,
+  );
+  if (selector?.type !== "Literal") return false;
+  if (parent.type === "ConditionalExpression")
+    return current === (selector.value ? parent.alternate : parent.consequent);
+  return (
+    parent.type === "LogicalExpression" &&
+    current === parent.right &&
+    ((parent.operator === "&&" && !selector.value) ||
+      (parent.operator === "||" && Boolean(selector.value)) ||
+      (parent.operator === "??" && selector.value != null))
+  );
+}
+
 function asyncResultIsConsumed(
   node: AnyNode,
   parentOf: (node: AnyNode) => AnyNode,
@@ -542,6 +583,26 @@ function asyncResultIsConsumed(
     if (parent.type === "SequenceExpression" && parent.expressions.at(-1) !== current) return false;
     if (parent.type === "UnaryExpression" && parent.operator === "void") return false;
     if (!awaited) {
+      if (parent.type === "MemberExpression" && parent.object === current) {
+        const chain = parentOf(parent);
+        const method = parent.computed ? parent.property?.value : parent.property?.name;
+        if (
+          chain?.type !== "CallExpression" ||
+          chain.callee !== parent ||
+          !["then", "catch", "finally"].includes(method)
+        )
+          return false;
+        if (method === "then" && chain.arguments[0] && chain.arguments[0].type !== "Literal") {
+          const callback = unwrapExpression(chain.arguments[0]);
+          if (!["ArrowFunctionExpression", "FunctionExpression"].includes(callback?.type))
+            return false;
+          const callbackParents = new WeakMap<AnyNode, AnyNode>();
+          walkScriptLocal(callback, (child) => callbackParents.set(child, parentOf(child)));
+          if (!parameterContributesToReturn(callback, 0, callbackParents)) return false;
+        }
+        current = parent;
+        continue;
+      }
       if (parent.type === "AwaitExpression") awaited = true;
       else if (parent.type === "ReturnStatement" || parent.type === "ArrowFunctionExpression") {
         let owner = parent;
@@ -602,6 +663,14 @@ function isConsumedIterator(
 ): boolean {
   const parent = parentOf(node);
   return (
+    (parent?.type === "VariableDeclarator" &&
+      parent.init === node &&
+      parent.id?.type === "ArrayPattern" &&
+      parent.id.elements.length > 0) ||
+    (parent?.type === "AssignmentExpression" &&
+      parent.right === node &&
+      parent.left?.type === "ArrayPattern" &&
+      parent.left.elements.length > 0) ||
     (parent?.type === "YieldExpression" && parent.delegate && parent.argument === node) ||
     (parent?.type === "SpreadElement" &&
       ["ArrayExpression", "CallExpression", "NewExpression"].includes(parentOf(parent)?.type)) ||
@@ -750,6 +819,23 @@ function contributesToReturn(
       return false;
     if (parent?.type === "SequenceExpression" && parent.expressions.at(-1) !== current)
       return false;
+    if (expressionBranchIsInactive(parent, current)) return false;
+    if (parent?.type === "CallExpression" && parent.arguments.includes(current)) {
+      const callee = unwrapExpression(parent.callee);
+      const binding =
+        callee?.type === "Identifier" ? resolveLocalBinding(parent, callee.name, parents) : null;
+      const fn = unwrapExpression(
+        binding?.type === "VariableDeclarator" ? binding.init : (binding ?? callee),
+      );
+      if (
+        ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+          fn?.type,
+        ) &&
+        !parameterContributesToReturn(fn, parent.arguments.indexOf(current), parents, seen)
+      )
+        return false;
+    }
+
     if (
       (parent?.type === "VariableDeclarator" && parent.init === current) ||
       (parent?.type === "AssignmentPattern" && parent.right === current) ||
