@@ -499,3 +499,34 @@ test.each(["add", "delete", "rename"])(
     );
   },
 );
+
+test.each(["delete", "replace"])(
+  "invalidates registered handlers outside server scan directories: %s",
+  async (change) => {
+    await withRuntimeGraph(
+      {
+        ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+        "custom/account.ts": "export default () => ({})",
+      },
+      async (root) => {
+        const file = join(root, "custom/account.ts");
+        const directory = join(root, "custom");
+        mkdirSync(join(root, ".nuxt"), { recursive: true });
+        writeFileSync(
+          join(root, ".nuxt/doctor.manifest.json"),
+          JSON.stringify({
+            generatedAt: "2100-01-01T00:00:00.000Z",
+            layers: [],
+            resolvedServerHandlers: [{ file, route: "/api/account" }],
+            serverInventory: { [directory]: ["account.ts"] },
+            serverHandlerMtimes: { [file]: statSync(file).mtimeMs },
+          }),
+        );
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+        if (change === "delete") rmSync(file);
+        else utimesSync(file, new Date("2020-01-01"), new Date("2020-01-01"));
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(false);
+      },
+    );
+  },
+);

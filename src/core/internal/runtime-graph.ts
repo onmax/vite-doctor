@@ -169,6 +169,17 @@ export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest
     })
   )
     return false;
+  if (
+    manifest.serverHandlerMtimes &&
+    Object.entries(manifest.serverHandlerMtimes).some(([file, modifiedAt]) => {
+      try {
+        return statSync(resolve(root, file)).mtimeMs !== modifiedAt;
+      } catch {
+        return true;
+      }
+    })
+  )
+    return false;
   const generatedAt = Date.parse(manifest.generatedAt);
   const serverDirectories = new Set([
     resolve(root, "server"),
@@ -193,6 +204,30 @@ export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest
     [...serverDirectories].some((directory) => !directoriesUnchanged(directory))
   )
     return false;
+  return isNuxtConfigurationCurrent(root, manifest);
+}
+
+export function isNuxtManifestConfigurationCurrent(root: string, manifestPath?: string): boolean {
+  if (!manifestPath) return false;
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as NuxtDoctorManifest;
+    if (!manifest.generatedAt || !Number.isFinite(Date.parse(manifest.generatedAt))) return false;
+    const layers =
+      manifest.autoRegisteredLayers ??
+      (manifest.layers ?? [])
+        .filter((layer) => dirname(resolve(root, layer.root)) === join(root, "layers"))
+        .map((layer) => resolve(root, layer.root).split("/").pop()!)
+        .sort();
+    return (
+      JSON.stringify(layers) === JSON.stringify(autoRegisteredNuxtLayers(root)) &&
+      isNuxtConfigurationCurrent(root, manifest)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isNuxtConfigurationCurrent(root: string, manifest: NuxtDoctorManifest): boolean {
   const configs = [
     { root, nuxtConfigMtimeMs: manifest.nuxtConfigMtimeMs },
     ...(manifest.layers ?? []),

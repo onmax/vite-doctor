@@ -29,6 +29,7 @@ type NuxtAutoImportContext = {
 type NuxtDoctorEvidence = {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
+  serverHandlerMtimes?: Record<string, number>;
   pages?: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
@@ -44,6 +45,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   const evidence = {
     resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
     serverInventory: undefined as Record<string, string[]> | undefined,
+    serverHandlerMtimes: undefined as Record<string, number> | undefined,
     pages: [] as Array<{ path?: string; file?: string; name?: string }>,
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
@@ -105,7 +107,16 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
         resolve(nuxt.options.rootDir, nuxt.options.serverDir ?? "server"),
         ...(nuxt.options._layers ? getLayerDirectories(nuxt).map((layer) => layer.server) : []),
         ...toArray(nitro.options.scanDirs).map((directory) => resolve(String(directory))),
+        ...evidence.resolvedServerHandlers.map((handler) =>
+          resolve(nuxt.options.rootDir, handler.file, ".."),
+        ),
       ]);
+      evidence.serverHandlerMtimes = Object.fromEntries(
+        evidence.resolvedServerHandlers.flatMap((handler) => {
+          const file = resolve(nuxt.options.rootDir, handler.file);
+          return existsSync(file) ? [[file, statSync(file).mtimeMs]] : [];
+        }),
+      );
       evidence.serverInventory = Object.fromEntries(
         [...directories].map((directory) => [directory, nuxtServerInventory(directory)]),
       );
@@ -254,6 +265,7 @@ export async function writeManifest(
     })),
     resolvedServerHandlers: evidence?.resolvedServerHandlers,
     serverInventory: evidence?.serverInventory,
+    serverHandlerMtimes: evidence?.serverHandlerMtimes,
     pages: evidence?.pages ?? [],
     prerenderRoutes: [
       ...new Set([

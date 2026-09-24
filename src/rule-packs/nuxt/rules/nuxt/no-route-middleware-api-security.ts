@@ -1,9 +1,10 @@
 import type { RuleContext } from "../../../../core/primitives.js";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, extname, relative, resolve } from "pathe";
+import { dirname, extname, join, relative, resolve } from "pathe";
 import { parseSync } from "oxc-parser";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
+import { isNuxtManifestConfigurationCurrent } from "../../../../core/internal/runtime-graph.js";
 
 export const noRouteMiddlewareApiSecurity = createRule({
   meta: {
@@ -23,13 +24,25 @@ export const noRouteMiddlewareApiSecurity = createRule({
         const nuxt = ctx.project.nuxt;
         if (!nuxt) return;
         const middlewareFiles = new Set<string>();
-        const rootAppDir =
+        const configurationCurrent =
           nuxt.manifest?.hasManifest && !nuxt.manifest.isCurrent
-            ? resolve(ctx.project.root, existsSync(resolve(ctx.project.root, "app")) ? "app" : ".")
-            : nuxt.appDir;
-        const layers = nuxt.manifest?.hasManifest && !nuxt.manifest.isCurrent ? [] : nuxt.layers;
+            ? isNuxtManifestConfigurationCurrent(ctx.project.root, nuxt.manifestPath)
+            : true;
+        const rootConfig = configurationCurrent
+          ? undefined
+          : rootMiddlewareConfiguration(ctx.project.root);
+        const rootAppDir = rootConfig ? resolve(ctx.project.root, rootConfig.srcDir) : nuxt.appDir;
+        const rootMiddlewareDir = configurationCurrent
+          ? undefined
+          : resolve(rootAppDir, rootConfig!.middleware);
+        const layers = configurationCurrent ? nuxt.layers : [];
         for (const layer of [
-          { root: ctx.project.root, srcDir: rootAppDir, priority: -1 },
+          {
+            root: ctx.project.root,
+            srcDir: rootAppDir,
+            appMiddlewareDir: rootMiddlewareDir,
+            priority: -1,
+          },
           ...layers,
         ]) {
           const appDir =
@@ -96,20 +109,30 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
   );
 }
 
+function rootMiddlewareConfiguration(root: string): { srcDir: string; middleware: string } {
+  const config = ["ts", "js", "mjs", "cjs", "mts", "cts"]
+    .map((extension) => join(root, `nuxt.config.${extension}`))
+    .find(existsSync);
+  const text = config ? readFileSync(config, "utf8") : "";
+  return {
+    srcDir:
+      text.match(/\bsrcDir\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] ??
+      (existsSync(join(root, "app")) ? "app" : "."),
+    middleware: text.match(/\bmiddleware\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? "middleware",
+  };
+}
+
 function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
   const manifest = ctx.project.nuxt?.manifest;
   const resolvedHandlers = manifest?.isCurrent ? manifest.resolvedServerHandlers : undefined;
   const registered = manifest?.isCurrent ? (manifest.serverHandlers ?? []) : [];
   const middleware = resolvedHandlers
-    ? resolvedHandlers
-        .filter(
-          (handler) =>
-            handler.middleware && !handler.method && (!handler.route || handler.route === "/**"),
-        )
-        .map((handler) => handler.file)
-    : (dirs?.middleware ?? []);
-  if (middleware.some(hasUnconditionalAuthGuard)) return [];
+    ? resolvedHandlers.filter(
+        (handler) => handler.middleware && hasUnconditionalAuthGuard(handler.file),
+      )
+    : [];
+  if (!resolvedHandlers && (dirs?.middleware ?? []).some(hasUnconditionalAuthGuard)) return [];
   const candidates = resolvedHandlers
     ? resolvedHandlers.filter((handler) => !handler.middleware)
     : [
@@ -154,11 +177,26 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
             ) ||
               isSensitive(handler.route ?? "", handler.method, handler.route)) &&
             !isAuthProviderHandler(ctx, handler.file, handler.route) &&
+            !middleware.some((guard) => middlewareCoversHandler(guard, handler)) &&
             !hasUnconditionalAuthGuard(handler.file),
         )
         .map((handler) => handler.file),
     ),
   ];
+}
+
+function middlewareCoversHandler(
+  middleware: { route?: string; method?: string },
+  handler: { route?: string; method?: string },
+): boolean {
+  if (middleware.method && middleware.method.toLowerCase() !== handler.method?.toLowerCase())
+    return false;
+  if (!middleware.route || middleware.route === "/**") return true;
+  if (!handler.route) return false;
+  return (
+    middleware.route === handler.route ||
+    (middleware.route.endsWith("/**") && handler.route.startsWith(middleware.route.slice(0, -2)))
+  );
 }
 
 function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): boolean {
@@ -202,9 +240,9 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
       isProviderBinding(ctx, file, parsed.program, body.callee.object.name) &&
       body.arguments.length === 1 &&
       isCurrentRequest(body.arguments[0], event.name) &&
-      event.name !== "toWebRequest" &&
-      callback.id?.name !== "toWebRequest" &&
-      hasSupportedRequestConverter(parsed.program)
+      event.name !== body.arguments[0].callee.name &&
+      callback.id?.name !== body.arguments[0].callee.name &&
+      hasSupportedRequestConverter(parsed.program, body.arguments[0].callee.name)
     );
   } catch {
     return false;
@@ -215,17 +253,16 @@ function isCurrentRequest(node: AnyNode, event: string): boolean {
   return (
     node?.type === "CallExpression" &&
     node.callee.type === "Identifier" &&
-    node.callee.name === "toWebRequest" &&
     node.arguments.length === 1 &&
     node.arguments[0].type === "Identifier" &&
     node.arguments[0].name === event
   );
 }
 
-function hasSupportedRequestConverter(program: AnyNode): boolean {
+function hasSupportedRequestConverter(program: AnyNode, converter: string): boolean {
   const bindsConverter = (pattern: AnyNode): boolean => {
     if (!pattern) return false;
-    if (pattern.type === "Identifier") return pattern.name === "toWebRequest";
+    if (pattern.type === "Identifier") return pattern.name === converter;
     if (pattern.type === "ObjectPattern")
       return pattern.properties.some((item: AnyNode) =>
         bindsConverter(item.type === "RestElement" ? item.argument : item.value),
@@ -258,15 +295,18 @@ function hasSupportedRequestConverter(program: AnyNode): boolean {
     );
   };
   if (hasHoistedConverter(program)) return false;
-  return program.body.every((statement: AnyNode) => {
+  let imported = false;
+  const validBindings = program.body.every((statement: AnyNode) => {
     if (statement.type === "ImportDeclaration") {
-      return statement.specifiers.every(
-        (item: AnyNode) =>
-          item.local.name !== "toWebRequest" ||
-          (item.type === "ImportSpecifier" &&
-            item.imported.name === "toWebRequest" &&
-            ["h3", "#imports"].includes(statement.source.value)),
-      );
+      return statement.specifiers.every((item: AnyNode) => {
+        if (item.local.name !== converter) return true;
+        const supported =
+          item.type === "ImportSpecifier" &&
+          item.imported.name === "toWebRequest" &&
+          ["h3", "#imports"].includes(statement.source.value);
+        imported ||= supported;
+        return supported;
+      });
     }
     const declaration =
       statement.type === "ExportNamedDeclaration" || statement.type === "ExportDefaultDeclaration"
@@ -276,6 +316,7 @@ function hasSupportedRequestConverter(program: AnyNode): boolean {
       return declaration.declarations.every((item: AnyNode) => !bindsConverter(item.id));
     return !bindsConverter(declaration?.id);
   });
+  return validBindings && (converter === "toWebRequest" || imported);
 }
 
 function createsProvider(program: AnyNode, name: string, exported = false): boolean {

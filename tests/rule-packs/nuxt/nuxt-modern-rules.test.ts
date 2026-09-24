@@ -4037,6 +4037,7 @@ test.each([
   "",
   "import { toWebRequest } from 'h3';",
   "import { toWebRequest } from '#imports';",
+  "import { toWebRequest as toRequest } from 'h3';",
   "function unrelated() { var toWebRequest = () => new Request('https://example.com') }",
   "if (true) { const toWebRequest = () => new Request('https://example.com') }",
 ])(
@@ -4048,7 +4049,7 @@ test.each([
       files: {
         "app/middleware/auth.ts":
           "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
-        "server/api/auth/[...all].ts": `${converter} import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))`,
+        "server/api/auth/[...all].ts": `${converter} import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler(${converter.includes("as toRequest") ? "toRequest" : "toWebRequest"}(event)))`,
         "server/utils/auth.ts":
           "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
       },
@@ -4309,51 +4310,72 @@ test("Nuxt module captures and refreshes Nitro's resolved handlers", async () =>
   });
 });
 
-test.each(["unguarded", "guarded", "scoped-guard", "method-guard", "empty"])(
-  "NUXT0037 uses resolved layer handlers and middleware: %s",
-  async (state) => {
-    const handler = "layers/admin/backend/api/account.ts";
-    const result = await runRuleFixture({
-      rule: noRouteMiddlewareApiSecurity,
-      framework: "nuxt",
-      files: {
-        "app/middleware/auth.ts":
-          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
-        [handler]: "export default defineEventHandler(() => ({ private: true }))",
-        "layers/admin/backend/api/health.ts": "export default defineEventHandler(() => 'ok')",
-        "layers/admin/backend/middleware/auth.ts":
-          "export default defineEventHandler(event => requireUserSession(event))",
-        "server/api/profile.ts": "export default defineEventHandler(() => ({ ignored: true }))",
-        ".nuxt/doctor.manifest.json": JSON.stringify({
-          generatedAt: "2100-01-01T00:00:00.000Z",
-          layers: [{ root: "layers/admin", serverDir: "layers/admin/backend", priority: 0 }],
-          resolvedServerHandlers:
-            state === "empty"
-              ? []
-              : [
-                  { file: handler, route: "/api/account" },
-                  { file: "layers/admin/backend/api/health.ts", route: "/api/health" },
-                  ...(state === "unguarded"
-                    ? []
-                    : [
-                        {
-                          file: "layers/admin/backend/middleware/auth.ts",
-                          middleware: true,
-                          route: state === "scoped-guard" ? "/api/admin/**" : undefined,
-                          method: state === "method-guard" ? "post" : undefined,
-                        },
-                      ]),
-                ],
-        }),
-      },
-    });
-    expect(result.diagnostics).toHaveLength(state === "guarded" || state === "empty" ? 0 : 1);
-    if (result.diagnostics.length)
-      expect(result.diagnostics[0]!.related?.map((item) => item.file)).toEqual([
-        expect.stringContaining(handler),
-      ]);
-  },
-);
+test.each([
+  "unguarded",
+  "guarded",
+  "scoped-guard",
+  "matching-scope",
+  "method-guard",
+  "matching-method",
+  "empty",
+])("NUXT0037 uses resolved layer handlers and middleware: %s", async (state) => {
+  const handler = "layers/admin/backend/api/account.ts";
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      [handler]: "export default defineEventHandler(() => ({ private: true }))",
+      "layers/admin/backend/api/health.ts": "export default defineEventHandler(() => 'ok')",
+      "layers/admin/backend/middleware/auth.ts":
+        "export default defineEventHandler(event => requireUserSession(event))",
+      "server/api/profile.ts": "export default defineEventHandler(() => ({ ignored: true }))",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        layers: [{ root: "layers/admin", serverDir: "layers/admin/backend", priority: 0 }],
+        resolvedServerHandlers:
+          state === "empty"
+            ? []
+            : [
+                {
+                  file: handler,
+                  route: "/api/account",
+                  method: state === "matching-method" ? "get" : undefined,
+                },
+                { file: "layers/admin/backend/api/health.ts", route: "/api/health" },
+                ...(state === "unguarded"
+                  ? []
+                  : [
+                      {
+                        file: "layers/admin/backend/middleware/auth.ts",
+                        middleware: true,
+                        route:
+                          state === "scoped-guard"
+                            ? "/api/admin/**"
+                            : state === "matching-scope"
+                              ? "/api/**"
+                              : undefined,
+                        method:
+                          state === "method-guard"
+                            ? "post"
+                            : state === "matching-method"
+                              ? "get"
+                              : undefined,
+                      },
+                    ]),
+              ],
+      }),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(
+    ["guarded", "matching-scope", "matching-method", "empty"].includes(state) ? 0 : 1,
+  );
+  if (result.diagnostics.length)
+    expect(result.diagnostics[0]!.related?.map((item) => item.file)).toEqual([
+      expect.stringContaining(handler),
+    ]);
+});
 
 test("NUXT0037 ignores route middleware from stale layer inventory", async () => {
   const result = await runRuleFixture({
@@ -4379,6 +4401,43 @@ test("NUXT0037 ignores route middleware from stale layer inventory", async () =>
     },
   });
   expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(0);
+});
+
+test("NUXT0037 keeps configured middleware when only server inventory is stale", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "src/guards/auth.ts": "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        appDir: "src",
+        layers: [{ root: ".", srcDir: "src", appMiddlewareDir: "src/guards", priority: 0 }],
+        serverInventory: { server: [] },
+      }),
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+});
+
+test("NUXT0037 finds the current root source directory after config changes", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts": "export default defineNuxtConfig({ srcDir: 'src' })",
+      "src/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2000-01-01T00:00:00.000Z",
+        appDir: "layers/old/app",
+        layers: [{ root: "layers/old", srcDir: "layers/old/app", priority: 0 }],
+      }),
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
 });
 
 test.each([true, false])("provider aliases follow localLayerAliases: %s", async (enabled) => {
@@ -4439,6 +4498,31 @@ test("Nuxt captures cached wildcard overlaps and nested cache exclusions", async
       true,
     );
   });
+});
+
+test("Nuxt inventories registered handlers outside server directories", async () => {
+  await withFixture(
+    { "custom/account.ts": "export default defineEventHandler(() => ({}))" },
+    {},
+    async (root) => {
+      const hooks = new Map<string, (payload?: any) => unknown>();
+      await nuxtDoctorModule({}, {
+        _version: "4.5.1",
+        options: { rootDir: root, srcDir: "app", buildDir: ".nuxt", modules: [] },
+        hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
+        async callHook() {},
+      } as any);
+      const file = join(root, "custom/account.ts");
+      await hooks.get("nitro:init")!({
+        options: { handlers: [{ handler: file, route: "/api/account" }] },
+        scannedHandlers: [],
+        hooks: { hook() {} },
+      });
+      const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+      expect(manifest.serverInventory[join(root, "custom")]).toEqual(["account.ts"]);
+      expect(manifest.serverHandlerMtimes[file]).toEqual(expect.any(Number));
+    },
+  );
 });
 
 test("cached wildcard overlap respects route segment boundaries", async () => {
