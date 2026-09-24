@@ -134,8 +134,19 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
     )
   )
     return false;
-  const executes = (fn: AnyNode, seen: Set<AnyNode>): boolean => {
-    if (seen.has(fn) || fn.generator || fn.async) return false;
+  const executes = (fn: AnyNode, seen: Set<AnyNode>, effect: AnyNode): boolean => {
+    if (seen.has(fn) || fn.generator) return false;
+    let suspended = false;
+    if (fn.async)
+      walkScriptLocal(fn.body, (node) => {
+        if (
+          node.type === "AwaitExpression" &&
+          node.start < effect.end &&
+          containingFunction(node, parents) === fn &&
+          !isInactivePath(node, fn, parents)
+        )
+          suspended = true;
+      });
     seen.add(fn);
     let found = false;
     walkScriptLocal(ctx.file.scriptAst, (call) => {
@@ -147,11 +158,12 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
           resultCallbackCall(fn, parents, argument, true) === call,
       );
       if (!invokes && !callback) return;
+      if (suspended && (!invokes || parents.get(call)?.type !== "AwaitExpression")) return;
       if (ctx.helpers.isClientOnlyExecutionContext(call, ctx.file.text)) return;
       if (isInactivePath(call, containingFunction(call, parents), parents)) return;
       const caller = containingFunction(call, parents);
       if (caller) {
-        if (executes(caller, new Set(seen))) found = true;
+        if (executes(caller, new Set(seen), call)) found = true;
       } else if (
         !hasPriorAliasWrite({ start: Infinity }, binding, ctx.file.scriptAst, parents, {
           ...assignment,
@@ -162,7 +174,7 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
     });
     return found;
   };
-  return executes(owner, new Set());
+  return executes(owner, new Set(), assignment);
 }
 
 function functionFlowsToTemplate(
@@ -174,26 +186,43 @@ function functionFlowsToTemplate(
   const parents = getScriptParents(ctx);
   if (seen.has(fn)) return false;
   seen.add(fn);
-  const callbackCall = resultCallbackCall(fn, parents);
-  if (callbackCall) {
+  const directCallback = resultCallbackCall(fn, parents);
+  const callbackCalls: AnyNode[] = directCallback ? [directCallback] : [];
+  if (!directCallback && !fn.async && !fn.generator)
+    walkScriptLocal(ctx.file.scriptAst, (call) => {
+      if (
+        call.type === "CallExpression" &&
+        call.callee?.type === "CallExpression" &&
+        resolveLocalValue(call.callee, parents) === fn &&
+        !isInactivePath(call, containingFunction(call, parents), parents)
+      )
+        callbackCalls.push(call);
+    });
+  for (const callbackCall of callbackCalls) {
     const owner = containingFunction(callbackCall, parents);
+    const variable = nearestVariableDeclarator(callbackCall, parents);
     if (
       !owner &&
       (callbackCall.callee.type === "MemberExpression" ||
-        unwrapExpression(callbackCall.callee) === fn) &&
-      isLikelyRenderedTimeExpression(ctx, callbackCall) &&
+        resolveLocalValue(callbackCall.callee, parents) === fn) &&
+      !ctx.helpers.isClientOnlyExecutionContext(callbackCall, ctx.file.text) &&
       getRenderedReferences(ctx).some((reference) => {
-        const variable = nearestVariableDeclarator(callbackCall);
         return (
           variable &&
           patternBinds(variable.id, reference.name) &&
-          projectionIncludes(source, variable, reference, parents)
+          (directCallback
+            ? projectionIncludes(source, variable, reference, parents)
+            : projectionIncludes(callbackCall, variable, reference, parents, [source, fn]))
         );
       })
     )
       return true;
-    if (owner && contributesToReturn(callbackCall, owner, parents))
-      return functionFlowsToTemplate(ctx, owner, seen, callbackCall);
+    if (
+      owner &&
+      contributesToReturn(callbackCall, owner, parents) &&
+      functionFlowsToTemplate(ctx, owner, new Set(seen), callbackCall)
+    )
+      return true;
   }
   const getter = parents.get(fn)?.kind === "get";
   const binding = functionBinding(fn, parents);
@@ -207,6 +236,17 @@ function functionFlowsToTemplate(
     if (key === undefined) return false;
     memberPath.unshift(String(key));
   }
+  const assigned = parents.get(fn);
+  if (assigned?.type === "AssignmentExpression") {
+    let target = assigned.left;
+    while (target?.type === "MemberExpression") {
+      const key = target.computed ? target.property?.value : target.property?.name;
+      if (key === undefined) return false;
+      memberPath.unshift(String(key));
+      target = target.object;
+    }
+  }
+  const nativeInvocations = new WeakSet<AnyNode>();
   const capturedReferences = new WeakMap<AnyNode, AnyNode>();
   const matchesCallee = (callee: AnyNode): boolean => {
     const original = callee;
@@ -217,7 +257,10 @@ function functionFlowsToTemplate(
         aliases.add(target);
         target = resolveLocalValue(target, parents);
       }
-      if (target === fn) callee = callee.object;
+      if (target === fn) {
+        nativeInvocations.add(original);
+        callee = callee.object;
+      }
     }
     if (!memberPath.length && callee?.type === "MemberExpression") {
       let value = resolveLocalValue(callee, parents, new Set(), [], ctx.file.scriptAst);
@@ -310,9 +353,18 @@ function functionFlowsToTemplate(
       child = current, current = parents.get(current)
     ) {
       if (current.type !== "AssignmentPattern" || current.right !== child) continue;
-      const argument = parameterValue(current, fn, call, parents);
+      const argument = parameterValue(
+        current,
+        fn,
+        call,
+        parents,
+        nativeInvocations.has(call.callee) ? invocationMethod(call.callee) : null,
+      );
       if (argument && !isUndefinedValue(argument, parents, ctx.file.scriptAst)) return false;
     }
+    const invokedPath = nativeInvocations.has(call.callee)
+      ? [...memberPath, invocationMethod(call.callee)]
+      : memberPath;
     let replaced = false;
     walkScriptLocal(ctx.file.scriptAst, (write) => {
       if (
@@ -331,7 +383,7 @@ function functionFlowsToTemplate(
         path.unshift(String(key));
         target = target.object;
       }
-      if (target?.name !== functionName || !path.every((key, index) => memberPath[index] === key))
+      if (target?.name !== functionName || !path.every((key, index) => invokedPath[index] === key))
         return;
       if (resolveLocalBinding(write, functionName, parents) !== binding) return;
       const owner = containingFunction(write, parents);
@@ -401,7 +453,8 @@ function functionFlowsToTemplate(
         ? node.type === "MemberExpression"
         : ["CallExpression", "NewExpression"].includes(node.type)) &&
       (callback || matchesCallee(getter ? node : node.callee)) &&
-      reachesCall(node)
+      reachesCall(node) &&
+      !isInactivePath(node, containingFunction(node, parents), parents)
     ) {
       if (
         fn.generator &&
@@ -532,13 +585,10 @@ function parameterValue(
   fn: AnyNode,
   call: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
+  method: string | null,
 ): AnyNode {
   const index = fn.params?.indexOf(pattern) ?? -1;
   if (index >= 0) {
-    const method =
-      resolveLocalValue(call.callee, parents, new Set(), [], fn) === fn
-        ? null
-        : invocationMethod(call.callee);
     const args =
       method === "call"
         ? call.arguments.slice(1)
@@ -554,7 +604,7 @@ function parameterValue(
   }
   const parent = parents.get(pattern);
   if (parent?.type === "AssignmentPattern" && parent.left === pattern) {
-    const value = parameterValue(parent, fn, call, parents);
+    const value = parameterValue(parent, fn, call, parents, method);
     return value === undefined
       ? undefined
       : isUndefinedValue(value, parents)
@@ -562,7 +612,7 @@ function parameterValue(
         : value;
   }
   if (parent?.type === "Property" && parent.value === pattern) {
-    const value = parameterValue(parents.get(parent), fn, call, parents);
+    const value = parameterValue(parents.get(parent), fn, call, parents, method);
     const key = parent.computed ? parent.key?.value : (parent.key?.name ?? parent.key?.value);
     if (value?.type !== "ObjectExpression" || key === undefined) return undefined;
     for (const property of [...value.properties].reverse()) {
@@ -576,7 +626,7 @@ function parameterValue(
     return null;
   }
   if (parent?.type === "ArrayPattern") {
-    const value = parameterValue(parent, fn, call, parents);
+    const value = parameterValue(parent, fn, call, parents, method);
     const index = parent.elements.indexOf(pattern);
     if (value?.type !== "ArrayExpression" || index < 0) return undefined;
     if (value.elements.slice(0, index + 1).some((item: AnyNode) => item?.type === "SpreadElement"))
@@ -635,7 +685,7 @@ function resultCallbackCall(
       )
       ? call
       : null;
-  if (fn.async) return null;
+  if (fn.async && !includeEffects) return null;
   if (
     call.callee?.type === "MemberExpression" &&
     call.callee.object?.name === "Array" &&
@@ -837,10 +887,46 @@ function generatorSlotIncludes(
         parents.get(parents.get(node)) !== fn.body,
     )
   )
-    return true;
+    return yields.some(
+      (yielded) =>
+        contributesToReturn(source, fn, parents, new Set(), yielded.argument) &&
+        yields.filter(
+          (prior) =>
+            prior.end <= yielded.start &&
+            yieldProducesValue(prior, parents) &&
+            writeDominatesReference(prior, yielded, fn, parents),
+        ).length <= Number(path[0]),
+    );
   yields.sort((a, b) => a.start - b.start);
   const yielded = yields[Number(path[0])];
   return Boolean(yielded && contributesToReturn(source, fn, parents, new Set(), yielded.argument));
+}
+
+function yieldProducesValue(
+  yielded: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+  seen = new Set<AnyNode>(),
+): boolean {
+  if (!yielded.delegate) return true;
+  const argument = unwrapExpression(yielded.argument);
+  if (argument?.type === "ArrayExpression")
+    return argument.elements.some((element: AnyNode) => element?.type !== "SpreadElement");
+  if (argument?.type !== "CallExpression") return false;
+  const fn = resolveLocalValue(argument.callee, parents);
+  if (!fn?.generator || seen.has(fn)) return false;
+  seen.add(fn);
+  for (const statement of fn.body.body) {
+    if (statement.type === "ReturnStatement" || statement.type === "ThrowStatement") return false;
+    if (
+      statement.type === "ExpressionStatement" &&
+      statement.expression?.type === "YieldExpression" &&
+      yieldProducesValue(statement.expression, parents, seen)
+    )
+      return true;
+    if (statement.type !== "ExpressionStatement" && statement.type !== "VariableDeclaration")
+      return false;
+  }
+  return false;
 }
 
 function reachesFirstYield(
@@ -862,7 +948,7 @@ function reachesFirstYield(
       contributesToReturn(source, fn, parents, new Set(), yielded.argument) &&
       !yields.some(
         (prior) =>
-          !prior.delegate &&
+          yieldProducesValue(prior, parents) &&
           prior.end <= yielded.start &&
           writeDominatesReference(prior, yielded, fn, parents),
       ),
@@ -1239,6 +1325,17 @@ function resolveLocalValue(
     for (const key of bindingPath) value = localObjectProperty(value, key);
     return value;
   }
+  if (node.type === "CallExpression") {
+    const fn = resolveLocalValue(node.callee, parents, seen);
+    if (!fn || fn.async || fn.generator) return null;
+    if (fn.type === "ArrowFunctionExpression" && fn.body.type !== "BlockStatement")
+      return resolveLocalValue(fn.body, parents, seen);
+    const returned = fn.body?.body?.filter(
+      (statement: AnyNode) => statement.type === "ReturnStatement",
+    );
+    if (returned?.length !== 1) return null;
+    return resolveLocalValue(returned[0].argument, parents, seen);
+  }
   if (node.type === "MemberExpression") {
     const key = node.computed ? node.property?.value : node.property?.name;
     return key === undefined
@@ -1577,12 +1674,12 @@ function functionBinding(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>) {
     expression = object;
   }
   const parent = parents.get(expression);
-  if (
-    parent?.type === "AssignmentExpression" &&
-    parent.operator === "=" &&
-    parent.left.type === "Identifier"
-  )
-    return resolveLocalBinding(parent, parent.left.name, parents) ?? fn;
+  if (parent?.type === "AssignmentExpression" && parent.operator === "=") {
+    let target = parent.left;
+    while (target?.type === "MemberExpression") target = target.object;
+    if (target?.type === "Identifier")
+      return resolveLocalBinding(parent, target.name, parents) ?? fn;
+  }
   return parent?.type === "VariableDeclarator" ? parent : fn;
 }
 
@@ -1941,12 +2038,12 @@ function isCommandLikeName(name: string) {
   return COMMAND_LIKE_RE.test(name);
 }
 
-function nearestVariableDeclarator(node: AnyNode) {
-  let current = node.__doctorParent ?? node.parent;
+function nearestVariableDeclarator(node: AnyNode, parents?: WeakMap<AnyNode, AnyNode>) {
+  let current = parents?.get(node) ?? node.__doctorParent ?? node.parent;
   while (current) {
     if (current.type === "VariableDeclarator") return current;
     if (nearestFunctionOrProgram(current) === current) return null;
-    current = current.__doctorParent ?? current.parent;
+    current = parents?.get(current) ?? current.__doctorParent ?? current.parent;
   }
   return null;
 }

@@ -1642,3 +1642,86 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["function clock() {}; clock.call = (value = Date.now()) => value", "clock.call('stable')", 0],
+  ["function clock() {}; clock.apply = (value = Date.now()) => value", "clock.apply('stable')", 0],
+  ["function clock() {}; clock.call = (value = Date.now()) => value", "clock.call()", 1],
+  [
+    "function clock(value = Date.now()) { return value }; clock.call = () => 'stable'",
+    "clock.call(null)",
+    0,
+  ],
+  [
+    "function clock(value = Date.now()) { return value }; clock.apply = () => 'stable'",
+    "clock.apply(null, [])",
+    0,
+  ],
+  ["function clock() { return 'stable' }; clock.call = () => Date.now()", "clock.call(null)", 1],
+  [
+    "function* stable() { yield 'stable' }; function* clock() { yield* stable(); yield Date.now() }",
+    "clock().next().value",
+    0,
+  ],
+  [
+    "function* stable() {}; function* clock() { yield* stable(); yield Date.now() }",
+    "clock().next().value",
+    1,
+  ],
+  [
+    "function* inner() { yield Date.now() }; function* clock() { yield* inner(); yield 'stable' }",
+    "clock().next().value",
+    1,
+  ],
+])(
+  "preserves invocation identity and delegated advancement: %s",
+  async (script, expression, count) => {
+    for (const template of [false, true]) {
+      const result = await runNuxtAppRuleFixture(
+        noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+        `<script setup>${script}; ${template ? "" : `const displayed = ${expression}`}</script><template>{{ ${template ? expression : "displayed"} }}</template>`,
+      );
+      expect(result.diagnostics).toHaveLength(count);
+    }
+  },
+);
+
+test.each([
+  [
+    "function clock() { return Date.now() }; let displayed = 'stable'; if (false) displayed = clock()",
+    0,
+  ],
+  ["let displayed; async function initialize() { displayed = Date.now() }; await initialize()", 1],
+  [
+    "let displayed; async function initialize() { await later(); displayed = Date.now() }; await initialize()",
+    1,
+  ],
+  [
+    "let displayed; async function initialize() { await later(); displayed = Date.now() }; initialize()",
+    0,
+  ],
+  ["let displayed; [1].forEach(async () => { displayed = Date.now(); await later() })", 1],
+  ["let displayed; [1].forEach(async () => { await later(); displayed = Date.now() })", 0],
+  [
+    "function clock() { return Date.now() }; function makeClock() { return () => clock() }; const displayed = makeClock()()",
+    1,
+  ],
+  [
+    "function clock() { return Date.now() }; function makeClock() { return () => clock() }; const displayed = makeClock()",
+    0,
+  ],
+  [
+    "function* values() { yield 'stable'; if (flag) yield Date.now() }; const [displayed] = values()",
+    0,
+  ],
+  [
+    "function* values() { yield 'stable'; if (flag) yield Date.now() }; const [, displayed] = values()",
+    1,
+  ],
+])("preserves reviewed execution and slot reachability: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
