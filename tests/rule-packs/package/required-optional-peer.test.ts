@@ -7,6 +7,18 @@ const optionalPeer = {
 };
 
 test.each([
+  '(function () { require("peer"); }).call(this);',
+  '(function () { require("peer"); }).apply(this, []);',
+  '((peer = require("peer")) => peer).call(null);',
+  '((peer = require("peer")) => peer).apply(null, []);',
+  '((peer = require("peer")) => peer).apply(null, [undefined]);',
+  'require("peer")?.load();',
+  'require("peer")?.["load"]();',
+  'require("peer").load?.();',
+  '(({ ["peer"]: peer = require("peer") }) => peer)({});',
+  '(({ [1]: peer = require("peer") }) => peer)({});',
+  '(({ toString = require("peer") }) => toString)({ toString: undefined });',
+  '(({ peer = require("peer") }) => peer)({ ["peer"]: undefined });',
   'do { switch (1) { case 1: break; } } while (require("peer"));',
   'do { while (true) { break; } } while (require("peer"));',
   'do { inner: { break inner; } } while (require("peer"));',
@@ -68,6 +80,18 @@ test.each([
 });
 
 test.each([
+  '(({ toString = require("peer") }) => toString)({});',
+  '(({ constructor = require("peer") }) => constructor)({});',
+  '(({ ["toString"]: peer = require("peer") }) => peer)({});',
+  '(({ ["peer"]: peer = require("peer") }) => peer)({ peer: 1 });',
+  '(({ [1]: peer = require("peer") }) => peer)({ 1: 1 });',
+  '(({ peer = require("peer") }) => peer)({ __proto__: custom });',
+  '((peer = require("peer")) => peer).call(null, 1);',
+  '((peer = require("peer")) => peer).apply(null, [1]);',
+  '((peer = require("peer")) => peer).apply(null, unknown);',
+  'obj?.[require("peer")];',
+  'obj?.load?.(require("peer"));',
+  '(function () { require("peer"); }).call?.(null);',
   'outer: do { do { continue outer; } while (require("peer")); } while (false);',
   'outer: do { switch (1) { case 1: break outer; } } while (require("peer"));',
   '((undefined) => ((peer = require("peer")) => peer)(undefined))(1);',

@@ -559,7 +559,8 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
           ts.SyntaxKind.QuestionQuestionEqualsToken,
         ].includes(parent.operatorToken.kind) &&
         isWithin(node, parent.right)) ||
-      ts.isCallChain(parent)
+      ((ts.isCallChain(parent) || ts.isElementAccessChain(parent)) &&
+        !isWithin(node, parent.expression))
     )
       return false;
     if (dynamic && ts.isCallExpression(parent)) return false;
@@ -604,13 +605,39 @@ function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): bo
     return false;
   let expression: ts.Node = node;
   while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  let method: string | undefined;
+  if (
+    ts.isPropertyAccessExpression(expression.parent) &&
+    expression.parent.expression === expression &&
+    ["call", "apply"].includes(expression.parent.name.text)
+  ) {
+    method = expression.parent.name.text;
+    expression = expression.parent;
+    while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  }
   const call = expression.parent;
-  if (!ts.isCallExpression(call) || call.expression !== expression) return false;
+  if (!ts.isCallExpression(call) || ts.isCallChain(call) || call.expression !== expression)
+    return false;
   if (isWithin(load, node.body)) return true;
   const index = node.parameters.findIndex((parameter) => isWithin(load, parameter));
   if (index < 0 || call.arguments.some(ts.isSpreadElement)) return false;
+  let args: readonly ts.Expression[] = call.arguments;
+  if (method === "call") args = args.slice(1);
+  if (method === "apply") {
+    let list = args[1];
+    while (list && ts.isParenthesizedExpression(list)) list = list.expression;
+    if (!list || isUndefined(list) || list.kind === ts.SyntaxKind.NullKeyword) args = [];
+    else if (ts.isArrayLiteralExpression(list) && !list.elements.some(ts.isSpreadElement))
+      args = list.elements;
+    else return false;
+  }
   const parameter = node.parameters[index]!;
-  return bindingDefaultExecutes(parameter, call.arguments[index], load);
+  const value = args[index];
+  return bindingDefaultExecutes(
+    parameter,
+    value && !ts.isOmittedExpression(value) ? value : undefined,
+    load,
+  );
 }
 
 function isUndefined(value: ts.Expression | undefined): boolean {
@@ -620,6 +647,17 @@ function isUndefined(value: ts.Expression | undefined): boolean {
     (ts.isVoidExpression(value) && ts.isNumericLiteral(value.expression)) ||
     (ts.isIdentifier(value) && value.text === "undefined" && !shadowsName(value, "undefined"))
   );
+}
+
+function literalPropertyName(name: ts.Node): string | undefined {
+  if (ts.isComputedPropertyName(name)) {
+    name = name.expression;
+    while (ts.isParenthesizedExpression(name)) name = name.expression;
+    if (!ts.isStringLiteral(name) && !ts.isNumericLiteral(name)) return undefined;
+  }
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)
+    ? name.text
+    : undefined;
 }
 
 function bindingDefaultExecutes(
@@ -637,23 +675,24 @@ function bindingDefaultExecutes(
     if (
       value.properties.some(
         (property) =>
-          !ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name),
+          !ts.isPropertyAssignment(property) ||
+          literalPropertyName(property.name) === undefined ||
+          (!ts.isComputedPropertyName(property.name) &&
+            literalPropertyName(property.name) === "__proto__"),
       )
     )
       return false;
     for (const element of binding.name.elements) {
       if (element.dotDotDotToken || !isWithin(load, element)) continue;
-      const name = element.propertyName ?? element.name;
-      if (!ts.isIdentifier(name) && !ts.isStringLiteral(name) && !ts.isNumericLiteral(name))
-        return false;
+      const name = literalPropertyName(element.propertyName ?? element.name);
+      if (name === undefined) return false;
       const property = [...value.properties]
         .reverse()
         .find(
           (property) =>
-            ts.isPropertyAssignment(property) &&
-            !ts.isComputedPropertyName(property.name) &&
-            property.name.text === name.text,
+            ts.isPropertyAssignment(property) && literalPropertyName(property.name) === name,
         );
+      if (!property && Object.hasOwn(Object.prototype, name)) return false;
       return bindingDefaultExecutes(
         element,
         property && ts.isPropertyAssignment(property) ? property.initializer : undefined,
