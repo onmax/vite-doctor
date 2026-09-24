@@ -240,3 +240,29 @@ test("includes adjacent declarations, browser and binary entrypoints, and typesV
   ]);
   expect(result.missing).toEqual([]);
 });
+
+test.each([
+  ["js", "ts"],
+  ["js", "tsx"],
+  ["mjs", "mts"],
+  ["cjs", "cts"],
+])("resolves %s specifiers to %s source chunks", (specifierExtension, sourceExtension) => {
+  const result = inventory(
+    { exports: `./src/index.${sourceExtension}` },
+    {
+      [`src/index.${sourceExtension}`]: `import "./chunk.${specifierExtension}";`,
+      [`src/chunk.${sourceExtension}`]: 'import "peer";',
+    },
+  )!;
+  expect(result.references).toMatchObject([{ packageName: "peer", required: true }]);
+  expect(result.missing).toEqual([]);
+});
+
+test("does not substitute TypeScript chunks for missing JavaScript runtime imports", () => {
+  const result = inventory(
+    { main: "index.js" },
+    { "index.js": 'import "./chunk.js";', "chunk.ts": 'import "peer";' },
+  )!;
+  expect(result.references).toEqual([]);
+  expect(result.missing).toEqual(["chunk.js"]);
+});

@@ -14,7 +14,7 @@ export interface PackageManifest {
   typings?: string;
   exports?: unknown;
   imports?: Record<string, unknown>;
-  bin?: string | Record<string, string>;
+  bin?: string | string[] | Record<string, string>;
   typesVersions?: Record<string, Record<string, string[]>>;
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
@@ -77,7 +77,10 @@ function isPackageManifest(value: unknown): value is PackageManifest {
     types: isString,
     typings: isString,
     imports: isRecord,
-    bin: (entry) => isString(entry) || recordOf(entry, isString),
+    bin: (entry) =>
+      isString(entry) ||
+      (Array.isArray(entry) && entry.every(isString)) ||
+      recordOf(entry, isString),
     typesVersions: (entry) =>
       recordOf(entry, (version) =>
         recordOf(version, (targets) => Array.isArray(targets) && targets.every(isString)),
@@ -148,6 +151,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     from = root,
     probe = true,
     adjacentDeclaration = false,
+    sourceResolution = false,
   ) {
     const path = resolve(from, target);
     if (!inside(path)) return;
@@ -163,6 +167,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       ? kind === "types"
         ? typeCandidates(path)
         : [
+            ...(sourceResolution ? sourceCandidates(path) : []),
             path,
             ...[
               ".js",
@@ -289,6 +294,8 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             edge.kind === "types" ||
               edge.probe === true ||
               /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
+            false,
+            /\.(?:[cm]?ts|tsx)$/.test(current.path),
           );
           continue;
         }
@@ -355,6 +362,13 @@ function typeCandidates(path: string) {
       (ext) => path + ext,
     ),
   ];
+}
+
+function sourceCandidates(path: string): string[] {
+  if (/\.jsx?$/.test(path))
+    return [path.replace(/\.jsx?$/, ".ts"), path.replace(/\.jsx?$/, ".tsx")];
+  if (/\.[cm]js$/.test(path)) return [path.replace(/js$/, "ts")];
+  return [];
 }
 
 function externalPackageName(specifier: string): string | null {
@@ -503,12 +517,20 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
   if (dynamic && !ts.isAwaitExpression(node.parent)) return false;
   for (let parent = node.parent; parent && !ts.isSourceFile(parent); parent = parent.parent) {
     if (
-      ts.isFunctionLike(parent) ||
-      ts.isClassLike(parent) ||
+      (ts.isFunctionLike(parent) && !(parent.name && isWithin(node, parent.name))) ||
+      (ts.isPropertyDeclaration(parent) &&
+        !(parent.name && isWithin(node, parent.name)) &&
+        !parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) ||
       (ts.isIfStatement(parent) && !isWithin(node, parent.expression)) ||
       (ts.isConditionalExpression(parent) && !isWithin(node, parent.condition)) ||
       (ts.isSwitchStatement(parent) && !isWithin(node, parent.expression)) ||
-      ts.isIterationStatement(parent, false) ||
+      (ts.isWhileStatement(parent) && !isWithin(node, parent.expression)) ||
+      ts.isDoStatement(parent) ||
+      (ts.isForStatement(parent) &&
+        !(parent.initializer && isWithin(node, parent.initializer)) &&
+        !(parent.condition && isWithin(node, parent.condition))) ||
+      ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) &&
+        !isWithin(node, parent.expression)) ||
       ts.isTryStatement(parent) ||
       (ts.isBinaryExpression(parent) &&
         [

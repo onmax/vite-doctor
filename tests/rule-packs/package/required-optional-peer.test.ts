@@ -7,6 +7,16 @@ const optionalPeer = {
 };
 
 test.each([
+  'while (require("peer")) {}',
+  'for (require("peer");;) {}',
+  'for (;require("peer");) {}',
+  'for (const item of require("peer")) {}',
+  'for (const item in require("peer")) {}',
+  'class Adapter extends require("peer").Base {}',
+  'class Adapter { static peer = require("peer"); }',
+  'class Adapter { static { require("peer"); } }',
+  'class Adapter { [require("peer").key]() {} }',
+  'class Adapter { [require("peer").key] = null; }',
   'import "peer";',
   'export * from "peer";',
   'const peer = require("peer/subpath");',
@@ -33,6 +43,12 @@ test.each([
 });
 
 test.each([
+  'while (enabled) { require("peer"); }',
+  'for (;enabled;require("peer")) {}',
+  'for (const item of items) { require("peer"); }',
+  'class Adapter { peer = require("peer"); }',
+  'class Adapter { static load() { require("peer"); } }',
+  'if (enabled) { class Adapter extends require("peer").Base {} }',
   'try { require("peer") } catch {}',
   'if (enabled) require("peer");',
   'const peer = enabled ? require("peer") : null;',
@@ -121,7 +137,7 @@ test("checks conditional default exports and package import aliases", async () =
   expect(diagnostics.map((d) => d.code)).toEqual(["PKG0003", "PKG0003"]);
 });
 
-test.each(["./cli.js", { example: "./cli.js" }])(
+test.each(["./cli.js", { example: "./cli.js" }, ["./cli.js"]])(
   "allows optional peers loaded only by standalone binaries: %j",
   async (bin) => {
     expect(
@@ -151,4 +167,12 @@ test("still diagnoses undeclared dependencies in standalone binaries", async () 
     { "index.js": "export {};", "cli.js": 'import "undeclared";' },
   );
   expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["PKG0001"]);
+});
+
+test("analyzes every array-form binary", async () => {
+  const diagnostics = await diagnose(
+    { bin: ["first.js", "second.js"] },
+    { "first.js": 'import "first-peer";', "second.js": 'import "second-peer";' },
+  );
+  expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["PKG0001", "PKG0001"]);
 });
