@@ -130,9 +130,13 @@ function undisposedResource(program: AnyNode): string | null {
     controller: AnyNode;
     value: AnyNode;
   };
+  type Completion = { normal: boolean; abrupt: boolean; value?: AnyNode };
   const resources: Resource[] = [];
+  const repeated = new Set<AnyNode>();
+  let loopDepth = 0;
   const listeners: Listener[] = [];
   const values = new Map<AnyNode, AnyNode>();
+  const returned = new Map<AnyNode, AnyNode>();
   const callbacks = new Map<AnyNode, AnyNode>();
   const properties = new Map<AnyNode, Map<string, AnyNode>>();
   const members = new Map<AnyNode, Map<string, AnyNode>>();
@@ -144,6 +148,7 @@ function undisposedResource(program: AnyNode): string | null {
   let callbackValue: AnyNode;
   const identity = (node: AnyNode, environment = values): AnyNode => {
     node = unwrapResourceExpression(node);
+    if (returned.has(node)) return identity(returned.get(node), environment);
     if (node?.type === "MemberExpression") {
       const key = propertyKey(node);
       if (key !== undefined) {
@@ -177,7 +182,9 @@ function undisposedResource(program: AnyNode): string | null {
     }
     const binding = resolve(node);
     return environment.has(binding)
-      ? environment.get(binding)
+      ? returned.has(environment.get(binding))
+        ? identity(environment.get(binding), environment)
+        : environment.get(binding)
       : (binding ?? memberPath(node) ?? node);
   };
   const receiverIdentity = (node: AnyNode, environment: Map<AnyNode, AnyNode>): AnyNode => {
@@ -197,53 +204,7 @@ function undisposedResource(program: AnyNode): string | null {
     }
     return typeof node.value === "boolean" ? node.value : node;
   };
-  function inspect(
-    target: AnyNode,
-    args: AnyNode[] = [],
-    environment = values,
-    module = false,
-  ): void {
-    target = unwrapResourceExpression(target);
-    if (target?.type === "Identifier") {
-      const value = identity(target, environment);
-      if (
-        resources.some((resource) => resource.value === value && resource.kind === "subscription")
-      )
-        cleaned.add(value);
-      target = callbacks.get(value) ?? value;
-    }
-    if (
-      target?.type === "CallExpression" &&
-      target.callee?.type === "MemberExpression" &&
-      propertyKey(target.callee) === "bind" &&
-      !visited.has(target)
-    ) {
-      visited.add(target);
-      const bound = target.callee.object;
-      const boundArgs = [...target.arguments.slice(1), ...args];
-      if (bound.type === "MemberExpression") {
-        if (identity(bound.object, environment) === identity(target.arguments[0], environment))
-          evaluate(
-            { type: "CallExpression", callee: bound, arguments: boundArgs },
-            environment,
-            module,
-          );
-      } else {
-        inspect(bound, boundArgs, environment, module);
-      }
-      visited.delete(target);
-      return;
-    }
-    if (
-      !target ||
-      visited.has(target) ||
-      !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
-        target.type,
-      )
-    )
-      return;
-    visited.add(target);
-    const local = new Map(environment);
+  function bindResource(pattern: AnyNode, argument: AnyNode, local: Map<AnyNode, AnyNode>): void {
     const read = (object: AnyNode, key: string): AnyNode =>
       identity(
         {
@@ -276,9 +237,13 @@ function undisposedResource(program: AnyNode): string | null {
         }
       } else if (pattern.type === "ObjectPattern") {
         const excluded = new Set<string>();
+        let unknownExclusion = false;
         for (const property of pattern.properties) {
           if (property.type === "RestElement") {
-            if (argument?.type !== "ObjectExpression") continue;
+            if (argument?.type !== "ObjectExpression" || unknownExclusion) {
+              bind(property.argument, {});
+              continue;
+            }
             const rest = { type: "ObjectExpression", properties: [] };
             const entries = new Map<string, AnyNode>();
             for (const item of argument.properties) {
@@ -292,9 +257,13 @@ function undisposedResource(program: AnyNode): string | null {
             bind(property.argument, rest);
           } else {
             const key = property.computed
-              ? property.key?.value
+              ? identity(property.key, local)?.value
               : (property.key?.name ?? property.key?.value);
-            if (key === undefined) continue;
+            if (key === undefined) {
+              unknownExclusion = true;
+              bind(property.value, {});
+              continue;
+            }
             excluded.add(String(key));
             const missing =
               argument?.type === "ObjectExpression" &&
@@ -310,21 +279,84 @@ function undisposedResource(program: AnyNode): string | null {
         }
       }
     };
+    bind(pattern, argument);
+  }
+  function inspect(
+    target: AnyNode,
+    args: AnyNode[] = [],
+    environment = values,
+    module = false,
+  ): Completion {
+    target = unwrapResourceExpression(target);
+    if (target?.type === "Identifier") {
+      const value = identity(target, environment);
+      if (
+        resources.some((resource) => resource.value === value && resource.kind === "subscription")
+      )
+        cleaned.add(value);
+      target = callbacks.get(value) ?? value;
+    }
+    if (
+      target?.type === "CallExpression" &&
+      target.callee?.type === "MemberExpression" &&
+      propertyKey(target.callee) === "bind" &&
+      !visited.has(target)
+    ) {
+      visited.add(target);
+      const bound = target.callee.object;
+      const boundArgs = [...target.arguments.slice(1), ...args];
+      let completion: Completion = { normal: true, abrupt: false };
+      if (bound.type === "MemberExpression") {
+        if (identity(bound.object, environment) === identity(target.arguments[0], environment))
+          completion = evaluate(
+            { type: "CallExpression", callee: bound, arguments: boundArgs },
+            environment,
+            module,
+          );
+      } else {
+        completion = inspect(bound, boundArgs, environment, module);
+      }
+      visited.delete(target);
+      return completion;
+    }
+    if (
+      !target ||
+      visited.has(target) ||
+      !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
+        target.type,
+      )
+    )
+      return { normal: true, abrupt: false };
+    visited.add(target);
+    const local = new Map(environment);
     for (const [index, param] of target.params.entries()) {
       if (param.type === "RestElement")
-        bind(param.argument, {
-          type: "ArrayExpression",
-          elements: args.slice(index).map((arg) => identity(arg, environment)),
-        });
-      else bind(param, identity(args[index], environment));
+        bindResource(
+          param.argument,
+          {
+            type: "ArrayExpression",
+            elements: args.slice(index).map((arg) => identity(arg, environment)),
+          },
+          local,
+        );
+      else bindResource(param, identity(args[index], environment), local);
     }
-    evaluate(target.body, local, module);
+    const completion = evaluate(target.body, local, module);
     for (const binding of environment.keys()) {
       if (local.has(binding)) environment.set(binding, local.get(binding));
     }
     visited.delete(target);
+    return completion;
   }
-  function evaluate(root: AnyNode, environment: Map<AnyNode, AnyNode>, module: boolean): void {
+  function evaluate(
+    root: AnyNode,
+    environment: Map<AnyNode, AnyNode>,
+    module: boolean,
+  ): Completion {
+    const exits: Set<AnyNode>[] = [];
+    let normal = false;
+    let abrupt = false;
+    const returns: AnyNode[] = [];
     walkEvaluation(root, (node) => {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     });
@@ -345,6 +377,8 @@ function undisposedResource(program: AnyNode): string | null {
           : node.type === "AssignmentExpression"
             ? node.left
             : null;
+      if (handle && ["ObjectPattern", "ArrayPattern"].includes(handle.type))
+        bindResource(handle, identity(node.init ?? node.right, environment), environment);
       if (handle?.type === "Identifier") {
         const binding = resolve(handle);
         const init = unwrapResourceExpression(
@@ -362,10 +396,14 @@ function undisposedResource(program: AnyNode): string | null {
       {
         const path = memberPath(node.callee);
         const global = node.callee?.object ?? node.callee;
+        const globalValue = identity(global, environment);
+        const globalAlias = ["window", "globalThis", "self"].includes(globalValue);
         const callee =
-          !resolve(global) &&
+          (!resolve(global) || globalAlias) &&
           !(node.callee?.computed && typeof node.callee.property?.value !== "string")
-            ? path?.replace(/^(?:window|globalThis|self)\./, "")
+            ? globalAlias && node.callee?.type === "MemberExpression"
+              ? propertyKey(node.callee)
+              : path?.replace(/^(?:window|globalThis|self)\./, "")
             : undefined;
         const kind =
           node.type === "CallExpression" && callee === "setInterval" && !resolve(node.callee)
@@ -379,7 +417,13 @@ function undisposedResource(program: AnyNode): string | null {
                 : node.type === "CallExpression" && path?.endsWith(".subscribe")
                   ? "subscription"
                   : null;
-        if (module && kind)
+        if (module && kind) {
+          if (
+            loopDepth ||
+            (resources.some((resource) => resource.value === node) && !cleaned.has(node))
+          )
+            repeated.add(node);
+          cleaned.delete(node);
           resources.push({
             value: node,
             kind,
@@ -393,9 +437,12 @@ function undisposedResource(program: AnyNode): string | null {
                     : "close",
             method: !["interval", "timeout"].includes(kind),
           });
+        }
       }
       if (node.type !== "CallExpression") return;
-      const callee = memberPath(node.callee);
+      const calleeGlobal = identity(node.callee?.object, environment);
+      const globalAlias = ["window", "globalThis", "self"].includes(calleeGlobal);
+      const callee = globalAlias ? `window.${propertyKey(node.callee)}` : memberPath(node.callee);
       if (module && callee === "import.meta.hot.dispose") {
         const argument = unwrapResourceExpression(node.arguments[0]);
         callbackValue = identity(argument, environment);
@@ -481,17 +528,18 @@ function undisposedResource(program: AnyNode): string | null {
           matches &&
           !replacedMethod &&
           identity(receiver, environment) === resource.value &&
-          (!global || !resolve(global))
+          (!global || !resolve(global) || globalAlias)
         )
           cleaned.add(resource.value);
       }
-      inspect(node.callee, node.arguments, environment, module);
+      const completion = inspect(node.callee, node.arguments, environment, module);
+      if (completion.value) returned.set(node, completion.value);
+      if (completion.abrupt) {
+        abrupt = true;
+        exits.push(new Set(cleaned));
+      }
+      return completion.normal;
     };
-    if (module) {
-      walkEvaluation(root, visit);
-      return;
-    }
-    const exits: Set<AnyNode>[] = [];
     const snapshot = () => ({
       cleaned: new Set(cleaned),
       values: new Map(environment),
@@ -558,25 +606,54 @@ function undisposedResource(program: AnyNode): string | null {
           "ForInStatement",
           "ForOfStatement",
           "WhileStatement",
+          "DoWhileStatement",
           "SwitchStatement",
           "TryStatement",
         ].includes(node.type)
-      )
+      ) {
+        exits.push(new Set(cleaned));
+        abrupt = true;
+        if (module) {
+          const before = snapshot();
+          const loop = !["SwitchStatement", "TryStatement"].includes(node.type);
+          if (loop) loopDepth++;
+          for (const [key, child] of Object.entries(node)) {
+            if (key !== "__doctorParent") walk(child);
+          }
+          if (loop) loopDepth--;
+          merge(before, snapshot());
+        }
         return true;
-      visit(node);
+      }
+      if (visit(node) === false) return false;
       for (const [key, child] of Object.entries(node)) {
         if (key !== "__doctorParent" && !walk(child)) return false;
       }
       if (node.type === "ReturnStatement" || node.type === "ThrowStatement") {
         exits.push(new Set(cleaned));
+        if (node.type === "ReturnStatement") {
+          normal = true;
+          returns.push(identity(node.argument, environment));
+        } else abrupt = true;
         return false;
       }
       return true;
     };
-    if (walk(root)) exits.push(new Set(cleaned));
+    if (walk(root)) {
+      normal = true;
+      returns.push(
+        root.type === "BlockStatement" || root.type === "Program"
+          ? undefined
+          : identity(root, environment),
+      );
+      exits.push(new Set(cleaned));
+    }
     for (const value of cleaned) {
       if (exits.some((exit) => !exit.has(value))) cleaned.delete(value);
     }
+    const value =
+      returns.length && returns.every((value) => value === returns[0]) ? returns[0] : undefined;
+    return { normal, abrupt, value };
   }
   evaluate(program, values, true);
   inspect(callback);
@@ -586,7 +663,10 @@ function undisposedResource(program: AnyNode): string | null {
     )
   )
     cleaned.add(callbackValue);
-  return resources.find((resource) => !cleaned.has(resource.value))?.kind ?? null;
+  return (
+    resources.find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))
+      ?.kind ?? null
+  );
 }
 
 function unwrapResourceExpression(node: AnyNode): AnyNode {

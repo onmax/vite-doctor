@@ -992,3 +992,152 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "module false branch",
+    "const timer = setInterval(refresh); if (false) clearInterval(timer); import.meta.hot.dispose(saveState)",
+    true,
+  ],
+  [
+    "module uncertain branch",
+    "const timer = setInterval(refresh); if (stop) clearInterval(timer); import.meta.hot.dispose(saveState)",
+    true,
+  ],
+  [
+    "module both branches",
+    "const timer = setInterval(refresh); if (stop) clearInterval(timer); else clearInterval(timer); import.meta.hot.dispose(saveState)",
+    false,
+  ],
+  [
+    "module true branch",
+    "const timer = setInterval(refresh); if (true) clearInterval(timer); import.meta.hot.dispose(saveState)",
+    false,
+  ],
+  [
+    "repeated loop resource",
+    "let timer; for (let i = 0; i < 2; i++) timer = setInterval(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "repeated setup resource",
+    "let timer; function start() { timer = setInterval(refresh) }; start(); start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "cleaned repeated setup",
+    "let timer; function start() { timer = setInterval(refresh) }; start(); clearInterval(timer); start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "return from try",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { if (skip) return } finally { saveState() }; clearInterval(timer) })",
+    true,
+  ],
+  [
+    "infinite loop before cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { while (true) {}; clearInterval(timer) })",
+    true,
+  ],
+  [
+    "do loop before cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { do { return } while (false); clearInterval(timer) })",
+    true,
+  ],
+  [
+    "throwing helper before cleanup",
+    "const timer = setInterval(refresh); function fail() { throw new Error('stop') }; import.meta.hot.dispose(() => { fail(); clearInterval(timer) })",
+    true,
+  ],
+  [
+    "conditionally throwing helper",
+    "const timer = setInterval(refresh); function fail() { if (skip) throw new Error('stop') }; import.meta.hot.dispose(() => { fail(); clearInterval(timer) })",
+    true,
+  ],
+  [
+    "returning helper before cleanup",
+    "const timer = setInterval(refresh); function done() { if (skip) return; saveState() }; import.meta.hot.dispose(() => { done(); clearInterval(timer) })",
+    false,
+  ],
+  [
+    "cleanup before throwing helper",
+    "const timer = setInterval(refresh); function fail() { throw new Error('stop') }; import.meta.hot.dispose(() => { clearInterval(timer); fail() })",
+    false,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
+
+for (const [name, source, leaks] of [
+  [
+    "destructured array resource",
+    "const [timer] = [setInterval(refresh)]; import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "destructured object resource",
+    "const { timer } = { timer: setInterval(refresh) }; import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "destructured resource mismatch",
+    "const [timer] = [setInterval(refresh)]; import.meta.hot.dispose(() => clearInterval(other))",
+    true,
+  ],
+  [
+    "returned resource handle",
+    "function start() { return setInterval(refresh) }; const timer = start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "arrow returned resource handle",
+    "const start = () => setInterval(refresh); const timer = start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "returned resource mismatch",
+    "function start() { return setInterval(refresh) }; const timer = start(); import.meta.hot.dispose(() => clearInterval(other))",
+    true,
+  ],
+  [
+    "aliased global resource leak",
+    "const timers = window; const timer = timers.setInterval(refresh); import.meta.hot.dispose(saveState)",
+    true,
+  ],
+  [
+    "aliased global resource cleanup",
+    "const timers = window; const timer = timers.setInterval(refresh); import.meta.hot.dispose(() => timers.clearInterval(timer))",
+    false,
+  ],
+  [
+    "computed rest exclusion",
+    "const timer = setInterval(refresh); const key = 'timer'; function cleanup({ [key]: ignored, ...rest }) { clearInterval(rest.timer) }; import.meta.hot.dispose(() => cleanup({ timer }))",
+    true,
+  ],
+  [
+    "unknown rest exclusion",
+    "const timer = setInterval(refresh); function cleanup({ [key]: ignored, ...rest }) { clearInterval(rest.timer) }; import.meta.hot.dispose(() => cleanup({ timer }))",
+    true,
+  ],
+  [
+    "computed rest retained key",
+    "const timer = setInterval(refresh); const key = 'other'; function cleanup({ [key]: ignored, ...rest }) { clearInterval(rest.timer) }; import.meta.hot.dispose(() => cleanup({ timer }))",
+    false,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
