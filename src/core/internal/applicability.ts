@@ -37,6 +37,8 @@ export function evaluateRuleApplicability(
 }
 
 export function evaluatePackActivation(pack: RulePack, project: ProjectInfo): ApplicabilityResult {
+  if (pack.activation === false)
+    return inactive(`Rule Pack ${pack.name} requires explicit preset selection.`);
   if (!pack.activation) return active();
   if (pack.activation.nuxt && project.framework !== "nuxt") {
     return inactive(`Rule Pack ${pack.name} requires a Nuxt project.`);
