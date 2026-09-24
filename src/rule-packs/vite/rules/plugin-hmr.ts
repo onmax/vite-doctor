@@ -137,6 +137,7 @@ function undisposedResource(program: AnyNode): string | null {
   const listeners: Listener[] = [];
   const thisBinding = {};
   const lexicalReceivers = new Map<AnyNode, AnyNode>();
+  const lexicalEnvironments = new Map<AnyNode, Map<AnyNode, AnyNode>>();
   const alternatives = new Map<AnyNode, AnyNode[]>();
   const callbackChoices = new Map<AnyNode, AnyNode[]>();
   const superConstructors = new Map<AnyNode, (args: AnyNode[]) => Completion>();
@@ -311,10 +312,11 @@ function undisposedResource(program: AnyNode): string | null {
         resources.some((resource) => resource.value === value && resource.kind === "subscription")
       )
         cleaned.add(value);
-      target = lexicalReceivers.has(value) ? value : (callbacks.get(value) ?? value);
+      target = lexicalEnvironments.has(value) ? value : (callbacks.get(value) ?? value);
     }
-    if (lexicalReceivers.has(target)) {
-      receiver = lexicalReceivers.get(target);
+    const captured = lexicalEnvironments.get(target);
+    if (captured) {
+      if (lexicalReceivers.has(target)) receiver = lexicalReceivers.get(target);
       target = callbacks.get(target) ?? target;
     }
     if (
@@ -356,7 +358,7 @@ function undisposedResource(program: AnyNode): string | null {
     )
       return { normal: true, abrupt: false };
     visited.add(target);
-    const local = new Map(environment);
+    const local = new Map([...(captured ?? []), ...environment]);
     if (target.type === "FunctionExpression" && target.id) local.set(target.id, target);
     local.set(thisBinding, receiver);
     for (const [index, param] of target.params.entries()) {
@@ -802,9 +804,11 @@ function undisposedResource(program: AnyNode): string | null {
       if (
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
       ) {
-        if (node.type === "ArrowFunctionExpression") {
+        if (node.type !== "FunctionDeclaration") {
           const closure = {};
-          lexicalReceivers.set(closure, environment.get(thisBinding));
+          lexicalEnvironments.set(closure, environment);
+          if (node.type === "ArrowFunctionExpression")
+            lexicalReceivers.set(closure, environment.get(thisBinding));
           callbacks.set(closure, node);
           returned.set(node, closure);
         }
@@ -1045,6 +1049,11 @@ function undisposedResource(program: AnyNode): string | null {
           "SwitchStatement",
         ].includes(node.type)
       ) {
+        const pretest = node.type === "WhileStatement" || node.type === "ForStatement";
+        if (pretest) {
+          if (!walk(node.init) || !walk(node.test)) return false;
+          if (identity(node.test, environment)?.value === false) return true;
+        }
         const loop = node.type !== "SwitchStatement";
         controls.push(loop);
         if (loop) {
@@ -1058,7 +1067,8 @@ function undisposedResource(program: AnyNode): string | null {
           if (loop) loopDepth++;
           if (loop) {
             for (const [key, child] of Object.entries(node)) {
-              if (key !== "__doctorParent") walk(child);
+              if (key !== "__doctorParent" && !(pretest && ["init", "test"].includes(key)))
+                walk(child);
             }
           } else {
             walk(node.discriminant);
@@ -1168,7 +1178,7 @@ function undisposedResource(program: AnyNode): string | null {
     properties.clear();
     for (const [key, entries] of initialProperties) properties.set(key, new Map(entries));
     inspect(
-      callbacks.get(disposer) && !lexicalReceivers.has(disposer)
+      callbacks.get(disposer) && !lexicalEnvironments.has(disposer)
         ? callbacks.get(disposer)
         : disposer,
     );

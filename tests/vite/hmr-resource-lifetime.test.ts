@@ -1988,3 +1988,57 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "returned arrow parameter",
+    "function make(h) { return () => clearInterval(h) }; const timer = setInterval(refresh); import.meta.hot.dispose(make(timer))",
+    false,
+  ],
+  [
+    "returned function local",
+    "function make(h) { const local = h; return function () { clearInterval(local) } }; const timer = setInterval(refresh); import.meta.hot.dispose(make(timer))",
+    false,
+  ],
+  [
+    "returned arrow reassigned local",
+    "function make(h) { let local; const cb = () => clearInterval(local); local = h; return cb }; const timer = setInterval(refresh); import.meta.hot.dispose(make(timer))",
+    false,
+  ],
+  [
+    "returned callback wrong resource",
+    "function make(h) { return () => clearInterval(h) }; const timer = setInterval(refresh); import.meta.hot.dispose(make(other))",
+    true,
+  ],
+  [
+    "unreachable while",
+    "while (false) { setInterval(refresh) }; import.meta.hot.dispose(() => saveState())",
+    false,
+  ],
+  [
+    "unreachable for",
+    "for (; false;) { setInterval(refresh) }; import.meta.hot.dispose(() => saveState())",
+    false,
+  ],
+  [
+    "for initializer still runs",
+    "for (setInterval(refresh); false;) {}; import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+  [
+    "do while executes once",
+    "do { setInterval(refresh) } while (false); import.meta.hot.dispose(() => saveState())",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(
+      result.diagnostics.some((item) => item.ruleId === requireDisposeForSideEffects.meta.id),
+    ).toBe(leaks);
+  });
+}
