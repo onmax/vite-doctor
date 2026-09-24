@@ -37,7 +37,15 @@ export const noHttpErrorMasking = createRule({
       ScriptNode(node: AnyNode) {
         if (node.type !== "TryStatement" || !node.handler) return;
         const conditions = stableConditions(node);
-        const initial: Path = { outcome: "normal", conditions: new Map() };
+        let root = node;
+        while (root.__doctorParent) root = root.__doctorParent;
+        const lexical = lexicalBindings(root);
+        const initial: Path = {
+          outcome: "normal",
+          conditions: new Map(),
+          resolveBinding: lexical.resolve,
+          functions: enclosingFunctions(root, node, lexical),
+        };
         const candidate = outcomes(node.block, initial, new Map(), conditions).find((path) => {
           if (typeof path.outcome !== "number" || path.outcome < 400 || path.outcome >= 500)
             return false;
@@ -70,6 +78,7 @@ export const noHttpErrorMasking = createRule({
 type Outcome = number | "server-error" | "normal" | "exit" | "throw" | "break" | "continue";
 
 interface Path {
+  resolveBinding: (node: AnyNode) => AnyNode;
   outcome: Outcome;
   label?: string;
   conditions: ReadonlyMap<string, boolean>;
@@ -216,29 +225,63 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     });
   }
   if (node.type === "VariableDeclaration") {
-    const next = new Map(path.conditions);
-    const values = new Map(bindings);
-    const functions = new Map(path.functions);
+    let paths: Path[] = [normal];
     for (const declaration of node.declarations) {
-      if (declaration.id.type !== "Identifier") continue;
-      if (declaration.init) {
-        functions.delete(declaration.id.name);
-        if (isFunction(declaration.init)) functions.set(declaration.id.name, declaration.init);
-        values.delete(declaration.id.name);
-        const status = httpStatus(declaration.init);
-        if (status !== undefined) values.set(declaration.id.name, status);
-      }
-      next.delete(declaration.id.name);
-      if (
-        declaration.init?.type === "Literal" &&
-        typeof declaration.init.value === "boolean" &&
-        conditions.has(declaration.id.name)
-      )
-        next.set(declaration.id.name, declaration.init.value);
+      paths = paths.flatMap((current) => {
+        if (current.outcome !== "normal") return [current];
+        return outcomes(declaration.init, current, bindings, conditions).map((evaluated) => {
+          if (evaluated.outcome !== "normal") return evaluated;
+          const next = new Map(evaluated.conditions);
+          const values = new Map(evaluated.bindings);
+          const functions = new Map(evaluated.functions);
+          for (const name of bindingNames(declaration.id)) {
+            next.delete(name);
+            if (declaration.init) {
+              functions.delete(name);
+              values.delete(name);
+            }
+          }
+          if (declaration.id.type === "Identifier") {
+            const name = declaration.id.name;
+            if (isFunction(declaration.init)) functions.set(name, declaration.init);
+            const status = httpStatus(declaration.init);
+            if (status !== undefined) values.set(name, status);
+            if (
+              declaration.init?.type === "Literal" &&
+              typeof declaration.init.value === "boolean" &&
+              conditions.has(name)
+            )
+              next.set(name, declaration.init.value);
+          }
+          return { ...evaluated, bindings: values, functions, conditions: next };
+        });
+      });
     }
-    return [{ ...normal, bindings: values, functions, conditions: next }];
+    return paths;
   }
   const assignment = node.type === "ExpressionStatement" ? node.expression : node;
+  if (
+    assignment.type === "AssignmentExpression" &&
+    assignment.left.type === "MemberExpression" &&
+    assignment.left.object.type === "Identifier"
+  ) {
+    const member = assignment.left;
+    const property = member.computed ? member.property.value : member.property.name;
+    if (property === "statusCode" || property === "status") {
+      const values = new Map(bindings);
+      const name = member.object.name;
+      if (values.has(name)) {
+        values.delete(name);
+        if (
+          assignment.operator === "=" &&
+          assignment.right.type === "Literal" &&
+          typeof assignment.right.value === "number"
+        )
+          values.set(name, assignment.right.value);
+      }
+      return [{ ...normal, bindings: values }];
+    }
+  }
   if (assignment.type === "AssignmentExpression" && assignment.left.type === "Identifier") {
     const next = new Map(path.conditions);
     const values = new Map(bindings);
@@ -358,7 +401,9 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       const target = param.type === "AssignmentPattern" ? param.left : param;
       if (target.type !== "Identifier") return;
       const supplied = call.arguments[index];
-      const defaulted = !supplied && param.type === "AssignmentPattern";
+      const defaulted =
+        param.type === "AssignmentPattern" &&
+        (!supplied || isUndefinedArgument(supplied, path.resolveBinding));
       const arg = defaulted ? param.right : supplied;
       const values = defaulted ? local : bindings;
       const booleans = defaulted ? localConditions : path.conditions;
@@ -693,11 +738,10 @@ function isFunction(node: AnyNode): boolean {
   );
 }
 
-function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
+function lexicalBindings(root: AnyNode) {
   type Scope = { parent?: Scope; bindings: Map<string, AnyNode>; functionScope?: boolean };
   const scopes = new Map<AnyNode, Scope>();
   const names = new Map<AnyNode, AnyNode>();
-  const invoked = new Set<AnyNode>();
   function bind(pattern: AnyNode, scope: Scope) {
     for (const binding of bindingNames(pattern))
       if (!scope.bindings.has(binding)) scope.bindings.set(binding, pattern);
@@ -726,6 +770,8 @@ function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
       if (node.type === "FunctionExpression") bind(node.id, scope);
     }
     if (node.type === "CatchClause") bind(node.param, scope);
+    if (node.type === "ImportDeclaration")
+      for (const specifier of node.specifiers) bind(specifier.local, scope);
     if (node.type === "ClassDeclaration") bind(node.id, scope);
     if (node.type === "VariableDeclaration") {
       let target = scope;
@@ -744,16 +790,70 @@ function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
     }
   }
   collect(root, { bindings: new Map(), functionScope: true });
+  return {
+    names,
+    resolve: (reference: AnyNode, location = reference) => {
+      for (let scope = scopes.get(location); scope; scope = scope.parent) {
+        const binding = scope.bindings.get(reference.name);
+        if (binding) return binding;
+      }
+    },
+  };
+}
+
+function enclosingFunctions(
+  root: AnyNode,
+  node: AnyNode,
+  lexical: ReturnType<typeof lexicalBindings>,
+) {
+  const visible = new Map(
+    [...lexical.names]
+      .filter(
+        ([fn, binding]) =>
+          fn.type === "FunctionDeclaration" && lexical.resolve(binding, node) === binding,
+      )
+      .map(([fn]) => [fn.id.name, fn]),
+  );
+  walkScriptLocal(root, (child) => {
+    if (child.start >= node.start) return;
+    const target =
+      child.type === "AssignmentExpression"
+        ? child.left
+        : child.type === "UpdateExpression"
+          ? child.argument
+          : child.type === "VariableDeclarator" && child.init
+            ? child.id
+            : undefined;
+    if (!target) return;
+    for (const name of bindingNames(target)) {
+      const fn = visible.get(name);
+      if (fn && lexical.resolve({ name }, child) === lexical.names.get(fn)) visible.delete(name);
+    }
+  });
+  return visible;
+}
+
+function isUndefinedArgument(node: AnyNode, resolve: Path["resolveBinding"]): boolean {
+  while (node.type === "ParenthesizedExpression") node = node.expression;
+  if (
+    node.type === "UnaryExpression" &&
+    node.operator === "void" &&
+    node.argument.type === "Literal"
+  )
+    return true;
+  if (node.type !== "Identifier" || node.name !== "undefined") return false;
+  return !resolve(node);
+}
+
+function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
+  const { names, resolve } = lexicalBindings(root);
+  const invoked = new Set<AnyNode>();
   walkScriptLocal(root, (node) => {
     if (node.type !== "CallExpression") return;
     for (const reference of [node.callee, ...node.arguments]) {
       if (reference.type !== "Identifier") continue;
-      for (let scope = scopes.get(reference); scope; scope = scope.parent) {
-        const binding = scope.bindings.get(reference.name);
-        if (!binding) continue;
-        invoked.add(binding);
-        break;
-      }
+      const binding = resolve(reference);
+      if (binding) invoked.add(binding);
     }
   });
   const skipped = new Set<AnyNode>();

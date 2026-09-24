@@ -81,6 +81,96 @@ test.each([
     false,
   ],
   [
+    "explicit undefined default",
+    "throw createError({ statusCode: 404 })",
+    "function preserve(value = error) { if (isError(value)) throw value }; preserve(undefined); throw new Error()",
+    false,
+  ],
+  [
+    "void literal default",
+    "throw createError({ statusCode: 404 })",
+    "function preserve(value = error) { if (isError(value)) throw value }; preserve(void 0); throw new Error()",
+    false,
+  ],
+  [
+    "shadowed undefined argument",
+    "throw createError({ statusCode: 404 })",
+    "const undefined = unknown; function preserve(value = error) { if (isError(value)) throw value }; preserve(undefined); throw new Error()",
+    true,
+  ],
+  [
+    "parameter shadowed undefined argument",
+    "throw createError({ statusCode: 404 })",
+    "function outer(undefined) { function preserve(value = error) { if (isError(value)) throw value }; preserve(undefined); throw new Error() }; outer(unknown)",
+    true,
+  ],
+  [
+    "undefined boolean default",
+    "throw createError({ statusCode: 404 })",
+    "function preserve(flag = true) { if (flag) throw error }; preserve(undefined); throw new Error()",
+    false,
+  ],
+  [
+    "undefined earlier parameter default",
+    "throw createError({ statusCode: 404 })",
+    "function preserve(first, value = first) { if (isError(value)) throw value }; preserve(error, undefined); throw new Error()",
+    false,
+  ],
+  [
+    "awaited initializer throw",
+    "async function missing() { throw createError({ statusCode: 404 }) }; const account = await missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "synchronous initializer throw",
+    "function missing() { throw createError({ statusCode: 404 }) }; const account = missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "destructured initializer throw",
+    "function missing() { throw createError({ statusCode: 404 }) }; const { account } = missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "initializer rethrow",
+    "throw createError({ statusCode: 404 })",
+    "function preserve() { throw error }; const account = preserve(); throw new Error()",
+    false,
+  ],
+  [
+    "statusCode replacement",
+    "throw createError({ statusCode: 404 })",
+    "error.statusCode = 500; throw error",
+    true,
+  ],
+  [
+    "status replacement",
+    "throw createError({ statusCode: 404 })",
+    "error.status = 500; throw error",
+    true,
+  ],
+  [
+    "computed status replacement",
+    "throw createError({ statusCode: 404 })",
+    'error["statusCode"] = 500; throw error',
+    true,
+  ],
+  [
+    "unrelated property write",
+    "throw createError({ statusCode: 404 })",
+    'error.message = "missing"; throw error',
+    false,
+  ],
+  [
+    "client status replacement",
+    "throw createError({ statusCode: 404 })",
+    "error.statusCode = 403; throw error",
+    false,
+  ],
+  [
     "explicit argument overrides default",
     "throw createError({ statusCode: 404 })",
     "function preserve(value = error) { if (isError(value)) throw value }; preserve(unknown); throw new Error()",
@@ -828,6 +918,26 @@ test.each([
 
 test.each([
   [
+    "enclosing helper",
+    "function missing() { throw createError({ statusCode: 404 }) }; try { missing() } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "replaced enclosing helper",
+    "function missing() { throw createError({ statusCode: 404 }) }; missing = () => {}; try { missing() } catch { throw new Error() }",
+    false,
+  ],
+  [
+    "enclosing awaited helper",
+    "async function missing() { throw createError({ statusCode: 404 }) }; try { await missing() } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "shadowed enclosing helper",
+    "function missing() { throw createError({ statusCode: 404 }) }; { const missing = () => {}; try { missing() } catch { throw new Error() } }",
+    false,
+  ],
+  [
     "nested rethrow",
     `try {
     try { throw createError({ statusCode: 401 }) }
@@ -885,7 +995,9 @@ test.each([
   const result = await runRuleFixture({
     framework: "nitro",
     rule: noHttpErrorMasking,
-    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(async () => { ${body} })`,
+    },
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
 });
