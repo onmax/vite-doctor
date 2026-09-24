@@ -106,7 +106,11 @@ export const noRuntimeObjectDefine = createRule({
       ScriptNode(node) {
         if ((node as { type?: string }).type !== "Program") return;
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
-          if (isLiteralPrimitive(entry.rawValue) || entry.rawValue.startsWith("JSON.stringify("))
+          if (
+            isLiteralPrimitive(entry.rawValue) ||
+            entry.rawValue.startsWith("JSON.stringify(") ||
+            /^process\.env\.[^.]+$/.test(memberPath(entry.valueNode) ?? "")
+          )
             continue;
           ctx.report(
             diagnostics.VITE0004({
@@ -243,7 +247,7 @@ function readAliasInitializers(source: string) {
       const definition = reference.resolved?.defs[0];
       bindingKeys.set(
         reference.identifier.range[0],
-        reference.resolved
+        reference.resolved?.defs.length
           ? `binding:${reference.resolved.identifiers[0]?.range[0]}`
           : `global:${reference.identifier.name}`,
       );
@@ -1369,22 +1373,39 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
       (node?.type === "UnaryExpression" && node.operator === "void")
     );
   }
+  function propertyValues(property: AnyNode): AnyNode[] {
+    if (property.kind !== "get") return [property.value];
+    const values: AnyNode[] = [];
+    visitReturnValues(property.value.body, (value) => values.push(resolve(value)));
+    return values;
+  }
   function effectiveProperty(property: AnyNode): AnyNode {
     if (property.kind !== "get") return property;
     const values: AnyNode[] = [];
     visitReturnValues(property.value.body, (value) => values.push(value));
     return values.length === 1
-      ? { ...property, kind: "init", value: resolve(values[0]) }
+      ? { ...property, kind: "init", value: resolve(values[0]), getterResult: true }
       : property;
   }
   const mergedNodes = new Set<AnyNode>();
-  function mergeValue(base: AnyNode, override: AnyNode): AnyNode {
+  function mergeValue(base: AnyNode, override: AnyNode, getterResult = false): AnyNode {
     base = resolve(base);
     override = resolve(override);
     if (nullish(override)) return base;
     if (nullish(base)) return override;
     let result: AnyNode;
-    if (base?.type === "ArrayExpression" || override?.type === "ArrayExpression") {
+    if (
+      getterResult &&
+      ![
+        "Literal",
+        "ObjectExpression",
+        "ArrayExpression",
+        "FunctionExpression",
+        "ArrowFunctionExpression",
+      ].includes(override?.type)
+    ) {
+      result = { type: "ConditionalExpression", consequent: base, alternate: override };
+    } else if (base?.type === "ArrayExpression" || override?.type === "ArrayExpression") {
       result = {
         type: "ArrayExpression",
         elements: [
@@ -1405,7 +1426,10 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         properties.set(
           key,
           previous?.kind === "init" && property.kind === "init"
-            ? { ...property, value: mergeValue(previous.value, property.value) }
+            ? {
+                ...property,
+                value: mergeValue(previous.value, property.value, property.getterResult),
+              }
             : property,
         );
       }
@@ -1418,6 +1442,8 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     if (!node) return [];
     if (!mergedNodes.has(node))
       return [{ rawValue: text.slice(node.start, node.end), valueStart: node.start }];
+    if (node.type === "ConditionalExpression")
+      return [...traceValues(node.consequent), ...traceValues(node.alternate)];
     return node.type === "ArrayExpression"
       ? node.elements.flatMap(traceValues)
       : node.properties.flatMap((property: AnyNode) =>
@@ -1463,6 +1489,22 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         const ranges = initializers.get(node.start);
         if (ranges?.length !== 1) break;
         node = nodesByRange.get(ranges[0]!.join(":"));
+      } else if (
+        node.type === "CallExpression" &&
+        memberPath(node.callee) === "Object.assign" &&
+        bindingKeys.get(node.callee.object.start) === "global:Object" &&
+        node.arguments.length > 0 &&
+        node.arguments.every(
+          (argument: AnyNode) => resolve(argument, new Set(visited))?.type === "ObjectExpression",
+        )
+      ) {
+        node = {
+          type: "ObjectExpression",
+          properties: node.arguments.map((argument: AnyNode) => ({
+            type: "SpreadElement",
+            argument,
+          })),
+        };
       } else if (node.type === "MemberExpression") {
         const object = resolve(node.object, new Set(visited));
         const property = node.computed ? resolve(node.property, new Set(visited)) : node.property;
@@ -1721,6 +1763,11 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
           return readConfig(test.value ? node.consequent : node.alternate);
         let predicate = node.test;
         let inverted = false;
+        const isNullish =
+          predicate?.type === "BinaryExpression" &&
+          predicate.operator === "==" &&
+          predicate.right?.value === null;
+        if (isNullish) predicate = predicate.left;
         const visited = new Set<AnyNode>();
         while (predicate && !visited.has(predicate)) {
           visited.add(predicate);
@@ -1740,7 +1787,9 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             predicate = next;
           } else break;
         }
-        const key = predicate?.type === "Identifier" ? bindingKeys.get(predicate.start) : undefined;
+        const binding =
+          predicate?.type === "Identifier" ? bindingKeys.get(predicate.start) : undefined;
+        const key = binding && isNullish ? `nullish:${binding}` : binding;
         return [true, false].flatMap((truth) =>
           readConfig(truth ? node.consequent : node.alternate).flatMap((alternative) => {
             if (!key) return [alternative];
@@ -1765,6 +1814,13 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
           (option) => option.type === "Property" && keyOf(option) === "define",
         );
         if (option) {
+          if (option.kind === "get")
+            return propertyValues(option).flatMap((value) =>
+              readConfig({
+                ...node,
+                properties: [{ ...option, kind: "init", value }],
+              }),
+            );
           const values = resolve(option.value);
           if (values?.type !== "ObjectExpression") return empty();
           const expandedValues = expandSpread(values);
@@ -1783,19 +1839,21 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             if (key !== null) properties.set(key, property);
           }
           for (const [key, property] of properties) {
-            const valueStart = property.value.start;
-            result.push({
-              key,
-              valueNode: property.value,
-              rawValue: text.slice(valueStart, property.value.end),
-              valueStart,
-              range: ctx.helpers.rangeFromOffsets(
-                ctx.file.path,
-                text,
-                property.key.start,
-                property.key.end,
-              ),
-            });
+            for (const value of propertyValues(property)) {
+              const valueStart = value.start;
+              result.push({
+                key,
+                valueNode: value,
+                rawValue: text.slice(valueStart, value.end),
+                valueStart,
+                range: ctx.helpers.rangeFromOffsets(
+                  ctx.file.path,
+                  text,
+                  property.key.start,
+                  property.key.end,
+                ),
+              });
+            }
           }
         }
         return [{ entries: result, predicates: new Map() }];

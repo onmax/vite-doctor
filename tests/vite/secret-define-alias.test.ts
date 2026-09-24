@@ -1164,7 +1164,7 @@ test.each([noSecretDefine, noRuntimeObjectDefine])(
       framework: "vite",
       rule,
       files: {
-        "vite.config.cjs": `const { defineConfig: config, mergeConfig } = require("vite"); module.exports = config(mergeConfig({}, { define: { VALUE: process.env.PRIVATE_TOKEN } }));`,
+        "vite.config.cjs": `const { defineConfig: config, mergeConfig } = require("vite"); module.exports = config(mergeConfig({}, { define: { VALUE: { token: process.env.PRIVATE_TOKEN } } }));`,
       },
     });
     expect(result.diagnostics).toHaveLength(1);
@@ -1392,6 +1392,7 @@ test.each([
   ["null", true],
   ["undefined", true],
   ["void 0", true],
+  ["process.env.OPTIONAL_OVERRIDE", true],
   ['"safe"', false],
   ['{ public: "safe" }', true],
 ])("reads getter overrides before merging: %s", async (value, expected) => {
@@ -1405,4 +1406,41 @@ test.each([
     },
   });
   expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ["export default { get define() { return { PRIVATE_TOKEN: {} } } }", true, true],
+  [
+    "const replacement = process.env.PRIVATE_TOKEN; export default { define: { get VALUE() { return replacement } } }",
+    true,
+    false,
+  ],
+  ["export default Object.assign({}, { define: { PRIVATE_TOKEN: {} } })", true, true],
+  [
+    "export default Object.assign({}, { define: { PRIVATE_TOKEN: {} } }, { define: {} })",
+    false,
+    false,
+  ],
+  [
+    "const Object = { assign() { return {} } }; export default Object.assign({}, { define: { PRIVATE_TOKEN: {} } })",
+    false,
+    false,
+  ],
+  [
+    'const flag = process.env.MODE; export default { ...(flag ?? { define: { VALUE: process.env.PRIVATE_TOKEN } }), ...(flag ?? { define: { VALUE: "safe" } }) }',
+    false,
+    false,
+  ],
+])("reads effective accessor and composed configs: %s", async (source, secret, runtimeObject) => {
+  for (const [rule, expected] of [
+    [noSecretDefine, secret],
+    [noRuntimeObjectDefine, runtimeObject],
+  ] as const) {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": source },
+    });
+    expect(result.diagnostics.length > 0).toBe(expected);
+  }
 });
