@@ -21,8 +21,7 @@ export const forwardAuthHeadersSsr = createRule({
           first?.value ?? (first?.start != null ? ctx.file.text.slice(first.start, first.end) : "");
         if (!String(url).startsWith("/api/")) return;
         if (!isAuthSensitiveInternalApi(String(url))) return;
-        const snippet = ctx.file.text.slice(node.start, node.end);
-        if (forwardsRequestCredentials(snippet, ctx.file.text)) return;
+        if (forwardsRequestCredentials(node)) return;
         report(
           ctx,
           node,
@@ -43,14 +42,54 @@ function isAuthSensitiveInternalApi(url: string): boolean {
   );
 }
 
-function forwardsRequestCredentials(call: string, source: string): boolean {
-  if (/\buseRequestFetch\s*\(/.test(call)) return true;
-  if (/\buseRequestHeaders\s*\(/.test(call)) return true;
-  if (/\bheaders\s*:\s*\{[^}]*\b(?:cookie|authorization)\s*:/is.test(call)) return true;
-  const headerVariable = call.match(/\bheaders\s*:\s*([A-Za-z_$][\w$]*)/);
-  if (!headerVariable) return false;
-  const declaration = new RegExp(
-    `\\b(?:const|let)\\s+${headerVariable[1]}\\s*=\\s*useRequestHeaders\\s*\\(`,
+function propertyName(property: AnyNode): string | undefined {
+  if (property.type !== "Property") return;
+  if (!property.computed && property.key?.type === "Identifier") return property.key.name;
+  return typeof property.key?.value === "string" ? property.key.value : undefined;
+}
+
+function isCredentialHeader(name: string | undefined): boolean {
+  return /^(?:cookie|authorization)$/i.test(name ?? "");
+}
+
+function forwardsRequestCredentials(call: AnyNode): boolean {
+  const options = call.arguments?.[1];
+  if (options?.type !== "ObjectExpression") return false;
+  const headers = options.properties.find(
+    (property: AnyNode) => propertyName(property) === "headers",
   );
-  return declaration.test(source);
+  return hasCredentialHeaders(headers?.value, call);
+}
+
+function hasCredentialHeaders(value: AnyNode, call: AnyNode): boolean {
+  if (value?.type === "Identifier") value = localInitializer(value, call);
+  if (value?.type === "CallExpression" && value.callee?.name === "useRequestHeaders") {
+    const selected = value.arguments[0];
+    return (
+      !selected ||
+      (selected.type === "ArrayExpression" &&
+        selected.elements.some((element: AnyNode) => isCredentialHeader(element?.value)))
+    );
+  }
+  return (
+    value?.type === "ObjectExpression" &&
+    value.properties.some((property: AnyNode) => isCredentialHeader(propertyName(property)))
+  );
+}
+
+function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
+  let scope = call.__doctorParent ?? call.parent;
+  while (scope) {
+    if (Array.isArray(scope.body)) {
+      for (const statement of scope.body) {
+        if (statement.type !== "VariableDeclaration") continue;
+        const declaration = statement.declarations.find(
+          (item: AnyNode) => item.id?.type === "Identifier" && item.id.name === identifier.name,
+        );
+        if (declaration) return declaration.init;
+      }
+    }
+    if (scope.params?.some((param: AnyNode) => param.name === identifier.name)) return;
+    scope = scope.__doctorParent ?? scope.parent;
+  }
 }

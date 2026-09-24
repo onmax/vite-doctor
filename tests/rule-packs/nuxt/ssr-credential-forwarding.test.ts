@@ -24,3 +24,44 @@ const user = await $fetch('/api/user', { headers: forwarded })
     false,
   );
 });
+
+test.each([
+  "{ query: { locale: useRequestHeaders(['accept-language'])['accept-language'] } }",
+  "{ query: { headers: useRequestHeaders(['cookie']) } }",
+  "{ headers: useRequestHeaders(['accept-language']) }",
+  "{ headers: useRequestHeaders([]) }",
+  "{ headers: unrelated }",
+])("unforwarded credentials remain diagnosed for %s", async (options) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">
+const unrelated = useRequestHeaders(['accept-language'])
+const user = await $fetch('/api/user', ${options})
+</script>`,
+  );
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
+});
+
+test.each([
+  "{ headers: useRequestHeaders() }",
+  "{ headers: useRequestHeaders(['cookie']) }",
+  "{ headers: useRequestHeaders(['authorization']) }",
+  "{ headers: { cookie } }",
+  "{ headers: { 'cookie': cookie } }",
+  "{ headers: { Authorization: token } }",
+  "{ headers: { 'Authorization': token } }",
+  "{ headers }",
+])("credential headers satisfy the rule for %s", async (options) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">
+const cookie = useRequestHeaders(['cookie']).cookie
+const token = useRequestHeaders(['authorization']).authorization
+const headers = useRequestHeaders(['cookie'])
+const user = await $fetch('/api/user', ${options})
+</script>`,
+  );
+  expect(result.diagnostics.some((item) => item.ruleId === forwardAuthHeadersSsr.meta.id)).toBe(
+    false,
+  );
+});
