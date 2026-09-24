@@ -98,11 +98,63 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
   if (name && new RegExp(`{{[^}]*\\b${escapeRegExp(name)}\\b[^}]*}}`).test(template)) return true;
   if (isHydratingStateValue(node)) return true;
   const owner = nearestFunctionOrProgram(node);
+  if (owner && renderedSetupWrite(ctx, node, owner)) return true;
   return Boolean(
     owner &&
     contributesToReturn(node, owner, getScriptParents(ctx)) &&
     functionFlowsToTemplate(ctx, owner, new Set(), node),
   );
+}
+
+function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): boolean {
+  const parents = getScriptParents(ctx);
+  let assignment = source;
+  while (assignment && assignment !== owner) {
+    if (assignment.type === "AssignmentExpression" && assignment.operator === "=") break;
+    assignment = parents.get(assignment);
+  }
+  if (
+    !assignment ||
+    assignment === owner ||
+    !contributesToReturn(source, owner, parents, new Set(), assignment.right)
+  )
+    return false;
+  let target = unwrapExpression(assignment.left);
+  while (target?.type === "MemberExpression") target = unwrapExpression(target.object);
+  if (target?.type !== "Identifier") return false;
+  const binding = resolveLocalBinding(assignment, target.name, parents);
+  if (
+    !binding ||
+    hasPriorAliasWrite({ start: Infinity }, binding, owner, parents, assignment) ||
+    resolveLocalBinding(ctx.file.scriptAst, target.name, parents) !== binding ||
+    !getRenderedReferences(ctx).some(
+      (reference) =>
+        reference.name === target.name &&
+        projectionIncludes(source, assignment, reference, parents),
+    )
+  )
+    return false;
+  const executes = (fn: AnyNode, seen: Set<AnyNode>): boolean => {
+    if (seen.has(fn) || fn.generator || fn.async) return false;
+    seen.add(fn);
+    let found = false;
+    walkScriptLocal(ctx.file.scriptAst, (call) => {
+      if (call.type !== "CallExpression" || resolveLocalValue(call.callee, parents) !== fn) return;
+      if (ctx.helpers.isClientOnlyExecutionContext(call, ctx.file.text)) return;
+      const caller = containingFunction(call, parents);
+      if (caller) {
+        if (executes(caller, new Set(seen))) found = true;
+      } else if (
+        !hasPriorAliasWrite({ start: Infinity }, binding, ctx.file.scriptAst, parents, {
+          ...assignment,
+          start: call.start,
+        })
+      )
+        found = true;
+    });
+    return found;
+  };
+  return executes(owner, new Set());
 }
 
 function functionFlowsToTemplate(
@@ -150,6 +202,19 @@ function functionFlowsToTemplate(
   const capturedReferences = new WeakMap<AnyNode, AnyNode>();
   const matchesCallee = (callee: AnyNode): boolean => {
     const original = callee;
+    if (!memberPath.length && callee?.type === "MemberExpression") {
+      let value = resolveLocalValue(callee, parents, new Set(), [], ctx.file.scriptAst);
+      const captured = value;
+      const aliases = new Set<AnyNode>();
+      while (value?.type === "Identifier" && !aliases.has(value)) {
+        aliases.add(value);
+        value = resolveLocalValue(value, parents);
+      }
+      if (value === fn) {
+        capturedReferences.set(original, captured);
+        return true;
+      }
+    }
     const path = [...memberPath];
     const visited = new Set<AnyNode>();
     let captured: AnyNode;
@@ -209,7 +274,7 @@ function functionFlowsToTemplate(
     ) {
       if (current.type !== "AssignmentPattern" || current.right !== child) continue;
       const argument = parameterValue(current, fn, call, parents);
-      if (argument && !isUndefinedValue(argument)) return false;
+      if (argument && !isUndefinedValue(argument, parents, ctx.file.scriptAst)) return false;
     }
     let replaced = false;
     walkScriptLocal(ctx.file.scriptAst, (write) => {
@@ -405,10 +470,16 @@ function resultAliases(
   return results;
 }
 
-function isUndefinedValue(node: AnyNode): boolean {
+function isUndefinedValue(
+  node: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+  scope = node,
+): boolean {
   return (
     !node ||
-    (node.type === "Identifier" && node.name === "undefined") ||
+    (node.type === "Identifier" &&
+      node.name === "undefined" &&
+      !resolveLocalBinding(parents.has(node) ? node : scope, "undefined", parents)) ||
     (node.type === "UnaryExpression" && node.operator === "void")
   );
 }
@@ -428,7 +499,11 @@ function parameterValue(
   const parent = parents.get(pattern);
   if (parent?.type === "AssignmentPattern" && parent.left === pattern) {
     const value = parameterValue(parent, fn, call, parents);
-    return value === undefined ? undefined : isUndefinedValue(value) ? parent.right : value;
+    return value === undefined
+      ? undefined
+      : isUndefinedValue(value, parents)
+        ? parent.right
+        : value;
   }
   if (parent?.type === "Property" && parent.value === pattern) {
     const value = parameterValue(parents.get(parent), fn, call, parents);
@@ -796,6 +871,19 @@ function isConsumedIterator(
   hasNativeArray: (node: AnyNode) => boolean,
 ): boolean {
   const parent = parentOf(node);
+  const nextCall = parent && parentOf(parent);
+  const value = nextCall && parentOf(nextCall);
+  if (
+    parent?.type === "MemberExpression" &&
+    parent.object === node &&
+    (parent.computed ? parent.property?.value : parent.property?.name) === "next" &&
+    nextCall?.type === "CallExpression" &&
+    nextCall.callee === parent &&
+    value?.type === "MemberExpression" &&
+    value.object === nextCall &&
+    (value.computed ? value.property?.value : value.property?.name) === "value"
+  )
+    return true;
   return (
     (parent?.type === "VariableDeclarator" &&
       parent.init === node &&
@@ -969,22 +1057,28 @@ function resolveLocalValue(
   parents: WeakMap<AnyNode, AnyNode>,
   seen = new Set<AnyNode>(),
   path: string[] = [],
+  referenceScope = node,
 ): AnyNode {
   node = unwrapExpression(node);
   if (!node || seen.has(node)) return null;
   seen.add(node);
   if (node.type === "Identifier") {
-    const binding = resolveLocalBinding(node, node.name, parents);
+    const binding = resolveLocalBinding(
+      parents.has(node) ? node : referenceScope,
+      node.name,
+      parents,
+    );
     if (!binding) return null;
     if (binding.type !== "VariableDeclarator") return binding;
     let scope = binding;
     while (parents.get(scope)) scope = parents.get(scope);
-    if (hasPriorAliasWrite(node, binding, scope, parents)) return null;
+    if (hasPriorAliasWrite(parents.has(node) ? node : { start: Infinity }, binding, scope, parents))
+      return null;
     const bindingPath = patternPath(binding.id, node.name) ?? [];
     const projectedPath = [...bindingPath, ...path];
     let memberWritten = false;
     walkScriptLocal(scope, (write) => {
-      if (write.type !== "AssignmentExpression" || write.start >= node.start) return;
+      if (write.type !== "AssignmentExpression" || write.start >= (node.start ?? Infinity)) return;
       let target = unwrapExpression(write.left);
       if (target?.type !== "MemberExpression") return;
       const writtenPath: (string | undefined)[] = [];
@@ -1013,7 +1107,7 @@ function resolveLocalValue(
     return key === undefined
       ? null
       : localObjectProperty(
-          resolveLocalValue(node.object, parents, seen, [String(key), ...path]),
+          resolveLocalValue(node.object, parents, seen, [String(key), ...path], referenceScope),
           String(key),
         );
   }
@@ -1038,10 +1132,12 @@ function contributesToReturn(
   owner: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   seen = new Set<AnyNode>(),
+  sink?: AnyNode,
 ): boolean {
   if (seen.has(node)) return false;
   seen.add(node);
   for (let current = node; current && current !== owner; current = parents.get(current)) {
+    if (current === sink) return true;
     const parent = parents.get(current);
     if (
       parent?.type === "ExpressionStatement" ||
@@ -1208,6 +1304,7 @@ function hasPriorAliasWrite(
   owner: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   source = binding,
+  requireDominance = true,
 ): boolean {
   const name = reference.name ?? binding.id?.name ?? binding.left?.name;
   const storedPath: string[] = [];
@@ -1259,7 +1356,7 @@ function hasPriorAliasWrite(
           aliases.has(alias) ||
           alias.start >= write.start ||
           !writeDominatesReference(alias, write, owner, parents) ||
-          hasPriorAliasWrite(root, alias, owner, parents)
+          hasPriorAliasWrite(root, alias, owner, parents, alias, false)
         )
           return;
         aliases.add(alias);
@@ -1274,7 +1371,7 @@ function hasPriorAliasWrite(
     if (
       ((patternBinds(target, name) && resolveLocalBinding(write, name, parents) === binding) ||
         replacesMember) &&
-      writeDominatesReference(write, reference, owner, parents)
+      (!requireDominance || writeDominatesReference(write, reference, owner, parents))
     )
       reassigned = true;
   });

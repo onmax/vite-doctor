@@ -1452,3 +1452,96 @@ test("does not normalize a shadowed undefined return", async () => {
   );
   expect(result.diagnostics).toHaveLength(1);
 });
+
+test.each([
+  ["let alias = result; if (flag) alias = {}; const next = alias; next.generatedAt = 'stable'", 1],
+  ["let alias = result; const next = alias; if (flag) alias = {}; next.generatedAt = 'stable'", 0],
+])("preserves conditional alias identity: %s", async (replacement, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function label() { const result = {}; result.generatedAt = Date.now(); ${replacement}; return result.generatedAt }; const displayed = label()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+test.each([
+  [
+    "const undefined = 'stable'; function label(value = Date.now()) { return value }; const displayed = label(undefined)",
+    0,
+  ],
+  ["function label(value = Date.now()) { return value }; const displayed = label(undefined)", 1],
+])("resolves undefined default arguments: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["const helpers = { clock }", "helpers.clock()", 1],
+  ["const helpers = { clock }; clock = () => 'stable'", "helpers.clock()", 1],
+  ["const helpers = { nested: { clock } }", "helpers.nested.clock()", 1],
+  ["const helpers = { clock }; helpers.clock = () => 'stable'", "helpers.clock()", 0],
+  ["const helpers = { clock }; helpers.status = 'ready'", "helpers.clock()", 1],
+])("traces helpers stored as object values: %s", async (script, expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { return Date.now() }; ${script}</script><template>{{ ${expression} }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["clock().next().value", 1],
+  ["clock().next().done", 0],
+  ["clock().next", 0],
+])("recognizes direct generator advancement: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function* clock() { yield Date.now() }; const displayed = ${expression}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["let displayed; function initialize() { displayed = Date.now() }; initialize()", 1],
+  [
+    "let displayed; function initialize() { displayed = Date.now() }; function setup() { initialize() }; setup()",
+    1,
+  ],
+  ["let displayed; function initialize() { displayed = Date.now() }", 0],
+  ["let displayed; function initialize() { displayed = Date.now() }; onMounted(initialize)", 0],
+  [
+    "let displayed; function initialize() { displayed = Date.now() }; initialize(); displayed = 'stable'",
+    0,
+  ],
+  [
+    "let displayed; function initialize() { let displayed; displayed = Date.now() }; initialize()",
+    0,
+  ],
+  [
+    "let displayed; function stable(value) { return 'ready' }; function initialize() { displayed = stable(Date.now()) }; initialize()",
+    0,
+  ],
+])("traces setup helper writes to rendered bindings: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test("ignores a setup write replaced within the helper", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>let displayed; function initialize() { displayed = Date.now(); displayed = 'stable' }; initialize()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+test("traces generator advancement in the template", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function* clock() { yield Date.now() }</script><template>{{ clock().next().value }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
