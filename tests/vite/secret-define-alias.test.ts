@@ -239,6 +239,11 @@ test.each([
   'JSON.stringify(replacement + "")',
   'JSON.stringify(enabled ? replacement : "")',
   "JSON.stringify([replacement])",
+  "JSON.stringify({ replacement })",
+  "JSON.stringify([0, replacement])",
+  "JSON.stringify({ nested: { value: replacement }, public: true })",
+  "JSON.stringify({\n    replacement,\n  })",
+  "JSON.stringify((0, replacement))",
 ])("traces aliases in compound replacements: %s", async (expression) => {
   for (const source of ["PRIVATE_TOKEN", "PUBLIC_VERSION"]) {
     const result = await runRuleFixture({
@@ -261,7 +266,13 @@ export default { define: {
 test.each([
   'JSON.stringify(publicValues.replacement ?? "")',
   "JSON.stringify(publicValue as typeof replacement)",
-])("does not trace property names or type references: %s", async (expression) => {
+  "JSON.stringify(typeof replacement)",
+  "JSON.stringify(void replacement)",
+  "JSON.stringify(!replacement)",
+  "JSON.stringify(replacement === 'present')",
+  "JSON.stringify(replacement ? 'present' : 'absent')",
+  "JSON.stringify((replacement, 'public'))",
+])("does not trace references that cannot expose their value: %s", async (expression) => {
   const result = await runRuleFixture({
     framework: "vite",
     rule: noSecretDefine,
@@ -305,4 +316,17 @@ export default { define: {
     },
   });
   expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
+});
+
+test("does not trace a typeof transform in an intermediate alias", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const original = process.env.PRIVATE_TOKEN
+const replacement = typeof original
+export default { define: { __CONFIG__: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
 });

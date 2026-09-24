@@ -1,5 +1,6 @@
 import { parseForESLint } from "@typescript-eslint/parser";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
+import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { diagnostics } from "../../../diagnostics.js";
 import {
   isLiteralPrimitive,
@@ -8,6 +9,7 @@ import {
   readViteConfigFacts,
   SECRET_NAME_RE,
   hasTypeDeclaration,
+  propertyName,
 } from "./shared.js";
 
 export const noUnusedDefine = createRule({
@@ -101,7 +103,7 @@ export const noRuntimeObjectDefine = createRule({
     return {
       ScriptNode(node) {
         if ((node as { type?: string }).type !== "Program") return;
-        for (const entry of readDefineEntriesFromCurrentFile(ctx)) {
+        for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           if (isLiteralPrimitive(entry.rawValue) || entry.rawValue.startsWith("JSON.stringify("))
             continue;
           ctx.report(
@@ -138,7 +140,7 @@ export const noSecretDefine = createRule({
       ScriptNode(node) {
         if ((node as { type?: string }).type !== "Program") return;
         const initializers = readAliasInitializers(ctx.file.text);
-        for (const entry of readDefineEntriesFromCurrentFile(ctx)) {
+        for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           if (
             !SECRET_NAME_RE.test(entry.key) &&
             !SECRET_NAME_RE.test(entry.rawValue) &&
@@ -244,6 +246,23 @@ function resolvesSecretAlias(
         if (node.expression) nodes.push(node.expression);
         continue;
       }
+      if (
+        (node.type === "UnaryExpression" &&
+          ["typeof", "void", "!", "delete"].includes(node.operator as string)) ||
+        (node.type === "BinaryExpression" &&
+          ["==", "!=", "===", "!==", "<", ">", "<=", ">=", "in", "instanceof"].includes(
+            node.operator as string,
+          ))
+      )
+        continue;
+      if (node.type === "ConditionalExpression") {
+        nodes.push(node.consequent, node.alternate);
+        continue;
+      }
+      if (node.type === "SequenceExpression") {
+        nodes.push((node.expressions as unknown[]).at(-1));
+        continue;
+      }
       if (node.type === "Identifier") identifiers.add(node.range[0]);
       for (const key of parsed.visitorKeys[node.type] ?? []) {
         const child = node[key];
@@ -269,25 +288,34 @@ function resolvesSecretAlias(
   return false;
 }
 
-function readDefineEntriesFromCurrentFile(ctx: RuleContext) {
+function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   const text = ctx.file.text;
-  const body = /\bdefine\s*:\s*\{([\s\S]*?)\n\s*\}/m.exec(text);
-  if (!body) return [];
-  const base = body.index + body[0].indexOf(body[1]!);
   const entries: Array<{ key: string; rawValue: string; valueStart: number; range: SourceRange }> =
     [];
-  const re = /(["']?)([A-Z_$][\w$]*(?:\.[A-Z_$][\w$]*)?)\1\s*:\s*([^,\n}]+)/g;
-  for (const match of body[1]!.matchAll(re)) {
-    const key = match[2]!;
-    const rawValue = match[3]!.trim();
-    const start = base + match.index! + match[0].indexOf(key);
-    entries.push({
-      key,
-      rawValue,
-      valueStart:
-        base + match.index! + match[0].length - match[3]!.length + match[3]!.indexOf(rawValue),
-      range: ctx.helpers.rangeFromOffsets(ctx.file.path, text, start, start + key.length),
-    });
-  }
+  walkScriptLocal(program, (node) => {
+    if (
+      node.type !== "Property" ||
+      propertyName(node.key) !== "define" ||
+      node.value.type !== "ObjectExpression"
+    )
+      return;
+    for (const property of node.value.properties) {
+      if (property.type !== "Property") continue;
+      const key = propertyName(property.key);
+      if (key === null) continue;
+      const valueStart = property.value.start;
+      entries.push({
+        key,
+        rawValue: text.slice(valueStart, property.value.end),
+        valueStart,
+        range: ctx.helpers.rangeFromOffsets(
+          ctx.file.path,
+          text,
+          property.key.start,
+          property.key.end,
+        ),
+      });
+    }
+  });
   return entries;
 }
