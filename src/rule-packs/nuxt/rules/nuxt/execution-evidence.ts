@@ -464,6 +464,8 @@ function resultCallbackCall(
       "every",
       "find",
       "findIndex",
+      "findLast",
+      "findLastIndex",
       "reduce",
       "reduceRight",
     ].includes(call.callee.property?.name)
@@ -474,7 +476,10 @@ function resultCallbackCall(
     const value = unwrapExpression(binding ? binding.init : receiver);
     if (value?.type === "ArrayExpression") {
       const method = call.callee.property.name;
-      const count = arrayElementCount(value, ["find", "findIndex"].includes(method));
+      const count = arrayElementCount(
+        value,
+        ["find", "findIndex", "findLast", "findLastIndex"].includes(method),
+      );
       const minimum =
         ["sort", "toSorted"].includes(method) ||
         (["reduce", "reduceRight"].includes(method) && call.arguments.length < 2)
@@ -490,6 +495,39 @@ function resultCallbackCall(
     }
   }
   return null;
+}
+
+function alwaysReplacesCompletion(node: AnyNode): boolean {
+  if (!node) return false;
+  if (["ReturnStatement", "ThrowStatement"].includes(node.type)) return true;
+  if (node.type === "BlockStatement") return node.body.some(alwaysReplacesCompletion);
+  if (node.type === "IfStatement")
+    return alwaysReplacesCompletion(node.consequent) && alwaysReplacesCompletion(node.alternate);
+  if (node.type === "TryStatement")
+    return (
+      alwaysReplacesCompletion(node.finalizer) ||
+      (alwaysReplacesCompletion(node.block) &&
+        (!node.handler || alwaysReplacesCompletion(node.handler.body)))
+    );
+  return false;
+}
+
+function returnIsOverridden(node: AnyNode, parentOf: (node: AnyNode) => AnyNode): boolean {
+  for (let current = node; current; current = parentOf(current)) {
+    const parent = parentOf(current);
+    if (
+      !parent ||
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(parent.type)
+    )
+      return false;
+    if (
+      parent.type === "TryStatement" &&
+      current !== parent.finalizer &&
+      alwaysReplacesCompletion(parent.finalizer)
+    )
+      return true;
+  }
+  return false;
 }
 
 function asyncResultIsConsumed(
@@ -514,7 +552,7 @@ function asyncResultIsConsumed(
           )
         )
           owner = parentOf(owner);
-        return Boolean(owner?.async);
+        return Boolean(owner?.async) && !returnIsOverridden(parent, parentOf);
       } else if (
         ![
           "ParenthesizedExpression",
@@ -533,9 +571,11 @@ function asyncResultIsConsumed(
           aggregate.callee?.type !== "MemberExpression" ||
           aggregate.callee.object?.type !== "Identifier" ||
           aggregate.callee.object.name !== "Promise" ||
-          (aggregate.callee.computed
-            ? aggregate.callee.property?.value
-            : aggregate.callee.property?.name) !== "all" ||
+          !["all", "race", "any", "allSettled"].includes(
+            aggregate.callee.computed
+              ? aggregate.callee.property?.value
+              : aggregate.callee.property?.name,
+          ) ||
           !hasNativePromise(aggregate)
         )
           return false;
@@ -562,6 +602,7 @@ function isConsumedIterator(
 ): boolean {
   const parent = parentOf(node);
   return (
+    (parent?.type === "YieldExpression" && parent.delegate && parent.argument === node) ||
     (parent?.type === "SpreadElement" &&
       ["ArrayExpression", "CallExpression", "NewExpression"].includes(parentOf(parent)?.type)) ||
     (["ForOfStatement", "VForExpression"].includes(parent?.type) && parent.right === node) ||
@@ -773,7 +814,11 @@ function contributesToReturn(
         )
       )
         scope = parents.get(scope);
-      return scope === owner && !owner.generator;
+      return (
+        scope === owner &&
+        !owner.generator &&
+        !returnIsOverridden(parent, (node) => parents.get(node))
+      );
     }
     if (parent === owner)
       return (

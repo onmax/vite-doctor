@@ -987,3 +987,65 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ["await Promise.race([clock()])", 1],
+  ["await Promise.any([clock()])", 1],
+  ["await Promise.allSettled([clock()])", 1],
+  ["Promise.race([clock()])", 0],
+  ["await Promise['race']([clock()])", 1],
+])("tracks native async aggregation: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>async function clock() { return Date.now() }
+const displayed = ${expression}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["yield* clock()", "[...outer()]", 1],
+  ["yield clock()", "[...outer()]", 0],
+  ["yield* clock()", "outer()", 0],
+])("tracks delegated generators: %s %s", async (body, expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function* clock() { yield Date.now() }
+function* outer() { ${body} }
+const displayed = ${expression}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each(["findLast", "findLastIndex"])("tracks eager %s callbacks", async (method) => {
+  for (const [array, count] of [
+    ["[1]", 1],
+    ["[,]", 1],
+    ["[]", 0],
+  ] as const) {
+    const result = await runNuxtAppRuleFixture(
+      noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+      `<script setup>const displayed = ${array}.${method}(() => Date.now() % 2)</script><template>{{ displayed }}</template>`,
+    );
+    expect(result.diagnostics).toHaveLength(count);
+  }
+});
+
+test.each([
+  ["try { return clock() } finally { return 'stable' }", 0],
+  ["try { return await clock() } finally { return 'stable' }", 0],
+  ["try { return clock() } finally { if (flag) return 'stable' }", 1],
+  ["try { return clock() } finally { if (flag) return 'a'; else return 'b' }", 0],
+  ["try { return clock() } finally { console.log('done') }", 1],
+  ["try { return 'stable' } finally { return clock() }", 1],
+  ["try { return clock() } finally { throw new Error('failed') }", 0],
+  ["try { return clock() } finally { function unused() { return 'stable' } }", 1],
+])("respects finally completion: %s", async (body, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>async function clock() { return Date.now() }
+async function label() { ${body} }
+const displayed = await label()</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
