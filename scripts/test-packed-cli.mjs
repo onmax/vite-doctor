@@ -98,10 +98,14 @@ try {
   const packageReport = verifyDoctor(
     [...libraryArgs, "--extends", "package/recommended", "--max-warnings", "0"],
     [1],
-    "PKG0003",
+    "PKG0001",
     "vite",
   );
-  assert.deepEqual(packageReport.diagnostics.map((item) => item.code).sort(), ["PKG0003"]);
+  assert.deepEqual(packageReport.diagnostics.map((item) => item.code).sort(), [
+    "PKG0001",
+    "PKG0002",
+    "PKG0003",
+  ]);
   assert.match(packageReport.commands.verify, /--extends package\/recommended/);
   process.stdout.write(
     `Packed Doctor CLI checks passed on ${process.platform}, Node ${process.versions.node}.\n`,

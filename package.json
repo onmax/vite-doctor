@@ -63,7 +63,7 @@
     "test:pack": "node scripts/test-packed-cli.mjs",
     "check": "vp check",
     "predoctor": "pnpm build",
-    "doctor": "node dist/cli.mjs . --no-cache",
+    "doctor": "node dist/cli.mjs . --no-cache --max-warnings 0 --format text",
     "release": "bumpp package.json --push --no-push-all",
     "release:check": "vp fmt && pnpm build && vp lint && pnpm test && pnpm test:pack",
     "release:pack": "mkdir -p artifacts && pnpm build && pnpm pack --pack-destination artifacts",
