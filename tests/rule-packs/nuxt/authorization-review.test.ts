@@ -35,6 +35,42 @@ test("opt-in authorization review reports cited server gaps", async () => {
   expect(result.diagnostics.find((item) => item.code === "NUXT0074")?.related).toHaveLength(1);
 });
 
+test("reviewer failure preserves diagnostics and continues with incomplete evidence", async () => {
+  const reviewed: string[] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    reviewed.push(candidate.handler.path);
+    if (candidate.handler.path === "server/api/profile.get.ts")
+      throw new Error("Provider unavailable");
+    return {
+      status: "report",
+      reason: "The handler has no server guard.",
+      citations: [
+        { path: candidate.handler.path, line: 1 },
+        { path: candidate.sources[0]!.path, line: 1 },
+      ],
+    };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "server/api/profile.get.ts": files["server/api/account.get.ts"],
+      "server/api/settings.get.ts": files["server/api/account.get.ts"],
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+
+  expect(reviewed).toHaveLength(3);
+  expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(2);
+  expect(result.project.evidenceGaps).toContainEqual({
+    source: "vite-doctor/nuxt-authorization-review",
+    message:
+      "Authorization review failed for server/api/profile.get.ts; the handler was not reviewed.",
+    files: ["server/api/profile.get.ts"],
+  });
+  expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+});
+
 test("unknown reviews and fabricated citations produce no diagnostic", async () => {
   const unknown = await runReview(async () => ({
     status: "unknown",

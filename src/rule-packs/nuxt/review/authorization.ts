@@ -195,7 +195,17 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             }
             const sources = [...middleware, ...serverMiddleware, ...imports.sources];
             const candidate = { handler, sources };
-            const review = await reviewer(candidate);
+            let review: AuthorizationReviewResult;
+            try {
+              review = await reviewer(candidate);
+            } catch {
+              review = {
+                status: "unknown",
+                reason: `Authorization review failed for ${handler.path}; the handler was not reviewed.`,
+                incomplete: true,
+                citations: [],
+              };
+            }
             if (review.incomplete) {
               ctx.project.evidenceGaps = [
                 ...(ctx.project.evidenceGaps ?? []),

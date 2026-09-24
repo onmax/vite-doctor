@@ -132,7 +132,8 @@ function hasUnconditionalMiddlewareGuard(file: string): boolean {
     for (const statement of handler.body.body) {
       if (statement.type === "ReturnStatement") return isGuard(statement.argument);
       if (statement.type === "ExpressionStatement") {
-        if (isGuard(statement.expression)) return true;
+        if (statement.expression.type === "AwaitExpression" && isGuard(statement.expression))
+          return true;
       } else if (statement.type === "VariableDeclaration") {
         if (
           statement.declarations.some(
