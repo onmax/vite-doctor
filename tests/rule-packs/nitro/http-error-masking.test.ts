@@ -1817,3 +1817,98 @@ test.each(["in", "of"])(
     expect(result.diagnostics).toEqual([]);
   },
 );
+
+test.each([
+  [
+    "status equality guard",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { if (error.statusCode === 404) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "computed status guard",
+    "try { throw createError({ status: 404 }) } catch (error) { if (error['status'] === 404) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "status range guard",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { if (error.statusCode >= 400 && error.statusCode < 500) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "status guard leaves masking reachable",
+    "try { throw createError({ statusCode: 403 }) } catch (error) { if (error.statusCode === 404) throw error; throw new Error() }",
+    1,
+  ],
+  [
+    "status mutation before guard",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { error.statusCode = 403; if (error.statusCode === 404) throw error; throw new Error() }",
+    1,
+  ],
+  [
+    "let TDZ",
+    "try { missing; throw createError({ statusCode: 404 }); let missing } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "const TDZ",
+    "try { missing; throw createError({ statusCode: 404 }); const missing = 1 } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "class TDZ",
+    "try { Missing; throw createError({ statusCode: 404 }); class Missing {} } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "initialized class",
+    "try { class Missing {}; Missing; throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "initialized let",
+    "try { let missing; missing; throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "enclosing TDZ",
+    "missing; try { throw createError({ statusCode: 404 }) } catch { throw new Error() }; let missing",
+    0,
+  ],
+  [
+    "unreachable catch",
+    "try {} catch { try { throw createError({ statusCode: 404 }) } catch { throw new Error() } }",
+    0,
+  ],
+  [
+    "reachable catch",
+    "try { throw new Error() } catch { try { throw createError({ statusCode: 404 }) } catch { throw new Error() } }",
+    1,
+  ],
+  [
+    "enclosing catch binding",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { const innerCatch = true;\n try { throw error } catch { throw new Error() }\n }",
+    2,
+  ],
+  [
+    "named expression recursion",
+    "const missing = function missing(stop) { if (stop) throw createError({ statusCode: 404 }); return missing(true) }; try { missing(false) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "distinct expression self name",
+    "const missing = function self(stop) { if (stop) throw createError({ statusCode: 404 }); return self(true) }; try { missing(false) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "self binding survives outer replacement",
+    "let missing = function self(stop) { missing = () => {}; if (stop) throw createError({ statusCode: 404 }); return self(true) }; try { missing(false) } catch { throw new Error() }",
+    1,
+  ],
+])("tracks review regression: %s", async (_name, body, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
