@@ -817,3 +817,27 @@ test.each([
       expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
   }
 });
+
+test.each(["handler", "middleware"])("retains JSON evidence imported by %s", async (source) => {
+  let calls = 0;
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    calls++;
+    expect(candidate.sources).toContainEqual({
+      path: "permissions.json",
+      text: '{"role":"admin"}',
+    });
+    return { status: "unknown", reason: "Evidence collected", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      [source === "handler" ? "server/api/account.get.ts" : "app/middleware/auth.ts"]:
+        `import permissions from '../../permissions.json'; export default ${source === "handler" ? "defineEventHandler" : "defineNuxtRouteMiddleware"}(() => permissions)`,
+      "permissions.json": '{"role":"admin"}',
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(calls).toBe(1);
+  expect(JSON.parse(createAgentReport(result)).status).not.toBe("incomplete");
+});

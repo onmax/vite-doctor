@@ -410,6 +410,7 @@ function localImports(
   for (const current of queue) {
     const { aliases, unknownLayerAliases } = resolveAliases(current);
     const file = resolve(root, current.path);
+    if (!/\.[cm]?[jt]sx?$/.test(file)) continue;
     const parsed = parseSync(file, current.text);
     if (parsed.errors.length) {
       omitted.push(current.path);

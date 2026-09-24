@@ -1,6 +1,6 @@
 import type { RuleContext } from "../../../../core/primitives.js";
 import { existsSync, readFileSync } from "node:fs";
-import { relative } from "pathe";
+import { dirname, extname, relative, resolve } from "pathe";
 import { parseSync } from "oxc-parser";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
 import { createNuxtRuntimeEvidence } from "./evidence.js";
@@ -121,6 +121,8 @@ function isAuthProviderHandler(file: string, route?: string): boolean {
     const callback = factory.arguments[0];
     if (callback?.type !== "ArrowFunctionExpression" && callback?.type !== "FunctionExpression")
       return false;
+    const event = callback.params[0];
+    if (event?.type !== "Identifier") return false;
     let body = callback.body;
     if (body.type === "BlockStatement") {
       if (body.body.length !== 1 || body.body[0].type !== "ReturnStatement") return false;
@@ -132,13 +134,78 @@ function isAuthProviderHandler(file: string, route?: string): boolean {
       body.callee.type === "MemberExpression" &&
       !body.callee.computed &&
       body.callee.object.type === "Identifier" &&
-      body.callee.object.name === "auth" &&
       body.callee.property.type === "Identifier" &&
-      body.callee.property.name === "handler"
+      body.callee.property.name === "handler" &&
+      body.callee.object.name !== event.name &&
+      isProviderBinding(file, parsed.program, body.callee.object.name) &&
+      body.arguments.length === 1 &&
+      isCurrentRequest(body.arguments[0], event.name)
     );
   } catch {
     return false;
   }
+}
+
+function isCurrentRequest(node: AnyNode, event: string): boolean {
+  return (
+    node?.type === "CallExpression" &&
+    node.callee.type === "Identifier" &&
+    node.callee.name === "toWebRequest" &&
+    node.arguments.length === 1 &&
+    node.arguments[0].type === "Identifier" &&
+    node.arguments[0].name === event
+  );
+}
+
+function createsProvider(program: AnyNode, name: string, exported = false): boolean {
+  const factories = program.body.flatMap((node: AnyNode) =>
+    node.type === "ImportDeclaration" && node.source.value === "better-auth"
+      ? node.specifiers
+          .filter(
+            (item: AnyNode) =>
+              item.type === "ImportSpecifier" && item.imported.name === "betterAuth",
+          )
+          .map((item: AnyNode) => item.local.name)
+      : [],
+  );
+  return program.body.some((statement: AnyNode) => {
+    if (exported && statement.type !== "ExportNamedDeclaration") return false;
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    return (
+      declaration?.type === "VariableDeclaration" &&
+      declaration.kind === "const" &&
+      declaration.declarations.some(
+        (item: AnyNode) =>
+          item.id.type === "Identifier" &&
+          item.id.name === name &&
+          item.init?.type === "CallExpression" &&
+          item.init.callee.type === "Identifier" &&
+          factories.includes(item.init.callee.name),
+      )
+    );
+  });
+}
+
+function isProviderBinding(file: string, program: AnyNode, name: string): boolean {
+  if (createsProvider(program, name)) return true;
+  for (const node of program.body) {
+    if (node.type !== "ImportDeclaration" || !node.source.value.startsWith(".")) continue;
+    const binding = node.specifiers.find(
+      (item: AnyNode) => item.type === "ImportSpecifier" && item.local.name === name,
+    );
+    if (!binding) continue;
+    const base = resolve(dirname(file), node.source.value);
+    const candidates = extname(base)
+      ? [base]
+      : ["ts", "js", "mts", "mjs", "cts", "cjs"].map((extension) => `${base}.${extension}`);
+    const target = candidates.find((candidate) => existsSync(candidate));
+    if (!target) return false;
+    const parsed = parseSync(target, readProjectFile(target));
+    if (parsed.errors.length) return false;
+    return createsProvider(parsed.program, binding.imported.name, true);
+  }
+  return false;
 }
 
 function hasUnconditionalAuthGuard(file: string): boolean {

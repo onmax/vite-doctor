@@ -4024,8 +4024,36 @@ test("standard auth provider catch-all delegates authorization to the provider",
       "app/middleware/auth.ts":
         "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
       "server/api/auth/[...all].ts":
-        "export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+        "import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+      "server/utils/auth.ts":
+        "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
     },
   });
   expect(result.diagnostics).toHaveLength(0);
 });
+
+test.each([
+  "const auth = { handler: () => ({ private: true }) }; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+  "import { auth } from './unrelated'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler())",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(other)))",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(auth => auth.handler(toWebRequest(auth)))",
+])(
+  "provider-shaped calls without provenance or request delegation remain sensitive: %s",
+  async (handler) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        "server/api/auth/[...all].ts": handler,
+        "server/api/auth/unrelated.ts":
+          "export const auth = { handler: () => ({ private: true }) }",
+        "server/utils/auth.ts":
+          "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  },
+);
