@@ -348,12 +348,56 @@ function readAliasInitializers(source: string) {
           if (argument.type !== "SpreadElement") recordArrayMutation(argument, false, node);
     }
   };
+  const executedFunctions = new Set<AnyNode>();
+  function calledFunction(node: AnyNode): AnyNode {
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
+    )
+      return node;
+    if (node.type !== "Identifier") return;
+    const definition = references.get(node.range[0])?.resolved?.defs[0];
+    if (definition?.type === "FunctionName") return definition.node;
+    const value = resolveImmutable(node);
+    if (["FunctionExpression", "ArrowFunctionExpression"].includes(value.type)) return value;
+  }
+  function isConfigHelper(node: AnyNode) {
+    const identifier = node.type === "MemberExpression" ? node.object : node;
+    if (identifier.type !== "Identifier") return false;
+    const definition = references.get(identifier.range[0])?.resolved?.defs[0];
+    if (
+      definition?.type !== "ImportBinding" ||
+      definition.parent.type !== "ImportDeclaration" ||
+      !["vite", "vitest/config"].includes(definition.parent.source.value as string)
+    )
+      return false;
+    if (node.type === "MemberExpression")
+      return (
+        definition.node.type === "ImportNamespaceSpecifier" &&
+        !node.computed &&
+        node.property.name === "defineConfig"
+      );
+    return (
+      definition.node.type === "ImportSpecifier" &&
+      propertyName(definition.node.imported) === "defineConfig"
+    );
+  }
+  function collectExecutedFunction(node?: AnyNode) {
+    if (!node || executedFunctions.has(node)) return;
+    executedFunctions.add(node);
+    collectMutations(node.body);
+  }
   function collectMutations(node: AnyNode) {
     if (!node) return;
     if (
       ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
     )
       return;
+    if (node.type === "ExportDefaultDeclaration")
+      collectExecutedFunction(calledFunction(node.declaration));
+    if (node.type === "CallExpression") {
+      collectExecutedFunction(calledFunction(node.callee));
+      if (isConfigHelper(node.callee)) collectExecutedFunction(calledFunction(node.arguments[0]));
+    }
     visitMutation(node);
     for (const key of parsed.visitorKeys[node.type] ?? []) {
       const child = node[key];

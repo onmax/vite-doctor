@@ -2057,6 +2057,32 @@ test("binds the receiver of an exported config getter", async () => {
   expect(result.diagnostics).toHaveLength(1);
 });
 
+test.each([
+  ['const values = ["safe"]; values.push(process.env.PRIVATE_TOKEN)', true],
+  ['const values = [process.env.PRIVATE_TOKEN]; values[0] = "safe"', false],
+])("tracks array writes inside executed config callbacks: %s", async (body, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `import { defineConfig } from 'vite'; export default defineConfig(() => { ${body}; return { define: { VALUE: JSON.stringify(values) } } })`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test("tracks array writes inside invoked config factories", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts":
+        'const make = () => { const values = ["safe"]; values.push(process.env.PRIVATE_TOKEN); return { define: { VALUE: JSON.stringify(values) } } }; export default make()',
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
 test("binds array-rest values in serialization helpers", async () => {
   const result = await runRuleFixture({
     framework: "vite",
