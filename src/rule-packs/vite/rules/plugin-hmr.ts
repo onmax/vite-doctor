@@ -151,6 +151,7 @@ function undisposedResource(program: AnyNode): string | null {
   const visited = new Set<AnyNode>();
   type Disposer = { callback: AnyNode; path: Map<object, boolean> };
   let currentPath = new Map<object, boolean>();
+  const conditions = new Map<AnyNode, object>();
   const resourcePaths = new Map<AnyNode, Map<object, boolean>>();
   let disposers: Disposer[] = [{ callback: undefined, path: new Map() }];
   const identity = (node: AnyNode, environment = values): AnyNode => {
@@ -212,7 +213,12 @@ function undisposedResource(program: AnyNode): string | null {
     }
     return typeof node.value === "boolean" ? node.value : node;
   };
-  function bindResource(pattern: AnyNode, argument: AnyNode, local: Map<AnyNode, AnyNode>): void {
+  function bindResource(
+    pattern: AnyNode,
+    argument: AnyNode,
+    local: Map<AnyNode, AnyNode>,
+    module = false,
+  ): void {
     const read = (object: AnyNode, key: string): AnyNode =>
       identity(
         {
@@ -231,6 +237,7 @@ function undisposedResource(program: AnyNode): string | null {
           argument === undefined ||
           argument === "undefined" ||
           (argument?.type === "UnaryExpression" && argument.operator === "void");
+        if (useDefault) evaluate(pattern.right, local, module);
         bind(pattern.left, useDefault ? identity(pattern.right, local) : argument);
       } else if (pattern.type === "ArrayPattern" && argument?.type === "ArrayExpression") {
         for (const [index, element] of pattern.elements.entries()) {
@@ -361,7 +368,7 @@ function undisposedResource(program: AnyNode): string | null {
           },
           local,
         );
-      else bindResource(param, identity(args[index], environment), local);
+      else bindResource(param, identity(args[index], environment), local, module);
     }
     const completion = evaluate(target.body, local, module);
     for (const binding of environment.keys()) {
@@ -464,7 +471,12 @@ function undisposedResource(program: AnyNode): string | null {
       if (node.type !== "CallExpression") return;
       const calleeGlobal = identity(node.callee?.object, environment);
       const globalAlias = ["window", "globalThis", "self"].includes(calleeGlobal);
-      const callee = globalAlias ? `window.${propertyKey(node.callee)}` : memberPath(node.callee);
+      const calleeValue = identity(node.callee, environment);
+      const callee = globalAlias
+        ? `window.${propertyKey(node.callee)}`
+        : typeof calleeValue === "string"
+          ? calleeValue
+          : memberPath(node.callee);
       if (module && callee === "import.meta.hot.dispose") {
         const callback = identity(node.arguments[0], environment);
         disposers = (callbackChoices.get(callback) ?? [callback]).map((callback) => ({
@@ -554,7 +566,7 @@ function undisposedResource(program: AnyNode): string | null {
           !replacedMethod &&
           (identity(receiver, environment) === resource.value ||
             alternatives.get(identity(receiver, environment))?.includes(resource.value)) &&
-          (!global || !resolve(global) || globalAlias)
+          (!global || !resolve(global) || globalAlias || typeof calleeValue === "string")
         )
           cleaned.add(resource.value);
       }
@@ -596,8 +608,31 @@ function undisposedResource(program: AnyNode): string | null {
       for (const value of cleaned) if (!right.cleaned.has(value)) cleaned.delete(value);
       for (const key of new Set([...left.values.keys(), ...right.values.keys()])) {
         if (!left.values.has(key)) environment.set(key, right.values.get(key));
-        else if (right.values.has(key) && left.values.get(key) !== right.values.get(key))
-          environment.set(key, {});
+        else if (right.values.has(key) && left.values.get(key) !== right.values.get(key)) {
+          const choices = [left.values.get(key), right.values.get(key)].flatMap(
+            (value) => alternatives.get(value) ?? [value],
+          );
+          const value = {};
+          if (
+            choices.every(
+              (choice, index) =>
+                resources.some((resource) => resource.value === choice) &&
+                choices
+                  .slice(index + 1)
+                  .every(
+                    (other) =>
+                      choice === other ||
+                      [...(resourcePaths.get(choice) ?? [])].some(
+                        ([condition, side]) =>
+                          resourcePaths.get(other)?.has(condition) &&
+                          resourcePaths.get(other)?.get(condition) !== side,
+                      ),
+                  ),
+            )
+          )
+            alternatives.set(value, choices);
+          environment.set(key, value);
+        }
       }
       for (const object of new Set([...left.properties.keys(), ...right.properties.keys()])) {
         const a = left.properties.get(object) ?? new Map();
@@ -614,11 +649,16 @@ function undisposedResource(program: AnyNode): string | null {
       expression?: AnyNode,
       includeAbrupt = false,
       catches = false,
+      condition?: AnyNode,
     ): boolean => {
       const resourceStart = resources.length;
       const before = snapshot();
       const parentPath = currentPath;
-      const choice = {};
+      const conditionValue =
+        condition?.type === "Identifier" ? identity(condition, environment) : undefined;
+      if (conditionValue !== undefined && !conditions.has(conditionValue))
+        conditions.set(conditionValue, {});
+      const choice = conditions.get(conditionValue) ?? {};
       const selectPath = (side: boolean) => {
         if (!module || includeAbrupt) return;
         currentPath = new Map(parentPath).set(choice, side);
@@ -637,6 +677,13 @@ function undisposedResource(program: AnyNode): string | null {
       const leftValue = identity(left, environment);
       const afterLeft = snapshot();
       restore(before);
+      if (catches) {
+        const throws = leftExits.filter((exit) => thrownExits.has(exit));
+        if (throws.length) {
+          for (const value of throws[0])
+            if (throws.every((exit) => exit.has(value))) cleaned.add(value);
+        }
+      }
       selectPath(false);
       const rightContinues = walk(right);
       abrupt ||= leftAbrupt && (!catches || leftExits.some((exit) => !thrownExits.has(exit)));
@@ -702,6 +749,19 @@ function undisposedResource(program: AnyNode): string | null {
             if (key !== undefined) properties.get(node)!.set(key, field.value);
           }
         }
+        if (!walk(node.superClass)) return false;
+        for (const field of node.body.body) {
+          if (field.computed && !walk(field.key)) return false;
+          if (field.type === "PropertyDefinition" && field.static) {
+            if (!walk(field.value)) return false;
+            const key = field.computed
+              ? identity(field.key, environment)?.value
+              : (field.key?.name ?? field.key?.value);
+            if (key !== undefined)
+              properties.get(node)!.set(String(key), identity(field.value, environment));
+          } else if (field.type === "StaticBlock" && !walk(field)) return false;
+        }
+        return true;
       }
       if (node.type === "NewExpression") {
         if (!walk(node.callee)) return false;
@@ -829,6 +889,9 @@ function undisposedResource(program: AnyNode): string | null {
           node.consequent,
           node.alternate,
           node.type === "ConditionalExpression" ? node : undefined,
+          false,
+          false,
+          node.test,
         );
       }
       if (node.type === "LogicalExpression") {

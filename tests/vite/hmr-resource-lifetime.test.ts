@@ -1660,6 +1660,71 @@ for (const [name, source, leaks] of [
     "const timer = (setInterval(refresh), setInterval(refresh)); import.meta.hot.dispose(() => clearInterval(timer))",
     true,
   ],
+  [
+    "default parameter creates a resource",
+    "function start(timer = setInterval(refresh)) {}; start(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "default parameter resource can be returned",
+    "function start(timer = setInterval(refresh)) { return timer }; const timer = start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "supplied parameter skips default resource",
+    "function start(timer = setInterval(refresh)) {}; start(1); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "cleanup function alias",
+    "const stop = clearInterval; const timer = setInterval(refresh); import.meta.hot.dispose(() => stop(timer))",
+    false,
+  ],
+  [
+    "shadowed cleanup alias",
+    "const clearInterval = () => {}; const stop = clearInterval; const timer = setInterval(refresh); import.meta.hot.dispose(() => stop(timer))",
+    true,
+  ],
+  [
+    "branch assigned handles",
+    "let timer; if (flag) timer = setInterval(a); else timer = setInterval(b); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "branch overwritten handle still leaks",
+    "let timer = setInterval(a); if (flag) timer = setInterval(b); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "static field handle cleanup",
+    "class Worker { static timer = setInterval(refresh) }; import.meta.hot.dispose(() => clearInterval(Worker.timer))",
+    false,
+  ],
+  [
+    "cleanup before caught throw",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { clearInterval(timer); throw Error() } catch {} })",
+    false,
+  ],
+  [
+    "partial cleanup before caught throw",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { if (flag) { clearInterval(timer); throw Error() }; throw Error() } catch {} })",
+    true,
+  ],
+  [
+    "repeated condition correlates lifetimes",
+    "if (flag) window.addEventListener('resize', refresh); if (flag) import.meta.hot.dispose(() => window.removeEventListener('resize', refresh)); else import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "different conditions cannot correlate lifetimes",
+    "if (flag) window.addEventListener('resize', refresh); if (other) import.meta.hot.dispose(() => window.removeEventListener('resize', refresh)); else import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "reassigned condition cannot correlate lifetimes",
+    "let enabled = flag; if (enabled) window.addEventListener('resize', refresh); enabled = other; if (enabled) import.meta.hot.dispose(() => window.removeEventListener('resize', refresh)); else import.meta.hot.dispose(() => {})",
+    true,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({
