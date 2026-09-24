@@ -7,6 +7,15 @@ const optionalPeer = {
 };
 
 test.each([
+  '(function () { try { throw 0; } catch {} require("peer"); })();',
+  '(function () { (() => { return; })(); require("peer"); })();',
+
+  'new (class { peer = require("peer"); })();',
+  'new (class { first = 0; peer = require("peer"); constructor() { return {}; } })();',
+  'await import("peer").then(value => value, undefined);',
+  'await import("peer").then(value => value, null);',
+  'await import("peer").then(value => value, 0);',
+
   'new (class { field; constructor() { require("peer"); } })();',
   'new (class { field = 0; constructor() { require("peer"); } })();',
   'await import("peer").then(module => module.default);',
@@ -100,6 +109,13 @@ test.each([
 });
 
 test.each([
+  '(function () { return; require("peer"); })();',
+  '(function () { { return; } require("peer"); })();',
+  '(function () { throw 0; require("peer"); })();',
+  'new (class { first = unknown(); peer = require("peer"); })();',
+  'new (class extends Base { peer = require("peer"); })();',
+  'if (enabled) new (class { peer = require("peer"); })();',
+  'const undefined = () => {}; await import("peer").then(value => value, undefined);',
   '(function (first = (() => { throw 0; })()) { require("peer"); })();',
   '(function (first = (() => { throw 0; })()) { require("peer"); }).call(null);',
   '(function (first = (() => { throw 0; })()) { require("peer"); }).apply(null, []);',
@@ -493,3 +509,16 @@ test.each(["peer", "./types.d.ts", "#nested"])(
     ).toEqual([]);
   },
 );
+
+test.each([
+  ["./adapter.js", "peer"],
+  [null, "./adapter.js", "peer"],
+  [["./adapter.js", "peer"], "peer"],
+])("uses the first valid imports array target: %j", async (...targets) => {
+  expect(
+    await diagnose(
+      { main: "index.js", imports: { "#adapter": targets }, ...optionalPeer },
+      { "index.js": 'import "#adapter";', "adapter.js": "export {};" },
+    ),
+  ).toEqual([]);
+});

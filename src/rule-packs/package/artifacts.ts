@@ -436,7 +436,13 @@ function resolvePackageImport(
         targetKind,
         new Set(seen),
       );
-    if (Array.isArray(value)) return value.flatMap((entry) => flatten(entry, targetKind));
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const targets = flatten(entry, targetKind);
+        if (targets.length) return targets;
+      }
+      return [];
+    }
     if (value && typeof value === "object")
       return Object.entries(value).flatMap(([condition, entry]) =>
         flatten(
@@ -592,6 +598,50 @@ function isNonAbruptElement(node: ts.Expression): boolean {
   );
 }
 
+function isNonCallable(node: ts.Expression): boolean {
+  while (ts.isParenthesizedExpression(node)) node = node.expression;
+  return (
+    isUndefined(node) ||
+    ts.isLiteralExpression(node) ||
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword
+  );
+}
+
+function isImmediateField(field: ts.PropertyDeclaration): boolean {
+  const owner = field.parent;
+  if (!ts.isClassExpression(owner) || owner.heritageClauses?.length || owner.modifiers?.length)
+    return false;
+  let expression: ts.Node = owner;
+  while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  const call = expression.parent;
+  if (
+    !ts.isNewExpression(call) ||
+    call.expression !== expression ||
+    !(call.arguments ?? []).every(isNonAbruptElement)
+  )
+    return false;
+  for (const member of owner.members) {
+    if (
+      (member.name && ts.isComputedPropertyName(member.name)) ||
+      ts.isClassStaticBlockDeclaration(member) ||
+      (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length)
+    )
+      return false;
+    if (
+      ts.isPropertyDeclaration(member) &&
+      member !== field &&
+      member.initializer &&
+      (member.pos < field.pos ||
+        member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) &&
+      !isNonAbruptElement(member.initializer)
+    )
+      return false;
+  }
+  return true;
+}
+
 function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
   if (ts.isCallChain(node)) return false;
   let expression: ts.Node = node;
@@ -629,7 +679,8 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       !ts.isCallExpression(call) ||
       ts.isCallChain(call) ||
       call.expression !== member ||
-      call.arguments.length > 1 ||
+      call.arguments.length > 2 ||
+      (call.arguments[1] && !isNonCallable(call.arguments[1])) ||
       !call.arguments.every(isNonAbruptElement)
     )
       break;
@@ -647,7 +698,8 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       (ts.isPropertyDeclaration(parent) &&
         !isDecoratorExpression(node, parent) &&
         !(parent.name && isWithin(node, parent.name)) &&
-        !parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) ||
+        !parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) &&
+        !isImmediateField(parent)) ||
       (ts.isIfStatement(parent) && !isWithin(node, parent.expression)) ||
       (ts.isConditionalExpression(parent) && !isWithin(node, parent.condition)) ||
       (ts.isSwitchStatement(parent) && !isWithin(node, parent.expression)) ||
@@ -680,9 +732,25 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
         !isWithin(node, parent.expression))
     )
       return false;
+    if (ts.isBlock(parent)) {
+      const index = parent.statements.findIndex((statement) => isWithin(node, statement));
+      if (parent.statements.slice(0, index).some(isDefinitelyAbrupt)) return false;
+    }
     if (dynamic && ts.isCallExpression(parent) && !awaitedCalls.has(parent)) return false;
   }
   return true;
+}
+
+function isDefinitelyAbrupt(statement: ts.Statement): boolean {
+  if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+  if (ts.isBlock(statement)) return statement.statements.some(isDefinitelyAbrupt);
+  if (ts.isIfStatement(statement))
+    return (
+      !!statement.elseStatement &&
+      isDefinitelyAbrupt(statement.thenStatement) &&
+      isDefinitelyAbrupt(statement.elseStatement)
+    );
+  return false;
 }
 
 function hasAbruptCompletion(statement: ts.Statement, includeThrow = true): boolean {
