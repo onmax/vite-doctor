@@ -599,6 +599,71 @@ for (const [name, source, leaks] of [
     "const self = custom; const resource = self.setInterval(refresh); import.meta.hot.dispose(() => saveState())",
     false,
   ],
+  [
+    "bound socket cleanup",
+    "const socket = new WebSocket(url); import.meta.hot.dispose(socket.close.bind(socket))",
+    false,
+  ],
+  [
+    "bound socket wrong receiver",
+    "const socket = new WebSocket(url); const other = new WebSocket(url); import.meta.hot.dispose(socket.close.bind(other))",
+    true,
+  ],
+  [
+    "bound helper",
+    "const timer = setInterval(refresh); function cleanup() { clearInterval(timer) }; import.meta.hot.dispose(cleanup.bind(null))",
+    false,
+  ],
+  [
+    "bound helper argument",
+    "const timer = setInterval(refresh); function cleanup(handle) { clearInterval(handle) }; const dispose = cleanup.bind(null, timer); import.meta.hot.dispose(dispose)",
+    false,
+  ],
+  [
+    "bound unrelated helper",
+    "const timer = setInterval(refresh); function cleanup() { saveState() }; import.meta.hot.dispose(cleanup.bind(null))",
+    true,
+  ],
+  [
+    "abort listener",
+    'const controller = new AbortController(); window.addEventListener("resize", refresh, { signal: controller.signal }); import.meta.hot.dispose(() => controller.abort())',
+    false,
+  ],
+  [
+    "abort other controller",
+    'const controller = new AbortController(); const other = new AbortController(); window.addEventListener("resize", refresh, { signal: controller.signal }); import.meta.hot.dispose(() => other.abort())',
+    true,
+  ],
+  [
+    "abort aliased signal",
+    'const controller = new AbortController(); const signal = controller.signal; const options = { signal }; window.addEventListener("resize", refresh, options); import.meta.hot.dispose(controller.abort.bind(controller))',
+    false,
+  ],
+  [
+    "mutated event member",
+    'const names = { current: "resize" }; window.addEventListener(names.current, refresh); names.current = "scroll"; import.meta.hot.dispose(() => window.removeEventListener(names.current, refresh))',
+    true,
+  ],
+  [
+    "mutated handler member",
+    'const handlers = { current: refresh }; window.addEventListener("resize", handlers.current); handlers.current = other; import.meta.hot.dispose(() => window.removeEventListener("resize", handlers.current))',
+    true,
+  ],
+  [
+    "mutated capture object",
+    'const options = { capture: false }; window.addEventListener("resize", refresh, options); options.capture = true; import.meta.hot.dispose(() => window.removeEventListener("resize", refresh, options))',
+    true,
+  ],
+  [
+    "mutated capture alias",
+    'const options = { capture: false }; const alias = options; window.addEventListener("resize", refresh, options); import.meta.hot.dispose(() => { alias.capture = true; window.removeEventListener("resize", refresh, options) })',
+    true,
+  ],
+  [
+    "computed custom resource key",
+    "const setInterval = customKey; const timer = window[setInterval](refresh); import.meta.hot.dispose(() => saveState())",
+    false,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({

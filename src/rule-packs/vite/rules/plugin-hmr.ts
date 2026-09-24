@@ -127,18 +127,37 @@ function undisposedResource(program: AnyNode): string | null {
     event: unknown;
     handler: AnyNode;
     capture: unknown;
+    controller: AnyNode;
     value: AnyNode;
   };
   const resources: Resource[] = [];
   const listeners: Listener[] = [];
   const values = new Map<AnyNode, AnyNode>();
   const callbacks = new Map<AnyNode, AnyNode>();
+  const properties = new Map<AnyNode, Map<string, AnyNode>>();
+  const propertyKey = (node: AnyNode): string | undefined =>
+    node?.computed ? node.property?.value : node?.property?.name;
   const cleaned = new Set<AnyNode>();
   const visited = new Set<AnyNode>();
   let callback: AnyNode;
   let callbackValue: AnyNode;
   const identity = (node: AnyNode, environment = values): AnyNode => {
     node = unwrapResourceExpression(node);
+    if (node?.type === "MemberExpression") {
+      const key = propertyKey(node);
+      if (key !== undefined) {
+        const object = identity(node.object, environment);
+        const stored = properties.get(object);
+        if (stored?.has(key)) return stored.get(key);
+        if (object?.type === "ObjectExpression") {
+          const property = object.properties.find(
+            (item: AnyNode) => !item.computed && (item.key?.name ?? item.key?.value) === key,
+          );
+          if (property) return identity(property.value, environment);
+        }
+      }
+      return node;
+    }
     const binding = resolve(node);
     return environment.has(binding)
       ? environment.get(binding)
@@ -146,12 +165,14 @@ function undisposedResource(program: AnyNode): string | null {
   };
   const receiverIdentity = (node: AnyNode, environment: Map<AnyNode, AnyNode>): AnyNode => {
     node = unwrapResourceExpression(node);
-    return resolve(node) ? identity(node, environment) : memberPath(node);
+    return identity(node, environment);
   };
   const capture = (node: AnyNode, environment: Map<AnyNode, AnyNode>): unknown => {
     node = identity(node, environment);
     if (!node) return false;
     if (node.type === "ObjectExpression") {
+      if (properties.get(node)?.has("capture"))
+        return capture(properties.get(node)!.get("capture"), environment);
       const property = node.properties.find(
         (item: AnyNode) => (item.key?.name ?? item.key?.value) === "capture",
       );
@@ -167,7 +188,29 @@ function undisposedResource(program: AnyNode): string | null {
         resources.some((resource) => resource.value === value && resource.kind === "subscription")
       )
         cleaned.add(value);
-      target = callbacks.get(value);
+      target = callbacks.get(value) ?? value;
+    }
+    if (
+      target?.type === "CallExpression" &&
+      target.callee?.type === "MemberExpression" &&
+      propertyKey(target.callee) === "bind" &&
+      !visited.has(target)
+    ) {
+      visited.add(target);
+      const bound = target.callee.object;
+      const boundArgs = [...target.arguments.slice(1), ...args];
+      if (bound.type === "MemberExpression") {
+        if (identity(bound.object, environment) === identity(target.arguments[0], environment))
+          evaluate(
+            { type: "CallExpression", callee: bound, arguments: boundArgs },
+            environment,
+            false,
+          );
+      } else {
+        inspect(bound, boundArgs, environment);
+      }
+      visited.delete(target);
+      return;
     }
     if (
       !target ||
@@ -190,6 +233,16 @@ function undisposedResource(program: AnyNode): string | null {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     });
     walkEvaluation(root, (node) => {
+      if (node.type === "AssignmentExpression" && node.left.type === "MemberExpression") {
+        const key = propertyKey(node.left);
+        if (key !== undefined) {
+          const object = identity(node.left.object, environment);
+          if (!properties.has(object)) properties.set(object, new Map());
+          properties
+            .get(object)!
+            .set(key, node.operator === "=" ? identity(node.right, environment) : node);
+        }
+      }
       const handle =
         node.type === "VariableDeclarator"
           ? node.id
@@ -208,9 +261,11 @@ function undisposedResource(program: AnyNode): string | null {
             callbacks.set(value, init);
           const path = memberPath(init.callee);
           const global = init.callee?.object ?? init.callee;
-          const callee = !resolve(global)
-            ? path?.replace(/^(?:window|globalThis|self)\./, "")
-            : undefined;
+          const callee =
+            !resolve(global) &&
+            !(init.callee?.computed && typeof init.callee.property?.value !== "string")
+              ? path?.replace(/^(?:window|globalThis|self)\./, "")
+              : undefined;
           const kind =
             init.type === "CallExpression" && callee === "setInterval" && !resolve(init.callee)
               ? "interval"
@@ -246,7 +301,7 @@ function undisposedResource(program: AnyNode): string | null {
         callbackValue = identity(argument, environment);
         callback =
           argument?.type === "Identifier"
-            ? callbacks.get(identity(argument, environment))
+            ? (callbacks.get(callbackValue) ?? callbackValue)
             : argument;
         return;
       }
@@ -269,7 +324,20 @@ function undisposedResource(program: AnyNode): string | null {
         const handler = receiverIdentity(node.arguments[1], environment);
         const options = capture(node.arguments[2], environment);
         if (module && method === "addEventListener") {
-          listeners.push({ receiver, event, handler, capture: options, value: node });
+          const listenerOptions = identity(node.arguments[2], environment);
+          const signalProperty =
+            listenerOptions?.type === "ObjectExpression"
+              ? listenerOptions.properties.find(
+                  (item: AnyNode) =>
+                    !item.computed && (item.key?.name ?? item.key?.value) === "signal",
+                )
+              : undefined;
+          const signal = identity(signalProperty?.value, environment);
+          const controller =
+            signal?.type === "MemberExpression" && propertyKey(signal) === "signal"
+              ? identity(signal.object, environment)
+              : undefined;
+          listeners.push({ receiver, event, handler, capture: options, controller, value: node });
           resources.push({
             value: node,
             kind: "listener",
@@ -288,6 +356,13 @@ function undisposedResource(program: AnyNode): string | null {
             )
               cleaned.add(listener.value);
           }
+        }
+      }
+      if (method === "abort") {
+        const controller = identity(node.callee.object, environment);
+        for (const listener of listeners) {
+          if (listener.controller && listener.controller === controller)
+            cleaned.add(listener.value);
         }
       }
       for (const resource of resources) {
