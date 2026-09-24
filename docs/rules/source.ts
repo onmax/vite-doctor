@@ -6,7 +6,7 @@ import { ruleDocumentationMetadata } from "./metadata.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
 export type RuleFix = "safe" | "suggestion" | "no";
-export type RuleFramework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn";
+export type RuleFramework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn" | "package";
 
 export interface RuleExample {
   title: string;
@@ -93,6 +93,7 @@ export function getRuleReports() {
     nitro: rules.filter((rule) => rule.framework === "nitro"),
     nuxt: rules.filter((rule) => ["vue", "nitro", "nuxt"].includes(rule.framework)),
     typescript: rules.filter((rule) => rule.framework === "typescript"),
+    package: rules.filter((rule) => rule.framework === "package"),
     shadcn: rules.filter((rule) => rule.framework === "shadcn"),
     all: rules,
   };
@@ -106,7 +107,7 @@ export function getRuleReports() {
       },
     ]),
   ) as unknown as Record<
-    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "all",
+    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "package" | "all",
     RulesReport
   >;
 }
@@ -141,11 +142,10 @@ export const diagnosticsCollectionSource = {
 function collectDiagnosticDocuments(): DiagnosticDocument[] {
   const maps = readDiagnosticCodeMaps();
   const ruleDiagnostics = getRuleDocuments().flatMap((rule) => {
-    const code = maps.get(rule.id);
-    if (!code) return [];
-    const path = `/diagnostics/${code}`;
-    return [
-      {
+    const codes = maps.get(rule.id) ?? [];
+    return codes.map((code) => {
+      const path = `/diagnostics/${code}`;
+      return {
         code,
         title: `${code}: ${rule.title}`,
         description: rule.description,
@@ -161,8 +161,8 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
         sourceUrl: rule.sourceUrl,
         path,
         key: `${path.slice(1)}.md`,
-      },
-    ];
+      };
+    });
   });
   const source = "src/core/internal/diagnostics.ts";
   return [
@@ -192,19 +192,22 @@ function readDiagnosticCodeMaps() {
   const files = [
     "src/core/diagnostic-registry.ts",
     "src/rule-packs/vue/diagnostics.ts",
+    "src/rule-packs/package/diagnostics.ts",
     "src/diagnostics.ts",
     "src/rule-packs/nitro/diagnostics.ts",
     "src/rule-packs/nuxt/diagnostics.ts",
     "src/rule-packs/typescript/diagnostics.ts",
     "src/rule-packs/shadcn/diagnostics.ts",
   ];
-  const map = new Map<string, string>();
+  const map = new Map<string, string[]>();
   for (const file of files) {
     const text = readFileSync(join(root, file), "utf8");
     for (const match of text.matchAll(
       /\{\s*code:\s*"([^"]+)"\s*,\s*ruleId:\s*"([^"]+)"\s*,?\s*\}/g,
     )) {
-      map.set(match[2]!, match[1]!);
+      const codes = map.get(match[2]!) ?? [];
+      if (!codes.includes(match[1]!)) codes.push(match[1]!);
+      map.set(match[2]!, codes);
     }
   }
   return map;
@@ -251,6 +254,10 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
 }
 
 function collectRuleDocuments() {
+  const packageSources = readdirSync(join(root, "src/rule-packs/package/rules"))
+    .filter((file) => file.endsWith(".ts"))
+    .sort()
+    .map((file) => join(root, "src/rule-packs/package/rules", file));
   const vueSources = ruleSourcesFromIndex(join(root, "src/rule-packs/vue/rules/vue/index.ts"));
   const viteRulesDir = join(root, "src/rule-packs/vite/rules");
   const viteSources = readdirSync(viteRulesDir)
@@ -282,6 +289,10 @@ function collectRuleDocuments() {
     .map((file) => join(shadcnRulesDir, file));
 
   return [
+    ...withRulePath(
+      collectRules(packageSources, "vite-doctor/package", "package"),
+      "/package/rules",
+    ),
     ...withRulePath(collectRules(vueSources, "vite-doctor/vue", "vue"), "/vue/rules"),
     ...withRulePath(collectRules(viteSources, "vite-doctor/vite", "vite"), "/vite/rules"),
     ...withRulePath(
@@ -728,6 +739,8 @@ function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {
 }
 
 function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
+  if (rule.framework === "package")
+    return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
   if (rule.framework === "typescript") return `pnpm vite-doctor . --rules ${rule.id}`;
   return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;
