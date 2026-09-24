@@ -2224,3 +2224,75 @@ for (const loop of [
     });
   }
 }
+
+for (const [name, source, leaks] of [
+  [
+    "case search preserves cleanup on default",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (mode) { case (clearInterval(timer), 0): break; default: break } })",
+    false,
+  ],
+  [
+    "case search evaluates tests after a leading default",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (mode) { default: break; case (clearInterval(timer), 0): break } })",
+    false,
+  ],
+  [
+    "literal switch skips unreachable resource",
+    "switch (0) { case 1: setInterval(refresh) }; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "literal switch skips later tests after match",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { switch (0) { case 0: break; case (clearInterval(timer), 1): break } })",
+    true,
+  ],
+  [
+    "call forwards cleanup arguments",
+    "const timer = setInterval(refresh); function cleanup(h) { clearInterval(h) }; import.meta.hot.dispose(() => cleanup.call(null, timer))",
+    false,
+  ],
+  [
+    "apply forwards cleanup receiver",
+    "const holder = { timer: setInterval(refresh) }; function cleanup(h) { clearInterval(this.timer); clearInterval(h) }; const other = setInterval(refresh); import.meta.hot.dispose(() => cleanup.apply(holder, [other]))",
+    false,
+  ],
+  [
+    "for of cleans every concrete handle",
+    "const timers = [setInterval(refresh), setInterval(refresh)]; import.meta.hot.dispose(() => { for (const timer of timers) clearInterval(timer) })",
+    false,
+  ],
+  [
+    "for of break leaves later handles live",
+    "const timers = [setInterval(refresh), setInterval(refresh)]; import.meta.hot.dispose(() => { for (const timer of timers) { clearInterval(timer); break } })",
+    true,
+  ],
+  [
+    "for of continue reaches later handles",
+    "const timers = [setInterval(refresh), setInterval(refresh)]; import.meta.hot.dispose(() => { for (const timer of timers) { clearInterval(timer); continue } })",
+    false,
+  ],
+  [
+    "null optional call skips resource argument",
+    "null?.(setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "optional chain skips computed key and arguments",
+    "const absent = null; absent?.[setInterval(refresh)](setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "non-null optional call tracks resource argument",
+    "function setup(h) {}; setup?.(setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}

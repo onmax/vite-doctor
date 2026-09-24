@@ -143,6 +143,7 @@ function undisposedResource(program: AnyNode): string | null {
   const superConstructors = new Map<AnyNode, (args: AnyNode[]) => Completion>();
   const values = new Map<AnyNode, AnyNode>();
   const returned = new Map<AnyNode, AnyNode>();
+  const optionalSkipped = new Set<AnyNode>();
   const callbacks = new Map<AnyNode, AnyNode>();
   const properties = new Map<AnyNode, Map<string, AnyNode>>();
   const members = new Map<AnyNode, Map<string, AnyNode>>();
@@ -313,6 +314,27 @@ function undisposedResource(program: AnyNode): string | null {
       )
         cleaned.add(value);
       target = lexicalEnvironments.has(value) ? value : (callbacks.get(value) ?? value);
+    }
+    if (target?.type === "MemberExpression" && ["call", "apply"].includes(propertyKey(target)!)) {
+      const forwarded = identity(args[1], environment);
+      if (
+        propertyKey(target) === "apply" &&
+        forwarded !== undefined &&
+        forwarded?.type !== "ArrayExpression" &&
+        !(forwarded?.type === "Literal" && forwarded.value == null)
+      )
+        return { normal: true, abrupt: false };
+      return inspect(
+        target.object,
+        propertyKey(target) === "call"
+          ? args.slice(1)
+          : forwarded?.type === "ArrayExpression"
+            ? forwarded.elements
+            : [],
+        environment,
+        module,
+        identity(args[0], environment),
+      );
     }
     const captured = lexicalEnvironments.get(target);
     if (captured) {
@@ -797,8 +819,12 @@ function undisposedResource(program: AnyNode): string | null {
       else if (leftContinues) restore(afterLeft);
       return leftContinues || rightContinues;
     };
-    const controls: { node: AnyNode; loop: boolean; continues: ReturnType<typeof snapshot>[] }[] =
-      [];
+    const controls: {
+      node: AnyNode;
+      loop: boolean;
+      continues: ReturnType<typeof snapshot>[];
+      breaks?: ReturnType<typeof snapshot>[];
+    }[] = [];
     const labels = new Map<string, { exit: Set<AnyNode>; state: ReturnType<typeof snapshot> }[]>();
     const walk = (node: AnyNode): boolean => {
       if (!node || typeof node !== "object") return true;
@@ -1043,6 +1069,49 @@ function undisposedResource(program: AnyNode): string | null {
         }
         return continues && finallyContinues;
       }
+      if (node.type === "ForOfStatement") {
+        if (!walk(node.right)) return false;
+        const iterable = identity(node.right, environment);
+        if (
+          iterable?.type === "ArrayExpression" &&
+          !iterable.elements.some((item: AnyNode) => item?.type === "SpreadElement")
+        ) {
+          const control = {
+            node,
+            loop: true,
+            continues: [] as ReturnType<typeof snapshot>[],
+            breaks: [] as ReturnType<typeof snapshot>[],
+          };
+          controls.push(control);
+          let continues = true;
+          for (const element of iterable.elements) {
+            bindResource(
+              node.left.type === "VariableDeclaration" ? node.left.declarations[0].id : node.left,
+              identity(element, environment),
+              environment,
+              module,
+            );
+            control.continues = [];
+            continues = walk(node.body);
+            let next = continues ? snapshot() : undefined;
+            for (const state of control.continues) {
+              if (next) merge(next, state);
+              else restore(state);
+              next = snapshot();
+            }
+            if (!next) break;
+            continues = true;
+          }
+          controls.pop();
+          let combined = continues ? snapshot() : undefined;
+          for (const state of control.breaks) {
+            if (combined) merge(combined, state);
+            else restore(state);
+            combined = snapshot();
+          }
+          return Boolean(combined);
+        }
+      }
       if (
         [
           "ForStatement",
@@ -1089,7 +1158,11 @@ function undisposedResource(program: AnyNode): string | null {
             if (updateState && !walk(node.update)) bodyStopped = true;
           } else if (loop) {
             for (const [key, child] of Object.entries(node)) {
-              if (key !== "__doctorParent" && !(pretest && ["init", "test"].includes(key)))
+              if (
+                key !== "__doctorParent" &&
+                !(node.type === "ForOfStatement" && key === "right") &&
+                !(pretest && ["init", "test"].includes(key))
+              )
                 if (!walk(child) && key === "body") bodyStopped = !control.continues.length;
             }
           } else {
@@ -1097,12 +1170,34 @@ function undisposedResource(program: AnyNode): string | null {
               controls.pop();
               return false;
             }
-            const entry = snapshot();
-            let combined = node.cases.some((item: AnyNode) => !item.test) ? undefined : entry;
+            const discriminant = identity(node.discriminant, environment);
+            const entries: { index: number; state: ReturnType<typeof snapshot> }[] = [];
+            let unmatched = true;
             for (const [index, item] of node.cases.entries()) {
-              restore(entry);
-              walk(item.test);
-              walk(node.cases.slice(index).flatMap((item: AnyNode) => item.consequent));
+              if (!item.test) continue;
+              if (!walk(item.test)) {
+                unmatched = false;
+                break;
+              }
+              const test = identity(item.test, environment);
+              const known = discriminant?.type === "Literal" && test?.type === "Literal";
+              if (!known || discriminant.value === test.value)
+                entries.push({ index, state: snapshot() });
+              if (known && discriminant.value === test.value) {
+                unmatched = false;
+                break;
+              }
+            }
+            if (unmatched)
+              entries.push({
+                index: node.cases.findIndex((item: AnyNode) => !item.test),
+                state: snapshot(),
+              });
+            let combined: ReturnType<typeof snapshot> | undefined;
+            for (const { index, state } of entries) {
+              restore(state);
+              if (index >= 0)
+                walk(node.cases.slice(index).flatMap((item: AnyNode) => item.consequent));
               if (combined) merge(combined, snapshot());
               combined = snapshot();
             }
@@ -1139,6 +1234,10 @@ function undisposedResource(program: AnyNode): string | null {
           target.push({ exit, state: snapshot() });
           return false;
         }
+        if (node.type === "BreakStatement" && !node.label && controls.at(-1)?.breaks) {
+          controls.at(-1)!.breaks!.push(snapshot());
+          return false;
+        }
         if (node.type === "ContinueStatement") {
           const control = controls.findLast(
             (item) =>
@@ -1148,10 +1247,42 @@ function undisposedResource(program: AnyNode): string | null {
                   item.node.__doctorParent.label.name === node.label.name)),
           );
           control?.continues.push(snapshot());
+          if (control?.breaks) return false;
         }
         if (controls.at(-1)?.loop || node.type === "ContinueStatement" || node.label)
           exits.push(new Set(cleaned));
         return false;
+      }
+      if (
+        node.type === "ChainExpression" ||
+        node.type === "CallExpression" ||
+        node.type === "MemberExpression"
+      ) {
+        if (optionalSkipped.delete(node)) returned.delete(node);
+        const base =
+          node.type === "ChainExpression"
+            ? node.expression
+            : node.type === "CallExpression"
+              ? node.callee
+              : node.object;
+        if (!walk(base)) return false;
+        const value = identity(base, environment);
+        if (
+          (node.optional &&
+            (value === undefined || (value?.type === "Literal" && value.value == null))) ||
+          optionalSkipped.has(base)
+        ) {
+          if (node.type !== "ChainExpression") optionalSkipped.add(node);
+          returned.set(node, { type: "Literal", value: undefined });
+          return true;
+        }
+        if (node.type === "ChainExpression") {
+          returned.set(node, value);
+          return true;
+        }
+        if (node.type === "MemberExpression") return !node.computed || walk(node.property);
+        if (!walk(node.arguments)) return false;
+        return visit(node) !== false;
       }
       const bindsValue =
         node.type === "VariableDeclarator" ||
