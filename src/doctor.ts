@@ -14,6 +14,7 @@ import { vueRulePack } from "./rule-packs/vue/rules.js";
 import { viteRulePack } from "./rules.js";
 import { typescriptRulePack } from "./rule-packs/typescript/index.js";
 import shadcnRulePack from "./rule-packs/shadcn/index.js";
+import { packageRulePack } from "./rule-packs/package/index.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
@@ -25,6 +26,7 @@ export async function viteDoctorExtensions(
 ): Promise<DoctorExtension[]> {
   const framework = detectRequestedFramework(options);
   const extensions = [
+    defineDoctorExtension({ name: "vite-doctor/builtin-package", rulePacks: [packageRulePack] }),
     defineDoctorExtension({ name: "vite-doctor/builtin-vite", rulePacks: [viteRulePack] }),
     defineDoctorExtension({
       name: "vite-doctor/builtin-typescript",

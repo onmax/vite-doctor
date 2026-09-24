@@ -287,6 +287,7 @@ export interface ProjectInfo {
   nuxt?: NuxtProjectInfo;
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
+  evidenceGaps?: Array<{ source: string; message: string; files: string[] }>;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
 }
@@ -552,17 +553,20 @@ export interface RulePack {
   version: string;
   rules: DoctorRule[];
   presets: { recommended: string[]; strict?: string[] } & Record<string, string[] | undefined>;
-  activation?: {
-    languages?: ProjectLanguage[];
-    packages?: string[];
-    modules?: string[];
-    nuxt?: string;
-  };
+  activation?:
+    | false
+    | {
+        languages?: ProjectLanguage[];
+        packages?: string[];
+        modules?: string[];
+        nuxt?: string;
+      };
 }
 
 export interface DoctorRunResult {
   version: string;
   reportVersion?: 3;
+  extends?: DoctorSerializableConfig["extends"];
   framework: DoctorFramework;
   root: string;
   scope: {
