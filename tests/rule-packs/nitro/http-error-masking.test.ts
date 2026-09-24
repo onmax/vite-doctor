@@ -1666,3 +1666,52 @@ test("preserves a returned HTTP error through a normal finalizer", async () => {
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(true);
 });
+
+test.each([
+  ["named factory", 'import { createError } from "h3"', "createError", "", true],
+  ["aliased factory", 'import { createError as httpError } from "h3"', "httpError", "", true],
+  [
+    "imported guard",
+    'import { createError, isError } from "h3"',
+    "createError",
+    "if (isError(error)) throw error;",
+    false,
+  ],
+  [
+    "aliased guard",
+    'import { createError as httpError, isError as isHttpError } from "h3"',
+    "httpError",
+    "if (isHttpError(error)) throw error;",
+    false,
+  ],
+  ["unrelated factory", 'import { createError } from "other"', "createError", "", false],
+  [
+    "unrelated guard",
+    'import { createError } from "h3"; import { isError } from "other"',
+    "createError",
+    "if (isError(error)) throw error;",
+    true,
+  ],
+  ["shadowed factory", 'import { createError } from "h3"', "createError", "", false, "createError"],
+  [
+    "shadowed guard",
+    'import { createError, isError } from "h3"',
+    "createError",
+    "if (isError(error)) throw error;",
+    true,
+    "isError",
+  ],
+])("handles %s bindings", async (_name, imports, factory, guard, reports, parameter = "") => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "api/account.ts": `${imports}
+        export default defineEventHandler((${parameter}) => {
+          try { throw ${factory}({ statusCode: 404 }) }
+          catch (error) { ${guard} throw new Error() }
+        })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+});

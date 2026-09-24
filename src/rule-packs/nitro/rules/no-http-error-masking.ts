@@ -909,8 +909,7 @@ function conditionPaths(
     const guarded = unwrapExpression(valueNode.arguments?.[0]);
     const caught =
       valueNode.type === "CallExpression" &&
-      guard?.name === "isError" &&
-      !current.resolveBinding(guard) &&
+      isH3Reference(guard, "isError", current.resolveBinding) &&
       valueNode.arguments.length === 1 &&
       guarded?.type === "Identifier"
         ? errorStatus(values.get(guarded.name), current)
@@ -951,15 +950,32 @@ function unwrapExpression(node: AnyNode): AnyNode {
   return node;
 }
 
+function isH3Reference(node: AnyNode, name: string, resolve: Path["resolveBinding"]): boolean {
+  if (node?.type !== "Identifier") return false;
+  const binding = resolve(node);
+  if (!binding) return node.name === name;
+  const specifier = binding.__doctorParent;
+  const declaration = specifier?.__doctorParent;
+  return (
+    specifier?.type === "ImportSpecifier" &&
+    (specifier.imported.name ?? specifier.imported.value) === name &&
+    specifier.importKind !== "type" &&
+    declaration?.type === "ImportDeclaration" &&
+    declaration.importKind !== "type" &&
+    declaration.source.value === "h3"
+  );
+}
+
 function httpStatus(
   node: AnyNode,
   resolve: Path["resolveBinding"],
 ): number | "server-error" | undefined {
   node = unwrapExpression(node);
   const callee = unwrapExpression(node?.callee);
-  if (callee?.type === "Identifier" && resolve(callee)) return;
   if (
     ["NewExpression", "CallExpression"].includes(node?.type) &&
+    callee?.type === "Identifier" &&
+    !resolve(callee) &&
     [
       "Error",
       "TypeError",
@@ -972,7 +988,7 @@ function httpStatus(
     ].includes(callee?.name)
   )
     return "server-error";
-  if (node?.type !== "CallExpression" || callee?.name !== "createError") return;
+  if (node?.type !== "CallExpression" || !isH3Reference(callee, "createError", resolve)) return;
   const options = unwrapExpression(node.arguments?.[0]);
   if (!options || (options.type === "Literal" && typeof options.value === "string")) return 500;
   if (options.type !== "ObjectExpression") return;
