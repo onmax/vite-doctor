@@ -89,8 +89,11 @@ export const requireDisposeForSideEffects = createRule({
         if (isServerSidePath(ctx.file.relativePath) || isFixturePath(ctx.file.relativePath)) return;
         const text = stripCommentsAndStrings(ctx.file.text);
         if (!/import\.meta\.hot\.accept\s*\(/.test(text)) return;
-        if (/import\.meta\.hot\.dispose\s*\(/.test(text)) return;
+        const hasDispose = /import\.meta\.hot\.dispose\s*\(/.test(text);
+        const undisposed = hasDispose ? undisposedResource(text) : null;
+        if (hasDispose && !undisposed) return;
         if (
+          !undisposed &&
           !/(addEventListener|setInterval|setTimeout|new\s+WebSocket|EventSource\s*\(|\.subscribe\s*\()/.test(
             text,
           )
@@ -98,7 +101,9 @@ export const requireDisposeForSideEffects = createRule({
           return;
         ctx.report(
           diagnostics.VITE0013({
-            why: "This HMR-accepting module creates side effects without a hot dispose handler.",
+            why: undisposed
+              ? `This HMR-accepting module does not dispose its ${undisposed} resource.`
+              : "This HMR-accepting module creates side effects without a hot dispose handler.",
             fix: "Clean up listeners, timers, and sockets in import.meta.hot.dispose().",
           }),
           {
@@ -113,6 +118,53 @@ export const requireDisposeForSideEffects = createRule({
     };
   },
 });
+
+function undisposedResource(text: string): string | null {
+  const opening = /import\.meta\.hot\.dispose\s*\(\s*\([^)]*\)\s*=>\s*\{/g.exec(text);
+  if (!opening) return null;
+  const start = opening.index + opening[0].length;
+  let depth = 1;
+  let end = start;
+  for (; end < text.length && depth; end++) {
+    if (text[end] === "{") depth++;
+    if (text[end] === "}") depth--;
+  }
+  if (depth) return null;
+  const body = text.slice(start, end - 1);
+  const setup = text.slice(0, opening.index);
+  const resourcePatterns = [
+    {
+      kind: "interval",
+      create: /\b(?:const|let)\s+(\w+)\s*=\s*setInterval\s*\(/g,
+      dispose: "clearInterval",
+    },
+    {
+      kind: "timeout",
+      create: /\b(?:const|let)\s+(\w+)\s*=\s*setTimeout\s*\(/g,
+      dispose: "clearTimeout",
+    },
+    {
+      kind: "WebSocket",
+      create: /\b(?:const|let)\s+(\w+)\s*=\s*new\s+WebSocket\s*\(/g,
+      dispose: "close",
+    },
+    {
+      kind: "subscription",
+      create: /\b(?:const|let)\s+(\w+)\s*=\s*[\w$.]+\.subscribe\s*\(/g,
+      dispose: "unsubscribe",
+    },
+  ];
+  for (const resource of resourcePatterns) {
+    for (const match of setup.matchAll(resource.create)) {
+      const name = match[1]!;
+      const cleanup = resource.dispose.startsWith("clear")
+        ? new RegExp(`\\b${resource.dispose}\\s*\\(\\s*${name}\\s*\\)`)
+        : new RegExp(`\\b${name}\\.${resource.dispose}\\s*\\(`);
+      if (!cleanup.test(body)) return resource.kind;
+    }
+  }
+  return null;
+}
 
 function isPluginSource(path: string): boolean {
   return isViteConfigFile(path) || /(?:^|\/)plugins?\/.*\.[cm]?[jt]s$/.test(path);
