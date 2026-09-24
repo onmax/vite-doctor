@@ -2625,3 +2625,190 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "shifted conditional arrays",
+    "const timer = setInterval(refresh); const timers = flag ? [timer] : [, timer]; import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "shifted assigned arrays",
+    "const timer = setInterval(refresh); let timers; if(flag) timers = [timer]; else timers = [,timer]; import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "shifted arrays preserve other leaks",
+    "const timer = setInterval(refresh); const other = setInterval(refresh); const timers = flag ? [timer, other] : [, timer]; import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "shifted arrays preserve callback indices",
+    "const timer = setInterval(refresh); const timers = flag ? [timer] : [, timer]; import.meta.hot.dispose(() => timers.forEach((t,i) => { if (i === 0) clearInterval(t) }))",
+    true,
+  ],
+  [
+    "awaited async handle",
+    "async function start() { return setInterval(refresh) }; const timer = await start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "unawaited async handle",
+    "async function start() { return setInterval(refresh) }; const timer = start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "nested awaited async handle",
+    "async function start() { return setInterval(refresh) }; async function outer() { return start() }; const timer = await outer(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "removal pop()",
+    "const timers = [setInterval(refresh)]; timers.pop(); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "removal shift()",
+    "const timers = [setInterval(refresh)]; timers.shift(); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "removal splice(0, 1)",
+    "const timers = [setInterval(refresh)]; timers.splice(0, 1); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "forward factory setInterval.call(window, refresh) True",
+    "const timer = setInterval.call(window, refresh); import.meta.hot.dispose(() => { clearInterval(timer) })",
+    false,
+  ],
+  [
+    "forward factory setInterval.call(window, refresh) False",
+    "const timer = setInterval.call(window, refresh); import.meta.hot.dispose(() => {  })",
+    true,
+  ],
+  [
+    "forward factory setInterval.apply(window, [refresh]) True",
+    "const timer = setInterval.apply(window, [refresh]); import.meta.hot.dispose(() => { clearInterval(timer) })",
+    false,
+  ],
+  [
+    "forward factory setInterval.apply(window, [refresh]) False",
+    "const timer = setInterval.apply(window, [refresh]); import.meta.hot.dispose(() => {  })",
+    true,
+  ],
+  [
+    "forward factory window.setTimeout.call(window, refresh) True",
+    "const timer = window.setTimeout.call(window, refresh); import.meta.hot.dispose(() => { clearInterval(timer) })",
+    false,
+  ],
+  [
+    "forward factory window.setTimeout.call(window, refresh) False",
+    "const timer = window.setTimeout.call(window, refresh); import.meta.hot.dispose(() => {  })",
+    true,
+  ],
+  [
+    "synchronous some",
+    "[1,2].some(() => { setInterval(refresh); return true }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "synchronous every",
+    "[1,2].every(() => { setInterval(refresh); return true }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "synchronous find",
+    "[1,2].find(() => { setInterval(refresh); return true }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "synchronous findIndex",
+    "[1,2].findIndex(() => { setInterval(refresh); return true }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "synchronous findLast",
+    "[1,2].findLast(() => { setInterval(refresh); return true }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "synchronous findLastIndex",
+    "[1,2].findLastIndex(() => { setInterval(refresh); return true }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "synchronous reduce",
+    "[1,2].reduce(() => { setInterval(refresh); return true }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "synchronous reduceRight",
+    "[1,2].reduceRight(() => { setInterval(refresh); return true }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "short circuit some",
+    "[true,false].some(x => { if (x) return true; setInterval(refresh); return false }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "short circuit find",
+    "[true,false].find(x => { if (x) return true; setInterval(refresh); return false }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "logical guard &&",
+    "let timer; enabled && (timer = setInterval(refresh)); enabled && import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "logical guard ||",
+    "let timer; enabled || (timer = setInterval(refresh)); enabled || import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "removed timer can be cleaned",
+    "const timers = [setInterval(refresh)]; const timer = timers.pop(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "splice returns removed handles",
+    "const timers = [setInterval(refresh)]; const removed = timers.splice(0,1); import.meta.hot.dispose(() => removed.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "reduce forwards accumulator handles",
+    "const timer = [1].reduce(() => setInterval(refresh), null); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "some does not guarantee later cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => [true,false].some(first => { if (first) return flag; clearInterval(timer); return true }))",
+    true,
+  ],
+  [
+    "changed logical guards preserve leaks",
+    "let timer; let enabled = flag; enabled && (timer = setInterval(refresh)); enabled = other; enabled && import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "mixed logical and if guards correlate",
+    "let timer; enabled && (timer = setInterval(refresh)); if(enabled) import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "forwarded timer cleanup",
+    "const timer = setInterval.call(window, refresh); import.meta.hot.dispose(() => clearInterval.apply(window, [timer]))",
+    false,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}

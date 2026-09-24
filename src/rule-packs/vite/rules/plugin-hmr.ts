@@ -138,6 +138,8 @@ function undisposedResource(program: AnyNode): string | null {
   const thisBinding = {};
   const lexicalReceivers = new Map<AnyNode, AnyNode>();
   const lexicalEnvironments = new Map<AnyNode, Map<AnyNode, AnyNode>>();
+  const promises = new Map<AnyNode, AnyNode>();
+  const arrayChoices = new Map<AnyNode, { array: AnyNode; path: Map<object, boolean> }[]>();
   const alternatives = new Map<AnyNode, AnyNode[]>();
   const callbackChoices = new Map<AnyNode, AnyNode[]>();
   const superConstructors = new Map<AnyNode, (args: AnyNode[]) => Completion>();
@@ -173,6 +175,11 @@ function undisposedResource(program: AnyNode): string | null {
   };
   const identity = (node: AnyNode, environment = values): AnyNode => {
     node = unwrapResourceExpression(node);
+    if (node?.type === "AwaitExpression") {
+      let value = identity(node.argument, environment);
+      while (promises.has(value)) value = identity(promises.get(value), environment);
+      return value;
+    }
     if (node?.type === "ThisExpression") return environment.get(thisBinding);
     if (returned.has(node)) return identity(returned.get(node), environment);
     if (node?.type === "MemberExpression") {
@@ -428,7 +435,12 @@ function undisposedResource(program: AnyNode): string | null {
         environment.set(binding, local.get(binding));
     }
     visited.delete(target);
-    return target.async ? { ...completion, value: {} } : completion;
+    if (target.async) {
+      const promise = {};
+      promises.set(promise, completion.value);
+      return { ...completion, value: promise };
+    }
+    return completion;
   }
   function evaluate(
     root: AnyNode,
@@ -446,7 +458,37 @@ function undisposedResource(program: AnyNode): string | null {
     walkEvaluation(root, (node) => {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     });
-    const visit = (node: AnyNode, receiver?: AnyNode) => {
+    const visit = (node: AnyNode, receiver?: AnyNode): boolean | undefined => {
+      if (node.type === "CallExpression") {
+        const target = identity(node.callee, environment);
+        if (
+          target?.type === "MemberExpression" &&
+          ["call", "apply"].includes(propertyKey(target)!)
+        ) {
+          const args = node.arguments.map((argument: AnyNode) => identity(argument, environment));
+          const forwarded = args[1];
+          if (
+            propertyKey(target) === "apply" &&
+            forwarded !== undefined &&
+            forwarded?.type !== "ArrayExpression" &&
+            !(forwarded?.type === "Literal" && forwarded.value == null)
+          )
+            return true;
+          const call = {
+            type: "CallExpression",
+            callee: target.object,
+            arguments:
+              propertyKey(target) === "call"
+                ? args.slice(1)
+                : forwarded?.type === "ArrayExpression"
+                  ? arrayElements(forwarded)
+                  : [],
+          };
+          const continues = visit(call, args[0]);
+          if (returned.has(call)) returned.set(node, returned.get(call));
+          return continues;
+        }
+      }
       if (node.type === "AssignmentExpression" && node.left.type === "MemberExpression") {
         const key = propertyKey(node.left);
         if (key !== undefined) {
@@ -645,6 +687,67 @@ function undisposedResource(program: AnyNode): string | null {
         node.callee.type === "MemberExpression"
           ? identity(node.callee.object, environment)
           : undefined;
+      if (arrayChoices.has(array) && !replacedMethod) {
+        const before = snapshot();
+        const parentPath = currentPath;
+        const resultBinding = {};
+        let merged: ReturnType<typeof snapshot> | undefined;
+        let continues = true;
+        for (const choice of arrayChoices.get(array)!) {
+          restore(before);
+          currentPath = choice.path;
+          const call = { ...node, callee: { ...node.callee, object: choice.array } };
+          continues = visit(call, receiver) !== false && continues;
+          environment.set(resultBinding, returned.get(call));
+          const after = snapshot();
+          if (merged) merge(merged, after);
+          merged = snapshot();
+        }
+        currentPath = parentPath;
+        returned.set(node, environment.get(resultBinding));
+        environment.delete(resultBinding);
+        return continues;
+      }
+      if (
+        array?.type === "ArrayExpression" &&
+        !replacedMethod &&
+        ["pop", "shift", "splice", "unshift", "reverse", "sort", "fill", "copyWithin"].includes(
+          method!,
+        )
+      ) {
+        const elements = [...arrayElements(array)];
+        const args = node.arguments.map((argument: AnyNode) => identity(argument, environment));
+        let result: AnyNode;
+        if (method === "pop") result = elements.pop();
+        else if (method === "shift") result = elements.shift();
+        else if (method === "unshift")
+          result = { type: "Literal", value: elements.unshift(...args) };
+        else if (method === "reverse") {
+          elements.reverse();
+          result = array;
+        } else if (
+          method === "splice" &&
+          args
+            .slice(0, 2)
+            .every((arg: AnyNode) => arg?.type === "Literal" && typeof arg.value === "number")
+        ) {
+          const removed =
+            args.length === 0
+              ? []
+              : args.length === 1
+                ? elements.splice(args[0].value)
+                : elements.splice(args[0].value, args[1].value, ...args.slice(2));
+          result = { type: "ArrayExpression", elements: removed };
+        } else {
+          elements.splice(0, elements.length, { type: "SpreadElement", argument: {} });
+          result = {};
+        }
+        const stored = new Map(elements.map((element, index) => [String(index), element]));
+        stored.set("length", { type: "Literal", value: elements.length });
+        properties.set(array, stored);
+        returned.set(node, result);
+        return true;
+      }
       if (array?.type === "ArrayExpression" && !replacedMethod && method === "push") {
         const elements = arrayElements(array);
         if (
@@ -664,7 +767,19 @@ function undisposedResource(program: AnyNode): string | null {
       if (
         array?.type === "ArrayExpression" &&
         !replacedMethod &&
-        ["forEach", "map", "filter"].includes(method!)
+        [
+          "forEach",
+          "map",
+          "filter",
+          "some",
+          "every",
+          "find",
+          "findIndex",
+          "findLast",
+          "findLastIndex",
+          "reduce",
+          "reduceRight",
+        ].includes(method!)
       ) {
         const expand = (items: AnyNode[], seen = new Set<AnyNode>()): AnyNode[] =>
           items.flatMap((item) => {
@@ -677,21 +792,50 @@ function undisposedResource(program: AnyNode): string | null {
           });
         const elements: AnyNode[] = [];
         let knownSelection = true;
-        for (const [index, element] of expand(arrayElements(array)).entries()) {
+        let accumulator = identity(node.arguments[1], environment);
+        let hasAccumulator = node.arguments.length > 1;
+        const reducing = method === "reduce" || method === "reduceRight";
+        const entries = [...expand(arrayElements(array)).entries()];
+        if (["reduceRight", "findLast", "findLastIndex"].includes(method!)) entries.reverse();
+        let optionalTail: ReturnType<typeof snapshot> | undefined;
+        for (const [index, element] of entries) {
           if (!element || element.type === "SpreadElement") continue;
+          if (reducing && !hasAccumulator) {
+            accumulator = identity(element, environment);
+            hasAccumulator = true;
+            continue;
+          }
           const call = {
             type: "CallExpression",
             callee: identity(node.arguments[0], environment),
             arguments: [identity(element, environment), { type: "Literal", value: index }, array],
           };
-          if (visit(call, identity(node.arguments[1], environment)) === false) return false;
+          if (reducing) call.arguments.unshift(accumulator);
+          if (
+            visit(call, reducing ? undefined : identity(node.arguments[1], environment)) === false
+          )
+            return false;
           const result = returned.get(call);
+          if (reducing) accumulator = result;
+          if (
+            ["some", "every", "find", "findIndex", "findLast", "findLastIndex"].includes(method!)
+          ) {
+            const known = result?.type === "Literal" || promises.has(result);
+            const truthy = promises.has(result) || Boolean(result?.value);
+            if (known && (method === "every" ? !truthy : truthy)) break;
+            if (!known) {
+              if (optionalTail) merge(optionalTail, snapshot());
+              optionalTail = snapshot();
+            }
+          }
           if (method === "filter") {
             if (result?.type === "Literal") {
               if (result.value) elements.push(identity(element, environment));
             } else knownSelection = false;
           } else elements.push(result);
         }
+        if (optionalTail) merge(optionalTail, snapshot());
+        if (reducing) returned.set(node, accumulator);
         if (method === "map" || (method === "filter" && knownSelection))
           returned.set(node, { type: "ArrayExpression", elements });
         return true;
@@ -754,6 +898,30 @@ function undisposedResource(program: AnyNode): string | null {
           const value = { type: "ArrayExpression", elements: [] as AnyNode[] };
           if (!mergedObjects.has(a)) mergedObjects.set(a, new Map());
           mergedObjects.get(a)!.set(b, value);
+          arrayChoices.set(value, [
+            ...(arrayChoices.get(a) ?? [
+              {
+                array: {
+                  type: "ArrayExpression",
+                  elements: arrayElements(a, left.properties).map((item) =>
+                    identity(item, left.values),
+                  ),
+                },
+                path: left.path,
+              },
+            ]),
+            ...(arrayChoices.get(b) ?? [
+              {
+                array: {
+                  type: "ArrayExpression",
+                  elements: arrayElements(b, right.properties).map((item) =>
+                    identity(item, right.values),
+                  ),
+                },
+                path: right.path,
+              },
+            ]),
+          ]);
           const first = arrayElements(a, left.properties);
           const second = arrayElements(b, right.properties);
           for (let index = 0; index < Math.max(first.length, second.length); index++)
@@ -886,6 +1054,14 @@ function undisposedResource(program: AnyNode): string | null {
       abrupt ||= leftAbrupt && (!catches || leftExits.some((exit) => !thrownExits.has(exit)));
       const rightValue = identity(right, environment);
       const afterRight = snapshot();
+      const arrayExpression =
+        expression &&
+        leftValue?.type === "ArrayExpression" &&
+        rightValue?.type === "ArrayExpression";
+      if (arrayExpression) {
+        afterLeft.values.set(expression, leftValue);
+        afterRight.values.set(expression, rightValue);
+      }
       currentPath = parentPath;
       if (expression && leftContinues && rightContinues) {
         const choices = [leftValue, rightValue].flatMap(
@@ -917,6 +1093,10 @@ function undisposedResource(program: AnyNode): string | null {
       if (caughtThrowOnly) restore(afterRight);
       else if (includeAbrupt || (leftContinues && rightContinues)) merge(afterLeft, afterRight);
       else if (leftContinues) restore(afterLeft);
+      if (arrayExpression) {
+        returned.set(expression, environment.get(expression));
+        environment.delete(expression);
+      }
       if (leftContinues !== rightContinues)
         currentPath = new Map(leftContinues ? afterLeft.path : afterRight.path);
       return leftContinues || rightContinues;
@@ -1177,7 +1357,14 @@ function undisposedResource(program: AnyNode): string | null {
           returned.set(node, useRight ? identity(node.right, environment) : left);
           return true;
         }
-        return branch(node.right, null);
+        return branch(
+          node.operator === "||" ? null : node.right,
+          node.operator === "||" ? node.right : null,
+          undefined,
+          false,
+          false,
+          node.operator === "??" ? undefined : node.left,
+        );
       }
       if (node.type === "TryStatement") {
         const firstExit = exits.length;
@@ -1553,7 +1740,6 @@ function unwrapResourceExpression(node: AnyNode): AnyNode {
       "TSNonNullExpression",
       "TSSatisfiesExpression",
       "ParenthesizedExpression",
-      "AwaitExpression",
     ].includes(node.type)
   )
     node = node.expression ?? node.argument;
