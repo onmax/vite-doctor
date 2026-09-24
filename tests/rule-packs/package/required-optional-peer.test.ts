@@ -7,6 +7,9 @@ const optionalPeer = {
 };
 
 test.each([
+  'await Promise.all([import("peer")]);',
+  'export {}; await (Promise.all([(import("peer"))]));',
+
   '(function () { require("peer"); }).call(this);',
   '(function () { require("peer"); }).apply(this, []);',
   '((peer = require("peer")) => peer).call(null);',
@@ -80,6 +83,16 @@ test.each([
 });
 
 test.each([
+  'require = undefined; require?.("peer");',
+  'require?.("peer");',
+  'Promise.all([import("peer")]);',
+  'await Promise.allSettled([import("peer")]);',
+  'const Promise = custom; await Promise.all([import("peer")]);',
+  'try { await Promise.all([import("peer")]); } catch {}',
+  'await Promise.all([enabled && import("peer")]);',
+  'await Promise.all([() => import("peer")]);',
+  'async function load() { await Promise.all([import("peer")]); }',
+
   '(({ toString = require("peer") }) => toString)({});',
   '(({ constructor = require("peer") }) => constructor)({});',
   '(({ ["toString"]: peer = require("peer") }) => peer)({});',
@@ -315,4 +328,44 @@ test("requires optional peers resolved directly", async () => {
       },
     ),
   ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each(["dist/index", "dist"])("resolves legacy main %s", async (main) => {
+  expect(
+    await diagnose(
+      { main, ...optionalPeer },
+      {
+        "dist/index.js": 'require("peer");',
+      },
+    ),
+  ).toHaveLength(1);
+});
+
+test.each([
+  'class Adapter { @require("peer") method() {} }',
+  'class Adapter { @require("peer") field = null; }',
+  'class Adapter { method(@require("peer") value: unknown) {} }',
+])("reports eager member decorators: %s", async (source) => {
+  expect(
+    await diagnose(
+      { main: "index.ts", ...optionalPeer },
+      {
+        "index.ts": source,
+      },
+    ),
+  ).toHaveLength(1);
+});
+
+test.each([
+  'class Adapter { @(() => require("peer")) method() {} }',
+  'if (enabled) { class Adapter { @require("peer") method() {} } }',
+])("preserves guarded decorator loads: %s", async (source) => {
+  expect(
+    await diagnose(
+      { main: "index.ts", ...optionalPeer },
+      {
+        "index.ts": source,
+      },
+    ),
+  ).toEqual([]);
 });

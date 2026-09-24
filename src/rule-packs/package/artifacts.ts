@@ -250,8 +250,8 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   } else if (!manifest.main && !manifest.module) {
     if (existsSync(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
   }
-  for (const entry of [manifest.main, manifest.module])
-    if (entry) enqueue(entry, "runtime", true, root, false, true);
+  if (manifest.main) enqueue(manifest.main, "runtime", true, root, true, true);
+  if (manifest.module) enqueue(manifest.module, "runtime", true, root, false, true);
   if (typeof manifest.browser === "string")
     enqueue(manifest.browser, "runtime", true, root, false, true);
   else if (manifest.browser) {
@@ -525,16 +525,46 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
   return edges;
 }
 
+function isDecoratorExpression(node: ts.Node, ancestor: ts.Node): boolean {
+  for (let current = node.parent; current && current !== ancestor; current = current.parent)
+    if (ts.isDecorator(current)) return true;
+  return false;
+}
+
 function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
+  if (ts.isCallChain(node)) return false;
   let expression: ts.Node = node;
   while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  let aggregate: ts.CallExpression | undefined;
+  if (dynamic && ts.isArrayLiteralExpression(expression.parent)) {
+    let array: ts.Node = expression.parent;
+    while (ts.isParenthesizedExpression(array.parent)) array = array.parent;
+    const call = array.parent;
+    if (
+      ts.isCallExpression(call) &&
+      !ts.isCallChain(call) &&
+      call.arguments.length === 1 &&
+      call.arguments[0] === array &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      ts.isIdentifier(call.expression.expression) &&
+      call.expression.expression.text === "Promise" &&
+      call.expression.name.text === "all" &&
+      !shadowsName(call, "Promise")
+    ) {
+      aggregate = call;
+      expression = call;
+      while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+    }
+  }
   if (dynamic && !ts.isAwaitExpression(expression.parent)) return false;
   for (let parent = node.parent; parent && !ts.isSourceFile(parent); parent = parent.parent) {
     if (
       (ts.isFunctionLike(parent) &&
+        !isDecoratorExpression(node, parent) &&
         !(parent.name && isWithin(node, parent.name)) &&
         !isImmediateInvocation(parent, node)) ||
       (ts.isPropertyDeclaration(parent) &&
+        !isDecoratorExpression(node, parent) &&
         !(parent.name && isWithin(node, parent.name)) &&
         !parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) ||
       (ts.isIfStatement(parent) && !isWithin(node, parent.expression)) ||
@@ -566,7 +596,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
         !isWithin(node, parent.expression))
     )
       return false;
-    if (dynamic && ts.isCallExpression(parent)) return false;
+    if (dynamic && ts.isCallExpression(parent) && parent !== aggregate) return false;
   }
   return true;
 }
