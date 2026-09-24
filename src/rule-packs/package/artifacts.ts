@@ -47,6 +47,7 @@ interface ImportEdge {
   required: boolean;
   typeReference?: boolean;
   probe?: boolean;
+  resolutionOnly?: boolean;
 }
 
 const runs = new WeakMap<ProjectInfo, PackageArtifacts | null>();
@@ -61,12 +62,12 @@ function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
-function recordOf(value: unknown, valid: (entry: unknown) => boolean): boolean {
-  return isRecord(value) && Object.values(value).every(valid);
+function recordOf(value: unknown, accepts: (entry: unknown) => boolean): boolean {
+  return isRecord(value) && Object.values(value).every(accepts);
 }
 
-function isPackageManifest(value: unknown): value is PackageManifest {
-  if (!isRecord(value)) return false;
+function parsePackageManifest(value: unknown): PackageManifest {
+  if (!isRecord(value)) throw new TypeError("package.json must contain an object");
   const fields: Record<string, (entry: unknown) => boolean> = {
     name: isString,
     private: (entry) => typeof entry === "boolean",
@@ -96,9 +97,11 @@ function isPackageManifest(value: unknown): value is PackageManifest {
       ),
     devDependencies: (entry) => recordOf(entry, isString),
   };
-  return Object.entries(fields).every(
-    ([key, valid]) => value[key] === undefined || valid(value[key]),
-  );
+  for (const [field, accepts] of Object.entries(fields)) {
+    if (value[field] !== undefined && !accepts(value[field]))
+      throw new TypeError(`Invalid package.json field: ${field}`);
+  }
+  return value;
 }
 
 export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null {
@@ -124,9 +127,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   root = realpathSync(root);
   const manifestPath = resolve(root, "package.json");
   if (!existsSync(manifestPath)) return null;
-  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
-  if (!isPackageManifest(manifest))
-    throw new TypeError(`Invalid package manifest: ${manifestPath}`);
+  const manifest = parsePackageManifest(JSON.parse(readFileSync(manifestPath, "utf8")));
   if (manifest.private) return null;
   const references: PackageReference[] = [];
   const missing = new Set<string>();
@@ -284,12 +285,13 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     );
     for (const edge of importEdges(source, current.kind)) {
       const required = current.required && edge.required;
+      const executionRequired = required && !edge.resolutionOnly;
       for (const specifier of resolvePackageImport(edge.specifier, manifest.imports)) {
         if (specifier.startsWith(".")) {
           enqueue(
             specifier,
             edge.kind,
-            required,
+            executionRequired,
             edge.specifier.startsWith("#") ? root : dirname(current.path),
             edge.kind === "types" ||
               edge.probe === true ||
@@ -317,7 +319,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             `#self${specifier.slice(packageName.length)}`,
             aliases,
           )) {
-            if (target.startsWith(".")) enqueue(target, edge.kind, required);
+            if (target.startsWith(".")) enqueue(target, edge.kind, executionRequired);
           }
           continue;
         }
@@ -416,7 +418,13 @@ function resolvePackageImport(
 
 function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEdge[] {
   const edges: ImportEdge[] = [];
-  function add(literal: ts.Node | undefined, typeOnly: boolean, required: boolean, probe = false) {
+  function add(
+    literal: ts.Node | undefined,
+    typeOnly: boolean,
+    required: boolean,
+    probe = false,
+    resolutionOnly = false,
+  ) {
     while (literal && ts.isParenthesizedExpression(literal)) literal = literal.expression;
     if (!literal || !ts.isStringLiteralLike(literal)) return;
     edges.push({
@@ -426,6 +434,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
       kind: typeOnly ? "types" : kind,
       required: !typeOnly && required,
       probe,
+      resolutionOnly,
     });
   }
   function visit(node: ts.Node) {
@@ -473,7 +482,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
         node.expression.name.text === "resolve" &&
         !shadowsRequire(node)
       )
-        add(node.arguments[0], false, isUnconditional(node, false), true);
+        add(node.arguments[0], false, isUnconditional(node, false), true, true);
     }
     ts.forEachChild(node, visit);
   }
@@ -562,8 +571,24 @@ function hasAbruptCompletion(statement: ts.Statement): boolean {
   let abrupt = false;
   function visit(node: ts.Node) {
     if (ts.isFunctionLike(node)) return;
-    if (ts.isBreakStatement(node) || ts.isReturnStatement(node) || ts.isThrowStatement(node))
-      abrupt = true;
+    if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) abrupt = true;
+    if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) {
+      let target = node.parent;
+      while (target) {
+        if (
+          node.label
+            ? ts.isLabeledStatement(target) && target.label.text === node.label.text
+            : ts.isIterationStatement(target, false) ||
+              (ts.isBreakStatement(node) && ts.isSwitchStatement(target))
+        )
+          break;
+        target = target.parent;
+      }
+      if (target && !isWithin(target, statement)) {
+        const loop = ts.isLabeledStatement(target) ? target.statement : target;
+        if (ts.isBreakStatement(node) || loop !== statement.parent) abrupt = true;
+      }
+    }
     ts.forEachChild(node, visit);
   }
   visit(statement);
@@ -582,12 +607,74 @@ function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): bo
   const call = expression.parent;
   if (!ts.isCallExpression(call) || call.expression !== expression) return false;
   if (isWithin(load, node.body)) return true;
-  const index = node.parameters.findIndex(
-    (parameter) => parameter.initializer && isWithin(load, parameter.initializer),
-  );
+  const index = node.parameters.findIndex((parameter) => isWithin(load, parameter));
   if (index < 0 || call.arguments.some(ts.isSpreadElement)) return false;
-  const argument = call.arguments[index];
-  return !argument || (ts.isVoidExpression(argument) && ts.isNumericLiteral(argument.expression));
+  const parameter = node.parameters[index]!;
+  return bindingDefaultExecutes(parameter, call.arguments[index], load);
+}
+
+function isUndefined(value: ts.Expression | undefined): boolean {
+  if (!value) return true;
+  while (ts.isParenthesizedExpression(value)) value = value.expression;
+  return (
+    (ts.isVoidExpression(value) && ts.isNumericLiteral(value.expression)) ||
+    (ts.isIdentifier(value) && value.text === "undefined" && !shadowsName(value, "undefined"))
+  );
+}
+
+function bindingDefaultExecutes(
+  binding: ts.ParameterDeclaration | ts.BindingElement,
+  value: ts.Expression | undefined,
+  load: ts.Node,
+): boolean {
+  if (isUndefined(value) && binding.initializer) {
+    if (isWithin(load, binding.initializer)) return true;
+    value = binding.initializer;
+  }
+  if (!value || ts.isIdentifier(binding.name)) return false;
+  while (ts.isParenthesizedExpression(value)) value = value.expression;
+  if (ts.isObjectBindingPattern(binding.name) && ts.isObjectLiteralExpression(value)) {
+    if (
+      value.properties.some(
+        (property) =>
+          !ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name),
+      )
+    )
+      return false;
+    for (const element of binding.name.elements) {
+      if (element.dotDotDotToken || !isWithin(load, element)) continue;
+      const name = element.propertyName ?? element.name;
+      if (!ts.isIdentifier(name) && !ts.isStringLiteral(name) && !ts.isNumericLiteral(name))
+        return false;
+      const property = [...value.properties]
+        .reverse()
+        .find(
+          (property) =>
+            ts.isPropertyAssignment(property) &&
+            !ts.isComputedPropertyName(property.name) &&
+            property.name.text === name.text,
+        );
+      return bindingDefaultExecutes(
+        element,
+        property && ts.isPropertyAssignment(property) ? property.initializer : undefined,
+        load,
+      );
+    }
+  }
+  if (ts.isArrayBindingPattern(binding.name) && ts.isArrayLiteralExpression(value)) {
+    if (value.elements.some(ts.isSpreadElement)) return false;
+    for (const [index, element] of binding.name.elements.entries()) {
+      if (!ts.isBindingElement(element) || element.dotDotDotToken || !isWithin(load, element))
+        continue;
+      const item = value.elements[index];
+      return bindingDefaultExecutes(
+        element,
+        item && !ts.isOmittedExpression(item) ? item : undefined,
+        load,
+      );
+    }
+  }
+  return false;
 }
 
 function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
@@ -597,9 +684,13 @@ function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
 }
 
 function shadowsRequire(node: ts.Node): boolean {
+  return shadowsName(node, "require");
+}
+
+function shadowsName(node: ts.Node, identifier: string): boolean {
   function binds(name: ts.BindingName): boolean {
     return ts.isIdentifier(name)
-      ? name.text === "require"
+      ? name.text === identifier
       : name.elements.some((element) => ts.isBindingElement(element) && binds(element.name));
   }
   for (let scope = node.parent; scope; scope = scope.parent) {
@@ -617,12 +708,12 @@ function shadowsRequire(node: ts.Node): boolean {
       if (
         (ts.isVariableDeclaration(child) && binds(child.name)) ||
         ((ts.isFunctionDeclaration(child) || ts.isClassDeclaration(child)) &&
-          child.name?.text === "require") ||
-        (ts.isImportClause(child) && child.name?.text === "require") ||
+          child.name?.text === identifier) ||
+        (ts.isImportClause(child) && child.name?.text === identifier) ||
         ((ts.isImportSpecifier(child) ||
           ts.isNamespaceImport(child) ||
           ts.isImportEqualsDeclaration(child)) &&
-          child.name.text === "require")
+          child.name.text === identifier)
       )
         found = true;
       if (

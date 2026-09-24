@@ -7,6 +7,15 @@ const optionalPeer = {
 };
 
 test.each([
+  'do { switch (1) { case 1: break; } } while (require("peer"));',
+  'do { while (true) { break; } } while (require("peer"));',
+  'do { inner: { break inner; } } while (require("peer"));',
+  '((peer = require("peer")) => peer)(undefined);',
+  '(({ peer = require("peer") } = {}) => peer)();',
+  '(({ peer = require("peer") }) => peer)({});',
+  '(({ nested: { peer = require("peer") } = {} } = {}) => peer)();',
+  '(([peer = require("peer")] = []) => peer)();',
+
   'do { require("peer"); } while (false);',
   'do {} while (require("peer"));',
   'do { continue; } while (require("peer"));',
@@ -59,6 +68,14 @@ test.each([
 });
 
 test.each([
+  'outer: do { do { continue outer; } while (require("peer")); } while (false);',
+  'outer: do { switch (1) { case 1: break outer; } } while (require("peer"));',
+  '((undefined) => ((peer = require("peer")) => peer)(undefined))(1);',
+  'const undefined = 1; ((peer = require("peer")) => peer)(undefined);',
+  '(({ peer = require("peer") } = {}) => peer)({ peer: 1 });',
+  '(({ peer = require("peer") }) => peer)(unknown);',
+  '(({ peer = require("peer") }) => peer)({ ...unknown });',
+  '(([peer = require("peer")] = []) => peer)([1]);',
   'const load = () => require("peer");',
   '((peer = require("peer")) => peer)({});',
   'consume(() => require("peer"));',
@@ -252,3 +269,26 @@ test.each(['import "./server.js";', 'export const load = () => import("./server.
     );
   },
 );
+
+test("does not execute local files passed to require.resolve", async () => {
+  expect(
+    await diagnose(
+      { main: "index.js", ...optionalPeer },
+      {
+        "index.js": 'require.resolve("./adapter.js");',
+        "adapter.js": 'import "peer";',
+      },
+    ),
+  ).toEqual([]);
+});
+
+test("requires optional peers resolved directly", async () => {
+  expect(
+    await diagnose(
+      { main: "index.js", ...optionalPeer },
+      {
+        "index.js": 'require.resolve("peer");',
+      },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});

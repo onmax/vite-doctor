@@ -21,9 +21,6 @@ function inventory(manifest: unknown, files: Record<string, string>) {
 }
 
 test.each([
-  null,
-  [],
-  "package",
   { main: 42 },
   { private: "true" },
   { browser: { "./index.js": 42 } },
@@ -38,7 +35,7 @@ test.each([
   { peerDependenciesMeta: { peer: { optional: "true" } } },
   { devDependencies: { tool: 42 } },
 ])("rejects malformed package manifests before artifact analysis: %j", (manifest) => {
-  expect(() => inventory(manifest, {})).toThrow("Invalid package manifest:");
+  expect(() => inventory(manifest, {})).toThrow("Invalid package.json field:");
 });
 
 test("follows conditional exports, chunks and declarations without scanning source or unrelated output", () => {
@@ -278,3 +275,7 @@ test.each(["chunk.ts", "chunk.mts", "chunk.cts", "chunk.tsx", "chunk/index.ts"])
     expect(result.missing).toEqual(["chunk"]);
   },
 );
+
+test.each([null, [], "package"])("rejects non-object manifests: %j", (manifest) => {
+  expect(() => inventory(manifest, {})).toThrow("package.json must contain an object");
+});
