@@ -289,16 +289,18 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     for (const edge of importEdges(source, current.kind)) {
       const required = current.required && edge.required;
       const executionRequired = required && !edge.resolutionOnly;
-      for (const specifier of resolvePackageImport(edge.specifier, manifest.imports)) {
+      for (const { specifier, kind } of resolvePackageImport(
+        edge.specifier,
+        manifest.imports,
+        edge.kind,
+      )) {
         if (specifier.startsWith(".")) {
           enqueue(
             specifier,
-            edge.kind,
-            executionRequired,
+            kind,
+            executionRequired && kind === "runtime",
             edge.specifier.startsWith("#") ? root : dirname(current.path),
-            edge.kind === "types" ||
-              edge.probe === true ||
-              /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
+            kind === "types" || edge.probe === true || /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
             false,
             /\.(?:[cm]?ts|tsx)$/.test(current.path),
           );
@@ -321,8 +323,14 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           for (const target of resolvePackageImport(
             `#self${specifier.slice(packageName.length)}`,
             aliases,
+            kind,
           )) {
-            if (target.startsWith(".")) enqueue(target, edge.kind, executionRequired);
+            if (target.specifier.startsWith("."))
+              enqueue(
+                target.specifier,
+                target.kind,
+                executionRequired && target.kind === "runtime",
+              );
           }
           continue;
         }
@@ -331,8 +339,8 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           specifier,
           packageName,
           typeReference: edge.typeReference ?? false,
-          kind: edge.kind,
-          required,
+          kind,
+          required: required && kind === "runtime",
           file: current.path,
           range: {
             start: edge.start,
@@ -387,9 +395,10 @@ function externalPackageName(specifier: string): string | null {
 function resolvePackageImport(
   specifier: string,
   imports: PackageManifest["imports"],
+  kind: PackageReference["kind"],
   seen = new Set<string>(),
-): string[] {
-  if (!specifier.startsWith("#")) return [specifier];
+): { specifier: string; kind: PackageReference["kind"] }[] {
+  if (!specifier.startsWith("#")) return [{ specifier, kind }];
   if (seen.has(specifier)) return [];
   seen.add(specifier);
   const entries = Object.entries(imports ?? {}).sort(
@@ -409,11 +418,25 @@ function resolvePackageImport(
   const wildcard = key.includes("*")
     ? specifier.slice(key.indexOf("*"), specifier.length - (key.length - key.indexOf("*") - 1))
     : "";
-  function flatten(value: unknown): string[] {
+  function flatten(
+    value: unknown,
+    targetKind = kind,
+  ): { specifier: string; kind: PackageReference["kind"] }[] {
     if (typeof value === "string")
-      return resolvePackageImport(value.replaceAll("*", wildcard), imports, new Set(seen));
-    if (Array.isArray(value)) return value.flatMap(flatten);
-    if (value && typeof value === "object") return Object.values(value).flatMap(flatten);
+      return resolvePackageImport(
+        value.replaceAll("*", wildcard),
+        imports,
+        targetKind,
+        new Set(seen),
+      );
+    if (Array.isArray(value)) return value.flatMap((entry) => flatten(entry, targetKind));
+    if (value && typeof value === "object")
+      return Object.entries(value).flatMap(([condition, entry]) =>
+        flatten(
+          entry,
+          condition === "types" || condition.startsWith("types@") ? "types" : targetKind,
+        ),
+      );
     return [];
   }
   return flatten(target);
@@ -687,6 +710,35 @@ function isImmediateInvocation(node: ts.SignatureDeclaration, load: ts.Node): bo
     (ts.isNewExpression(call) && (method || ts.isArrowFunction(node)))
   )
     return false;
+  if (ts.isNewExpression(call)) {
+    if (!(call.arguments ?? []).every(isNonAbruptElement)) return false;
+    if (ts.isConstructorDeclaration(node)) {
+      const owner = node.parent;
+      if (
+        owner.heritageClauses?.length ||
+        owner.modifiers?.length ||
+        owner.members.some(
+          (member) =>
+            (member.name && ts.isComputedPropertyName(member.name)) ||
+            ts.isClassStaticBlockDeclaration(member) ||
+            ts.isPropertyDeclaration(member) ||
+            (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length),
+        )
+      )
+        return false;
+    }
+    const index = node.parameters.findIndex((parameter) => isWithin(load, parameter));
+    for (const [offset, parameter] of node.parameters.entries()) {
+      if (offset === index) break;
+      if (!ts.isIdentifier(parameter.name)) return false;
+      if (
+        isUndefined(call.arguments?.[offset]) &&
+        parameter.initializer &&
+        !isNonAbruptElement(parameter.initializer)
+      )
+        return false;
+    }
+  }
   if (node.body && isWithin(load, node.body)) return true;
   const index = node.parameters.findIndex((parameter) => isWithin(load, parameter));
   if (index < 0 || call.arguments?.some(ts.isSpreadElement)) return false;

@@ -94,6 +94,10 @@ test.each([
 test.each([
   '(function () { try { require("peer"); } finally { return; } })();',
   '(function () { try { require("peer"); } finally { if (enabled) return; } })();',
+  'new (function () { require("peer"); })((() => { throw 0; })());',
+  'new (function (first = (() => { throw 0; })(), peer = require("peer")) {})();',
+  'new (class { static { throw 0; } constructor() { require("peer"); } })();',
+  'new (class { field = (() => { throw 0; })(); constructor() { require("peer"); } })();',
   'new (function (peer = require("peer")) {})(1);',
   'new (class { constructor(peer = require("peer")) {} })(1);',
   'const Adapter = class { constructor() { require("peer"); } };',
@@ -449,3 +453,23 @@ test("prefers TSX when substituting a JSX import", async () => {
     ).toHaveLength(required ? 1 : 0);
   }
 });
+
+test.each(["peer", "./types.d.ts", "#nested"])(
+  "ignores type-only import-map target %s",
+  async (target) => {
+    expect(
+      await diagnose(
+        {
+          main: "index.js",
+          imports: { "#adapter": { types: target, default: "./adapter.js" }, "#nested": "peer" },
+          ...optionalPeer,
+        },
+        {
+          "index.js": 'import "#adapter";',
+          "adapter.js": "export {};",
+          "types.d.ts": 'import "peer";',
+        },
+      ),
+    ).toEqual([]);
+  },
+);
