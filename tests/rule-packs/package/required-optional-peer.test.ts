@@ -147,6 +147,9 @@ test.each([
   'await import("peer").then(value => value, [unknown()]);',
   'await import("peer").then(value => value, { ...unknown });',
   'await import("peer").then(value => value, [...unknown]);',
+  '(function () { if (disabled) return; require("peer"); })();',
+  '(function () { { if (disabled) return; } require("peer"); })();',
+  '(async function () { if (disabled) return; await import("peer"); })();',
   '(function () { return; require("peer"); })();',
   '(function () { { return; } require("peer"); })();',
   '(function () { throw 0; require("peer"); })();',
@@ -572,3 +575,41 @@ test("reports an optional peer required through a CommonJS directory main", asyn
   );
   expect(diagnostics).toMatchObject([{ code: "PKG0003" }]);
 });
+
+test.each(["const", "var", "function"])("keeps namespace %s bindings local", async (kind) => {
+  const binding = kind === "function" ? "function Promise() {}" : `${kind} Promise = custom;`;
+  for (const inside of [false, true]) {
+    const load = 'await Promise.all([import("peer")]);';
+    const source = `namespace Internal { ${binding} ${inside ? load : ""} } ${inside ? "" : load}`;
+    expect(
+      await diagnose({ main: "index.ts", ...optionalPeer }, { "index.ts": source }),
+    ).toHaveLength(inside ? 0 : 1);
+  }
+});
+
+test.each([{ node: [{ browser: "peer" }] }, { node: [[{ browser: "peer" }]] }])(
+  "falls through unresolved import-map arrays: %j",
+  async ({ node }) => {
+    const diagnostics = await diagnose(
+      {
+        main: "index.js",
+        imports: { "#adapter": { node, default: "./adapter.js" } },
+        ...optionalPeer,
+      },
+      { "index.js": 'import "#adapter";', "adapter.js": 'import "peer";' },
+    );
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["PKG0003"]);
+  },
+);
+
+test.each([{ node: [] }, { node: [null] }, { node: [{ browser: "peer" }, null] }])(
+  "preserves blocked import-map arrays: %j",
+  async ({ node }) => {
+    expect(
+      await diagnose(
+        { main: "index.js", imports: { "#adapter": { node, default: "peer" } }, ...optionalPeer },
+        { "index.js": 'import "#adapter";' },
+      ),
+    ).toEqual([]);
+  },
+);

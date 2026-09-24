@@ -470,11 +470,13 @@ function resolvePackageImport(
         new Set(seen),
       );
     if (Array.isArray(value)) {
+      let selected: ReturnType<typeof flatten> = value.length ? undefined : [];
       for (const entry of value) {
         const targets = flatten(entry, targetKind);
         if (targets?.length) return targets;
+        if (targets !== undefined) selected = targets;
       }
-      return [];
+      return selected;
     }
     if (isRecord(value)) {
       for (const [condition, entry] of Object.entries(value)) {
@@ -777,7 +779,14 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       return false;
     if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
       const index = parent.statements.findIndex((statement) => isWithin(node, statement));
-      if (parent.statements.slice(0, index).some(isDefinitelyAbrupt)) return false;
+      if (
+        parent.statements
+          .slice(0, index)
+          .some(
+            (statement) => isDefinitelyAbrupt(statement) || hasAbruptCompletion(statement, false),
+          )
+      )
+        return false;
     }
     if (dynamic && ts.isCallExpression(parent) && !awaitedCalls.has(parent)) return false;
   }
@@ -1031,6 +1040,7 @@ function bindingContains(declaration: ts.VariableDeclaration, node: ts.Node): bo
   for (let scope: ts.Node | undefined = declaration.parent; scope; scope = scope.parent) {
     if (
       ts.isSourceFile(scope) ||
+      ts.isModuleBlock(scope) ||
       ts.isFunctionLike(scope) ||
       (blockScoped &&
         (ts.isBlock(scope) ||
@@ -1060,7 +1070,7 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
       binds(scope.variableDeclaration.name)
     )
       return true;
-    if (!ts.isSourceFile(scope) && !ts.isBlock(scope)) continue;
+    if (!ts.isSourceFile(scope) && !ts.isBlock(scope) && !ts.isModuleBlock(scope)) continue;
     let found = false;
     function search(child: ts.Node) {
       if (
@@ -1076,7 +1086,10 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
         found = true;
       if (
         child !== scope &&
-        (ts.isBlock(child) || ts.isFunctionLike(child) || ts.isClassLike(child))
+        (ts.isBlock(child) ||
+          ts.isModuleBlock(child) ||
+          ts.isFunctionLike(child) ||
+          ts.isClassLike(child))
       )
         return;
       ts.forEachChild(child, search);
