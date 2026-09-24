@@ -761,7 +761,7 @@ function resultCallbackCall(
     }
     if (value?.type === "ArrayExpression") {
       const method = call.callee.property.name;
-      const count = arrayElementCount(
+      let count = arrayElementCount(
         value,
         ["find", "findIndex", "findLast", "findLastIndex"].includes(method),
       );
@@ -770,6 +770,55 @@ function resultCallbackCall(
         (["reduce", "reduceRight"].includes(method) && call.arguments.length < 2)
           ? 2
           : 1;
+      walkScriptLocal(scope.body, (write) => {
+        if (
+          write.start <= value.start ||
+          write.start >= call.start ||
+          isInactivePath(write, scope, parents)
+        )
+          return;
+        const target =
+          write.type === "AssignmentExpression" || write.type === "UpdateExpression"
+            ? unwrapExpression(write.left ?? write.argument)
+            : write.type === "CallExpression"
+              ? unwrapExpression(write.callee)
+              : null;
+        if (
+          target?.type !== "MemberExpression" ||
+          resolveLocalValue(target.object, parents) !== value
+        )
+          return;
+        const key = target.computed ? target.property?.value : target.property?.name;
+        const dominates = writeDominatesReference(write, call, scope, parents);
+        if (
+          write.type === "AssignmentExpression" &&
+          key === "length" &&
+          write.operator === "=" &&
+          write.right?.type === "Literal" &&
+          write.right.value === 0 &&
+          dominates
+        ) {
+          count = 0;
+        } else if (
+          write.type === "CallExpression" &&
+          ["push", "unshift"].includes(key) &&
+          dominates
+        ) {
+          count += write.arguments.some((argument: AnyNode) => argument.type === "SpreadElement")
+            ? Infinity
+            : write.arguments.length;
+        } else if (write.type === "CallExpression" && ["pop", "shift"].includes(key) && dominates) {
+          count = Math.max(0, count - 1);
+        } else if (
+          key === "length" ||
+          key === undefined ||
+          /^\d+$/.test(String(key)) ||
+          (write.type === "CallExpression" &&
+            ["push", "unshift", "pop", "shift", "splice", "fill", "copyWithin"].includes(key))
+        ) {
+          count = Infinity;
+        }
+      });
       if (count < minimum) return null;
       let methodReplaced = false;
       for (const binding of bindings)
@@ -839,6 +888,7 @@ function parameterContributesToReturn(
   parents: WeakMap<AnyNode, AnyNode>,
   seen = new Set<AnyNode>(),
   argumentSource?: [AnyNode, AnyNode],
+  sourcePath: (string | null)[] = [],
 ): boolean {
   const parameter =
     fn.params[index] ?? fn.params.find((param: AnyNode) => param.type === "RestElement");
@@ -851,7 +901,15 @@ function parameterContributesToReturn(
       resolveLocalBinding(reference, reference.name, parents) === parameter &&
       !hasPriorAliasWrite(reference, parameter, fn, parents) &&
       (!argumentSource ||
-        projectionIncludes(argumentSource[0], argumentSource[1], reference, parents)) &&
+        projectionIncludes(
+          argumentSource[0],
+          argumentSource[1],
+          reference,
+          parents,
+          undefined,
+          sourcePath,
+          parameter.type === "RestElement" ? [String(index - fn.params.indexOf(parameter))] : [],
+        )) &&
       contributesToReturn(reference, fn, parents, new Set(seen))
     )
       contributes = true;
@@ -1138,7 +1196,7 @@ function asyncResultIsConsumed(
           aggregate.callee?.type !== "MemberExpression" ||
           aggregate.callee.object?.type !== "Identifier" ||
           aggregate.callee.object.name !== "Promise" ||
-          !["all", "race", "any", "allSettled"].includes(
+          !(effectOnly ? ["all", "allSettled"] : ["all", "race", "any", "allSettled"]).includes(
             aggregate.callee.computed
               ? aggregate.callee.property?.value
               : aggregate.callee.property?.name,
@@ -1243,6 +1301,7 @@ function projectionIncludes(
   parents: WeakMap<AnyNode, AnyNode>,
   returnedSource?: [AnyNode, AnyNode],
   sourcePath: (string | null)[] = [],
+  bindingPrefix: string[] = [],
 ): boolean {
   const path = [...sourcePath];
   for (const [start, end] of [...(returnedSource ? [returnedSource] : []), [node, variable]]) {
@@ -1260,16 +1319,23 @@ function projectionIncludes(
         const chain = parents.get(parent);
         const callback =
           chain?.type === "CallExpression" ? resolveLocalValue(chain.arguments[0], parents) : null;
-        if (callback?.params?.[0]?.type === "Identifier") {
+        if (callback?.params?.[0]) {
           let included = false;
           walkScriptLocal(callback.body, (value) => {
             if (
               value.type === "Identifier" &&
-              value.name === callback.params[0].name &&
+              patternBinds(callback.params[0], value.name) &&
               resolveLocalBinding(value, value.name, parents) === callback.params[0] &&
               contributesToReturn(value, callback, parents)
             ) {
               const remainingPath = [...path];
+              const bindingPath = patternPath(callback.params[0], value.name);
+              if (!bindingPath) return;
+              for (const key of bindingPath) {
+                if (!remainingPath.length) break;
+                const projected = remainingPath.shift();
+                if (projected !== null && projected !== key) return;
+              }
               let selected = value;
               while (remainingPath.length) {
                 const member = parents.get(selected);
@@ -1295,6 +1361,23 @@ function projectionIncludes(
           });
           return included;
         }
+      }
+      if (parent?.type === "CallExpression" && parent.arguments.includes(current)) {
+        const fn = resolveLocalValue(parent.callee, parents);
+        if (
+          ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+            fn?.type,
+          ) &&
+          !parameterContributesToReturn(
+            fn,
+            parent.arguments.indexOf(current),
+            parents,
+            new Set(),
+            [current, current],
+            path,
+          )
+        )
+          return false;
       }
       if (parent?.type === "ArrayExpression") {
         const index = parent.elements.indexOf(current);
@@ -1329,6 +1412,7 @@ function projectionIncludes(
       }
     }
   }
+  path.unshift(...bindingPrefix);
   let target = variable.id ?? variable.left;
   if (variable.type === "AssignmentExpression") {
     const storedPath: string[] = [];
@@ -1623,16 +1707,30 @@ function returnsSameLiteral(owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>):
     );
   };
   if (!alwaysReturns(owner.body)) return false;
+  const inertLocalAssignment = (node: AnyNode): boolean => {
+    if (
+      node?.type !== "AssignmentExpression" ||
+      node.operator !== "=" ||
+      node.left?.type !== "Identifier" ||
+      !isInertExpression(node.right)
+    )
+      return false;
+    const binding = resolveLocalBinding(node, node.left.name, parents);
+    return binding?.type === "VariableDeclarator" && containingFunction(binding, parents) === owner;
+  };
   let first: AnyNode;
   let same = true;
   walkScriptLocal(owner.body, (statement) => {
     if (containingFunction(statement, parents) !== owner) return;
     if (
-      (statement.type === "ExpressionStatement" && !isInertExpression(statement.expression)) ||
+      (statement.type === "ExpressionStatement" &&
+        !isInertExpression(statement.expression) &&
+        !inertLocalAssignment(statement.expression)) ||
       (statement.type === "VariableDeclarator" &&
         statement.init &&
         !isInertExpression(statement.init)) ||
-      ["AssignmentExpression", "UpdateExpression", "ThrowStatement"].includes(statement.type)
+      (["AssignmentExpression", "UpdateExpression", "ThrowStatement"].includes(statement.type) &&
+        !inertLocalAssignment(statement))
     )
       same = false;
     if (statement.type !== "ReturnStatement") return;

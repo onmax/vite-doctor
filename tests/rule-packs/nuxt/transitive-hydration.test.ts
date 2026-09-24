@@ -1832,3 +1832,96 @@ const ${pattern} = values()
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  [
+    "const source = []; const alias = source; alias.push(1); const displayed = source.map(() => Date.now())",
+    1,
+  ],
+  ["const source = [1]; source.pop(); const displayed = source.map(() => Date.now())", 0],
+  [
+    "const source = []; if (false) source.push(1); const displayed = source.map(() => Date.now())",
+    0,
+  ],
+  [
+    "function clock() { return Date.now() }; function first(...values) { return values[0].label }; const displayed = first({ label: 'stable', time: clock() })",
+    0,
+  ],
+  [
+    "function clock() { return Date.now() }; function first(...values) { return values[0].time }; const displayed = first({ label: 'stable', time: clock() })",
+    1,
+  ],
+  [
+    "function clock() { return Date.now() }; function label() { function first(...values) { return values[0] }; return first('stable', clock()) }; const displayed = label()",
+    0,
+  ],
+  [
+    "async function clock() { return { nested: { label: 'Ready', time: Date.now() } } }; const displayed = await clock().then(({ nested: { label } }) => label)",
+    0,
+  ],
+  [
+    "async function clock() { return { nested: { label: 'Ready', time: Date.now() } } }; const displayed = await clock().then(({ nested: { time: timestamp } }) => timestamp)",
+    1,
+  ],
+
+  ["const source = []; source.push(1); const displayed = source.map(() => Date.now())", 1],
+  ["const source = [1]; source.length = 0; const displayed = source.map(() => Date.now())", 0],
+  [
+    "function clock() { return Date.now() }; function first(...values) { return values[0] }; const displayed = first('stable', clock())",
+    0,
+  ],
+  [
+    "function clock() { return Date.now() }; function first(...values) { return values[0] }; const displayed = first(clock(), 'stable')",
+    1,
+  ],
+  [
+    "function clock() { return Date.now() }; function second(fixed, ...values) { return values[1] }; const displayed = second(null, 'stable', clock())",
+    1,
+  ],
+  [
+    "function label() { let local; local = 1; if (Date.now()) return 'Ready'; return 'Ready' }; const displayed = label()",
+    0,
+  ],
+  [
+    "let displayed = 'stable'; async function initialize() { await later(); displayed = Date.now() }; await Promise.race([initialize(), Promise.resolve()])",
+    0,
+  ],
+  [
+    "let displayed = 'stable'; async function initialize() { await later(); displayed = Date.now() }; await Promise.any([initialize(), Promise.resolve()])",
+    0,
+  ],
+  [
+    "let displayed = 'stable'; async function initialize() { await later(); displayed = Date.now() }; await Promise.allSettled([initialize()])",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; const displayed = await Promise.race([clock()])",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; const displayed = await Promise.any([clock()])",
+    1,
+  ],
+  [
+    "async function clock() { return { label: 'Ready', generatedAt: Date.now() } }; const displayed = await clock().then(({ label }) => label)",
+    0,
+  ],
+  [
+    "async function clock() { return { label: 'Ready', generatedAt: Date.now() } }; const displayed = await clock().then(({ generatedAt }) => generatedAt)",
+    1,
+  ],
+  [
+    "async function clock() { return ['Ready', Date.now()] }; const displayed = await clock().then(([label]) => label)",
+    0,
+  ],
+  [
+    "async function clock() { return ['Ready', Date.now()] }; const displayed = await clock().then(([, generatedAt]) => generatedAt)",
+    1,
+  ],
+])("handles reviewed hydration boundaries: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
