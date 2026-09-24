@@ -63,7 +63,7 @@ test("follows each alias in its declaration scope", async () => {
     files: {
       "vite.config.ts": `const value = process.env.PRIVATE_TOKEN
 const replacement = value
-export default defineConfig(() => {
+import { defineConfig } from 'vite'; export default defineConfig(() => {
   const value = process.env.PUBLIC_VERSION
   return { define: {
     __CONFIG__: JSON.stringify(replacement),
@@ -80,7 +80,7 @@ test("does not follow an outer alias through a shadowing parameter", async () =>
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `const replacement = process.env.PRIVATE_TOKEN
-export default defineConfig((replacement) => ({ define: {
+import { defineConfig } from 'vite'; export default defineConfig((replacement) => ({ define: {
   __CONFIG__: JSON.stringify(replacement),
 } }))`,
     },
@@ -112,7 +112,7 @@ test.each([
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `const replacement = process.env.${outer}
-export default defineConfig(() => {
+import { defineConfig } from 'vite'; export default defineConfig(() => {
   const replacement = process.env.${inner}
   return { define: {
     __CONFIG__: JSON.stringify(replacement),
@@ -223,7 +223,7 @@ test.each([
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `const { ${outer}: replacement } = process.env
-export default defineConfig(() => {
+import { defineConfig } from 'vite'; export default defineConfig(() => {
   const { ${inner}: replacement } = process.env
   return { define: {
     __CONFIG__: JSON.stringify(replacement),
@@ -379,7 +379,7 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
   test.each([
     "const base = { define: { PRIVATE_TOKEN: {} } }; export default { ...base, define: {} }",
     "export default { define: { __VERSION__: '1' }, plugins: [options] }",
-    "export default defineConfig(() => { const nested = { define: { PRIVATE_TOKEN: {} } }; return { define: { __VERSION__: '1' }, plugins: [options, nested] } })",
+    "import { defineConfig } from 'vite'; export default defineConfig(() => { const nested = { define: { PRIVATE_TOKEN: {} } }; return { define: { __VERSION__: '1' }, plugins: [options, nested] } })",
   ])(`${rule.meta.id} ignores unrelated define properties: %s`, async (config) => {
     const result = await runRuleFixture({
       framework: "vite",
@@ -398,9 +398,9 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
   });
   test.each([
     "export default { define: { PRIVATE_TOKEN: {} } }",
-    "export default defineConfig({ define: { PRIVATE_TOKEN: {} } })",
-    "export default defineConfig(() => ({ define: { PRIVATE_TOKEN: {} } }))",
-    "export default defineConfig(function () { return { define: { PRIVATE_TOKEN: {} } } })",
+    "import { defineConfig } from 'vite'; export default defineConfig({ define: { PRIVATE_TOKEN: {} } })",
+    "import { defineConfig } from 'vite'; export default defineConfig(() => ({ define: { PRIVATE_TOKEN: {} } }))",
+    "import { defineConfig } from 'vite'; export default defineConfig(function () { return { define: { PRIVATE_TOKEN: {} } } })",
     "const config = { define: { PRIVATE_TOKEN: {} } }; export default config",
     "const config = { define: { PRIVATE_TOKEN: {} } }; export default { ...config }",
     "export default function config() { return { define: { PRIVATE_TOKEN: {} } } }",
@@ -599,8 +599,8 @@ test.each([
 for (const rule of [noRuntimeObjectDefine, noSecretDefine]) {
   test.each([
     'import { defineConfig as config } from "vite"; export default config({ define: { PRIVATE_TOKEN: {} } })',
-    "export default defineConfig(async () => { return await Promise.resolve({ define: { PRIVATE_TOKEN: {} } }) })",
-    "export default defineConfig(async () => Promise.resolve({ define: { PRIVATE_TOKEN: {} } }))",
+    "import { defineConfig } from 'vite'; export default defineConfig(async () => { return await Promise.resolve({ define: { PRIVATE_TOKEN: {} } }) })",
+    "import { defineConfig } from 'vite'; export default defineConfig(async () => Promise.resolve({ define: { PRIVATE_TOKEN: {} } }))",
     "export default Promise.resolve({ define: { PRIVATE_TOKEN: {} } })",
   ])(`${rule.meta.id} discovers wrapped configs: %s`, async (config) => {
     const result = await runRuleFixture({
@@ -747,4 +747,82 @@ test("checks runtime object replacements in merged configs", async () => {
     },
   });
   expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  ["mergeConfig(flag ? secret : publicConfig, {})", true],
+  ["mergeConfig({}, flag ? secret : publicConfig)", true],
+  ["mergeConfig(flag ? secret : publicConfig, publicConfig)", false],
+  ["mergeConfig(secret, flag ? publicConfig : {})", true],
+  ["mergeConfig(flag ? secret : publicConfig, flag ? {} : publicConfig)", true],
+])("preserves alternatives in %s", async (config, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `import { mergeConfig } from 'vite';
+const secret = { define: { VALUE: process.env.PRIVATE_TOKEN } };
+const publicConfig = { define: { VALUE: 'public' } };
+export default ${config};`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each(["const defineConfig = () => ({})", "import { defineConfig } from 'unrelated'"])(
+  "does not unwrap an unrelated defineConfig: %s",
+  async (setup) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `${setup}; export default defineConfig({ define: { PRIVATE_TOKEN: {} } });`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test(`resolves static template define keys for ${rule.meta.id}`, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: {
+        "vite.config.ts": "const key = `PRIVATE_TOKEN`; export default { define: { [key]: {} } };",
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  });
+}
+
+test.each([
+  ["get value() { return process.env.PRIVATE_TOKEN }", true],
+  ["value() { return process.env.PRIVATE_TOKEN }", false],
+  ["get value() { return 'public' }", false],
+])("traces serialized accessors: %s", async (property, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const holder = { ${property} }; export default { define: { VALUE: JSON.stringify(holder) } };`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test.each([
+  ["{ value: 'public', ...secret }", true],
+  ["{ ...secret, value: 'public' }", false],
+  ["{ ...{ ...secret } }", true],
+  ["{ ...secret, ...{ value: 'public' } }", false],
+])("preserves destructured spread precedence: %s", async (argument, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const secret = { value: process.env.PRIVATE_TOKEN }; const read = ({ value }) => value; export default { define: { VALUE: read(${argument}) } };`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
 });

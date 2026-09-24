@@ -359,6 +359,7 @@ function resolvesSecretAlias(
     value: string;
     start: number;
     invoked: boolean;
+    serialized?: boolean;
     awaited: boolean;
     args: Range[];
     following?: Range[][];
@@ -377,6 +378,7 @@ function resolvesSecretAlias(
       if (SECRET_NAME_RE.test(current.value)) return true;
       continue;
     }
+    const serializedNodes = new Set<unknown>();
     const identifiers = new Set<number>();
     const invokedNodes = new Set<unknown>();
     const awaitedNodes = new Set<unknown>();
@@ -384,9 +386,10 @@ function resolvesSecretAlias(
     const invokedReferences = new Set<number>();
     const callArguments = new Map<unknown, [number, number][]>();
     const followingCalls = new Map<unknown, Range[][]>();
-    if (current.invoked || current.awaited) {
+    if (current.invoked || current.awaited || current.serialized) {
       const statement = parsed.ast.body[0];
       if (statement?.type === "ExpressionStatement") {
+        if (current.serialized) serializedNodes.add(statement.expression);
         if (current.invoked) invokedNodes.add(statement.expression);
         callArguments.set(statement.expression, current.args);
         followingCalls.set(statement.expression, current.following ?? []);
@@ -398,6 +401,7 @@ function resolvesSecretAlias(
       const node = nodes.pop() as AnyNode;
       if (node.type.startsWith("TS")) {
         if (node.expression) {
+          if (serializedNodes.has(node)) serializedNodes.add(node.expression);
           if (invokedNodes.has(node)) invokedNodes.add(node.expression);
           callArguments.set(node.expression, callArguments.get(node) ?? []);
           followingCalls.set(node.expression, followingCalls.get(node) ?? []);
@@ -434,26 +438,47 @@ function resolvesSecretAlias(
             } else if (pattern.type === "Identifier") {
               bindings.set(pattern.name, range ? [range] : []);
             } else if (pattern.type === "ObjectPattern" || pattern.type === "ArrayPattern") {
-              let value: AnyNode;
-              let offset = 0;
-              const visited = new Set<number>();
-              while (range && !visited.has(range[0])) {
-                visited.add(range[0]);
-                offset = range[0] - 1;
-                try {
-                  const parsed = parseForESLint(`(${source.slice(...range)})`, { range: true });
-                  const statement = parsed.ast.body[0];
-                  value =
-                    statement?.type === "ExpressionStatement" ? statement.expression : undefined;
-                } catch {
-                  break;
+              function readValue(range: Range | undefined, visited = new Set<number>()) {
+                let value: AnyNode;
+                let offset = 0;
+                while (range && !visited.has(range[0])) {
+                  visited.add(range[0]);
+                  offset = range[0] - 1;
+                  try {
+                    const parsed = parseForESLint(`(${source.slice(...range)})`, { range: true });
+                    const statement = parsed.ast.body[0];
+                    value =
+                      statement?.type === "ExpressionStatement" ? statement.expression : undefined;
+                  } catch {
+                    break;
+                  }
+                  if (value?.type !== "Identifier") break;
+                  const ranges =
+                    current.bindings.get(offset + value.range[0]) ??
+                    initializers.get(offset + value.range[0]);
+                  if (ranges?.length !== 1) break;
+                  range = ranges[0];
                 }
-                if (value?.type !== "Identifier") break;
-                const ranges =
-                  current.bindings.get(offset + value.range[0]) ??
-                  initializers.get(offset + value.range[0]);
-                if (ranges?.length !== 1) break;
-                range = ranges[0];
+                return { value, offset, visited };
+              }
+              const { value, offset } = readValue(range);
+              function properties(
+                range: Range | undefined,
+                visited = new Set<number>(),
+              ): Array<{ node: AnyNode; offset: number }> {
+                const resolved = readValue(range, visited);
+                if (resolved.value?.type !== "ObjectExpression") return [];
+                return resolved.value.properties.flatMap((node: AnyNode) =>
+                  node.type === "SpreadElement"
+                    ? properties(
+                        [
+                          resolved.offset + node.argument.range[0],
+                          resolved.offset + node.argument.range[1],
+                        ],
+                        new Set(resolved.visited),
+                      )
+                    : [{ node, offset: resolved.offset }],
+                );
               }
               if (pattern.type === "ObjectPattern") {
                 for (const property of pattern.properties) {
@@ -464,8 +489,8 @@ function resolvesSecretAlias(
                       : null;
                   const match =
                     value?.type === "ObjectExpression" && key !== null
-                      ? value.properties.findLast(
-                          (item: AnyNode) =>
+                      ? properties(range).findLast(
+                          ({ node: item }) =>
                             item.type === "Property" &&
                             (!item.computed || item.key.type === "Literal") &&
                             propertyName(item.key) === key,
@@ -474,7 +499,10 @@ function resolvesSecretAlias(
                   bind(
                     property.value,
                     match
-                      ? [offset + match.value.range[0], offset + match.value.range[1]]
+                      ? [
+                          match.offset + match.node.value.range[0],
+                          match.offset + match.node.value.range[1],
+                        ]
                       : undefined,
                   );
                 }
@@ -510,6 +538,7 @@ function resolvesSecretAlias(
               callArguments.set(value, following[0]!);
               followingCalls.set(value, following.slice(1));
             }
+            if (serializedNodes.has(node)) serializedNodes.add(value);
             nodes.push(value);
           };
           if (body.type !== "BlockStatement") visit(body);
@@ -517,8 +546,12 @@ function resolvesSecretAlias(
         }
         continue;
       }
+      if (node.type === "Property" && node.kind === "get" && serializedNodes.has(node))
+        invokedNodes.add(node.value);
       if (node.type === "AwaitExpression") awaitedNodes.add(node.argument);
       if (node.type === "CallExpression") {
+        if (memberPath(node.callee) === "JSON.stringify" && node.arguments[0])
+          serializedNodes.add(node.arguments[0]);
         if (
           memberPath(node.callee as AnyNode) === "Promise.resolve" &&
           !shadowedPromises.has(current.start + node.callee.object.range[0] - 1)
@@ -550,6 +583,7 @@ function resolvesSecretAlias(
             ? [callArguments.get(node) ?? [], ...(followingCalls.get(node) ?? [])]
             : [],
         );
+        if (serializedNodes.has(node)) serializedNodes.add(node.callee);
         invokedNodes.add(node.callee);
         if (awaitedNodes.has(node)) awaitedNodes.add(node.callee);
         if (localCalls.has(current.start + node.range[0] - 1)) {
@@ -561,12 +595,13 @@ function resolvesSecretAlias(
         const member = memberReturns.get(current.start + node.range[0] - 1);
         if (member && (invokedNodes.has(node) || member.getter)) {
           const awaited = awaitedNodes.has(node);
-          const identity = `${member.range[0]}:member:${awaited}:${JSON.stringify(callArguments.get(node))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(node))}`;
+          const identity = `${member.range[0]}:member:${awaited}:${serializedNodes.has(node)}:${JSON.stringify(callArguments.get(node))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(node))}`;
           if (!seen.has(identity)) {
             seen.add(identity);
             pending.push({
               value: member.prefix + source.slice(...member.range),
               start: member.range[0] - member.prefix.length,
+              serialized: serializedNodes.has(node),
               invoked: true,
               awaited,
               args: callArguments.get(node) ?? [],
@@ -585,6 +620,7 @@ function resolvesSecretAlias(
       }
       if (node.type === "Property") {
         if (node.computed) nodes.push(node.key);
+        if (serializedNodes.has(node)) serializedNodes.add(node.value);
         nodes.push(node.value);
         continue;
       }
@@ -600,6 +636,7 @@ function resolvesSecretAlias(
         return true;
       if (node.type === "ConditionalExpression") {
         for (const branch of [node.consequent, node.alternate]) {
+          if (serializedNodes.has(node)) serializedNodes.add(branch);
           if (invokedNodes.has(node)) invokedNodes.add(branch);
           callArguments.set(branch, callArguments.get(node) ?? []);
           followingCalls.set(branch, followingCalls.get(node) ?? []);
@@ -613,6 +650,7 @@ function resolvesSecretAlias(
       }
       if (node.type === "SequenceExpression") {
         const last = (node.expressions as unknown[]).at(-1);
+        if (serializedNodes.has(node)) serializedNodes.add(last);
         if (invokedNodes.has(node)) invokedNodes.add(last);
         callArguments.set(last, callArguments.get(node) ?? []);
         followingCalls.set(last, followingCalls.get(node) ?? []);
@@ -627,8 +665,10 @@ function resolvesSecretAlias(
       }
       for (const key of parsed.visitorKeys[node.type] ?? []) {
         const child = node[key];
-        if (Array.isArray(child)) nodes.push(...child.filter(Boolean));
-        else if (child) nodes.push(child);
+        const children = Array.isArray(child) ? child.filter(Boolean) : child ? [child] : [];
+        if (serializedNodes.has(node) && node.type !== "MemberExpression")
+          children.forEach((child) => serializedNodes.add(child));
+        nodes.push(...children);
       }
     }
     for (const scope of parsed.scopeManager.scopes) {
@@ -638,9 +678,10 @@ function resolvesSecretAlias(
         const offset = current.start + reference.identifier.range[0] - 1;
         const ranges = current.bindings.get(offset) ?? initializers.get(offset);
         for (const range of ranges ?? []) {
+          const serialized = serializedNodes.has(reference.identifier);
           const invoked = invokedReferences.has(reference.identifier.range[0]);
           const awaited = awaitedReferences.has(reference.identifier.range[0]);
-          const identity = `${range[0]}:${invoked}:${awaited}:${JSON.stringify(callArguments.get(reference.identifier))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(reference.identifier))}`;
+          const identity = `${range[0]}:${invoked}:${awaited}:${serialized}:${JSON.stringify(callArguments.get(reference.identifier))}:${JSON.stringify([...current.bindings])}:${JSON.stringify(followingCalls.get(reference.identifier))}`;
           if (seen.has(identity)) continue;
           seen.add(identity);
           const initializer = source.slice(...range);
@@ -648,6 +689,7 @@ function resolvesSecretAlias(
             value: initializer,
             start: range[0],
             invoked,
+            serialized,
             awaited,
             args: callArguments.get(reference.identifier) ?? [],
             following: followingCalls.get(reference.identifier),
@@ -668,7 +710,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     readAliasInitializers(text);
   const nodesByRange = new Map<string, AnyNode>();
   walkScriptLocal(program, (node) => {
-    nodesByRange.set(`${node.start}:${node.end}`, node);
+    if (node.type !== "TemplateElement") nodesByRange.set(`${node.start}:${node.end}`, node);
   });
   const seen = new Set<AnyNode>();
   function resolve(node: AnyNode): AnyNode {
@@ -691,6 +733,8 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   function keyOf(property: AnyNode): string | null {
     if (!property.computed) return propertyName(property.key);
     const key = resolve(property.key);
+    if (key?.type === "TemplateLiteral" && key.expressions.length === 0)
+      return key.quasis[0].value.cooked;
     return key?.type === "Literal" ? propertyName(key) : null;
   }
   function readOptions(input: AnyNode, visited = new Set<AnyNode>()): AnyNode[] {
@@ -703,42 +747,45 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     visited.delete(node);
     return options;
   }
-  function readConfig(input: AnyNode) {
+  function readConfig(input: AnyNode): (typeof entries)[] {
     const node = resolve(input);
-    if (!node || seen.has(node)) return;
+    if (!node || seen.has(node)) return [[]];
     seen.add(node);
     try {
       if (node.type === "CallExpression" && mergeHelpers.has(node.callee.start)) {
-        const offset = entries.length;
-        readConfig(node.arguments[0]);
-        readConfig(node.arguments[1]);
-        const merged = new Map(entries.splice(offset).map((entry) => [entry.key, entry]));
-        entries.push(...merged.values());
+        const left = readConfig(node.arguments[0]);
+        const right = readConfig(node.arguments[1]);
+        return left.flatMap((base) =>
+          right.map((override) => [
+            ...new Map([...base, ...override].map((entry) => [entry.key, entry])).values(),
+          ]),
+        );
       } else if (node.type === "AwaitExpression") {
-        readConfig(node.argument);
+        return readConfig(node.argument);
       } else if (
         node.type === "CallExpression" &&
-        (node.callee.name === "defineConfig" ||
-          configHelpers.has(node.callee.start) ||
+        (configHelpers.has(node.callee.start) ||
           (memberPath(node.callee) === "Promise.resolve" &&
             !shadowedPromises.has(node.callee.object.start)))
       ) {
-        readConfig(node.arguments[0]);
+        return readConfig(node.arguments[0]);
       } else if (
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
       ) {
-        if (node.body.type !== "BlockStatement") readConfig(node.body);
-        else visitReturnValues(node.body, readConfig);
+        if (node.body.type !== "BlockStatement") return readConfig(node.body);
+        const alternatives: (typeof entries)[] = [];
+        visitReturnValues(node.body, (value) => alternatives.push(...readConfig(value)));
+        return alternatives.length ? alternatives : [[]];
       } else if (node.type === "ConditionalExpression") {
-        readConfig(node.consequent);
-        readConfig(node.alternate);
+        return [...readConfig(node.consequent), ...readConfig(node.alternate)];
       } else if (node.type === "ObjectExpression") {
+        const result: typeof entries = [];
         const option = readOptions(node).findLast(
           (option) => option.type === "Property" && keyOf(option) === "define",
         );
         if (option) {
           const values = resolve(option.value);
-          if (values?.type !== "ObjectExpression") return;
+          if (values?.type !== "ObjectExpression") return [[]];
           const properties = new Map<string, AnyNode>();
           for (const property of readOptions(values)) {
             if (property.type !== "Property") continue;
@@ -747,7 +794,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
           }
           for (const [key, property] of properties) {
             const valueStart = property.value.start;
-            entries.push({
+            result.push({
               key,
               rawValue: text.slice(valueStart, property.value.end),
               valueStart,
@@ -760,16 +807,20 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             });
           }
         }
+        return [result];
       }
+      return [[]];
     } finally {
       seen.delete(node);
     }
   }
   for (const statement of (program as AnyNode).body) {
-    if (statement.type === "ExportDefaultDeclaration") readConfig(statement.declaration);
+    if (statement.type === "ExportDefaultDeclaration")
+      entries.push(...readConfig(statement.declaration).flat());
     else if (statement.type === "ExportNamedDeclaration" && !statement.source) {
       for (const specifier of statement.specifiers) {
-        if (propertyName(specifier.exported) === "default") readConfig(specifier.local);
+        if (propertyName(specifier.exported) === "default")
+          entries.push(...readConfig(specifier.local).flat());
       }
     } else if (
       statement.type === "ExpressionStatement" &&
@@ -777,7 +828,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
       statement.expression.operator === "=" &&
       memberPath(statement.expression.left) === "module.exports"
     )
-      readConfig(statement.expression.right);
+      entries.push(...readConfig(statement.expression.right).flat());
   }
   return entries;
 }
