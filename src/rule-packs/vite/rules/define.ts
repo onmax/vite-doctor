@@ -325,12 +325,20 @@ function readAliasInitializers(source: string) {
             property.value.type === "AssignmentPattern" ? property.value.left : property.value;
           return binding.type === "Identifier" && binding.name === reference.identifier.name;
         });
+        const key =
+          property?.type === "Property"
+            ? property.computed
+              ? resolveImmutable(property.key)
+              : property.key
+            : undefined;
         if (
           property?.type === "Property" &&
-          ((!property.computed && property.key.type === "Identifier") ||
-            (property.key.type === "Literal" && typeof property.key.value === "string"))
+          key &&
+          ((!property.computed && key.type === "Identifier") ||
+            (key.type === "Literal" && typeof key.value === "string") ||
+            (key.type === "TemplateLiteral" && key.expressions.length === 0))
         ) {
-          const ranges = [property.key.range];
+          const ranges = [key.range];
           if (property.value.type === "AssignmentPattern") {
             ranges.push(property.value.right.range);
           }
@@ -1173,8 +1181,24 @@ function resolvesSecretAlias(
             (resolvedLeft!.offset + left.range[0] === undefinedRange[0] ||
               bindingKeys.get(resolvedLeft!.offset + left.range[0]) === "global:undefined"));
         let branches = [node.left, node.right];
-        if (left?.type === "Literal" || isUndefined) {
-          const value = isUndefined ? undefined : left.value;
+        const isTruthyObject =
+          left &&
+          [
+            "ObjectExpression",
+            "ArrayExpression",
+            "FunctionExpression",
+            "ArrowFunctionExpression",
+            "ClassExpression",
+          ].includes(left.type);
+        const isStaticTemplate = left?.type === "TemplateLiteral" && left.expressions.length === 0;
+        if (left?.type === "Literal" || isUndefined || isTruthyObject || isStaticTemplate) {
+          const value = isUndefined
+            ? undefined
+            : isTruthyObject
+              ? true
+              : isStaticTemplate
+                ? left.quasis[0].value.cooked
+                : left.value;
           const useRight =
             node.operator === "&&"
               ? Boolean(value)
@@ -1319,8 +1343,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     if (node.type !== "TemplateElement") nodesByRange.set(`${node.start}:${node.end}`, node);
   });
   const seen = new Set<AnyNode>();
-  function resolve(node: AnyNode): AnyNode {
-    const visited = new Set<AnyNode>();
+  function resolve(node: AnyNode, visited = new Set<AnyNode>()): AnyNode {
     while (node && !visited.has(node)) {
       visited.add(node);
       if (
@@ -1332,6 +1355,37 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         const ranges = initializers.get(node.start);
         if (ranges?.length !== 1) break;
         node = nodesByRange.get(ranges[0]!.join(":"));
+      } else if (node.type === "MemberExpression") {
+        const object = resolve(node.object, new Set(visited));
+        const property = node.computed ? resolve(node.property, new Set(visited)) : node.property;
+        const key = node.computed
+          ? property?.type === "Literal"
+            ? String(property.value)
+            : property?.type === "TemplateLiteral" && property.expressions.length === 0
+              ? property.quasis[0].value.cooked
+              : null
+          : propertyName(property);
+        if (key == null) break;
+        if (object?.type === "ObjectExpression") {
+          const match = readOptions(object).findLast(
+            (item) => item.type === "Property" && keyOf(item) === key,
+          );
+          if (match?.kind !== "init") break;
+          node = match.value;
+        } else if (
+          object?.type === "ArrayExpression" &&
+          !object.elements.some((item: AnyNode) => item?.type === "SpreadElement")
+        ) {
+          const index = Number(key);
+          if (
+            !Number.isInteger(index) ||
+            index < 0 ||
+            index >= 2 ** 32 - 1 ||
+            String(index) !== key
+          )
+            break;
+          node = object.elements[index];
+        } else break;
       } else break;
     }
     return node;

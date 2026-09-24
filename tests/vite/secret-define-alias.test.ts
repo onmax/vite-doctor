@@ -195,10 +195,10 @@ test.each([
     false,
   ],
   ["let { PRIVATE_TOKEN: replacement = '' } = process.env; replacement = 'public'", false],
-  ["const key = 'PRIVATE_TOKEN'; const { [key]: replacement = '' } = process.env", false],
+  ["const key = 'PRIVATE_TOKEN'; const { [key]: replacement = '' } = process.env", true],
   ["let { PRIVATE_TOKEN: replacement } = process.env; replacement = 'public'", false],
   ["const { PRIVATE_TOKEN: other, ...replacement } = process.env", false],
-  ["const key = 'PRIVATE_TOKEN'; const { [key]: replacement } = process.env", false],
+  ["const key = 'PRIVATE_TOKEN'; const { [key]: replacement } = process.env", true],
 ])("resolves static renamed environment bindings: %s", async (declaration, expected) => {
   const result = await runRuleFixture({
     framework: "vite",
@@ -1170,3 +1170,61 @@ test.each([noSecretDefine, noRuntimeObjectDefine])(
     expect(result.diagnostics).toHaveLength(1);
   },
 );
+
+test.each([
+  ['"PRIVATE_TOKEN"', true],
+  ["`PRIVATE_TOKEN`", true],
+  ['"PUBLIC_VERSION"', false],
+])("resolves computed environment destructuring keys: %s", async (key, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const key = ${key}; const { [key]: replacement } = process.env;
+export default { define: { VALUE: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+  test.each([
+    ["options.config", "{ config: { define: { PRIVATE_TOKEN: {} } } }", true],
+    ['options["config"]', "{ config: { define: { PRIVATE_TOKEN: {} } } }", true],
+    ["options[0]", "[{ define: { PRIVATE_TOKEN: {} } }]", true],
+    ["options.config.nested", "{ config: { nested: { define: { PRIVATE_TOKEN: {} } } } }", true],
+    ["options.config", "{ ...{ config: { define: { PRIVATE_TOKEN: {} } } }, config: {} }", false],
+    ["options.missing", "{ config: { define: { PRIVATE_TOKEN: {} } } }", false],
+  ])(
+    `resolves config member projections for ${rule.meta.id}: %s`,
+    async (projection, argument, expected) => {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule,
+        files: {
+          "vite.config.ts": `const make = options => ${projection}; export default make(${argument})`,
+        },
+      });
+      expect(result.diagnostics.length > 0).toBe(expected);
+    },
+  );
+}
+
+test.each([
+  ["{} || process.env.PRIVATE_TOKEN", false],
+  ["[] ?? process.env.PRIVATE_TOKEN", false],
+  ["(() => {}) || process.env.PRIVATE_TOKEN", false],
+  ["{} && process.env.PRIVATE_TOKEN", true],
+  ["[] && process.env.PRIVATE_TOKEN", true],
+  ["`public` || process.env.PRIVATE_TOKEN", false],
+  ["`` || process.env.PRIVATE_TOKEN", true],
+])("selects reachable logical values: %s", async (value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `export default { define: { VALUE: JSON.stringify(${value}) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
