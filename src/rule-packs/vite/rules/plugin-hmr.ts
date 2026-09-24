@@ -199,13 +199,26 @@ function undisposedResource(program: AnyNode): string | null {
           return identity(arrayElements(object)[Number(key)], environment);
         }
         if (object?.type === "ObjectExpression") {
-          const property = object.properties.find(
-            (item: AnyNode) => !item.computed && (item.key?.name ?? item.key?.value) === key,
-          );
-          if (property)
-            return property.kind === "get" || property.kind === "set"
-              ? node
-              : identity(property.value, environment);
+          const seen = new Set<AnyNode>();
+          const read = (source: AnyNode): AnyNode => {
+            source = identity(source, environment);
+            if (source?.type !== "ObjectExpression" || seen.has(source)) return node;
+            seen.add(source);
+            if (properties.get(source)?.has(key)) return properties.get(source)!.get(key);
+            for (const item of [...source.properties].reverse()) {
+              if (item.type === "SpreadElement") {
+                const spread = read(item.argument);
+                if (spread !== undefined) return spread;
+              } else if (item.computed || (item.key?.name ?? item.key?.value) === "__proto__") {
+                return node;
+              } else if ((item.key?.name ?? item.key?.value) === key) {
+                return item.kind === "init" ? identity(item.value, environment) : node;
+              }
+            }
+            return undefined;
+          };
+          const value = read(object);
+          if (value !== undefined) return value;
           if (
             !(key in Object.prototype) &&
             object.properties.every(
@@ -405,13 +418,21 @@ function undisposedResource(program: AnyNode): string | null {
             module,
           );
       } else {
-        completion = inspect(
-          bound,
-          boundArgs,
-          environment,
-          module,
-          identity(target.arguments[0], environment),
-        );
+        const callable = identity(bound, environment);
+        if (callable === "setInterval" || callable === "setTimeout")
+          completion = evaluate(
+            { type: "CallExpression", callee: bound, arguments: boundArgs },
+            environment,
+            module,
+          );
+        else
+          completion = inspect(
+            bound,
+            boundArgs,
+            environment,
+            module,
+            identity(target.arguments[0], environment),
+          );
       }
       visited.delete(target);
       return completion;
@@ -1097,12 +1118,13 @@ function undisposedResource(program: AnyNode): string | null {
         conditions.set(conditionValue, {});
       const choice = conditions.get(conditionValue) ?? {};
       const selectPath = (side: boolean) => {
-        if (!module || includeAbrupt) return;
+        if (includeAbrupt) return;
         currentPath = new Map(parentPath).set(choice, side);
-        disposers = disposers.map((disposer) => ({
-          callback: disposer.callback,
-          path: new Map(disposer.path).set(choice, side),
-        }));
+        if (module)
+          disposers = disposers.map((disposer) => ({
+            callback: disposer.callback,
+            path: new Map(disposer.path).set(choice, side),
+          }));
       };
       selectPath(!inverted);
       const firstExit = exits.length;
@@ -1146,7 +1168,7 @@ function undisposedResource(program: AnyNode): string | null {
         );
         returned.set(expression, callbacksValue);
         const created = new Set(resources.slice(resourceStart).map((resource) => resource.value));
-        if (choices.every((value) => created.has(value))) {
+        if (choices.some((value) => created.has(value))) {
           const value = {};
           alternatives.set(value, choices);
           returned.set(expression, value);
@@ -1432,7 +1454,7 @@ function undisposedResource(program: AnyNode): string | null {
         return branch(
           node.operator === "||" ? null : node.right,
           node.operator === "||" ? node.right : null,
-          undefined,
+          node,
           false,
           false,
           node.operator === "??" ? undefined : node.left,

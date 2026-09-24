@@ -2763,6 +2763,31 @@ for (const [name, source, leaks] of [
     false,
   ],
   [
+    "logical initializer retains guarded timer",
+    "const timer = enabled && setInterval(refresh); import.meta.hot.dispose(() => { if (enabled) clearInterval(timer) })",
+    false,
+  ],
+  [
+    "bound global timer factory leaks",
+    "const start = setInterval.bind(globalThis); start(refresh); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "bound global timer factory cleans up",
+    "const start = setInterval.bind(globalThis); const timer = start(refresh); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "known object spread retains timer",
+    "const state = { ...{ timer: setInterval(refresh) } }; import.meta.hot.dispose(() => clearInterval(state.timer))",
+    false,
+  ],
+  [
+    "object spread override retains latest timer",
+    "const state = { timer: setInterval(refresh), ...{ timer: setInterval(refresh) } }; import.meta.hot.dispose(() => clearInterval(state.timer))",
+    true,
+  ],
+  [
     "logical guard ||",
     "let timer; enabled || (timer = setInterval(refresh)); enabled || import.meta.hot.dispose(() => clearInterval(timer))",
     false,
