@@ -1834,6 +1834,13 @@ test.each([
 
 test.each([
   ["while (true) { for (;;) { break } }", false],
+  ["while (true) { try { break } finally { continue } }", false],
+  ['while (true) { try { break } finally { return "safe" } }', false],
+  ["while (true) { try { break } finally { throw new Error() } }", false],
+  ["while (true) { try { throw new Error() } catch { break } finally { continue } }", false],
+  ["while (true) { try { break } finally { const done = true } }", true],
+  ["while (true) { try { break } finally { if (process.env.MODE) continue } }", true],
+  ["while (true) { try { continue } finally { break } }", true],
   ["while (true) { switch (process.env.MODE) { default: break } }", false],
   ["while (true) { inner: { break inner } }", false],
   ["while (true) { if (false) break }", false],
@@ -1863,4 +1870,74 @@ test("does not trace unrelated secrets through an undefined merge getter", async
     },
   });
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ['import runtime from "node:process"; const { PRIVATE_TOKEN: replacement } = runtime.env', true],
+  ['import * as runtime from "process"; const { PRIVATE_TOKEN: replacement } = runtime.env', true],
+  [
+    'import { default as runtime } from "node:process"; const { PUBLIC_VERSION: replacement } = runtime.env',
+    false,
+  ],
+  [
+    'const process = { env: { PRIVATE_TOKEN: "safe" } }; const { PRIVATE_TOKEN: replacement } = process.env',
+    false,
+  ],
+  [
+    'const read = ({ publicValue, ...rest }) => rest.token; const replacement = read({ publicValue: "safe", token: process.env.PRIVATE_TOKEN })',
+    true,
+  ],
+  [
+    'const read = ({ token, ...rest }) => rest; const replacement = read({ publicValue: "safe", token: process.env.PRIVATE_TOKEN })',
+    false,
+  ],
+  [
+    'const read = ({ publicValue, ...rest }) => rest; const replacement = read({ publicValue: "safe", token: process.env.PRIVATE_TOKEN })',
+    true,
+  ],
+  [
+    'const read = ({ publicValue, ...rest }) => rest.token; const values = { token: process.env.PRIVATE_TOKEN }; const replacement = read({ ...values, token: "safe" })',
+    false,
+  ],
+  [
+    "const read = (value) => value; const args = [process.env.PRIVATE_TOKEN]; const replacement = read(...args)",
+    true,
+  ],
+  [
+    'const read = (first, second) => second; const args = [process.env.PRIVATE_TOKEN]; const replacement = read(...args, "safe")',
+    false,
+  ],
+  [
+    'const read = (first, second) => second; const args = [process.env.PRIVATE_TOKEN]; const nested = ["safe", ...args]; const replacement = read(...nested)',
+    true,
+  ],
+  [
+    "const read = (first, second) => second; const args = [, process.env.PRIVATE_TOKEN]; const replacement = read(...args)",
+    true,
+  ],
+  [
+    'import runtime from "node:process"; const read = ({ publicValue, ...rest }) => rest.token; const replacement = read({ token: runtime.env.PRIVATE_TOKEN })',
+    true,
+  ],
+  [
+    "const token = process.env.PRIVATE_TOKEN; const read = ({ publicValue, ...rest }) => rest.token; const replacement = read({ token })",
+    true,
+  ],
+  [
+    'const key = "token"; const read = ({ [key]: removed, ...rest }) => rest; const replacement = read({ token: process.env.PRIVATE_TOKEN, value: "safe" })',
+    false,
+  ],
+  [
+    'const key = "token"; const read = ({ publicValue, ...rest }) => rest.token; const replacement = read({ [key]: process.env.PRIVATE_TOKEN })',
+    true,
+  ],
+])("traces serialization helper bindings: %s", async (declarations, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
 });

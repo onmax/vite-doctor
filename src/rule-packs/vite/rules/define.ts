@@ -267,6 +267,11 @@ function readAliasInitializers(source: string) {
             propertyName(definition.node.imported) === "default"))
       )
         bindingKeys.set(reference.identifier.range[0], "global:process");
+    }
+  }
+  for (const scope of scopeManager.scopes) {
+    for (const reference of scope.references) {
+      const definition = reference.resolved?.defs[0];
       if (
         definition?.type === "ImportBinding" &&
         definition.parent.type === "ImportDeclaration" &&
@@ -336,7 +341,8 @@ function readAliasInitializers(source: string) {
         !init.computed &&
         init.property.type === "Identifier" &&
         init.property.name === "env" &&
-        ((init.object.type === "Identifier" && init.object.name === "process") ||
+        ((init.object.type === "Identifier" &&
+          bindingKeys.get(init.object.range[0]) === "global:process") ||
           (init.object.type === "MetaProperty" &&
             init.object.meta.name === "import" &&
             init.object.property.name === "meta"))
@@ -616,6 +622,33 @@ function resolvesSecretAlias(
     const range: Range = [start, source.length];
     literals.set(value, range);
     return range;
+  }
+  let copiedRanges = false;
+  function copyRange(range: Range, bindings: Trace["bindings"]): void {
+    if (!copiedRanges) {
+      initializers = new Map(initializers);
+      memberReturns = new Map(memberReturns);
+      serializationHooks = new Map(serializationHooks);
+      bindingKeys = new Map(bindingKeys);
+      localCalls = new Set(localCalls);
+      shadowedPromises = new Set(shadowedPromises);
+      copiedRanges = true;
+    }
+    const start = source.length;
+    const text = source.slice(...range);
+    const shift = start - range[0];
+    source += text;
+    for (const map of [initializers, memberReturns, serializationHooks, bindingKeys, bindings]) {
+      for (const [position, value] of map) {
+        if (position >= range[0] && position < range[1])
+          (map as Map<number, unknown>).set(position + shift, value);
+      }
+    }
+    for (const set of [localCalls, shadowedPromises, restReferences]) {
+      for (const position of set) {
+        if (position >= range[0] && position < range[1]) set.add(position + shift);
+      }
+    }
   }
   function readValue(
     range: Range,
@@ -938,17 +971,35 @@ function resolvesSecretAlias(
                 );
               }
               if (pattern.type === "ObjectPattern") {
+                function keyOf(property: AnyNode, offset: number): string | null {
+                  if (!property.computed) return propertyName(property.key);
+                  const { value } = readValue([
+                    offset + property.key.range[0],
+                    offset + property.key.range[1],
+                  ]);
+                  return value?.type === "Literal" ? String(value.value) : null;
+                }
+                const consumed = new Set<string>();
+                let unknownConsumed = false;
                 for (const property of pattern.properties) {
-                  if (property.type !== "Property") continue;
-                  function keyOf(property: AnyNode, offset: number): string | null {
-                    if (!property.computed) return propertyName(property.key);
-                    const { value } = readValue([
-                      offset + property.key.range[0],
-                      offset + property.key.range[1],
-                    ]);
-                    return value?.type === "Literal" ? String(value.value) : null;
+                  if (property.type === "RestElement") {
+                    if (value?.type !== "ObjectExpression" || unknownConsumed) continue;
+                    const start = source.length;
+                    source += "{";
+                    for (const { node, offset } of properties(range)) {
+                      const key = keyOf(node, offset);
+                      if (key !== null && consumed.has(key)) continue;
+                      copyRange([offset + node.range[0], offset + node.range[1]], current.bindings);
+                      source += ",";
+                    }
+                    source += "}";
+                    bind(property.argument, [start, source.length]);
+                    continue;
                   }
+                  if (property.type !== "Property") continue;
                   const key = keyOf(property, current.start - 1);
+                  if (key !== null) consumed.add(key);
+                  else unknownConsumed = true;
                   const match =
                     value?.type === "ObjectExpression" && key !== null
                       ? properties(range).findLast(
@@ -1190,13 +1241,28 @@ function resolvesSecretAlias(
           !shadowedPromises.has(current.start + node.callee.object.range[0] - 1)
         )
           continue;
-        callArguments.set(
-          node.callee,
-          (node.arguments as AnyNode[]).map((argument) => [
-            current.start + argument.range[0] - 1,
-            current.start + argument.range[1] - 1,
-          ]),
-        );
+        function expandArguments(
+          args: AnyNode[],
+          offset: number,
+          seen = new Set<number>(),
+        ): Range[] {
+          return args.flatMap((argument): Range[] => {
+            if (!argument) return [undefinedRange];
+            const range: Range = [offset + argument.range[0], offset + argument.range[1]];
+            if (argument.type !== "SpreadElement") return [range];
+            const value = readValue(
+              [offset + argument.argument.range[0], offset + argument.argument.range[1]],
+              current.bindings,
+            );
+            if (value?.node.type !== "ArrayExpression" || seen.has(value.offset)) return [range];
+            return expandArguments(
+              value.node.elements,
+              value.offset,
+              new Set([...seen, value.offset]),
+            );
+          });
+        }
+        callArguments.set(node.callee, expandArguments(node.arguments, current.start - 1));
         followingCalls.set(
           node.callee,
           invokedNodes.has(node)
@@ -2209,6 +2275,14 @@ function hasExitingBreak(node: AnyNode, labels: Set<string>, unlabeled = true): 
   if (["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type))
     return false;
   if (node.type === "BreakStatement") return node.label ? labels.has(node.label.name) : unlabeled;
+  if (node.type === "TryStatement") {
+    if (hasExitingBreak(node.finalizer, labels, unlabeled)) return true;
+    if (visitReturnValues(node.finalizer, () => {})) return false;
+    return (
+      hasExitingBreak(node.block, labels, unlabeled) ||
+      hasExitingBreak(node.handler?.body, labels, unlabeled)
+    );
+  }
   if (node.type === "IfStatement" && node.test.type === "Literal")
     return hasExitingBreak(node.test.value ? node.consequent : node.alternate, labels, unlabeled);
   if (
