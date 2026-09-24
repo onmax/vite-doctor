@@ -2373,3 +2373,85 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "implicit optional returned handle",
+    "function start() { if (flag) return setInterval(refresh) }; const timer = start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "explicit optional returned handle",
+    "function start() { if (flag) return setInterval(refresh); return undefined }; clearInterval(start()); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "optional return cannot hide an unreturned live handle",
+    "function start() { const timer = setInterval(refresh); if (flag) return timer }; const timer = start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "filter callback creates a resource",
+    "[1].filter(() => { setInterval(refresh); return true }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "empty filter skips callback",
+    "[].filter(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "filter retains original resource handles",
+    "const timers = [setInterval(refresh)].filter(() => true); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "filter discards resource handles on false",
+    "const timers = [setInterval(refresh)].filter(() => false); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "do while break skips test",
+    "do { break } while (setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "do while return skips test",
+    "function start() { do { return } while (setInterval(refresh)) }; start(); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "do while continue reaches test",
+    "do { continue } while (setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "do while normal body reaches test",
+    "do { refresh() } while (setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "member branches preserve alternative handles",
+    "const state = {}; if (flag) state.timer = setInterval(a); else state.timer = setInterval(b); import.meta.hot.dispose(() => clearInterval(state.timer))",
+    false,
+  ],
+  [
+    "optional member preserves handle",
+    "const state = {}; if (flag) state.timer = setInterval(a); import.meta.hot.dispose(() => clearInterval(state.timer))",
+    false,
+  ],
+  [
+    "member branches cannot hide two live handles",
+    "const a = setInterval(refresh); const b = setInterval(refresh); const state = {}; if (flag) state.timer = a; else state.timer = b; import.meta.hot.dispose(() => clearInterval(state.timer))",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}

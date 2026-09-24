@@ -633,7 +633,7 @@ function undisposedResource(program: AnyNode): string | null {
       if (
         array?.type === "ArrayExpression" &&
         !replacedMethod &&
-        ["forEach", "map"].includes(method!)
+        ["forEach", "map", "filter"].includes(method!)
       ) {
         const expand = (items: AnyNode[], seen = new Set<AnyNode>()): AnyNode[] =>
           items.flatMap((item) => {
@@ -645,6 +645,7 @@ function undisposedResource(program: AnyNode): string | null {
             );
           });
         const elements: AnyNode[] = [];
+        let knownSelection = true;
         for (const [index, element] of expand(array.elements).entries()) {
           if (!element || element.type === "SpreadElement") continue;
           const call = {
@@ -653,9 +654,15 @@ function undisposedResource(program: AnyNode): string | null {
             arguments: [identity(element, environment), { type: "Literal", value: index }, array],
           };
           if (visit(call) === false) return false;
-          elements.push(returned.get(call));
+          const result = returned.get(call);
+          if (method === "filter") {
+            if (result?.type === "Literal") {
+              if (result.value) elements.push(identity(element, environment));
+            } else knownSelection = false;
+          } else elements.push(result);
         }
-        if (method === "map") returned.set(node, { type: "ArrayExpression", elements });
+        if (method === "map" || (method === "filter" && knownSelection))
+          returned.set(node, { type: "ArrayExpression", elements });
         return true;
       }
       const completion =
@@ -707,43 +714,40 @@ function undisposedResource(program: AnyNode): string | null {
           cleaned.add(value);
         else cleaned.delete(value);
       }
+      const mergeValue = (a: AnyNode, b: AnyNode) => {
+        if (a === b) return a;
+        const value = {};
+        callbackChoices.set(
+          value,
+          [a, b].flatMap((choice) => callbackChoices.get(choice) ?? [choice]),
+        );
+        const handles = [a, b]
+          .flatMap((choice) => alternatives.get(choice) ?? [choice])
+          .filter((choice) => resources.some((resource) => resource.value === choice));
+        if (
+          handles.length &&
+          handles.every((handle) =>
+            [left, right].every(
+              (state, index) =>
+                (alternatives.get([a, b][index]) ?? [[a, b][index]]).includes(handle) ||
+                absent(handle, state),
+            ),
+          )
+        )
+          alternatives.set(value, handles);
+        return value;
+      };
       for (const key of new Set([...left.values.keys(), ...right.values.keys()])) {
         if (!left.values.has(key)) environment.set(key, right.values.get(key));
-        else if (right.values.has(key) && left.values.get(key) !== right.values.get(key)) {
-          const choices = [left.values.get(key), right.values.get(key)].flatMap(
-            (value) => alternatives.get(value) ?? [value],
-          );
-          const value = {};
-          callbackChoices.set(
-            value,
-            [left.values.get(key), right.values.get(key)].flatMap(
-              (choice) => callbackChoices.get(choice) ?? [choice],
-            ),
-          );
-          const handles = choices.filter((choice) =>
-            resources.some((resource) => resource.value === choice),
-          );
-          if (
-            handles.length &&
-            handles.every((handle) =>
-              [left, right].every(
-                (state) =>
-                  (alternatives.get(state.values.get(key)) ?? [state.values.get(key)]).includes(
-                    handle,
-                  ) || absent(handle, state),
-              ),
-            )
-          )
-            alternatives.set(value, handles);
-          environment.set(key, value);
-        }
+        else if (right.values.has(key))
+          environment.set(key, mergeValue(left.values.get(key), right.values.get(key)));
       }
       for (const object of new Set([...left.properties.keys(), ...right.properties.keys()])) {
         const a = left.properties.get(object) ?? new Map();
         const b = right.properties.get(object) ?? new Map();
         if (!properties.has(object)) properties.set(object, new Map());
         for (const key of new Set([...a.keys(), ...b.keys()])) {
-          if (a.get(key) !== b.get(key)) properties.get(object)!.set(key, {});
+          properties.get(object)!.set(key, mergeValue(a.get(key), b.get(key)));
         }
       }
     };
@@ -1187,7 +1191,7 @@ function undisposedResource(program: AnyNode): string | null {
           const firstExit = exits.length;
           let bodyStopped = false;
           if (loop) loopDepth++;
-          if (node.type === "ForStatement") {
+          if (node.type === "ForStatement" || node.type === "DoWhileStatement") {
             const continues = walk(node.body);
             bodyStopped = !continues && !control.continues.length;
             let updateState = continues ? snapshot() : undefined;
@@ -1196,7 +1200,8 @@ function undisposedResource(program: AnyNode): string | null {
               else restore(state);
               updateState = snapshot();
             }
-            if (updateState && !walk(node.update)) bodyStopped = true;
+            if (updateState && !walk(node.type === "ForStatement" ? node.update : node.test))
+              bodyStopped = true;
           } else if (loop) {
             for (const [key, child] of Object.entries(node)) {
               if (
@@ -1379,19 +1384,19 @@ function undisposedResource(program: AnyNode): string | null {
         value,
         returns.flatMap((item) => callbackChoices.get(item) ?? [item]),
       );
-      const handles = returns.flatMap((item) => alternatives.get(item) ?? [item]);
+      const handles = returns
+        .flatMap((item) => alternatives.get(item) ?? [item])
+        .filter((handle) => resources.some((resource) => resource.value === handle));
       if (
-        handles.every(
-          (handle) =>
-            resources.some((resource) => resource.value === handle) &&
-            returns.every(
-              (item, index) =>
-                (alternatives.get(item) ?? [item]).includes(handle) ||
-                [...(resourcePaths.get(handle) ?? [])].some(
-                  ([condition, side]) =>
-                    returnPaths[index].has(condition) && returnPaths[index].get(condition) !== side,
-                ),
-            ),
+        handles.every((handle) =>
+          returns.every(
+            (item, index) =>
+              (alternatives.get(item) ?? [item]).includes(handle) ||
+              [...(resourcePaths.get(handle) ?? [])].some(
+                ([condition, side]) =>
+                  returnPaths[index].has(condition) && returnPaths[index].get(condition) !== side,
+              ),
+          ),
         )
       )
         alternatives.set(value, handles);
