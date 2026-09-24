@@ -120,10 +120,23 @@ export function resolveNuxtCompatibility(
 
 export function autoRegisteredNuxtLayers(root: string): string[] {
   const directory = join(root, "layers");
-  if (!existsSync(directory)) return [];
-  return readdirSync(directory)
-    .filter((name) => statSync(join(directory, name)).isDirectory())
-    .sort();
+  try {
+    if (!statSync(directory).isDirectory()) return [];
+    return readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => {
+        if (entry.isDirectory()) return true;
+        if (!entry.isSymbolicLink()) return false;
+        try {
+          return statSync(join(directory, entry.name)).isDirectory();
+        } catch {
+          return false;
+        }
+      })
+      .map((entry) => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest | null) {

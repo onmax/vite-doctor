@@ -80,7 +80,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext): string[] {
     /(?:^|\/)(?:auth|sessions?|admin|accounts?|users?|me|profiles?|private|billing|settings)(?:[./-]|$)/i;
   const isSensitive = (path: string): boolean =>
     sensitive.test(path) &&
-    !/(?:^|\/)auth\/(?:login|callback)(?:\.(?:get|post))?(?:\.[cm]?[jt]s)?$|(?:^|\/)session\/create(?:\.post)?(?:\.[cm]?[jt]s)?$/i.test(
+    !/(?:^|\/)auth\/(?:login|callback|register|sign-up|signup|forgot-password|reset-password|verify-email)(?:\.(?:get|post))?(?:\.[cm]?[jt]s)?$|(?:^|\/)session\/create(?:\.post)?(?:\.[cm]?[jt]s)?$/i.test(
       path,
     );
   return [
@@ -122,7 +122,7 @@ function isAuthProviderHandler(file: string, route?: string): boolean {
     if (callback?.type !== "ArrowFunctionExpression" && callback?.type !== "FunctionExpression")
       return false;
     const event = callback.params[0];
-    if (event?.type !== "Identifier") return false;
+    if (event?.type !== "Identifier" || callback.params.length !== 1) return false;
     let body = callback.body;
     if (body.type === "BlockStatement") {
       if (body.body.length !== 1 || body.body[0].type !== "ReturnStatement") return false;
@@ -139,7 +139,10 @@ function isAuthProviderHandler(file: string, route?: string): boolean {
       body.callee.object.name !== event.name &&
       isProviderBinding(file, parsed.program, body.callee.object.name) &&
       body.arguments.length === 1 &&
-      isCurrentRequest(body.arguments[0], event.name)
+      isCurrentRequest(body.arguments[0], event.name) &&
+      event.name !== "toWebRequest" &&
+      callback.id?.name !== "toWebRequest" &&
+      hasSupportedRequestConverter(parsed.program)
     );
   } catch {
     return false;
@@ -155,6 +158,39 @@ function isCurrentRequest(node: AnyNode, event: string): boolean {
     node.arguments[0].type === "Identifier" &&
     node.arguments[0].name === event
   );
+}
+
+function hasSupportedRequestConverter(program: AnyNode): boolean {
+  const bindsConverter = (pattern: AnyNode): boolean => {
+    if (!pattern) return false;
+    if (pattern.type === "Identifier") return pattern.name === "toWebRequest";
+    if (pattern.type === "ObjectPattern")
+      return pattern.properties.some((item: AnyNode) =>
+        bindsConverter(item.type === "RestElement" ? item.argument : item.value),
+      );
+    if (pattern.type === "ArrayPattern") return pattern.elements.some(bindsConverter);
+    if (pattern.type === "AssignmentPattern") return bindsConverter(pattern.left);
+    if (pattern.type === "RestElement") return bindsConverter(pattern.argument);
+    return false;
+  };
+  return program.body.every((statement: AnyNode) => {
+    if (statement.type === "ImportDeclaration") {
+      return statement.specifiers.every(
+        (item: AnyNode) =>
+          item.local.name !== "toWebRequest" ||
+          (item.type === "ImportSpecifier" &&
+            item.imported.name === "toWebRequest" &&
+            ["h3", "#imports"].includes(statement.source.value)),
+      );
+    }
+    const declaration =
+      statement.type === "ExportNamedDeclaration" || statement.type === "ExportDefaultDeclaration"
+        ? statement.declaration
+        : statement;
+    if (declaration?.type === "VariableDeclaration")
+      return declaration.declarations.every((item: AnyNode) => !bindsConverter(item.id));
+    return !bindsConverter(declaration?.id);
+  });
 }
 
 function createsProvider(program: AnyNode, name: string, exported = false): boolean {

@@ -841,3 +841,26 @@ test.each(["handler", "middleware"])("retains JSON evidence imported by %s", asy
   expect(calls).toBe(1);
   expect(JSON.parse(createAgentReport(result)).status).not.toBe("incomplete");
 });
+
+test.each(["import(`./policies/${tenant}`)", "require(policyPath)"])(
+  "non-static dependencies make authorization evidence incomplete: %s",
+  async (dependency) => {
+    let calls = 0;
+    const extension = createNuxtAuthorizationReviewExtension(async () => {
+      calls++;
+      return { status: "unknown", reason: "Missing policy", citations: [] };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "server/api/account.get.ts":
+          "import guard from '../utils/guard'; export default defineEventHandler(guard)",
+        "server/utils/guard.ts": `export default async event => (await ${dependency}).default(event)`,
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(calls).toBe(0);
+    expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+  },
+);

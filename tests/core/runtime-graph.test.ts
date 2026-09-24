@@ -450,3 +450,20 @@ test.each(["add", "remove"])(
     );
   },
 );
+
+test("a layers file does not invalidate or crash Nuxt manifest discovery", async () => {
+  await withRuntimeGraph(
+    {
+      ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+      layers: "not a directory",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        autoRegisteredLayers: [],
+        layers: [],
+      }),
+    },
+    async (root) => {
+      expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+    },
+  );
+});

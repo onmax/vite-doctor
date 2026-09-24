@@ -2416,34 +2416,40 @@ test("a guard in one API handler does not hide an unguarded sensitive handler", 
   expect(diagnostic?.message).not.toContain("feedback.get.ts");
 });
 
-test.each(["auth/login.post.ts", "auth/callback.get.ts", "session/create.post.ts"])(
-  "public authentication endpoint %s does not require a server guard",
-  async (endpoint) => {
-    const result = await runRuleFixture({
-      rule: noRouteMiddlewareApiSecurity,
-      framework: "nuxt",
-      files: {
-        "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
-        "server/api/admin.get.ts": `export default defineEventHandler((event) => requireAuth(event))`,
-        [`server/api/${endpoint}`]: `export default defineEventHandler(() => ({}))`,
-        "server/handlers/entry.ts": `export default defineEventHandler(() => ({}))`,
-        ".nuxt/doctor.manifest.json": JSON.stringify({
-          generatedAt: new Date().toISOString(),
-          nuxtVersion: "4",
-          vueVersion: "3.5",
-          appDir: "app",
-          serverHandlers: [
-            {
-              file: "server/handlers/entry.ts",
-              route: `/api/${endpoint.replace(/\.(get|post)?\.?ts$/, "")}`,
-            },
-          ],
-        }),
-      },
-    });
-    expect(result.diagnostics).toHaveLength(0);
-  },
-);
+test.each([
+  "auth/login.post.ts",
+  "auth/callback.get.ts",
+  "session/create.post.ts",
+  "auth/register.post.ts",
+  "auth/forgot-password.post.ts",
+  "auth/reset-password.post.ts",
+  "auth/verify-email.get.ts",
+  "auth/sign-up.post.ts",
+])("public authentication endpoint %s does not require a server guard", async (endpoint) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+      "server/api/admin.get.ts": `export default defineEventHandler((event) => requireAuth(event))`,
+      [`server/api/${endpoint}`]: `export default defineEventHandler(() => ({}))`,
+      "server/handlers/entry.ts": `export default defineEventHandler(() => ({}))`,
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        nuxtVersion: "4",
+        vueVersion: "3.5",
+        appDir: "app",
+        serverHandlers: [
+          {
+            file: "server/handlers/entry.ts",
+            route: `/api/${endpoint.replace(/\.(get|post)?\.?ts$/, "")}`,
+          },
+        ],
+      }),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
 
 test.each([
   "auth/logout.post.ts",
@@ -4016,23 +4022,31 @@ test.each([
   expect(result.diagnostics).toHaveLength(1);
 });
 
-test("standard auth provider catch-all delegates authorization to the provider", async () => {
-  const result = await runRuleFixture({
-    rule: noRouteMiddlewareApiSecurity,
-    framework: "nuxt",
-    files: {
-      "app/middleware/auth.ts":
-        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
-      "server/api/auth/[...all].ts":
-        "import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
-      "server/utils/auth.ts":
-        "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
-    },
-  });
-  expect(result.diagnostics).toHaveLength(0);
-});
+test.each(["", "import { toWebRequest } from 'h3';", "import { toWebRequest } from '#imports';"])(
+  "standard auth provider catch-all delegates authorization to the provider: %s",
+  async (converter) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        "server/api/auth/[...all].ts": `${converter} import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))`,
+        "server/utils/auth.ts":
+          "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
+      },
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
 
 test.each([
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(function toWebRequest(event) { return auth.handler(toWebRequest(event)) })",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler((event, toWebRequest) => auth.handler(toWebRequest(event)))",
+  "import { auth } from '../../utils/auth'; const toWebRequest = () => new Request('https://example.com'); export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+  "import { auth } from '../../utils/auth'; import { toWebRequest } from './unrelated'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+  "import { auth } from '../../utils/auth'; function toWebRequest() { return new Request('https://example.com') }; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(toWebRequest => auth.handler(toWebRequest(toWebRequest)))",
   "const auth = { handler: () => ({ private: true }) }; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
   "import { auth } from './unrelated'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
   "import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler())",

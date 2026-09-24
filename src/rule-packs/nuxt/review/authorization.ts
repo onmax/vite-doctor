@@ -437,6 +437,8 @@ function localImports(
       else if (source?.type === "TemplateLiteral" && source.expressions.length === 0) {
         const value = source.quasis[0]?.value.cooked;
         if (typeof value === "string") specifiers.push(value);
+      } else if (source) {
+        omitted.push(`${current.path}: unresolved dependency`);
       }
     });
     for (const specifier of specifiers) {
