@@ -2534,6 +2534,7 @@ test.each([
   ["(event) => getUserSession(event)", undefined, undefined, 1],
   ["async (event) => { await requireAuth(event) }", "/api/admin/**", undefined, 1],
   ["async (event) => { await requireAuth(event) }", undefined, "GET", 1],
+  ["async (event) => { await requireAuth(event) }", undefined, "post", 0],
 ])(
   "registered middleware guard coverage for %s at %s with method %s",
   async (handler, route, method, count) => {
@@ -2545,6 +2546,7 @@ test.each([
         "server/handlers/auth.ts": `export default defineEventHandler(${handler})`,
         "server/handlers/data.ts": `export default defineEventHandler(() => ({}))`,
         ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: "2999-01-01T00:00:00.000Z",
           nuxtVersion: "4",
           vueVersion: "3.5",
           appDir: "app",
@@ -2560,6 +2562,40 @@ test.each([
       expect(result.diagnostics[0]?.related?.map((item) => item.file)).toEqual([
         expect.stringContaining("server/handlers/data.ts"),
       ]);
+  },
+);
+
+test.each([
+  ["2999-01-01T00:00:00.000Z", "get", 0, "GET"],
+  ["2999-01-01T00:00:00.000Z", "post", 1, "GET"],
+  ["2999-01-01T00:00:00.000Z", undefined, 1, "GET"],
+  ["2000-01-01T00:00:00.000Z", "get", 1, "GET"],
+  [undefined, "get", 1, "GET"],
+  ["2000-01-01T00:00:00.000Z", "get", 1, undefined],
+])(
+  "registered middleware currency %s and file method %s",
+  async (generatedAt, method, count, middlewareMethod) => {
+    const file = `server/api/account${method ? `.${method}` : ""}.ts`;
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "nuxt.config.ts": `export default defineNuxtConfig({})`,
+        "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => navigateTo('/login'))`,
+        "server/handlers/auth.ts": `export default defineEventHandler(async (event) => { await requireAuth(event) })`,
+        [file]: `export default defineEventHandler(() => ({}))`,
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt,
+          nuxtVersion: "4",
+          vueVersion: "3.5",
+          appDir: "app",
+          serverHandlers: [
+            { file: "server/handlers/auth.ts", middleware: true, method: middlewareMethod },
+          ],
+        }),
+      },
+    });
+    expect(result.diagnostics).toHaveLength(count);
   },
 );
 

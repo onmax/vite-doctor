@@ -69,17 +69,16 @@ function unguardedSensitiveHandlers(ctx: any): string[] {
   const dirs = ctx.project.nuxt?.serverDirs;
   const registered = ctx.project.nuxt?.manifest?.serverHandlers ?? [];
   const middleware = [
-    ...(dirs?.middleware ?? []),
-    ...registered
-      .filter(
-        (handler: { middleware?: boolean; route?: string; method?: string }) =>
-          handler.middleware && !handler.route && !handler.method,
-      )
-      .map((handler: { file: string }) => handler.file),
-  ];
-  if (middleware.some(hasUnconditionalMiddlewareGuard)) return [];
+    ...(dirs?.middleware ?? []).map((file: string) => ({ file, method: undefined })),
+    ...(ctx.project.nuxt?.manifest?.isCurrent ? registered : []).filter(
+      (handler: { middleware?: boolean; route?: string }) => handler.middleware && !handler.route,
+    ),
+  ].filter((handler: { file: string }) => hasUnconditionalMiddlewareGuard(handler.file));
   const candidates = [
-    ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({ file })),
+    ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({
+      file,
+      method: file.match(/\.(get|head|post|put|delete|patch|options|connect|trace)\.[^.]+$/i)?.[1],
+    })),
     ...registered.filter((handler: { middleware?: boolean }) => !handler.middleware),
   ];
   const sensitive =
@@ -92,7 +91,12 @@ function unguardedSensitiveHandlers(ctx: any): string[] {
             existsSync(handler.file) &&
             (sensitive.test(toPosixPath(relative(ctx.project.root, handler.file))) ||
               sensitive.test(handler.route ?? "")) &&
-            !hasAuthGuard(readProjectFile(handler.file)),
+            !hasAuthGuard(readProjectFile(handler.file)) &&
+            !middleware.some(
+              (guard: { method?: string }) =>
+                !guard.method ||
+                (handler.method && guard.method.toUpperCase() === handler.method.toUpperCase()),
+            ),
         )
         .map((handler) => handler.file),
     ),
