@@ -1,4 +1,4 @@
-name: Package Compatibility
+name: CI
 
 on:
   workflow_call:
@@ -12,14 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  package:
-    name: ${{ matrix.os }} / Node ${{ matrix.node }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        node: ["22.20.0", "24"]
-    runs-on: ${{ matrix.os }}
+  check:
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -31,9 +25,12 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node }}
+          node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: node dist/cli.mjs . --no-cache --max-warnings 0 --format text
-      - run: pnpm test:pack
+      - run: pnpm release:check
+
+  compatibility:
+    uses: ./.github/workflows/package-compatibility.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}

@@ -13,11 +13,11 @@ permissions:
   pull-requests: write
 
 jobs:
-  compatibility:
-    uses: ./.github/workflows/package-compatibility.yml
+  check:
+    uses: ./.github/workflows/ci.yml
 
   publish:
-    needs: compatibility
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -29,5 +29,4 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm release:check
       - run: pnpm exec pkg-pr-new publish . --pnpm --bin --packageManager=pnpm
