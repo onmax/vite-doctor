@@ -16,7 +16,6 @@ export type NuxtExecutionEvidence =
   | "server-only"
   | "unknown";
 
-const TEMPLATE_BLOCK_RE = /<template[^>]*>([\s\S]*?)<\/template>/;
 const TEMPLATE_DIRECTIVE_RE_G = /[@:]\w+(?:\.[\w.]+)?\s*=\s*["']([^"']+)["']/g;
 const TEMPLATE_EVENT_RE_G = /(?:@|v-on:)[\w:-]+(?:\.[\w.]+)?\s*=\s*["']([^"']+)["']/g;
 const IDENT_RE_G = /\b[A-Za-z_$][\w$]*\b/g;
@@ -83,9 +82,14 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
   const text = ctx.file.text;
   if (/<\s*(NuxtTime|ClientOnly)\b/.test(text)) return false;
   // Event bindings do not exclude SSR calls to the same helper. Preserve source offsets for guards.
-  const executionSource = text.replace(TEMPLATE_BLOCK_RE, (template) =>
-    template.replace(TEMPLATE_EVENT_RE_G, (event) => " ".repeat(event.length)),
-  );
+  const templateBlock = getTemplateBlock(ctx);
+  const start = templateBlock?.loc.start.offset;
+  const executionSource =
+    !templateBlock || start === undefined
+      ? text
+      : text.slice(0, start) +
+        templateBlock.content.replace(TEMPLATE_EVENT_RE_G, (event) => " ".repeat(event.length)) +
+        text.slice(start + templateBlock.content.length);
   if (ctx.helpers.isClientOnlyExecutionContext(node, executionSource)) return false;
   const source = sourceForNode(node, text);
   if (!source) return false;
@@ -363,12 +367,7 @@ function functionFlowsToTemplate(
         if (statement.type !== "ReturnStatement" || containingFunction(statement, parents) !== fn)
           return;
         const value = resolveLocalValue(statement.argument, parents);
-        if (
-          value &&
-          !["Literal", "UnaryExpression"].includes(value.type) &&
-          !isUndefinedValue(value, parents)
-        )
-          replacesInstance = true;
+        if (value && !constructorReturnsPrimitive(value, parents)) replacesInstance = true;
         if (
           [
             "ObjectExpression",
@@ -645,6 +644,32 @@ function isUndefinedValue(
   );
 }
 
+function constructorReturnsPrimitive(value: AnyNode, parents: WeakMap<AnyNode, AnyNode>): boolean {
+  if (isUndefinedValue(value, parents)) return true;
+  if (
+    ["BinaryExpression", "UnaryExpression", "UpdateExpression", "TemplateLiteral"].includes(
+      value.type,
+    )
+  )
+    return true;
+  if (value.type === "Literal") return !value.regex;
+  if (value.type === "SequenceExpression")
+    return constructorReturnsPrimitive(value.expressions.at(-1), parents);
+  if (value.type === "AssignmentExpression" && value.operator === "=")
+    return constructorReturnsPrimitive(value.right, parents);
+  if (value.type === "LogicalExpression")
+    return (
+      constructorReturnsPrimitive(value.left, parents) &&
+      constructorReturnsPrimitive(value.right, parents)
+    );
+  if (value.type === "ConditionalExpression")
+    return (
+      constructorReturnsPrimitive(value.consequent, parents) &&
+      constructorReturnsPrimitive(value.alternate, parents)
+    );
+  return false;
+}
+
 function parameterValue(
   pattern: AnyNode,
   fn: AnyNode,
@@ -750,7 +775,29 @@ function resultCallbackCall(
       )
       ? call
       : null;
-  if (fn.async && !includeEffects) return null;
+  if (fn.async && !includeEffects) {
+    const aggregate = parents.get(call);
+    const method = call.callee?.computed
+      ? call.callee.property?.value
+      : call.callee?.property?.name;
+    if (
+      !["map", "flatMap"].includes(method) ||
+      aggregate?.type !== "CallExpression" ||
+      aggregate.arguments[0] !== call ||
+      aggregate.callee?.type !== "MemberExpression" ||
+      aggregate.callee.object?.name !== "Promise" ||
+      (aggregate.callee.computed
+        ? aggregate.callee.property?.value
+        : aggregate.callee.property?.name) !== "all" ||
+      resolveLocalBinding(aggregate, "Promise", parents) ||
+      !asyncResultIsConsumed(
+        aggregate,
+        (node) => parents.get(node),
+        (node) => !resolveLocalBinding(node, "Promise", parents),
+      )
+    )
+      return null;
+  }
   if (
     call.callee?.type === "MemberExpression" &&
     call.callee.object?.name === "Array" &&
@@ -774,7 +821,7 @@ function resultCallbackCall(
   }
   if (
     call.callee?.type === "MemberExpression" &&
-    !call.callee.computed &&
+    (!call.callee.computed || call.callee.property?.type === "Literal") &&
     [
       ...(includeEffects ? ["forEach"] : []),
       "map",
@@ -790,7 +837,7 @@ function resultCallbackCall(
       "findLastIndex",
       "reduce",
       "reduceRight",
-    ].includes(call.callee.property?.name)
+    ].includes(call.callee.computed ? call.callee.property?.value : call.callee.property?.name)
   ) {
     const receiver = unwrapExpression(call.callee.object);
     const bindings = new Set<AnyNode>();
@@ -808,7 +855,7 @@ function resultCallbackCall(
       value = unwrapExpression(binding.init);
     }
     if (value?.type === "ArrayExpression") {
-      const method = call.callee.property.name;
+      const method = call.callee.computed ? call.callee.property.value : call.callee.property.name;
       const visitsHoles = ["find", "findIndex", "findLast", "findLastIndex"].includes(method);
       let length = 0;
       let occupied: Set<number> | null = new Set();
@@ -1394,7 +1441,13 @@ function projectionIncludes(
       const parent = parents.get(current);
       if (["FunctionExpression", "ArrowFunctionExpression"].includes(current.type)) {
         const call = resultCallbackCall(current, parents);
-        if (call && ["map", "from"].includes(call.callee.property?.name)) path.unshift(null);
+        if (
+          call &&
+          ["map", "from"].includes(
+            call.callee.computed ? call.callee.property?.value : call.callee.property?.name,
+          )
+        )
+          path.unshift(null);
       }
       if (
         parent?.type === "MemberExpression" &&
@@ -2121,11 +2174,19 @@ function getEvidenceCache(ctx: RuleContext): WeakMap<AnyNode, NuxtExecutionEvide
   return cache;
 }
 
+function getTemplateBlock(ctx: RuleContext) {
+  return (
+    ctx.file.sfc?.descriptor as
+      | { template?: { content: string; loc: { start: { offset: number } } } }
+      | undefined
+  )?.template;
+}
+
 function getTemplateSource(ctx: RuleContext): string {
   const key = `nuxt:template:${ctx.file.hash}`;
   const cached = ctx.cache.get<string>(key);
   if (cached !== undefined) return cached;
-  const value = ctx.file.text.match(TEMPLATE_BLOCK_RE)?.[1] ?? "";
+  const value = getTemplateBlock(ctx)?.content ?? "";
   ctx.cache.set(key, value);
   return value;
 }

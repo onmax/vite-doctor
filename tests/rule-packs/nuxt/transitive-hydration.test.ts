@@ -33,6 +33,26 @@ function click() { console.log(clock()) }
   ).toBe(false);
 });
 
+test("renders a helper inside a nested template despite a later event binding", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>function clock() { return Date.now() }</script><template><template v-if="true">{{ clock() }}</template><button @click="clock" /></template>`,
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  ["await Promise.all([1].map(async () => Date.now()))", 1],
+  ["[1].map(async () => Date.now())", 0],
+  ['[1]["map"](() => Date.now())', 1],
+])("traces consumed array callback result: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>const displayed = ${expression}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
 test.each([':title="label()"', 'v-bind:title="label()"', 'v-if="label()"', 'v-show="label()"'])(
   "finds helper calls in %s",
   async (binding) => {
@@ -1967,6 +1987,8 @@ test.each([
     "generatedAt",
     0,
   ],
+  ["this.generatedAt = Date.now(); return 1 + 2", "new Clock()", "generatedAt", 1],
+  ["this.generatedAt = Date.now(); return /stable/", "new Clock()", "generatedAt", 0],
   ["this.generatedAt = Date.now()", "Clock()", "generatedAt", 0],
 ])("projects constructor instance writes: %s %s %s", async (body, call, key, count) => {
   const result = await runNuxtAppRuleFixture(
