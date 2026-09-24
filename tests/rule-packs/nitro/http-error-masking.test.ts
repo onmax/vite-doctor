@@ -2345,3 +2345,58 @@ test.each([
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
 });
+
+test.each([
+  [
+    "closed-over error assignment",
+    "let saved; function set() { saved = createError({ statusCode: 404 }) }; try { set(); throw saved } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "skipped logical and assignment",
+    "let run = false; function notFound() { throw createError({ statusCode: 404 }) }; try { run &&= notFound() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "skipped logical or assignment",
+    "let run = true; function notFound() { throw createError({ statusCode: 404 }) }; try { run ||= notFound() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "skipped nullish assignment",
+    "let run = false; function notFound() { throw createError({ statusCode: 404 }) }; try { run ??= notFound() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "entered logical assignment",
+    "let run = true; function notFound() { throw createError({ statusCode: 404 }) }; try { run &&= notFound() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "nested try in later while iteration",
+    "let ready = false; while (true) { if (ready) { try { throw createError({ statusCode: 404 }) } catch { throw new Error() } } ready = true }",
+    1,
+  ],
+  [
+    "nested try in later for iteration",
+    "let ready = false; for (;;) { if (ready) { try { throw createError({ statusCode: 404 }) } catch { throw new Error() } } ready = true }",
+    1,
+  ],
+  [
+    "nested try after two iterations",
+    "let count = 0; while (count < 3) { if (count === 2) { try { throw createError({ statusCode: 404 }) } catch { throw new Error() } } count++ }",
+    1,
+  ],
+  [
+    "unreachable later iteration after return",
+    "let ready = false; while (true) { if (ready) { try { throw createError({ statusCode: 404 }) } catch { throw new Error() } } else return; ready = true }",
+    0,
+  ],
+])("tracks reviewed closure, assignment, and iteration paths: %s", async (_name, body, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});

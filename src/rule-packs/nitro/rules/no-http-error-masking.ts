@@ -468,20 +468,39 @@ function evaluateOutcomes(
   }
   const assignment = node;
   if (assignment.type === "AssignmentExpression") {
+    const logical = ["&&=", "||=", "??="].includes(assignment.operator);
     const targets =
-      assignment.left.type === "MemberExpression"
+      assignment.left.type === "MemberExpression" || logical
         ? outcomes(assignment.left, normal, bindings, conditions)
         : [normal];
     return targets
-      .flatMap((target) =>
-        target.outcome === "normal"
-          ? outcomes(assignment.right, target, bindings, conditions).map((evaluated) => ({
-              target,
-              evaluated,
-            }))
-          : [{ target, evaluated: target }],
-      )
-      .map(({ target, evaluated }) => {
+      .flatMap((target) => {
+        if (target.outcome !== "normal") return [{ target, evaluated: target, skipped: true }];
+        if (logical) {
+          const value = target.value;
+          const literal = value && "literal" in value ? value.literal : undefined;
+          const truthy = value && ("error" in value || (literal !== undefined && !!literal));
+          const known = value && ("error" in value || "literal" in value);
+          const shouldEvaluate =
+            assignment.operator === "??="
+              ? literal == null && !truthy
+              : assignment.operator === "&&="
+                ? truthy
+                : !truthy;
+          if (known && !shouldEvaluate) return [{ target, evaluated: target, skipped: true }];
+          const evaluated = outcomes(assignment.right, target, bindings, conditions).map(
+            (result) => ({ target, evaluated: result, skipped: false }),
+          );
+          return known ? evaluated : [{ target, evaluated: target, skipped: true }, ...evaluated];
+        }
+        return outcomes(assignment.right, target, bindings, conditions).map((evaluated) => ({
+          target,
+          evaluated,
+          skipped: false,
+        }));
+      })
+      .map(({ target, evaluated, skipped }) => {
+        if (skipped) return evaluated;
         if (evaluated.outcome !== "normal") return evaluated;
         if (isArrayIterator(assignment.left, target)) {
           const iterator = unwrapExpression(assignment.right);
@@ -872,7 +891,11 @@ function evaluateOutcomes(
       )
       .map((current) => {
         const restored = new Map(
-          [...(current.bindings ?? [])].filter(([name]) => bindings.has(name)),
+          [...(current.bindings ?? [])].filter(
+            ([name]) =>
+              bindings.has(name) ||
+              path.resolveBinding({ name: name?.name } as AnyNode, node) === name,
+          ),
         );
         const restoredFunctions = new Map(current.functions);
         const restoredConditions = new Map(current.conditions);
@@ -1715,15 +1738,41 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
       (parent.type === "WhileStatement" || parent.type === "ForStatement") &&
       child === parent.body
     ) {
-      prefixes.unshift([
-        ...(parent.type === "ForStatement" && parent.init ? [parent.init] : []),
-        {
-          type: "IfStatement",
-          test: parent.test ?? { type: "Literal", value: true },
-          consequent: null,
-          alternate: { type: "ReturnStatement" },
-        } as AnyNode,
-      ]);
+      prefixes.unshift((path) => {
+        const entry =
+          parent.type === "ForStatement" && parent.init
+            ? outcomes(parent.init, path, new Map(), conditions)
+            : [path];
+        const pending = [...entry];
+        const entries: Path[] = [];
+        const seen = new Set<string>();
+        while (pending.length) {
+          const current = pending.pop()!;
+          if (current.outcome !== "normal") continue;
+          const key = pathKey([
+            [...current.conditions],
+            [...(current.literals ?? [])].map(([binding, value]) => [binding.start, value]),
+            [...(current.bindings ?? [])].map(([binding, value]) => [binding?.start, value]),
+          ]);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const test = parent.test ?? { type: "Literal", value: true };
+          for (const { path: tested, value } of conditionPaths(
+            test,
+            current,
+            new Map(),
+            conditions,
+          )) {
+            if (tested.outcome !== "normal" || !value) continue;
+            entries.push(tested);
+            for (const body of outcomes(parent.body, tested, new Map(), conditions)) {
+              if (body.outcome !== "normal" && body.outcome !== "continue") continue;
+              pending.push(...outcomes(parent.update, body, new Map(), conditions));
+            }
+          }
+        }
+        return entries;
+      });
     }
   }
   let paths = [initial];
