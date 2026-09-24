@@ -477,3 +477,29 @@ test("ignores callbacks on replaced array bindings", async () => {
   );
   expect(result.diagnostics).toHaveLength(0);
 });
+
+test.each([
+  [
+    "function attributeName() { return String(Date.now()) }",
+    '<div :[attributeName()]="true" />',
+    1,
+  ],
+  ["const helpers = { label() { return Date.now() } }", "{{ helpers.label() }}", 1],
+  [
+    "const helpers = { label() { return Date.now() } }; const displayed = helpers.label()",
+    "{{ displayed }}",
+    1,
+  ],
+  [
+    "const helpers = { label() { return Date.now() }, stable() { return 'stable' } }",
+    "{{ helpers.stable() }}",
+    0,
+  ],
+  ["const helpers = { label() { return Date.now() } }", '<button @click="helpers.label()" />', 0],
+])("traces dynamic arguments and object helpers: %s", async (script, template, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>${template}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

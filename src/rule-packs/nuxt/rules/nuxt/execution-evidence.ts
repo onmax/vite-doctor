@@ -119,17 +119,40 @@ function functionFlowsToTemplate(
   const binding = functionBinding(fn, parents);
   const functionName = binding.id?.type === "Identifier" ? binding.id.name : null;
   if (!functionName) return false;
+  const memberPath: string[] = [];
+  for (let current = fn; current && current !== binding; current = parents.get(current)) {
+    const parent = parents.get(current);
+    if (parent?.type !== "Property") continue;
+    const key = parent.computed ? parent.key?.value : (parent.key?.name ?? parent.key?.value);
+    if (key === undefined) return false;
+    memberPath.unshift(String(key));
+  }
+  const matchesCallee = (callee: AnyNode): boolean => {
+    for (const key of [...memberPath].reverse()) {
+      if (callee?.type !== "MemberExpression") return false;
+      const accessed = callee.computed ? callee.property?.value : callee.property?.name;
+      if (String(accessed) !== key) return false;
+      callee = callee.object;
+    }
+    return callee?.type === "Identifier" && callee.name === functionName;
+  };
   const renderedReferences = getRenderedReferences(ctx);
   if (
     resolveLocalBinding(ctx.file.scriptAst, functionName, parents) === binding &&
-    renderedReferences.some(
-      (reference) =>
-        reference.name === functionName &&
-        reference.parent?.type === "CallExpression" &&
-        reference.parent.callee === reference &&
-        projectionIncludes(source, fn, reference.parent, parents) &&
-        (!fn.generator || isConsumedIterator(reference.parent, (node) => node.parent)),
-    )
+    renderedReferences.some((reference) => {
+      if (reference.name !== functionName) return false;
+      let callee = reference;
+      while (callee.parent?.type === "MemberExpression" && callee.parent.object === callee)
+        callee = callee.parent;
+      const call = callee.parent;
+      return (
+        call?.type === "CallExpression" &&
+        call.callee === callee &&
+        matchesCallee(callee) &&
+        projectionIncludes(source, fn, call, parents) &&
+        (!fn.generator || isConsumedIterator(call, (node) => node.parent))
+      );
+    })
   )
     return true;
   const visit = (node: AnyNode, owner: AnyNode, variable: AnyNode): boolean => {
@@ -145,7 +168,7 @@ function functionFlowsToTemplate(
     if (node.type === "VariableDeclarator") return visit(node.init, owner, node);
     if (
       node.type === "CallExpression" &&
-      node.callee?.name === functionName &&
+      matchesCallee(node.callee) &&
       resolveLocalBinding(node, functionName, parents) === binding
     ) {
       if (fn.generator && !isConsumedIterator(node, (node) => parents.get(node))) return false;
@@ -257,8 +280,10 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
           ["bind", "model", "if", "else-if", "show", "text", "html", "for"].includes(
             attribute.key.name.name,
           )
-        )
+        ) {
           visit(attribute.value);
+          if (attribute.key.name.name === "bind") visit(attribute.key.argument);
+        }
       }
       for (const child of node.children) visit(child);
     }
@@ -531,7 +556,14 @@ function getScriptParents(ctx: RuleContext): WeakMap<AnyNode, AnyNode> {
 }
 
 function functionBinding(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>) {
-  const parent = parents.get(fn);
+  let expression = fn;
+  while (parents.get(expression)?.type === "Property") {
+    const property = parents.get(expression);
+    const object = parents.get(property);
+    if (property.value !== expression || object?.type !== "ObjectExpression") break;
+    expression = object;
+  }
+  const parent = parents.get(expression);
   return parent?.type === "VariableDeclarator" ? parent : fn;
 }
 
