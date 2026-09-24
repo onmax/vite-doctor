@@ -1369,6 +1369,14 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
       (node?.type === "UnaryExpression" && node.operator === "void")
     );
   }
+  function effectiveProperty(property: AnyNode): AnyNode {
+    if (property.kind !== "get") return property;
+    const values: AnyNode[] = [];
+    visitReturnValues(property.value.body, (value) => values.push(value));
+    return values.length === 1
+      ? { ...property, kind: "init", value: resolve(values[0]) }
+      : property;
+  }
   const mergedNodes = new Set<AnyNode>();
   function mergeValue(base: AnyNode, override: AnyNode): AnyNode {
     base = resolve(base);
@@ -1387,10 +1395,10 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     } else if (base?.type === "ObjectExpression" && override?.type === "ObjectExpression") {
       const properties = new Map<unknown, AnyNode>();
       for (const property of readOptions(base))
-        properties.set(keyOf(property) ?? property, property);
+        properties.set(keyOf(property) ?? property, effectiveProperty(property));
       const overrides = new Map<unknown, AnyNode>();
       for (const property of readOptions(override))
-        overrides.set(keyOf(property) ?? property, property);
+        overrides.set(keyOf(property) ?? property, effectiveProperty(property));
       for (const [key, property] of overrides) {
         if (property.kind === "init" && nullish(resolve(property.value))) continue;
         const previous = properties.get(key);
@@ -1450,6 +1458,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         node.expression
       )
         node = node.expression;
+      else if (node.type === "SequenceExpression") node = node.expressions.at(-1);
       else if (node.type === "Identifier") {
         const ranges = initializers.get(node.start);
         if (ranges?.length !== 1) break;
@@ -1510,6 +1519,62 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     );
     visited.delete(node);
     return options;
+  }
+  function conditional(node: AnyNode): AnyNode {
+    node = resolve(node);
+    if (node?.type === "ConditionalExpression") return node;
+    if (node?.type !== "LogicalExpression") return;
+    const left = resolve(node.left);
+    if (node.operator === "??") {
+      if (nullish(left))
+        return {
+          type: "ConditionalExpression",
+          test: { type: "Literal", value: true },
+          consequent: node.right,
+          alternate: node.left,
+        };
+      if (left?.type === "Literal")
+        return {
+          type: "ConditionalExpression",
+          test: { type: "Literal", value: true },
+          consequent: node.left,
+          alternate: node.right,
+        };
+    }
+    return {
+      type: "ConditionalExpression",
+      test:
+        node.operator === "??"
+          ? {
+              type: "BinaryExpression",
+              operator: "==",
+              left: node.left,
+              right: { type: "Literal", value: null },
+            }
+          : node.left,
+      consequent: node.operator === "||" ? node.left : node.right,
+      alternate: node.operator === "||" ? node.right : node.left,
+    };
+  }
+  function expandSpread(node: AnyNode): AnyNode {
+    if (node?.type !== "ObjectExpression") return;
+    const properties = readOptions(node);
+    for (const [index, property] of properties.entries()) {
+      if (property.type !== "SpreadElement") continue;
+      const branch = conditional(property.argument);
+      if (!branch) continue;
+      const replace = (argument: AnyNode) => ({
+        ...node,
+        properties: properties.map((item, offset) =>
+          offset === index ? { ...property, argument } : item,
+        ),
+      });
+      return {
+        ...branch,
+        consequent: replace(branch.consequent),
+        alternate: replace(branch.alternate),
+      };
+    }
   }
   type Alternative = { entries: typeof entries; predicates: Map<string, boolean> };
   function readConfig(input: AnyNode): Alternative[] {
@@ -1648,7 +1713,12 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         const alternatives: Alternative[] = [];
         visitReturnValues(node.body, (value) => alternatives.push(...readConfig(value)));
         return alternatives.length ? alternatives : empty();
+      } else if (node.type === "LogicalExpression") {
+        return readConfig(conditional(node));
       } else if (node.type === "ConditionalExpression") {
+        const test = resolve(node.test);
+        if (test?.type === "Literal")
+          return readConfig(test.value ? node.consequent : node.alternate);
         let predicate = node.test;
         let inverted = false;
         const visited = new Set<AnyNode>();
@@ -1688,6 +1758,8 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
           }),
         );
       } else if (node.type === "ObjectExpression") {
+        const expanded = expandSpread(node);
+        if (expanded) return readConfig(expanded);
         const result: typeof entries = [];
         const option = readOptions(node).findLast(
           (option) => option.type === "Property" && keyOf(option) === "define",
@@ -1695,6 +1767,15 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         if (option) {
           const values = resolve(option.value);
           if (values?.type !== "ObjectExpression") return empty();
+          const expandedValues = expandSpread(values);
+          if (expandedValues) {
+            const replace = (value: AnyNode) => ({ ...node, properties: [{ ...option, value }] });
+            return readConfig({
+              ...expandedValues,
+              consequent: replace(expandedValues.consequent),
+              alternate: replace(expandedValues.alternate),
+            });
+          }
           const properties = new Map<string, AnyNode>();
           for (const property of readOptions(values)) {
             if (property.type !== "Property") continue;

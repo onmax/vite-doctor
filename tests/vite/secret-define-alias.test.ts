@@ -1350,3 +1350,59 @@ test.each([
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+test.each([
+  ["flag && { define: { PRIVATE_TOKEN: {} } }", true],
+  ["flag ? { define: { PRIVATE_TOKEN: {} } } : {}", true],
+  ["flag || { define: { PRIVATE_TOKEN: {} } }", true],
+  ["flag ?? { define: { PRIVATE_TOKEN: {} } }", true],
+  ["null ?? { define: { PRIVATE_TOKEN: {} } }", true],
+  ["false ?? { define: { PRIVATE_TOKEN: {} } }", false],
+  ["false && { define: { PRIVATE_TOKEN: {} } }", false],
+  ["true ? {} : { define: { PRIVATE_TOKEN: {} } }", false],
+])("reads conditional config spreads: %s", async (spread, expected) => {
+  for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: {
+        "vite.config.ts": `const flag = process.env.MODE; export default { ...(${spread}) }`,
+      },
+    });
+    expect(result.diagnostics.length > 0).toBe(expected);
+  }
+});
+
+test.each([
+  ["export default (initialize(), { define: { PRIVATE_TOKEN: {} } })", true],
+  ["export default { ...(flag && { define: { PRIVATE_TOKEN: {} } }), define: {} }", false],
+  ["export default { define: { ...(flag && { PRIVATE_TOKEN: {} }) } }", true],
+])("reads effective config values: %s", async (source, expected) => {
+  for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": `const flag = process.env.MODE; ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(expected);
+  }
+});
+
+test.each([
+  ["null", true],
+  ["undefined", true],
+  ["void 0", true],
+  ['"safe"', false],
+  ['{ public: "safe" }', true],
+])("reads getter overrides before merging: %s", async (value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `import { mergeConfig } from 'vite'; export default mergeConfig(
+      { define: { VALUE: { value: { token: process.env.PRIVATE_TOKEN } } } },
+      { define: { VALUE: { get value() { return ${value} } } } })`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
