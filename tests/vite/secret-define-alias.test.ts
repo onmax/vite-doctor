@@ -2015,3 +2015,31 @@ test("preserves immutable arrays passed directly to JSON.stringify", async () =>
   });
   expect(result.diagnostics).toHaveLength(1);
 });
+
+test.each([
+  ['const replacement = ["safe"]; replacement[0] = process.env.PRIVATE_TOKEN', true],
+  ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.push("safe")', true],
+  ['const replacement = [process.env.PRIVATE_TOKEN]; replacement[0] = "safe"', false],
+  ['const replacement = [process.env.PRIVATE_TOKEN]; replacement.fill("safe")', false],
+])("tracks effective values in mutated arrays: %s", async (declarations, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+test("binds array-rest values in serialization helpers", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts":
+        'const read = ([publicValue, ...rest]) => rest[0]; export default { define: { VALUE: JSON.stringify(read(["safe", process.env.PRIVATE_TOKEN])) } }',
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});

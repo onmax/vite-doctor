@@ -249,22 +249,50 @@ function readAliasInitializers(source: string) {
       return resolveImmutable(definition.node.init, seen);
     return node;
   }
-  const mutableArrays = new Set<AnyNode>();
-  function invalidateArray(node: AnyNode, memberWrite = false) {
+  const mutableArrays = new Map<AnyNode, Array<[number, number] | undefined> | null>();
+  function invalidateArray(node: AnyNode, memberWrite = false, mutation?: AnyNode) {
     if (!node) return;
+    const member = memberWrite && node.type === "MemberExpression" ? node : undefined;
     while (memberWrite && node.type === "MemberExpression") node = node.object;
     const value = resolveImmutable(node);
-    if (value.type === "ArrayExpression") mutableArrays.add(value);
+    if (value.type !== "ArrayExpression") return;
+    const elements = mutableArrays.has(value)
+      ? mutableArrays.get(value)
+      : value.elements.map((element: AnyNode) => element?.range);
+    if (!elements) return;
+    if (
+      member &&
+      mutation?.type === "AssignmentExpression" &&
+      mutation.operator === "=" &&
+      member.computed &&
+      member.property.type === "Literal" &&
+      Number.isInteger(member.property.value) &&
+      member.property.value >= 0
+    ) {
+      elements[member.property.value] = mutation.right.range;
+    } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "push") {
+      elements.push(...mutation.arguments.map((argument: AnyNode) => argument.range));
+    } else if (
+      mutation?.type === "CallExpression" &&
+      mutation.callee.property?.name === "fill" &&
+      mutation.arguments.length === 1
+    ) {
+      elements.fill(mutation.arguments[0].range);
+    } else {
+      mutableArrays.set(value, null);
+      return;
+    }
+    mutableArrays.set(value, elements);
   }
   walkScriptLocal(parsed.ast, (node) => {
-    if (node.type === "AssignmentExpression") invalidateArray(node.left, true);
+    if (node.type === "AssignmentExpression") invalidateArray(node.left, true, node);
     else if (
       node.type === "UpdateExpression" ||
       (node.type === "UnaryExpression" && node.operator === "delete")
     )
       invalidateArray(node.argument, true);
     else if (node.type === "CallExpression") {
-      if (node.callee.type === "MemberExpression") invalidateArray(node.callee.object);
+      if (node.callee.type === "MemberExpression") invalidateArray(node.callee.object, false, node);
       const serializesArray =
         memberPath(node.callee) === "JSON.stringify" &&
         !references.get(node.callee.object.range[0])?.resolved &&
@@ -359,8 +387,14 @@ function readAliasInitializers(source: string) {
         }
       }
       if (id.type === "Identifier") {
+        const effective = mutableArrays.get(resolveImmutable(init));
         if (!mutableArrays.has(resolveImmutable(init)))
           initializers.set(reference.identifier.range[0], [init.range]);
+        else if (effective)
+          initializers.set(
+            reference.identifier.range[0],
+            effective.filter((range) => range != null),
+          );
       } else if (
         id.type === "ObjectPattern" &&
         init.type === "MemberExpression" &&
@@ -1067,6 +1101,18 @@ function resolvesSecretAlias(
                 }
               } else {
                 pattern.elements.forEach((element: AnyNode, index: number) => {
+                  if (element?.type === "RestElement" && value?.type === "ArrayExpression") {
+                    const remaining = value.elements.slice(index).filter(Boolean);
+                    const start = source.length;
+                    source += "[";
+                    remaining.forEach((item: AnyNode, position: number) => {
+                      if (position) source += ",";
+                      copyRange([offset + item.range[0], offset + item.range[1]], current.bindings);
+                    });
+                    source += "]";
+                    bind(element.argument, [start, source.length]);
+                    return;
+                  }
                   const match =
                     value?.type === "ArrayExpression" ? value.elements[index] : undefined;
                   if (element)
