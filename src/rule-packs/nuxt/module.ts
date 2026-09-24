@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { autoRegisteredNuxtLayers } from "../../core/internal/runtime-graph.js";
 import { defineNuxtModule, getLayerDirectories } from "nuxt/kit";
 import type { NuxtModule } from "nuxt/schema";
 import { join, relative, resolve } from "pathe";
@@ -139,6 +140,7 @@ export async function writeManifest(
   const layerDirectories = nuxt.options._layers ? getLayerDirectories(nuxt) : [];
   const manifest = {
     nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
+    autoRegisteredLayers: autoRegisteredNuxtLayers(rootDir),
     nuxtVersion: nuxt._version ?? nuxt.version ?? "4",
     vueVersion: nuxt.options.vue?.version ?? "3.5",
     compatibilityVersion: nuxt.options.future?.compatibilityVersion,

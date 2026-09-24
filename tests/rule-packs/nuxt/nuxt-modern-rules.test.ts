@@ -3983,3 +3983,17 @@ test.each([undefined, "2000-01-01T00:00:00.000Z"])(
     expect(result.diagnostics).toHaveLength(0);
   },
 );
+
+test("session lookup alone does not protect a sensitive handler", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/account.get.ts":
+        "export default defineEventHandler(async event => { const session = await getUserSession(event); return { private: true } })",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});

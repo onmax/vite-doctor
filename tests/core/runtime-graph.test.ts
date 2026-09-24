@@ -422,3 +422,31 @@ test.each(["edit", "delete", "create"])(
     );
   },
 );
+
+test.each(["add", "remove"])(
+  "invalidates newly auto-registered layer changes: %s",
+  async (change) => {
+    await withRuntimeGraph(
+      {
+        ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+      },
+      async (root) => {
+        const layer = join(root, "layers/new-layer");
+        if (change === "remove") mkdirSync(layer, { recursive: true });
+        mkdirSync(join(root, ".nuxt"), { recursive: true });
+        writeFileSync(
+          join(root, ".nuxt/doctor.manifest.json"),
+          JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            autoRegisteredLayers: change === "remove" ? ["new-layer"] : [],
+            layers: [],
+          }),
+        );
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+        if (change === "add") mkdirSync(layer, { recursive: true });
+        else rmSync(layer, { recursive: true });
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(false);
+      },
+    );
+  },
+);

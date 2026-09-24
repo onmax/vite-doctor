@@ -395,40 +395,46 @@ function localImports(
   aliases: Record<string, string>,
   unknownLayerAliases = false,
 ): { sources: AuthorizationReviewSource[]; omitted: string[] } {
-  const file = resolve(root, source.path);
-  const imported: string[] = [];
-  for (const match of source.text.matchAll(/\b(?:from\s*|require\s*\(\s*)["']([^"']+)["']/g)) {
-    const specifier = match[1]!;
-    if (unknownLayerAliases && /^(?:~{1,2}|@{1,2})(?:\/|$)/.test(specifier)) continue;
-    const alias = Object.keys(aliases)
-      .sort((a, b) => b.length - a.length)
-      .find((key) => specifier === key || specifier.startsWith(`${key}/`));
-    const base = specifier.startsWith(".")
-      ? resolve(dirname(file), specifier)
-      : alias
-        ? resolve(root, aliases[alias]!, specifier.slice(alias.length).replace(/^\//, ""))
-        : undefined;
-    if (!base) continue;
-    for (const candidate of extname(base)
-      ? [base]
-      : [base, `${base}/index`].flatMap((path) =>
-          ["ts", "js", "mts", "mjs", "cts", "cjs"].map((extension) => `${path}.${extension}`),
-        )) {
-      if (existsSync(candidate)) {
-        imported.push(candidate);
-        break;
+  const queue = [source];
+  const sources: AuthorizationReviewSource[] = [];
+  const omitted: string[] = [];
+  const visited = new Set([resolve(root, source.path)]);
+  for (const current of queue) {
+    const file = resolve(root, current.path);
+    for (const match of current.text.matchAll(/\b(?:from\s*|require\s*\(\s*)["']([^"']+)["']/g)) {
+      const specifier = match[1]!;
+      if (unknownLayerAliases && /^(?:~{1,2}|@{1,2})(?:\/|$)/.test(specifier)) continue;
+      const alias = Object.keys(aliases)
+        .sort((a, b) => b.length - a.length)
+        .find((key) => specifier === key || specifier.startsWith(`${key}/`));
+      const base = specifier.startsWith(".")
+        ? resolve(dirname(file), specifier)
+        : alias
+          ? resolve(root, aliases[alias]!, specifier.slice(alias.length).replace(/^\//, ""))
+          : undefined;
+      if (!base) continue;
+      let found = false;
+      for (const candidate of extname(base)
+        ? [base]
+        : [base, `${base}/index`].flatMap((path) =>
+            ["ts", "js", "mts", "mjs", "cts", "cjs"].map((extension) => `${path}.${extension}`),
+          )) {
+        if (existsSync(candidate)) {
+          found = true;
+          if (visited.has(candidate)) break;
+          visited.add(candidate);
+          const collected = sources.length < 4 ? projectSources(root, [candidate]) : [];
+          if (collected.length) {
+            sources.push(...collected);
+            queue.push(...collected);
+          } else omitted.push(relative(root, candidate).replaceAll("\\", "/"));
+          break;
+        }
       }
+      if (!found) omitted.push(specifier);
     }
   }
-  const files = [...new Set(imported)];
-  const sources = projectSources(root, files.slice(0, 4));
-  const collected = new Set(sources.map((source) => resolve(root, source.path)));
-  return {
-    sources,
-    omitted: files
-      .filter((file) => !collected.has(file))
-      .map((file) => relative(root, file).replaceAll("\\", "/")),
-  };
+  return { sources, omitted };
 }
 
 function validCitations(

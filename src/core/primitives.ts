@@ -242,6 +242,7 @@ export interface NuxtModuleSource {
 }
 
 export interface NuxtDoctorManifest {
+  autoRegisteredLayers?: string[];
   generatedAt?: string;
   nuxtConfigMtimeMs?: number;
   nuxtVersion: string;

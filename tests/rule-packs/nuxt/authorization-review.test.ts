@@ -716,3 +716,51 @@ test("rejects layer middleware evidence after the active layer config changes", 
   expect(result.project.nuxt?.manifest?.isCurrent).toBe(false);
   expect(calls).toBe(0);
 });
+
+test.each([false, true])("collects nested guard policy and handles cycles: %s", async (cycle) => {
+  let calls = 0;
+  const collected: string[] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    calls++;
+    collected.push(...candidate.sources.map((source) => source.path));
+    return { status: "unknown", reason: "Policy available for review", citations: [] };
+  });
+  await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "server/api/account.get.ts":
+        "import guard from '../utils/guard'; export default defineEventHandler(guard)",
+      "server/utils/guard.ts":
+        "import policy from './policy'; export default event => policy(event)",
+      "server/utils/policy.ts": cycle
+        ? "import guard from './guard'; export default guard"
+        : "export default event => requireAuth(event)",
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(calls).toBe(1);
+  expect(collected).toContain("server/utils/policy.ts");
+});
+
+test("omitted nested guard policies make the report incomplete", async () => {
+  let calls = 0;
+  const extension = createNuxtAuthorizationReviewExtension(async () => {
+    calls++;
+    return { status: "unknown", reason: "Missing policy", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "server/api/account.get.ts":
+        "import guard from '../utils/guard'; export default defineEventHandler(guard)",
+      "server/utils/guard.ts":
+        "import policy from './policy'; export default event => policy(event)",
+      "server/utils/policy.ts": " ".repeat(16_001),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(calls).toBe(0);
+  expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+});

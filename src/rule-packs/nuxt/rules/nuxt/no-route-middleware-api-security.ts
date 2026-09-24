@@ -154,7 +154,7 @@ function hasUnconditionalMiddlewareGuard(file: string): boolean {
 }
 
 function hasAuthGuard(text: string): boolean {
-  return /requireUserSession|requireMcpAdminToken|isAuthorizedAdmin|requireAuth|authorize|authGuard|protectRoute|getUserSession/i.test(
+  return /requireUserSession|requireMcpAdminToken|isAuthorizedAdmin|requireAuth|authorize|authGuard|protectRoute/i.test(
     text,
   );
 }

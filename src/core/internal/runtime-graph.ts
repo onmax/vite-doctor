@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "pathe";
 import { valid } from "semver";
@@ -118,8 +118,24 @@ export function resolveNuxtCompatibility(
   };
 }
 
+export function autoRegisteredNuxtLayers(root: string): string[] {
+  const directory = join(root, "layers");
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory)
+    .filter((name) => statSync(join(directory, name)).isDirectory())
+    .sort();
+}
+
 export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest | null) {
   if (!manifest?.generatedAt || !Number.isFinite(Date.parse(manifest.generatedAt))) return false;
+  const recordedLayers =
+    manifest.autoRegisteredLayers ??
+    (manifest.layers ?? [])
+      .filter((layer) => dirname(resolve(root, layer.root)) === join(root, "layers"))
+      .map((layer) => resolve(root, layer.root).split("/").pop()!)
+      .sort();
+  if (JSON.stringify(recordedLayers) !== JSON.stringify(autoRegisteredNuxtLayers(root)))
+    return false;
   const configs = [
     { root, nuxtConfigMtimeMs: manifest.nuxtConfigMtimeMs },
     ...(manifest.layers ?? []),
