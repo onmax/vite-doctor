@@ -50,6 +50,7 @@ export const noHttpErrorMasking = createRule({
           conditions: new Map(),
           resolveBinding: lexical.resolve,
           functions: declaredFunctions(lexical),
+          asyncBody: Boolean(enclosing.__doctorParent?.async),
         };
         let candidate: Path | undefined;
         try {
@@ -170,7 +171,7 @@ function outcomes(
     (current) => {
       if (current.outcome !== "normal") return current;
       const expression = unwrapExpression(node);
-      const status = httpStatus(expression, current.resolveBinding, current.literals);
+      const status = httpStatus(expression, current);
       if (status !== undefined)
         return { ...current, value: { error: { id: --current.budget.remaining, status } } };
       if (expression?.type === "Literal")
@@ -811,6 +812,23 @@ function evaluateOutcomes(
                       : undefined;
         return { ...current, value: { literal } };
       });
+    if (node.type === "TaggedTemplateExpression")
+      return paths.flatMap((current) =>
+        current.outcome === "normal"
+          ? outcomes(
+              {
+                type: "CallExpression",
+                callee: node.tag,
+                arguments: [{ type: "UnknownExpression" }, ...node.quasi.expressions],
+              } as AnyNode,
+              current,
+              bindings,
+              conditions,
+              [undefined, ...node.quasi.expressions.map(() => undefined)],
+              [{ type: "UnknownExpression" }, ...node.quasi.expressions],
+            )
+          : [current],
+      );
     return node.type === "SequenceExpression"
       ? paths
       : paths.map((current) => ({ ...current, value: undefined }));
@@ -1665,17 +1683,31 @@ function isH3Reference(node: AnyNode, name: string, resolve: Path["resolveBindin
   );
 }
 
-function httpStatus(
-  node: AnyNode,
-  resolve: Path["resolveBinding"],
-  literals?: Path["literals"],
-): number | "server-error" | undefined {
+function numericStatus(node: AnyNode, path: Path): number | undefined {
+  node = unwrapExpression(node);
+  const literal = knownLiteral(node, path);
+  if (typeof literal === "number") return literal;
+  if (node?.type === "UnaryExpression" && (node.operator === "+" || node.operator === "-")) {
+    const value = numericStatus(node.argument, path);
+    return value === undefined ? undefined : node.operator === "-" ? -value : value;
+  }
+  if (node?.type !== "BinaryExpression") return;
+  const left = numericStatus(node.left, path);
+  const right = numericStatus(node.right, path);
+  if (left === undefined || right === undefined) return;
+  if (node.operator === "+") return left + right;
+  if (node.operator === "-") return left - right;
+  if (node.operator === "*") return left * right;
+  if (node.operator === "/") return left / right;
+}
+
+function httpStatus(node: AnyNode, path: Path): number | "server-error" | undefined {
   node = unwrapExpression(node);
   const callee = unwrapExpression(node?.callee);
   if (
     ["NewExpression", "CallExpression"].includes(node?.type) &&
     callee?.type === "Identifier" &&
-    !resolve(callee) &&
+    !path.resolveBinding(callee) &&
     [
       "Error",
       "TypeError",
@@ -1688,23 +1720,23 @@ function httpStatus(
     ].includes(callee?.name)
   )
     return "server-error";
-  if (node?.type !== "CallExpression" || !isH3Reference(callee, "createError", resolve)) return;
+  if (node?.type !== "CallExpression" || !isH3Reference(callee, "createError", path.resolveBinding))
+    return;
   const options = unwrapExpression(node.arguments?.[0]);
   if (!options || (options.type === "Literal" && typeof options.value === "string")) return 500;
   if (options.type !== "ObjectExpression") return;
   const statuses = new Map<string, number | undefined>();
   for (const property of options.properties ?? []) {
-    if (property.type === "SpreadElement" || property.computed) {
+    const key = property.computed
+      ? knownLiteral(property.key, path)
+      : (property.key?.name ?? property.key?.value);
+    if (property.type === "SpreadElement" || (property.computed && key === undefined)) {
       statuses.set("statusCode", undefined);
       statuses.set("status", undefined);
       continue;
     }
-    const key = property.key?.name ?? property.key?.value;
     if (key === "statusCode" || key === "status") {
-      const value = unwrapExpression(property.value);
-      const literal =
-        value?.type === "Identifier" ? literals?.get(resolve(value))?.literal : value?.value;
-      statuses.set(key, typeof literal === "number" ? literal : undefined);
+      statuses.set(key, numericStatus(property.value, path));
     }
   }
   if (statuses.has("statusCode")) return statuses.get("statusCode");
@@ -2007,6 +2039,15 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
             parent.left.type === "VariableDeclaration"
               ? parent.left.declarations[0].id
               : parent.left;
+          if (
+            parent.left.type !== "VariableDeclaration" &&
+            bindingNames(target).some((name) => {
+              const binding = current.resolveBinding({ name } as AnyNode, target);
+              const declaration = binding?.__doctorParent?.__doctorParent;
+              return declaration?.type === "VariableDeclaration" && declaration.kind === "const";
+            })
+          )
+            return [];
           const values = elements?.length ? elements : [{ type: "UnknownExpression" }];
           return values.flatMap((value: AnyNode) =>
             patternOutcomes(

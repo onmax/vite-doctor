@@ -2438,6 +2438,16 @@ test.each([
     1,
   ],
   [
+    "computed HTTP status key",
+    "try { throw createError({ ['statusCode']: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "computed numeric HTTP status",
+    "try { throw createError({ statusCode: 400 + 4 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
     "constructor call of arrow throws before client error",
     "try { new (() => {}); throw createError({ statusCode: 404 }) } catch { throw new Error() }",
     0,
@@ -2448,9 +2458,19 @@ test.each([
     1,
   ],
   [
+    "tagged template function throws client error",
+    "function tag() { throw createError({ statusCode: 404 }) }; try { tag`value` } catch { throw new Error() }",
+    1,
+  ],
+  [
     "for-of binding reaches nested try",
     "for (const code of [404]) { try { throw createError({ statusCode: code }) } catch { throw new Error() } }",
     1,
+  ],
+  [
+    "for-of cannot assign to existing const",
+    "const code = 500; for (code of [404]) { try { throw createError({ statusCode: code }) } catch { throw new Error() } }",
+    0,
   ],
   [
     "optional call of known function",
@@ -2580,4 +2600,16 @@ test.each([
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
+
+test("enclosing async handler adopts rejected return", async () => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "export default defineEventHandler(async () => { try { throw createError({ statusCode: 404 }) } catch { return Promise.reject(new Error()) } })",
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
 });
