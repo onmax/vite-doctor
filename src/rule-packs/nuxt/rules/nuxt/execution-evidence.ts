@@ -94,35 +94,63 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
   if (name && new RegExp(`{{[^}]*\\b${escapeRegExp(name)}\\b[^}]*}}`).test(template)) return true;
   if (isHydratingStateValue(node)) return true;
   const owner = nearestFunctionOrProgram(node);
-  const functionName = owner ? namedFunctionForNode(owner) : null;
-  return Boolean(functionName && functionFlowsToTemplate(ctx, functionName, template, new Set()));
+  return Boolean(owner && functionFlowsToTemplate(ctx, owner, template, new Set()));
 }
 
 function functionFlowsToTemplate(
   ctx: RuleContext,
-  functionName: string,
+  fn: AnyNode,
   template: string,
-  seen: Set<string>,
+  seen: Set<AnyNode>,
 ): boolean {
-  if (seen.has(functionName) || seen.size >= 4) return false;
-  seen.add(functionName);
-  if (new RegExp(`{{[^}]*\\b${escapeRegExp(functionName)}\\s*\\(`).test(template)) return true;
+  const parents = getScriptParents(ctx);
+  const binding = functionBinding(fn, parents);
+  const functionName = binding.id?.type === "Identifier" ? binding.id.name : null;
+  if (!functionName || seen.has(fn) || seen.size >= 4) return false;
+  seen.add(fn);
+  const renderedExpressions = [
+    ...template.matchAll(/{{([\s\S]*?)}}/g),
+    ...template.matchAll(/(?:\s:|\sv-(?:bind\b|if\b|else-if\b|show\b))[^=]*=\s*["']([^"']+)["']/g),
+  ].map((match) => match[1] ?? "");
   const renderedIdentifier = (name: string) =>
-    getTemplateBoundIdentifiers(ctx).has(name) ||
-    new RegExp(`{{[^}]*\\b${escapeRegExp(name)}\\b[^}]*}}`).test(template);
-  const visit = (node: AnyNode, owner: string | null, variable: string | null): boolean => {
+    renderedExpressions.some((expression) =>
+      new RegExp(`\\b${escapeRegExp(name)}\\b`).test(expression),
+    );
+  if (
+    resolveLocalBinding(ctx.file.scriptAst, functionName, parents) === binding &&
+    renderedExpressions.some((expression) =>
+      new RegExp(`\\b${escapeRegExp(functionName)}\\s*\\(`).test(expression),
+    )
+  )
+    return true;
+  const visit = (node: AnyNode, owner: AnyNode, variable: AnyNode): boolean => {
     if (!node || typeof node !== "object") return false;
     if (Array.isArray(node)) return node.some((child) => visit(child, owner, variable));
-    if (node.type === "FunctionDeclaration") owner = node.id?.name ?? owner;
-    if (node.type === "VariableDeclarator") {
-      const name = node.id?.type === "Identifier" ? node.id.name : null;
-      if (name && ["ArrowFunctionExpression", "FunctionExpression"].includes(node.init?.type))
-        return visit(node.init, name, null);
-      return visit(node.init, owner, name);
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
+    ) {
+      owner = node;
+      variable = null;
     }
-    if (node.type === "CallExpression" && node.callee?.name === functionName) {
-      if (variable && renderedIdentifier(variable)) return true;
-      if (owner && owner !== functionName && functionFlowsToTemplate(ctx, owner, template, new Set(seen)))
+    if (node.type === "VariableDeclarator") return visit(node.init, owner, node);
+    if (
+      node.type === "CallExpression" &&
+      node.callee?.name === functionName &&
+      resolveLocalBinding(node, functionName, parents) === binding
+    ) {
+      const name = variable?.id?.type === "Identifier" ? variable.id.name : null;
+      if (
+        name &&
+        resolveLocalBinding(ctx.file.scriptAst, name, parents) === variable &&
+        renderedIdentifier(name)
+      )
+        return true;
+      if (
+        owner &&
+        owner !== fn &&
+        contributesToReturn(node, owner, parents) &&
+        functionFlowsToTemplate(ctx, owner, template, new Set(seen))
+      )
         return true;
     }
     for (const [key, value] of Object.entries(node)) {
@@ -132,6 +160,124 @@ function functionFlowsToTemplate(
     return false;
   };
   return visit(ctx.file.scriptAst, null, null);
+}
+
+function contributesToReturn(node: AnyNode, owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>) {
+  for (let current = node; current && current !== owner; current = parents.get(current)) {
+    const parent = parents.get(current);
+    if (
+      parent?.type === "ExpressionStatement" ||
+      (parent?.type === "UnaryExpression" && parent.operator === "void")
+    )
+      return false;
+    if (parent?.type === "SequenceExpression" && parent.expressions.at(-1) !== current)
+      return false;
+    if (parent?.type === "ReturnStatement") return true;
+    if (parent === owner)
+      return (
+        owner.type === "ArrowFunctionExpression" &&
+        owner.body === current &&
+        current.type !== "BlockStatement"
+      );
+  }
+  return false;
+}
+
+function getScriptParents(ctx: RuleContext): WeakMap<AnyNode, AnyNode> {
+  const key = `nuxt:script-parents:${ctx.file.hash}`;
+  const cached = ctx.cache.get<WeakMap<AnyNode, AnyNode>>(key);
+  if (cached) return cached;
+  const parents = new WeakMap<AnyNode, AnyNode>();
+  walkScriptLocal(ctx.file.scriptAst, (node) => {
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "__doctorParent" || key === "parent") continue;
+      for (const child of Array.isArray(value) ? value : [value]) {
+        if (child && typeof child === "object" && "type" in child) parents.set(child, node);
+      }
+    }
+  });
+  ctx.cache.set(key, parents);
+  return parents;
+}
+
+function functionBinding(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>) {
+  const parent = parents.get(fn);
+  return parent?.type === "VariableDeclarator" ? parent : fn;
+}
+
+function patternBinds(node: AnyNode, name: string): boolean {
+  if (!node) return false;
+  if (node.type === "Identifier") return node.name === name;
+  if (node.type === "AssignmentPattern") return patternBinds(node.left, name);
+  if (node.type === "RestElement") return patternBinds(node.argument, name);
+  if (node.type === "ArrayPattern")
+    return node.elements.some((item: AnyNode) => patternBinds(item, name));
+  if (node.type === "ObjectPattern")
+    return node.properties.some((item: AnyNode) => patternBinds(item.value ?? item.argument, name));
+  return false;
+}
+
+function findFunctionVar(node: AnyNode, name: string): AnyNode {
+  if (!node || typeof node !== "object") return null;
+  if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type))
+    return null;
+  if (node.type === "VariableDeclaration" && node.kind === "var") {
+    return node.declarations.find((item: AnyNode) => patternBinds(item.id, name)) ?? null;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "__doctorParent" || key === "parent") continue;
+    const found = findFunctionVar(value, name);
+    if (found) return found;
+  }
+  return null;
+}
+
+function resolveLocalBinding(
+  node: AnyNode,
+  name: string,
+  parents: WeakMap<AnyNode, AnyNode>,
+): AnyNode {
+  for (let scope = node; scope; scope = parents.get(scope)) {
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(scope.type)
+    ) {
+      const parameter = scope.params.find((param: AnyNode) => patternBinds(param, name));
+      if (parameter) return parameter;
+      const local = findFunctionVar(scope.body, name);
+      if (local) return local;
+      if (scope.id?.name === name) return scope;
+    }
+    if (scope.type === "CatchClause" && patternBinds(scope.param, name)) return scope.param;
+    const statements =
+      scope.type === "Program" || scope.type === "BlockStatement"
+        ? scope.body
+        : scope.type === "ForStatement"
+          ? [scope.init].filter(Boolean)
+          : ["ForOfStatement", "ForInStatement"].includes(scope.type)
+            ? [scope.left]
+            : scope.type === "SwitchStatement"
+              ? scope.cases.flatMap((item: AnyNode) => item.consequent)
+              : [];
+    for (const statement of statements) {
+      const declaration = statement.declaration ?? statement;
+      if (
+        ["FunctionDeclaration", "ClassDeclaration"].includes(declaration.type) &&
+        declaration.id?.name === name
+      )
+        return declaration;
+      if (declaration.type === "VariableDeclaration") {
+        const binding = declaration.declarations.find((item: AnyNode) =>
+          patternBinds(item.id, name),
+        );
+        if (binding) return binding;
+      }
+      if (declaration.type === "ImportDeclaration") {
+        const binding = declaration.specifiers.find((item: AnyNode) => item.local?.name === name);
+        if (binding) return binding;
+      }
+    }
+  }
+  return null;
 }
 
 export function isInsideExportedFunction(text: string, offset: number) {
