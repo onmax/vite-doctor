@@ -40,6 +40,8 @@ export const noHttpErrorMasking = createRule({
         let enclosing = node;
         while (enclosing.__doctorParent && !isFunction(enclosing.__doctorParent))
           enclosing = enclosing.__doctorParent;
+        const enclosingFunction = enclosing.__doctorParent;
+        const handlerCall = enclosingFunction?.__doctorParent;
         const conditions = stableConditions(enclosing);
         let root = node;
         while (root.__doctorParent) root = root.__doctorParent;
@@ -50,7 +52,12 @@ export const noHttpErrorMasking = createRule({
           conditions: new Map(),
           resolveBinding: lexical.resolve,
           functions: declaredFunctions(lexical),
-          asyncBody: Boolean(enclosing.__doctorParent?.async),
+          asyncBody: Boolean(
+            enclosingFunction?.async ||
+            (handlerCall?.type === "CallExpression" &&
+              ["defineEventHandler", "eventHandler"].includes(handlerCall.callee?.name) &&
+              handlerCall.arguments.includes(enclosingFunction)),
+          ),
         };
         let candidate: Path | undefined;
         try {

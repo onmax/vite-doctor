@@ -2613,3 +2613,15 @@ test("enclosing async handler adopts rejected return", async () => {
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
 });
+
+test("enclosing synchronous handler adopts rejected return", async () => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "export default defineEventHandler(() => { try { throw createError({ statusCode: 404 }) } catch { return Promise.reject(new Error()) } })",
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+});
