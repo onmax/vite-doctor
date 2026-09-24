@@ -141,9 +141,8 @@ export const noSecretDefine = createRule({
     return {
       ScriptNode(node) {
         if ((node as { type?: string }).type !== "Program") return;
-        const { initializers, memberReturns, localCalls, shadowedPromises } = readAliasInitializers(
-          ctx.file.text,
-        );
+        const { initializers, memberReturns, localCalls, shadowedPromises, serializationHooks } =
+          readAliasInitializers(ctx.file.text);
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           if (
             !SECRET_NAME_RE.test(entry.key) &&
@@ -155,6 +154,7 @@ export const noSecretDefine = createRule({
               memberReturns,
               localCalls,
               shadowedPromises,
+              serializationHooks,
             )
           )
             continue;
@@ -179,6 +179,9 @@ export const noSecretDefine = createRule({
 
 function readAliasInitializers(source: string) {
   const initializers = new Map<number, [number, number][]>();
+  const serializationHooks = new Map<number, { range: [number, number]; prefix: string }>();
+  const namespaces = new Set<number>();
+  const bindingKeys = new Map<number, string>();
   const configHelpers = new Set<number>();
   const mergeHelpers = new Set<number>();
   const shadowedPromises = new Set<number>();
@@ -193,6 +196,8 @@ function readAliasInitializers(source: string) {
   } catch {
     return {
       initializers,
+      bindingKeys,
+      serializationHooks,
       memberReturns,
       configHelpers,
       mergeHelpers,
@@ -204,6 +209,19 @@ function readAliasInitializers(source: string) {
   for (const scope of scopeManager.scopes) {
     for (const reference of scope.references) {
       const definition = reference.resolved?.defs[0];
+      bindingKeys.set(
+        reference.identifier.range[0],
+        reference.resolved
+          ? `binding:${reference.resolved.identifiers[0]?.range[0]}`
+          : `global:${reference.identifier.name}`,
+      );
+      if (
+        definition?.type === "ImportBinding" &&
+        definition.parent.type === "ImportDeclaration" &&
+        definition.parent.source.value === "vite" &&
+        definition.node.type === "ImportNamespaceSpecifier"
+      )
+        namespaces.add(reference.identifier.range[0]);
       if (reference.identifier.name === "Promise" && definition)
         shadowedPromises.add(reference.identifier.range[0]);
       if (
@@ -318,6 +336,26 @@ function readAliasInitializers(source: string) {
       return readProperties(spread, new Set([...seen, spread]));
     });
   }
+  for (const object of nodesByRange.values()) {
+    if (object.type !== "ObjectExpression") continue;
+    const hook = readProperties(object, new Set([object])).findLast(
+      (property) =>
+        property.type === "Property" &&
+        (property.computed ? resolve(property.key)?.value : propertyName(property.key)) ===
+          "toJSON",
+    );
+    const value = hook?.kind === "init" && resolve(hook.value);
+    if (
+      !value ||
+      !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(value.type)
+    )
+      continue;
+    const prefix =
+      value.type === "FunctionExpression" && source[value.range[0]] === "("
+        ? `${value.async ? "async " : ""}function${value.generator ? "*" : ""}`
+        : "";
+    serializationHooks.set(object.range[0], { range: value.range, prefix });
+  }
   for (const call of calls) {
     const callee = resolve(call.callee);
     if (
@@ -328,6 +366,11 @@ function readAliasInitializers(source: string) {
       localCalls.add(call.range[0]);
   }
   for (const member of members) {
+    if (namespaces.has(member.object.range[0])) {
+      const name = member.computed ? member.property.value : member.property.name;
+      if (name === "defineConfig") configHelpers.add(member.range[0]);
+      if (name === "mergeConfig") mergeHelpers.add(member.range[0]);
+    }
     const value = resolve(member);
     if (
       !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
@@ -342,7 +385,16 @@ function readAliasInitializers(source: string) {
         : "";
     memberReturns.set(member.range[0], { range: value.range, getter: getters.has(value), prefix });
   }
-  return { initializers, memberReturns, configHelpers, mergeHelpers, shadowedPromises, localCalls };
+  return {
+    initializers,
+    bindingKeys,
+    serializationHooks,
+    memberReturns,
+    configHelpers,
+    mergeHelpers,
+    shadowedPromises,
+    localCalls,
+  };
 }
 
 function resolvesSecretAlias(
@@ -353,6 +405,7 @@ function resolvesSecretAlias(
   memberReturns: Map<number, { range: [number, number]; getter: boolean; prefix: string }>,
   localCalls: Set<number>,
   shadowedPromises: Set<number>,
+  serializationHooks: Map<number, { range: [number, number]; prefix: string }>,
 ): boolean {
   type Range = [number, number];
   type Trace = {
@@ -546,12 +599,36 @@ function resolvesSecretAlias(
         }
         continue;
       }
+      if (node.type === "ObjectExpression" && serializedNodes.has(node)) {
+        const hook = serializationHooks.get(current.start + node.range[0] - 1);
+        if (hook) {
+          const identity = `serialization:${hook.range[0]}:${JSON.stringify([...current.bindings])}`;
+          if (!seen.has(identity)) {
+            seen.add(identity);
+            pending.push({
+              value: hook.prefix + source.slice(...hook.range),
+              start: hook.range[0] - hook.prefix.length,
+              invoked: true,
+              serialized: true,
+              awaited: false,
+              args: [],
+              bindings: new Map(current.bindings),
+            });
+          }
+          continue;
+        }
+      }
       if (node.type === "Property" && node.kind === "get" && serializedNodes.has(node))
         invokedNodes.add(node.value);
       if (node.type === "AwaitExpression") awaitedNodes.add(node.argument);
       if (node.type === "CallExpression") {
-        if (memberPath(node.callee) === "JSON.stringify" && node.arguments[0])
+        if (memberPath(node.callee) === "JSON.stringify" && node.arguments[0]) {
           serializedNodes.add(node.arguments[0]);
+          if (node.arguments[1]) {
+            invokedNodes.add(node.arguments[1]);
+            serializedNodes.add(node.arguments[1]);
+          }
+        }
         if (
           memberPath(node.callee as AnyNode) === "Promise.resolve" &&
           !shadowedPromises.has(current.start + node.callee.object.range[0] - 1)
@@ -706,7 +783,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
   const text = ctx.file.text;
   const entries: Array<{ key: string; rawValue: string; valueStart: number; range: SourceRange }> =
     [];
-  const { initializers, configHelpers, mergeHelpers, shadowedPromises } =
+  const { initializers, bindingKeys, configHelpers, mergeHelpers, shadowedPromises, localCalls } =
     readAliasInitializers(text);
   const nodesByRange = new Map<string, AnyNode>();
   walkScriptLocal(program, (node) => {
@@ -747,19 +824,39 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
     visited.delete(node);
     return options;
   }
-  function readConfig(input: AnyNode): (typeof entries)[] {
+  type Alternative = { entries: typeof entries; predicates: Map<string, boolean> };
+  function readConfig(input: AnyNode): Alternative[] {
+    const empty = () => [{ entries: [], predicates: new Map<string, boolean>() }];
     const node = resolve(input);
-    if (!node || seen.has(node)) return [[]];
+    if (!node || seen.has(node)) return empty();
     seen.add(node);
     try {
       if (node.type === "CallExpression" && mergeHelpers.has(node.callee.start)) {
         const left = readConfig(node.arguments[0]);
         const right = readConfig(node.arguments[1]);
         return left.flatMap((base) =>
-          right.map((override) => [
-            ...new Map([...base, ...override].map((entry) => [entry.key, entry])).values(),
-          ]),
+          right.flatMap((override) => {
+            if (
+              [...base.predicates].some(
+                ([key, value]) =>
+                  override.predicates.has(key) && override.predicates.get(key) !== value,
+              )
+            )
+              return [];
+            return [
+              {
+                entries: [
+                  ...new Map(
+                    [...base.entries, ...override.entries].map((entry) => [entry.key, entry]),
+                  ).values(),
+                ],
+                predicates: new Map([...base.predicates, ...override.predicates]),
+              },
+            ];
+          }),
         );
+      } else if (node.type === "CallExpression" && localCalls.has(node.start)) {
+        return readConfig(node.callee);
       } else if (node.type === "AwaitExpression") {
         return readConfig(node.argument);
       } else if (
@@ -773,11 +870,26 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
       ) {
         if (node.body.type !== "BlockStatement") return readConfig(node.body);
-        const alternatives: (typeof entries)[] = [];
+        const alternatives: Alternative[] = [];
         visitReturnValues(node.body, (value) => alternatives.push(...readConfig(value)));
-        return alternatives.length ? alternatives : [[]];
+        return alternatives.length ? alternatives : empty();
       } else if (node.type === "ConditionalExpression") {
-        return [...readConfig(node.consequent), ...readConfig(node.alternate)];
+        const test = resolve(node.test);
+        const predicate = test?.type === "Identifier" ? test : node.test;
+        const key = predicate?.type === "Identifier" ? bindingKeys.get(predicate.start) : undefined;
+        return [true, false].flatMap((truth) =>
+          readConfig(truth ? node.consequent : node.alternate).flatMap((alternative) => {
+            if (!key) return [alternative];
+            if (alternative.predicates.has(key) && alternative.predicates.get(key) !== truth)
+              return [];
+            return [
+              {
+                entries: alternative.entries,
+                predicates: new Map([...alternative.predicates, [key, truth]]),
+              },
+            ];
+          }),
+        );
       } else if (node.type === "ObjectExpression") {
         const result: typeof entries = [];
         const option = readOptions(node).findLast(
@@ -785,7 +897,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         );
         if (option) {
           const values = resolve(option.value);
-          if (values?.type !== "ObjectExpression") return [[]];
+          if (values?.type !== "ObjectExpression") return empty();
           const properties = new Map<string, AnyNode>();
           for (const property of readOptions(values)) {
             if (property.type !== "Property") continue;
@@ -807,20 +919,24 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             });
           }
         }
-        return [result];
+        return [{ entries: result, predicates: new Map() }];
       }
-      return [[]];
+      return empty();
     } finally {
       seen.delete(node);
     }
   }
   for (const statement of (program as AnyNode).body) {
     if (statement.type === "ExportDefaultDeclaration")
-      entries.push(...readConfig(statement.declaration).flat());
+      entries.push(
+        ...readConfig(statement.declaration).flatMap((alternative) => alternative.entries),
+      );
     else if (statement.type === "ExportNamedDeclaration" && !statement.source) {
       for (const specifier of statement.specifiers) {
         if (propertyName(specifier.exported) === "default")
-          entries.push(...readConfig(specifier.local).flat());
+          entries.push(
+            ...readConfig(specifier.local).flatMap((alternative) => alternative.entries),
+          );
       }
     } else if (
       statement.type === "ExpressionStatement" &&
@@ -828,7 +944,9 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
       statement.expression.operator === "=" &&
       memberPath(statement.expression.left) === "module.exports"
     )
-      entries.push(...readConfig(statement.expression.right).flat());
+      entries.push(
+        ...readConfig(statement.expression.right).flatMap((alternative) => alternative.entries),
+      );
   }
   return entries;
 }
