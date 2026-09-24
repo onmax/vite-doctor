@@ -4237,3 +4237,24 @@ test.each(["ts", "js", "mts", "mjs", "cts", "cjs"])(
     }
   },
 );
+
+test.each([
+  ["const auth = betterAuth({}); export { auth }", 0],
+  ["const instance = betterAuth({}); export { instance as auth }", 0],
+  ["const auth = { handler: () => ({}) }; export { auth }", 1],
+  ["const auth = betterAuth({}); export { auth } from './other'", 1],
+  ["const auth = betterAuth({}); export type { auth }", 1],
+])("provider export lists require local provenance: %s", async (provider, count) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/auth/[...all].ts":
+        "import { auth } from '~/utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+      "app/utils/auth.ts": `import { betterAuth } from 'better-auth'; ${provider}`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});

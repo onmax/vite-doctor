@@ -1103,7 +1103,7 @@ test.each(["present", "oversized", "inactive", "custom-server"])(
 );
 
 test.each(["api", "routes"])("reviews conventional layer %s handlers", async (directory) => {
-  const handler = `extensions/accounts/backend/${directory}/account.ts`;
+  const handler = `extensions/admin/backend/${directory}/account.ts`;
   const reviewed: string[] = [];
   const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
     reviewed.push(candidate.handler.path);
@@ -1121,16 +1121,19 @@ test.each(["api", "routes"])("reviews conventional layer %s handlers", async (di
     files: {
       "app/middleware/auth.ts": files["app/middleware/auth.ts"],
       [handler]: files["server/api/account.get.ts"],
-      [`extensions/accounts/app/server/${directory}/account.ts`]: " ".repeat(17000),
-      [`extensions/accounts/server/${directory}/account.ts`]: " ".repeat(17000),
+      [`extensions/admin/backend/${directory}/health.ts`]:
+        "export default defineEventHandler(() => 'ok')",
+      [`extensions/admin/backend/${directory}/status.ts`]: " ".repeat(17000),
+      [`extensions/admin/app/server/${directory}/account.ts`]: " ".repeat(17000),
+      [`extensions/admin/server/${directory}/account.ts`]: " ".repeat(17000),
       [`extensions/inactive/server/${directory}/account.ts`]: " ".repeat(17000),
       ".nuxt/doctor.manifest.json": JSON.stringify({
         generatedAt: "2100-01-01T00:00:00.000Z",
         layers: [
           {
-            root: "extensions/accounts",
-            srcDir: "extensions/accounts/app",
-            serverDir: "extensions/accounts/backend",
+            root: "extensions/admin",
+            srcDir: "extensions/admin/app",
+            serverDir: "extensions/admin/backend",
             priority: 0,
           },
         ],

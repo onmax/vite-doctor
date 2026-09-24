@@ -158,30 +158,30 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             return;
           }
           const registered = registrations.filter((entry) => !entry.middleware);
+          const layerHandlerDirs = nuxt.manifest?.isCurrent
+            ? nuxt.layers.flatMap((layer) =>
+                ["api", "routes"].map((directory) =>
+                  resolve(root, layer.serverDir ?? resolve(root, layer.root, "server"), directory),
+                ),
+              )
+            : [];
           const handlerFiles = [
             ...new Set(
               [
                 ...(ctx.project.nuxt?.serverDirs.api ?? []),
                 ...(ctx.project.nuxt?.serverDirs.routes ?? []),
-                ...appMiddlewareFiles(
-                  nuxt.manifest?.isCurrent
-                    ? nuxt.layers.flatMap((layer) =>
-                        ["api", "routes"].map((directory) =>
-                          resolve(
-                            root,
-                            layer.serverDir ?? resolve(root, layer.root, "server"),
-                            directory,
-                          ),
-                        ),
-                      )
-                    : [],
-                ),
+                ...appMiddlewareFiles(layerHandlerDirs),
                 ...registered.map((entry) => resolve(root, entry.file)),
               ].map((file) => resolve(root, file)),
             ),
           ].filter(
             (file) =>
-              sensitivePath.test(relative(root, file)) ||
+              sensitivePath.test(
+                relative(
+                  layerHandlerDirs.find((directory) => file.startsWith(`${directory}/`)) ?? root,
+                  file,
+                ),
+              ) ||
               registered.some(
                 (entry) =>
                   resolve(root, entry.file) === file && sensitivePath.test(entry.route ?? ""),

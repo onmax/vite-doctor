@@ -256,6 +256,19 @@ function createsProvider(program: AnyNode, name: string, exported = false): bool
             value.callee.type === "Identifier" &&
             factories.includes(value.callee.name);
     }
+    if (
+      exported &&
+      statement.type === "ExportNamedDeclaration" &&
+      !statement.source &&
+      statement.exportKind !== "type" &&
+      statement.specifiers.some(
+        (specifier: AnyNode) =>
+          specifier.exportKind !== "type" &&
+          (specifier.exported.name ?? specifier.exported.value) === name &&
+          createsProvider(program, specifier.local.name),
+      )
+    )
+      return true;
     if (exported && statement.type !== "ExportNamedDeclaration") return false;
     const declaration =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
