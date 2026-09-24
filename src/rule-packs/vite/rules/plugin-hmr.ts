@@ -1,5 +1,5 @@
 import { createRule } from "../../../core/index.js";
-import { isViteConfigFile, type AnyNode } from "./shared.js";
+import { isViteConfigFile, memberPath, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
 export const requirePluginName = createRule({
@@ -90,7 +90,7 @@ export const requireDisposeForSideEffects = createRule({
         const text = stripCommentsAndStrings(ctx.file.text);
         if (!/import\.meta\.hot\.accept\s*\(/.test(text)) return;
         const hasDispose = /import\.meta\.hot\.dispose\s*\(/.test(text);
-        const undisposed = hasDispose ? undisposedResource(text) : null;
+        const undisposed = hasDispose ? undisposedResource(node) : null;
         if (hasDispose && !undisposed) return;
         if (
           !undisposed &&
@@ -119,51 +119,85 @@ export const requireDisposeForSideEffects = createRule({
   },
 });
 
-function undisposedResource(text: string): string | null {
-  const opening = /import\.meta\.hot\.dispose\s*\(\s*\([^)]*\)\s*=>\s*\{/g.exec(text);
-  if (!opening) return null;
-  const start = opening.index + opening[0].length;
-  let depth = 1;
-  let end = start;
-  for (; end < text.length && depth; end++) {
-    if (text[end] === "{") depth++;
-    if (text[end] === "}") depth--;
-  }
-  if (depth) return null;
-  const body = text.slice(start, end - 1);
-  const setup = text.slice(0, opening.index);
-  const resourcePatterns = [
-    {
-      kind: "interval",
-      create: /\b(?:const|let)\s+(\w+)\s*=\s*setInterval\s*\(/g,
-      dispose: "clearInterval",
-    },
-    {
-      kind: "timeout",
-      create: /\b(?:const|let)\s+(\w+)\s*=\s*setTimeout\s*\(/g,
-      dispose: "clearTimeout",
-    },
-    {
-      kind: "WebSocket",
-      create: /\b(?:const|let)\s+(\w+)\s*=\s*new\s+WebSocket\s*\(/g,
-      dispose: "close",
-    },
-    {
-      kind: "subscription",
-      create: /\b(?:const|let)\s+(\w+)\s*=\s*[\w$.]+\.subscribe\s*\(/g,
-      dispose: "unsubscribe",
-    },
-  ];
-  for (const resource of resourcePatterns) {
-    for (const match of setup.matchAll(resource.create)) {
-      const name = match[1]!;
-      const cleanup = resource.dispose.startsWith("clear")
-        ? new RegExp(`\\b${resource.dispose}\\s*\\(\\s*${name}\\s*\\)`)
-        : new RegExp(`\\b${name}\\.${resource.dispose}\\s*\\(`);
-      if (!cleanup.test(body)) return resource.kind;
+function undisposedResource(program: AnyNode): string | null {
+  const resources: Array<{ name: string; kind: string; cleanup: string; method: boolean }> = [];
+  const callbacks = new Map<string, AnyNode>();
+  let callback: AnyNode;
+  walkEvaluation(program, (node) => {
+    if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id.name, node);
+    if (node.type === "VariableDeclarator" && node.id?.type === "Identifier") {
+      const init = node.init;
+      if (["ArrowFunctionExpression", "FunctionExpression"].includes(init?.type)) {
+        callbacks.set(node.id.name, init);
+      }
+      const callee = memberPath(init?.callee);
+      const kind =
+        init?.type === "CallExpression" && callee === "setInterval"
+          ? "interval"
+          : init?.type === "CallExpression" && callee === "setTimeout"
+            ? "timeout"
+            : init?.type === "NewExpression" && callee === "WebSocket"
+              ? "WebSocket"
+              : init?.type === "CallExpression" && callee?.endsWith(".subscribe")
+                ? "subscription"
+                : null;
+      if (kind)
+        resources.push({
+          name: node.id.name,
+          kind,
+          cleanup:
+            kind === "interval"
+              ? "clearInterval"
+              : kind === "timeout"
+                ? "clearTimeout"
+                : kind === "WebSocket"
+                  ? "close"
+                  : "unsubscribe",
+          method: kind === "WebSocket" || kind === "subscription",
+        });
     }
+    if (node.type === "CallExpression" && memberPath(node.callee) === "import.meta.hot.dispose") {
+      callback = node.arguments[0];
+    }
+  });
+  if (callback?.type === "Identifier") callback = callbacks.get(callback.name);
+  const cleanups: AnyNode[] = [];
+  if (
+    ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
+      callback?.type,
+    )
+  ) {
+    walkEvaluation(callback.body, (node) => {
+      if (node.type === "CallExpression") cleanups.push(node);
+    });
   }
-  return null;
+  return (
+    resources.find(
+      (resource) =>
+        !cleanups.some((call) =>
+          resource.method
+            ? memberPath(call.callee) === `${resource.name}.${resource.cleanup}`
+            : memberPath(call.callee) === resource.cleanup &&
+              call.arguments[0]?.type === "Identifier" &&
+              call.arguments[0].name === resource.name,
+        ),
+    )?.kind ?? null
+  );
+}
+
+function walkEvaluation(node: AnyNode, visit: (node: AnyNode) => void): void {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const child of node) walkEvaluation(child, visit);
+    return;
+  }
+  if (typeof node.type !== "string") return;
+  visit(node);
+  if (["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type))
+    return;
+  for (const [key, child] of Object.entries(node)) {
+    if (key !== "__doctorParent") walkEvaluation(child, visit);
+  }
 }
 
 function isPluginSource(path: string): boolean {
