@@ -1,3 +1,4 @@
+import { parseForESLint } from "@typescript-eslint/parser";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
 import { diagnostics } from "../../../diagnostics.js";
 import {
@@ -136,11 +137,12 @@ export const noSecretDefine = createRule({
     return {
       ScriptNode(node) {
         if ((node as { type?: string }).type !== "Program") return;
+        const initializers = readAliasInitializers(ctx.file.text);
         for (const entry of readDefineEntriesFromCurrentFile(ctx)) {
           if (
             !SECRET_NAME_RE.test(entry.key) &&
             !SECRET_NAME_RE.test(entry.rawValue) &&
-            !resolvesSecretAlias(entry.rawValue, ctx.file.text)
+            !resolvesSecretAlias(entry.rawValue, entry.valueStart, ctx.file.text, initializers)
           )
             continue;
           ctx.report(
@@ -162,19 +164,44 @@ export const noSecretDefine = createRule({
   },
 });
 
-function resolvesSecretAlias(value: string, source: string, seen = new Set<string>()): boolean {
+function readAliasInitializers(source: string) {
+  const { scopeManager } = parseForESLint(source, { range: true, sourceType: "module" });
+  const initializers = new Map<number, [number, number]>();
+  for (const scope of scopeManager.scopes) {
+    for (const reference of scope.references) {
+      const definition = reference.resolved?.defs[0];
+      if (
+        definition?.type !== "Variable" ||
+        definition.node.id.type !== "Identifier" ||
+        !definition.node.init
+      )
+        continue;
+      initializers.set(reference.identifier.range[0], definition.node.init.range);
+    }
+  }
+  return initializers;
+}
+
+function resolvesSecretAlias(
+  value: string,
+  start: number,
+  source: string,
+  initializers: Map<number, [number, number]>,
+  seen = new Set<number>(),
+): boolean {
   const unwrapped = value
     .trim()
     .replace(/^JSON\.stringify\s*\((.*)\)$/s, "$1")
     .trim();
-  if (!/^[A-Za-z_$][\w$]*$/.test(unwrapped) || seen.has(unwrapped) || seen.size >= 4) return false;
-  seen.add(unwrapped);
-  const declaration = source.match(
-    new RegExp(`\\b(?:const|let)\\s+${unwrapped.replaceAll("$", "\\$")}\\s*=\\s*([^;\\n]+)`),
+  if (!/^[A-Za-z_$][\w$]*$/.test(unwrapped) || seen.size >= 4) return false;
+  const range = initializers.get(start + value.lastIndexOf(unwrapped));
+  if (!range || seen.has(range[0])) return false;
+  seen.add(range[0]);
+  const initializer = source.slice(...range);
+  return (
+    SECRET_NAME_RE.test(initializer) ||
+    resolvesSecretAlias(initializer, range[0], source, initializers, seen)
   );
-  if (!declaration) return false;
-  const initializer = declaration[1]!.trim();
-  return SECRET_NAME_RE.test(initializer) || resolvesSecretAlias(initializer, source, seen);
 }
 
 function readDefineEntriesFromCurrentFile(ctx: RuleContext) {
@@ -182,7 +209,8 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext) {
   const body = /\bdefine\s*:\s*\{([\s\S]*?)\n\s*\}/m.exec(text);
   if (!body) return [];
   const base = body.index + body[0].indexOf(body[1]!);
-  const entries: Array<{ key: string; rawValue: string; range: SourceRange }> = [];
+  const entries: Array<{ key: string; rawValue: string; valueStart: number; range: SourceRange }> =
+    [];
   const re = /(["']?)([A-Z_$][\w$]*(?:\.[A-Z_$][\w$]*)?)\1\s*:\s*([^,\n}]+)/g;
   for (const match of body[1]!.matchAll(re)) {
     const key = match[2]!;
@@ -191,6 +219,8 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext) {
     entries.push({
       key,
       rawValue,
+      valueStart:
+        base + match.index! + match[0].length - match[3]!.length + match[3]!.indexOf(rawValue),
       range: ctx.helpers.rangeFromOffsets(ctx.file.path, text, start, start + key.length),
     });
   }
