@@ -343,6 +343,9 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
         manifest.imports,
         edge.kind,
         edge.probe === "commonjs" ? "require" : "import",
+        new Set(),
+        undefined,
+        root,
       )) {
         if (specifier.startsWith(".")) {
           enqueue(
@@ -465,6 +468,7 @@ function resolvePackageImport(
   mode: "import" | "require",
   seen = new Set<string>(),
   selfRoot?: string,
+  importsRoot?: string,
 ): { specifier: string; kind: PackageReference["kind"] }[] {
   if (!specifier.startsWith("#")) return [{ specifier, kind }];
   if (seen.has(specifier)) return [];
@@ -493,6 +497,8 @@ function resolvePackageImport(
     if (value === null) return [];
     if (typeof value === "string") {
       if (selfRoot && !validExportTarget(value, selfRoot)) return undefined;
+      if (importsRoot && value.startsWith(".") && !validExportTarget(value, importsRoot))
+        return undefined;
       return resolvePackageImport(
         value.replaceAll("*", wildcard),
         imports,
@@ -500,6 +506,7 @@ function resolvePackageImport(
         mode,
         new Set(seen),
         selfRoot,
+        importsRoot,
       );
     }
     if (Array.isArray(value)) {
@@ -696,6 +703,53 @@ function isNonAbruptStatement(statement: ts.Statement): boolean {
   return ts.isEmptyStatement(statement);
 }
 
+function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
+  if (
+    ts.isBinaryExpression(parent) &&
+    isWithin(node, parent.right) &&
+    parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  )
+    return !isNonAbruptElement(parent.left);
+  if (ts.isArrayLiteralExpression(parent))
+    return parent.elements
+      .slice(
+        0,
+        parent.elements.findIndex((item) => isWithin(node, item)),
+      )
+      .some((item) => !isNonAbruptElement(item));
+  if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
+    const args = parent.arguments ?? [];
+    const index = args.findIndex((arg) => isWithin(node, arg));
+    return index >= 0 && args.slice(0, index).some((arg) => !isNonAbruptElement(arg));
+  }
+  if (ts.isVariableDeclarationList(parent)) {
+    const index = parent.declarations.findIndex((declaration) => isWithin(node, declaration));
+    return (
+      index >= 0 &&
+      parent.declarations
+        .slice(0, index)
+        .some((declaration) =>
+          Boolean(declaration.initializer && !isNonAbruptElement(declaration.initializer)),
+        )
+    );
+  }
+  if (ts.isObjectLiteralExpression(parent)) {
+    const index = parent.properties.findIndex((property) => isWithin(node, property));
+    return (
+      index >= 0 &&
+      parent.properties
+        .slice(0, index)
+        .some(
+          (property) =>
+            !ts.isPropertyAssignment(property) ||
+            literalPropertyName(property.name) === undefined ||
+            !isNonAbruptElement(property.initializer),
+        )
+    );
+  }
+  return false;
+}
+
 function isNonCallable(node: ts.Expression): boolean {
   while (ts.isParenthesizedExpression(node)) node = node.expression;
   return (
@@ -824,6 +878,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     }
   }
   for (let parent = node.parent; parent; parent = parent.parent) {
+    if (hasAbruptPredecessor(node, parent)) return false;
     if (
       (ts.isFunctionLike(parent) &&
         !isDecoratorExpression(node, parent) &&
@@ -834,6 +889,22 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
         !(parent.name && isWithin(node, parent.name)) &&
         !parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) &&
         !isImmediateField(parent)) ||
+      ((ts.isPropertyDeclaration(parent) || ts.isClassStaticBlockDeclaration(parent)) &&
+        ts.isClassLike(parent.parent) &&
+        parent.parent.members
+          .slice(0, parent.parent.members.indexOf(parent))
+          .some(
+            (member) =>
+              (member.name && ts.isComputedPropertyName(member.name)) ||
+              (ts.isClassStaticBlockDeclaration(member) &&
+                !member.body.statements.every(isNonAbruptStatement)) ||
+              (ts.isPropertyDeclaration(member) &&
+                member.modifiers?.some(
+                  (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+                ) &&
+                member.initializer &&
+                !isNonAbruptElement(member.initializer)),
+          )) ||
       (ts.isIfStatement(parent) && !isWithin(node, parent.expression)) ||
       (ts.isConditionalExpression(parent) && !isWithin(node, parent.condition)) ||
       (ts.isSwitchStatement(parent) && !isWithin(node, parent.expression)) ||

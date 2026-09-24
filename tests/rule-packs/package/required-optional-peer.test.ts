@@ -682,6 +682,34 @@ test("skips invalid self-export array targets", async () => {
   ).toMatchObject([{ code: "PKG0003" }]);
 });
 
+test("skips invalid import-map array targets before selecting the optional peer", async () => {
+  expect(
+    await diagnose(
+      { main: "index.js", imports: { "#adapter": ["../invalid.js", "peer"] }, ...optionalPeer },
+      { "index.js": 'import "#adapter";' },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each([
+  'class Adapter { static { throw 0; } static peer = require("peer"); }',
+  'class Adapter { static first = unknown(); static peer = require("peer"); }',
+])("skips static loads after an abrupt class element: %s", async (source) => {
+  expect(await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source })).toEqual(
+    [],
+  );
+});
+
+test.each([
+  'await (async () => { unknown(), await import("peer"); })();',
+  'await (async () => { [unknown(), await import("peer")]; })();',
+  'await (async () => { const values = [unknown(), await import("peer")]; })();',
+])("skips awaited loads after an abrupt expression: %s", async (source) => {
+  expect(await diagnose({ main: "index.mjs", ...optionalPeer }, { "index.mjs": source })).toEqual(
+    [],
+  );
+});
+
 test.each([
   ["index.mjs", undefined],
   ["index.js", "module"],
