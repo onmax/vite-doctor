@@ -89,14 +89,6 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     for (const statement of node.body) {
       if (statement.type === "FunctionDeclaration" && statement.id)
         functions.set(statement.id.name, statement);
-      if (statement.type === "VariableDeclaration")
-        for (const declaration of statement.declarations)
-          if (
-            declaration.id.type === "Identifier" &&
-            declaration.init &&
-            isFunction(declaration.init)
-          )
-            functions.set(declaration.id.name, declaration.init);
     }
     const scopedBindings = new Map(bindings);
     const scopedConditions = new Map(normal.conditions);
@@ -121,6 +113,7 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
               current.label,
               [...(current.bindings ?? [])].sort(([a], [b]) => a.localeCompare(b)),
               [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
+              [...(current.functions ?? [])].sort(([a], [b]) => a.localeCompare(b)),
             ]),
             current,
           ]),
@@ -138,10 +131,15 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
         restoredBindings.delete(name);
         if (bindings.has(name)) restoredBindings.set(name, bindings.get(name)!);
       }
+      const restoredFunctions = new Map(current.functions);
+      for (const name of locals) {
+        restoredFunctions.delete(name);
+        if (path.functions?.has(name)) restoredFunctions.set(name, path.functions.get(name)!);
+      }
       return {
         ...current,
         bindings: restoredBindings,
-        functions: path.functions,
+        functions: restoredFunctions,
         conditions: restored,
       };
     });
@@ -214,9 +212,12 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
   if (node.type === "VariableDeclaration") {
     const next = new Map(path.conditions);
     const values = new Map(bindings);
+    const functions = new Map(path.functions);
     for (const declaration of node.declarations) {
       if (declaration.id.type !== "Identifier") continue;
       if (declaration.init) {
+        functions.delete(declaration.id.name);
+        if (isFunction(declaration.init)) functions.set(declaration.id.name, declaration.init);
         values.delete(declaration.id.name);
         const status = httpStatus(declaration.init);
         if (status !== undefined) values.set(declaration.id.name, status);
@@ -229,12 +230,16 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       )
         next.set(declaration.id.name, declaration.init.value);
     }
-    return [{ ...normal, bindings: values, conditions: next }];
+    return [{ ...normal, bindings: values, functions, conditions: next }];
   }
   const assignment = node.type === "ExpressionStatement" ? node.expression : node;
   if (assignment.type === "AssignmentExpression" && assignment.left.type === "Identifier") {
     const next = new Map(path.conditions);
     const values = new Map(bindings);
+    const functions = new Map(path.functions);
+    functions.delete(assignment.left.name);
+    if (assignment.operator === "=" && isFunction(assignment.right))
+      functions.set(assignment.left.name, assignment.right);
     values.delete(assignment.left.name);
     const status = assignment.operator === "=" ? httpStatus(assignment.right) : undefined;
     if (status !== undefined) values.set(assignment.left.name, status);
@@ -246,7 +251,7 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
       conditions.has(assignment.left.name)
     )
       next.set(assignment.left.name, assignment.right.value);
-    return [{ ...normal, bindings: values, conditions: next }];
+    return [{ ...normal, bindings: values, functions, conditions: next }];
   }
   if (isLoop(node)) return loopOutcomes(node, normal, bindings, conditions);
   if (node.type === "IfStatement") {
@@ -308,12 +313,13 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     }
     return paths;
   }
-  let callee = assignment.callee;
+  const call = assignment.type === "AwaitExpression" ? assignment.argument : assignment;
+  let callee = call.callee;
   while (callee?.type === "ParenthesizedExpression") callee = callee.expression;
   if (
-    assignment.type === "CallExpression" &&
+    call.type === "CallExpression" &&
     isFunction(callee) &&
-    !callee.async &&
+    (!callee.async || assignment.type === "AwaitExpression") &&
     !callee.generator
   ) {
     const local = new Map(bindings);
@@ -347,10 +353,13 @@ function outcomes(node: AnyNode, path: Path, bindings: Bindings, conditions: Set
     const values = new Map(bindings);
     for (const name of values.keys()) if (!stableBinding(node, name)) values.delete(name);
     walkScriptLocal(node, (child) => {
-      if (child.type !== "Identifier") return;
-      const fn = path.functions?.get(child.name);
-      if (!fn) return;
-      for (const name of values.keys()) if (!stableBinding(fn, name)) values.delete(name);
+      if (child.type !== "CallExpression") return;
+      for (const reference of [child.callee, ...child.arguments]) {
+        if (reference.type !== "Identifier") continue;
+        const fn = path.functions?.get(reference.name);
+        if (!fn) continue;
+        for (const name of values.keys()) if (!stableBinding(fn, name)) values.delete(name);
+      }
     });
     return [{ ...normal, bindings: values }];
   }
@@ -408,7 +417,29 @@ function loopOutcomes(
       (node.type === "ForStatement"
         ? { type: "Literal", value: true }
         : { type: "Identifier", name: "" }),
-    consequent: node.body,
+    consequent:
+      node.type === "ForInStatement" || node.type === "ForOfStatement"
+        ? {
+            type: "BlockStatement",
+            body: [
+              node.left.type === "VariableDeclaration"
+                ? {
+                    ...node.left,
+                    declarations: node.left.declarations.map((declaration: AnyNode) => ({
+                      ...declaration,
+                      init: { type: "Identifier", name: "" },
+                    })),
+                  }
+                : {
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: node.left,
+                    right: { type: "Identifier", name: "" },
+                  },
+              node.body,
+            ],
+          }
+        : node.body,
     alternate: { type: "BreakStatement" },
   } as AnyNode;
   let first = node.type === "DoWhileStatement";
@@ -417,6 +448,7 @@ function loopOutcomes(
     const key = JSON.stringify([
       [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
       [...(current.bindings ?? [])].sort(([a], [b]) => a.localeCompare(b)),
+      [...(current.functions ?? [])].sort(([a], [b]) => a.localeCompare(b)),
     ]);
     if (!first && seen.has(key)) continue;
     if (!first) seen.add(key);
@@ -492,7 +524,10 @@ function stableConditions(node: AnyNode): Set<string> {
       uses.set(child.id.name, (uses.get(child.id.name) ?? 0) + 1);
       return;
     }
-    if (child.type === "VariableDeclarator" || child.type === "CatchClause") {
+    if (
+      (child.type === "VariableDeclarator" && child.id.type !== "Identifier") ||
+      child.type === "CatchClause"
+    ) {
       walkScriptLocal(child.id ?? child.param, (binding) => {
         if (binding.type === "Identifier") unstable.add(binding.name);
       });
@@ -589,17 +624,17 @@ function stableBinding(body: AnyNode, name: string): boolean {
 
 function isFunction(node: AnyNode): boolean {
   return ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
-    node.type,
+    node?.type,
   );
 }
 
 function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
   const names = new Map<AnyNode, AnyNode>();
-  const identifiers = new Map<string, Set<AnyNode>>();
+  const invoked = new Set<string>();
   walkScriptLocal(root, (node) => {
-    if (node.type === "Identifier") {
-      if (!identifiers.has(node.name)) identifiers.set(node.name, new Set());
-      identifiers.get(node.name)!.add(node);
+    if (node.type === "CallExpression") {
+      for (const reference of [node.callee, ...node.arguments])
+        if (reference.type === "Identifier") invoked.add(reference.name);
     }
     if (node.type === "FunctionDeclaration" && node.id) names.set(node, node.id);
     if (
@@ -612,7 +647,7 @@ function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
   });
   const skipped = new Set<AnyNode>();
   for (const [fn, name] of names) {
-    if (identifiers.get(name.name)?.size === 1) walkScriptLocal(fn, (node) => skipped.add(node));
+    if (fn !== root && !invoked.has(name.name)) walkScriptLocal(fn, (node) => skipped.add(node));
   }
   return skipped;
 }

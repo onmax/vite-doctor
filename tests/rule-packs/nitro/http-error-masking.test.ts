@@ -39,6 +39,108 @@ test("keeps a catch that preserves intentional HTTP errors", async () => {
 
 test.each([
   [
+    "inspected condition callback",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "const mutate = () => { missing = false }; void mutate; if (missing) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "conditional function replacement",
+    "let local = createError({ statusCode: 404 }); let mutate = () => {}; if (change) mutate = () => { local = new Error() }; else mutate = () => {}; mutate(); throw local",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "awaited async IIFE throw",
+    "await (async () => { throw createError({ statusCode: 404 }) })()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "awaited synchronous IIFE throw",
+    "await (() => { throw createError({ statusCode: 404 }) })()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "unawaited async IIFE rejection",
+    "(async () => { throw createError({ statusCode: 404 }) })()",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "for-of catch target",
+    "throw createError({ statusCode: 404 })",
+    "for (error of [new Error()]) {}; if (isError(error)) throw error; throw new Error()",
+    true,
+  ],
+  [
+    "for-in catch target",
+    "throw createError({ statusCode: 404 })",
+    "for (error in object) {}; if (isError(error)) throw error; throw new Error()",
+    true,
+  ],
+  [
+    "for-of destructured catch target",
+    "throw createError({ statusCode: 404 })",
+    "for ({ value: error } of items) {}; if (isError(error)) throw error; throw new Error()",
+    true,
+  ],
+  [
+    "for-of shadowed catch target",
+    "throw createError({ statusCode: 404 })",
+    "for (const error of items) {}; if (isError(error)) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "inspected callback binding",
+    "throw createError({ statusCode: 404 })",
+    "const mutate = () => { error = new Error() }; void mutate; if (isError(error)) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "callback passed to a function",
+    "throw createError({ statusCode: 404 })",
+    "const mutate = () => { error = new Error() }; invoke(mutate); if (isError(error)) throw error; throw new Error()",
+    true,
+  ],
+  [
+    "nonboolean condition shadow",
+    "if (missing) throw createError({ statusCode: 404 })",
+    "{ const missing = readFlag() }; if (missing) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "function reference before initialization",
+    "throw createError({ statusCode: 404 })",
+    "mutate(); const mutate = () => { error = new Error() }; if (isError(error)) throw error; throw new Error()",
+    false,
+  ],
+  [
+    "function replaced with no-op",
+    "let local = createError({ statusCode: 404 }); let mutate = () => { local = new Error() }; mutate = () => {}; mutate(); throw local",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "no-op replaced with mutation",
+    "let local = createError({ statusCode: 404 }); let mutate = () => {}; mutate = () => { local = new Error() }; mutate(); throw local",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "function replaced inside block",
+    "let local = createError({ statusCode: 404 }); let mutate = () => { local = new Error() }; { mutate = () => {} }; mutate(); throw local",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "hoisted function declaration",
+    "let local = createError({ statusCode: 404 }); mutate(); throw local; function mutate() { local = new Error() }",
+    "throw new Error()",
+    false,
+  ],
+  [
     "IIFE parameter shadow",
     "throw createError({ statusCode: 404 })",
     "((error) => { error = new Error() })(other); if (isError(error)) throw error; throw new Error()",
@@ -574,7 +676,7 @@ test.each([
     framework: "nitro",
     rule: noHttpErrorMasking,
     files: {
-      "server/api/account.ts": `export default defineEventHandler(() => {
+      "server/api/account.ts": `export default defineEventHandler(async () => {
         try { ${body} } catch ${name === "optional catch binding" ? "" : "(error)"} { ${handler} }
       })`,
     },
