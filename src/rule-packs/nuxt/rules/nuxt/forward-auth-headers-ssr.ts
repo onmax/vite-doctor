@@ -53,7 +53,7 @@ function isCredentialHeader(name: string | undefined): boolean {
 }
 
 function forwardsRequestCredentials(call: AnyNode): boolean {
-  const options = call.arguments?.[1];
+  const options = unwrapExpression(call.arguments?.[1]);
   if (options?.type !== "ObjectExpression") return false;
   for (const property of [...options.properties].reverse()) {
     if (property.type === "SpreadElement") return false;
@@ -62,31 +62,87 @@ function forwardsRequestCredentials(call: AnyNode): boolean {
   return false;
 }
 
-function hasCredentialHeaders(value: AnyNode, call: AnyNode, seen = new Set<AnyNode>()): boolean {
-  if (!value || seen.has(value)) return false;
-  seen.add(value);
+function unwrapExpression(value: AnyNode): AnyNode {
+  while (
+    value &&
+    [
+      "TSAsExpression",
+      "TSSatisfiesExpression",
+      "TSNonNullExpression",
+      "TSTypeAssertion",
+      "ParenthesizedExpression",
+    ].includes(value.type)
+  ) {
+    value = value.expression;
+  }
+  return value;
+}
+
+function hasCredentialHeaders(value: AnyNode, call: AnyNode): boolean {
+  return [...(credentialHeaders(value, call)?.values() ?? [])].some(Boolean);
+}
+
+function credentialHeaders(
+  value: AnyNode,
+  call: AnyNode,
+  seen = new Set<AnyNode>(),
+): Map<string, boolean> | undefined {
+  value = unwrapExpression(value);
+  if (!value || seen.has(value)) return;
+  seen = new Set(seen).add(value);
   if (value.type === "Identifier") {
-    return hasCredentialHeaders(localInitializer(value, call), call, seen);
+    return credentialHeaders(localInitializer(value, call), call, seen);
   }
   if (value.type === "NewExpression" && value.callee?.name === "Headers") {
-    return hasCredentialHeaders(value.arguments[0], call, seen);
+    const input = unwrapExpression(value.arguments[0]);
+    if (input?.type === "ArrayExpression") {
+      const headers = new Map<string, boolean>();
+      for (const entry of input.elements) {
+        const tuple = unwrapExpression(entry);
+        const name = tuple?.type === "ArrayExpression" && tuple.elements[0]?.value;
+        if (typeof name !== "string") return;
+        if (isCredentialHeader(name)) headers.set(name.toLowerCase(), true);
+      }
+      return headers;
+    }
+    return credentialHeaders(input, call, seen);
   }
-  if (value?.type === "CallExpression" && value.callee?.name === "useRequestHeaders") {
-    const selected = value.arguments[0];
-    return (
-      !selected ||
-      (selected.type === "ArrayExpression" &&
-        selected.elements.some((element: AnyNode) => isCredentialHeader(element?.value)))
+  if (value.type === "CallExpression" && value.callee?.name === "useRequestHeaders") {
+    const selected = unwrapExpression(value.arguments[0]);
+    if (!selected)
+      return new Map([
+        ["cookie", true],
+        ["authorization", true],
+      ]);
+    if (selected.type !== "ArrayExpression") return;
+    return new Map(
+      selected.elements
+        .filter((element: AnyNode) => isCredentialHeader(element?.value))
+        .map((element: AnyNode) => [element.value.toLowerCase(), true]),
     );
   }
-  return (
-    value?.type === "ObjectExpression" &&
-    value.properties.some((property: AnyNode) =>
-      property.type === "SpreadElement"
-        ? hasCredentialHeaders(property.argument, call, seen)
-        : isCredentialHeader(propertyName(property)),
-    )
-  );
+  if (value.type !== "ObjectExpression") return;
+  const headers = new Map<string, boolean>();
+  for (const property of value.properties) {
+    if (property.type === "SpreadElement") {
+      const spread = credentialHeaders(property.argument, call, seen);
+      if (!spread) {
+        headers.set("cookie", false);
+        headers.set("authorization", false);
+      }
+      if (spread) for (const [name, present] of spread) headers.set(name, present);
+    } else {
+      const name = propertyName(property);
+      if (!name) {
+        headers.set("cookie", false);
+        headers.set("authorization", false);
+      } else if (isCredentialHeader(name)) {
+        const header = unwrapExpression(property.value);
+        headers.set(name.toLowerCase(), header != null && !("value" in header && !header.value));
+      }
+    }
+  }
+  return headers;
 }
 
 function bindsName(pattern: AnyNode, name: string): boolean {
@@ -101,6 +157,31 @@ function bindsName(pattern: AnyNode, name: string): boolean {
       bindsName(property.type === "RestElement" ? property.argument : property.value, name),
     );
   return false;
+}
+
+function hasHoistedBinding(node: AnyNode, name: string): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (Array.isArray(node)) return node.some((item) => hasHoistedBinding(item, name));
+  if (
+    [
+      "FunctionDeclaration",
+      "FunctionExpression",
+      "ArrowFunctionExpression",
+      "ClassDeclaration",
+      "ClassExpression",
+      "StaticBlock",
+    ].includes(node.type)
+  )
+    return false;
+  if (node.type === "VariableDeclaration" && node.kind === "var") {
+    return node.declarations.some((declaration: AnyNode) => bindsName(declaration.id, name));
+  }
+  return Object.entries(node).some(([key, child]) => {
+    if (key === "parent" || key.startsWith("__")) return false;
+    return Array.isArray(child)
+      ? child.some((item) => hasHoistedBinding(item, name))
+      : hasHoistedBinding(child, name);
+  });
 }
 
 function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
@@ -130,6 +211,11 @@ function localInitializer(identifier: AnyNode, call: AnyNode): AnyNode {
       )
         return;
     }
+    if (
+      (scope.type === "Program" || scope.type === "StaticBlock" || scope.params) &&
+      hasHoistedBinding(scope.body, identifier.name)
+    )
+      return;
     if (scope.type === "CatchClause" && bindsName(scope.param, identifier.name)) return;
     if (scope.params?.some((param: AnyNode) => bindsName(param, identifier.name))) return;
     scope = scope.__doctorParent ?? scope.parent;

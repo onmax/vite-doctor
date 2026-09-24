@@ -34,6 +34,10 @@ test.each([
   "{ headers: useRequestHeaders(['cookie']), headers: unrelated }",
   "{ headers: new Headers({ Accept: 'application/json' }) }",
   "{ headers: unrelated }",
+  "{ headers: { ...useRequestHeaders(['cookie']), ...overrides } }",
+  "{ headers: { ...useRequestHeaders(['cookie']), ...{ cookie: '' } } }",
+  "{ headers: { ...useRequestHeaders(['cookie']), ...{ ...overrides, Accept: 'application/json' } } }",
+  "{ headers: new Headers([['Accept', 'application/json']]) }",
   "{ headers: { ...unrelated } }",
   "{ headers: { ...useRequestHeaders(['accept']) } }",
 ])("unforwarded credentials remain diagnosed for %s", async (options) => {
@@ -49,6 +53,14 @@ const user = await $fetch('/api/user', ${options})
 
 test.each([
   "{ headers: useRequestHeaders() }",
+  "({ headers: useRequestHeaders(['cookie']) } as const)",
+  "({ headers: useRequestHeaders(['cookie']) } satisfies Record<string, unknown>)",
+  "{ headers: (useRequestHeaders(['cookie']) as Record<string, string>) }",
+  "{ headers: new Headers([['cookie', cookie]]) }",
+  "{ headers: new Headers([['Authorization', token]] as const) }",
+  "{ headers: { ...overrides, ...useRequestHeaders(['cookie']) } }",
+  "{ headers: { ...useRequestHeaders(['cookie']), ...{ Accept: 'application/json' } } }",
+  "{ headers: { ...useRequestHeaders(), cookie: '' } }",
   "{ ...requestOptions, headers: useRequestHeaders(['cookie']) }",
   "{ headers: new Headers({ cookie }) }",
   "{ headers: new Headers(useRequestHeaders(['cookie'])) }",
@@ -126,6 +138,27 @@ async function load(headers) {
   return $fetch('/api/user', { headers: forwarded })
 }
 </script>`,
+  );
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  "if (condition) var headers = { Accept: 'application/json' }; return $fetch('/api/user', { headers })",
+  "return $fetch('/api/user', { headers }); if (condition) { var headers = unrelated }",
+  "for (var headers of unrelated) {} return $fetch('/api/user', { headers })",
+  "try {} catch { var { headers } = unrelated } return $fetch('/api/user', { headers })",
+])("nested var bindings shadow outer credentials: %s", async (body) => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">const headers = useRequestHeaders(['cookie']); function load() { ${body} }</script>`,
+  );
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
+});
+
+test("nested functions do not shadow credentials in their parent", async () => {
+  const result = await runNuxtAppRuleFixture(
+    forwardAuthHeadersSsr,
+    `<script setup lang="ts">const headers = useRequestHeaders(['cookie']); function load() { function inner() { var headers = unrelated } return $fetch('/api/user', { headers }) }</script>`,
   );
   expect(result.diagnostics).toEqual([]);
 });
