@@ -296,13 +296,13 @@ test.each([true, false])(
       rules: extension.rulePacks![0]!.rules,
     });
     expect(candidates.map((candidate) => candidate.handler.path)).toEqual(
-      current
-        ? ["server/api/account.get.ts", "server/handlers/entry.ts"]
-        : ["server/api/account.get.ts"],
+      current ? ["server/api/account.get.ts", "server/handlers/entry.ts"] : [],
     );
-    expect(candidates[0]!.sources.some((source) => source.path === "server/guards/global.ts")).toBe(
-      false,
-    );
+    expect(
+      candidates.some((candidate) =>
+        candidate.sources.some((source) => source.path === "server/guards/global.ts"),
+      ),
+    ).toBe(false);
   },
 );
 
@@ -501,10 +501,11 @@ test.each([true, false])("manifest aliases require current evidence: %s", async 
     },
     rules: extension.rulePacks![0]!.rules,
   });
-  expect(candidates).toHaveLength(1);
-  expect(candidates[0]!.sources.some((source) => source.path === "server/old/guard.ts")).toBe(
-    current,
-  );
+  expect(candidates).toHaveLength(current ? 1 : 0);
+  if (current)
+    expect(candidates[0]!.sources.some((source) => source.path === "server/old/guard.ts")).toBe(
+      true,
+    );
 });
 
 test.each([false, true])(
@@ -865,7 +866,7 @@ test.each(["import(`./policies/${tenant}`)", "require(policyPath)"])(
   },
 );
 
-test("stale manifests still collect Nuxt 4 app middleware", async () => {
+test.each([".", "old-app"])("stale middleware configuration %s is incomplete", async (appDir) => {
   let calls = 0;
   const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
     calls++;
@@ -879,11 +880,56 @@ test("stale manifests still collect Nuxt 4 app middleware", async () => {
       "nuxt.config.ts": "export default defineNuxtConfig({})",
       ".nuxt/doctor.manifest.json": JSON.stringify({
         generatedAt: "2000-01-01T00:00:00.000Z",
-        appDir: ".",
+        appDir,
       }),
+      "old-app/middleware/auth.ts": "export default () => true",
+      "middleware/auth.ts": "export default () => true",
+      "current/policies/auth.ts": "export default () => true",
     },
     rules: extension.rulePacks![0]!.rules,
   });
   expect(result.project.nuxt?.manifest?.isCurrent).toBe(false);
-  expect(calls).toBe(1);
+  expect(calls).toBe(0);
+  expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
 });
+
+test.each(["present", "missing", "oversized"])(
+  "collects authoritative auto-imported guards: %s",
+  async (availability) => {
+    let calls = 0;
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      calls++;
+      expect(candidate.sources.map((source) => source.path)).toContain("server/utils/access.ts");
+      return { status: "unknown", reason: "Evidence collected", citations: [] };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "server/api/account.get.ts":
+          "export default defineEventHandler(async event => { await enforceAccountAccess(event); return {} })",
+        ...(availability === "missing"
+          ? {}
+          : {
+              "server/utils/access.ts":
+                availability === "oversized"
+                  ? " ".repeat(16_001)
+                  : "export const enforceAccountAccess = event => requireUserSession(event)",
+            }),
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: new Date(Date.now() + 1000).toISOString(),
+          appDir: "app",
+          autoImportEnabled: true,
+          autoImports: [
+            { name: "enforceAccountAccess", from: "~~/server/utils/access", kind: "app" },
+          ],
+        }),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(calls).toBe(availability === "present" ? 1 : 0);
+    expect(JSON.parse(createAgentReport(result)).status === "incomplete").toBe(
+      availability !== "present",
+    );
+  },
+);

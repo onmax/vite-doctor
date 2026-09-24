@@ -64,6 +64,18 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
         async onProjectEnd() {
           const root = ctx.project.root;
           const nuxt = ctx.project.nuxt!;
+          if (nuxt.manifest?.hasManifest && !nuxt.manifest.isCurrent) {
+            ctx.project.evidenceGaps = [
+              ...(ctx.project.evidenceGaps ?? []),
+              {
+                source: "vite-doctor/nuxt-authorization-review",
+                message:
+                  "Authorization review requires current Nuxt middleware configuration. Regenerate the Doctor manifest before reviewing handlers.",
+                files: [".nuxt/doctor.manifest.json"],
+              },
+            ];
+            return;
+          }
           const middlewareDirs = nuxt.manifest?.isCurrent
             ? nuxt.layers.map((layer) =>
                 resolve(
@@ -82,10 +94,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             !nuxt.manifest?.isCurrent ||
             !nuxt.layers.some((layer) => resolve(root, layer.root) === root)
           )
-            middlewareDirs.push(
-              resolve(nuxt.appDir, "middleware"),
-              resolve(nuxt.appDir, "app/middleware"),
-            );
+            middlewareDirs.push(resolve(nuxt.appDir, "middleware"));
           const middlewareFiles = appMiddlewareFiles(middlewareDirs).filter((file) =>
             authMiddlewareName.test(relative(root, file)),
           );
@@ -187,6 +196,14 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                         }
                       : {}),
                   },
+                  autoImports:
+                    nuxt.autoImportsAuthoritative && nuxt.autoImportEnabled
+                      ? new Map(
+                          [...nuxt.autoImports]
+                            .filter(([, entry]) => !entry.type)
+                            .map(([name, entry]) => [name, entry.from]),
+                        )
+                      : new Map<string, string>(),
                   unknownLayerAliases: Boolean(layer && nuxt.localLayerAliases === undefined),
                 };
               },
@@ -403,6 +420,7 @@ function localImports(
   seeds: AuthorizationReviewSource[],
   resolveAliases: (source: AuthorizationReviewSource) => {
     aliases: Record<string, string>;
+    autoImports: Map<string, string>;
     unknownLayerAliases: boolean;
   },
 ): { sources: AuthorizationReviewSource[]; omitted: string[] } {
@@ -411,7 +429,7 @@ function localImports(
   const omitted: string[] = [];
   const visited = new Set(seeds.map((source) => resolve(root, source.path)));
   for (const current of queue) {
-    const { aliases, unknownLayerAliases } = resolveAliases(current);
+    const { aliases, autoImports, unknownLayerAliases } = resolveAliases(current);
     const file = resolve(root, current.path);
     if (!/\.[cm]?[jt]sx?$/.test(file)) continue;
     const parsed = parseSync(file, current.text);
@@ -421,6 +439,10 @@ function localImports(
     }
     const specifiers: string[] = [];
     walkScriptLocal(parsed.program, (node) => {
+      if (node.type === "Identifier") {
+        const from = autoImports.get(node.name);
+        if (from) specifiers.push(from);
+      }
       const source =
         node.type === "ImportDeclaration" ||
         node.type === "ExportNamedDeclaration" ||
@@ -456,7 +478,9 @@ function localImports(
         ? resolve(dirname(file), specifier)
         : alias
           ? resolve(root, aliases[alias]!, specifier.slice(alias.length).replace(/^\//, ""))
-          : undefined;
+          : specifier.startsWith("/") || /^[A-Z]:[/\\]/i.test(specifier)
+            ? resolve(specifier)
+            : undefined;
       if (!base) continue;
       let found = false;
       for (const candidate of extname(base)
