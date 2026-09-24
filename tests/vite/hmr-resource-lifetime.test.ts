@@ -1223,3 +1223,90 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+for (const [name, source, leaks] of [
+  [
+    "deferred instance field",
+    "class Worker { timer = setInterval(refresh) }; import.meta.hot.dispose(() => save())",
+    false,
+  ],
+  [
+    "static field executes",
+    "class Worker { static timer = setInterval(refresh) }; import.meta.hot.dispose(() => save())",
+    true,
+  ],
+  [
+    "computed instance field key executes",
+    "class Worker { [setInterval(refresh)] = 1 }; import.meta.hot.dispose(() => save())",
+    true,
+  ],
+  [
+    "conditional timers",
+    "const timer = fast ? setInterval(a) : setInterval(b); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "nested conditional timers",
+    "const timer = fast ? setInterval(a) : slow ? setInterval(b) : setInterval(c); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "constant conditional timer",
+    "const timer = true ? setInterval(a) : setInterval(b); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "conditional sockets",
+    "const socket = fast ? new WebSocket(a) : new WebSocket(b); import.meta.hot.dispose(() => socket.close())",
+    false,
+  ],
+  [
+    "conditional existing timers still leak",
+    "const a = setInterval(refresh); const b = setInterval(refresh); const timer = fast ? a : b; import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "conditional extra timer leaks",
+    "const timer = fast ? (setInterval(a), setInterval(b)) : setInterval(c); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "method setup receiver",
+    "const helpers = { start() { this.timer = setInterval(refresh) } }; helpers.start(); import.meta.hot.dispose(() => clearInterval(helpers.timer))",
+    false,
+  ],
+  [
+    "method cleanup receiver",
+    "const state = { timer: setInterval(refresh), cleanup() { clearInterval(this.timer) } }; import.meta.hot.dispose(() => state.cleanup())",
+    false,
+  ],
+  [
+    "unrelated method receiver",
+    "const a = { timer: setInterval(refresh), cleanup() { clearInterval(this.timer) } }; const b = { cleanup: a.cleanup }; import.meta.hot.dispose(() => b.cleanup())",
+    true,
+  ],
+  [
+    "detached method receiver",
+    "const state = { timer: setInterval(refresh), cleanup() { clearInterval(this.timer) } }; const cleanup = state.cleanup; import.meta.hot.dispose(() => cleanup())",
+    true,
+  ],
+  [
+    "arrow keeps lexical receiver",
+    "const state = { start() { this.timer = setInterval(refresh); this.cleanup = () => clearInterval(this.timer) } }; state.start(); import.meta.hot.dispose(() => state.cleanup())",
+    false,
+  ],
+  [
+    "arrow does not use method receiver",
+    "const state = { timer: setInterval(refresh), cleanup: () => clearInterval(this.timer) }; import.meta.hot.dispose(() => state.cleanup())",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}

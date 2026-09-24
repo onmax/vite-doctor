@@ -135,6 +135,9 @@ function undisposedResource(program: AnyNode): string | null {
   const repeated = new Set<AnyNode>();
   let loopDepth = 0;
   const listeners: Listener[] = [];
+  const thisBinding = {};
+  const lexicalReceivers = new Map<AnyNode, AnyNode>();
+  const alternatives = new Map<AnyNode, AnyNode[]>();
   const values = new Map<AnyNode, AnyNode>();
   const returned = new Map<AnyNode, AnyNode>();
   const callbacks = new Map<AnyNode, AnyNode>();
@@ -148,6 +151,7 @@ function undisposedResource(program: AnyNode): string | null {
   let callbackValue: AnyNode;
   const identity = (node: AnyNode, environment = values): AnyNode => {
     node = unwrapResourceExpression(node);
+    if (node?.type === "ThisExpression") return environment.get(thisBinding);
     if (returned.has(node)) return identity(returned.get(node), environment);
     if (node?.type === "MemberExpression") {
       const key = propertyKey(node);
@@ -286,8 +290,10 @@ function undisposedResource(program: AnyNode): string | null {
     args: AnyNode[] = [],
     environment = values,
     module = false,
+    receiver?: AnyNode,
   ): Completion {
     target = unwrapResourceExpression(target);
+    if (target?.type === "MemberExpression") receiver = identity(target.object, environment);
     if (target?.type === "Identifier" || target?.type === "MemberExpression") {
       const value = identity(target, environment);
       if (
@@ -314,7 +320,13 @@ function undisposedResource(program: AnyNode): string | null {
             module,
           );
       } else {
-        completion = inspect(bound, boundArgs, environment, module);
+        completion = inspect(
+          bound,
+          boundArgs,
+          environment,
+          module,
+          identity(target.arguments[0], environment),
+        );
       }
       visited.delete(target);
       return completion;
@@ -329,6 +341,10 @@ function undisposedResource(program: AnyNode): string | null {
       return { normal: true, abrupt: false };
     visited.add(target);
     const local = new Map(environment);
+    local.set(
+      thisBinding,
+      target.type === "ArrowFunctionExpression" ? lexicalReceivers.get(target) : receiver,
+    );
     for (const [index, param] of target.params.entries()) {
       if (param.type === "RestElement")
         bindResource(
@@ -343,7 +359,8 @@ function undisposedResource(program: AnyNode): string | null {
     }
     const completion = evaluate(target.body, local, module);
     for (const binding of environment.keys()) {
-      if (local.has(binding)) environment.set(binding, local.get(binding));
+      if (binding !== thisBinding && local.has(binding))
+        environment.set(binding, local.get(binding));
     }
     visited.delete(target);
     return completion;
@@ -527,7 +544,8 @@ function undisposedResource(program: AnyNode): string | null {
         if (
           matches &&
           !replacedMethod &&
-          identity(receiver, environment) === resource.value &&
+          (identity(receiver, environment) === resource.value ||
+            alternatives.get(identity(receiver, environment))?.includes(resource.value)) &&
           (!global || !resolve(global) || globalAlias)
         )
           cleaned.add(resource.value);
@@ -568,13 +586,27 @@ function undisposedResource(program: AnyNode): string | null {
         }
       }
     };
-    const branch = (left: AnyNode, right: AnyNode): boolean => {
+    const branch = (left: AnyNode, right: AnyNode, expression?: AnyNode): boolean => {
+      const resourceStart = resources.length;
       const before = snapshot();
       const leftContinues = walk(left);
+      const leftValue = identity(left, environment);
       const afterLeft = snapshot();
       restore(before);
       const rightContinues = walk(right);
+      const rightValue = identity(right, environment);
       const afterRight = snapshot();
+      if (expression && leftContinues && rightContinues) {
+        const choices = [leftValue, rightValue].flatMap(
+          (value) => alternatives.get(value) ?? [value],
+        );
+        const created = new Set(resources.slice(resourceStart).map((resource) => resource.value));
+        if (choices.every((value) => created.has(value))) {
+          const value = {};
+          alternatives.set(value, choices);
+          returned.set(expression, value);
+        }
+      }
       if (leftContinues && rightContinues) merge(afterLeft, afterRight);
       else if (leftContinues) restore(afterLeft);
       return leftContinues || rightContinues;
@@ -586,15 +618,28 @@ function undisposedResource(program: AnyNode): string | null {
       if (
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
       ) {
+        if (node.type === "ArrowFunctionExpression")
+          lexicalReceivers.set(node, environment.get(thisBinding));
         visit(node);
         return true;
       }
+      if (node.type === "PropertyDefinition" && !node.static)
+        return !node.computed || walk(node.key);
       if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
         if (!walk(node.test)) return false;
         const test = identity(node.test, environment);
-        if (typeof test?.value === "boolean")
-          return walk(test.value ? node.consequent : node.alternate);
-        return branch(node.consequent, node.alternate);
+        if (typeof test?.value === "boolean") {
+          const selected = test.value ? node.consequent : node.alternate;
+          const continues = walk(selected);
+          if (node.type === "ConditionalExpression")
+            returned.set(node, identity(selected, environment));
+          return continues;
+        }
+        return branch(
+          node.consequent,
+          node.alternate,
+          node.type === "ConditionalExpression" ? node : undefined,
+        );
       }
       if (node.type === "LogicalExpression") {
         if (!walk(node.left)) return false;
