@@ -243,6 +243,17 @@ function functionFlowsToTemplate(
         callbackCalls.push(call);
     });
   for (const callbackCall of callbackCalls) {
+    let inactiveDefault = false;
+    for (
+      let current = source, child = source;
+      current && current !== fn;
+      child = current, current = parents.get(current)
+    ) {
+      if (current.type !== "AssignmentPattern" || current.right !== child) continue;
+      const value = parameterValue(current, fn, callbackCall, parents, null, true);
+      if (value && !isUndefinedValue(value, parents, ctx.file.scriptAst)) inactiveDefault = true;
+    }
+    if (inactiveDefault) continue;
     const owner = containingFunction(callbackCall, parents);
     const variable = nearestVariableDeclarator(callbackCall, parents);
     if (
@@ -714,18 +725,7 @@ function parameterValue(
   const index = fn.params?.indexOf(pattern) ?? -1;
   if (index >= 0) {
     if (callback) {
-      const receiver = unwrapExpression(call.callee?.object);
-      const array =
-        receiver?.type === "ArrayExpression" ? receiver : resolveLocalValue(receiver, parents);
-      if (index !== 0 || array?.type !== "ArrayExpression") return undefined;
-      const elements = array.elements.filter(
-        (element: AnyNode) => element?.type !== "SpreadElement",
-      );
-      if (array.elements.some((element: AnyNode) => element?.type === "SpreadElement"))
-        return undefined;
-      return elements.some((element: AnyNode) => isUndefinedValue(element, parents))
-        ? null
-        : elements[0];
+      return callbackParameterValue(index, call, parents);
     }
     const args =
       method === "call"
@@ -772,6 +772,60 @@ function parameterValue(
     return value.elements[index] ?? null;
   }
   return undefined;
+}
+
+function callbackParameterValue(
+  index: number,
+  call: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): AnyNode {
+  const method = call.callee?.computed ? call.callee.property?.value : call.callee?.property?.name;
+  if (method === "from" && call.callee?.object?.name !== "Array") return undefined;
+  const input = method === "from" ? call.arguments[0] : call.callee?.object;
+  const receiver = unwrapExpression(input);
+  const array =
+    receiver?.type === "ArrayExpression" ? receiver : resolveLocalValue(receiver, parents);
+  if (
+    array?.type !== "ArrayExpression" ||
+    array.elements.some((element: AnyNode) => element?.type === "SpreadElement")
+  )
+    return undefined;
+  const visitsHoles =
+    method === "from" || ["find", "findIndex", "findLast", "findLastIndex"].includes(method);
+  const elements = visitsHoles ? array.elements : array.elements.filter(Boolean);
+  if (["reduce", "reduceRight"].includes(method)) {
+    if (index === 0) {
+      const initial =
+        call.arguments.length > 1
+          ? call.arguments[1]
+          : elements[method === "reduce" ? 0 : elements.length - 1];
+      if (isUndefinedValue(initial, parents)) return null;
+      if (elements.length > (call.arguments.length > 1 ? 1 : 2)) return undefined;
+      return initial;
+    }
+    if (index === 1) {
+      const values =
+        call.arguments.length > 1
+          ? elements
+          : elements.slice(method === "reduce" ? 1 : 0, method === "reduceRight" ? -1 : undefined);
+      return values.some((element: AnyNode) => isUndefinedValue(element, parents))
+        ? null
+        : values[0];
+    }
+    if (index === 2) return { type: "Literal", value: 0 };
+    if (index === 3) return array;
+    return null;
+  }
+  if (["sort", "toSorted"].includes(method)) {
+    if (index > 1) return null;
+    return elements.find((element: AnyNode) => !isUndefinedValue(element, parents));
+  }
+  if (index === 1) return { type: "Literal", value: 0 };
+  if (index === 2 && method !== "from") return array;
+  if (index !== 0) return null;
+  return elements.some((element: AnyNode) => isUndefinedValue(element, parents))
+    ? null
+    : elements[0];
 }
 
 function arrayElementCount(array: AnyNode, includeHoles: boolean): number {
@@ -1973,12 +2027,45 @@ function hasPriorAliasWrite(
   }
   let reassigned = false;
   walkScriptLocal(owner.body, (write) => {
-    if (
-      write.start >= reference.start ||
-      write.start <= source.start ||
-      containingFunction(write, parents) !== (owner.type === "Program" ? null : owner)
-    )
-      return;
+    const nested = containingFunction(write, parents);
+    let effectiveWrite = write;
+    if (nested !== (owner.type === "Program" ? null : owner)) {
+      if (
+        !nested ||
+        nested.async ||
+        nested.generator ||
+        containingFunction(nested, parents) !== (owner.type === "Program" ? null : owner) ||
+        parents.get(write)?.type !== "ExpressionStatement" ||
+        parents.get(parents.get(write)) !== nested.body ||
+        nested.body.body.some(
+          (statement: AnyNode) =>
+            statement.start < write.start && alwaysReplacesCompletion(statement),
+        )
+      )
+        return;
+      const declaration = parents.get(nested);
+      const binding = declaration?.type === "VariableDeclarator" ? declaration : nested;
+      let invocation: AnyNode;
+      walkScriptLocal(owner.body, (candidate) => {
+        if (
+          candidate.type === "CallExpression" &&
+          candidate.callee?.type === "Identifier" &&
+          containingFunction(candidate, parents) === (owner.type === "Program" ? null : owner) &&
+          candidate.start > source.start &&
+          candidate.start < reference.start &&
+          resolveLocalBinding(candidate, candidate.callee.name, parents) === binding &&
+          (!declaration ||
+            declaration.type !== "VariableDeclarator" ||
+            declaration.start < candidate.start) &&
+          writeDominatesReference(candidate, reference, owner, parents)
+        )
+          invocation = candidate;
+      });
+      if (!invocation || !writeDominatesReference(write, { start: Infinity }, nested, parents))
+        return;
+      effectiveWrite = invocation;
+    }
+    if (effectiveWrite.start >= reference.start || effectiveWrite.start <= source.start) return;
     const target =
       write.type === "AssignmentExpression"
         ? write.left
@@ -2025,7 +2112,7 @@ function hasPriorAliasWrite(
     if (
       ((patternBinds(target, name) && resolveLocalBinding(write, name, parents) === binding) ||
         replacesMember) &&
-      (!requireDominance || writeDominatesReference(write, reference, owner, parents))
+      (!requireDominance || writeDominatesReference(effectiveWrite, reference, owner, parents))
     )
       reassigned = true;
   });

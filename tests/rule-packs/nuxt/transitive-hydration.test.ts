@@ -210,6 +210,8 @@ test.each([
   'let value = clock(); [value] = ["stable"]; return value',
   'let value = clock(); ({ value } = { value: "stable" }); return value',
   "let value = clock(); value++; return value",
+  'let value = clock(); function stabilize() { value = "stable" }; stabilize(); return value',
+  'let value = clock(); const stabilize = () => { value = "stable" }; stabilize(); return value',
   'let value = clock(); if (flag) { value = "stable"; return value }; return "stable"',
 ])("does not follow reassigned return aliases: %s", async (body) => {
   const result = await runNuxtAppRuleFixture(
@@ -226,6 +228,8 @@ test.each([
   'let value = clock(); return value; value = "stable"',
   'let value = clock(); function unused() { value = "stable" }; return value',
   'let value = clock(); const unused = () => { value = "stable" }; return value',
+  'let value = clock(); function stabilize() { value = "stable" }; return value; stabilize()',
+  'let value = clock(); function stabilize() { value = "stable" }; if (flag) stabilize(); return value',
   'if (clock() % 2) return "a"; return "b"',
   'switch (clock() % 2) { case 0: return "a"; default: return "b" }',
   'switch (1) { case clock(): return "a"; default: return "b" }',
@@ -2006,10 +2010,35 @@ test.each([
   ["[undefined].map(clock)", 1],
   ["[1].map(clock)", 0],
   ["[1, undefined].map(clock)", 1],
+  ["[, 1].map(clock)", 0],
+  ["[, 1].find(clock)", 1],
+  ["[1].reduce(clock, undefined)", 1],
+  ["[1, 2].reduce(clock)", 0],
+  ["[1, undefined].reduce((sum, value = Date.now()) => value, 0)", 1],
+  ["Array.from([undefined], clock)", 1],
+  ["Array.from([1], clock)", 0],
+  ["[1, 2].sort(clock)", 0],
 ])("respects array callback inputs for parameter defaults: %s", async (expression, count) => {
   const result = await runNuxtAppRuleFixture(
     noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
     `<script setup>function clock(value = Date.now()) { return value }; const displayed = ${expression}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["[, 1].map((value = Date.now()) => value)", 0],
+  ["[1].map((value, index = Date.now()) => index)", 0],
+  ["[1].map((value, index, array = Date.now()) => array)", 0],
+  ["[1].reduce((sum = Date.now()) => sum, undefined)", 1],
+  ["[1, 2].reduce((sum, value = Date.now()) => value, 0)", 0],
+  ["Array.from([,], (value = Date.now()) => value)", 1],
+  ["Array.from([1], (value, index = Date.now()) => index)", 0],
+  ["[undefined, 1, 2].sort((value = Date.now()) => value)", 0],
+])("respects array callback parameter positions: %s", async (expression, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>const displayed = ${expression}</script><template>{{ displayed }}</template>`,
   );
   expect(result.diagnostics).toHaveLength(count);
 });
