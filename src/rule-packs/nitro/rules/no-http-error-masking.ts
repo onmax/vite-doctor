@@ -108,7 +108,7 @@ interface Path {
 
 type ErrorValue = { id: number; status: Outcome };
 type Value = { error: ErrorValue } | { literal: unknown };
-type Bindings = ReadonlyMap<string, ErrorValue>;
+type Bindings = ReadonlyMap<AnyNode, ErrorValue>;
 
 function errorStatus(value: ErrorValue | undefined, path: Path): Outcome | undefined {
   return value && (path.errors?.get(value.id) ?? value.status);
@@ -124,14 +124,14 @@ function outcomes(
   return evaluateOutcomes(node, path, bindings, conditions, argumentValues).map((current) => {
     if (current.outcome !== "normal") return current;
     const expression = unwrapExpression(node);
-    const status = httpStatus(expression, current.resolveBinding);
+    const status = httpStatus(expression, current.resolveBinding, current.literals);
     if (status !== undefined)
       return { ...current, value: { error: { id: --current.budget.remaining, status } } };
     if (expression?.type === "Literal") return { ...current, value: { literal: expression.value } };
     if (expression?.type === "Identifier") {
       const binding = current.resolveBinding(expression);
       if (binding && current.uninitialized?.has(binding)) return { ...current, outcome: "throw" };
-      const error = current.bindings?.get(expression.name);
+      const error = current.bindings?.get(binding);
       return {
         ...current,
         value: error ? { error } : binding ? current.literals?.get(binding) : undefined,
@@ -172,7 +172,7 @@ function evaluateOutcomes(
     const scopedBindings = new Map(bindings);
     const scopedConditions = new Map(normal.conditions);
     for (const name of locals) {
-      scopedBindings.delete(name);
+      scopedBindings.delete(path.resolveBinding({ name } as AnyNode, node));
       scopedConditions.delete(name);
     }
     let paths: Path[] = [
@@ -200,7 +200,7 @@ function evaluateOutcomes(
               current.value,
               [...(current.errors ?? [])],
               [...(current.literals ?? [])].map(([node, value]) => [node.start, value]),
-              [...(current.bindings ?? [])].sort(([a], [b]) => a.localeCompare(b)),
+              [...(current.bindings ?? [])].map(([binding, value]) => [binding?.start, value]),
               [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
               [...(current.functions ?? [])]
                 .map(([binding, fn]) => [binding.start, fn.start])
@@ -219,8 +219,9 @@ function evaluateOutcomes(
       }
       const restoredBindings = new Map(current.bindings);
       for (const name of locals) {
-        restoredBindings.delete(name);
-        if (bindings.has(name)) restoredBindings.set(name, bindings.get(name)!);
+        const binding = path.resolveBinding({ name } as AnyNode, node);
+        restoredBindings.delete(binding);
+        if (bindings.has(binding)) restoredBindings.set(binding, bindings.get(binding)!);
       }
       const restoredFunctions = new Map(current.functions);
       for (const name of locals) {
@@ -314,60 +315,65 @@ function evaluateOutcomes(
     for (const declaration of node.declarations) {
       paths = paths.flatMap((current) => {
         if (current.outcome !== "normal") return [current];
-        return outcomes(declaration.init, current, bindings, conditions).map((evaluated) => {
-          if (evaluated.outcome !== "normal") return evaluated;
-          const next = new Map(evaluated.conditions);
-          const values = new Map(evaluated.bindings);
-          const functions = new Map(evaluated.functions);
-          for (const name of bindingNames(declaration.id)) {
-            next.delete(name);
-            if (declaration.init) {
-              functions.delete(evaluated.resolveBinding({ name } as AnyNode, declaration.id));
-              values.delete(name);
+        return outcomes(declaration.init, current, bindings, conditions)
+          .flatMap((evaluated) =>
+            patternOutcomes(declaration.id, declaration.init, evaluated, conditions),
+          )
+          .map((evaluated) => {
+            if (evaluated.outcome !== "normal") return evaluated;
+            const next = new Map(evaluated.conditions);
+            const values = new Map(evaluated.bindings);
+            const functions = new Map(evaluated.functions);
+            for (const name of bindingNames(declaration.id)) {
+              next.delete(name);
+              if (declaration.init) {
+                functions.delete(evaluated.resolveBinding({ name } as AnyNode, declaration.id));
+                values.delete(evaluated.resolveBinding({ name } as AnyNode, declaration.id));
+              }
             }
-          }
-          if (declaration.id.type === "Identifier") {
-            const name = declaration.id.name;
-            if (isFunction(declaration.init))
-              functions.set(evaluated.resolveBinding(declaration.id), declaration.init);
-            const value = evaluated.value;
-            if (value && "error" in value) values.set(name, value.error);
-            if (
-              declaration.init?.type === "Literal" &&
-              typeof declaration.init.value === "boolean" &&
-              conditions.has(name)
-            )
-              next.set(name, declaration.init.value);
-          }
-          const literals = new Map(evaluated.literals);
-          const uninitialized = new Set(evaluated.uninitialized);
-          for (const name of bindingNames(declaration.id)) {
-            const reference =
-              declaration.id.type === "Identifier"
-                ? declaration.id
-                : { ...declaration.id, type: "Identifier", name };
-            const binding = evaluated.resolveBinding(reference);
-            if (binding) {
-              literals.delete(binding);
-              uninitialized.delete(binding);
+            if (declaration.id.type === "Identifier") {
+              const name = declaration.id.name;
+              if (isFunction(declaration.init))
+                functions.set(evaluated.resolveBinding(declaration.id), declaration.init);
+              const value = evaluated.value;
+              if (value && "error" in value)
+                values.set(evaluated.resolveBinding(declaration.id), value.error);
               if (
-                declaration.id.type === "Identifier" &&
-                evaluated.value &&
-                "literal" in evaluated.value
+                declaration.init?.type === "Literal" &&
+                typeof declaration.init.value === "boolean" &&
+                conditions.has(name)
               )
-                literals.set(binding, evaluated.value);
+                next.set(name, declaration.init.value);
             }
-          }
-          return {
-            ...evaluated,
-            value: undefined,
-            bindings: values,
-            functions,
-            conditions: next,
-            literals,
-            uninitialized,
-          };
-        });
+            const literals = new Map(evaluated.literals);
+            const uninitialized = new Set(evaluated.uninitialized);
+            for (const name of bindingNames(declaration.id)) {
+              const reference =
+                declaration.id.type === "Identifier"
+                  ? declaration.id
+                  : { ...declaration.id, type: "Identifier", name };
+              const binding = evaluated.resolveBinding(reference);
+              if (binding) {
+                literals.delete(binding);
+                uninitialized.delete(binding);
+                if (
+                  declaration.id.type === "Identifier" &&
+                  evaluated.value &&
+                  "literal" in evaluated.value
+                )
+                  literals.set(binding, evaluated.value);
+              }
+            }
+            return {
+              ...evaluated,
+              value: undefined,
+              bindings: values,
+              functions,
+              conditions: next,
+              literals,
+              uninitialized,
+            };
+          });
       });
     }
     return paths;
@@ -399,19 +405,19 @@ function evaluateOutcomes(
           assignment.left.object.type === "Identifier"
         ) {
           const member = assignment.left;
-          const property = member.computed ? member.property.value : member.property.name;
+          const property = member.computed
+            ? knownLiteral(member.property, evaluated)
+            : member.property.name;
           if (property === "statusCode" || property === "status") {
             const values = new Map(evaluated.bindings);
-            const name = member.object.name;
-            const error = values.get(name);
+            const error = values.get(evaluated.resolveBinding(member.object));
             const errors = new Map(evaluated.errors);
             if (error)
               errors.set(
                 error.id,
                 assignment.operator === "=" &&
-                  assignment.right.type === "Literal" &&
-                  typeof assignment.right.value === "number"
-                  ? assignment.right.value
+                  typeof knownLiteral(assignment.right, evaluated) === "number"
+                  ? (knownLiteral(assignment.right, evaluated) as number)
                   : "throw",
               );
             return { ...evaluated, errors };
@@ -422,12 +428,17 @@ function evaluateOutcomes(
           const values = new Map(evaluated.bindings);
           const functions = new Map(evaluated.functions);
           const binding = evaluated.resolveBinding(assignment.left);
+          if (
+            binding?.__doctorParent?.type === "FunctionExpression" &&
+            binding.__doctorParent.id === binding
+          )
+            return { ...evaluated, outcome: "throw" };
           functions.delete(binding);
           if (binding && assignment.operator === "=" && isFunction(assignment.right))
             functions.set(binding, assignment.right);
-          values.delete(assignment.left.name);
+          values.delete(binding);
           const value = assignment.operator === "=" ? evaluated.value : undefined;
-          if (value && "error" in value) values.set(assignment.left.name, value.error);
+          if (value && "error" in value) values.set(binding, value.error);
           const literals = new Map(evaluated.literals);
           if (binding) {
             literals.delete(binding);
@@ -447,7 +458,7 @@ function evaluateOutcomes(
         const functions = new Map(evaluated.functions);
         const next = new Map(evaluated.conditions);
         for (const name of bindingNames(assignment.left)) {
-          values.delete(name);
+          values.delete(evaluated.resolveBinding({ name } as AnyNode, assignment.left));
           functions.delete(evaluated.resolveBinding({ name } as AnyNode, assignment.left));
           next.delete(name);
         }
@@ -516,10 +527,13 @@ function evaluateOutcomes(
           const b = rightValue.literal;
           if (node.operator === "===") value = { literal: a === b };
           else if (node.operator === "!==") value = { literal: a !== b };
-          else if (typeof a === "number" && typeof b === "number") {
+          else if (
+            (typeof a === "number" || typeof a === "string") &&
+            (typeof b === "number" || typeof b === "string")
+          ) {
             const comparisons: Record<string, boolean> = {
-              "==": a === b,
-              "!=": a !== b,
+              "==": a == b,
+              "!=": a != b,
               "<": a < b,
               "<=": a <= b,
               ">": a > b,
@@ -613,7 +627,8 @@ function evaluateOutcomes(
   let callee = unwrapExpression(call.callee);
   if (callee?.type === "Identifier") callee = path.functions?.get(path.resolveBinding(callee));
   if (
-    call.type === "CallExpression" &&
+    (call.type === "CallExpression" ||
+      (call.type === "NewExpression" && callee?.type !== "ArrowFunctionExpression")) &&
     isFunction(callee) &&
     (!callee.async || assignment.type === "AwaitExpression") &&
     !callee.generator
@@ -639,7 +654,7 @@ function evaluateOutcomes(
       shadows.add(callee.id.name);
     const localConditions = new Map(path.conditions);
     for (const name of shadows) {
-      local.delete(name);
+      local.delete(path.resolveBinding({ name } as AnyNode, callee));
       functions.delete(path.resolveBinding({ name } as AnyNode, callee));
       localConditions.delete(name);
     }
@@ -674,7 +689,7 @@ function evaluateOutcomes(
           const value = defaulted ? result.value : argumentValues?.[index];
           const error = value && "error" in value ? value.error : undefined;
           const values = new Map(result.bindings);
-          if (error) values.set(target.name, error);
+          if (error) values.set(result.resolveBinding(target), error);
           const booleans = new Map(result.conditions);
           const boolean =
             arg?.type === "Literal" && typeof arg.value === "boolean"
@@ -700,11 +715,11 @@ function evaluateOutcomes(
         const restoredFunctions = new Map(current.functions);
         const restoredConditions = new Map(current.conditions);
         for (const name of shadows) {
-          restored.delete(name);
           const binding = path.resolveBinding({ name } as AnyNode, callee);
+          restored.delete(binding);
           restoredFunctions.delete(binding);
           restoredConditions.delete(name);
-          if (bindings.has(name)) restored.set(name, bindings.get(name)!);
+          if (bindings.has(binding)) restored.set(binding, bindings.get(binding)!);
           if (path.functions?.has(binding))
             restoredFunctions.set(binding, path.functions.get(binding)!);
           if (path.conditions.has(name)) restoredConditions.set(name, path.conditions.get(name)!);
@@ -725,14 +740,16 @@ function evaluateOutcomes(
   }
   if (!isFunction(node)) {
     const values = new Map(bindings);
-    for (const name of values.keys()) if (!stableBinding(node, name)) values.delete(name);
+    for (const binding of values.keys())
+      if (!stableBinding(node, binding?.name)) values.delete(binding);
     walkScriptLocal(node, (child) => {
       if (child.type !== "CallExpression") return;
       for (const reference of [child.callee, ...child.arguments]) {
         if (reference.type !== "Identifier") continue;
         const fn = path.functions?.get(path.resolveBinding(reference));
         if (!fn) continue;
-        for (const name of values.keys()) if (!stableBinding(fn, name)) values.delete(name);
+        for (const binding of values.keys())
+          if (!stableBinding(fn, binding?.name)) values.delete(binding);
       }
     });
     const literals = new Map(path.literals);
@@ -742,6 +759,81 @@ function evaluateOutcomes(
     return [{ ...normal, bindings: values, literals }];
   }
   return [normal];
+}
+
+function knownLiteral(node: AnyNode, path: Path): unknown {
+  node = unwrapExpression(node);
+  return node?.type === "Identifier"
+    ? path.literals?.get(path.resolveBinding(node))?.literal
+    : node?.type === "Literal"
+      ? node.value
+      : undefined;
+}
+
+function patternOutcomes(
+  pattern: AnyNode,
+  source: AnyNode,
+  path: Path,
+  conditions: Set<string>,
+): Path[] {
+  if (path.outcome !== "normal" || !pattern) return [path];
+  source = unwrapExpression(source);
+  if (pattern.type === "AssignmentPattern") {
+    const missing = !source || isUndefinedArgument(source, path.resolveBinding);
+    const known =
+      source?.type === "Literal" ||
+      source?.type === "ObjectExpression" ||
+      source?.type === "ArrayExpression";
+    const defaults = () =>
+      outcomes(pattern.right, path, path.bindings ?? new Map(), conditions).flatMap((current) =>
+        patternOutcomes(pattern.left, pattern.right, current, conditions),
+      );
+    return missing
+      ? defaults()
+      : known
+        ? patternOutcomes(pattern.left, source, path, conditions)
+        : [...patternOutcomes(pattern.left, source, path, conditions), ...defaults()];
+  }
+  const entries: [AnyNode, AnyNode, AnyNode?][] = [];
+  if (pattern.type === "ObjectPattern") {
+    for (const property of pattern.properties) {
+      if (property.type === "RestElement") continue;
+      const key = property.computed
+        ? knownLiteral(property.key, path)
+        : (property.key.name ?? property.key.value);
+      const properties = source?.type === "ObjectExpression" ? source.properties : undefined;
+      const uncertain =
+        !properties ||
+        properties.some((item: AnyNode) => item.type === "SpreadElement" || item.computed);
+      const matching = properties?.findLast(
+        (item: AnyNode) => (item.key?.name ?? item.key?.value) === key,
+      );
+      entries.push([
+        property.value,
+        uncertain ? { type: "UnknownExpression" } : matching?.value,
+        property.computed ? property.key : undefined,
+      ]);
+    }
+  } else if (pattern.type === "ArrayPattern") {
+    for (const [index, element] of pattern.elements.entries()) {
+      if (element)
+        entries.push([
+          element,
+          source?.type === "ArrayExpression" ? source.elements[index] : source,
+        ]);
+    }
+  }
+  return entries.reduce(
+    (paths, [target, value, key]) =>
+      paths.flatMap((current) => {
+        if (current.outcome !== "normal") return [current];
+        const evaluated = key
+          ? outcomes(key, current, current.bindings ?? new Map(), conditions)
+          : [current];
+        return evaluated.flatMap((result) => patternOutcomes(target, value, result, conditions));
+      }),
+    [path],
+  );
 }
 
 function isLoop(node: AnyNode): boolean {
@@ -833,7 +925,7 @@ function loopOutcomes(
       [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
       [...(current.errors ?? [])],
       [...(current.literals ?? [])].map(([node, value]) => [node.start, value]),
-      [...(current.bindings ?? [])].sort(([a], [b]) => a.localeCompare(b)),
+      [...(current.bindings ?? [])].map(([binding, value]) => [binding?.start, value]),
       [...(current.functions ?? [])]
         .map(([binding, fn]) => [binding.start, fn.start])
         .sort(([a], [b]) => a - b),
@@ -861,8 +953,9 @@ function catchOutcomes(
   conditions: Set<string>,
 ): Path[] {
   const caught = new Map(path.bindings ?? bindings);
-  if (handler.param?.type === "Identifier") caught.delete(handler.param.name);
-  const name = handler.param?.type === "Identifier" ? handler.param.name : undefined;
+  if (handler.param?.type === "Identifier") caught.delete(path.resolveBinding(handler.param));
+  const name =
+    handler.param?.type === "Identifier" ? path.resolveBinding(handler.param) : undefined;
   if (name)
     caught.set(
       name,
@@ -996,7 +1089,7 @@ function conditionPaths(
       isH3Reference(guard, "isError", current.resolveBinding) &&
       valueNode.arguments.length === 1 &&
       guarded?.type === "Identifier"
-        ? errorStatus(values.get(guarded.name), current)
+        ? errorStatus(values.get(current.resolveBinding(guarded)), current)
         : undefined;
     const known =
       typeof caught === "number"
@@ -1006,7 +1099,7 @@ function conditionPaths(
           : valueNode.type === "Literal"
             ? Boolean(valueNode.value)
             : valueNode.type === "Identifier"
-              ? values.has(valueNode.name)
+              ? values.has(current.resolveBinding(valueNode))
                 ? true
                 : current.conditions.get(valueNode.name)
               : undefined;
@@ -1053,6 +1146,7 @@ function isH3Reference(node: AnyNode, name: string, resolve: Path["resolveBindin
 function httpStatus(
   node: AnyNode,
   resolve: Path["resolveBinding"],
+  literals?: Path["literals"],
 ): number | "server-error" | undefined {
   node = unwrapExpression(node);
   const callee = unwrapExpression(node?.callee);
@@ -1086,7 +1180,9 @@ function httpStatus(
     const key = property.key?.name ?? property.key?.value;
     if (key === "statusCode" || key === "status") {
       const value = unwrapExpression(property.value);
-      statuses.set(key, typeof value?.value === "number" ? value.value : undefined);
+      const literal =
+        value?.type === "Identifier" ? literals?.get(resolve(value))?.literal : value?.value;
+      statuses.set(key, typeof literal === "number" ? literal : undefined);
     }
   }
   if (statuses.has("statusCode")) return statuses.get("statusCode");
@@ -1116,9 +1212,7 @@ function blockBindings(node: AnyNode): Set<string> {
   for (const statement of node.body) {
     if (statement.type === "VariableDeclaration" && statement.kind !== "var") {
       for (const declaration of statement.declarations)
-        walkScriptLocal(declaration.id, (binding) => {
-          if (binding.type === "Identifier") names.add(binding.name);
-        });
+        for (const name of bindingNames(declaration.id)) names.add(name);
     } else if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
       if (statement.id) names.add(statement.id.name);
     }
@@ -1241,15 +1335,10 @@ function switchEntries(
   return outcomes(discriminant, path, bindings, conditions).flatMap((evaluated) => {
     if (evaluated.outcome !== "normal") return [{ path: evaluated, entry: -1 }];
     const discriminantValue = evaluated.value;
-    const uninitialized = new Set(evaluated.uninitialized);
-    for (const item of cases)
-      for (const statement of item.consequent) {
-        if (statement.type === "VariableDeclaration" && statement.kind !== "var")
-          for (const declaration of statement.declarations) {
-            const binding = evaluated.resolveBinding(declaration.id);
-            if (binding) uninitialized.add(binding);
-          }
-      }
+    const uninitialized = lexicalTDZ(
+      { type: "BlockStatement", body: cases.flatMap((item) => item.consequent) },
+      evaluated,
+    );
     let unmatched = [{ ...evaluated, uninitialized } as Path];
     const entries: { path: Path; entry: number }[] = [];
     const seen = new Set<unknown>();
@@ -1338,7 +1427,7 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
             const bindings = new Map(current.bindings);
             if (handler.param?.type === "Identifier")
               bindings.set(
-                handler.param.name,
+                current.resolveBinding(handler.param),
                 current.value && "error" in current.value
                   ? current.value.error
                   : { id: --current.budget.remaining, status: current.outcome },

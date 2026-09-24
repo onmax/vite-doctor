@@ -1912,3 +1912,98 @@ test.each([
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
 });
+
+test.each([
+  [
+    "closure with a generic outer error",
+    "const saved = new Error(); function fail() { throw saved }; { const saved = createError({ statusCode: 404 }); try { fail() } catch { throw new Error() } }",
+    false,
+  ],
+  [
+    "closure with an HTTP outer error",
+    "const saved = createError({ statusCode: 404 }); function fail() { throw saved }; { const saved = new Error(); try { fail() } catch { throw new Error() } }",
+    true,
+  ],
+  [
+    "constant status",
+    "const NOT_FOUND = 404; try { throw createError({ statusCode: NOT_FOUND }) } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "object default",
+    "function notFound() { throw createError({ statusCode: 404 }) }; try { const { value = notFound() } = {} } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "unused object default",
+    "function notFound() { throw createError({ statusCode: 404 }) }; try { const { value = notFound() } = { value: 1 } } catch { throw new Error() }",
+    false,
+  ],
+  [
+    "array default",
+    "function notFound() { throw createError({ statusCode: 404 }) }; try { const [value = notFound()] = [] } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "constructor throw",
+    "function NotFound() { throw createError({ statusCode: 404 }) }; try { new NotFound() } catch { throw new Error() }",
+    true,
+  ],
+  [
+    "nonconstructible arrow",
+    "const NotFound = () => { throw createError({ statusCode: 404 }) }; try { new NotFound() } catch { throw new Error() }",
+    false,
+  ],
+  [
+    "coercive equality",
+    'try { throw createError({ statusCode: 404 }) } catch (error) { if (error.statusCode == "404") throw error; throw new Error() }',
+    false,
+  ],
+  [
+    "coercive range",
+    'try { throw createError({ statusCode: 404 }) } catch (error) { if (error.statusCode >= "400") throw error; throw new Error() }',
+    false,
+  ],
+  [
+    "computed status write",
+    'const key = "statusCode"; try { throw createError({ statusCode: 404 }) } catch (error) { error[key] = 403; if (error.statusCode === 404) throw error; throw new Error() }',
+    true,
+  ],
+])("respects %s", async (_name, source, reports) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${source} })` },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+});
+
+test.each([
+  [
+    "switch class temporal dead zone",
+    `switch (1) { case 1: Later; try { throw createError({ statusCode: 404 }) } catch { throw new Error() }; break; case 2: class Later {} }`,
+  ],
+  [
+    "immutable function self-binding",
+    `const fail = function self() { self = () => { throw createError({ statusCode: 404 }) }; self() }; try { fail() } catch { throw new Error() }`,
+  ],
+])("does not report unreachable masking after %s", async (_name, source) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${source} })` },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("evaluates computed destructuring keys", async () => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `function missing() { throw createError({ statusCode: 404 }) }
+        try { const { [missing()]: value } = {} } catch { throw new Error() }`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
+});
