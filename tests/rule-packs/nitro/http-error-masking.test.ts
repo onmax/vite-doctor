@@ -2082,3 +2082,113 @@ test.each([
   });
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
 });
+
+test.each([
+  [
+    "BigInt expression",
+    "try { 1n; throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "BigInt loop binding",
+    "const value = 1n; try { while (unknown) { throw createError({ statusCode: 404 }) } } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "class static field self-reference",
+    "try { class Failure { static self = Failure; static value = (() => { throw createError({ statusCode: 404 }) })() } } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "class static block self-reference",
+    "try { class Failure { static { Failure; throw createError({ statusCode: 404 }) } } } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "named class expression self-reference",
+    "try { const Failure = class Failure { static self = Failure; static value = (() => { throw createError({ statusCode: 404 }) })() } } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "class computed key TDZ",
+    "try { class Failure { [Failure]() {}; static { throw createError({ statusCode: 404 }) } } } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "named class expression computed key TDZ",
+    "try { const Failure = class Failure { [Failure]() {}; static { throw createError({ statusCode: 404 }) } } } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "anonymous class outer binding TDZ",
+    "try { const Failure = class { static self = Failure; static { throw createError({ statusCode: 404 }) } } } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "closed-over true condition",
+    "const preserve = true; function keep(e) { if (preserve) throw e } { const preserve = false; try { throw createError({ statusCode: 404 }) } catch (error) { keep(error); throw new Error() } }",
+    0,
+  ],
+  [
+    "closed-over false condition",
+    "const preserve = false; function keep(e) { if (preserve) throw e } { const preserve = true; try { throw createError({ statusCode: 404 }) } catch (error) { keep(error); throw new Error() } }",
+    1,
+  ],
+  [
+    "closed-over correlated condition",
+    "function keep(e) { if (preserve) throw e } if (preserve) { const preserve = false; try { throw createError({ statusCode: 404 }) } catch (error) { keep(error); throw new Error() } }",
+    0,
+  ],
+  [
+    "finalizer after false assignment",
+    "let flag = true; try { flag = false } finally { try { if (flag) throw createError({ statusCode: 404 }) } catch { throw new Error() } }",
+    0,
+  ],
+  [
+    "finalizer after true assignment",
+    "let flag = false; try { flag = true } finally { try { if (flag) throw createError({ statusCode: 404 }) } catch { throw new Error() } }",
+    1,
+  ],
+  [
+    "finalizer after catch assignment",
+    "let flag = false; try { throw new Error() } catch { flag = true } finally { try { if (flag) throw createError({ statusCode: 404 }) } catch { throw new Error() } }",
+    1,
+  ],
+  [
+    "finalizer after return",
+    "let flag = false; try { flag = true; return } finally { try { if (flag) throw createError({ statusCode: 404 }) } catch { throw new Error() } }",
+    1,
+  ],
+  [
+    "empty array iteration",
+    "try { for (const item of []) throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "empty object iteration",
+    "try { for (const item in {}) throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "empty string iteration",
+    "try { for (const item of '') throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "nonempty array iteration",
+    "try { for (const item of [1]) throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "nonempty object iteration",
+    "try { for (const item in { key: 1 }) throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+])("respects reviewed execution path: %s", async (_name, body, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});

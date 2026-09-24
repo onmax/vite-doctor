@@ -110,6 +110,17 @@ type ErrorValue = { id: number; status: Outcome };
 type Value = { error: ErrorValue } | { literal: unknown };
 type Bindings = ReadonlyMap<AnyNode, ErrorValue>;
 
+function pathKey(value: unknown): string {
+  return JSON.stringify(value, (_key, value) =>
+    typeof value === "bigint" ? { bigint: String(value) } : value,
+  );
+}
+
+function conditionKey(node: AnyNode, path: Path, location = node): string {
+  const binding = path.resolveBinding(node, location);
+  return binding ? `${binding.start}:${node.name}` : node.name;
+}
+
 function errorStatus(value: ErrorValue | undefined, path: Path): Outcome | undefined {
   return value && (path.errors?.get(value.id) ?? value.status);
 }
@@ -173,7 +184,7 @@ function evaluateOutcomes(
     const scopedConditions = new Map(normal.conditions);
     for (const name of locals) {
       scopedBindings.delete(path.resolveBinding({ name } as AnyNode, node));
-      scopedConditions.delete(name);
+      scopedConditions.delete(conditionKey({ name } as AnyNode, path, node));
     }
     let paths: Path[] = [
       {
@@ -193,7 +204,7 @@ function evaluateOutcomes(
       paths = [
         ...new Map(
           next.map((current) => [
-            JSON.stringify([
+            pathKey([
               current.outcome,
               current.label,
               [...(current.uninitialized ?? [])].map((binding) => binding.start),
@@ -214,8 +225,9 @@ function evaluateOutcomes(
     return paths.map((current) => {
       const restored = new Map(current.conditions);
       for (const name of locals) {
-        restored.delete(name);
-        if (path.conditions.has(name)) restored.set(name, path.conditions.get(name)!);
+        const key = conditionKey({ name } as AnyNode, path, node);
+        restored.delete(key);
+        if (path.conditions.has(key)) restored.set(key, path.conditions.get(key)!);
       }
       const restoredBindings = new Map(current.bindings);
       for (const name of locals) {
@@ -325,7 +337,7 @@ function evaluateOutcomes(
             const values = new Map(evaluated.bindings);
             const functions = new Map(evaluated.functions);
             for (const name of bindingNames(declaration.id)) {
-              next.delete(name);
+              next.delete(conditionKey({ name } as AnyNode, evaluated, declaration.id));
               if (declaration.init) {
                 functions.delete(evaluated.resolveBinding({ name } as AnyNode, declaration.id));
                 values.delete(evaluated.resolveBinding({ name } as AnyNode, declaration.id));
@@ -343,7 +355,7 @@ function evaluateOutcomes(
                 typeof declaration.init.value === "boolean" &&
                 conditions.has(name)
               )
-                next.set(name, declaration.init.value);
+                next.set(conditionKey(declaration.id, evaluated), declaration.init.value);
             }
             const literals = new Map(evaluated.literals);
             const uninitialized = new Set(evaluated.uninitialized);
@@ -379,7 +391,9 @@ function evaluateOutcomes(
     return paths;
   }
   if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
-    let paths = outcomes(node.superClass, normal, bindings, conditions);
+    const uninitialized = new Set(normal.uninitialized);
+    if (node.id) uninitialized.add(normal.resolveBinding(node.id));
+    let paths = outcomes(node.superClass, { ...normal, uninitialized }, bindings, conditions);
     for (const member of node.body.body) {
       if (member.computed)
         paths = paths.flatMap((current) =>
@@ -388,6 +402,11 @@ function evaluateOutcomes(
             : [current],
         );
     }
+    paths = paths.map((current) => {
+      const uninitialized = new Set(current.uninitialized);
+      if (node.id) uninitialized.delete(current.resolveBinding(node.id));
+      return { ...current, uninitialized };
+    });
     for (const member of node.body.body) {
       const initializer =
         member.type === "StaticBlock"
@@ -405,7 +424,7 @@ function evaluateOutcomes(
     return paths.map((current) => {
       if (current.outcome !== "normal") return current;
       const uninitialized = new Set(current.uninitialized);
-      uninitialized.delete(current.resolveBinding(node.id));
+      if (node.id) uninitialized.delete(node.id);
       return { ...current, uninitialized, value: undefined };
     });
   }
@@ -471,14 +490,14 @@ function evaluateOutcomes(
             literals.delete(binding);
             if (value && "literal" in value) literals.set(binding, value);
           }
-          next.delete(assignment.left.name);
+          next.delete(conditionKey(assignment.left, evaluated));
           if (
             assignment.operator === "=" &&
             assignment.right.type === "Literal" &&
             typeof assignment.right.value === "boolean" &&
             conditions.has(assignment.left.name)
           )
-            next.set(assignment.left.name, assignment.right.value);
+            next.set(conditionKey(assignment.left, evaluated), assignment.right.value);
           return { ...evaluated, bindings: values, functions, conditions: next, literals };
         }
         const values = new Map(evaluated.bindings);
@@ -487,7 +506,7 @@ function evaluateOutcomes(
         for (const name of bindingNames(assignment.left)) {
           values.delete(evaluated.resolveBinding({ name } as AnyNode, assignment.left));
           functions.delete(evaluated.resolveBinding({ name } as AnyNode, assignment.left));
-          next.delete(name);
+          next.delete(conditionKey({ name } as AnyNode, evaluated, assignment.left));
         }
         return { ...evaluated, bindings: values, functions, conditions: next };
       });
@@ -683,7 +702,7 @@ function evaluateOutcomes(
     for (const name of shadows) {
       local.delete(path.resolveBinding({ name } as AnyNode, callee));
       functions.delete(path.resolveBinding({ name } as AnyNode, callee));
-      localConditions.delete(name);
+      localConditions.delete(conditionKey({ name } as AnyNode, path, callee));
     }
     if (
       callee.type === "FunctionExpression" &&
@@ -730,9 +749,9 @@ function evaluateOutcomes(
             arg?.type === "Literal" && typeof arg.value === "boolean"
               ? arg.value
               : arg?.type === "Identifier"
-                ? source.conditions.get(arg.name)
+                ? source.conditions.get(conditionKey(arg, source))
                 : undefined;
-          if (boolean !== undefined) booleans.set(target.name, boolean);
+          if (boolean !== undefined) booleans.set(conditionKey(target, result), boolean);
           return { ...result, bindings: values, conditions: booleans };
         });
       });
@@ -753,11 +772,12 @@ function evaluateOutcomes(
           const binding = path.resolveBinding({ name } as AnyNode, callee);
           restored.delete(binding);
           restoredFunctions.delete(binding);
-          restoredConditions.delete(name);
+          const key = conditionKey({ name } as AnyNode, path, callee);
+          restoredConditions.delete(key);
           if (bindings.has(binding)) restored.set(binding, bindings.get(binding)!);
           if (path.functions?.has(binding))
             restoredFunctions.set(binding, path.functions.get(binding)!);
-          if (path.conditions.has(name)) restoredConditions.set(name, path.conditions.get(name)!);
+          if (path.conditions.has(key)) restoredConditions.set(key, path.conditions.get(key)!);
         }
         return {
           ...current,
@@ -825,7 +845,7 @@ function patternOutcomes(
     const booleans = new Map(path.conditions);
     if (error) values.set(binding, error);
     if (literal !== undefined) literals.set(binding, { literal });
-    if (typeof literal === "boolean") booleans.set(pattern.name, literal);
+    if (typeof literal === "boolean") booleans.set(conditionKey(pattern, path), literal);
     return [{ ...path, bindings: values, literals, conditions: booleans }];
   }
   if (pattern.type === "AssignmentPattern") {
@@ -959,6 +979,16 @@ function loopOutcomes(
       : node.type === "ForInStatement" || node.type === "ForOfStatement"
         ? outcomes(node.right, path, bindings, conditions)
         : [path];
+  const source = unwrapExpression(node.right);
+  if (
+    (node.type === "ForOfStatement" &&
+      ((source?.type === "ArrayExpression" && source.elements.length === 0) ||
+        (source?.type === "Literal" && source.value === ""))) ||
+    (node.type === "ForInStatement" &&
+      source?.type === "ObjectExpression" &&
+      source.properties.length === 0)
+  )
+    return pending;
   const seen = new Set<string>();
   const iteration = {
     type: "IfStatement",
@@ -999,7 +1029,7 @@ function loopOutcomes(
       result.push(current);
       continue;
     }
-    const key = JSON.stringify([
+    const key = pathKey([
       [...current.conditions].sort(([a], [b]) => a.localeCompare(b)),
       [...(current.errors ?? [])],
       [...(current.literals ?? [])].map(([node, value]) => [node.start, value]),
@@ -1179,13 +1209,16 @@ function conditionPaths(
             : valueNode.type === "Identifier"
               ? values.has(current.resolveBinding(valueNode))
                 ? true
-                : current.conditions.get(valueNode.name)
+                : current.conditions.get(conditionKey(valueNode, current))
               : undefined;
     if (known !== undefined) return [{ path: current, value: known }];
     return [true, false].map((value) => ({
       path:
         valueNode.type === "Identifier" && conditions.has(valueNode.name)
-          ? { ...current, conditions: new Map(current.conditions).set(valueNode.name, value) }
+          ? {
+              ...current,
+              conditions: new Map(current.conditions).set(conditionKey(valueNode, current), value),
+            }
           : current,
       value,
     }));
@@ -1290,7 +1323,10 @@ function lexicalTDZ(node: AnyNode, path: Path): Set<AnyNode> {
           : [];
     for (const pattern of patterns)
       for (const name of bindingNames(pattern)) {
-        const binding = path.resolveBinding({ name } as AnyNode, pattern);
+        const binding =
+          statement.type === "ClassDeclaration"
+            ? statement.id
+            : path.resolveBinding({ name } as AnyNode, pattern);
         if (binding) uninitialized.add(binding);
       }
   }
@@ -1354,10 +1390,13 @@ function lexicalBindings(root: AnyNode) {
       bind(node.id, outer);
       names.set(node, outer.bindings.get(node.id.name)!);
     }
+    if (node.type === "ClassDeclaration") bind(node.id, outer);
     const scoped =
       isFunction(node) ||
       [
         "BlockStatement",
+        "ClassDeclaration",
+        "ClassExpression",
         "CatchClause",
         "SwitchStatement",
         "ForStatement",
@@ -1375,7 +1414,8 @@ function lexicalBindings(root: AnyNode) {
     if (node.type === "CatchClause") bind(node.param, scope);
     if (node.type === "ImportDeclaration")
       for (const specifier of node.specifiers) bind(specifier.local, scope);
-    if (node.type === "ClassDeclaration") bind(node.id, scope);
+    if ((node.type === "ClassDeclaration" || node.type === "ClassExpression") && node.id)
+      scope.bindings.set(node.id.name, node);
     if (node.type === "VariableDeclaration") {
       let target = scope;
       if (node.kind === "var")
@@ -1501,6 +1541,16 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
             return paths.filter((current) => current.outcome === "normal");
           },
         ),
+      );
+    } else if (parent.type === "TryStatement" && child === parent.finalizer) {
+      const protectedTry = { ...parent, finalizer: null };
+      prefixes.unshift((path) =>
+        outcomes(protectedTry, path, new Map(), conditions).map((current) => ({
+          ...current,
+          outcome: "normal",
+          label: undefined,
+          value: undefined,
+        })),
       );
     } else if (parent.type === "CatchClause") {
       const handler = parent;
