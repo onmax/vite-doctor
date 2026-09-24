@@ -556,3 +556,15 @@ test.each([
     ),
   ).toEqual([]);
 });
+
+test("reports an optional peer required through a CommonJS directory main", async () => {
+  const diagnostics = await diagnose(
+    { main: "index.cjs", ...optionalPeer },
+    {
+      "index.cjs": 'require("./adapter");',
+      "adapter/package.json": JSON.stringify({ main: "lib/index.js" }),
+      "adapter/lib/index.js": 'require("peer");',
+    },
+  );
+  expect(diagnostics).toMatchObject([{ code: "PKG0003" }]);
+});

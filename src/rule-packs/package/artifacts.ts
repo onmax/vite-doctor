@@ -146,6 +146,29 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     );
   }
 
+  function commonjsFile(path: string): string | undefined {
+    const suffixes = ["", ".js", ".json", ".node"];
+    const findFile = (paths: string[]) =>
+      paths.find((candidate) => existsSync(candidate) && statSync(candidate).isFile());
+    const file = findFile(suffixes.map((suffix) => path + suffix));
+    if (file) return file;
+    if (!existsSync(path) || !statSync(path).isDirectory() || !inside(realpathSync(path))) return;
+    const manifestPath = resolve(path, "package.json");
+    if (existsSync(manifestPath) && inside(realpathSync(manifestPath))) {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      if (isRecord(manifest) && typeof manifest.main === "string" && manifest.main) {
+        const main = resolve(path, manifest.main);
+        if (!inside(main)) return;
+        const entry = findFile([
+          ...suffixes.map((suffix) => main + suffix),
+          ...suffixes.slice(1).map((suffix) => resolve(main, "index" + suffix)),
+        ]);
+        if (entry) return entry;
+      }
+    }
+    return findFile(suffixes.slice(1).map((suffix) => resolve(path, "index" + suffix)));
+  }
+
   function enqueue(
     target: string,
     kind: "runtime" | "types",
@@ -169,12 +192,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       ? kind === "types"
         ? typeCandidates(path)
         : probe === "main" || (probe === "commonjs" && !sourceResolution)
-          ? [
-              path,
-              ...[".js", ".json", ".node", "/index.js", "/index.json", "/index.node"].map(
-                (ext) => path + ext,
-              ),
-            ]
+          ? [commonjsFile(path)].filter((file): file is string => file !== undefined)
           : [
               ...(sourceResolution ? sourceCandidates(path) : []),
               path,

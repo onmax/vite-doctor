@@ -393,3 +393,64 @@ test.each(["js", "json", "node"])("resolves CommonJS chunks with .%s", (extensio
     expect(result.missing).toEqual([]);
   }
 });
+
+test.each(["lib/entry.js", "lib/entry", "lib"])(
+  "resolves CommonJS directory main %s before index fallback",
+  (main) => {
+    const result = inventory(
+      { main: "index.js" },
+      {
+        "index.js": 'require("./adapter");',
+        "adapter/package.json": JSON.stringify({ main }),
+        "adapter/lib/entry.js": 'require("peer");',
+        "adapter/lib/index.js": 'require("peer");',
+        "adapter/index.js": 'require("fallback");',
+      },
+    )!;
+    expect(result.missing).toEqual([]);
+    expect(result.references).toMatchObject([{ packageName: "peer", required: true }]);
+  },
+);
+
+test.each([{}, { main: "missing" }, { main: "." }])(
+  "falls back to the CommonJS directory index for %j",
+  (manifest) => {
+    const result = inventory(
+      { main: "index.js" },
+      {
+        "index.js": 'require("./adapter");',
+        "adapter/package.json": JSON.stringify(manifest),
+        "adapter/index.js": 'require("peer");',
+      },
+    )!;
+    expect(result.missing).toEqual([]);
+    expect(result.references).toMatchObject([{ packageName: "peer", required: true }]);
+  },
+);
+
+test("prefers CommonJS file probing over a directory package main", () => {
+  const result = inventory(
+    { main: "index.js" },
+    {
+      "index.js": 'require("./adapter");',
+      "adapter.js": 'require("peer");',
+      "adapter/package.json": "{",
+      "adapter/index.js": 'require("fallback");',
+    },
+  )!;
+  expect(result.missing).toEqual([]);
+  expect(result.references).toMatchObject([{ packageName: "peer", required: true }]);
+});
+
+test("keeps CommonJS directory resolution probes non-required", () => {
+  const result = inventory(
+    { main: "index.js" },
+    {
+      "index.js": 'require.resolve("./adapter");',
+      "adapter/package.json": JSON.stringify({ main: "lib/entry.js" }),
+      "adapter/lib/entry.js": 'require("peer");',
+    },
+  )!;
+  expect(result.missing).toEqual([]);
+  expect(result.references).toMatchObject([{ packageName: "peer", required: false }]);
+});
