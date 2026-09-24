@@ -4,7 +4,7 @@ import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { readPackageArtifacts } from "../../../src/rule-packs/package/artifacts.js";
 
-function inventory(manifest: object, files: Record<string, string>) {
+function inventory(manifest: unknown, files: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), "doctor-artifacts-"));
   try {
     for (const [file, text] of Object.entries({
@@ -206,4 +206,17 @@ test("includes adjacent declarations, browser and binary entrypoints, and typesV
     "legacy-types",
   ]);
   expect(result.missing).toEqual([]);
+});
+
+test.each([
+  null,
+  [],
+  { main: 42 },
+  { browser: { "./index.js": true } },
+  { bin: { example: false } },
+  { dependencies: { example: 1 } },
+  { typesVersions: { "*": { "*": "index.d.ts" } } },
+  { peerDependenciesMeta: { example: { optional: "yes" } } },
+])("rejects an invalid package manifest: %j", (manifest) => {
+  expect(() => inventory(manifest, {})).toThrow("Invalid package manifest");
 });
