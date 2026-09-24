@@ -293,36 +293,49 @@ function functionFlowsToTemplate(
         )
       )
         return false;
-      if (
-        fn.async &&
-        !asyncResultIsConsumed(
-          node,
-          (node) => parents.get(node),
-          (aggregate) => !resolveLocalBinding(aggregate, "Promise", parents),
+      const originalVariable = variable;
+      for (const result of fn.async ? resultAliases(node, parents) : [node]) {
+        const owner = containingFunction(result, parents);
+        let variable = result === node ? originalVariable : null;
+        if (result !== node) {
+          for (let current = result; current && current !== owner; current = parents.get(current)) {
+            if (["VariableDeclarator", "AssignmentExpression"].includes(current.type)) {
+              variable = current;
+              break;
+            }
+          }
+        }
+        if (
+          fn.async &&
+          !asyncResultIsConsumed(
+            result,
+            (node) => parents.get(node),
+            (aggregate) => !resolveLocalBinding(aggregate, "Promise", parents),
+          )
         )
-      )
-        return false;
-      if (
-        variable &&
-        (!owner || contributesToReturn(node, owner, parents)) &&
-        renderedReferences.some(
-          (reference) =>
-            patternBinds(variable.id ?? variable.left, reference.name) &&
-            resolveLocalBinding(ctx.file.scriptAst, reference.name, parents) ===
-              (variable.type === "AssignmentExpression"
-                ? resolveLocalBinding(variable, reference.name, parents)
-                : variable) &&
-            projectionIncludes(node, variable, reference, parents, [source, fn]),
+          continue;
+        if (
+          variable &&
+          (!owner || contributesToReturn(result, owner, parents)) &&
+          renderedReferences.some(
+            (reference) =>
+              patternBinds(variable.id ?? variable.left, reference.name) &&
+              resolveLocalBinding(ctx.file.scriptAst, reference.name, parents) ===
+                (variable.type === "AssignmentExpression"
+                  ? resolveLocalBinding(variable, reference.name, parents)
+                  : variable) &&
+              projectionIncludes(result, variable, reference, parents, [source, fn]),
+          )
         )
-      )
-        return true;
-      if (
-        owner &&
-        owner !== fn &&
-        contributesToReturn(node, owner, parents) &&
-        functionFlowsToTemplate(ctx, owner, new Set(seen), node)
-      )
-        return true;
+          return true;
+        if (
+          owner &&
+          owner !== fn &&
+          contributesToReturn(result, owner, parents) &&
+          functionFlowsToTemplate(ctx, owner, new Set(seen), result)
+        )
+          return true;
+      }
     }
     for (const [key, value] of Object.entries(node)) {
       if (key === "__doctorParent" || key === "parent") continue;
@@ -331,6 +344,45 @@ function functionFlowsToTemplate(
     return false;
   };
   return visit(ctx.file.scriptAst, null, null);
+}
+
+function resultAliases(
+  node: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+  seen = new Set<AnyNode>(),
+): AnyNode[] {
+  if (seen.has(node)) return [];
+  seen.add(node);
+  const results = [node];
+  let expression = node;
+  while (
+    parents.get(expression) &&
+    unwrapExpression(parents.get(expression)) === unwrapExpression(expression)
+  )
+    expression = parents.get(expression);
+  const binding = parents.get(expression);
+  if (
+    binding?.type !== "VariableDeclarator" ||
+    binding.init !== expression ||
+    binding.id.type !== "Identifier"
+  )
+    return results;
+  let scope = containingFunction(binding, parents);
+  if (!scope) {
+    scope = binding;
+    while (parents.get(scope)) scope = parents.get(scope);
+  }
+  walkScriptLocal(scope.body, (reference) => {
+    if (
+      reference.type === "Identifier" &&
+      reference.start > binding.start &&
+      resolveLocalBinding(reference, reference.name, parents) === binding &&
+      !hasPriorAliasWrite(reference, binding, scope, parents)
+    ) {
+      results.push(...resultAliases(reference, parents, seen));
+    }
+  });
+  return results;
 }
 
 function isUndefinedValue(node: AnyNode): boolean {
@@ -402,6 +454,7 @@ function unwrapExpression(node: AnyNode): AnyNode {
       "TSSatisfiesExpression",
       "TSNonNullExpression",
       "TSTypeAssertion",
+      "TSInstantiationExpression",
     ].includes(node?.type)
   )
     node = node.expression;
@@ -491,7 +544,28 @@ function resultCallbackCall(
         scope = call;
         while (parents.get(scope)) scope = parents.get(scope);
       }
-      if (!binding || !hasPriorAliasWrite(call, binding, scope, parents)) return call;
+      let methodReplaced = false;
+      if (binding)
+        walkScriptLocal(scope.body, (write) => {
+          const target =
+            write.type === "AssignmentExpression" ? unwrapExpression(write.left) : null;
+          if (
+            write.start <= binding.start ||
+            write.start >= call.start ||
+            target?.type !== "MemberExpression" ||
+            unwrapExpression(target.object)?.type !== "Identifier"
+          )
+            return;
+          const key = target.computed ? target.property?.value : target.property?.name;
+          if (
+            (key === undefined || String(key) === method) &&
+            resolveLocalBinding(write, unwrapExpression(target.object).name, parents) === binding &&
+            writeDominatesReference(write, call, scope, parents)
+          )
+            methodReplaced = true;
+        });
+      if (!methodReplaced && (!binding || !hasPriorAliasWrite(call, binding, scope, parents)))
+        return call;
     }
   }
   return null;
@@ -538,6 +612,7 @@ function parameterContributesToReturn(
   index: number,
   parents: WeakMap<AnyNode, AnyNode>,
   seen = new Set<AnyNode>(),
+  argumentSource?: [AnyNode, AnyNode],
 ): boolean {
   const parameter =
     fn.params[index] ?? fn.params.find((param: AnyNode) => param.type === "RestElement");
@@ -548,6 +623,8 @@ function parameterContributesToReturn(
       reference.type === "Identifier" &&
       patternBinds(parameter, reference.name) &&
       resolveLocalBinding(reference, reference.name, parents) === parameter &&
+      (!argumentSource ||
+        projectionIncludes(argumentSource[0], argumentSource[1], reference, parents)) &&
       contributesToReturn(reference, fn, parents, new Set(seen))
     )
       contributes = true;
@@ -593,11 +670,28 @@ function asyncResultIsConsumed(
         )
           return false;
         if (method === "then" && chain.arguments[0] && chain.arguments[0].type !== "Literal") {
-          const callback = unwrapExpression(chain.arguments[0]);
-          if (!["ArrowFunctionExpression", "FunctionExpression"].includes(callback?.type))
-            return false;
           const callbackParents = new WeakMap<AnyNode, AnyNode>();
-          walkScriptLocal(callback, (child) => callbackParents.set(child, parentOf(child)));
+          let root = chain;
+          while (parentOf(root)) root = parentOf(root);
+          walkScriptLocal(root, (child) => callbackParents.set(child, parentOf(child)));
+          let callback = unwrapExpression(chain.arguments[0]);
+          const bindings = new Set<AnyNode>();
+          while (callback?.type === "Identifier") {
+            const binding = resolveLocalBinding(callback, callback.name, callbackParents);
+            if (!binding || bindings.has(binding)) return false;
+            bindings.add(binding);
+            const scope = containingFunction(chain, callbackParents) ?? root;
+            if (hasPriorAliasWrite(chain, binding, scope, callbackParents)) return false;
+            callback = unwrapExpression(
+              binding.type === "VariableDeclarator" ? binding.init : binding,
+            );
+          }
+          if (
+            !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
+              callback?.type,
+            )
+          )
+            return false;
           if (!parameterContributesToReturn(callback, 0, callbackParents)) return false;
         }
         current = parent;
@@ -622,6 +716,7 @@ function asyncResultIsConsumed(
           "TSAsExpression",
           "TSNonNullExpression",
           "TSTypeAssertion",
+          "TSInstantiationExpression",
         ].includes(parent.type)
       ) {
         if (parent.type !== "ArrayExpression") return false;
@@ -758,7 +853,7 @@ function projectionIncludes(
   }
   let current = reference;
   for (const key of path) {
-    const member = current.parent;
+    const member = parents.get(current) ?? current.parent;
     if (member?.type !== "MemberExpression" || member.object !== current) return true;
     const accessed = member.computed ? member.property?.value : member.property?.name;
     if (accessed === undefined) return true;
@@ -831,7 +926,10 @@ function contributesToReturn(
         ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
           fn?.type,
         ) &&
-        !parameterContributesToReturn(fn, parent.arguments.indexOf(current), parents, seen)
+        !parameterContributesToReturn(fn, parent.arguments.indexOf(current), parents, seen, [
+          node,
+          current,
+        ])
       )
         return false;
     }

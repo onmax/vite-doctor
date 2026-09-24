@@ -1116,3 +1116,70 @@ const displayed = await label()</script><template>{{ displayed }}</template>`,
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  [
+    "async function clock() { return Date.now() }; const pending = clock(); const displayed = await pending",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; const pending = clock(); const alias = pending; const displayed = await alias",
+    1,
+  ],
+  [
+    "async function clock() { return Date.now() }; let pending = clock(); pending = Promise.resolve('stable'); const displayed = await pending",
+    0,
+  ],
+  [
+    "async function clock() { return Date.now() }; const pending = clock(); const displayed = pending",
+    0,
+  ],
+  [
+    "async function clock() { return Date.now() }; async function label() { const pending = clock(); return await pending }; const displayed = await label()",
+    1,
+  ],
+  [
+    "function clock() { return Date.now() }; function select(value) { return value.label }; function label() { return select({ label: 'Ready', generatedAt: clock() }) }; const displayed = label()",
+    0,
+  ],
+  [
+    "function clock() { return Date.now() }; function select(value) { return value.generatedAt }; function label() { return select({ label: 'Ready', generatedAt: clock() }) }; const displayed = label()",
+    1,
+  ],
+  [
+    "const source = [1]; source.map = () => ['stable']; const displayed = source.map(() => Date.now())",
+    0,
+  ],
+  [
+    "const source = [1]; source['map'] = () => ['stable']; const displayed = source.map(() => Date.now())",
+    0,
+  ],
+  [
+    "const source = [1]; source.filter = () => ['stable']; const displayed = source.map(() => Date.now())",
+    1,
+  ],
+  ["function clock<T>() { return Date.now() }; const displayed = (clock<number>)()", 1],
+  [
+    "function clock<T>() { return Date.now() }; const alias = clock<number>; const displayed = alias()",
+    1,
+  ],
+])("respects reviewed aliases and projections: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup lang="ts">${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["function identity(value) { return value }", "identity", 1],
+  ["const identity = (value) => value; const alias = identity", "alias", 1],
+  ["function stable(value) { return 'stable' }", "stable", 0],
+  ["let identity = (value) => value; identity = () => 'stable'", "identity", 0],
+])("traces local promise callbacks: %s", async (declaration, callback, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>async function clock() { return Date.now() }; ${declaration}; const displayed = await clock().then(${callback})</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
