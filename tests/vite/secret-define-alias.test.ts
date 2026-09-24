@@ -543,3 +543,95 @@ test.each([
   });
   expect(result.diagnostics.length > 0).toBe(expected);
 });
+
+test.each([
+  [
+    "const inner = async () => process.env.PRIVATE_TOKEN; const outer = async () => inner()",
+    "await outer()",
+    true,
+  ],
+  [
+    "const inner = async () => process.env.PRIVATE_TOKEN; const outer = async () => inner()",
+    "outer()",
+    false,
+  ],
+  ["const value = process.env.PRIVATE_TOKEN", "Promise.resolve(value)", false],
+  ["const value = process.env.PRIVATE_TOKEN", "await Promise.resolve(value)", true],
+  ["const inner = async () => process.env.PRIVATE_TOKEN", "await Promise.resolve(inner())", true],
+  ["const value = process.env.PRIVATE_TOKEN", "await Promise.reject(value)", false],
+  ["const holder = { get value() { return process.env.PRIVATE_TOKEN } }", "holder.value", true],
+  ["const holder = { get value() { return process.env.PUBLIC_VERSION } }", "holder.value", false],
+  [
+    "const holder = { get unused() { return process.env.PRIVATE_TOKEN }, value: 'public' }",
+    "holder.value",
+    false,
+  ],
+  ["const read = (value = process.env.PRIVATE_TOKEN) => value", "read()", true],
+  ["const read = (value = process.env.PRIVATE_TOKEN) => value", "read(undefined)", true],
+  ["const read = (value = process.env.PRIVATE_TOKEN) => value", "read('public')", false],
+  ["const read = (value = process.env.PRIVATE_TOKEN) => 'public'", "read()", false],
+  [
+    "const read = (value = process.env.PRIVATE_TOKEN) => value; const other = read",
+    "other()",
+    true,
+  ],
+  [
+    "const holder = { read(value = process.env.PRIVATE_TOKEN) { return value } }",
+    "holder.read()",
+    true,
+  ],
+  [
+    "const holder = { read(value = process.env.PRIVATE_TOKEN) { return value } }",
+    "holder.read('public')",
+    false,
+  ],
+])("traces invoked values: %s / %s", async (declarations, value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declarations}; export default async () => ({ define: { __CONFIG__: JSON.stringify(${value}) } })`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
+
+for (const rule of [noRuntimeObjectDefine, noSecretDefine]) {
+  test.each([
+    'import { defineConfig as config } from "vite"; export default config({ define: { PRIVATE_TOKEN: {} } })',
+    "export default defineConfig(async () => { return await Promise.resolve({ define: { PRIVATE_TOKEN: {} } }) })",
+    "export default defineConfig(async () => Promise.resolve({ define: { PRIVATE_TOKEN: {} } }))",
+    "export default Promise.resolve({ define: { PRIVATE_TOKEN: {} } })",
+  ])(`${rule.meta.id} discovers wrapped configs: %s`, async (config) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule,
+      files: { "vite.config.ts": config },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  });
+}
+
+test.each([
+  ["const read = async (value) => value", "read(process.env.PRIVATE_TOKEN)", false],
+  ["const read = async (value) => value", "await read(process.env.PRIVATE_TOKEN)", true],
+  ["const holder = { read: () => process.env.PRIVATE_TOKEN }", "holder.read()", true],
+  [
+    "const holder = { async read() { return Promise.resolve(process.env.PRIVATE_TOKEN) } }",
+    "await holder.read()",
+    true,
+  ],
+  ["const read = (value = process.env.PRIVATE_TOKEN) => value", "[read('public'), read()]", true],
+  ["const read = (value = process.env.PRIVATE_TOKEN) => value", "[read(), read('public')]", true],
+  ["const read = (value = 'public') => read(value)", "read()", false],
+  ["const serialize = JSON.stringify", "serialize(process.env.PRIVATE_TOKEN)", true],
+])("keeps invocation context: %s / %s", async (declarations, value, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `${declarations}; export default async () => ({ define: { __CONFIG__: JSON.stringify(${value}) } })`,
+    },
+  });
+  expect(result.diagnostics.length > 0).toBe(expected);
+});
