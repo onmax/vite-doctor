@@ -694,10 +694,29 @@ test("skips invalid import-map array targets before selecting the optional peer"
 test.each([
   'class Adapter { static { throw 0; } static peer = require("peer"); }',
   'class Adapter { static first = unknown(); static peer = require("peer"); }',
-])("skips static loads after an abrupt class element: %s", async (source) => {
+  'class Adapter { static [unknown()] = require("peer"); }',
+  'class Adapter extends unknown() { static peer = require("peer"); }',
+  'unknown()(require("peer"));',
+  'new (unknown())(require("peer"));',
+  '({ get run() { throw 0; } }).run(require("peer"));',
+  '({ [unknown()]: require("peer") });',
+])("skips loads after potentially abrupt predecessors: %s", async (source) => {
   expect(await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source })).toEqual(
     [],
   );
+});
+
+test.each([
+  '({ method() {}, peer: require("peer") });',
+  '({ get value() { return 1; }, peer: require("peer") });',
+  '({ ["value"]: require("peer") });',
+  'class Adapter { static ["value"] = 1; static peer = require("peer"); }',
+  '{ var require = () => {}; } require("peer");',
+  'if (true) { var require = () => {}; } require("peer");',
+])("respects safe object definitions and nested var scopes: %s", async (source) => {
+  expect(
+    await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source }),
+  ).toHaveLength(source.includes("var require") ? 0 : 1);
 });
 
 test.each([

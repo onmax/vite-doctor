@@ -720,7 +720,17 @@ function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
   if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
     const args = parent.arguments ?? [];
     const index = args.findIndex((arg) => isWithin(node, arg));
-    return index >= 0 && args.slice(0, index).some((arg) => !isNonAbruptElement(arg));
+    const safeCallee =
+      isNonAbruptElement(parent.expression) ||
+      (ts.isCallExpression(parent) &&
+        ts.isPropertyAccessExpression(parent.expression) &&
+        ts.isIdentifier(parent.expression.expression) &&
+        parent.expression.expression.text === "Promise" &&
+        parent.expression.name.text === "all" &&
+        !shadowsName(parent, "Promise"));
+    return (
+      index >= 0 && (!safeCallee || args.slice(0, index).some((arg) => !isNonAbruptElement(arg)))
+    );
   }
   if (ts.isVariableDeclarationList(parent)) {
     const index = parent.declarations.findIndex((declaration) => isWithin(node, declaration));
@@ -735,16 +745,24 @@ function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
   }
   if (ts.isObjectLiteralExpression(parent)) {
     const index = parent.properties.findIndex((property) => isWithin(node, property));
+    const current = parent.properties[index];
     return (
       index >= 0 &&
-      parent.properties
-        .slice(0, index)
-        .some(
-          (property) =>
-            !ts.isPropertyAssignment(property) ||
-            literalPropertyName(property.name) === undefined ||
-            !isNonAbruptElement(property.initializer),
+      (parent.properties.slice(0, index).some((property) => {
+        if (ts.isSpreadAssignment(property)) return true;
+        if (ts.isShorthandPropertyAssignment(property)) return true;
+        if (
+          ts.isComputedPropertyName(property.name) &&
+          !isNonAbruptElement(property.name.expression)
         )
+          return true;
+        return ts.isPropertyAssignment(property) && !isNonAbruptElement(property.initializer);
+      }) ||
+        (current &&
+          ts.isPropertyAssignment(current) &&
+          ts.isComputedPropertyName(current.name) &&
+          isWithin(node, current.initializer) &&
+          !isNonAbruptElement(current.name.expression)))
     );
   }
   return false;
@@ -891,20 +909,33 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
         !isImmediateField(parent)) ||
       ((ts.isPropertyDeclaration(parent) || ts.isClassStaticBlockDeclaration(parent)) &&
         ts.isClassLike(parent.parent) &&
-        parent.parent.members
-          .slice(0, parent.parent.members.indexOf(parent))
-          .some(
-            (member) =>
-              (member.name && ts.isComputedPropertyName(member.name)) ||
-              (ts.isClassStaticBlockDeclaration(member) &&
-                !member.body.statements.every(isNonAbruptStatement)) ||
-              (ts.isPropertyDeclaration(member) &&
-                member.modifiers?.some(
-                  (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
-                ) &&
-                member.initializer &&
-                !isNonAbruptElement(member.initializer)),
-          )) ||
+        (parent.parent.heritageClauses?.some(
+          (clause) =>
+            clause.token === ts.SyntaxKind.ExtendsKeyword &&
+            clause.types.some((type) => !isNonAbruptElement(type.expression)),
+        ) ||
+          (ts.isPropertyDeclaration(parent) &&
+            parent.name &&
+            ts.isComputedPropertyName(parent.name) &&
+            parent.initializer &&
+            isWithin(node, parent.initializer) &&
+            !isNonAbruptElement(parent.name.expression)) ||
+          parent.parent.members
+            .slice(0, parent.parent.members.indexOf(parent))
+            .some(
+              (member) =>
+                (member.name &&
+                  ts.isComputedPropertyName(member.name) &&
+                  !isNonAbruptElement(member.name.expression)) ||
+                (ts.isClassStaticBlockDeclaration(member) &&
+                  !member.body.statements.every(isNonAbruptStatement)) ||
+                (ts.isPropertyDeclaration(member) &&
+                  member.modifiers?.some(
+                    (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+                  ) &&
+                  member.initializer &&
+                  !isNonAbruptElement(member.initializer)),
+            ))) ||
       (ts.isIfStatement(parent) && !isWithin(node, parent.expression)) ||
       (ts.isConditionalExpression(parent) && !isWithin(node, parent.condition)) ||
       (ts.isSwitchStatement(parent) && !isWithin(node, parent.expression)) ||
@@ -1282,7 +1313,8 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
       if (
         (ts.isVariableDeclaration(child) && binds(child.name) && bindingContains(child, node)) ||
         ((ts.isFunctionDeclaration(child) || ts.isClassDeclaration(child)) &&
-          child.name?.text === identifier) ||
+          child.name?.text === identifier &&
+          isWithin(node, child.parent)) ||
         (ts.isImportClause(child) && child.name?.text === identifier) ||
         ((ts.isImportSpecifier(child) ||
           ts.isNamespaceImport(child) ||
@@ -1292,10 +1324,7 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
         found = true;
       if (
         child !== scope &&
-        (ts.isBlock(child) ||
-          ts.isModuleBlock(child) ||
-          ts.isFunctionLike(child) ||
-          ts.isClassLike(child))
+        (ts.isModuleBlock(child) || ts.isFunctionLike(child) || ts.isClassLike(child))
       )
         return;
       ts.forEachChild(child, search);
