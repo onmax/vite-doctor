@@ -150,6 +150,7 @@ function undisposedResource(program: AnyNode): string | null {
   const promises = new Map<AnyNode, AnyNode>();
   const promiseCompletions = new Map<AnyNode, Completion>();
   const pendingFetchPromises = new Set<AnyNode>();
+  const pendingUserPromises = new Set<AnyNode>();
   const lateReactions: {
     callback: AnyNode;
     args: AnyNode[];
@@ -159,6 +160,7 @@ function undisposedResource(program: AnyNode): string | null {
     callback: AnyNode;
     environment: Map<AnyNode, AnyNode>;
     result?: AnyNode;
+    resumeAwait?: boolean;
   }[] = [];
   const subscriptions: { callback: AnyNode; environment: Map<AnyNode, AnyNode> }[] = [];
   const promiseSettlers = new Map<AnyNode, (value: AnyNode) => void>();
@@ -169,6 +171,7 @@ function undisposedResource(program: AnyNode): string | null {
       rejected?: AnyNode;
       environment: Map<AnyNode, AnyNode>;
       result: AnyNode;
+      resumeAwait?: boolean;
     }[]
   >();
   const pendingTimeouts: {
@@ -607,7 +610,7 @@ function undisposedResource(program: AnyNode): string | null {
     let abrupt = false;
     const returns: AnyNode[] = [];
     const returnPaths: Map<object, boolean>[] = [];
-    let pendingAwait = false;
+    let pendingAwait: unknown;
     walkEvaluation(root, (node) => {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     });
@@ -2025,17 +2028,26 @@ function undisposedResource(program: AnyNode): string | null {
         for (const [index, statement] of node.body.entries()) {
           if (!walk(statement)) return false;
           if (pendingAwait) {
-            pendingAwait = false;
-            if (index + 1 < node.body.length)
-              lateReactions.push({
-                callback: {
-                  type: "ArrowFunctionExpression",
-                  params: [],
-                  body: { type: "BlockStatement", body: node.body.slice(index + 1) },
-                },
-                args: [],
-                environment: new Map(environment),
-              });
+            const awaited = pendingAwait;
+            pendingAwait = undefined;
+            if (index + 1 < node.body.length) {
+              const callback = {
+                type: "ArrowFunctionExpression",
+                params: [],
+                body: { type: "BlockStatement", body: node.body.slice(index + 1) },
+              };
+              const captured = new Map(environment);
+              if (pendingUserPromises.has(awaited)) {
+                const reactions = pendingPromiseReactions.get(awaited) ?? [];
+                reactions.push({
+                  fulfilled: callback,
+                  environment: captured,
+                  result: {},
+                  resumeAwait: true,
+                });
+                pendingPromiseReactions.set(awaited, reactions);
+              } else lateReactions.push({ callback, args: [], environment: captured });
+            }
             return true;
           }
         }
@@ -2219,6 +2231,7 @@ function undisposedResource(program: AnyNode): string | null {
         ) {
           if (!walk(node.arguments)) return false;
           const promise = {};
+          pendingUserPromises.add(promise);
           const resolve = {};
           const reject = {};
           let completion: Completion = { normal: false, abrupt: false };
@@ -2260,6 +2273,7 @@ function undisposedResource(program: AnyNode): string | null {
                   callback: reaction.fulfilled,
                   environment: reaction.environment,
                   result: reaction.result,
+                  resumeAwait: reaction.resumeAwait,
                 });
             }
           });
@@ -2274,6 +2288,7 @@ function undisposedResource(program: AnyNode): string | null {
                   callback: reaction.rejected,
                   environment: reaction.environment,
                   result: reaction.result,
+                  resumeAwait: reaction.resumeAwait,
                 });
             }
           });
@@ -2816,14 +2831,19 @@ function undisposedResource(program: AnyNode): string | null {
         if (!walk(node.argument)) return false;
         const awaited = identity(node.argument, environment);
         const completion = promiseCompletions.get(awaited);
-        if (asyncFunction && pendingFetchPromises.has(awaited)) pendingAwait = true;
+        if (
+          asyncFunction &&
+          (pendingFetchPromises.has(awaited) ||
+            (pendingUserPromises.has(awaited) && !completion?.normal && !completion?.abrupt))
+        )
+          pendingAwait = awaited;
         if (completion?.abrupt) {
           abrupt = true;
           exits.push(new Set(cleaned));
           thrownExits.add(exits[exits.length - 1]);
           throwStates.set(exits[exits.length - 1], snapshot());
         }
-        return completion?.normal ?? true;
+        return Boolean(pendingAwait) || (completion?.normal ?? true);
       }
       if (node.type === "TaggedTemplateExpression") {
         if (!walk(node.tag) || !walk(node.quasi)) return false;
@@ -2925,8 +2945,12 @@ function undisposedResource(program: AnyNode): string | null {
   evaluate(program, values, true);
   const drainMicrotasks = () => {
     while (microtasks.length) {
-      const { callback, environment, result } = microtasks.shift()!;
+      const { callback, environment, result, resumeAwait } = microtasks.shift()!;
       const completion = adoptPromise(inspect(callback, [], environment, true));
+      if (resumeAwait)
+        for (const binding of values.keys()) {
+          if (environment.has(binding)) values.set(binding, environment.get(binding));
+        }
       if (result) {
         promiseCompletions.set(result, completion);
         if (completion.normal) promises.set(result, completion.value);
@@ -2937,6 +2961,7 @@ function undisposedResource(program: AnyNode): string | null {
               callback: next,
               environment: reaction.environment,
               result: reaction.result,
+              resumeAwait: reaction.resumeAwait,
             });
         }
       }

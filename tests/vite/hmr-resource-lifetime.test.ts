@@ -3839,6 +3839,16 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "listener-resolved promise resumes an async resource creator",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); async function start() { await ready; setInterval(refresh) } start(); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "disposal cleans a resource created after listener resolves an await",
+    "let finish; let timer; const ready = new Promise(resolve => { finish = resolve }); async function start() { await ready; timer = setInterval(refresh) } start(); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => { removeEventListener('click', handler); clearInterval(timer) })",
+    false,
+  ],
+  [
     "many listeners have bounded ordering exploration",
     `${Array.from({ length: 11 }, (_, index) => `const handler${index} = () => { ${index === 0 ? "setInterval(refresh)" : ""} }; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 11 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
     true,
