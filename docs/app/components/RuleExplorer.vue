@@ -179,8 +179,8 @@ const activeFrameworkLinkClass = computed(
     <header v-if="showHeader" class="py-2">
       <div class="flex flex-col gap-2 md:flex-row md:items-baseline md:justify-between">
         <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <a
-            href="/"
+          <NuxtLink
+            to="/"
             class="inline-flex items-center gap-2 rounded-md text-neutral-800 hover:text-neutral-950 dark:text-neutral-100 dark:hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
             aria-label="Doctor home"
           >
@@ -198,7 +198,7 @@ const activeFrameworkLinkClass = computed(
                 {{ versionLabel }}
               </span>
             </component>
-          </a>
+          </NuxtLink>
         </div>
 
         <div
