@@ -174,6 +174,7 @@ export function rootMiddlewareConfiguration(
   const srcDir = property(options, "srcDir");
   const directory = property(options, "dir");
   const middleware = property(directory, "middleware");
+  const nitro = property(options, "nitro");
   if (
     property(options, "serverDir") ||
     property(options, "extends") ||
@@ -186,7 +187,10 @@ export function rootMiddlewareConfiguration(
     srcDir: srcDir?.value ?? defaultSourceDirectory(root, middleware?.value ?? "middleware"),
     middleware: middleware?.value ?? "middleware",
     customServerRegistration: Boolean(
-      property(options, "nitro") ||
+      (nitro &&
+        (nitro.type !== "ObjectExpression" ||
+          property(nitro, "handlers") ||
+          property(nitro, "scanDirs"))) ||
       property(options, "serverHandlers") ||
       property(options, "devServerHandlers"),
     ),

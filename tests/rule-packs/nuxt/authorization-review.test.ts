@@ -39,6 +39,28 @@ test.each(["nitro", "serverHandlers", "devServerHandlers"])(
   },
 );
 
+test.each([
+  "nitro: { preset: 'node-server' }",
+  "nitro: { routeRules: { '/api/**': { cors: true } } }",
+])("unrelated %s configuration permits manifest-free authorization review", async (option) => {
+  const reviewed: string[] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    reviewed.push(candidate.handler.path);
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "nuxt.config.ts": `export default defineNuxtConfig({ ${option} })`,
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+
+  expect(reviewed).toEqual(["server/api/account.get.ts"]);
+  expect(JSON.parse(createAgentReport(result)).status).not.toBe("incomplete");
+});
+
 test("matches manifest-free layer handlers by runtime route, not layer name", async () => {
   const reviewed: string[] = [];
   const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
