@@ -4,6 +4,56 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "Set iteration visits members added by the callback",
+    "const timers = new Set([setInterval(refresh)]); let added = false; import.meta.hot.dispose(() => timers.forEach(timer => { if (!added) { added = true; timers.add(setInterval(refresh)) } clearInterval(timer) }))",
+    false,
+  ],
+  [
+    "Set iteration skips members deleted by the callback",
+    "const timers = new Set([setInterval(refresh), setInterval(refresh)]); import.meta.hot.dispose(() => timers.forEach(timer => { timers.clear(); clearInterval(timer) }))",
+    true,
+  ],
+  [
+    "listener options getter creates a resource",
+    "const handler = () => {}; const options = { get once() { setInterval(refresh); return false } }; document.addEventListener('click', handler, options); import.meta.hot.dispose(() => document.removeEventListener('click', handler, options))",
+    true,
+  ],
+  [
+    "throwing default parameter prevents disposal cleanup",
+    "const timer = setInterval(refresh); const fail = () => { throw Error() }; import.meta.hot.dispose((data, unused = fail()) => clearInterval(timer))",
+    true,
+  ],
+  [
+    "unknown Promise.all input may reject",
+    "Promise.all([getPromise()]).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "one-shot do while resource is cleaned",
+    "let timer; do { timer = setInterval(refresh) } while (false); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "Object.assign getter throws into catch",
+    "try { Object.assign({}, { get value() { throw Error() } }) } catch { setInterval(refresh) } import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "six listener orders with no resource creation do not leak",
+    `${Array.from({ length: 6 }, (_, index) => `const handler${index} = () => {}; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 6 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
+    false,
+  ],
+  [
+    "subscription callback creates a resource before disposal",
+    "const sub = events.subscribe(() => setInterval(refresh)); import.meta.hot.dispose(() => sub.unsubscribe())",
+    true,
+  ],
+  [
+    "simulated listener drains queued microtasks",
+    "const handler = () => queueMicrotask(() => setInterval(refresh)); document.addEventListener('click', handler); import.meta.hot.dispose(() => document.removeEventListener('click', handler))",
+    true,
+  ],
+  [
     "Promise.all passes fulfilled values to reactions",
     "Promise.all([Promise.resolve(false)]).then(([start]) => { if (start) setInterval(refresh) }); import.meta.hot.dispose(() => {})",
     false,

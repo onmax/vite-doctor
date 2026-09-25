@@ -156,6 +156,7 @@ function undisposedResource(program: AnyNode): string | null {
     environment: Map<AnyNode, AnyNode>;
   }[] = [];
   const microtasks: { callback: AnyNode; environment: Map<AnyNode, AnyNode> }[] = [];
+  const subscriptions: { callback: AnyNode; environment: Map<AnyNode, AnyNode> }[] = [];
   const promiseSettlers = new Map<AnyNode, (value: AnyNode) => void>();
   const pendingTimeouts: {
     timeout: AnyNode;
@@ -166,6 +167,7 @@ function undisposedResource(program: AnyNode): string | null {
   }[] = [];
   let timerSimulationDepth = 0;
   const setCollections = new Set<AnyNode>();
+  const setIterations = new Map<AnyNode, AnyNode[][]>();
   const arrayChoices = new Map<AnyNode, { array: AnyNode; path: Map<object, boolean> }[]>();
   const alternatives = new Map<AnyNode, AnyNode[]>();
   const callbackChoices = new Map<AnyNode, AnyNode[]>();
@@ -373,7 +375,7 @@ function undisposedResource(program: AnyNode): string | null {
           argument === undefined ||
           argument === "undefined" ||
           (argument?.type === "UnaryExpression" && argument.operator === "void");
-        if (useDefault) evaluate(pattern.right, local, module);
+        if (useDefault && !evaluate(pattern.right, local, module).normal) throw abruptBinding;
         bind(pattern.left, useDefault ? identity(pattern.right, local) : argument);
       } else if (pattern.type === "ArrayPattern" && argument?.type === "ArrayExpression") {
         for (const [index, element] of pattern.elements.entries()) {
@@ -791,6 +793,8 @@ function undisposedResource(program: AnyNode): string | null {
           alternatives.set(value, created);
           returned.set(node, value);
         }
+        if (module && kinds.has("subscription") && node.arguments[0])
+          subscriptions.push({ callback: identity(node.arguments[0], environment), environment });
         if (
           (module || timerSimulationDepth === 1) &&
           (kinds.has("timeout") || kinds.has("interval")) &&
@@ -884,6 +888,12 @@ function undisposedResource(program: AnyNode): string | null {
                 module,
                 descriptor.receiver,
               );
+              if (completion.abrupt) {
+                abrupt = true;
+                exits.push(new Set(cleaned));
+                thrownExits.add(exits[exits.length - 1]);
+                throwStates.set(exits[exits.length - 1], snapshot());
+              }
               if (!completion.normal) return false;
               value = completion.value;
             } else if (!properties.get(source)?.has(key) && descriptor?.property.kind !== "init")
@@ -935,7 +945,9 @@ function undisposedResource(program: AnyNode): string | null {
           const items = arrayElements(value).map((item: AnyNode) => identity(item, environment));
           const completion = {
             normal: items.every((item: AnyNode) => promiseCompletions.get(item)?.normal !== false),
-            abrupt: items.some((item: AnyNode) => promiseCompletions.get(item)?.abrupt),
+            abrupt: items.some(
+              (item: AnyNode) => promiseCompletions.get(item)?.abrupt ?? !promises.has(item),
+            ),
           };
           promises.set(promise, {
             type: "ArrayExpression",
@@ -1090,15 +1102,31 @@ function undisposedResource(program: AnyNode): string | null {
         const options = capture(node.arguments[2], environment);
         if (method === "addEventListener") {
           const listenerOptions = identity(node.arguments[2], environment);
-          const once = identity(
-            {
-              type: "MemberExpression",
-              object: listenerOptions,
-              property: { type: "Identifier", name: "once" },
-              computed: false,
-            },
-            environment,
-          );
+          const descriptor = effectiveProperties(listenerOptions, environment).get("once");
+          const onceCompletion =
+            descriptor?.accessor &&
+            descriptor.property.kind === "get" &&
+            !properties.get(listenerOptions)?.has("once")
+              ? inspect(descriptor.property.value, [], environment, module, descriptor.receiver)
+              : undefined;
+          if (onceCompletion?.abrupt) {
+            abrupt = true;
+            exits.push(new Set(cleaned));
+            thrownExits.add(exits[exits.length - 1]);
+            throwStates.set(exits[exits.length - 1], snapshot());
+          }
+          if (onceCompletion && !onceCompletion.normal) return false;
+          const once = onceCompletion
+            ? onceCompletion.value
+            : identity(
+                {
+                  type: "MemberExpression",
+                  object: listenerOptions,
+                  property: { type: "Identifier", name: "once" },
+                  computed: false,
+                },
+                environment,
+              );
           const signal = identity(
             {
               type: "MemberExpression",
@@ -1205,6 +1233,7 @@ function undisposedResource(program: AnyNode): string | null {
             stored.set(String(elements.length), value);
             stored.set("length", { type: "Literal", value: elements.length + 1 });
             properties.set(array, stored);
+            for (const iteration of setIterations.get(array) ?? []) iteration.push(value);
           }
           returned.set(node, array);
           return true;
@@ -1222,23 +1251,39 @@ function undisposedResource(program: AnyNode): string | null {
             remaining.forEach((element, position) => stored.set(String(position), element));
             stored.set("length", { type: "Literal", value: remaining.length });
             properties.set(array, stored);
+            for (const iteration of setIterations.get(array) ?? []) {
+              for (let position = 0; position < iteration.length; position++)
+                if (iteration[position] === value) iteration[position] = null;
+            }
           }
           returned.set(node, { type: "Literal", value: index !== -1 });
           return true;
         }
         if (method === "clear") {
           properties.set(array, new Map([["length", { type: "Literal", value: 0 }]]));
+          for (const iteration of setIterations.get(array) ?? []) iteration.fill(null);
           return true;
         }
         if (method === "forEach") {
-          for (const element of elements) {
+          const iteration: AnyNode[] = [...elements];
+          const active = setIterations.get(array) ?? [];
+          active.push(iteration);
+          setIterations.set(array, active);
+          for (let position = 0; position < iteration.length; position++) {
+            if (position >= 64) break;
+            const element = iteration[position];
+            if (element === null) continue;
             const call = {
               type: "CallExpression",
               callee: identity(node.arguments[0], environment),
               arguments: [element, element, array],
             };
-            if (visit(call, identity(node.arguments[1], environment)) === false) return false;
+            if (visit(call, identity(node.arguments[1], environment)) === false) {
+              active.pop();
+              return false;
+            }
           }
+          active.pop();
           return true;
         }
       }
@@ -2301,7 +2346,11 @@ function undisposedResource(program: AnyNode): string | null {
           const resourceStart = resources.length;
           const firstExit = exits.length;
           let bodyStopped = false;
-          if (loop) loopDepth++;
+          const repeats =
+            node.type !== "DoWhileStatement" ||
+            node.test?.type !== "Literal" ||
+            Boolean(node.test.value);
+          if (loop && repeats) loopDepth++;
           if (node.type === "ForStatement" || node.type === "DoWhileStatement") {
             const continues = walk(node.body);
             bodyStopped = !continues && !control.continues.length;
@@ -2359,7 +2408,7 @@ function undisposedResource(program: AnyNode): string | null {
               combined = snapshot();
             }
           }
-          if (loop) loopDepth--;
+          if (loop && repeats) loopDepth--;
           if (!bodyStopped) {
             for (const value of testResources) repeated.add(value);
           }
@@ -2598,7 +2647,13 @@ function undisposedResource(program: AnyNode): string | null {
     return { normal, abrupt, value };
   }
   evaluate(program, values, true);
-  for (const { callback, environment } of microtasks) inspect(callback, [], environment, true);
+  const drainMicrotasks = () => {
+    while (microtasks.length) {
+      const { callback, environment } = microtasks.shift()!;
+      inspect(callback, [], environment, true);
+    }
+  };
+  drainMicrotasks();
   const captureDisposalState = () => ({
     cleaned: new Set(cleaned),
     values: new Map(values),
@@ -2654,22 +2709,20 @@ function undisposedResource(program: AnyNode): string | null {
     timerSimulationDepth = 1;
     inspect(callback, [event], values, false, receiver);
     timerSimulationDepth = 0;
+    drainMicrotasks();
     disposalStates.push(captureDisposalState());
     if (!listener.once && !cleaned.has(listener.value)) {
       timerSimulationDepth = 1;
       inspect(callback, [event], values, false, receiver);
       timerSimulationDepth = 0;
+      drainMicrotasks();
       disposalStates.push(captureDisposalState());
     }
     currentPath = parentPath;
   };
   let listenerOrderCount = 0;
-  let listenerOrdersTruncated = false;
   const fireOrders = (remaining: Listener[]) => {
-    if (listenerOrderCount++ >= 1024) {
-      listenerOrdersTruncated = true;
-      return;
-    }
+    if (listenerOrderCount++ >= 1024) return;
     if (!remaining.length) {
       disposalStates.push(captureDisposalState());
       return;
@@ -2684,6 +2737,14 @@ function undisposedResource(program: AnyNode): string | null {
   };
   fireOrders(listeners);
   restoreDisposalState(beforeListeners);
+  for (const { callback, environment } of subscriptions) {
+    timerSimulationDepth = 1;
+    inspect(callback, [], environment);
+    timerSimulationDepth = 0;
+    drainMicrotasks();
+    disposalStates.push(captureDisposalState());
+    restoreDisposalState(beforeListeners);
+  }
   for (const listenerState of disposalStates.slice()) {
     restoreDisposalState(listenerState);
     const beforeTimeouts = captureDisposalState();
@@ -2709,6 +2770,7 @@ function undisposedResource(program: AnyNode): string | null {
           timerSimulationDepth = 1;
           inspect(callback, args, environment, false);
           timerSimulationDepth = 0;
+          drainMicrotasks();
           if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
             cleaned.add(timeout);
           disposalStates.push(captureDisposalState());
@@ -2719,6 +2781,7 @@ function undisposedResource(program: AnyNode): string | null {
       timerSimulationDepth = 1;
       inspect(callback, args, environment, false);
       timerSimulationDepth = 0;
+      drainMicrotasks();
       if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
         cleaned.add(timeout);
       disposalStates.push(captureDisposalState());
@@ -2727,6 +2790,7 @@ function undisposedResource(program: AnyNode): string | null {
         !cleaned.has(timeout)
       ) {
         inspect(callback, args, environment, false);
+        drainMicrotasks();
         disposalStates.push(captureDisposalState());
       }
     }
@@ -2800,7 +2864,7 @@ function undisposedResource(program: AnyNode): string | null {
           repeated.has(resource.value) || outcomes.some((outcome) => !outcome.has(resource.value)),
       )?.kind;
   }
-  return disposalLeak ?? (listenerOrdersTruncated ? (resources[0]?.kind ?? "listener") : null);
+  return disposalLeak ?? null;
 }
 
 function unwrapResourceExpression(node: AnyNode): AnyNode {
