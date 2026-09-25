@@ -2174,8 +2174,23 @@ for (const [name, source, leaks] of [
   ],
   [
     "dispose can clean a timer created by a listener",
-    "let timer; const start = () => { timer = setInterval(refresh) }; addEventListener('click', start); import.meta.hot.dispose(() => { removeEventListener('click', start); clearInterval(timer) })",
+    "let timer; const start = () => { timer = setInterval(refresh) }; addEventListener('click', start, { once: true }); import.meta.hot.dispose(() => { removeEventListener('click', start); clearInterval(timer) })",
     false,
+  ],
+  [
+    "repeatable listener overwrites an interval before disposal",
+    "let timer; const start = () => { timer = setInterval(refresh) }; addEventListener('click', start); import.meta.hot.dispose(() => { removeEventListener('click', start); clearInterval(timer) })",
+    true,
+  ],
+  [
+    "repeatable listener cleans its previous interval",
+    "let timer; const start = () => { if (timer) clearInterval(timer); timer = setInterval(refresh) }; addEventListener('click', start); import.meta.hot.dispose(() => { removeEventListener('click', start); clearInterval(timer) })",
+    false,
+  ],
+  [
+    "throwing object getter reaches catch-created timer",
+    "const source = { get value() { throw Error() } }; try { source.value } catch { setInterval(refresh) }; import.meta.hot.dispose(() => {})",
+    true,
   ],
   [
     "plain assignment does not read an accessor getter",

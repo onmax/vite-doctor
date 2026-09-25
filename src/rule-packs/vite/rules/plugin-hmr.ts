@@ -129,6 +129,7 @@ function undisposedResource(program: AnyNode): string | null {
     capture: unknown;
     controller: AnyNode;
     value: AnyNode;
+    once: boolean;
   };
   type Completion = { normal: boolean; abrupt: boolean; value?: AnyNode };
   const resources: Resource[] = [];
@@ -1004,6 +1005,15 @@ function undisposedResource(program: AnyNode): string | null {
         const options = capture(node.arguments[2], environment);
         if (method === "addEventListener") {
           const listenerOptions = identity(node.arguments[2], environment);
+          const once = identity(
+            {
+              type: "MemberExpression",
+              object: listenerOptions,
+              property: { type: "Identifier", name: "once" },
+              computed: false,
+            },
+            environment,
+          );
           const signal = identity(
             {
               type: "MemberExpression",
@@ -1026,7 +1036,15 @@ function undisposedResource(program: AnyNode): string | null {
               )
           )
             return true;
-          listeners.push({ receiver, event, handler, capture: options, controller, value: node });
+          listeners.push({
+            receiver,
+            event,
+            handler,
+            capture: options,
+            controller,
+            value: node,
+            once: once?.type === "Literal" && once.value === true,
+          });
           resourcePaths.set(node, new Map(currentPath));
           resources.push({
             value: node,
@@ -2237,6 +2255,12 @@ function undisposedResource(program: AnyNode): string | null {
                 descriptor!.receiver,
               );
               returned.set(node, completion.value);
+              if (completion.abrupt) {
+                abrupt = true;
+                exits.push(new Set(cleaned));
+                thrownExits.add(exits[exits.length - 1]);
+                throwStates.set(exits[exits.length - 1], snapshot());
+              }
               return completion.normal;
             }
           }
@@ -2365,6 +2389,10 @@ function undisposedResource(program: AnyNode): string | null {
     if (cleaned.has(listener.value)) continue;
     inspect(listener.handler, [listener.event], values, false, listener.receiver);
     disposalStates.push(captureDisposalState());
+    if (!listener.once && !cleaned.has(listener.value)) {
+      inspect(listener.handler, [listener.event], values, false, listener.receiver);
+      disposalStates.push(captureDisposalState());
+    }
   }
   for (const { timeout, callback, args, environment } of pendingTimeouts) {
     if (cleaned.has(timeout)) continue;
