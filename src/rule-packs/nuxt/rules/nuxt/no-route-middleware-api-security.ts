@@ -203,8 +203,12 @@ export function rootMiddlewareConfiguration(
     customServerRegistration: Boolean(
       (nitro &&
         (nitro.type !== "ObjectExpression" ||
-          property(nitro, "handlers") ||
-          property(nitro, "scanDirs"))) ||
+          nitro.properties.some(
+            (entry: AnyNode) =>
+              entry.type !== "Property" ||
+              entry.computed ||
+              ["handlers", "scanDirs", "routes"].includes(entry.key.name ?? entry.key.value),
+          ))) ||
       property(options, "serverHandlers") ||
       property(options, "devServerHandlers"),
     ),

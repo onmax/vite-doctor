@@ -40,6 +40,29 @@ test.each(["nitro", "serverHandlers", "devServerHandlers"])(
 );
 
 test.each([
+  "nitro: { routes: { '/api/account': { handler: 'custom/account.ts' } } }",
+  "nitro: { ...customNitro }",
+  "nitro: { [registrationKey]: [{ route: '/api/account', handler: 'custom/account.ts' }] }",
+])("requires a manifest for unresolved Nitro registration in %s", async (registration) => {
+  let calls = 0;
+  const extension = createNuxtAuthorizationReviewExtension(async () => {
+    calls++;
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "nuxt.config.ts": `export default defineNuxtConfig({ ${registration} })`,
+      "custom/account.ts": files["server/api/account.get.ts"],
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(calls).toBe(0);
+  expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+});
+
+test.each([
   "nitro: { preset: 'node-server' }",
   "nitro: { routeRules: { '/api/**': { cors: true } } }",
 ])("unrelated %s configuration permits manifest-free authorization review", async (option) => {
