@@ -4561,6 +4561,21 @@ test("NUXT0037 discovers auto-registered layer handlers without a manifest", asy
   expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
 });
 
+test("NUXT0037 uses root middleware when a layer app directory has no effective contents", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "layers/admin/app/router.options.ts": "export default {}",
+      "layers/admin/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "layers/admin/server/api/account.get.ts":
+        "export default defineEventHandler(() => ({ private: true }))",
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+});
+
 test("NUXT0037 ignores unrelated middleware options without a manifest", async () => {
   const result = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,

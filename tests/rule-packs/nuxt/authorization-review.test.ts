@@ -48,6 +48,49 @@ test("opt-in authorization review reports cited server gaps", async () => {
   });
 });
 
+test("authorization review records incomplete evidence for configured server directories without a manifest", async () => {
+  let reviewed = false;
+  const extension = createNuxtAuthorizationReviewExtension(async () => {
+    reviewed = true;
+    return { status: "unknown", reason: "", citations: [] };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts": "export default defineNuxtConfig({ serverDir: 'backend' })",
+      "app/middleware/auth.ts": files["app/middleware/auth.ts"],
+      "backend/api/account.get.ts": files["server/api/account.get.ts"],
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+
+  expect(reviewed).toBe(false);
+  expect(
+    result.project.evidenceGaps?.some(
+      (gap) => gap.source === "vite-doctor/nuxt-authorization-review",
+    ),
+  ).toBe(true);
+});
+
+test("authorization review discovers root middleware and layer handlers without a manifest", async () => {
+  const reviewed: string[] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    reviewed.push(candidate.handler.path);
+    return { status: "unknown", reason: "", citations: [] };
+  });
+  await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      "layers/admin/app/router.options.ts": "export default {}",
+      "layers/admin/middleware/auth.ts": files["app/middleware/auth.ts"],
+      "layers/admin/server/api/account.get.ts": files["server/api/account.get.ts"],
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+
+  expect(reviewed).toEqual(["layers/admin/server/api/account.get.ts"]);
+});
+
 test.each([
   "rejection",
   undefined,

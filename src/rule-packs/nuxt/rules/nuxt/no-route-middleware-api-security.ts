@@ -148,7 +148,9 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
   );
 }
 
-function rootMiddlewareConfiguration(root: string): { srcDir: string; middleware: string } | null {
+export function rootMiddlewareConfiguration(
+  root: string,
+): { srcDir: string; middleware: string } | null {
   const config = ["ts", "js", "mjs", "cjs", "mts", "cts"]
     .map((extension) => join(root, `nuxt.config.${extension}`))
     .find(existsSync);
@@ -181,9 +183,25 @@ function rootMiddlewareConfiguration(root: string): { srcDir: string; middleware
   )
     return null;
   return {
-    srcDir: srcDir?.value ?? (existsSync(join(root, "app")) ? "app" : "."),
+    srcDir: srcDir?.value ?? defaultSourceDirectory(root, middleware?.value ?? "middleware"),
     middleware: middleware?.value ?? "middleware",
   };
+}
+
+function defaultSourceDirectory(root: string, middleware: string): string {
+  const app = join(root, "app");
+  if (!existsSync(app)) return ".";
+  const contents = readdirSync(app).filter(
+    (entry) => entry !== "spa-loading-template.html" && !entry.startsWith("router.options"),
+  );
+  if (
+    contents.length === 0 &&
+    ["app.vue", "App.vue", "assets", "layouts", middleware, "pages", "plugins"].some((entry) =>
+      existsSync(join(root, entry)),
+    )
+  )
+    return ".";
+  return "app";
 }
 
 function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: boolean): string[] {
