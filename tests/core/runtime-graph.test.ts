@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -380,3 +380,153 @@ function nuxtGraph(options: {
 function packageManifest(name: string, version: string, dependencies?: Record<string, string>) {
   return JSON.stringify({ name, version, dependencies });
 }
+
+test.each(["edit", "delete", "create"])(
+  "invalidates manifest evidence when a layer config changes: %s",
+  async (change) => {
+    await withRuntimeGraph(
+      {
+        ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+        "nuxt.config.ts": "export default defineNuxtConfig({})",
+        "layers/admin/nuxt.config.ts": "export default defineNuxtConfig({})",
+      },
+      async (root) => {
+        const layerConfig = join(root, "layers/admin/nuxt.config.ts");
+        if (change === "create") rmSync(layerConfig);
+        mkdirSync(join(root, ".nuxt"), { recursive: true });
+        writeFileSync(
+          join(root, ".nuxt/doctor.manifest.json"),
+          JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            nuxtConfigMtimeMs: statSync(join(root, "nuxt.config.ts")).mtimeMs,
+            layers: [
+              {
+                root: "layers/admin",
+                nuxtConfigMtimeMs: change === "create" ? null : statSync(layerConfig).mtimeMs,
+                priority: 0,
+              },
+            ],
+          }),
+        );
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+        if (change === "delete") rmSync(layerConfig);
+        else {
+          writeFileSync(
+            layerConfig,
+            "export default defineNuxtConfig({ dir: { middleware: 'guards' } })",
+          );
+          utimesSync(layerConfig, new Date(), new Date(Date.now() + 2000));
+        }
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(false);
+      },
+    );
+  },
+);
+
+test.each(["add", "remove"])(
+  "invalidates newly auto-registered layer changes: %s",
+  async (change) => {
+    await withRuntimeGraph(
+      {
+        ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+      },
+      async (root) => {
+        const layer = join(root, "layers/new-layer");
+        if (change === "remove") mkdirSync(layer, { recursive: true });
+        mkdirSync(join(root, ".nuxt"), { recursive: true });
+        writeFileSync(
+          join(root, ".nuxt/doctor.manifest.json"),
+          JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            autoRegisteredLayers: change === "remove" ? ["new-layer"] : [],
+            layers: [],
+          }),
+        );
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+        if (change === "add") mkdirSync(layer, { recursive: true });
+        else rmSync(layer, { recursive: true });
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(false);
+      },
+    );
+  },
+);
+
+test("a layers file does not invalidate or crash Nuxt manifest discovery", async () => {
+  await withRuntimeGraph(
+    {
+      ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+      layers: "not a directory",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        autoRegisteredLayers: [],
+        layers: [],
+      }),
+    },
+    async (root) => {
+      expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+    },
+  );
+});
+
+test.each(["add", "delete", "rename"])(
+  "invalidates changed server inventory: %s",
+  async (change) => {
+    await withRuntimeGraph(
+      {
+        ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+        "layers/admin/backend/api/account.ts": "export default () => ({})",
+      },
+      async (root) => {
+        const directory = join(root, "layers/admin/backend");
+        mkdirSync(join(root, ".nuxt"), { recursive: true });
+        writeFileSync(
+          join(root, ".nuxt/doctor.manifest.json"),
+          JSON.stringify({
+            generatedAt: "2100-01-01T00:00:00.000Z",
+            layers: [{ root: "layers/admin", serverDir: directory, priority: 0 }],
+            resolvedServerHandlers: [
+              { file: "layers/admin/backend/api/account.ts", route: "/api/account" },
+            ],
+            serverInventory: { [directory]: ["api", "api/account.ts"] },
+          }),
+        );
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+        if (change !== "add") rmSync(join(directory, "api/account.ts"));
+        if (change !== "delete")
+          writeFileSync(join(directory, "api/profile.ts"), "export default () => ({})");
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(false);
+      },
+    );
+  },
+);
+
+test.each(["delete", "replace"])(
+  "invalidates registered handlers outside server scan directories: %s",
+  async (change) => {
+    await withRuntimeGraph(
+      {
+        ...nuxtGraph({ nuxt: "4.4.6", nitroName: "nitropack", nitro: "2.13.4", h3: "1.15.11" }),
+        "custom/account.ts": "export default () => ({})",
+      },
+      async (root) => {
+        const file = join(root, "custom/account.ts");
+        const directory = join(root, "custom");
+        mkdirSync(join(root, ".nuxt"), { recursive: true });
+        writeFileSync(
+          join(root, ".nuxt/doctor.manifest.json"),
+          JSON.stringify({
+            generatedAt: "2100-01-01T00:00:00.000Z",
+            layers: [],
+            resolvedServerHandlers: [{ file, route: "/api/account" }],
+            serverInventory: { [directory]: ["account.ts"] },
+            serverHandlerMtimes: { [file]: statSync(file).mtimeMs },
+          }),
+        );
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(true);
+        if (change === "delete") rmSync(file);
+        else utimesSync(file, new Date("2020-01-01"), new Date("2020-01-01"));
+        expect((await detectProject(root)).nuxt?.manifest?.isCurrent).toBe(false);
+      },
+    );
+  },
+);

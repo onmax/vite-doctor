@@ -1,4 +1,5 @@
 import { relative, resolve } from "pathe";
+import { isNuxtManifestCurrent } from "./runtime-graph.js";
 import type { NuxtDoctorManifest, NuxtModuleSource } from "../primitives.js";
 
 export interface NuxtProjectInventory {
@@ -13,6 +14,9 @@ export interface NuxtProjectInventory {
   appScanRoots: string[];
   sharedScanRoots: string[];
   hasManifest: boolean;
+  isCurrent: boolean;
+  serverHandlers: NuxtDoctorManifest["serverHandlers"];
+  resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   pages: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes: string[];
   buildManifest?: {
@@ -46,6 +50,15 @@ export function createNuxtProjectInventory(
       resolve(root, dir),
     ),
     hasManifest: Boolean(manifestPath),
+    isCurrent: isNuxtManifestCurrent(root, manifest),
+    serverHandlers: (manifest?.serverHandlers ?? []).map((handler) => ({
+      ...handler,
+      file: resolve(root, handler.file),
+    })),
+    resolvedServerHandlers: manifest?.resolvedServerHandlers?.map((handler) => ({
+      ...handler,
+      file: resolve(root, handler.file),
+    })),
     pages: manifest?.pages ?? [],
     prerenderRoutes: manifest?.prerenderRoutes ?? [],
     buildManifest: manifest?.buildManifest,

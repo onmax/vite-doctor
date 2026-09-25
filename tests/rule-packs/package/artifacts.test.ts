@@ -365,14 +365,17 @@ test.each([
   null,
   [],
   { main: 42 },
+  { private: "false" },
+  { dependencies: { h3: false } },
   { browser: { "./index.js": true } },
-  { bin: { example: false } },
+  { bin: { cli: 42 } },
   { bin: ["cli.js", false] },
-  { dependencies: { example: 1 } },
   { typesVersions: { "*": { "*": "index.d.ts" } } },
-  { peerDependenciesMeta: { example: { optional: "yes" } } },
-])("rejects an invalid package manifest: %j", (manifest) => {
-  expect(() => inventory(manifest, {})).toThrow(TypeError);
+  { imports: [] },
+  { typesVersions: { "*": { "*": [42] } } },
+  { peerDependenciesMeta: { h3: { optional: "true" } } },
+])("rejects malformed package manifest %j", (manifest) => {
+  expect(() => inventory({}, { "package.json": JSON.stringify(manifest) })).toThrow(TypeError);
 });
 
 test.each([true, false])(
