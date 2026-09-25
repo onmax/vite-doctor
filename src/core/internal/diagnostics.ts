@@ -53,13 +53,15 @@ export function applyReportEligibility(session: ScanSession): void {
   );
   const sources = new Map(session.handles.map((handle) => [handle.path, handle.text] as const));
   session.diagnostics = session.diagnostics.filter((diagnostic) => {
-    const fileEligibility = eligibility.get(diagnostic.file);
-    if (!fileEligibility) return false;
-    if (!diagnostic.range) return false;
-    const endLine = diagnosticEndLine(diagnostic.range, sources.get(diagnostic.file));
-    return fileEligibility.ranges.some(
-      (range) => diagnostic.range!.line <= range.endLine && endLine >= range.startLine,
-    );
+    const locations = [diagnostic, ...(diagnostic.related ?? [])];
+    return locations.some((location) => {
+      const fileEligibility = eligibility.get(location.file);
+      if (!fileEligibility || !location.range) return false;
+      const endLine = diagnosticEndLine(location.range, sources.get(location.file));
+      return fileEligibility.ranges.some(
+        (range) => location.range!.line <= range.endLine && endLine >= range.startLine,
+      );
+    });
   });
 }
 

@@ -39,6 +39,7 @@ test("accepts direct consumer declarations, optional peers, built-ins and self r
         "dist/index.js":
           'import "direct/subpath"; import "peer"; try { require("optional") } catch {}; import "node:fs"; import "fs/promises"; import "example-library/subpath";',
       },
+      { config: { rules: { "package/no-required-optional-peer": "off" } } },
     ),
   ).toEqual([]);
 });
@@ -101,4 +102,17 @@ test("accepts an @types provider for an external declaration import", async () =
       { "index.d.ts": 'export type { Foo } from "foo";' },
     ),
   ).toEqual([]);
+});
+
+test.each([
+  { main: 42 },
+  { browser: { "./index.js": true } },
+  { bin: { cli: false } },
+  { dependencies: { h3: 42 } },
+  { typesVersions: { "*": { "*": "index.d.ts" } } },
+  { peerDependenciesMeta: { h3: { optional: "yes" } } },
+])("rejects malformed package metadata %j", async (manifest) => {
+  await expect(diagnose(manifest, {})).rejects.toThrow(
+    `Invalid package.json field: ${Object.keys(manifest)[0]}`,
+  );
 });

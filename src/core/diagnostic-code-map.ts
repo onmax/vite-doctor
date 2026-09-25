@@ -3,6 +3,7 @@ import { defineDoctorDiagnostics, doctorDiagnosticsHost } from "./diagnostics.js
 export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "PKG0001", ruleId: "package/no-phantom-dependencies" },
   { code: "PKG0002", ruleId: "package/no-phantom-dependencies" },
+  { code: "PKG0003", ruleId: "package/no-required-optional-peer" },
   { code: "SHAD0001", ruleId: "shadcn/no-restyle" },
   { code: "SHAD0002", ruleId: "shadcn/no-raw-colors" },
   { code: "SHAD0003", ruleId: "shadcn/no-arbitrary-values" },
@@ -108,6 +109,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0015", ruleId: "nitro/h3/no-removed-send" },
   { code: "NITRO0016", ruleId: "nitro/h3/prefer-redirect-response" },
   { code: "NITRO0017", ruleId: "nitro/h3/prefer-with-base" },
+  { code: "NITRO0018", ruleId: "nitro/h3/no-http-error-masking" },
   { code: "NUXT0001", ruleId: "docus/appconfig/no-unknown-key" },
   { code: "NUXT0002", ruleId: "docus/layers/no-empty-app-vue-shadow" },
   { code: "NUXT0003", ruleId: "nuxt-better-auth/require-standard-auth-handler-mount" },
@@ -184,6 +186,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0071", ruleId: "vueuse/prefer-useevent-listener" },
   { code: "NUXT0072", ruleId: "vueuse/prefer-usewindow-size" },
   { code: "NUXT0073", ruleId: "nuxt/config/no-ignored-compatibility-config" },
+  { code: "NUXT0074", ruleId: "nuxt/review/api-authorization-coverage" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;

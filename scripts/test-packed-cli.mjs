@@ -104,6 +104,7 @@ try {
   assert.deepEqual(packageReport.diagnostics.map((item) => item.code).sort(), [
     "PKG0001",
     "PKG0002",
+    "PKG0003",
   ]);
   assert.match(packageReport.commands.verify, /--extends package\/recommended/);
   process.stdout.write(

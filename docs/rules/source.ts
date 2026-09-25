@@ -278,6 +278,7 @@ function collectRuleDocuments() {
     .map((file) => join(nitroRulesDir, file));
   const nuxtSources = [
     ...ruleSourcesFromIndex(join(nuxtRulesDir, "nuxt/index.ts")),
+    join(root, "src/rule-packs/nuxt/review/authorization.ts"),
     ...readdirSync(nuxtRulesDir)
       .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "nuxt.ts")
       .sort()
@@ -439,6 +440,11 @@ function renderRulePage(rule: RuleDocument) {
 
   if (rule.description) lines.push(escapeMarkdownText(rule.description), "");
   lines.push(renderBadgeRow(rule), "");
+  if (rule.id === "nuxt/review/api-authorization-coverage")
+    lines.push(
+      "This opt-in rule requires a `doctor.config.ts` that registers `createNuxtAuthorizationReviewExtension`. See the [Nuxt authorization review setup](/nuxt#optional-api-authorization-review) before running it.",
+      "",
+    );
   lines.push("## Run this rule", "", "```bash", renderRuleCommand(rule), "```", "");
   if (rule.why) lines.push("## Why it matters", "", escapeMarkdownText(rule.why), "");
   if (rule.recommendedReplacement) {
@@ -739,6 +745,8 @@ function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {
 }
 
 function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
+  if (rule.id === "nuxt/review/api-authorization-coverage")
+    return `pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules ${rule.id}`;
   if (rule.framework === "package")
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
