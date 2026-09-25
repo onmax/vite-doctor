@@ -4,6 +4,54 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "Map forEach cleans known entry values",
+    "const timers = new Map([['refresh', setInterval(refresh)]]); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "Map set and delete update disposer membership",
+    "const timers = new Map(); const handle = setInterval(refresh); timers.set('refresh', handle); timers.delete('refresh'); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "Map deleted handle without disposer still leaks",
+    "const timers = new Map(); const handle = setInterval(refresh); timers.set('refresh', handle); timers.delete('refresh'); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  ...["allSettled", "race", "any"].map(
+    (method) =>
+      [
+        `Promise.${method} fulfillment runs its reaction`,
+        `Promise.${method}([Promise.resolve(1)]).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})`,
+        true,
+      ] as const,
+  ),
+  [
+    "Promise.allSettled fulfills after rejected entries",
+    "Promise.allSettled([Promise.reject(Error())]).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "Promise.any rejects an empty iterable",
+    "Promise.any([]).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "Promise.race stays pending for an empty iterable",
+    "Promise.race([]).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "class listener handleEvent getter creates a resource",
+    "class Handler { get handleEvent() { setInterval(refresh); return () => {} } }; const handler = new Handler(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "class listener handleEvent getter returns a resource-creating callback",
+    "class Handler { get handleEvent() { return () => setInterval(refresh) } }; const handler = new Handler(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
     "chained pending promise reactions create a resource",
     "let finish; const ready = new Promise(resolve => { finish = resolve }); ready.then(() => 1).then(() => setInterval(refresh)); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
     true,

@@ -180,6 +180,10 @@ function undisposedResource(program: AnyNode): string | null {
   }[] = [];
   let timerSimulationDepth = 0;
   const setCollections = new Set<AnyNode>();
+  const mapCollections = new Set<AnyNode>();
+  const sameMapKey = (left: AnyNode, right: AnyNode): boolean =>
+    left === right ||
+    (left?.type === "Literal" && right?.type === "Literal" && Object.is(left.value, right.value));
   const setIterations = new Map<AnyNode, AnyNode[][]>();
   let truncatedSetIteration = false;
   const arrayChoices = new Map<AnyNode, { array: AnyNode; path: Map<object, boolean> }[]>();
@@ -929,33 +933,46 @@ function undisposedResource(program: AnyNode): string | null {
         return true;
       }
       if (
-        (method === "resolve" || method === "reject" || method === "all") &&
+        ["resolve", "reject", "all", "allSettled", "race", "any"].includes(method!) &&
         node.callee.type === "MemberExpression" &&
         identity(node.callee.object, environment) === "Promise" &&
         !replacedMethod
       ) {
         const promise = {};
         const value = identity(node.arguments[0], environment);
-        if (method === "all" && value?.type !== "ArrayExpression") return true;
+        const aggregate = ["all", "allSettled", "race", "any"].includes(method!);
+        if (aggregate && value?.type !== "ArrayExpression") return true;
         if (
-          method === "all" &&
+          aggregate &&
           arrayElements(value).some((item: AnyNode) => item?.type === "SpreadElement")
         )
           return true;
-        if (method === "all") {
+        if (aggregate) {
           const items = arrayElements(value).map((item: AnyNode) => identity(item, environment));
+          const canFulfill = (item: AnyNode) => promiseCompletions.get(item)?.normal !== false;
+          const canReject = (item: AnyNode) =>
+            promiseCompletions.get(item)?.abrupt ?? !promises.has(item);
           const completion = {
-            normal: items.every((item: AnyNode) => promiseCompletions.get(item)?.normal !== false),
-            abrupt: items.some(
-              (item: AnyNode) => promiseCompletions.get(item)?.abrupt ?? !promises.has(item),
-            ),
+            normal:
+              method === "allSettled" ||
+              (method === "all" ? items.every(canFulfill) : items.some(canFulfill)),
+            abrupt:
+              method === "allSettled"
+                ? false
+                : method === "any"
+                  ? items.every(canReject)
+                  : items.some(canReject),
           };
-          promises.set(promise, {
-            type: "ArrayExpression",
-            elements: items.map((item: AnyNode) =>
-              promises.has(item) ? promises.get(item) : item,
-            ),
-          });
+          if (method === "all" || method === "allSettled")
+            promises.set(promise, {
+              type: "ArrayExpression",
+              elements: items.map((item: AnyNode) =>
+                promises.has(item) ? promises.get(item) : item,
+              ),
+            });
+          else if (method === "race" || method === "any")
+            promises.set(promise, items.length ? (promises.get(items[0]) ?? items[0]) : undefined);
+          if (method === "any" && !items.length) completion.abrupt = true;
           promiseCompletions.set(promise, completion);
           returned.set(node, promise);
           return true;
@@ -1317,6 +1334,57 @@ function undisposedResource(program: AnyNode): string | null {
         node.callee.type === "MemberExpression"
           ? identity(node.callee.object, environment)
           : undefined;
+      if (mapCollections.has(array) && !replacedMethod) {
+        const entries = arrayElements(array);
+        if (method === "set") {
+          const key = identity(node.arguments[0], environment);
+          const value = identity(node.arguments[1], environment);
+          const index = entries.findIndex((entry: AnyNode) =>
+            sameMapKey(arrayElements(entry)[0], key),
+          );
+          const stored = properties.get(array) ?? new Map<string, AnyNode>();
+          stored.set(String(index < 0 ? entries.length : index), {
+            type: "ArrayExpression",
+            elements: [key, value],
+          });
+          stored.set("length", {
+            type: "Literal",
+            value: index < 0 ? entries.length + 1 : entries.length,
+          });
+          properties.set(array, stored);
+          returned.set(node, array);
+          return true;
+        }
+        if (method === "clear" || method === "delete") {
+          const key = identity(node.arguments[0], environment);
+          const remaining =
+            method === "clear"
+              ? []
+              : entries.filter((entry: AnyNode) => !sameMapKey(arrayElements(entry)[0], key));
+          const stored = new Map<string, AnyNode>();
+          remaining.forEach((entry, index) => stored.set(String(index), entry));
+          stored.set("length", { type: "Literal", value: remaining.length });
+          properties.set(array, stored);
+          return true;
+        }
+        if (method === "forEach") {
+          for (const entry of entries) {
+            const [key, value] = arrayElements(entry);
+            if (
+              visit(
+                {
+                  type: "CallExpression",
+                  callee: identity(node.arguments[0], environment),
+                  arguments: [value, key, array],
+                },
+                identity(node.arguments[1], environment),
+              ) === false
+            )
+              return false;
+          }
+          return true;
+        }
+      }
       if (setCollections.has(array) && !replacedMethod) {
         const elements = arrayElements(array);
         if (method === "add") {
@@ -2046,6 +2114,23 @@ function undisposedResource(program: AnyNode): string | null {
         if (!walk(node.callee)) return false;
         const value = identity(node.callee, environment);
         const target = callbacks.get(value) ?? value;
+        if (value === "Map" && !resolve(node.callee)) {
+          if (!walk(node.arguments)) return false;
+          const source = identity(node.arguments[0], environment);
+          if (!source || source?.type === "ArrayExpression") {
+            const collection = {
+              type: "ArrayExpression",
+              elements: source
+                ? expand(arrayElements(source), environment).map((entry) =>
+                    identity(entry, environment),
+                  )
+                : [],
+            };
+            mapCollections.add(collection);
+            returned.set(node, collection);
+          }
+          return true;
+        }
         if (value === "Set" && !resolve(node.callee) && !node.arguments[0]) {
           const collection = { type: "ArrayExpression", elements: [] };
           setCollections.add(collection);
@@ -2843,12 +2928,14 @@ function undisposedResource(program: AnyNode): string | null {
       const beforeFiring = captureDisposalState();
       timerSimulationDepth = 1;
       const descriptor = effectiveProperties(listener.handler, values).get("handleEvent");
+      const classGetter = classGetters.get(listener.handler)?.get("handleEvent");
       const getter =
-        !functionListener &&
-        descriptor?.accessor &&
-        descriptor.property.kind === "get" &&
-        !properties.get(listener.handler)?.has("handleEvent")
-          ? inspect(descriptor.property.value, [], values, false, descriptor.receiver)
+        !functionListener && !properties.get(listener.handler)?.has("handleEvent")
+          ? classGetter
+            ? inspect(classGetter, [], values, false, listener.handler)
+            : descriptor?.accessor && descriptor.property.kind === "get"
+              ? inspect(descriptor.property.value, [], values, false, descriptor.receiver)
+              : undefined
           : undefined;
       const handler = getter
         ? getter.value
