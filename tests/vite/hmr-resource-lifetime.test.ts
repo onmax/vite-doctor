@@ -4,6 +4,26 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "chained pending promise reactions create a resource",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); ready.then(() => 1).then(() => setInterval(refresh)); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "third interval firing creates an undisposed timer",
+    "let stage = 0; const outer = setInterval(() => { if (stage === 2) setInterval(refresh); else stage++ }, 1000); import.meta.hot.dispose(() => clearInterval(outer))",
+    true,
+  ],
+  [
+    "listener signal accessor creates a resource",
+    "const handler = () => {}; const options = { get signal() { setInterval(refresh); return undefined } }; addEventListener('click', handler, options); import.meta.hot.dispose(() => removeEventListener('click', handler, options))",
+    true,
+  ],
+  [
+    "typeof known timer guard cleans resource",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (typeof timer !== 'undefined') clearInterval(timer) })",
+    false,
+  ],
+  [
     "chronological timers preserve intermediate callback state",
     "let stage = 0; setTimeout(() => { if (stage === 2) setInterval(refresh) }, 30); setTimeout(() => { if (stage === 1) stage = 2 }, 20); setTimeout(() => { stage = 1 }, 10); import.meta.hot.dispose(() => {})",
     true,

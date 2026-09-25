@@ -155,12 +155,21 @@ function undisposedResource(program: AnyNode): string | null {
     args: AnyNode[];
     environment: Map<AnyNode, AnyNode>;
   }[] = [];
-  const microtasks: { callback: AnyNode; environment: Map<AnyNode, AnyNode> }[] = [];
+  const microtasks: {
+    callback: AnyNode;
+    environment: Map<AnyNode, AnyNode>;
+    result?: AnyNode;
+  }[] = [];
   const subscriptions: { callback: AnyNode; environment: Map<AnyNode, AnyNode> }[] = [];
   const promiseSettlers = new Map<AnyNode, (value: AnyNode) => void>();
   const pendingPromiseReactions = new Map<
     AnyNode,
-    { fulfilled?: AnyNode; rejected?: AnyNode; environment: Map<AnyNode, AnyNode> }[]
+    {
+      fulfilled?: AnyNode;
+      rejected?: AnyNode;
+      environment: Map<AnyNode, AnyNode>;
+      result: AnyNode;
+    }[]
   >();
   const pendingTimeouts: {
     timeout: AnyNode;
@@ -993,12 +1002,14 @@ function undisposedResource(program: AnyNode): string | null {
               ? node.arguments[0]
               : undefined;
         const finallyHandler = method === "finally" ? node.arguments[0] : undefined;
+        const result = {};
         if (!previous.normal && !previous.abrupt) {
           const reactions = pendingPromiseReactions.get(promise) ?? [];
           reactions.push({
             fulfilled: fulfilledHandler ?? finallyHandler,
             rejected: rejectedHandler ?? finallyHandler,
             environment,
+            result,
           });
           pendingPromiseReactions.set(promise, reactions);
         }
@@ -1054,7 +1065,6 @@ function undisposedResource(program: AnyNode): string | null {
           value: fulfilled?.value ?? rejected?.value,
         };
         const settled = adoptPromise(completion);
-        const result = {};
         if (pendingFetchPromises.has(promise)) pendingFetchPromises.add(result);
         if (settled.normal) promises.set(result, settled.value);
         promiseCompletions.set(result, settled);
@@ -1166,15 +1176,37 @@ function undisposedResource(program: AnyNode): string | null {
                 },
                 environment,
               );
-          const signal = identity(
-            {
-              type: "MemberExpression",
-              object: listenerOptions,
-              property: { type: "Identifier", name: "signal" },
-              computed: false,
-            },
-            environment,
-          );
+          const signalDescriptor = effectiveProperties(listenerOptions, environment).get("signal");
+          const signalCompletion =
+            signalDescriptor?.accessor &&
+            signalDescriptor.property.kind === "get" &&
+            !properties.get(listenerOptions)?.has("signal")
+              ? inspect(
+                  signalDescriptor.property.value,
+                  [],
+                  environment,
+                  module,
+                  signalDescriptor.receiver,
+                )
+              : undefined;
+          if (signalCompletion?.abrupt) {
+            abrupt = true;
+            exits.push(new Set(cleaned));
+            thrownExits.add(exits[exits.length - 1]);
+            throwStates.set(exits[exits.length - 1], snapshot());
+          }
+          if (signalCompletion && !signalCompletion.normal) return false;
+          const signal = signalCompletion
+            ? signalCompletion.value
+            : identity(
+                {
+                  type: "MemberExpression",
+                  object: listenerOptions,
+                  property: { type: "Identifier", name: "signal" },
+                  computed: false,
+                },
+                environment,
+              );
           const controller =
             signal?.type === "MemberExpression" && propertyKey(signal) === "signal"
               ? identity(signal.object, environment)
@@ -2059,6 +2091,7 @@ function undisposedResource(program: AnyNode): string | null {
                 microtasks.push({
                   callback: reaction.fulfilled,
                   environment: reaction.environment,
+                  result: reaction.result,
                 });
             }
           });
@@ -2069,7 +2102,11 @@ function undisposedResource(program: AnyNode): string | null {
             promiseCompletions.set(promise, completion);
             for (const reaction of pendingPromiseReactions.get(promise) ?? []) {
               if (reaction.rejected)
-                microtasks.push({ callback: reaction.rejected, environment: reaction.environment });
+                microtasks.push({
+                  callback: reaction.rejected,
+                  environment: reaction.environment,
+                  result: reaction.result,
+                });
             }
           });
           const executor = inspect(node.arguments[0], [resolve, reject], environment, module);
@@ -2211,6 +2248,11 @@ function undisposedResource(program: AnyNode): string | null {
           const value = identity(expression, environment);
           if (value?.type === "Literal") return value.value;
           if (knownTruthyResource(value)) return true;
+          if (value?.type === "UnaryExpression" && value.operator === "typeof") {
+            const argument = identity(value.argument, environment);
+            if (argument?.type === "Literal") return typeof argument.value;
+            if (knownTruthyResource(argument)) return "object";
+          }
           if (value?.type === "UnaryExpression" && value.operator === "!") {
             const argument = constant(value.argument);
             if (argument !== undefined) return !argument;
@@ -2715,8 +2757,21 @@ function undisposedResource(program: AnyNode): string | null {
   evaluate(program, values, true);
   const drainMicrotasks = () => {
     while (microtasks.length) {
-      const { callback, environment } = microtasks.shift()!;
-      inspect(callback, [], environment, true);
+      const { callback, environment, result } = microtasks.shift()!;
+      const completion = adoptPromise(inspect(callback, [], environment, true));
+      if (result) {
+        promiseCompletions.set(result, completion);
+        if (completion.normal) promises.set(result, completion.value);
+        for (const reaction of pendingPromiseReactions.get(result) ?? []) {
+          const next = completion.normal ? reaction.fulfilled : reaction.rejected;
+          if (next)
+            microtasks.push({
+              callback: next,
+              environment: reaction.environment,
+              result: reaction.result,
+            });
+        }
+      }
     }
   };
   drainMicrotasks();
@@ -2833,6 +2888,35 @@ function undisposedResource(program: AnyNode): string | null {
     }
   };
   fireSubscriptions(beforeListeners, 0);
+  const mayCreateResource = (node: AnyNode, seen = new Set<object>()): boolean => {
+    if (!node || typeof node !== "object" || seen.has(node)) return false;
+    seen.add(node);
+    if (Array.isArray(node)) return node.some((child) => mayCreateResource(child, seen));
+    if (
+      (node.type === "Identifier" &&
+        ["setInterval", "setTimeout", "WebSocket", "EventSource"].includes(node.name)) ||
+      (node.type === "CallExpression" && node.callee?.property?.name === "subscribe")
+    )
+      return true;
+    return Object.entries(node).some(
+      ([key, child]) => key !== "__doctorParent" && mayCreateResource(child, seen),
+    );
+  };
+  const hasConditionalCreation = (node: AnyNode, seen = new Set<object>()): boolean => {
+    if (!node || typeof node !== "object" || seen.has(node)) return false;
+    seen.add(node);
+    if (Array.isArray(node)) return node.some((child) => hasConditionalCreation(child, seen));
+    if (
+      ["IfStatement", "ConditionalExpression", "LogicalExpression", "SwitchStatement"].includes(
+        node.type,
+      ) &&
+      mayCreateResource(node)
+    )
+      return true;
+    return Object.entries(node).some(
+      ([key, child]) => key !== "__doctorParent" && hasConditionalCreation(child, seen),
+    );
+  };
   let timerOrderCount = 0;
   let truncatedTimerOrders = false;
   for (const listenerState of disposalStates.slice()) {
@@ -2861,13 +2945,17 @@ function undisposedResource(program: AnyNode): string | null {
           if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
             cleaned.add(timeout);
           disposalStates.push(captureDisposalState());
-          if (
-            resources.find((resource) => resource.value === timeout)?.kind === "interval" &&
-            !cleaned.has(timeout)
-          ) {
-            inspect(callback, args, environment, false);
-            drainMicrotasks();
-            disposalStates.push(captureDisposalState());
+          if (resources.find((resource) => resource.value === timeout)?.kind === "interval") {
+            for (let firing = 1; firing < 8 && !cleaned.has(timeout); firing++) {
+              inspect(callback, args, environment, false);
+              drainMicrotasks();
+              disposalStates.push(captureDisposalState());
+            }
+            if (
+              !cleaned.has(timeout) &&
+              hasConditionalCreation(callbacks.get(callback) ?? callback)
+            )
+              truncatedTimerOrders = true;
           }
         }
         fireTimeouts(remaining.filter((_, position) => position !== index));
@@ -2948,21 +3036,6 @@ function undisposedResource(program: AnyNode): string | null {
       )?.kind;
   }
   if (!disposalLeak && (truncatedListenerOrders || truncatedSetIteration || truncatedTimerOrders)) {
-    const seen = new Set<object>();
-    const mayCreateResource = (node: AnyNode): boolean => {
-      if (!node || typeof node !== "object" || seen.has(node)) return false;
-      seen.add(node);
-      if (Array.isArray(node)) return node.some(mayCreateResource);
-      if (
-        (node.type === "Identifier" &&
-          ["setInterval", "setTimeout", "WebSocket", "EventSource"].includes(node.name)) ||
-        (node.type === "CallExpression" && node.callee?.property?.name === "subscribe")
-      )
-        return true;
-      return Object.entries(node).some(
-        ([key, child]) => key !== "__doctorParent" && mayCreateResource(child),
-      );
-    };
     if (mayCreateResource(program)) return "resource";
   }
   return disposalLeak ?? null;
