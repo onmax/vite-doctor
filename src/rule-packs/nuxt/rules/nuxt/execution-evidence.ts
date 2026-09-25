@@ -984,7 +984,8 @@ function resultCallbackCall(
     const length = localObjectProperty(input, "length");
     return length?.type === "Literal" &&
       ["number", "string", "boolean"].includes(typeof length.value) &&
-      Number(length.value) >= 1
+      Number(length.value) >= 1 &&
+      Number(length.value) < 2 ** 32
       ? call
       : null;
   }
