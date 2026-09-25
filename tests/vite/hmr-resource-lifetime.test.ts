@@ -9,6 +9,36 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "second interval firing overwrites a live timer",
+    "let inner; const outer = setInterval(() => { inner = setInterval(refresh) }, 1000); import.meta.hot.dispose(() => { clearInterval(outer); clearInterval(inner) })",
+    true,
+  ],
+  [
+    "second interval firing cleans the previous timer",
+    "let inner; const outer = setInterval(() => { clearInterval(inner); inner = setInterval(refresh) }, 1000); import.meta.hot.dispose(() => { clearInterval(outer); clearInterval(inner) })",
+    false,
+  ],
+  [
+    "fetch fulfillment can create an interval",
+    "fetch('/data').then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "fetch rejection can create an interval",
+    "fetch('/data').catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "inherited static method creates an interval",
+    "class Base { static start() { setInterval(refresh) } }; class Child extends Base {}; Child.start(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "inherited static getter creates an interval",
+    "class Base { static get timer() { return setInterval(refresh) } }; class Child extends Base {}; Child.timer; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
     "bound timeout callback fires",
     "const start = () => setInterval(refresh); const pending = setTimeout(start, 0); import.meta.hot.dispose(() => clearTimeout(pending))",
     true,

@@ -916,6 +916,12 @@ function undisposedResource(program: AnyNode): string | null {
         returned.set(node, promise);
         return true;
       }
+      if (node.type === "CallExpression" && identity(node.callee, environment) === "fetch") {
+        const promise = {};
+        promiseCompletions.set(promise, { normal: true, abrupt: true });
+        returned.set(node, promise);
+        return true;
+      }
       if (
         (method === "then" || method === "catch" || method === "finally") &&
         node.callee.type === "MemberExpression" &&
@@ -1680,6 +1686,17 @@ function undisposedResource(program: AnyNode): string | null {
           }
         }
         if (!walk(node.superClass)) return false;
+        const superclass = identity(node.superClass, environment);
+        for (const [key, value] of properties.get(superclass) ?? []) {
+          if (!properties.get(node)!.has(key) && !classGetters.get(node)?.has(key))
+            properties.get(node)!.set(key, value);
+        }
+        for (const [key, getter] of classGetters.get(superclass) ?? []) {
+          if (!properties.get(node)!.has(key) && !classGetters.get(node)?.has(key)) {
+            if (!classGetters.has(node)) classGetters.set(node, new Map());
+            classGetters.get(node)!.set(key, getter);
+          }
+        }
         const walkStatic = (field: AnyNode, key?: string): boolean => {
           const hadReceiver = environment.has(thisBinding);
           const receiver = environment.get(thisBinding);
@@ -2488,6 +2505,13 @@ function undisposedResource(program: AnyNode): string | null {
     if (cleaned.has(timeout)) continue;
     inspect(callback, args, environment, false);
     disposalStates.push(captureDisposalState());
+    if (
+      resources.find((resource) => resource.value === timeout)?.kind === "interval" &&
+      !cleaned.has(timeout)
+    ) {
+      inspect(callback, args, environment, false);
+      disposalStates.push(captureDisposalState());
+    }
   }
   let disposalLeak: string | undefined;
   for (const state of disposalStates) {
