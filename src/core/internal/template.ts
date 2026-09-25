@@ -14,9 +14,7 @@ export async function parseTemplate(
       filePath: file,
       sourceType: "module",
       ecmaVersion: "latest",
-      parserOptions: {
-        parser: parser as any,
-      },
+      parser: { ts: parser as any, tsx: parser as any, "<template>": "espree" },
     });
     return (result.ast.templateBody as unknown as Record<string, unknown>) ?? null;
   } catch {

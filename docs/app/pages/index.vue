@@ -155,22 +155,22 @@ function toggleTheme() {
     <header
       class="mx-auto flex max-w-6xl items-start justify-between gap-4 px-6 pt-6 sm:items-center sm:px-10 sm:pt-7"
     >
-      <a
-        href="/"
+      <NuxtLink
+        to="/"
         aria-label="Homepage"
         class="inline-flex items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-500"
       >
         <img src="/doctor-icon.png" alt="" class="size-7 rounded-md" aria-hidden="true" />
         <span class="text-base font-semibold tracking-tight">Doctor</span>
-      </a>
+      </NuxtLink>
 
       <nav class="flex min-w-0 flex-wrap items-center justify-end gap-0.5 sm:gap-1">
-        <a
-          href="/cli"
+        <NuxtLink
+          to="/cli"
           class="rounded-md px-2 py-1.5 text-sm font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 sm:px-3 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
           CLI
-        </a>
+        </NuxtLink>
         <a
           v-for="track in tracks"
           :key="track.id"
