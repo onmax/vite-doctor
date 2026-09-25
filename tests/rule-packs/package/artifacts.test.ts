@@ -22,6 +22,12 @@ function inventory(manifest: unknown, files: Record<string, string>) {
 
 test.each([
   { main: 42 },
+  { private: "false" },
+  { browser: { "./entry.js": true } },
+  { bin: [42] },
+  { dependencies: { vue: 3 } },
+  { dependencies: ["h3"] },
+  { peerDependenciesMeta: { vue: { optional: "true" } } },
   { private: "true" },
   { browser: { "./index.js": 42 } },
   { bin: { tool: null } },
@@ -37,7 +43,6 @@ test.each([
 ])("rejects malformed package manifests before artifact analysis: %j", (manifest) => {
   expect(() => inventory(manifest, {})).toThrow("Invalid package.json field:");
 });
-
 test("follows conditional exports, chunks and declarations without scanning source or unrelated output", () => {
   const result = inventory(
     {
