@@ -375,6 +375,24 @@ test("continues after an unresolved default export condition", async () => {
   ).toMatchObject([{ code: "PKG0003" }]);
 });
 
+test("does not follow export conditions after import and require have selected targets", async () => {
+  expect(
+    await diagnose(
+      {
+        exports: {
+          ".": { import: "./safe.mjs", require: "./safe.cjs", node: "./peer.js" },
+        },
+        ...optionalPeer,
+      },
+      {
+        "safe.mjs": "export {};",
+        "safe.cjs": "module.exports = {};",
+        "peer.js": 'require("peer");',
+      },
+    ),
+  ).toEqual([]);
+});
+
 test.each(["./cli.js", { example: "./cli.js" }, ["./cli.js"]])(
   "allows optional peers loaded only by standalone binaries: %j",
   async (bin) => {
@@ -606,14 +624,16 @@ test.each([
   ).toMatchObject([{ code: "PKG0003" }]);
 });
 
-test.each(['exports.peer = require("peer");', 'module.exports.peer = require("peer");'])(
-  "requires optional peers assigned to CommonJS exports: %s",
-  async (source) => {
-    expect(
-      await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source }),
-    ).toMatchObject([{ code: "PKG0003" }]);
-  },
-);
+test.each([
+  'exports.peer = require("peer");',
+  'module.exports.peer = require("peer");',
+  'exports["adapter"] = require("peer");',
+  'module.exports["adapter"] = require("peer");',
+])("requires optional peers assigned to CommonJS exports: %s", async (source) => {
+  expect(
+    await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source }),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
 
 test.each(["index.mjs", "index.js"])(
   "does not treat require.resolve as a peer load in native ESM %s",
@@ -641,6 +661,7 @@ test.each([
   'import { type Value } from "./types.ts"; require("peer");',
   'export type { Value } from "./types.ts"; require("peer");',
   'export { type Value } from "./types.ts"; require("peer");',
+  'export import Value = require("./types.ts"); require("peer");',
 ])("keeps typeless TypeScript with erased module syntax in CommonJS: %s", async (source) => {
   expect(
     await diagnose(

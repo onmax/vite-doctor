@@ -285,6 +285,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     required: boolean,
     kind: "runtime" | "types" = "runtime",
     adjacentDeclaration = false,
+    mode: "import" | "require" = "import",
   ): boolean {
     if (typeof value === "string") {
       if (!validExportTarget(value, root) || !inside(resolve(root, value))) return false;
@@ -292,18 +293,17 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       return true;
     }
     if (Array.isArray(value))
-      return value.some((item) => targets(item, required, kind, adjacentDeclaration));
+      return value.some((item) => targets(item, required, kind, adjacentDeclaration, mode));
     if (value && typeof value === "object") {
+      for (const [condition, item] of Object.entries(value))
+        if (condition === "types" || condition.startsWith("types@"))
+          targets(item, required, "types", adjacentDeclaration, mode);
       let selected = false;
       for (const [condition, item] of Object.entries(value)) {
-        const resolved = targets(
-          item,
-          required,
-          condition === "types" || condition.startsWith("types@") ? "types" : kind,
-          adjacentDeclaration,
-        );
+        if (condition !== "default" && condition !== "node" && condition !== mode) continue;
+        const resolved = targets(item, required, kind, adjacentDeclaration, mode);
         selected ||= resolved;
-        if (condition === "default" && (resolved || item === null)) break;
+        if (resolved || item === null) break;
       }
       return selected;
     }
@@ -318,9 +318,14 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       !Array.isArray(exports) &&
       Object.keys(exports).some((key) => key.startsWith("."))
     ) {
-      for (const [subpath, value] of Object.entries(exports))
-        targets(value, subpath === ".", "runtime", true);
-    } else targets(exports, true, "runtime", true);
+      for (const [subpath, value] of Object.entries(exports)) {
+        targets(value, subpath === ".", "runtime", true, "import");
+        targets(value, subpath === ".", "runtime", true, "require");
+      }
+    } else {
+      targets(exports, true, "runtime", true, "import");
+      targets(exports, true, "runtime", true, "require");
+    }
   } else if (!manifest.main && !manifest.module) {
     if (existsSync(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
   }
@@ -636,7 +641,12 @@ function hasRuntimeModuleSyntax(source: ts.SourceFile): boolean {
       );
     }
     if (ts.isExportAssignment(statement)) return !statement.isExportEquals;
-    if (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) return false;
+    if (
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      ts.isImportEqualsDeclaration(statement)
+    )
+      return false;
     if (!ts.canHaveModifiers(statement)) return false;
     const modifiers = ts.getModifiers(statement);
     return Boolean(
@@ -896,6 +906,16 @@ function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
               parent.left.expression.text === "module" &&
               parent.left.name.text === "exports" &&
               !shadowsName(parent, "module")) ||
+            (ts.isPropertyAccessExpression(parent.left.expression) &&
+              ts.isIdentifier(parent.left.expression.expression) &&
+              parent.left.expression.expression.text === "module" &&
+              parent.left.expression.name.text === "exports" &&
+              !shadowsName(parent, "module")))) ||
+        (ts.isElementAccessExpression(parent.left) &&
+          isNonAbruptElement(parent.left.argumentExpression) &&
+          ((ts.isIdentifier(parent.left.expression) &&
+            parent.left.expression.text === "exports" &&
+            !shadowsName(parent, "exports")) ||
             (ts.isPropertyAccessExpression(parent.left.expression) &&
               ts.isIdentifier(parent.left.expression.expression) &&
               parent.left.expression.expression.text === "module" &&
