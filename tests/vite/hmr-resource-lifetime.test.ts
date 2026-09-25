@@ -19,6 +19,21 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "listener passive accessor creates a resource",
+    "const handler = () => {}; const options = { get passive() { setInterval(refresh); return true } }; addEventListener('click', handler, options); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "listener handleEvent accessor creates a resource when fired",
+    "const handler = { get handleEvent() { setInterval(refresh); return () => {} } }; addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "listener handleEvent accessor returns a resource-creating callback",
+    "const handler = { get handleEvent() { return () => setInterval(refresh) } }; addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
     "typeof known timer guard cleans resource",
     "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (typeof timer !== 'undefined') clearInterval(timer) })",
     false,

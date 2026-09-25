@@ -1176,6 +1176,28 @@ function undisposedResource(program: AnyNode): string | null {
                 },
                 environment,
               );
+          const passiveDescriptor = effectiveProperties(listenerOptions, environment).get(
+            "passive",
+          );
+          const passiveCompletion =
+            passiveDescriptor?.accessor &&
+            passiveDescriptor.property.kind === "get" &&
+            !properties.get(listenerOptions)?.has("passive")
+              ? inspect(
+                  passiveDescriptor.property.value,
+                  [],
+                  environment,
+                  module,
+                  passiveDescriptor.receiver,
+                )
+              : undefined;
+          if (passiveCompletion?.abrupt) {
+            abrupt = true;
+            exits.push(new Set(cleaned));
+            thrownExits.add(exits[exits.length - 1]);
+            throwStates.set(exits[exits.length - 1], snapshot());
+          }
+          if (passiveCompletion && !passiveCompletion.normal) return false;
           const signalDescriptor = effectiveProperties(listenerOptions, environment).get("signal");
           const signalCompletion =
             signalDescriptor?.accessor &&
@@ -2810,29 +2832,43 @@ function undisposedResource(program: AnyNode): string | null {
         },
       ],
     };
-    const handler = identity(
-      {
-        type: "MemberExpression",
-        object: listener.handler,
-        property: { type: "Identifier", name: "handleEvent" },
-        computed: false,
-      },
-      values,
-    );
-    const callback =
+    const functionListener =
       callbacks.has(listener.handler) ||
       lexicalEnvironments.has(listener.handler) ||
       ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
         listener.handler?.type,
-      )
-        ? listener.handler
-        : handler;
-    const receiver = callback === handler ? listener.handler : listener.receiver;
+      );
     for (let firing = 0; firing < (listener.once ? 1 : 8); firing++) {
       if (cleaned.has(listener.value)) break;
       const beforeFiring = captureDisposalState();
       timerSimulationDepth = 1;
-      inspect(callback, [event], values, false, receiver);
+      const descriptor = effectiveProperties(listener.handler, values).get("handleEvent");
+      const getter =
+        !functionListener &&
+        descriptor?.accessor &&
+        descriptor.property.kind === "get" &&
+        !properties.get(listener.handler)?.has("handleEvent")
+          ? inspect(descriptor.property.value, [], values, false, descriptor.receiver)
+          : undefined;
+      const handler = getter
+        ? getter.value
+        : identity(
+            {
+              type: "MemberExpression",
+              object: listener.handler,
+              property: { type: "Identifier", name: "handleEvent" },
+              computed: false,
+            },
+            values,
+          );
+      if (!getter || getter.normal)
+        inspect(
+          functionListener ? listener.handler : handler,
+          [event],
+          values,
+          false,
+          functionListener ? listener.receiver : listener.handler,
+        );
       timerSimulationDepth = 0;
       drainMicrotasks();
       const afterFiring = captureDisposalState();
