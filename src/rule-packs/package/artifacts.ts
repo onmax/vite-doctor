@@ -130,7 +130,8 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   root = realpathSync(root);
   const manifestPath = resolve(root, "package.json");
   if (!existsSync(manifestPath)) return null;
-  const manifest = parsePackageManifest(JSON.parse(readFileSync(manifestPath, "utf8")));
+  const manifestText = readFileSync(manifestPath, "utf8");
+  const manifest = parsePackageManifest(JSON.parse(manifestText));
   if (manifest.private) return null;
   const references: PackageReference[] = [];
   const missing = new Set<string>();
@@ -158,6 +159,17 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       if (directory === rootPath) break;
     }
     return true;
+  }
+
+  function explicitCommonjsModule(path: string): boolean {
+    if (/\.c(?:js|ts)$/.test(path)) return true;
+    for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
+      const manifestPath = resolve(directory, "package.json");
+      if (existsSync(manifestPath))
+        return JSON.parse(readFileSync(manifestPath, "utf8")).type === "commonjs";
+      if (directory === rootPath) break;
+    }
+    return false;
   }
 
   function commonjsFile(path: string): string | undefined {
@@ -322,9 +334,33 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     if (visited.has(key)) continue;
     visited.add(key);
     if (current.required && manifest.browser && typeof manifest.browser === "object") {
-      for (const [original, replacement] of Object.entries(manifest.browser))
-        if (replacement && replacement.startsWith(".") && resolve(root, original) === current.path)
+      for (const [original, replacement] of Object.entries(manifest.browser)) {
+        if (!replacement || resolve(root, original) !== current.path) continue;
+        if (replacement.startsWith(".")) {
           enqueue(replacement, "runtime", true, root, false, true);
+          continue;
+        }
+        const packageName = externalPackageName(replacement);
+        if (!packageName) continue;
+        const keyOffset = manifestText.indexOf(JSON.stringify(original));
+        const offset = manifestText.indexOf(JSON.stringify(replacement), keyOffset);
+        const start = offset < 0 ? 0 : offset;
+        const before = manifestText.slice(0, start);
+        references.push({
+          specifier: replacement,
+          packageName,
+          typeReference: false,
+          kind: "runtime",
+          required: true,
+          file: manifestPath,
+          range: {
+            start,
+            end: start + JSON.stringify(replacement).length,
+            line: before.split("\n").length,
+            column: start - before.lastIndexOf("\n"),
+          },
+        });
+      }
     }
     const commonjs = commonjsModule(current.path);
     const text = readFileSync(current.path, "utf8");
@@ -334,7 +370,12 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       ts.ScriptTarget.Latest,
       true,
     );
-    for (const edge of importEdges(source, current.kind, commonjs)) {
+    for (const edge of importEdges(
+      source,
+      current.kind,
+      commonjs,
+      explicitCommonjsModule(current.path),
+    )) {
       const required = current.required && edge.required;
       const executionRequired = required && !edge.resolutionOnly;
       for (const { specifier, kind } of resolvePackageImport(
@@ -553,9 +594,10 @@ function importEdges(
   source: ts.SourceFile,
   kind: "runtime" | "types",
   commonjs: boolean,
+  explicitCommonjs: boolean,
 ): ImportEdge[] {
   const edges: ImportEdge[] = [];
-  const supportsStaticImports = !commonjs || !source.fileName.endsWith(".cjs");
+  const supportsStaticImports = !explicitCommonjs;
   function add(
     literal: ts.Node | undefined,
     typeOnly: boolean,
@@ -739,6 +781,8 @@ function isValidClassHeritage(node: ts.Expression): boolean {
 }
 
 function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
+  if (ts.isElementAccessExpression(parent) && isWithin(node, parent.argumentExpression))
+    return !isNonAbruptElement(parent.expression);
   if (
     ts.isBinaryExpression(parent) &&
     isWithin(node, parent.right) &&

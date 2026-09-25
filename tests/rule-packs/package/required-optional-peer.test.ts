@@ -445,6 +445,20 @@ test.each(['import "./server.js";', 'export const load = () => import("./server.
   },
 );
 
+test.each(['import "./server.js";', 'export const load = () => import("./server.js");'])(
+  "tracks bare peer replacements of required browser chunks: %s",
+  async (source) => {
+    const diagnostics = await diagnose(
+      { main: "index.js", browser: { "./server.js": "peer" }, ...optionalPeer },
+      { "index.js": source, "server.js": "export {};" },
+    );
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      source.startsWith("import") ? ["PKG0003"] : [],
+    );
+    if (diagnostics.length) expect(diagnostics[0]?.file).toContain("package.json");
+  },
+);
+
 test("does not execute local files passed to require.resolve", async () => {
   expect(
     await diagnose(
@@ -480,14 +494,26 @@ test.each(["index.mjs", "index.js"])(
   },
 );
 
-test("does not require peers from invalid static imports in CommonJS", async () => {
-  expect(
-    await diagnose(
-      { main: "index.cjs", ...optionalPeer },
-      { "index.cjs": 'import "peer"; export * from "peer";' },
-    ),
-  ).toEqual([]);
-});
+test.each(["index.cjs", "index.js", "index.cts", "index.ts"])(
+  "does not require peers from invalid static imports in CommonJS %s",
+  async (entrypoint) => {
+    expect(
+      await diagnose(
+        { main: entrypoint, type: "commonjs", ...optionalPeer },
+        { [entrypoint]: 'import "peer"; export * from "peer";' },
+      ),
+    ).toEqual([]);
+  },
+);
+
+test.each(['getTarget()[require("peer")];', 'getTarget()[require("peer")] = 1;'])(
+  "does not require peers after an abrupt element-access base: %s",
+  async (source) => {
+    expect(await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source })).toEqual(
+      [],
+    );
+  },
+);
 
 test.each(['exports.peer = require("peer");', 'module.exports.peer = require("peer");'])(
   "requires optional peers assigned to CommonJS exports: %s",

@@ -276,7 +276,6 @@ test.each([
   ["js", "ts"],
   ["js", "tsx"],
   ["mjs", "mts"],
-  ["cjs", "cts"],
 ])("resolves %s specifiers to %s source chunks", (specifierExtension, sourceExtension) => {
   const result = inventory(
     { exports: `./src/index.${sourceExtension}` },
@@ -287,6 +286,14 @@ test.each([
   )!;
   expect(result.references).toMatchObject([{ packageName: "peer", required: true }]);
   expect(result.missing).toEqual([]);
+});
+
+test("ignores static ESM imports in native CommonJS TypeScript chunks", () => {
+  const result = inventory(
+    { exports: "./src/index.cts" },
+    { "src/index.cts": 'import "./chunk.cjs";', "src/chunk.cts": 'import "peer";' },
+  )!;
+  expect(result.references).toEqual([]);
 });
 
 test("does not substitute TypeScript chunks for missing JavaScript runtime imports", () => {
