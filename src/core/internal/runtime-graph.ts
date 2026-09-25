@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "pathe";
 import { valid } from "semver";
@@ -118,14 +118,127 @@ export function resolveNuxtCompatibility(
   };
 }
 
+export function autoRegisteredNuxtLayers(root: string): string[] {
+  const directory = join(root, "layers");
+  try {
+    if (!statSync(directory).isDirectory()) return [];
+    return readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => {
+        if (entry.isDirectory()) return true;
+        if (!entry.isSymbolicLink()) return false;
+        try {
+          return statSync(join(directory, entry.name)).isDirectory();
+        } catch {
+          return false;
+        }
+      })
+      .map((entry) => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+export function nuxtServerInventory(directory: string): string[] {
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { recursive: true })
+    .map((entry) => String(entry).replaceAll("\\", "/"))
+    .sort();
+}
+
 export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest | null) {
   if (!manifest?.generatedAt || !Number.isFinite(Date.parse(manifest.generatedAt))) return false;
-  const config = readNuxtConfig(root);
-  const configModifiedAt = config ? configModifiedTime(config.file) : undefined;
-  if (configModifiedAt === undefined) return true;
-  return Number.isFinite(manifest.nuxtConfigMtimeMs)
-    ? manifest.nuxtConfigMtimeMs === configModifiedAt
-    : Date.parse(manifest.generatedAt) >= configModifiedAt;
+  const recordedLayers =
+    manifest.autoRegisteredLayers ??
+    (manifest.layers ?? [])
+      .filter((layer) => dirname(resolve(root, layer.root)) === join(root, "layers"))
+      .map((layer) => resolve(root, layer.root).split("/").pop()!)
+      .sort();
+  if (JSON.stringify(recordedLayers) !== JSON.stringify(autoRegisteredNuxtLayers(root)))
+    return false;
+  if (
+    manifest.serverInventory &&
+    Object.entries(manifest.serverInventory).some(([directory, entries]) => {
+      try {
+        return (
+          JSON.stringify(entries) !== JSON.stringify(nuxtServerInventory(resolve(root, directory)))
+        );
+      } catch {
+        return true;
+      }
+    })
+  )
+    return false;
+  if (
+    manifest.serverHandlerMtimes &&
+    Object.entries(manifest.serverHandlerMtimes).some(([file, modifiedAt]) => {
+      try {
+        return statSync(resolve(root, file)).mtimeMs !== modifiedAt;
+      } catch {
+        return true;
+      }
+    })
+  )
+    return false;
+  const generatedAt = Date.parse(manifest.generatedAt);
+  const serverDirectories = new Set([
+    resolve(root, "server"),
+    ...(manifest.layers ?? []).map((layer) =>
+      resolve(root, layer.serverDir ?? join(layer.root, "server")),
+    ),
+  ]);
+  const directoriesUnchanged = (directory: string): boolean => {
+    if (!existsSync(directory)) return true;
+    try {
+      if (Math.floor(statSync(directory).mtimeMs) > generatedAt) return false;
+      return readdirSync(directory, { withFileTypes: true }).every(
+        (entry) => !entry.isDirectory() || directoriesUnchanged(join(directory, entry.name)),
+      );
+    } catch {
+      return false;
+    }
+  };
+  if (
+    manifest.resolvedServerHandlers &&
+    !manifest.serverInventory &&
+    [...serverDirectories].some((directory) => !directoriesUnchanged(directory))
+  )
+    return false;
+  return isNuxtConfigurationCurrent(root, manifest);
+}
+
+export function isNuxtManifestConfigurationCurrent(root: string, manifestPath?: string): boolean {
+  if (!manifestPath) return false;
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as NuxtDoctorManifest;
+    if (!manifest.generatedAt || !Number.isFinite(Date.parse(manifest.generatedAt))) return false;
+    const layers =
+      manifest.autoRegisteredLayers ??
+      (manifest.layers ?? [])
+        .filter((layer) => dirname(resolve(root, layer.root)) === join(root, "layers"))
+        .map((layer) => resolve(root, layer.root).split("/").pop()!)
+        .sort();
+    return (
+      JSON.stringify(layers) === JSON.stringify(autoRegisteredNuxtLayers(root)) &&
+      isNuxtConfigurationCurrent(root, manifest)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isNuxtConfigurationCurrent(root: string, manifest: NuxtDoctorManifest): boolean {
+  const configs = [
+    { root, nuxtConfigMtimeMs: manifest.nuxtConfigMtimeMs },
+    ...(manifest.layers ?? []),
+  ];
+  return configs.every((entry) => {
+    const config = readNuxtConfig(resolve(root, entry.root));
+    const modifiedAt = config ? configModifiedTime(config.file) : undefined;
+    if (entry.nuxtConfigMtimeMs === null) return !config;
+    if (Number.isFinite(entry.nuxtConfigMtimeMs)) return entry.nuxtConfigMtimeMs === modifiedAt;
+    return modifiedAt === undefined || Date.parse(manifest.generatedAt!) >= modifiedAt;
+  });
 }
 
 function isSupportedNuxtCompatibility(value: unknown): value is 4 | 5 {

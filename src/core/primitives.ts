@@ -182,7 +182,15 @@ export interface NuxtProjectInfo {
     string,
     { name: string; file: string; mode?: "client" | "server" | "all"; sourceLayer?: string }
   >;
-  layers: Array<{ name?: string; root: string; priority: number }>;
+  layers: Array<{
+    name?: string;
+    root: string;
+    srcDir?: string;
+    appMiddlewareDir?: string;
+    serverDir?: string;
+    priority: number;
+  }>;
+  localLayerAliases?: boolean;
   routeRules?: Record<string, unknown>;
   runtimeConfig?: unknown;
   serverDirs: {
@@ -207,6 +215,9 @@ export interface NuxtProjectInfo {
     appScanRoots: string[];
     sharedScanRoots: string[];
     hasManifest: boolean;
+    isCurrent: boolean;
+    serverHandlers?: NuxtDoctorManifest["serverHandlers"];
+    resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
     pages?: Array<{ path?: string; file?: string; name?: string }>;
     prerenderRoutes?: string[];
     buildManifest?: {
@@ -233,6 +244,7 @@ export interface NuxtModuleSource {
 }
 
 export interface NuxtDoctorManifest {
+  autoRegisteredLayers?: string[];
   generatedAt?: string;
   nuxtConfigMtimeMs?: number;
   nuxtVersion: string;
@@ -249,10 +261,22 @@ export interface NuxtDoctorManifest {
   };
   autoImports: unknown[];
   components: unknown[];
-  layers: Array<{ root: string; name?: string; priority: number }>;
+  layers: Array<{
+    root: string;
+    nuxtConfigMtimeMs?: number | null;
+    srcDir?: string;
+    appMiddlewareDir?: string;
+    serverDir?: string;
+    name?: string;
+    priority: number;
+  }>;
+  localLayerAliases?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
+  resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+  serverInventory?: Record<string, string[]>;
+  serverHandlerMtimes?: Record<string, number>;
   pages?: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes?: string[];
   buildManifest?: {

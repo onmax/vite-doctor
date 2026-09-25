@@ -1,5 +1,9 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { defineNuxtModule } from "nuxt/kit";
+import {
+  autoRegisteredNuxtLayers,
+  nuxtServerInventory,
+} from "../../core/internal/runtime-graph.js";
+import { defineNuxtModule, getLayerDirectories } from "nuxt/kit";
 import type { NuxtModule } from "nuxt/schema";
 import { join, relative, resolve } from "pathe";
 import type {
@@ -23,6 +27,9 @@ type NuxtAutoImportContext = {
 };
 
 type NuxtDoctorEvidence = {
+  resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+  serverInventory?: Record<string, string[]>;
+  serverHandlerMtimes?: Record<string, number>;
   pages?: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
@@ -36,6 +43,9 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   nuxt.options.doctor = options;
 
   const evidence = {
+    resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
+    serverInventory: undefined as Record<string, string[]> | undefined,
+    serverHandlerMtimes: undefined as Record<string, number> | undefined,
     pages: [] as Array<{ path?: string; file?: string; name?: string }>,
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
@@ -43,6 +53,88 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
   };
+
+  nuxt.hook?.("nitro:init", async (nitro: any) => {
+    const captureHandlers = async () => {
+      const environments = new Set([
+        nitro.options.dev ? "dev" : "prod",
+        nitro.options.preset,
+        ...(nitro.options.preset === "nitro-prerender" ? ["prerender"] : []),
+      ]);
+      evidence.resolvedServerHandlers = [...nitro.scannedHandlers, ...nitro.options.handlers]
+        .filter((handler: any) => {
+          const environmentsForHandler = [handler.env].flat().filter(Boolean);
+          return (
+            !environmentsForHandler.length ||
+            environmentsForHandler.some((env: string) => environments.has(env))
+          );
+        })
+        .map((handler: any) => ({
+          file: relative(nuxt.options.rootDir, handler.handler),
+          route: handler.route,
+          method: handler.method,
+          middleware: handler.middleware,
+        }));
+      // Nitro expands wildcard handlers for cached route rules in its virtual handlers module.
+      const rules = Object.entries(nitro.options.routeRules ?? {}) as Array<
+        [string, { cache?: unknown }]
+      >;
+      const wildcard = /\/\*\*.*$/;
+      for (const [path, rule] of rules) {
+        if (
+          !rule.cache &&
+          !rules.some(
+            ([route, parent]) =>
+              parent.cache &&
+              wildcard.test(route) &&
+              path.startsWith(`${route.replace(wildcard, "")}/`),
+          )
+        )
+          continue;
+        if (
+          evidence.resolvedServerHandlers!.some(
+            (handler) => !handler.middleware && handler.route === path,
+          )
+        )
+          continue;
+        const matching = evidence
+          .resolvedServerHandlers!.map((handler, index) => ({ handler, index }))
+          .find(
+            ({ handler }) =>
+              !handler.middleware &&
+              handler.route &&
+              wildcard.test(handler.route) &&
+              path.startsWith(`${handler.route.replace(wildcard, "")}/`),
+          );
+        if (matching)
+          evidence.resolvedServerHandlers!.splice(matching.index, 0, {
+            ...matching.handler,
+            route: path,
+          });
+      }
+      const directories = new Set<string>([
+        resolve(nuxt.options.rootDir, nuxt.options.serverDir ?? "server"),
+        ...(nuxt.options._layers ? getLayerDirectories(nuxt).map((layer) => layer.server) : []),
+        ...toArray(nitro.options.scanDirs).map((directory) => resolve(String(directory))),
+        ...evidence.resolvedServerHandlers.map((handler) =>
+          resolve(nuxt.options.rootDir, handler.file, ".."),
+        ),
+      ]);
+      evidence.serverHandlerMtimes = Object.fromEntries(
+        evidence.resolvedServerHandlers.flatMap((handler) => {
+          const file = resolve(nuxt.options.rootDir, handler.file);
+          return existsSync(file) ? [[file, statSync(file).mtimeMs]] : [];
+        }),
+      );
+      evidence.serverInventory = Object.fromEntries(
+        [...directories].map((directory) => [directory, nuxtServerInventory(directory)]),
+      );
+      await writeManifest(nuxt, evidence);
+    };
+    await captureHandlers();
+    nitro.hooks.hook("rollup:before", captureHandlers);
+    nitro.hooks.hook("compiled", captureHandlers);
+  });
 
   nuxt.hook?.("imports:context", (context: NuxtAutoImportContext) => {
     evidence.autoImportContext = context;
@@ -97,7 +189,7 @@ const nuxtDoctorModule: NuxtModule<NuxtDoctorModuleOptions> = defineNuxtModule({
   meta: {
     name: "vite-doctor",
     configKey: "doctor",
-    compatibility: { nuxt: ">=4" },
+    compatibility: { nuxt: ">=4.1.0" },
     docs: "https://vite-doctor.onmax.me/nuxt",
   },
   setup: setupNuxtDoctor,
@@ -136,8 +228,10 @@ export async function writeManifest(
   const resolvedAutoImports = evidence?.autoImportContext?.getImports
     ? await evidence.autoImportContext.getImports()
     : toArray(nuxt.options.imports?.imports);
+  const layerDirectories = nuxt.options._layers ? getLayerDirectories(nuxt) : [];
   const manifest = {
     nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
+    autoRegisteredLayers: autoRegisteredNuxtLayers(rootDir),
     nuxtVersion: nuxt._version ?? nuxt.version ?? "4",
     vueVersion: nuxt.options.vue?.version ?? "3.5",
     compatibilityVersion: nuxt.options.future?.compatibilityVersion,
@@ -152,10 +246,22 @@ export async function writeManifest(
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({
         root: resolve(layer.cwd ?? layer.config?.rootDir ?? rootDir),
+        nuxtConfigMtimeMs:
+          nuxtConfigModifiedAt(resolve(layer.cwd ?? layer.config?.rootDir ?? rootDir)) ?? null,
+        srcDir: resolve(layer.cwd ?? rootDir, layer.config?.srcDir ?? "."),
+        appMiddlewareDir: resolve(
+          layerDirectories[index]?.appMiddleware ??
+            resolve(srcDir, nuxt.options.dir?.middleware || "middleware"),
+        ),
+        serverDir: resolve(
+          layerDirectories[index]?.server ??
+            resolve(layer.cwd ?? rootDir, layer.config?.serverDir ?? "server"),
+        ),
         name: layer.config?.name,
         priority: index,
       }),
     ),
+    localLayerAliases: nuxt.options.experimental?.localLayerAliases !== false,
     aliases: Object.fromEntries(
       Object.entries(nuxt.options.alias ?? {}).map(([key, value]) => [key, String(value)]),
     ),
@@ -166,6 +272,9 @@ export async function writeManifest(
       method: handler.method,
       middleware: handler.middleware,
     })),
+    resolvedServerHandlers: evidence?.resolvedServerHandlers,
+    serverInventory: evidence?.serverInventory,
+    serverHandlerMtimes: evidence?.serverHandlerMtimes,
     pages: evidence?.pages ?? [],
     prerenderRoutes: [
       ...new Set([

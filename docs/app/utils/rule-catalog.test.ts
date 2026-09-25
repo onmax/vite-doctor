@@ -351,6 +351,22 @@ test("rule explorer model filters and sorts rules", async () => {
   ]);
 });
 
+test("authorization review generates its Rule Catalog and Diagnostic Reference", async () => {
+  expect(
+    getRuleDocuments().some((rule) => rule.id === "nuxt/review/api-authorization-coverage"),
+  ).toBe(true);
+  expect(getDiagnosticDocuments().some((diagnostic) => diagnostic.code === "NUXT0074")).toBe(true);
+  expect(await diagnosticsCollectionSource.getKeys()).toContain("diagnostics/NUXT0074.md");
+  const rule = getRuleDocuments().find(
+    (item) => item.id === "nuxt/review/api-authorization-coverage",
+  )!;
+  const page = await rulesCollectionSource.getItem(rule.key);
+  expect(page).toContain("createNuxtAuthorizationReviewExtension");
+  expect(page).toContain(
+    "pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules nuxt/review/api-authorization-coverage",
+  );
+});
+
 test("documents every Nitro rule and the HTTP masking diagnostic", () => {
   const ids = getRuleDocuments().map((rule) => rule.id);
   for (const rule of nitroRulePack.rules) expect(ids).toContain(rule.meta.id);
