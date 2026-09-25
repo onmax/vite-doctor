@@ -4,6 +4,31 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "await suspends before evaluating later call arguments",
+    "let timer; async function start() { consume(await Promise.resolve(), timer = setInterval(refresh)) } start(); clearInterval(timer); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "await does not repeat earlier call arguments",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); async function start() { consume(setInterval(refresh), await ready) } start(); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "awaited value in a suspended expression follows the eventual settlement",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); async function start() { consume(await ready, setInterval(refresh)) } start(); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "pending rejection survives finally",
+    "let rejectReady; const ready = new Promise((resolve, reject) => { rejectReady = reject }); ready.finally(() => {}).catch(() => setInterval(refresh)); const handler = () => rejectReady(Error()); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "pending async return settles only after its await resumes",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); async function start() { await ready; return setInterval(refresh) } start().then(clearInterval); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    false,
+  ],
+  [
     "pending promise passes its resolved handle to a reaction",
     "let finish; const ready = new Promise(resolve => { finish = resolve }); ready.then(clearInterval); const handler = () => finish(setInterval(refresh)); addEventListener('click', handler, { once: true }); import.meta.hot.dispose(() => removeEventListener('click', handler))",
     false,

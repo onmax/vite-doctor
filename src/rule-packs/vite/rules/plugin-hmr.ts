@@ -132,7 +132,7 @@ function undisposedResource(program: AnyNode): string | null {
     once: boolean;
     path: Map<object, boolean>;
   };
-  type Completion = { normal: boolean; abrupt: boolean; value?: AnyNode };
+  type Completion = { normal: boolean; abrupt: boolean; value?: AnyNode; suspended?: boolean };
   const resources: Resource[] = [];
   const knownTruthyResource = (value: AnyNode): boolean =>
     resources.some(
@@ -171,6 +171,7 @@ function undisposedResource(program: AnyNode): string | null {
     {
       fulfilled?: AnyNode;
       rejected?: AnyNode;
+      finally?: AnyNode;
       environment: Map<AnyNode, AnyNode>;
       result: AnyNode;
       resumeAwait?: boolean;
@@ -179,6 +180,21 @@ function undisposedResource(program: AnyNode): string | null {
   >();
   const enqueueReactions = (promise: AnyNode, completion: Completion) => {
     for (const reaction of pendingPromiseReactions.get(promise) ?? []) {
+      if (reaction.finally) {
+        microtasks.push({
+          environment: reaction.environment,
+          task: () => {
+            const final = adoptPromise(inspect(reaction.finally, [], reaction.environment, true));
+            const settled = final.abrupt
+              ? { normal: completion.normal && final.normal, abrupt: true, value: final.value }
+              : completion;
+            promiseCompletions.set(reaction.result, settled);
+            if (settled.normal) promises.set(reaction.result, settled.value);
+            enqueueReactions(reaction.result, settled);
+          },
+        });
+        continue;
+      }
       if (reaction.settled) {
         microtasks.push({ environment: reaction.environment, task: reaction.settled });
         continue;
@@ -656,7 +672,12 @@ function undisposedResource(program: AnyNode): string | null {
       }
     }
     const parentPath = currentPath;
-    const completion = evaluate(target.body, local, module, Boolean(target.async));
+    const promise = target.async ? {} : undefined;
+    if (promise) {
+      pendingUserPromises.add(promise);
+      promiseCompletions.set(promise, { normal: false, abrupt: false });
+    }
+    const completion = evaluate(target.body, local, module, Boolean(target.async), promise);
     currentPath = parentPath;
     for (const binding of environment.keys()) {
       if (binding !== thisBinding && local.has(binding))
@@ -664,7 +685,7 @@ function undisposedResource(program: AnyNode): string | null {
     }
     visited.delete(target);
     if (target.async) {
-      const promise = {};
+      if (completion.suspended) return { normal: true, abrupt: false, value: promise };
       promises.set(promise, completion.value);
       const settled = adoptPromise(completion);
       promiseCompletions.set(promise, settled);
@@ -677,6 +698,7 @@ function undisposedResource(program: AnyNode): string | null {
     environment: Map<AnyNode, AnyNode>,
     module: boolean,
     asyncFunction = false,
+    resultPromise?: AnyNode,
   ): Completion {
     const exits: Set<AnyNode>[] = [];
     const exitedDisposers: Disposer[] = [];
@@ -1164,6 +1186,7 @@ function undisposedResource(program: AnyNode): string | null {
           reactions.push({
             fulfilled: fulfilledHandler ?? finallyHandler,
             rejected: rejectedHandler ?? finallyHandler,
+            finally: finallyHandler,
             environment,
             result,
           });
@@ -2154,30 +2177,52 @@ function undisposedResource(program: AnyNode): string | null {
       breaks?: ReturnType<typeof snapshot>[];
     }[] = [];
     const labels = new Map<string, { exit: Set<AnyNode>; state: ReturnType<typeof snapshot> }[]>();
-    const walk = (node: AnyNode): boolean => {
+    const completed = new Set<AnyNode>();
+    const resumeExpression = (node: AnyNode, captured: Map<AnyNode, AnyNode>): AnyNode => {
+      if (!node || typeof node !== "object") return node;
+      if (Array.isArray(node)) return node.map((child) => resumeExpression(child, captured));
+      if (node.type === "AwaitExpression" || completed.has(node)) {
+        const saved = { type: "Identifier", name: "__doctorAwaitValue" };
+        returned.set(saved, node.type === "AwaitExpression" ? node : identity(node, captured));
+        return saved;
+      }
+      return Object.fromEntries(
+        Object.entries(node)
+          .filter(([key]) => key !== "__doctorParent")
+          .map(([key, child]) => [key, resumeExpression(child, captured)]),
+      );
+    };
+    let walk: (node: AnyNode) => boolean;
+    const walkNode = (node: AnyNode): boolean => {
       if (!node || typeof node !== "object") return true;
       if (Array.isArray(node)) return node.every(walk);
       if (typeof node.type !== "string") return true;
       if (node.type === "Program" || node.type === "BlockStatement") {
         for (const [index, statement] of node.body.entries()) {
-          if (!walk(statement)) return false;
+          const continues = walk(statement);
           if (pendingAwait) {
             const awaited = pendingAwait;
             pendingAwait = undefined;
             suspendedAwait = awaited;
-            if (index + 1 < node.body.length) {
+            if (!continues || index + 1 < node.body.length || resultPromise) {
+              const captured = new Map(environment);
               const callback = {
                 type: "ArrowFunctionExpression",
                 params: [],
-                body: { type: "BlockStatement", body: node.body.slice(index + 1) },
+                body: {
+                  type: "BlockStatement",
+                  body: [
+                    ...(!continues ? [resumeExpression(statement, captured)] : []),
+                    ...node.body.slice(index + 1),
+                  ],
+                },
               };
-              const captured = new Map(environment);
               if (pendingUserPromises.has(awaited)) {
                 const reactions = pendingPromiseReactions.get(awaited) ?? [];
                 reactions.push({
                   fulfilled: callback,
                   environment: captured,
-                  result: {},
+                  result: resultPromise ?? {},
                   resumeAwait: true,
                 });
                 pendingPromiseReactions.set(awaited, reactions);
@@ -2185,6 +2230,7 @@ function undisposedResource(program: AnyNode): string | null {
             }
             return true;
           }
+          if (!continues) return false;
         }
         return true;
       }
@@ -2993,7 +3039,7 @@ function undisposedResource(program: AnyNode): string | null {
           thrownExits.add(exits[exits.length - 1]);
           throwStates.set(exits[exits.length - 1], snapshot());
         }
-        return Boolean(pendingAwait) || (completion?.normal ?? true);
+        return !pendingAwait && (completion?.normal ?? true);
       }
       if (node.type === "TaggedTemplateExpression") {
         if (!walk(node.tag) || !walk(node.quasi)) return false;
@@ -3052,6 +3098,12 @@ function undisposedResource(program: AnyNode): string | null {
       }
       return true;
     };
+    walk = (node) => {
+      const continues = walkNode(node);
+      if (continues && !pendingAwait && node?.type && node.type !== "BlockStatement")
+        completed.add(node);
+      return continues;
+    };
     if (walk(root)) {
       normal = true;
       returns.push(
@@ -3090,7 +3142,7 @@ function undisposedResource(program: AnyNode): string | null {
       )
         alternatives.set(value, handles);
     }
-    return { normal, abrupt, value };
+    return { normal, abrupt, value, suspended: Boolean(suspendedAwait) };
   }
   const drainMicrotasks = () => {
     while (microtasks.length) {
