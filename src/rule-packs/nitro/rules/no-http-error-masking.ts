@@ -543,6 +543,18 @@ function evaluateOutcomes(
     const uninitialized = new Set(normal.uninitialized);
     if (node.id) uninitialized.add(normal.resolveBinding(node.id));
     let paths = outcomes(node.superClass, { ...normal, uninitialized }, bindings, conditions);
+    paths = paths.map((current) => {
+      if (current.outcome !== "normal" || !node.superClass) return current;
+      const base = unwrapExpression(node.superClass);
+      const resolved =
+        base?.type === "Identifier" ? current.functions?.get(current.resolveBinding(base)) : base;
+      if (resolved?.type !== "ClassDeclaration" && resolved?.type !== "ClassExpression")
+        return current;
+      return {
+        ...current,
+        superClasses: new Map(current.superClasses).set(node, resolved),
+      };
+    });
     for (const member of node.body.body) {
       if (member.computed)
         paths = paths.flatMap((current) =>
@@ -575,14 +587,6 @@ function evaluateOutcomes(
       const uninitialized = new Set(current.uninitialized);
       if (node.id) uninitialized.delete(node.id);
       const functions = new Map(current.functions);
-      const superClasses = new Map(current.superClasses);
-      if (node.superClass) {
-        const base = unwrapExpression(node.superClass);
-        const resolved =
-          base?.type === "Identifier" ? current.functions?.get(current.resolveBinding(base)) : base;
-        if (resolved?.type === "ClassDeclaration" || resolved?.type === "ClassExpression")
-          superClasses.set(node, resolved);
-      }
       if (node.type === "ClassDeclaration" && node.id)
         functions.set(
           current.resolveBinding({ name: node.id.name } as AnyNode, node.__doctorParent) ??
@@ -590,7 +594,7 @@ function evaluateOutcomes(
             node.id,
           node,
         );
-      return { ...current, uninitialized, functions, superClasses, value: undefined };
+      return { ...current, uninitialized, functions, value: undefined };
     });
   }
   if (node.type === "UpdateExpression") {

@@ -67,6 +67,21 @@ for (const [name, body, expected] of [
     "let Base = class {}; let Derived; if (flag) Base = class { constructor() { throw createError({ statusCode: 404 }) } }; Derived = class extends Base {}; Base = class {}; try { new Derived() } catch { throw new Error() }",
     1,
   ],
+  ...["static { Base = class {} }", "[(() => { Base = class {}; return 'key' })()]() {}"].map(
+    (member) => [
+      `retains the original base through ${member}`,
+      `let Base = class { constructor() { throw createError({ statusCode: 404 }) } }; class Derived extends Base { ${member} }; try { new Derived() } catch { throw new Error() }`,
+      1,
+    ],
+  ),
+  ...[
+    "static { Base = class { constructor() { throw createError({ statusCode: 404 }) } } }",
+    "[(() => { Base = class { constructor() { throw createError({ statusCode: 404 }) } }; return 'key' })()]() {}",
+  ].map((member) => [
+    `does not adopt a base assigned by ${member}`,
+    `let Base = class {}; class Derived extends Base { ${member} }; try { new Derived() } catch { throw new Error() }`,
+    0,
+  ]),
   [
     "respects ordered Object.assign status setters",
     "try { throw createError({ statusCode: 404 }) } catch (error) { Object.assign(error, { statusCode: 500, status: 404 }); throw error }",
