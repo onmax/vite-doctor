@@ -7,6 +7,7 @@ import type { ProjectInfo, SourceRange } from "../../core/primitives.js";
 
 export interface PackageManifest {
   name?: string;
+  type?: string;
   private?: boolean;
   main?: string;
   module?: string;
@@ -47,7 +48,8 @@ interface ImportEdge {
   kind: "runtime" | "types";
   required: boolean;
   typeReference?: boolean;
-  probe?: boolean;
+  probe?: boolean | "commonjs";
+  resolutionOnly?: boolean;
 }
 
 const runs = new WeakMap<ProjectInfo, PackageArtifacts | null>();
@@ -70,6 +72,7 @@ function parsePackageManifest(value: unknown): PackageManifest {
   if (!isRecord(value)) throw new TypeError("package.json must contain an object");
   const fields: Record<string, (entry: unknown) => boolean> = {
     name: isString,
+    type: isString,
     private: (entry) => typeof entry === "boolean",
     main: isString,
     module: isString,
@@ -84,7 +87,7 @@ function parsePackageManifest(value: unknown): PackageManifest {
       recordOf(entry, isString),
     typesVersions: (entry) =>
       recordOf(entry, (version) =>
-        recordOf(version, (paths) => Array.isArray(paths) && paths.every(isString)),
+        recordOf(version, (targets) => Array.isArray(targets) && targets.every(isString)),
       ),
     dependencies: (entry) => recordOf(entry, isString),
     optionalDependencies: (entry) => recordOf(entry, isString),
@@ -124,10 +127,43 @@ export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null 
 }
 
 export function readPackageArtifacts(root: string): PackageArtifacts | null {
+  const active = readPackageArtifactsForMode(root, true);
+  if (!active) return null;
+  const inactive = readPackageArtifactsForMode(root, false)!;
+  const requiredInActive = new Set(
+    active.references
+      .filter((reference) => reference.required)
+      .map((reference) => reference.packageName),
+  );
+  const requiredInBoth = new Set(
+    inactive.references
+      .filter((reference) => reference.required && requiredInActive.has(reference.packageName))
+      .map((reference) => reference.packageName),
+  );
+  const references = new Map<string, PackageReference>();
+  for (const reference of [...active.references, ...inactive.references]) {
+    const key = `${reference.file}:${reference.range.start}:${reference.specifier}:${reference.kind}`;
+    const previous = references.get(key);
+    references.set(key, {
+      ...reference,
+      required:
+        (reference.required || previous?.required === true) &&
+        requiredInBoth.has(reference.packageName),
+    });
+  }
+  return {
+    manifest: active.manifest,
+    references: [...references.values()],
+    missing: [...new Set([...active.missing, ...inactive.missing])],
+  };
+}
+
+function readPackageArtifactsForMode(root: string, addons: boolean): PackageArtifacts | null {
   root = realpathSync(root);
   const manifestPath = resolve(root, "package.json");
   if (!existsSync(manifestPath)) return null;
-  const manifest = parsePackageManifest(JSON.parse(readFileSync(manifestPath, "utf8")));
+  const manifestText = readFileSync(manifestPath, "utf8");
+  const manifest = parsePackageManifest(JSON.parse(manifestText));
   if (manifest.private) return null;
   const references: PackageReference[] = [];
   const missing = new Set<string>();
@@ -145,13 +181,76 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     );
   }
 
+  function commonjsModule(path: string): boolean {
+    if (/\.c(?:js|ts)$/.test(path)) return true;
+    if (/\.m(?:js|ts)$/.test(path)) return false;
+    for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
+      const manifestPath = resolve(directory, "package.json");
+      if (existsSync(manifestPath))
+        return JSON.parse(readFileSync(manifestPath, "utf8")).type !== "module";
+      if (directory === rootPath) break;
+    }
+    return true;
+  }
+
+  function explicitCommonjsModule(path: string): boolean {
+    if (/\.c(?:js|ts)$/.test(path)) return true;
+    for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
+      const manifestPath = resolve(directory, "package.json");
+      if (existsSync(manifestPath))
+        return JSON.parse(readFileSync(manifestPath, "utf8")).type === "commonjs";
+      if (directory === rootPath) break;
+    }
+    return false;
+  }
+
+  function packageScope(path: string): { directory: string; manifest: PackageManifest } {
+    for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
+      const scopedManifest = resolve(directory, "package.json");
+      if (existsSync(scopedManifest))
+        return {
+          directory,
+          manifest:
+            directory === rootPath
+              ? manifest
+              : parsePackageManifest(JSON.parse(readFileSync(scopedManifest, "utf8"))),
+        };
+      if (directory === rootPath) break;
+    }
+    return { directory: rootPath, manifest };
+  }
+
+  function commonjsFile(path: string): string | undefined {
+    const suffixes = ["", ".js", ".json", ".node"];
+    const findFile = (paths: string[]) =>
+      paths.find((candidate) => existsSync(candidate) && statSync(candidate).isFile());
+    const file = findFile(suffixes.map((suffix) => path + suffix));
+    if (file) return file;
+    if (!existsSync(path) || !statSync(path).isDirectory() || !inside(realpathSync(path))) return;
+    const manifestPath = resolve(path, "package.json");
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      if (isRecord(manifest) && typeof manifest.main === "string" && manifest.main) {
+        const main = resolve(path, manifest.main);
+        if (!inside(main)) return;
+        const entry = findFile([
+          ...suffixes.map((suffix) => main + suffix),
+          ...suffixes.slice(1).map((suffix) => resolve(main, "index" + suffix)),
+        ]);
+        if (entry) return entry;
+      }
+    }
+    return findFile(suffixes.slice(1).map((suffix) => resolve(path, "index" + suffix)));
+  }
+
   function enqueue(
     target: string,
     kind: "runtime" | "types",
     required: boolean,
     from = root,
-    probe = true,
+    probe: boolean | "main" | "commonjs" = true,
     adjacentDeclaration = false,
+    sourceResolution = false,
   ) {
     const path = resolve(from, target);
     if (!inside(path)) return;
@@ -166,12 +265,29 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     const candidates = probe
       ? kind === "types"
         ? typeCandidates(path)
-        : [
-            path,
-            ...[".js", ".mjs", ".cjs", "/index.js", "/index.mjs", "/index.cjs"].map(
-              (ext) => path + ext,
-            ),
-          ]
+        : probe === "main" || (probe === "commonjs" && !sourceResolution)
+          ? [
+              commonjsFile(path),
+              ...(probe === "main" && manifest.exports == null
+                ? [".js", ".json", ".node"].map((suffix) => resolve(root, `index${suffix}`))
+                : []),
+            ].filter((file): file is string => file !== undefined)
+          : [
+              ...(sourceResolution ? sourceCandidates(path) : []),
+              path,
+              ...[
+                ...(sourceResolution ? [".ts", ".tsx"] : []),
+                ".js",
+                ".mjs",
+                ".cjs",
+                ".jsx",
+                ...(sourceResolution ? ["/index.ts", "/index.tsx"] : []),
+                "/index.js",
+                "/index.mjs",
+                "/index.cjs",
+                "/index.jsx",
+              ].map((ext) => path + ext),
+            ]
       : [path];
     const file = candidates.find(
       (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
@@ -198,33 +314,55 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
 
   function targets(
     value: unknown,
-    required: boolean,
     kind: "runtime" | "types" = "runtime",
-    adjacentDeclaration = false,
-  ) {
-    if (typeof value === "string") enqueue(value, kind, required, root, false, adjacentDeclaration);
-    else if (Array.isArray(value)) {
-      const fallbackMissing = new Set(missing);
-      for (const item of value) {
-        const beforeQueue = queue.length;
-        targets(item, required, kind, adjacentDeclaration);
-        if (queue.length > beforeQueue) {
-          for (const entry of missing) if (!fallbackMissing.has(entry)) missing.delete(entry);
-          break;
-        }
-      }
-    } else if (value && typeof value === "object") {
-      for (const [condition, item] of Object.entries(value))
-        targets(
-          item,
-          required,
-          condition === "types" || condition.startsWith("types@") ? "types" : kind,
-          adjacentDeclaration,
-        );
+    mode: "import" | "require" = "import",
+    addons = true,
+  ): string[] | "blocked" | undefined {
+    if (typeof value === "string") {
+      if (!validExportTarget(value, root) || !inside(resolve(root, value))) return "blocked";
+      return [value];
     }
+    if (value === null) return "blocked";
+    if (Array.isArray(value)) {
+      let blocked = value.length === 0;
+      for (const item of value) {
+        const result = targets(item, kind, mode, addons);
+        if (Array.isArray(result)) return result;
+        if (result === "blocked") blocked = true;
+      }
+      return blocked ? "blocked" : undefined;
+    }
+    if (value && typeof value === "object") {
+      if (kind === "runtime")
+        for (const [condition, item] of Object.entries(value))
+          if (condition === "types" || condition.startsWith("types@")) {
+            const declarations = targets(item, "types", mode, addons);
+            if (Array.isArray(declarations))
+              for (const declaration of declarations)
+                enqueue(declaration, "types", false, root, false, true);
+          }
+      for (const [condition, item] of Object.entries(value)) {
+        if (
+          condition !== "default" &&
+          condition !== "node" &&
+          !(addons && condition === "node-addons") &&
+          condition !== mode
+        )
+          continue;
+        const resolved = targets(item, kind, mode, addons);
+        if (resolved) return resolved;
+      }
+    }
+    return undefined;
   }
 
-  if (manifest.exports !== undefined) {
+  function addTargets(value: unknown, required: boolean, mode: "import" | "require") {
+    const selected = targets(value, "runtime", mode, addons);
+    if (Array.isArray(selected))
+      for (const target of selected) enqueue(target, "runtime", required, root, false, true);
+  }
+
+  if (manifest.exports != null) {
     const exports = manifest.exports;
     if (
       exports &&
@@ -232,27 +370,33 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       !Array.isArray(exports) &&
       Object.keys(exports).some((key) => key.startsWith("."))
     ) {
-      for (const [subpath, value] of Object.entries(exports))
-        targets(value, subpath === ".", "runtime", true);
-    } else targets(exports, true, "runtime", true);
+      for (const [subpath, value] of Object.entries(exports)) {
+        addTargets(value, subpath === ".", "import");
+        addTargets(value, subpath === ".", "require");
+      }
+    } else {
+      addTargets(exports, true, "import");
+      addTargets(exports, true, "require");
+    }
   } else if (!manifest.main && !manifest.module) {
     if (existsSync(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
   }
-  for (const entry of [manifest.main, manifest.module])
-    if (entry) enqueue(entry, "runtime", true, root, false, true);
+  if (manifest.main) enqueue(manifest.main, "runtime", true, root, "main", true);
+  if (manifest.module) enqueue(manifest.module, "runtime", true, root, true, true);
   if (typeof manifest.browser === "string")
     enqueue(manifest.browser, "runtime", true, root, false, true);
-  else if (manifest.browser)
+  else if (manifest.browser) {
     for (const entry of Object.values(manifest.browser))
       if (entry && entry.startsWith(".")) enqueue(entry, "runtime", false, root, false, true);
+  }
   for (const entry of [manifest.types, manifest.typings])
     if (entry) enqueue(entry, "types", false, root, false);
   const bin = Array.isArray(manifest.bin)
     ? Object.fromEntries(manifest.bin.map((entry) => [basename(entry), entry]))
     : manifest.bin;
-  if (typeof bin === "string") enqueue(bin, "runtime", true, root, false, true);
+  if (typeof bin === "string") enqueue(bin, "runtime", false, root, false, true);
   else if (bin)
-    for (const entry of Object.values(bin)) enqueue(entry, "runtime", true, root, false, true);
+    for (const entry of Object.values(bin)) enqueue(entry, "runtime", false, root, false, true);
   for (const version of Object.values(manifest.typesVersions ?? {}))
     for (const entries of Object.values(version))
       for (const entry of entries) enqueue(entry, "types", false, root, false);
@@ -262,44 +406,114 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     const key = `${current.path}:${current.kind}:${current.required}`;
     if (visited.has(key)) continue;
     visited.add(key);
+    if (current.required && manifest.browser && typeof manifest.browser === "object") {
+      for (const [original, replacement] of Object.entries(manifest.browser)) {
+        if (!replacement || resolve(root, original) !== current.path) continue;
+        if (replacement.startsWith(".")) {
+          enqueue(replacement, "runtime", true, root, false, true);
+          continue;
+        }
+        const packageName = externalPackageName(replacement);
+        if (!packageName) continue;
+        const keyOffset = manifestText.indexOf(JSON.stringify(original));
+        const offset = manifestText.indexOf(JSON.stringify(replacement), keyOffset);
+        const start = offset < 0 ? 0 : offset;
+        const before = manifestText.slice(0, start);
+        references.push({
+          specifier: replacement,
+          packageName,
+          typeReference: false,
+          kind: "runtime",
+          required: true,
+          file: manifestPath,
+          range: {
+            start,
+            end: start + JSON.stringify(replacement).length,
+            line: before.split("\n").length,
+            column: start - before.lastIndexOf("\n"),
+          },
+        });
+      }
+    }
+    const text = readFileSync(current.path, "utf8");
+    const parsed = ts.createSourceFile(current.path, text, ts.ScriptTarget.Latest, true);
+    const commonjs =
+      commonjsModule(current.path) &&
+      (explicitCommonjsModule(current.path) || !hasRuntimeModuleSyntax(parsed));
     const source = ts.createSourceFile(
       current.path,
-      readFileSync(current.path, "utf8"),
+      commonjs ? text : `${text}\nexport {};`,
       ts.ScriptTarget.Latest,
       true,
     );
-    for (const edge of importEdges(source, current.kind)) {
+    const scope = packageScope(current.path);
+    for (const edge of importEdges(
+      source,
+      current.kind,
+      commonjs,
+      explicitCommonjsModule(current.path),
+    )) {
       const required = current.required && edge.required;
-      for (const specifier of resolvePackageImport(edge.specifier, manifest.imports)) {
+      const executionRequired = required && !edge.resolutionOnly;
+      for (const { specifier, kind, required: selectedRequired } of resolvePackageImport(
+        edge.specifier,
+        scope.manifest.imports,
+        edge.kind,
+        edge.probe === "commonjs" ? "require" : "import",
+        new Set(),
+        undefined,
+        scope.directory,
+        addons,
+      )) {
         if (specifier.startsWith(".")) {
           enqueue(
             specifier,
-            edge.kind,
-            required,
-            edge.specifier.startsWith("#") ? root : dirname(current.path),
-            edge.kind === "types" || edge.probe === true,
+            kind,
+            executionRequired && selectedRequired && kind === "runtime",
+            edge.specifier.startsWith("#") ? scope.directory : dirname(current.path),
+            edge.specifier.startsWith("#")
+              ? false
+              : edge.probe || kind === "types" || /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
+            false,
+            /\.(?:[cm]?ts|tsx)$/.test(current.path),
           );
           continue;
         }
         const packageName = edge.typeReference ? specifier : externalPackageName(specifier);
         if (!packageName) continue;
-        if (packageName === manifest.name) {
-          const exports = manifest.exports;
+        if (packageName === scope.manifest.name) {
+          const exports = scope.manifest.exports;
           const entries =
             exports &&
             typeof exports === "object" &&
             !Array.isArray(exports) &&
             Object.keys(exports).some((key) => key.startsWith("."))
               ? exports
-              : { ".": exports ?? manifest.main };
+              : { ".": exports ?? scope.manifest.main };
           const aliases = Object.fromEntries(
             Object.entries(entries).map(([key, value]) => [`#self${key.slice(1)}`, value]),
           );
           for (const target of resolvePackageImport(
             `#self${specifier.slice(packageName.length)}`,
             aliases,
+            kind,
+            edge.probe === "commonjs" ? "require" : "import",
+            new Set(),
+            scope.directory,
+            undefined,
+            addons,
           )) {
-            if (target.startsWith(".")) enqueue(target, edge.kind, required);
+            if (target.specifier.startsWith("."))
+              enqueue(
+                target.specifier,
+                target.kind,
+                executionRequired &&
+                  selectedRequired &&
+                  target.required &&
+                  target.kind === "runtime",
+                scope.directory,
+                exports === undefined ? "main" : false,
+              );
           }
           continue;
         }
@@ -308,8 +522,8 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           specifier,
           packageName,
           typeReference: edge.typeReference ?? false,
-          kind: edge.kind,
-          required,
+          kind,
+          required: required && selectedRequired && kind === "runtime",
           file: current.path,
           range: {
             start: edge.start,
@@ -346,6 +560,13 @@ function typeCandidates(path: string) {
   ];
 }
 
+function sourceCandidates(path: string): string[] {
+  if (path.endsWith(".jsx")) return [path.replace(/\.jsx$/, ".tsx"), path.replace(/\.jsx$/, ".ts")];
+  if (path.endsWith(".js")) return [path.replace(/\.js$/, ".ts"), path.replace(/\.js$/, ".tsx")];
+  if (/\.[cm]js$/.test(path)) return [path.replace(/js$/, "ts")];
+  return [];
+}
+
 function externalPackageName(specifier: string): string | null {
   if (!specifier || isBuiltin(specifier) || /^(?:[.#/]|[a-zA-Z][\w+.-]*:)/.test(specifier))
     return null;
@@ -354,12 +575,42 @@ function externalPackageName(specifier: string): string | null {
     : specifier.split("/")[0]!;
 }
 
+function validExportTarget(value: string, root: string): boolean {
+  return (
+    value.startsWith("./") &&
+    !value
+      .slice(2)
+      .split(/[\\/]/)
+      .some((segment) => {
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(segment);
+        } catch {
+          return true;
+        }
+        return /^(\.|\.\.|node_modules)$/i.test(decoded) || /[\\/]/.test(decoded);
+      }) &&
+    !relative(root, resolve(root, value)).startsWith("../")
+  );
+}
+
+type ResolvedPackageImport = {
+  specifier: string;
+  kind: PackageReference["kind"];
+  required: boolean;
+};
+
 function resolvePackageImport(
   specifier: string,
   imports: PackageManifest["imports"],
+  kind: PackageReference["kind"],
+  mode: "import" | "require",
   seen = new Set<string>(),
-): string[] {
-  if (!specifier.startsWith("#")) return [specifier];
+  selfRoot?: string,
+  importsRoot?: string,
+  addons = true,
+): ResolvedPackageImport[] {
+  if (!specifier.startsWith("#")) return [{ specifier, kind, required: true }];
   if (seen.has(specifier)) return [];
   seen.add(specifier);
   const entries = Object.entries(imports ?? {}).sort(
@@ -379,19 +630,135 @@ function resolvePackageImport(
   const wildcard = key.includes("*")
     ? specifier.slice(key.indexOf("*"), specifier.length - (key.length - key.indexOf("*") - 1))
     : "";
-  function flatten(value: unknown): string[] {
-    if (typeof value === "string")
-      return resolvePackageImport(value.replaceAll("*", wildcard), imports, new Set(seen));
-    if (Array.isArray(value)) return value.flatMap(flatten);
-    if (value && typeof value === "object") return Object.values(value).flatMap(flatten);
-    return [];
+  function flatten(
+    value: unknown,
+    targetKind = kind,
+    addons = true,
+  ): ResolvedPackageImport[] | undefined {
+    if (value === null) return [];
+    if (typeof value === "string") {
+      if (key.includes("*") && !validExportTarget(`./${wildcard}`, selfRoot ?? importsRoot ?? ""))
+        return [];
+      const substituted = value.replaceAll("*", wildcard);
+      if (selfRoot && !validExportTarget(substituted, selfRoot)) return [];
+      if (importsRoot && value.startsWith(".") && !validExportTarget(substituted, importsRoot))
+        return [];
+      return resolvePackageImport(
+        substituted,
+        imports,
+        targetKind,
+        mode,
+        new Set(seen),
+        selfRoot,
+        importsRoot,
+        addons,
+      );
+    }
+    if (Array.isArray(value)) {
+      let selected: ReturnType<typeof flatten> = value.length ? undefined : [];
+      for (const entry of value) {
+        const targets = flatten(entry, targetKind, addons);
+        if (targets?.length) return targets;
+        if (targets !== undefined) selected = targets;
+      }
+      return selected;
+    }
+    if (isRecord(value)) return flattenConditions(value, targetKind, addons);
+    return undefined;
   }
-  return flatten(target);
+  function flattenConditions(
+    value: Record<string, unknown>,
+    targetKind: PackageReference["kind"],
+    addons: boolean,
+  ): ResolvedPackageImport[] | undefined {
+    for (const [condition, entry] of Object.entries(value)) {
+      const types = condition === "types" || condition.startsWith("types@");
+      if (
+        condition !== "default" &&
+        condition !== "node" &&
+        !(addons && condition === "node-addons") &&
+        condition !== mode &&
+        !(types && targetKind === "types")
+      )
+        continue;
+      const targets = flatten(entry, types ? "types" : targetKind, addons);
+      if (targets !== undefined) return targets;
+    }
+    return undefined;
+  }
+  return flatten(target, kind, addons) ?? [];
 }
 
-function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEdge[] {
+function hasRuntimeModuleSyntax(source: ts.SourceFile): boolean {
+  let esmSyntax = false;
+  function visit(node: ts.Node): void {
+    if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
+      esmSyntax = true;
+      return;
+    }
+    if (ts.isAwaitExpression(node) && !ts.findAncestor(node, ts.isFunctionLike)) {
+      esmSyntax = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  if (esmSyntax) return true;
+  return source.statements.some((statement) => {
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (!clause) return true;
+      if (clause.isTypeOnly) return false;
+      const bindings = clause.namedBindings;
+      return !(
+        !clause.name &&
+        bindings &&
+        ts.isNamedImports(bindings) &&
+        bindings.elements.length > 0 &&
+        bindings.elements.every((element) => element.isTypeOnly)
+      );
+    }
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.isTypeOnly) return false;
+      const clause = statement.exportClause;
+      return !(
+        clause &&
+        ts.isNamedExports(clause) &&
+        clause.elements.length > 0 &&
+        clause.elements.every((element) => element.isTypeOnly)
+      );
+    }
+    if (ts.isExportAssignment(statement)) return !statement.isExportEquals;
+    if (
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      ts.isImportEqualsDeclaration(statement)
+    )
+      return false;
+    if (!ts.canHaveModifiers(statement)) return false;
+    const modifiers = ts.getModifiers(statement);
+    return Boolean(
+      modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) &&
+      !modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword),
+    );
+  });
+}
+
+function importEdges(
+  source: ts.SourceFile,
+  kind: "runtime" | "types",
+  commonjs: boolean,
+  explicitCommonjs: boolean,
+): ImportEdge[] {
   const edges: ImportEdge[] = [];
-  function add(literal: ts.Node | undefined, typeOnly: boolean, required: boolean, probe = false) {
+  const supportsStaticImports = !explicitCommonjs;
+  function add(
+    literal: ts.Node | undefined,
+    typeOnly: boolean,
+    required: boolean,
+    probe: boolean | "commonjs" = false,
+    resolutionOnly = false,
+  ) {
     while (literal && ts.isParenthesizedExpression(literal)) literal = literal.expression;
     if (!literal || !ts.isStringLiteralLike(literal)) return;
     edges.push({
@@ -401,6 +768,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
       kind: typeOnly ? "types" : kind,
       required: !typeOnly && required,
       probe,
+      resolutionOnly,
     });
   }
   function visit(node: ts.Node) {
@@ -415,7 +783,7 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
           named.elements.length &&
           named.elements.every((item) => item.isTypeOnly)),
       );
-      add(node.moduleSpecifier, typeOnly, true);
+      if (typeOnly || supportsStaticImports) add(node.moduleSpecifier, typeOnly, true);
     } else if (ts.isExportDeclaration(node)) {
       const typeOnly = Boolean(
         node.isTypeOnly ||
@@ -424,31 +792,58 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
           node.exportClause.elements.length &&
           node.exportClause.elements.every((item) => item.isTypeOnly)),
       );
-      add(node.moduleSpecifier, typeOnly, true);
+      if (typeOnly || supportsStaticImports) add(node.moduleSpecifier, typeOnly, true);
     } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
     ) {
-      add(node.moduleReference.expression, node.isTypeOnly, true);
+      add(node.moduleReference.expression, node.isTypeOnly, true, "commonjs");
     } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
       add(node.argument.literal, true, false);
     } else if (ts.isCallExpression(node)) {
+      const member = node.expression;
+      const memberName = ts.isPropertyAccessExpression(member)
+        ? member.name.text
+        : ts.isElementAccessExpression(member) && ts.isStringLiteral(member.argumentExpression)
+          ? member.argumentExpression.text
+          : undefined;
+      const receiver =
+        ts.isPropertyAccessExpression(member) || ts.isElementAccessExpression(member)
+          ? member.expression
+          : undefined;
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
         add(node.arguments[0], false, isUnconditional(node, true));
       else if (
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === "require" &&
-        !shadowsRequire(node)
+        (commonjs &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "require" &&
+          !shadowsRequire(node)) ||
+        (receiver &&
+          ts.isIdentifier(receiver) &&
+          receiver.text === "module" &&
+          memberName === "require" &&
+          commonjs &&
+          !shadowsName(node, "module"))
       )
-        add(node.arguments[0], false, isUnconditional(node, false), true);
+        add(node.arguments[0], false, isUnconditional(node, false), "commonjs");
       else if (
-        ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "require" &&
-        node.expression.name.text === "resolve" &&
+        commonjs &&
+        receiver &&
+        ts.isIdentifier(receiver) &&
+        receiver.text === "require" &&
+        memberName === "resolve" &&
         !shadowsRequire(node)
       )
-        add(node.arguments[0], false, isUnconditional(node, false), true);
+        add(node.arguments[0], false, isUnconditional(node, false), "commonjs", true);
+      else if (
+        !commonjs &&
+        receiver &&
+        memberName === "resolve" &&
+        ts.isMetaProperty(receiver) &&
+        receiver.keywordToken === ts.SyntaxKind.ImportKeyword &&
+        receiver.name.text === "meta"
+      )
+        add(node.arguments[0], false, isUnconditional(node, false), false, true);
     }
     ts.forEachChild(node, visit);
   }
@@ -488,17 +883,416 @@ function importEdges(source: ts.SourceFile, kind: "runtime" | "types"): ImportEd
   return edges;
 }
 
-function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
-  if (dynamic && !ts.isAwaitExpression(node.parent)) return false;
-  for (let parent = node.parent; parent && !ts.isSourceFile(parent); parent = parent.parent) {
+function isDecoratorExpression(node: ts.Node, ancestor: ts.Node): boolean {
+  for (let current = node.parent; current && current !== ancestor; current = current.parent)
+    if (ts.isDecorator(current))
+      return (
+        current.parent === ancestor ||
+        (ts.isParameter(current.parent) && current.parent.parent === ancestor)
+      );
+  return false;
+}
+
+function isNonAbruptElement(node: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(node)) return isNonAbruptElement(node.expression);
+  if (ts.isPrefixUnaryExpression(node))
+    return (
+      (node.operator === ts.SyntaxKind.ExclamationToken ||
+        ((node.operator === ts.SyntaxKind.TildeToken ||
+          node.operator === ts.SyntaxKind.MinusToken ||
+          node.operator === ts.SyntaxKind.PlusToken) &&
+          (ts.isNumericLiteral(node.operand) ||
+            ts.isStringLiteral(node.operand) ||
+            (node.operator !== ts.SyntaxKind.PlusToken && ts.isBigIntLiteral(node.operand)) ||
+            node.operand.kind === ts.SyntaxKind.TrueKeyword ||
+            node.operand.kind === ts.SyntaxKind.FalseKeyword ||
+            node.operand.kind === ts.SyntaxKind.NullKeyword))) &&
+      isNonAbruptElement(node.operand)
+    );
+  if (ts.isVoidExpression(node) || ts.isTypeOfExpression(node))
+    return isNonAbruptElement(node.expression);
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.CommaToken)
+    return isNonAbruptElement(node.left) && isNonAbruptElement(node.right);
+  return (
+    ts.isLiteralExpression(node) ||
+    isUndefined(node) ||
+    node.kind === ts.SyntaxKind.ThisKeyword ||
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    (ts.isClassExpression(node) && !node.heritageClauses?.length && node.members.length === 0) ||
+    (ts.isArrayLiteralExpression(node) && node.elements.every(isNonAbruptElement)) ||
+    (ts.isObjectLiteralExpression(node) &&
+      node.properties.every(
+        (property) =>
+          ts.isPropertyAssignment(property) &&
+          literalPropertyName(property.name) !== undefined &&
+          isNonAbruptElement(property.initializer),
+      )) ||
+    ts.isOmittedExpression(node) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteralLike(node.arguments[0]!))
+  );
+}
+
+function isNonAbruptStatement(statement: ts.Statement): boolean {
+  if (ts.isExpressionStatement(statement)) return isNonAbruptElement(statement.expression);
+  if (ts.isVariableStatement(statement))
+    return statement.declarationList.declarations.every(
+      (declaration) =>
+        ts.isIdentifier(declaration.name) &&
+        (!declaration.initializer || isNonAbruptElement(declaration.initializer)),
+    );
+  if (ts.isBlock(statement)) return statement.statements.every(isNonAbruptStatement);
+  return ts.isEmptyStatement(statement);
+}
+
+function isValidClassHeritage(node: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(node)) return isValidClassHeritage(node.expression);
+  return (
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isClassExpression(node) && !node.heritageClauses?.length && node.members.length === 0) ||
+    (ts.isFunctionExpression(node) &&
+      !node.asteriskToken &&
+      !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword))
+  );
+}
+
+function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
+  if (ts.isTemplateExpression(parent)) {
+    const index = parent.templateSpans.findIndex((span) => isWithin(node, span.expression));
+    return (
+      index >= 0 &&
+      parent.templateSpans.slice(0, index).some((span) => {
+        let expression = span.expression;
+        while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+        return (
+          !isNonAbruptElement(expression) ||
+          !(
+            ts.isLiteralExpression(expression) ||
+            isUndefined(expression) ||
+            expression.kind === ts.SyntaxKind.TrueKeyword ||
+            expression.kind === ts.SyntaxKind.FalseKeyword ||
+            expression.kind === ts.SyntaxKind.NullKeyword ||
+            ts.isVoidExpression(expression) ||
+            ts.isTypeOfExpression(expression) ||
+            ts.isPrefixUnaryExpression(expression)
+          )
+        );
+      })
+    );
+  }
+  if (ts.isTaggedTemplateExpression(parent) && isWithin(node, parent.template))
+    return !isNonAbruptElement(parent.tag);
+  if (ts.isElementAccessExpression(parent) && isWithin(node, parent.argumentExpression))
+    return !isNonAbruptElement(parent.expression);
+  if (
+    ts.isBinaryExpression(parent) &&
+    isWithin(node, parent.right) &&
+    !(
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      (ts.isIdentifier(parent.left) ||
+        (ts.isPropertyAccessExpression(parent.left) &&
+          ((ts.isIdentifier(parent.left.expression) &&
+            parent.left.expression.text === "exports" &&
+            !shadowsName(parent, "exports")) ||
+            (ts.isIdentifier(parent.left.expression) &&
+              parent.left.expression.text === "module" &&
+              parent.left.name.text === "exports" &&
+              !shadowsName(parent, "module")) ||
+            (ts.isPropertyAccessExpression(parent.left.expression) &&
+              ts.isIdentifier(parent.left.expression.expression) &&
+              parent.left.expression.expression.text === "module" &&
+              parent.left.expression.name.text === "exports" &&
+              !shadowsName(parent, "module")))) ||
+        (ts.isElementAccessExpression(parent.left) &&
+          isNonAbruptElement(parent.left.argumentExpression) &&
+          ((ts.isIdentifier(parent.left.expression) &&
+            parent.left.expression.text === "exports" &&
+            !shadowsName(parent, "exports")) ||
+            (ts.isPropertyAccessExpression(parent.left.expression) &&
+              ts.isIdentifier(parent.left.expression.expression) &&
+              parent.left.expression.expression.text === "module" &&
+              parent.left.expression.name.text === "exports" &&
+              !shadowsName(parent, "module")))))
+    )
+  )
+    return !isNonAbruptElement(parent.left);
+  if (ts.isArrayLiteralExpression(parent))
+    return parent.elements
+      .slice(
+        0,
+        parent.elements.findIndex((item) => isWithin(node, item)),
+      )
+      .some((item) => !isNonAbruptElement(item));
+  if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
+    const args = parent.arguments ?? [];
+    const index = args.findIndex((arg) => isWithin(node, arg));
+    const safeCallee =
+      isNonAbruptElement(parent.expression) ||
+      (ts.isCallExpression(parent) &&
+        ts.isPropertyAccessExpression(parent.expression) &&
+        ts.isIdentifier(parent.expression.expression) &&
+        parent.expression.expression.text === "Promise" &&
+        parent.expression.name.text === "all" &&
+        !shadowsName(parent, "Promise"));
+    return (
+      index >= 0 && (!safeCallee || args.slice(0, index).some((arg) => !isNonAbruptElement(arg)))
+    );
+  }
+  if (ts.isVariableDeclarationList(parent)) {
+    const index = parent.declarations.findIndex((declaration) => isWithin(node, declaration));
+    return (
+      index >= 0 &&
+      parent.declarations
+        .slice(0, index)
+        .some((declaration) =>
+          Boolean(declaration.initializer && !isNonAbruptElement(declaration.initializer)),
+        )
+    );
+  }
+  if (ts.isObjectLiteralExpression(parent)) {
+    const index = parent.properties.findIndex((property) => isWithin(node, property));
+    const current = parent.properties[index];
+    return (
+      index >= 0 &&
+      (parent.properties.slice(0, index).some((property) => {
+        if (ts.isSpreadAssignment(property)) return true;
+        if (ts.isShorthandPropertyAssignment(property)) return true;
+        if (
+          ts.isComputedPropertyName(property.name) &&
+          !isNonAbruptElement(property.name.expression)
+        )
+          return true;
+        return ts.isPropertyAssignment(property) && !isNonAbruptElement(property.initializer);
+      }) ||
+        (current &&
+          ts.isPropertyAssignment(current) &&
+          ts.isComputedPropertyName(current.name) &&
+          isWithin(node, current.initializer) &&
+          !isNonAbruptElement(current.name.expression)))
+    );
+  }
+  return false;
+}
+
+function isNonCallable(node: ts.Expression): boolean {
+  while (ts.isParenthesizedExpression(node)) node = node.expression;
+  return (
+    isUndefined(node) ||
+    ts.isLiteralExpression(node) ||
+    ((ts.isObjectLiteralExpression(node) || ts.isArrayLiteralExpression(node)) &&
+      isNonAbruptElement(node)) ||
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword
+  );
+}
+
+function isImmediateField(field: ts.PropertyDeclaration): boolean {
+  const owner = field.parent;
+  if (!ts.isClassExpression(owner) || owner.heritageClauses?.length || owner.modifiers?.length)
+    return false;
+  let expression: ts.Node = owner;
+  while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  const call = expression.parent;
+  if (
+    !ts.isNewExpression(call) ||
+    call.expression !== expression ||
+    !(call.arguments ?? []).every(isNonAbruptElement)
+  )
+    return false;
+  for (const member of owner.members) {
     if (
-      ts.isFunctionLike(parent) ||
-      ts.isClassLike(parent) ||
-      ts.isIfStatement(parent) ||
-      ts.isConditionalExpression(parent) ||
-      ts.isSwitchStatement(parent) ||
-      ts.isIterationStatement(parent, false) ||
-      ts.isTryStatement(parent) ||
+      (member.name && ts.isComputedPropertyName(member.name)) ||
+      ts.isClassStaticBlockDeclaration(member) ||
+      (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length)
+    )
+      return false;
+    if (
+      ts.isPropertyDeclaration(member) &&
+      member !== field &&
+      member.initializer &&
+      (member.pos < field.pos ||
+        member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) &&
+      !isNonAbruptElement(member.initializer)
+    )
+      return false;
+  }
+  return true;
+}
+
+function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
+  if (ts.isCallChain(node) || node.arguments.slice(1).some((arg) => !isNonAbruptElement(arg)))
+    return false;
+  let expression: ts.Node = node;
+  while (
+    ts.isParenthesizedExpression(expression.parent) ||
+    ts.isAsExpression(expression.parent) ||
+    ts.isSatisfiesExpression(expression.parent) ||
+    ts.isNonNullExpression(expression.parent) ||
+    ts.isTypeAssertionExpression(expression.parent) ||
+    (dynamic &&
+      ts.isBinaryExpression(expression.parent) &&
+      expression.parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+      expression.parent.right === expression &&
+      isNonAbruptElement(expression.parent.left))
+  )
+    expression = expression.parent;
+  const awaitedCalls = new Set<ts.CallExpression>();
+  let awaitedImmediate = false;
+  if (dynamic && ts.isArrayLiteralExpression(expression.parent)) {
+    const elements = expression.parent.elements;
+    if (!elements.slice(0, elements.indexOf(expression as ts.Expression)).every(isNonAbruptElement))
+      return false;
+    let array: ts.Node = expression.parent;
+    while (ts.isParenthesizedExpression(array.parent)) array = array.parent;
+    const call = array.parent;
+    if (
+      ts.isCallExpression(call) &&
+      !ts.isCallChain(call) &&
+      call.arguments.length === 1 &&
+      call.arguments[0] === array &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      ts.isIdentifier(call.expression.expression) &&
+      call.expression.expression.text === "Promise" &&
+      call.expression.name.text === "all" &&
+      !shadowsName(call, "Promise")
+    ) {
+      awaitedCalls.add(call);
+      expression = call;
+      while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+    }
+  }
+  while (dynamic && ts.isPropertyAccessExpression(expression.parent)) {
+    const member = expression.parent;
+    const call = member.parent;
+    if (
+      member.expression !== expression ||
+      !["then", "finally", "catch"].includes(member.name.text) ||
+      !ts.isCallExpression(call) ||
+      ts.isCallChain(call) ||
+      call.expression !== member ||
+      (member.name.text === "then"
+        ? call.arguments.length > 2 || (call.arguments[1] && !isNonCallable(call.arguments[1]))
+        : call.arguments.length > 1 ||
+          (member.name.text === "catch" &&
+            call.arguments[0] &&
+            !isNonCallable(call.arguments[0]) &&
+            !(
+              (ts.isArrowFunction(call.arguments[0]) ||
+                ts.isFunctionExpression(call.arguments[0])) &&
+              ts.isBlock(call.arguments[0].body) &&
+              isRethrowingCatch(call.arguments[0].body)
+            ))) ||
+      !call.arguments.every(isNonAbruptElement)
+    )
+      break;
+    awaitedCalls.add(call);
+    expression = call;
+    while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  }
+  if (dynamic && !ts.isAwaitExpression(expression.parent)) {
+    let returned: ts.Node = expression;
+    if (ts.isReturnStatement(returned.parent)) returned = returned.parent;
+    const body = returned.parent;
+    const immediate = ts.isBlock(body) ? body.parent : body;
+    if (
+      !(ts.isFunctionExpression(immediate) || ts.isArrowFunction(immediate)) ||
+      !isImmediateInvocation(immediate, node, true)
+    )
+      return false;
+    let callee: ts.Node = immediate;
+    while (ts.isParenthesizedExpression(callee.parent)) callee = callee.parent;
+    const invocation = callee.parent;
+    if (!ts.isCallExpression(invocation) || !ts.isAwaitExpression(invocation.parent)) return false;
+    awaitedCalls.add(invocation);
+    awaitedImmediate = true;
+  }
+  if (dynamic) {
+    for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
+      if (!ts.isArrowFunction(ancestor) && !ts.isFunctionExpression(ancestor)) continue;
+      if (!isImmediateInvocation(ancestor, node, true)) break;
+      let callee: ts.Node = ancestor;
+      while (ts.isParenthesizedExpression(callee.parent)) callee = callee.parent;
+      const invocation = callee.parent;
+      if (ts.isCallExpression(invocation) && ts.isAwaitExpression(invocation.parent)) {
+        awaitedCalls.add(invocation);
+        awaitedImmediate = true;
+      }
+    }
+  }
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (hasAbruptPredecessor(node, parent)) return false;
+    if (
+      (ts.isFunctionLike(parent) &&
+        !isDecoratorExpression(node, parent) &&
+        !(parent.name && isWithin(node, parent.name)) &&
+        !isImmediateInvocation(parent, node, dynamic)) ||
+      (ts.isPropertyDeclaration(parent) &&
+        !isDecoratorExpression(node, parent) &&
+        !(parent.name && isWithin(node, parent.name)) &&
+        !parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) &&
+        !isImmediateField(parent)) ||
+      ((ts.isPropertyDeclaration(parent) || ts.isClassStaticBlockDeclaration(parent)) &&
+        ts.isClassLike(parent.parent) &&
+        (parent.parent.heritageClauses?.some(
+          (clause) =>
+            clause.token === ts.SyntaxKind.ExtendsKeyword &&
+            clause.types.some((type) => !isValidClassHeritage(type.expression)),
+        ) ||
+          (ts.isPropertyDeclaration(parent) &&
+            parent.name &&
+            ts.isComputedPropertyName(parent.name) &&
+            parent.initializer &&
+            isWithin(node, parent.initializer) &&
+            !isNonAbruptElement(parent.name.expression)) ||
+          parent.parent.members
+            .slice(0, parent.parent.members.indexOf(parent))
+            .some(
+              (member) =>
+                (member.name &&
+                  ts.isComputedPropertyName(member.name) &&
+                  !isNonAbruptElement(member.name.expression)) ||
+                (ts.isClassStaticBlockDeclaration(member) &&
+                  !member.body.statements.every(isNonAbruptStatement)) ||
+                (ts.isPropertyDeclaration(member) &&
+                  member.modifiers?.some(
+                    (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+                  ) &&
+                  member.initializer &&
+                  !isNonAbruptElement(member.initializer)),
+            ))) ||
+      (ts.isIfStatement(parent) && !isWithin(node, parent.expression)) ||
+      (ts.isConditionalExpression(parent) && !isWithin(node, parent.condition)) ||
+      (ts.isSwitchStatement(parent) && !isWithin(node, parent.expression)) ||
+      (ts.isWhileStatement(parent) && !isWithin(node, parent.expression)) ||
+      (ts.isDoStatement(parent) &&
+        !isWithin(node, parent.statement) &&
+        hasAbruptCompletion(parent.statement)) ||
+      (ts.isForStatement(parent) &&
+        !(parent.initializer && isWithin(node, parent.initializer)) &&
+        !(parent.condition && isWithin(node, parent.condition))) ||
+      ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) &&
+        !isWithin(node, parent.expression)) ||
+      (ts.isTryStatement(parent) &&
+        ((parent.catchClause &&
+          (isWithin(node, parent.catchClause) ||
+            (isWithin(node, parent.tryBlock) &&
+              (!isRethrowingCatch(parent.catchClause.block) ||
+                parent.tryBlock.statements
+                  .slice(
+                    0,
+                    parent.tryBlock.statements.findIndex((statement) => isWithin(node, statement)),
+                  )
+                  .some((statement) => !isNonAbruptStatement(statement)))))) ||
+          (parent.finallyBlock &&
+            !isWithin(node, parent.finallyBlock) &&
+            hasAbruptCompletion(parent.finallyBlock, false)))) ||
       (ts.isBinaryExpression(parent) &&
         [
           ts.SyntaxKind.AmpersandAmpersandToken,
@@ -507,22 +1301,368 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
           ts.SyntaxKind.AmpersandAmpersandEqualsToken,
           ts.SyntaxKind.BarBarEqualsToken,
           ts.SyntaxKind.QuestionQuestionEqualsToken,
-        ].includes(parent.operatorToken.kind)) ||
-      ts.isCallChain(parent)
+        ].includes(parent.operatorToken.kind) &&
+        isWithin(node, parent.right)) ||
+      ((ts.isCallChain(parent) || ts.isElementAccessChain(parent)) &&
+        !isWithin(node, parent.expression))
     )
       return false;
-    if (dynamic && ts.isCallExpression(parent)) return false;
+    if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
+      const index = parent.statements.findIndex((statement) => isWithin(node, statement));
+      if (
+        awaitedImmediate &&
+        ts.isBlock(parent) &&
+        ts.isFunctionLike(parent.parent) &&
+        parent.statements.slice(0, index).some((statement) => !isNonAbruptStatement(statement))
+      )
+        return false;
+      if (
+        parent.statements
+          .slice(0, index)
+          .some(
+            (statement) => isDefinitelyAbrupt(statement) || hasAbruptCompletion(statement, false),
+          )
+      )
+        return false;
+    }
+    if (dynamic && ts.isCallExpression(parent) && !awaitedCalls.has(parent)) return false;
   }
   return true;
 }
 
+function isDefinitelyAbrupt(statement: ts.Statement): boolean {
+  if (ts.isExpressionStatement(statement)) {
+    let expression = statement.expression;
+    while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+    if (ts.isPropertyAccessExpression(expression) && !expression.questionDotToken) {
+      let base: ts.Expression = expression.expression;
+      while (ts.isParenthesizedExpression(base)) base = base.expression;
+      if (base.kind === ts.SyntaxKind.NullKeyword) return true;
+    }
+  }
+  if (
+    ts.isWhileStatement(statement) ||
+    ts.isDoStatement(statement) ||
+    ts.isForStatement(statement)
+  ) {
+    let condition = ts.isForStatement(statement) ? statement.condition : statement.expression;
+    while (condition && ts.isParenthesizedExpression(condition)) condition = condition.expression;
+    return (
+      (!condition || condition.kind === ts.SyntaxKind.TrueKeyword) &&
+      !hasAbruptCompletion(statement.statement)
+    );
+  }
+  if (
+    ts.isReturnStatement(statement) ||
+    ts.isThrowStatement(statement) ||
+    ts.isBreakStatement(statement) ||
+    ts.isContinueStatement(statement)
+  )
+    return true;
+  if (
+    ts.isTryStatement(statement) &&
+    statement.finallyBlock &&
+    isDefinitelyAbrupt(statement.finallyBlock)
+  )
+    return true;
+  if (ts.isBlock(statement)) return statement.statements.some(isDefinitelyAbrupt);
+  if (ts.isIfStatement(statement))
+    return (
+      !!statement.elseStatement &&
+      isDefinitelyAbrupt(statement.thenStatement) &&
+      isDefinitelyAbrupt(statement.elseStatement)
+    );
+  return false;
+}
+
+function isRethrowingCatch(block: ts.Block): boolean {
+  const last = block.statements.at(-1);
+  return (
+    !!last &&
+    block.statements.slice(0, -1).every(isNonAbruptStatement) &&
+    (ts.isThrowStatement(last) ||
+      (ts.isBlock(last) && isRethrowingCatch(last)) ||
+      (ts.isIfStatement(last) &&
+        !!last.elseStatement &&
+        ts.isBlock(last.thenStatement) &&
+        ts.isBlock(last.elseStatement) &&
+        isRethrowingCatch(last.thenStatement) &&
+        isRethrowingCatch(last.elseStatement)))
+  );
+}
+
+function literalTruthiness(node: ts.Expression): boolean | undefined {
+  if (ts.isParenthesizedExpression(node)) return literalTruthiness(node.expression);
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (node.kind === ts.SyntaxKind.FalseKeyword || node.kind === ts.SyntaxKind.NullKeyword)
+    return false;
+  if (ts.isStringLiteralLike(node)) return Boolean(node.text);
+  if (ts.isNumericLiteral(node)) return Boolean(Number(node.text));
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+    const value = literalTruthiness(node.operand);
+    return value === undefined ? undefined : !value;
+  }
+  return undefined;
+}
+
+function hasAbruptCompletion(statement: ts.Statement, includeThrow = true): boolean {
+  let abrupt = false;
+  function visit(node: ts.Node) {
+    if (ts.isFunctionLike(node)) return;
+    if (ts.isIfStatement(node)) {
+      visit(node.expression);
+      const condition = literalTruthiness(node.expression);
+      if (condition !== false) visit(node.thenStatement);
+      if (condition !== true && node.elseStatement) visit(node.elseStatement);
+      return;
+    }
+    if (
+      (ts.isWhileStatement(node) && literalTruthiness(node.expression) === false) ||
+      (ts.isForStatement(node) && node.condition && literalTruthiness(node.condition) === false)
+    )
+      return;
+    if (ts.isTryStatement(node) && node.finallyBlock && isDefinitelyAbrupt(node.finallyBlock)) {
+      visit(node.finallyBlock);
+      return;
+    }
+    if (ts.isReturnStatement(node) || (includeThrow && ts.isThrowStatement(node))) abrupt = true;
+    if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) {
+      let target = node.parent;
+      while (target) {
+        if (
+          node.label
+            ? ts.isLabeledStatement(target) && target.label.text === node.label.text
+            : ts.isIterationStatement(target, false) ||
+              (ts.isBreakStatement(node) && ts.isSwitchStatement(target))
+        )
+          break;
+        target = target.parent;
+      }
+      if (target && !isWithin(target, statement)) {
+        const loop = ts.isLabeledStatement(target) ? target.statement : target;
+        if (ts.isBreakStatement(node) || loop !== statement.parent) abrupt = true;
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(statement);
+  return abrupt;
+}
+
+function isImmediateInvocation(
+  node: ts.SignatureDeclaration,
+  load: ts.Node,
+  allowAwaitedAsync = false,
+): boolean {
+  if (
+    !(
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isConstructorDeclaration(node)
+    ) ||
+    node.asteriskToken
+  )
+    return false;
+  let expression: ts.Node = ts.isConstructorDeclaration(node) ? node.parent : node;
+  if (ts.isConstructorDeclaration(node) && !ts.isClassExpression(expression)) return false;
+  while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  let method: string | undefined;
+  if (
+    ts.isPropertyAccessExpression(expression.parent) &&
+    expression.parent.expression === expression &&
+    ["call", "apply"].includes(expression.parent.name.text)
+  ) {
+    method = expression.parent.name.text;
+    expression = expression.parent;
+    while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  }
+  const call = expression.parent;
+  if (
+    node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+    !(allowAwaitedAsync && ts.isCallExpression(call) && ts.isAwaitExpression(call.parent))
+  )
+    return false;
+  if (
+    !(ts.isCallExpression(call) || ts.isNewExpression(call)) ||
+    ts.isCallChain(call) ||
+    call.expression !== expression ||
+    (ts.isConstructorDeclaration(node) && !ts.isNewExpression(call)) ||
+    (ts.isNewExpression(call) && (method || ts.isArrowFunction(node)))
+  )
+    return false;
+  if (!(call.arguments ?? []).every(isNonAbruptElement)) return false;
+  if (ts.isNewExpression(call)) {
+    if (ts.isConstructorDeclaration(node)) {
+      const owner = node.parent;
+      if (
+        owner.heritageClauses?.length ||
+        owner.modifiers?.length ||
+        owner.members.some(
+          (member) =>
+            (member.name && ts.isComputedPropertyName(member.name)) ||
+            ts.isClassStaticBlockDeclaration(member) ||
+            (ts.isPropertyDeclaration(member) &&
+              member.initializer &&
+              !isNonAbruptElement(member.initializer)) ||
+            (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length),
+        )
+      )
+        return false;
+    }
+  }
+  const index = node.parameters.findIndex((parameter) => isWithin(load, parameter));
+  if (call.arguments?.some(ts.isSpreadElement)) return false;
+  let args: readonly ts.Expression[] = call.arguments ?? [];
+  if (method === "call") args = args.slice(1);
+  if (method === "apply") {
+    let list = args[1];
+    while (list && ts.isParenthesizedExpression(list)) list = list.expression;
+    if (!list || isUndefined(list) || list.kind === ts.SyntaxKind.NullKeyword) args = [];
+    else if (ts.isArrayLiteralExpression(list) && !list.elements.some(ts.isSpreadElement))
+      args = list.elements;
+    else return false;
+  }
+  for (const [offset, parameter] of node.parameters.entries()) {
+    if (offset === index) break;
+    if (!ts.isIdentifier(parameter.name)) return false;
+    if (
+      isUndefined(args[offset]) &&
+      parameter.initializer &&
+      !isNonAbruptElement(parameter.initializer)
+    )
+      return false;
+  }
+  if (node.body && isWithin(load, node.body)) return true;
+  if (index < 0) return false;
+  const parameter = node.parameters[index]!;
+  const value = args[index];
+  return bindingDefaultExecutes(
+    parameter,
+    value && !ts.isOmittedExpression(value) ? value : undefined,
+    load,
+  );
+}
+
+function isUndefined(value: ts.Expression | undefined): boolean {
+  if (!value || ts.isOmittedExpression(value)) return true;
+  while (ts.isParenthesizedExpression(value)) value = value.expression;
+  return (
+    (ts.isVoidExpression(value) && ts.isNumericLiteral(value.expression)) ||
+    (ts.isIdentifier(value) && value.text === "undefined" && !shadowsName(value, "undefined"))
+  );
+}
+
+function literalPropertyName(name: ts.Node): string | undefined {
+  if (ts.isComputedPropertyName(name)) {
+    name = name.expression;
+    while (ts.isParenthesizedExpression(name)) name = name.expression;
+    if (!ts.isStringLiteral(name) && !ts.isNumericLiteral(name)) return undefined;
+  }
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)
+    ? name.text
+    : undefined;
+}
+
+function bindingDefaultExecutes(
+  binding: ts.ParameterDeclaration | ts.BindingElement,
+  value: ts.Expression | undefined,
+  load: ts.Node,
+): boolean {
+  if (isUndefined(value) && binding.initializer) {
+    if (isWithin(load, binding.initializer)) return true;
+    value = binding.initializer;
+  }
+  if (!value || ts.isIdentifier(binding.name)) return false;
+  while (ts.isParenthesizedExpression(value)) value = value.expression;
+  if (ts.isObjectBindingPattern(binding.name) && ts.isObjectLiteralExpression(value)) {
+    if (
+      value.properties.some(
+        (property) =>
+          !ts.isPropertyAssignment(property) ||
+          literalPropertyName(property.name) === undefined ||
+          (!ts.isComputedPropertyName(property.name) &&
+            literalPropertyName(property.name) === "__proto__"),
+      )
+    )
+      return false;
+    for (const element of binding.name.elements) {
+      if (element.dotDotDotToken || !isWithin(load, element)) continue;
+      const name = literalPropertyName(element.propertyName ?? element.name);
+      if (name === undefined) return false;
+      const property = [...value.properties]
+        .reverse()
+        .find(
+          (property) =>
+            ts.isPropertyAssignment(property) && literalPropertyName(property.name) === name,
+        );
+      if (!property && Object.hasOwn(Object.prototype, name)) return false;
+      return bindingDefaultExecutes(
+        element,
+        property && ts.isPropertyAssignment(property) ? property.initializer : undefined,
+        load,
+      );
+    }
+  }
+  if (ts.isArrayBindingPattern(binding.name) && ts.isArrayLiteralExpression(value)) {
+    if (value.elements.some(ts.isSpreadElement)) return false;
+    for (const [index, element] of binding.name.elements.entries()) {
+      if (!ts.isBindingElement(element) || element.dotDotDotToken || !isWithin(load, element))
+        continue;
+      const item = value.elements[index];
+      return bindingDefaultExecutes(
+        element,
+        item && !ts.isOmittedExpression(item) ? item : undefined,
+        load,
+      );
+    }
+  }
+  return false;
+}
+
+function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
+  for (let current: ts.Node | undefined = node; current; current = current.parent)
+    if (current === ancestor) return true;
+  return false;
+}
+
 function shadowsRequire(node: ts.Node): boolean {
+  return shadowsName(node, "require");
+}
+
+function bindingContains(declaration: ts.VariableDeclaration, node: ts.Node): boolean {
+  const blockScoped =
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    Boolean(declaration.parent.flags & ts.NodeFlags.BlockScoped);
+  for (let scope: ts.Node | undefined = declaration.parent; scope; scope = scope.parent) {
+    if (
+      ts.isSourceFile(scope) ||
+      ts.isModuleBlock(scope) ||
+      ts.isFunctionLike(scope) ||
+      (blockScoped &&
+        (ts.isBlock(scope) ||
+          ts.isCatchClause(scope) ||
+          ts.isForStatement(scope) ||
+          ts.isForInStatement(scope) ||
+          ts.isForOfStatement(scope) ||
+          ts.isCaseBlock(scope)))
+    )
+      return isWithin(node, scope);
+  }
+  return false;
+}
+
+function shadowsName(node: ts.Node, identifier: string): boolean {
   function binds(name: ts.BindingName): boolean {
     return ts.isIdentifier(name)
-      ? name.text === "require"
+      ? name.text === identifier
       : name.elements.some((element) => ts.isBindingElement(element) && binds(element.name));
   }
   for (let scope = node.parent; scope; scope = scope.parent) {
+    if (
+      (ts.isFunctionExpression(scope) || ts.isClassExpression(scope)) &&
+      scope.name?.text === identifier
+    )
+      return true;
     if (ts.isFunctionLike(scope) && scope.parameters.some((param) => binds(param.name)))
       return true;
     if (
@@ -531,23 +1671,53 @@ function shadowsRequire(node: ts.Node): boolean {
       binds(scope.variableDeclaration.name)
     )
       return true;
-    if (!ts.isSourceFile(scope) && !ts.isBlock(scope)) continue;
+    if (!ts.isSourceFile(scope) && !ts.isBlock(scope) && !ts.isModuleBlock(scope)) continue;
     let found = false;
     function search(child: ts.Node) {
       if (
-        (ts.isVariableDeclaration(child) && binds(child.name)) ||
+        (ts.isVariableDeclaration(child) &&
+          binds(child.name) &&
+          bindingContains(child, node) &&
+          !(
+            (identifier === "require" || identifier === "module") &&
+            ts.isSourceFile(scope) &&
+            !child.initializer &&
+            ts.isVariableDeclarationList(child.parent) &&
+            !(child.parent.flags & ts.NodeFlags.BlockScoped)
+          ) &&
+          !(
+            ts.isVariableDeclarationList(child.parent) &&
+            ts.isVariableStatement(child.parent.parent) &&
+            child.parent.parent.modifiers?.some(
+              (modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword,
+            )
+          )) ||
         ((ts.isFunctionDeclaration(child) || ts.isClassDeclaration(child)) &&
-          child.name?.text === "require") ||
-        (ts.isImportClause(child) && child.name?.text === "require") ||
+          !child.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) &&
+          child.name?.text === identifier &&
+          isWithin(node, child.parent)) ||
+        (ts.isImportClause(child) && !child.isTypeOnly && child.name?.text === identifier) ||
         ((ts.isImportSpecifier(child) ||
           ts.isNamespaceImport(child) ||
           ts.isImportEqualsDeclaration(child)) &&
-          child.name.text === "require")
+          !(ts.isImportSpecifier(child) && child.isTypeOnly) &&
+          !(ts.isImportEqualsDeclaration(child) && child.isTypeOnly) &&
+          !(
+            ts.isNamespaceImport(child) &&
+            ts.isImportClause(child.parent) &&
+            child.parent.isTypeOnly
+          ) &&
+          !(
+            ts.isImportSpecifier(child) &&
+            ts.isImportClause(child.parent.parent) &&
+            child.parent.parent.isTypeOnly
+          ) &&
+          child.name.text === identifier)
       )
         found = true;
       if (
         child !== scope &&
-        (ts.isBlock(child) || ts.isFunctionLike(child) || ts.isClassLike(child))
+        (ts.isModuleBlock(child) || ts.isFunctionLike(child) || ts.isClassLike(child))
       )
         return;
       ts.forEachChild(child, search);
