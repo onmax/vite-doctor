@@ -4,6 +4,46 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "Map constructor overwrites duplicate keys",
+    "const first = setInterval(refresh); const second = setInterval(refresh); const timers = new Map([['key', first], ['key', second]]); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "Map forEach skips deleted unvisited entries",
+    "const first = setInterval(refresh); const second = setInterval(refresh); const timers = new Map([['first', first], ['second', second]]); import.meta.hot.dispose(() => timers.forEach((handle, key) => { clearInterval(handle); if (key === 'first') timers.delete('second') }))",
+    true,
+  ],
+  [
+    "Map forEach visits entries appended during iteration",
+    "const first = setInterval(refresh); const second = setInterval(refresh); const timers = new Map([['first', first]]); import.meta.hot.dispose(() => timers.forEach((handle, key) => { clearInterval(handle); if (key === 'first') timers.set('second', second) }))",
+    false,
+  ],
+  [
+    "Map forEach uses overwritten unvisited values",
+    "const first = setInterval(refresh); const second = setInterval(refresh); const replacement = setInterval(refresh); const timers = new Map([['first', first], ['second', second]]); import.meta.hot.dispose(() => timers.forEach((handle, key) => { clearInterval(handle); if (key === 'first') timers.set('second', replacement) }))",
+    true,
+  ],
+  [
+    "Promise.race selects first settled fulfillment",
+    "const timer = setInterval(refresh); let selected; Promise.race([Promise.resolve(timer), Promise.reject(Error())]).then(handle => { selected = handle }); import.meta.hot.dispose(() => clearInterval(selected))",
+    false,
+  ],
+  [
+    "Promise.race selects first settled rejection",
+    "Promise.race([Promise.reject(Error()), Promise.resolve(1)]).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "Promise.any uses first fulfillable value",
+    "const timer = setInterval(refresh); let selected; Promise.any([Promise.reject(Error()), Promise.resolve(timer)]).then(handle => { selected = handle }); import.meta.hot.dispose(() => clearInterval(selected))",
+    false,
+  ],
+  [
+    "Promise.allSettled exposes fulfilled result value",
+    "const timer = setInterval(refresh); Promise.allSettled([Promise.resolve(timer)]).then(results => clearInterval(results[0].value)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
     "Map forEach cleans known entry values",
     "const timers = new Map([['refresh', setInterval(refresh)]]); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
     false,

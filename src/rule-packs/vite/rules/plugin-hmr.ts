@@ -952,28 +952,59 @@ function undisposedResource(program: AnyNode): string | null {
           const canFulfill = (item: AnyNode) => promiseCompletions.get(item)?.normal !== false;
           const canReject = (item: AnyNode) =>
             promiseCompletions.get(item)?.abrupt ?? !promises.has(item);
+          const firstCompletion = promiseCompletions.get(items[0]);
+          const firstSettled =
+            method === "race" &&
+            items.length > 0 &&
+            (!firstCompletion || firstCompletion.normal !== firstCompletion.abrupt);
+          const candidates = firstSettled ? items.slice(0, 1) : items;
           const completion = {
             normal:
               method === "allSettled" ||
-              (method === "all" ? items.every(canFulfill) : items.some(canFulfill)),
+              (method === "all" ? items.every(canFulfill) : candidates.some(canFulfill)),
             abrupt:
               method === "allSettled"
                 ? false
                 : method === "any"
                   ? items.every(canReject)
-                  : items.some(canReject),
+                  : candidates.some(canReject),
           };
           if (method === "all" || method === "allSettled")
             promises.set(promise, {
               type: "ArrayExpression",
-              elements: items.map((item: AnyNode) =>
-                promises.has(item) ? promises.get(item) : item,
-              ),
+              elements: items.map((item: AnyNode) => {
+                const settled = promiseCompletions.get(item);
+                const result = promises.has(item) ? promises.get(item) : item;
+                if (method === "all") return result;
+                const fulfilled = settled?.normal !== false;
+                return {
+                  type: "ObjectExpression",
+                  properties: [
+                    {
+                      type: "Property",
+                      kind: "init",
+                      key: { type: "Identifier", name: "status" },
+                      value: { type: "Literal", value: fulfilled ? "fulfilled" : "rejected" },
+                    },
+                    {
+                      type: "Property",
+                      kind: "init",
+                      key: { type: "Identifier", name: fulfilled ? "value" : "reason" },
+                      value: fulfilled ? result : settled?.value,
+                    },
+                  ],
+                };
+              }),
             });
-          else if (method === "race" || method === "any")
-            promises.set(promise, items.length ? (promises.get(items[0]) ?? items[0]) : undefined);
+          else if (method === "race" || method === "any") {
+            const winner = method === "any" ? items.find(canFulfill) : candidates[0];
+            promises.set(promise, winner ? (promises.get(winner) ?? winner) : undefined);
+          }
           if (method === "any" && !items.length) completion.abrupt = true;
-          promiseCompletions.set(promise, completion);
+          promiseCompletions.set(promise, {
+            ...completion,
+            value: method === "race" && !completion.normal ? firstCompletion?.value : undefined,
+          });
           returned.set(node, promise);
           return true;
         }
@@ -1339,8 +1370,8 @@ function undisposedResource(program: AnyNode): string | null {
         if (method === "set") {
           const key = identity(node.arguments[0], environment);
           const value = identity(node.arguments[1], environment);
-          const index = entries.findIndex((entry: AnyNode) =>
-            sameMapKey(arrayElements(entry)[0], key),
+          const index = entries.findIndex(
+            (entry: AnyNode) => entry && sameMapKey(arrayElements(entry)[0], key),
           );
           const stored = properties.get(array) ?? new Map<string, AnyNode>();
           stored.set(String(index < 0 ? entries.length : index), {
@@ -1357,18 +1388,37 @@ function undisposedResource(program: AnyNode): string | null {
         }
         if (method === "clear" || method === "delete") {
           const key = identity(node.arguments[0], environment);
-          const remaining =
-            method === "clear"
-              ? []
-              : entries.filter((entry: AnyNode) => !sameMapKey(arrayElements(entry)[0], key));
           const stored = new Map<string, AnyNode>();
-          remaining.forEach((entry, index) => stored.set(String(index), entry));
-          stored.set("length", { type: "Literal", value: remaining.length });
+          entries.forEach((entry: AnyNode, index: number) =>
+            stored.set(
+              String(index),
+              method === "clear" || (entry && sameMapKey(arrayElements(entry)[0], key))
+                ? null
+                : entry,
+            ),
+          );
+          stored.set("length", { type: "Literal", value: entries.length });
           properties.set(array, stored);
           return true;
         }
         if (method === "forEach") {
-          for (const entry of entries) {
+          const iterationLimit = Math.max(2048, entries.length);
+          for (let position = 0; position < arrayElements(array).length; position++) {
+            if (position >= iterationLimit) {
+              truncatedSetIteration ||= arrayElements(array)
+                .slice(position)
+                .some(
+                  (entry: AnyNode) =>
+                    entry &&
+                    resources.some(
+                      (resource) =>
+                        resource.value === arrayElements(entry)[1] && !cleaned.has(resource.value),
+                    ),
+                );
+              break;
+            }
+            const entry = arrayElements(array)[position];
+            if (!entry) continue;
             const [key, value] = arrayElements(entry);
             if (
               visit(
@@ -2118,13 +2168,24 @@ function undisposedResource(program: AnyNode): string | null {
           if (!walk(node.arguments)) return false;
           const source = identity(node.arguments[0], environment);
           if (!source || source?.type === "ArrayExpression") {
+            const entries: AnyNode[] = [];
+            for (const entry of source ? expand(arrayElements(source), environment) : []) {
+              const known = identity(entry, environment);
+              if (known?.type !== "ArrayExpression") return true;
+              const [key, item] = arrayElements(known);
+              const index = entries.findIndex((existing) =>
+                sameMapKey(arrayElements(existing)[0], identity(key, environment)),
+              );
+              const updated = {
+                type: "ArrayExpression",
+                elements: [identity(key, environment), identity(item, environment)],
+              };
+              if (index < 0) entries.push(updated);
+              else entries[index] = updated;
+            }
             const collection = {
               type: "ArrayExpression",
-              elements: source
-                ? expand(arrayElements(source), environment).map((entry) =>
-                    identity(entry, environment),
-                  )
-                : [],
+              elements: entries,
             };
             mapCollections.add(collection);
             returned.set(node, collection);
