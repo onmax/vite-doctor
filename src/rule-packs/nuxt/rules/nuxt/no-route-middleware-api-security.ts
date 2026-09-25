@@ -145,6 +145,29 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
   const dirs = ctx.project.nuxt?.serverDirs;
   const manifest = ctx.project.nuxt?.manifest;
   const resolvedHandlers = manifest?.isCurrent ? manifest.resolvedServerHandlers : undefined;
+  const layerFiles = { api: [] as string[], routes: [] as string[], middleware: [] as string[] };
+  const layerRoutes = new Map<string, string>();
+  if (!resolvedHandlers && configurationCurrent) {
+    for (const layer of ctx.project.nuxt?.layers ?? []) {
+      if (resolve(ctx.project.root, layer.root) === ctx.project.root) continue;
+      const serverDir = resolve(ctx.project.root, layer.serverDir ?? join(layer.root, "server"));
+      for (const category of ["api", "routes", "middleware"] as const) {
+        const directory = join(serverDir, category);
+        if (!existsSync(directory)) continue;
+        for (const entry of readdirSync(directory, { recursive: true })) {
+          const file = resolve(directory, String(entry));
+          if (/\.[cm]?[jt]s$/.test(file) && statSync(file).isFile()) {
+            layerFiles[category].push(file);
+            if (category !== "middleware")
+              layerRoutes.set(
+                file,
+                `${category === "api" ? "/api" : ""}/${toPosixPath(relative(directory, file))}`,
+              );
+          }
+        }
+      }
+    }
+  }
   const registered =
     manifest?.isCurrent && configurationCurrent ? (manifest.serverHandlers ?? []) : [];
   const middleware = resolvedHandlers
@@ -152,13 +175,22 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
         (handler) => handler.middleware && hasUnconditionalAuthGuard(handler.file),
       )
     : [];
-  if (!resolvedHandlers && (dirs?.middleware ?? []).some(hasUnconditionalAuthGuard)) return [];
+  if (
+    !resolvedHandlers &&
+    [...(dirs?.middleware ?? []), ...layerFiles.middleware].some(hasUnconditionalAuthGuard)
+  )
+    return [];
   const candidates = resolvedHandlers
     ? resolvedHandlers.filter((handler) => !handler.middleware)
     : [
-        ...[...(dirs?.api ?? []), ...(dirs?.routes ?? [])].map((file) => ({
+        ...[
+          ...(dirs?.api ?? []),
+          ...(dirs?.routes ?? []),
+          ...layerFiles.api,
+          ...layerFiles.routes,
+        ].map((file) => ({
           file,
-          route: undefined,
+          route: layerRoutes.get(file),
           method: undefined,
         })),
         ...registered.filter((handler) => !handler.middleware),
@@ -191,7 +223,8 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
             (isSensitive(
               resolvedHandlers
                 ? (handler.route ?? "")
-                : toPosixPath(relative(ctx.project.root, handler.file)),
+                : (layerRoutes.get(handler.file) ??
+                    toPosixPath(relative(ctx.project.root, handler.file))),
               handler.method,
               handler.route,
             ) ||
@@ -394,14 +427,24 @@ function isProviderBinding(
   file: string,
   program: AnyNode,
   name: string,
+  visited = new Set<string>(),
+  exported = false,
 ): boolean {
-  if (createsProvider(program, name)) return true;
+  if (visited.has(`${file}:${name}`)) return false;
+  visited.add(`${file}:${name}`);
+  if (createsProvider(program, name, exported)) return true;
   for (const node of program.body) {
-    if (node.type !== "ImportDeclaration") continue;
-    const binding = node.specifiers.find(
-      (item: AnyNode) =>
-        ["ImportSpecifier", "ImportDefaultSpecifier"].includes(item.type) &&
-        item.local.name === name,
+    if (exported && node.type !== "ExportNamedDeclaration") continue;
+    if (node.type !== "ImportDeclaration" && node.type !== "ExportNamedDeclaration") continue;
+    if (node.type === "ExportNamedDeclaration" && (!node.source || node.exportKind === "type"))
+      continue;
+    const binding = node.specifiers.find((item: AnyNode) =>
+      node.type === "ImportDeclaration"
+        ? ["ImportSpecifier", "ImportDefaultSpecifier"].includes(item.type) &&
+          item.local.name === name
+        : item.type === "ExportSpecifier" &&
+          item.exportKind !== "type" &&
+          (item.exported.name ?? item.exported.value) === name,
     );
     if (!binding) continue;
     const source = node.source.value as string;
@@ -444,14 +487,20 @@ function isProviderBinding(
           ),
         ];
     const target = candidates.find((candidate) => existsSync(candidate));
-    if (!target) return false;
+    if (!target) continue;
     const parsed = parseSync(target, readProjectFile(target));
-    if (parsed.errors.length) return false;
-    return createsProvider(
-      parsed.program,
-      binding.type === "ImportDefaultSpecifier" ? "default" : binding.imported.name,
-      true,
-    );
+    if (parsed.errors.length) continue;
+    const targetName =
+      node.type === "ImportDeclaration" && binding.type === "ImportDefaultSpecifier"
+        ? "default"
+        : node.type === "ImportDeclaration"
+          ? binding.imported.name
+          : binding.local.name;
+    if (
+      createsProvider(parsed.program, targetName, true) ||
+      isProviderBinding(ctx, target, parsed.program, targetName, visited, true)
+    )
+      return true;
   }
   return false;
 }
@@ -497,10 +546,13 @@ function hasUnconditionalAuthGuard(file: string): boolean {
       );
     };
     if (handler.body.type !== "BlockStatement") return isGuard(handler.body);
-    for (const statement of handler.body.body) {
+    for (const [index, statement] of handler.body.body.entries()) {
       if (statement.type === "ReturnStatement") return isGuard(statement.argument);
       if (statement.type === "ExpressionStatement") {
-        if (statement.expression.type === "AwaitExpression" && isGuard(statement.expression))
+        if (
+          isGuard(statement.expression) &&
+          (statement.expression.type === "AwaitExpression" || index < handler.body.body.length - 1)
+        )
           return true;
       } else if (statement.type === "VariableDeclaration") {
         if (

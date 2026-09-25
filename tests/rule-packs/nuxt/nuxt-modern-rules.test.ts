@@ -2547,6 +2547,8 @@ test.each([
   ["async (event) => { const { user } = await requireUserSession(event) }", 0],
   ["async (event) => { const session = await requireAuth(event) }", 0],
   ["(event) => { const session = requireAuth(event) }", 1],
+  ["(event) => { requireAuth(event); return { private: true } }", 0],
+  ["(event) => { requireAuth(otherEvent); return { private: true } }", 1],
   ["async (event) => { const session = await requireAuth(otherEvent) }", 1],
   ["(event) => { const guard = () => requireAuth(event) }", 1],
   ["(event) => { requireAuth(event) }", 1],
@@ -4262,6 +4264,28 @@ test.each([
   expect(result.diagnostics).toHaveLength(count);
 });
 
+test.each([
+  ["export { auth } from './server'", "export const auth = betterAuth({})", 0],
+  ["export { instance as auth } from './server'", "export const instance = betterAuth({})", 0],
+  ["export { auth } from './server'", "export const auth = { handler: () => ({}) }", 1],
+  ["export { auth } from './server'", "const auth = betterAuth({})", 1],
+  ["export { auth } from './auth'", "export { auth } from './index'", 1],
+])("provider re-exports require exported provenance: %s", async (barrel, provider, count) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/auth/[...all].ts":
+        "import { auth } from '~/utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
+      "app/utils/auth/index.ts": barrel,
+      "app/utils/auth/server.ts": `import { betterAuth } from 'better-auth'; ${provider}`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});
+
 test("Nuxt module captures and refreshes Nitro's resolved handlers", async () => {
   await withFixture({}, {}, async (root) => {
     const hooks = new Map<string, (payload?: any) => unknown>();
@@ -4465,6 +4489,29 @@ test("NUXT0037 ignores stale registered handlers when server inventory changes",
     },
   });
   expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(0);
+});
+
+test("NUXT0037 finds new layer handlers when resolved server inventory is stale", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "layers/admin/backend/api/account.get.ts":
+        "export default defineEventHandler(() => ({ private: true }))",
+      "layers/admin/backend/api/health.get.ts":
+        "export default defineEventHandler(() => ({ public: true }))",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        layers: [{ root: "layers/admin", serverDir: "layers/admin/backend", priority: 0 }],
+        serverInventory: { "layers/admin/backend": [] },
+        resolvedServerHandlers: [],
+      }),
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+  expect(result.diagnostics[0]?.file).toContain("account.get.ts");
 });
 
 test("NUXT0037 records an evidence gap for nonliteral changed middleware configuration", async () => {
