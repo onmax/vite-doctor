@@ -570,7 +570,7 @@ function undisposedResource(program: AnyNode): string | null {
       }
     }
     const parentPath = currentPath;
-    const completion = evaluate(target.body, local, module);
+    const completion = evaluate(target.body, local, module, Boolean(target.async));
     currentPath = parentPath;
     for (const binding of environment.keys()) {
       if (binding !== thisBinding && local.has(binding))
@@ -590,6 +590,7 @@ function undisposedResource(program: AnyNode): string | null {
     root: AnyNode,
     environment: Map<AnyNode, AnyNode>,
     module: boolean,
+    asyncFunction = false,
   ): Completion {
     const exits: Set<AnyNode>[] = [];
     const exitedDisposers: Disposer[] = [];
@@ -599,6 +600,7 @@ function undisposedResource(program: AnyNode): string | null {
     let abrupt = false;
     const returns: AnyNode[] = [];
     const returnPaths: Map<object, boolean>[] = [];
+    let pendingAwait = false;
     walkEvaluation(root, (node) => {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     });
@@ -949,7 +951,16 @@ function undisposedResource(program: AnyNode): string | null {
         promiseCompletions.set(
           promise,
           method === "resolve"
-            ? (promiseCompletions.get(value) ?? { normal: true, abrupt: false, value })
+            ? (promiseCompletions.get(value) ?? {
+                normal: true,
+                abrupt:
+                  value?.type !== "Literal" &&
+                  value?.type !== "ObjectExpression" &&
+                  value?.type !== "ArrayExpression" &&
+                  value !== undefined &&
+                  !resources.some((resource) => resource.value === value),
+                value,
+              })
             : { normal: false, abrupt: true, value },
         );
         returned.set(node, promise);
@@ -1725,6 +1736,26 @@ function undisposedResource(program: AnyNode): string | null {
       if (!node || typeof node !== "object") return true;
       if (Array.isArray(node)) return node.every(walk);
       if (typeof node.type !== "string") return true;
+      if (node.type === "Program" || node.type === "BlockStatement") {
+        for (const [index, statement] of node.body.entries()) {
+          if (!walk(statement)) return false;
+          if (pendingAwait) {
+            pendingAwait = false;
+            if (index + 1 < node.body.length)
+              lateReactions.push({
+                callback: {
+                  type: "ArrowFunctionExpression",
+                  params: [],
+                  body: { type: "BlockStatement", body: node.body.slice(index + 1) },
+                },
+                args: [],
+                environment: new Map(environment),
+              });
+            return true;
+          }
+        }
+        return true;
+      }
       if (
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
       ) {
@@ -2437,7 +2468,9 @@ function undisposedResource(program: AnyNode): string | null {
       }
       if (node.type === "AwaitExpression") {
         if (!walk(node.argument)) return false;
-        const completion = promiseCompletions.get(identity(node.argument, environment));
+        const awaited = identity(node.argument, environment);
+        const completion = promiseCompletions.get(awaited);
+        if (asyncFunction && pendingFetchPromises.has(awaited)) pendingAwait = true;
         if (completion?.abrupt) {
           abrupt = true;
           exits.push(new Set(cleaned));
@@ -2609,7 +2642,13 @@ function undisposedResource(program: AnyNode): string | null {
     }
     currentPath = parentPath;
   };
+  let listenerOrderCount = 0;
+  let listenerOrdersTruncated = false;
   const fireOrders = (remaining: Listener[]) => {
+    if (listenerOrderCount++ >= 1024) {
+      listenerOrdersTruncated = true;
+      return;
+    }
     if (!remaining.length) {
       disposalStates.push(captureDisposalState());
       return;
@@ -2735,7 +2774,7 @@ function undisposedResource(program: AnyNode): string | null {
           repeated.has(resource.value) || outcomes.some((outcome) => !outcome.has(resource.value)),
       )?.kind;
   }
-  return disposalLeak ?? null;
+  return disposalLeak ?? (listenerOrdersTruncated ? (resources[0]?.kind ?? "listener") : null);
 }
 
 function unwrapResourceExpression(node: AnyNode): AnyNode {

@@ -3560,6 +3560,21 @@ for (const [name, source, leaks] of [
     "const timers = new Set([setInterval(refresh)]); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
     false,
   ],
+  [
+    "Promise.resolve adopts possible rejection from unknown calls",
+    "Promise.resolve(getPromise()).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "pending async continuation can create a resource after disposal",
+    "let timer; async function start() { await fetch('/data'); timer = setInterval(refresh) } start(); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "many listeners have bounded ordering exploration",
+    `${Array.from({ length: 11 }, (_, index) => `const handler${index} = () => { ${index === 0 ? "setInterval(refresh)" : ""} }; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 11 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
+    true,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({
