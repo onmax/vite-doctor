@@ -431,6 +431,24 @@ test.each([
     true,
   ],
   [
+    "awaited Promise.all adopts local rejection",
+    "async function missing() { throw createError({ statusCode: 404 }) }; await Promise.all([missing()])",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "unawaited Promise.all does not throw synchronously",
+    "async function missing() { throw createError({ statusCode: 404 }) }; Promise.all([missing()])",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "shadowed Promise.all does not adopt local rejection",
+    "const Promise = { all(value) { return value } }; async function missing() { throw createError({ statusCode: 404 }) }; await Promise.all([missing()])",
+    "throw new Error()",
+    false,
+  ],
+  [
     "unawaited local rejection",
     "async function missing() { throw createError({ statusCode: 404 }) }; missing()",
     "throw new Error()",
@@ -2731,6 +2749,23 @@ test.each([
   [
     "const options = { statusCode: 404 }; const alias = options; try { throw createError(alias) } catch { throw new Error() }",
     1,
+  ],
+  [
+    "const options = { statusCode: 404 }; Object.assign(options, { statusCode: 500 }); try { throw createError(options) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "const options = { statusCode: 404 }; const alias = options; Object.assign(alias, { statusCode: 500 }); try { throw createError(options) } catch { throw new Error() }",
+    0,
+  ],
+  ["try { throw createError({ ...{ statusCode: 404 } }) } catch { throw new Error() }", 1],
+  [
+    "const options = { statusCode: 404 }; try { throw createError({ ...options }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "try { throw createError({ ...{ statusCode: 404 }, statusCode: 500 }) } catch { throw new Error() }",
+    0,
   ],
   [
     "try { throw createError({ statusCode: 404 }) } catch (error) { if (error instanceof Error) throw error; throw new Error() }",

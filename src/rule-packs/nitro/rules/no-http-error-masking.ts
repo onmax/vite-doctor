@@ -972,6 +972,16 @@ function evaluateOutcomes(
     return outcomes(call, normal, bindings, conditions);
   }
   if (!argumentValues && (call.type === "CallExpression" || call.type === "NewExpression")) {
+    const target = unwrapExpression(call.callee);
+    const adoptingArguments =
+      (assignment.type === "AwaitExpression" || path.adoptingAsync) &&
+      target?.type === "MemberExpression" &&
+      target.object.type === "Identifier" &&
+      target.object.name === "Promise" &&
+      !path.resolveBinding(target.object) &&
+      ["all", "race"].includes(
+        target.computed ? knownLiteral(target.property, path) : target.property.name,
+      );
     let paths = outcomes(
       call.callee,
       { ...normal, adoptingAsync: false },
@@ -1011,11 +1021,11 @@ function evaluateOutcomes(
           }
           return outcomes(
             item.type === "SpreadElement" ? item.argument : item,
-            state,
+            adoptingArguments ? { ...state, adoptingAsync: true } : state,
             bindings,
             conditions,
           ).map((evaluated) => ({
-            path: evaluated,
+            path: { ...evaluated, adoptingAsync: state.adoptingAsync },
             values: [...itemValues, evaluated.value],
             arguments: [...items, item],
           }));
@@ -1288,7 +1298,23 @@ function evaluateOutcomes(
     for (const binding of literals.keys())
       if (binding.type === "Identifier" && !stableBinding(node, binding.name))
         literals.delete(binding);
-    return [{ ...normal, bindings: values, literals }];
+    const objects = new Map(normal.objects);
+    if (node.type === "CallExpression" || node.type === "NewExpression") {
+      const callee = unwrapExpression(node.callee);
+      if (!isH3Reference(callee, "createError", path.resolveBinding)) {
+        for (const argument of node.arguments) {
+          const reference = unwrapExpression(
+            argument.type === "SpreadElement" ? argument.argument : argument,
+          );
+          if (reference?.type !== "Identifier") continue;
+          const object = objects.get(normal.resolveBinding(reference));
+          if (object)
+            for (const [binding, candidate] of objects)
+              if (candidate === object) objects.delete(binding);
+        }
+      }
+    }
+    return [{ ...normal, bindings: values, literals, objects }];
   }
   return [normal];
 }
@@ -1852,22 +1878,45 @@ function httpStatus(node: AnyNode, path: Path): number | "server-error" | undefi
   if (options?.type === "Identifier") options = path.objects?.get(path.resolveBinding(options));
   if (!options || (options.type === "Literal" && typeof options.value === "string")) return 500;
   if (options.type !== "ObjectExpression") return;
+  const statuses = optionStatuses(options, path, new Set());
+  if (statuses.has("statusCode")) return statuses.get("statusCode");
+  return statuses.has("status") ? statuses.get("status") : 500;
+}
+
+function optionStatuses(
+  options: AnyNode,
+  path: Path,
+  visited: Set<AnyNode>,
+): Map<string, number | undefined> {
   const statuses = new Map<string, number | undefined>();
-  for (const property of options.properties ?? []) {
+  if (visited.has(options)) return statuses;
+  visited.add(options);
+  for (const property of options.properties) {
+    if (property.type === "SpreadElement") {
+      const source = unwrapExpression(property.argument);
+      const object =
+        source?.type === "Identifier" ? path.objects?.get(path.resolveBinding(source)) : source;
+      if (object?.type === "ObjectExpression" && !visited.has(object)) {
+        for (const [key, status] of optionStatuses(object, path, visited))
+          statuses.set(key, status);
+      } else {
+        statuses.set("statusCode", undefined);
+        statuses.set("status", undefined);
+      }
+      continue;
+    }
     const key = property.computed
       ? knownLiteral(property.key, path)
       : (property.key?.name ?? property.key?.value);
-    if (property.type === "SpreadElement" || (property.computed && key === undefined)) {
+    if (property.computed && key === undefined) {
       statuses.set("statusCode", undefined);
       statuses.set("status", undefined);
-      continue;
-    }
-    if (key === "statusCode" || key === "status") {
+    } else if (key === "statusCode" || key === "status") {
       statuses.set(key, numericStatus(property.value, path));
     }
   }
-  if (statuses.has("statusCode")) return statuses.get("statusCode");
-  return statuses.has("status") ? statuses.get("status") : 500;
+  visited.delete(options);
+  return statuses;
 }
 
 function lexicalTDZ(node: AnyNode, path: Path): Set<AnyNode> {
