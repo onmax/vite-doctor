@@ -4078,6 +4078,22 @@ test("provider catch-all permits setup before terminal delegation", async () => 
   expect(result.diagnostics).toHaveLength(0);
 });
 
+test("provider catch-all accepts the H3 eventHandler wrapper", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/auth/[...all].ts":
+        "import { eventHandler } from 'h3'; import { auth } from '../../utils/auth'; export default eventHandler(event => auth.handler(toWebRequest(event)))",
+      "server/utils/auth.ts":
+        "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test.each([
   ...[
     "if (true) { var toWebRequest = () => new Request('https://example.com') }",
@@ -4088,6 +4104,9 @@ test.each([
       `import { auth } from '../../utils/auth'; ${declaration}; export default defineEventHandler(event => auth.handler(toWebRequest(event)))`,
   ),
   "import { auth } from '../../utils/auth'; export default defineEventHandler(function toWebRequest(event) { return auth.handler(toWebRequest(event)) })",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(event => { const toWebRequest = customConverter; return auth.handler(toWebRequest(event)) })",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(event => { const { toWebRequest } = customConverters; return auth.handler(toWebRequest(event)) })",
+  "import { auth } from '../../utils/auth'; import { toWebRequest as toRequest } from 'h3'; export default defineEventHandler(event => { const toRequest = customConverter; return auth.handler(toRequest(event)) })",
   "import { auth } from '../../utils/auth'; export default defineEventHandler((event, toWebRequest) => auth.handler(toWebRequest(event)))",
   "import { auth } from '../../utils/auth'; const toWebRequest = () => new Request('https://example.com'); export default defineEventHandler(event => auth.handler(toWebRequest(event)))",
   "import { auth } from '../../utils/auth'; import { toWebRequest } from './unrelated'; export default defineEventHandler(event => auth.handler(toWebRequest(event)))",

@@ -266,7 +266,7 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
     if (
       factory?.type !== "CallExpression" ||
       factory.callee.type !== "Identifier" ||
-      factory.callee.name !== "defineEventHandler"
+      !["defineEventHandler", "eventHandler"].includes(factory.callee.name)
     )
       return false;
     const callback = factory.arguments[0];
@@ -310,6 +310,13 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
       isCurrentRequest(body.arguments[0], event.name) &&
       event.name !== body.arguments[0].callee.name &&
       callback.id?.name !== body.arguments[0].callee.name &&
+      !callback.body.body?.some(
+        (statement: AnyNode) =>
+          statement.type === "VariableDeclaration" &&
+          statement.declarations.some((declaration: AnyNode) =>
+            bindsName(declaration.id, body.arguments[0].callee.name),
+          ),
+      ) &&
       hasSupportedRequestConverter(parsed.program, body.arguments[0].callee.name)
     );
   } catch {
