@@ -2,6 +2,50 @@ import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
 import { noHttpErrorMasking } from "../../../src/rule-packs/nitro/rules/no-http-error-masking.ts";
 
+for (const [name, body, expected] of [
+  [
+    "reclassifies a thrown error after finally changes its status",
+    "let replacement; try { throw createError({ statusCode: 404 }) } catch { replacement = createError({ statusCode: 500 }); throw replacement } finally { replacement.statusCode = 400 }",
+    0,
+  ],
+  [
+    "follows a local class constructor",
+    "class Missing { constructor() { throw createError({ statusCode: 404 }) } }; try { new Missing() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "stops when a known primitive is called",
+    "const nope = null; try { nope(); throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "stops when a null array is destructured",
+    "try { const [] = null; throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "tracks Object.assign mutations to caught errors",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { Object.assign(error, { statusCode: 500 }); throw error }",
+    1,
+  ],
+  ...["async ", ""].map((modifier) => [
+    `adopts a returned promise from an ${modifier || "ordinary "}forwarding helper`,
+    `async function missing() { throw createError({ statusCode: 404 }) }; ${modifier}function forward(value) { return value }; const pending = missing(); try { await forward(pending) } catch { throw new Error() }`,
+    1,
+  ]),
+] as [string, string, number][]) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "nitro",
+      rule: noHttpErrorMasking,
+      files: {
+        "server/api/account.ts": `export default defineEventHandler(async () => { ${body} })`,
+      },
+    });
+    expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(expected);
+  });
+}
+
 test("reports when a Nitro catch masks an intentional HTTP error", async () => {
   const result = await runRuleFixture({
     framework: "nitro",

@@ -70,14 +70,16 @@ export const noHttpErrorMasking = createRule({
               if (typeof path.outcome !== "number" || path.outcome < 400 || path.outcome >= 500)
                 return false;
               const caught = catchOutcomes(node.handler, path, new Map(), conditions);
-              return caught.some(
-                (result) =>
-                  (result.outcome === 500 || result.outcome === "server-error") &&
-                  (!node.finalizer ||
-                    outcomes(node.finalizer, result, new Map(), conditions).some(
-                      (final) => final.outcome === "normal",
-                    )),
-              );
+              return caught.some((result) => {
+                if (result.outcome !== 500 && result.outcome !== "server-error") return false;
+                if (!node.finalizer) return true;
+                return outcomes(node.finalizer, result, new Map(), conditions).some((final) => {
+                  if (final.outcome !== "normal") return false;
+                  if (!result.value || !("error" in result.value)) return true;
+                  const status = errorStatus(result.value.error, final);
+                  return status === 500 || status === "server-error";
+                });
+              });
             });
         } catch (error) {
           // Incomplete path exploration cannot prove that an HTTP error is masked.
@@ -469,7 +471,7 @@ function evaluateOutcomes(
             if (declaration.id.type === "Identifier") {
               const name = declaration.id.name;
               const initializer = unwrapExpression(declaration.init);
-              const fn = isFunction(initializer)
+              const fn = isLocalCallable(initializer)
                 ? initializer
                 : initializer?.type === "Identifier"
                   ? evaluated.functions?.get(evaluated.resolveBinding(initializer))
@@ -572,7 +574,15 @@ function evaluateOutcomes(
       if (current.outcome !== "normal") return current;
       const uninitialized = new Set(current.uninitialized);
       if (node.id) uninitialized.delete(node.id);
-      return { ...current, uninitialized, value: undefined };
+      const functions = new Map(current.functions);
+      if (node.type === "ClassDeclaration" && node.id)
+        functions.set(
+          current.resolveBinding({ name: node.id.name } as AnyNode, node.__doctorParent) ??
+            current.resolveBinding(node.id) ??
+            node.id,
+          node,
+        );
+      return { ...current, uninitialized, functions, value: undefined };
     });
   }
   if (node.type === "UpdateExpression") {
@@ -706,7 +716,7 @@ function evaluateOutcomes(
           functions.delete(binding);
           objects.delete(binding);
           const source = unwrapExpression(assignment.right);
-          const fn = isFunction(source)
+          const fn = isLocalCallable(source)
             ? source
             : source?.type === "Identifier"
               ? evaluated.functions?.get(evaluated.resolveBinding(source))
@@ -799,7 +809,15 @@ function evaluateOutcomes(
       paths = paths.flatMap((current) =>
         outcomes(node.finalizer, current, bindings, conditions).map((final) =>
           final.outcome === "normal"
-            ? { ...final, outcome: current.outcome, label: current.label, value: current.value }
+            ? {
+                ...final,
+                outcome:
+                  current.value && "error" in current.value
+                    ? (errorStatus(current.value.error, final) ?? current.outcome)
+                    : current.outcome,
+                label: current.label,
+                value: current.value,
+              }
             : final,
         ),
       );
@@ -1137,6 +1155,13 @@ function evaluateOutcomes(
       if (callee?.type === "Identifier") callee = path.functions?.get(path.resolveBinding(callee));
     }
   }
+  if (callee?.type === "ClassDeclaration" || callee?.type === "ClassExpression") {
+    if (call.type !== "NewExpression") return [{ ...normal, outcome: "throw" }];
+    callee = callee.body.body.find(
+      (member: AnyNode) => member.kind === "constructor" && !member.static,
+    )?.value;
+    if (!callee) return [normal];
+  }
   if (
     call.type === "NewExpression" &&
     (callee?.type === "ArrowFunctionExpression" || callee?.async || callee?.generator)
@@ -1302,7 +1327,7 @@ function evaluateOutcomes(
             const fn =
               arg?.type === "Identifier"
                 ? source.functions?.get(source.resolveBinding(arg))
-                : isFunction(arg)
+                : isLocalCallable(arg)
                   ? arg
                   : undefined;
             if (fn) functions.set(binding, fn);
@@ -1361,13 +1386,20 @@ function evaluateOutcomes(
           if (path.objects?.has(binding)) restoredObjects.set(binding, path.objects.get(binding)!);
           if (path.conditions.has(key)) restoredConditions.set(key, path.conditions.get(key)!);
         }
+        const returnedValue =
+          current.outcome === "exit" || callee.body.type !== "BlockStatement"
+            ? current.value
+            : undefined;
+        const adopted =
+          (assignment.type === "AwaitExpression" || path.adoptingAsync) &&
+          returnedValue &&
+          "promise" in returnedValue
+            ? returnedValue.promise
+            : undefined;
         return {
           ...current,
-          outcome: current.outcome === "exit" ? "normal" : current.outcome,
-          value:
-            current.outcome === "exit" || callee.body.type !== "BlockStatement"
-              ? current.value
-              : undefined,
+          outcome: adopted?.outcome ?? (current.outcome === "exit" ? "normal" : current.outcome),
+          value: adopted?.value ?? returnedValue,
           bindings: restored,
           functions: restoredFunctions,
           objects: restoredObjects,
@@ -1381,6 +1413,49 @@ function evaluateOutcomes(
       });
   }
   if (!isFunction(node)) {
+    if (node.type === "CallExpression" || node.type === "NewExpression") {
+      const target = unwrapExpression(node.callee);
+      if (
+        node.type === "CallExpression" &&
+        target?.type === "MemberExpression" &&
+        target.object.type === "Identifier" &&
+        target.object.name === "Object" &&
+        !path.resolveBinding(target.object) &&
+        (target.computed ? knownLiteral(target.property, path) : target.property.name) ===
+          "assign" &&
+        node.arguments[0]?.type === "Identifier"
+      ) {
+        const error = bindings.get(path.resolveBinding(node.arguments[0]));
+        if (error) {
+          const errors = new Map(normal.errors);
+          for (const source of node.arguments.slice(1)) {
+            const object = resolvedObject(source, normal);
+            if (!object) {
+              errors.set(error.id, "throw");
+              continue;
+            }
+            const statuses = optionStatuses(object, normal, new Set());
+            const status = statuses.has("statusCode")
+              ? statuses.get("statusCode")
+              : statuses.get("status");
+            if (status !== undefined) errors.set(error.id, status);
+          }
+          return [{ ...normal, errors, value: { error } }];
+        }
+      }
+      if (["Literal", "ObjectExpression", "ArrayExpression"].includes(target?.type))
+        return [{ ...normal, outcome: "throw" }];
+      if (target?.type === "Identifier") {
+        const binding = path.resolveBinding(target);
+        const literal = path.literals?.get(binding);
+        if (
+          literal ||
+          path.objects?.has(binding) ||
+          (binding && path.functions?.has(binding) === false && path.bindings?.has(binding))
+        )
+          return [{ ...normal, outcome: "throw" }];
+      }
+    }
     const values = new Map(bindings);
     for (const binding of values.keys())
       if (!stableBinding(node, binding?.name)) values.delete(binding);
@@ -1531,6 +1606,7 @@ function patternOutcomes(
       ]);
     }
   } else if (pattern.type === "ArrayPattern") {
+    if (knownNullish(source, parameterSource ?? path)) return [{ ...path, outcome: "throw" }];
     for (const [index, element] of pattern.elements.entries()) {
       if (element)
         entries.push([
@@ -2142,6 +2218,10 @@ function isFunction(node: AnyNode): boolean {
   return ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
     node?.type,
   );
+}
+
+function isLocalCallable(node: AnyNode): boolean {
+  return isFunction(node) || node?.type === "ClassExpression";
 }
 
 function lexicalBindings(root: AnyNode) {
