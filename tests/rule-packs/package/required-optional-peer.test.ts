@@ -960,6 +960,28 @@ test("requires a peer shared by both node-addons selections", async () => {
   ).toMatchObject([{ code: "PKG0003" }]);
 });
 
+test("requires a peer reached through a shared chunk in both addon modes", async () => {
+  expect(
+    await diagnose(
+      { exports: { "node-addons": "./addon.js", default: "./fallback.js" }, ...optionalPeer },
+      {
+        "addon.js": 'require("./shared.js");',
+        "fallback.js": 'require("./shared.js");',
+        "shared.js": 'require("peer");',
+      },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test("requires a peer reached through different chunks in both addon modes", async () => {
+  expect(
+    await diagnose(
+      { exports: { "node-addons": "./addon.js", default: "./fallback.js" }, ...optionalPeer },
+      { "addon.js": 'require("peer");', "fallback.js": 'require("peer");' },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }, { code: "PKG0003" }]);
+});
+
 test.each([
   { "node-addons": "./safe.js", default: "peer" },
   { "node-addons": "peer", default: "./safe.js" },
@@ -981,6 +1003,52 @@ test("requires an import-map peer shared by both addon modes", async () => {
         ...optionalPeer,
       },
       { "index.mjs": 'import "#adapter";' },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test("requires a peer in a shared chunk reached through different import-map targets", async () => {
+  expect(
+    await diagnose(
+      {
+        main: "index.mjs",
+        imports: { "#adapter": { "node-addons": "./addon.js", default: "./fallback.js" } },
+        ...optionalPeer,
+      },
+      {
+        "index.mjs": 'import "#adapter";',
+        "addon.js": 'import "./shared.js";',
+        "fallback.js": 'import "./shared.js";',
+        "shared.js": 'import "peer";',
+      },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each(['await 0; require("peer");', 'await 0; module.require("peer");'])(
+  "does not attribute an ambiguous top-level await failure to the peer: %s",
+  async (source) => {
+    expect(await diagnose({ main: "index.js", ...optionalPeer }, { "index.js": source })).toEqual(
+      [],
+    );
+  },
+);
+
+test.each([
+  ["index.cjs", 'module["require"]("peer");'],
+  ["index.cjs", 'require["resolve"]("peer");'],
+  ["index.mjs", 'import.meta["resolve"]("peer");'],
+])("recognizes statically named built-in loaders in %s: %s", async (entry, source) => {
+  expect(await diagnose({ main: entry, ...optionalPeer }, { [entry]: source })).toMatchObject([
+    { code: "PKG0003" },
+  ]);
+});
+
+test("preserves module.require across an empty top-level var redeclaration", async () => {
+  expect(
+    await diagnose(
+      { main: "index.cjs", ...optionalPeer },
+      { "index.cjs": 'var module; module.require("peer");' },
     ),
   ).toMatchObject([{ code: "PKG0003" }]);
 });

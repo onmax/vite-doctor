@@ -127,6 +127,38 @@ export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null 
 }
 
 export function readPackageArtifacts(root: string): PackageArtifacts | null {
+  const active = readPackageArtifactsForMode(root, true);
+  if (!active) return null;
+  const inactive = readPackageArtifactsForMode(root, false)!;
+  const requiredInActive = new Set(
+    active.references
+      .filter((reference) => reference.required)
+      .map((reference) => reference.packageName),
+  );
+  const requiredInBoth = new Set(
+    inactive.references
+      .filter((reference) => reference.required && requiredInActive.has(reference.packageName))
+      .map((reference) => reference.packageName),
+  );
+  const references = new Map<string, PackageReference>();
+  for (const reference of [...active.references, ...inactive.references]) {
+    const key = `${reference.file}:${reference.range.start}:${reference.specifier}:${reference.kind}`;
+    const previous = references.get(key);
+    references.set(key, {
+      ...reference,
+      required:
+        (reference.required || previous?.required === true) &&
+        requiredInBoth.has(reference.packageName),
+    });
+  }
+  return {
+    manifest: active.manifest,
+    references: [...references.values()],
+    missing: [...new Set([...active.missing, ...inactive.missing])],
+  };
+}
+
+function readPackageArtifactsForMode(root: string, addons: boolean): PackageArtifacts | null {
   root = realpathSync(root);
   const manifestPath = resolve(root, "package.json");
   if (!existsSync(manifestPath)) return null;
@@ -325,25 +357,9 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   }
 
   function addTargets(value: unknown, required: boolean, mode: "import" | "require") {
-    const active = targets(value, "runtime", mode);
-    const inactive = targets(value, "runtime", mode, false);
-    const selected = new Set([
-      ...(Array.isArray(active) ? active : []),
-      ...(Array.isArray(inactive) ? inactive : []),
-    ]);
-    for (const target of selected)
-      enqueue(
-        target,
-        "runtime",
-        required &&
-          Array.isArray(active) &&
-          active.includes(target) &&
-          Array.isArray(inactive) &&
-          inactive.includes(target),
-        root,
-        false,
-        true,
-      );
+    const selected = targets(value, "runtime", mode, addons);
+    if (Array.isArray(selected))
+      for (const target of selected) enqueue(target, "runtime", required, root, false, true);
   }
 
   if (manifest.exports != null) {
@@ -447,6 +463,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
         new Set(),
         undefined,
         scope.directory,
+        addons,
       )) {
         if (specifier.startsWith(".")) {
           enqueue(
@@ -483,6 +500,8 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             edge.probe === "commonjs" ? "require" : "import",
             new Set(),
             scope.directory,
+            undefined,
+            addons,
           )) {
             if (target.specifier.startsWith("."))
               enqueue(
@@ -589,6 +608,7 @@ function resolvePackageImport(
   seen = new Set<string>(),
   selfRoot?: string,
   importsRoot?: string,
+  addons = true,
 ): ResolvedPackageImport[] {
   if (!specifier.startsWith("#")) return [{ specifier, kind, required: true }];
   if (seen.has(specifier)) return [];
@@ -631,6 +651,7 @@ function resolvePackageImport(
         new Set(seen),
         selfRoot,
         importsRoot,
+        addons,
       );
     }
     if (Array.isArray(value)) {
@@ -642,37 +663,7 @@ function resolvePackageImport(
       }
       return selected;
     }
-    if (isRecord(value)) {
-      if (addons && Object.hasOwn(value, "node-addons")) {
-        const active = flattenConditions(value, targetKind, true);
-        const inactive = flattenConditions(value, targetKind, false);
-        if (active === undefined) return inactive;
-        if (inactive === undefined) return active.map((entry) => ({ ...entry, required: false }));
-        const selected = new Map<string, ResolvedPackageImport>();
-        for (const entry of [...active, ...inactive]) {
-          const key = `${entry.kind}:${entry.specifier}`;
-          selected.set(key, {
-            ...entry,
-            required:
-              entry.required &&
-              active.some(
-                (candidate) =>
-                  candidate.kind === entry.kind &&
-                  candidate.specifier === entry.specifier &&
-                  candidate.required,
-              ) &&
-              inactive.some(
-                (candidate) =>
-                  candidate.kind === entry.kind &&
-                  candidate.specifier === entry.specifier &&
-                  candidate.required,
-              ),
-          });
-        }
-        return [...selected.values()];
-      }
-      return flattenConditions(value, targetKind, addons);
-    }
+    if (isRecord(value)) return flattenConditions(value, targetKind, addons);
     return undefined;
   }
   function flattenConditions(
@@ -695,20 +686,24 @@ function resolvePackageImport(
     }
     return undefined;
   }
-  return flatten(target) ?? [];
+  return flatten(target, kind, addons) ?? [];
 }
 
 function hasRuntimeModuleSyntax(source: ts.SourceFile): boolean {
-  let importMeta = false;
+  let esmSyntax = false;
   function visit(node: ts.Node): void {
     if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
-      importMeta = true;
+      esmSyntax = true;
+      return;
+    }
+    if (ts.isAwaitExpression(node) && !ts.findAncestor(node, ts.isFunctionLike)) {
+      esmSyntax = true;
       return;
     }
     ts.forEachChild(node, visit);
   }
   visit(source);
-  if (importMeta) return true;
+  if (esmSyntax) return true;
   return source.statements.some((statement) => {
     if (ts.isImportDeclaration(statement)) {
       const clause = statement.importClause;
@@ -806,6 +801,16 @@ function importEdges(
     } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
       add(node.argument.literal, true, false);
     } else if (ts.isCallExpression(node)) {
+      const member = node.expression;
+      const memberName = ts.isPropertyAccessExpression(member)
+        ? member.name.text
+        : ts.isElementAccessExpression(member) && ts.isStringLiteral(member.argumentExpression)
+          ? member.argumentExpression.text
+          : undefined;
+      const receiver =
+        ts.isPropertyAccessExpression(member) || ts.isElementAccessExpression(member)
+          ? member.expression
+          : undefined;
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
         add(node.arguments[0], false, isUnconditional(node, true));
       else if (
@@ -813,30 +818,30 @@ function importEdges(
           ts.isIdentifier(node.expression) &&
           node.expression.text === "require" &&
           !shadowsRequire(node)) ||
-        (ts.isPropertyAccessExpression(node.expression) &&
-          ts.isIdentifier(node.expression.expression) &&
-          node.expression.expression.text === "module" &&
-          node.expression.name.text === "require" &&
+        (receiver &&
+          ts.isIdentifier(receiver) &&
+          receiver.text === "module" &&
+          memberName === "require" &&
           commonjs &&
           !shadowsName(node, "module"))
       )
         add(node.arguments[0], false, isUnconditional(node, false), "commonjs");
       else if (
         commonjs &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "require" &&
-        node.expression.name.text === "resolve" &&
+        receiver &&
+        ts.isIdentifier(receiver) &&
+        receiver.text === "require" &&
+        memberName === "resolve" &&
         !shadowsRequire(node)
       )
         add(node.arguments[0], false, isUnconditional(node, false), "commonjs", true);
       else if (
         !commonjs &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === "resolve" &&
-        ts.isMetaProperty(node.expression.expression) &&
-        node.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
-        node.expression.expression.name.text === "meta"
+        receiver &&
+        memberName === "resolve" &&
+        ts.isMetaProperty(receiver) &&
+        receiver.keywordToken === ts.SyntaxKind.ImportKeyword &&
+        receiver.name.text === "meta"
       )
         add(node.arguments[0], false, isUnconditional(node, false), false, true);
     }
@@ -1674,7 +1679,7 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
           binds(child.name) &&
           bindingContains(child, node) &&
           !(
-            identifier === "require" &&
+            (identifier === "require" || identifier === "module") &&
             ts.isSourceFile(scope) &&
             !child.initializer &&
             ts.isVariableDeclarationList(child.parent) &&
