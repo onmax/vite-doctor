@@ -235,6 +235,29 @@ test("follows self-references through the export map", () => {
   expect(result.references[0]).toMatchObject({ packageName: "peer", required: true });
 });
 
+test("resolves nested self-references from their own package scope", () => {
+  const result = inventory(
+    { name: "library", main: "dist/index.js" },
+    {
+      "dist/package.json": JSON.stringify({
+        name: "nested",
+        exports: { "./adapter": "./adapter.js" },
+      }),
+      "dist/index.js": 'require("nested/adapter");',
+      "dist/adapter.js": 'require("peer");',
+    },
+  )!;
+  expect(result.references).toMatchObject([{ packageName: "peer", required: true }]);
+});
+
+test("stops at a blocked default export target", () => {
+  const result = inventory(
+    { exports: { default: null, node: "./index.js" } },
+    { "index.js": 'require("peer");' },
+  )!;
+  expect(result.references).toEqual([]);
+});
+
 test("resolves extensionless TypeScript runtime chunks", () => {
   const result = inventory(
     { exports: "./src/index.ts" },

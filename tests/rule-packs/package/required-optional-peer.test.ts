@@ -571,6 +571,31 @@ test("resolves package imports from the nearest package scope", async () => {
   ).toMatchObject([{ code: "PKG0003" }]);
 });
 
+test("follows nested package self-references rather than root exports", async () => {
+  expect(
+    await diagnose(
+      { main: "dist/index.js", exports: { ".": "./dist/index.js" }, ...optionalPeer },
+      {
+        "dist/package.json": JSON.stringify({
+          name: "nested",
+          exports: { "./adapter": "./adapter.js" },
+        }),
+        "dist/index.js": 'require("nested/adapter");',
+        "dist/adapter.js": 'require("peer");',
+      },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test("ignores peers behind a blocked default export target", async () => {
+  expect(
+    await diagnose(
+      { exports: { ".": { default: null, node: "./index.js" } }, ...optionalPeer },
+      { "index.js": 'require("peer");' },
+    ),
+  ).toEqual([]);
+});
+
 test.each([
   'declare var require: (name: string) => unknown; require("peer");',
   'declare const require: (name: string) => unknown; require("peer");',
@@ -609,6 +634,20 @@ test("treats typeless JavaScript with ESM syntax as native ESM", async () => {
       { "index.js": 'export {}; require.resolve("peer");' },
     ),
   ).toEqual([]);
+});
+
+test.each([
+  'import type { Value } from "./types.ts"; require("peer");',
+  'import { type Value } from "./types.ts"; require("peer");',
+  'export type { Value } from "./types.ts"; require("peer");',
+  'export { type Value } from "./types.ts"; require("peer");',
+])("keeps typeless TypeScript with erased module syntax in CommonJS: %s", async (source) => {
+  expect(
+    await diagnose(
+      { main: "index.ts", ...optionalPeer },
+      { "index.ts": source, "types.ts": "export type Value = string;" },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
 });
 
 test.each([

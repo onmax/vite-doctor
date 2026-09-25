@@ -172,20 +172,20 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     return false;
   }
 
-  function packageScope(path: string): { directory: string; imports: PackageManifest["imports"] } {
+  function packageScope(path: string): { directory: string; manifest: PackageManifest } {
     for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
       const scopedManifest = resolve(directory, "package.json");
       if (existsSync(scopedManifest))
         return {
           directory,
-          imports:
+          manifest:
             directory === rootPath
-              ? manifest.imports
-              : parsePackageManifest(JSON.parse(readFileSync(scopedManifest, "utf8"))).imports,
+              ? manifest
+              : parsePackageManifest(JSON.parse(readFileSync(scopedManifest, "utf8"))),
         };
       if (directory === rootPath) break;
     }
-    return { directory: rootPath, imports: manifest.imports };
+    return { directory: rootPath, manifest };
   }
 
   function commonjsFile(path: string): string | undefined {
@@ -303,7 +303,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           adjacentDeclaration,
         );
         selected ||= resolved;
-        if (condition === "default" && resolved) break;
+        if (condition === "default" && (resolved || item === null)) break;
       }
       return selected;
     }
@@ -382,7 +382,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     const parsed = ts.createSourceFile(current.path, text, ts.ScriptTarget.Latest, true);
     const commonjs =
       commonjsModule(current.path) &&
-      (explicitCommonjsModule(current.path) || !ts.isExternalModule(parsed));
+      (explicitCommonjsModule(current.path) || !hasRuntimeModuleSyntax(parsed));
     const source = ts.createSourceFile(
       current.path,
       commonjs ? text : `${text}\nexport {};`,
@@ -400,7 +400,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       const executionRequired = required && !edge.resolutionOnly;
       for (const { specifier, kind } of resolvePackageImport(
         edge.specifier,
-        scope.imports,
+        scope.manifest.imports,
         edge.kind,
         edge.probe === "commonjs" ? "require" : "import",
         new Set(),
@@ -423,15 +423,15 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
         }
         const packageName = edge.typeReference ? specifier : externalPackageName(specifier);
         if (!packageName) continue;
-        if (packageName === manifest.name) {
-          const exports = manifest.exports;
+        if (packageName === scope.manifest.name) {
+          const exports = scope.manifest.exports;
           const entries =
             exports &&
             typeof exports === "object" &&
             !Array.isArray(exports) &&
             Object.keys(exports).some((key) => key.startsWith("."))
               ? exports
-              : { ".": exports ?? manifest.main };
+              : { ".": exports ?? scope.manifest.main };
           const aliases = Object.fromEntries(
             Object.entries(entries).map(([key, value]) => [`#self${key.slice(1)}`, value]),
           );
@@ -441,14 +441,14 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             kind,
             edge.probe === "commonjs" ? "require" : "import",
             new Set(),
-            root,
+            scope.directory,
           )) {
             if (target.specifier.startsWith("."))
               enqueue(
                 target.specifier,
                 target.kind,
                 executionRequired && target.kind === "runtime",
-                root,
+                scope.directory,
                 exports === undefined ? "main" : false,
               );
           }
@@ -608,6 +608,42 @@ function resolvePackageImport(
     return undefined;
   }
   return flatten(target) ?? [];
+}
+
+function hasRuntimeModuleSyntax(source: ts.SourceFile): boolean {
+  return source.statements.some((statement) => {
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (!clause) return true;
+      if (clause.isTypeOnly) return false;
+      const bindings = clause.namedBindings;
+      return !(
+        !clause.name &&
+        bindings &&
+        ts.isNamedImports(bindings) &&
+        bindings.elements.length > 0 &&
+        bindings.elements.every((element) => element.isTypeOnly)
+      );
+    }
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.isTypeOnly) return false;
+      const clause = statement.exportClause;
+      return !(
+        clause &&
+        ts.isNamedExports(clause) &&
+        clause.elements.length > 0 &&
+        clause.elements.every((element) => element.isTypeOnly)
+      );
+    }
+    if (ts.isExportAssignment(statement)) return !statement.isExportEquals;
+    if (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) return false;
+    if (!ts.canHaveModifiers(statement)) return false;
+    const modifiers = ts.getModifiers(statement);
+    return Boolean(
+      modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) &&
+      !modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword),
+    );
+  });
 }
 
 function importEdges(
