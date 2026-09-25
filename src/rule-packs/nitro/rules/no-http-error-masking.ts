@@ -52,6 +52,7 @@ export const noHttpErrorMasking = createRule({
           conditions: new Map(),
           resolveBinding: lexical.resolve,
           functions: declaredFunctions(lexical),
+          ...moduleBindings(root, enclosingFunction, lexical.resolve),
           asyncBody: Boolean(
             enclosingFunction?.async ||
             (handlerCall?.type === "CallExpression" &&
@@ -195,8 +196,7 @@ function outcomes(
                   "createError",
                   current.resolveBinding,
                 ) &&
-                expression.arguments[0]?.type === "ObjectExpression" &&
-                expression.arguments[0].properties.every(
+                resolvedObject(expression.arguments[0], current)?.properties.every(
                   (property: AnyNode) =>
                     property.type !== "SpreadElement" &&
                     !property.computed &&
@@ -215,7 +215,13 @@ function outcomes(
         const error = current.bindings?.get(binding);
         return {
           ...current,
-          value: error ? { error } : binding ? current.literals?.get(binding) : undefined,
+          value: error
+            ? { error }
+            : binding
+              ? current.literals?.get(binding)
+              : expression.name === "undefined"
+                ? { literal: undefined }
+                : undefined,
         };
       }
       return current;
@@ -491,6 +497,8 @@ function evaluateOutcomes(
                   "literal" in evaluated.value
                 )
                   literals.set(binding, evaluated.value);
+                else if (declaration.id.type === "Identifier" && !declaration.init)
+                  literals.set(binding, { literal: undefined });
               }
             }
             return {
@@ -1170,7 +1178,11 @@ function evaluateOutcomes(
         param.type === "AssignmentPattern" &&
         (!supplied ||
           (supplied.type === "Literal" && supplied.value === undefined) ||
-          isUndefinedArgument(supplied, path.resolveBinding));
+          isUndefinedArgument(supplied, path.resolveBinding) ||
+          (!uncertain &&
+            argumentValues?.[index] &&
+            "literal" in argumentValues[index] &&
+            argumentValues[index].literal === undefined));
       parameterPaths = parameterPaths.flatMap((current) => {
         if (current.outcome !== "normal") return [current];
         const choices =
@@ -1835,22 +1847,77 @@ function isH3Reference(node: AnyNode, name: string, resolve: Path["resolveBindin
   );
 }
 
-function numericStatus(node: AnyNode, path: Path): number | undefined {
+function numericStatus(
+  node: AnyNode,
+  path: Path,
+  visited = new Set<AnyNode>(),
+): number | undefined {
   node = unwrapExpression(node);
+  if (visited.has(node)) return;
+  visited.add(node);
   const literal = knownLiteral(node, path);
   if (typeof literal === "number") return literal;
+  if (node?.type === "MemberExpression") {
+    const object = resolvedObject(node.object, path);
+    const key = node.computed ? knownLiteral(node.property, path) : node.property.name;
+    if (object && key !== undefined) {
+      for (const property of [...object.properties].reverse()) {
+        if (
+          property.type === "SpreadElement" ||
+          (property.computed && knownLiteral(property.key, path) === undefined)
+        )
+          return;
+        const propertyKey = property.computed
+          ? knownLiteral(property.key, path)
+          : (property.key?.name ?? property.key?.value);
+        if (propertyKey === key) return numericStatus(property.value, path, visited);
+      }
+    }
+  }
   if (node?.type === "UnaryExpression" && (node.operator === "+" || node.operator === "-")) {
-    const value = numericStatus(node.argument, path);
+    const value = numericStatus(node.argument, path, visited);
     return value === undefined ? undefined : node.operator === "-" ? -value : value;
   }
   if (node?.type !== "BinaryExpression") return;
-  const left = numericStatus(node.left, path);
-  const right = numericStatus(node.right, path);
+  const left = numericStatus(node.left, path, visited);
+  const right = numericStatus(node.right, path, visited);
   if (left === undefined || right === undefined) return;
   if (node.operator === "+") return left + right;
   if (node.operator === "-") return left - right;
   if (node.operator === "*") return left * right;
   if (node.operator === "/") return left / right;
+}
+
+function resolvedObject(node: AnyNode, path: Path): AnyNode {
+  node = unwrapExpression(node);
+  const object = node?.type === "Identifier" ? path.objects?.get(path.resolveBinding(node)) : node;
+  return object?.type === "ObjectExpression" ? object : undefined;
+}
+
+function moduleBindings(
+  root: AnyNode,
+  enclosingFunction: AnyNode,
+  resolveBinding: Path["resolveBinding"],
+): Pick<Path, "literals" | "objects"> {
+  const literals = new Map<AnyNode, { literal: unknown }>();
+  const objects = new Map<AnyNode, AnyNode>();
+  let containing = enclosingFunction;
+  while (containing?.__doctorParent && containing.__doctorParent !== root)
+    containing = containing.__doctorParent;
+  if (root.type !== "Program" || !containing) return { literals, objects };
+  for (const statement of root.body.slice(0, root.body.indexOf(containing))) {
+    if (statement.type !== "VariableDeclaration" || statement.kind !== "const") continue;
+    for (const declaration of statement.declarations) {
+      if (declaration.id.type !== "Identifier") continue;
+      const binding = resolveBinding(declaration.id);
+      if (!binding) continue;
+      if (declaration.init?.type === "Literal")
+        literals.set(binding, { literal: declaration.init.value });
+      else if (declaration.init?.type === "ObjectExpression")
+        objects.set(binding, declaration.init);
+    }
+  }
+  return { literals, objects };
 }
 
 function httpStatus(node: AnyNode, path: Path): number | "server-error" | undefined {

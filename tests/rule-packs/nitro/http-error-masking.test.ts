@@ -19,6 +19,18 @@ test("reports when a Nitro catch masks an intentional HTTP error", async () => {
   expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
 });
 
+test("resolves a module-scoped status constant in a handler", async () => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "const NOT_FOUND = 404; export default defineEventHandler(() => { try { throw createError({ statusCode: NOT_FOUND }) } catch { throw new Error() } })",
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+});
+
 test("keeps a catch that preserves intentional HTTP errors", async () => {
   const result = await runRuleFixture({
     framework: "nitro",
@@ -433,6 +445,12 @@ test.each([
   [
     "awaited Promise.all adopts local rejection",
     "async function missing() { throw createError({ statusCode: 404 }) }; await Promise.all([missing()])",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "undefined binding uses default parameter",
+    "let code; function missing(value = 404) { throw createError({ statusCode: value }) }; missing(code)",
     "throw new Error()",
     true,
   ],
@@ -1229,12 +1247,12 @@ test.each([
   [
     "synchronous assignment value.result",
     "let value; try { function missing() { throw createError({ statusCode: 404 }) }; (value.result = missing()) } catch { throw new Error() }",
-    true,
+    false,
   ],
   [
     "awaited assignment value.result",
     "let value; try { async function missing() { throw createError({ statusCode: 404 }) }; (value.result = await missing()) } catch { throw new Error() }",
-    true,
+    false,
   ],
   [
     "synchronous assignment { result: value }",
@@ -2748,6 +2766,18 @@ test.each([
   ],
   [
     "const options = { statusCode: 404 }; const alias = options; try { throw createError(alias) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "const options = { statusCode: 404 }; try { throw createError(options) } catch (error) { if (error instanceof Error) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "const options = { statusCode: 404, constructor: { __h3_error__: true } }; try { throw createError(options) } catch (error) { if (error instanceof Error) throw error; throw new Error() }",
+    1,
+  ],
+  [
+    "const statuses = { missing: 404 }; try { throw createError({ statusCode: statuses.missing }) } catch { throw new Error() }",
     1,
   ],
   [
