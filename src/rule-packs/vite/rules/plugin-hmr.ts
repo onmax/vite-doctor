@@ -147,6 +147,7 @@ function undisposedResource(program: AnyNode): string | null {
   const thisBinding = {};
   const lexicalReceivers = new Map<AnyNode, AnyNode>();
   const lexicalEnvironments = new Map<AnyNode, Map<AnyNode, AnyNode>>();
+  let evaluatingCall = 0;
   const promises = new Map<AnyNode, AnyNode>();
   const promiseCompletions = new Map<AnyNode, Completion>();
   const pendingFetchPromises = new Set<AnyNode>();
@@ -599,6 +600,11 @@ function undisposedResource(program: AnyNode): string | null {
           cleaned.add(resource.value);
       return { normal: true, abrupt: false };
     }
+    if (["setInterval", "setTimeout"].includes(target) && !evaluatingCall) {
+      const callee = { type: "Identifier", name: target };
+      return evaluate({ type: "CallExpression", callee, arguments: args }, environment, module);
+    }
+    if (["setInterval", "setTimeout"].includes(target)) return { normal: true, abrupt: false };
     const captured = lexicalEnvironments.get(target);
     if (captured) {
       if (lexicalReceivers.has(target)) receiver = lexicalReceivers.get(target);
@@ -692,6 +698,20 @@ function undisposedResource(program: AnyNode): string | null {
       return { normal: true, abrupt: false, value: promise };
     }
     return completion;
+  }
+  function inspectEvaluatedCall(
+    target: AnyNode,
+    args: AnyNode[],
+    environment: Map<AnyNode, AnyNode>,
+    module: boolean,
+    receiver?: AnyNode,
+  ): Completion {
+    evaluatingCall++;
+    try {
+      return inspect(target, args, environment, module, receiver);
+    } finally {
+      evaluatingCall--;
+    }
   }
   function evaluate(
     root: AnyNode,
@@ -1903,7 +1923,7 @@ function undisposedResource(program: AnyNode): string | null {
           ? (superConstructors.get(environment.get(thisBinding))?.(
               node.arguments.map((arg: AnyNode) => identity(arg, environment)),
             ) ?? { normal: true, abrupt: false })
-          : inspect(node.callee, node.arguments, environment, module, receiver);
+          : inspectEvaluatedCall(node.callee, node.arguments, environment, module, receiver);
       if (completion.value) {
         returned.set(node, completion.value);
         if (node.callee.type === "Super") environment.set(thisBinding, completion.value);
@@ -3210,6 +3230,7 @@ function undisposedResource(program: AnyNode): string | null {
       if (cleaned.has(listener.value)) break;
       const beforeFiring = captureDisposalState();
       timerSimulationDepth = 1;
+      if (listener.once) cleaned.add(listener.value);
       const descriptor = effectiveProperties(listener.handler, values).get("handleEvent");
       const classGetter = classGetters.get(listener.handler)?.get("handleEvent");
       const getter =

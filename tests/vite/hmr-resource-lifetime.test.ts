@@ -4,6 +4,21 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "native timer factory as promise handler creates resource",
+    "Promise.resolve(refresh).then(setInterval); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "native timeout factory as promise handler creates resource",
+    "Promise.resolve(refresh).then(setTimeout); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "once listener is removed before its callback runs",
+    "let fired = false; const handler = () => { fired = true }; addEventListener('click', handler, { once: true }); import.meta.hot.dispose(() => { if (!fired) removeEventListener('click', handler) })",
+    false,
+  ],
+  [
     "await suspends before evaluating later call arguments",
     "let timer; async function start() { consume(await Promise.resolve(), timer = setInterval(refresh)) } start(); clearInterval(timer); import.meta.hot.dispose(() => {})",
     true,
