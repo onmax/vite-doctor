@@ -2417,6 +2417,20 @@ test("a guard in one API handler does not hide an unguarded sensitive handler", 
   expect(diagnostic?.message).not.toContain("feedback.get.ts");
 });
 
+test("NUXT0037 recognizes a guard inside a cached event handler", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/account.get.ts":
+        "export default cachedEventHandler(async event => { await requireUserSession(event); return { private: true } })",
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NUXT0037")).toHaveLength(0);
+});
+
 test.each([
   "auth/login.post.ts",
   "auth/sign-in.post.ts",
@@ -4343,6 +4357,9 @@ test.each([
 
 test.each([
   ["export { auth } from './server'", "export const auth = betterAuth({})", 0],
+  ["export * from './server'", "export const auth = betterAuth({})", 0],
+  ["export * from './server'", "export const auth = { handler: () => ({}) }", 1],
+  ["export * from './server'", "const auth = betterAuth({})", 1],
   ["export { instance as auth } from './server'", "export const instance = betterAuth({})", 0],
   ["export { auth } from './server'", "export const auth = { handler: () => ({}) }", 1],
   ["export { auth } from './server'", "const auth = betterAuth({})", 1],

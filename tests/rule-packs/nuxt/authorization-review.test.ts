@@ -79,6 +79,56 @@ test("matches manifest-free layer handlers by runtime route, not layer name", as
   expect(reviewed).toEqual(["server/api/account.get.ts", "layers/admin/server/api/account.ts"]);
 });
 
+test.each([false, true])(
+  "excludes public authentication operations from authorization review with manifest: %s",
+  async (manifest) => {
+    const reviewed: string[] = [];
+    const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+      reviewed.push(candidate.handler.path);
+      return {
+        status: "report",
+        reason: "No guard",
+        citations: [
+          { path: candidate.handler.path, line: 1 },
+          { path: candidate.sources[0]!.path, line: 1 },
+        ],
+      };
+    });
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "server/api/auth/sign-in.post.ts": files["server/api/account.get.ts"],
+        "server/api/auth/callback.get.ts": files["server/api/account.get.ts"],
+        ...(manifest
+          ? {
+              ".nuxt/doctor.manifest.json": JSON.stringify({
+                generatedAt: "2100-01-01T00:00:00.000Z",
+                resolvedServerHandlers: [
+                  { file: "server/api/account.get.ts", route: "/api/account", method: "get" },
+                  {
+                    file: "server/api/auth/sign-in.post.ts",
+                    route: "/api/auth/sign-in",
+                    method: "post",
+                  },
+                  {
+                    file: "server/api/auth/callback.get.ts",
+                    route: "/api/auth/callback",
+                    method: "get",
+                  },
+                ],
+              }),
+            }
+          : {}),
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+
+    expect(reviewed).toEqual(["server/api/account.get.ts"]);
+    expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(1);
+  },
+);
+
 async function runReview(reviewer: AuthorizationReviewer) {
   const extension = createNuxtAuthorizationReviewExtension(reviewer);
   return runProjectFixture({

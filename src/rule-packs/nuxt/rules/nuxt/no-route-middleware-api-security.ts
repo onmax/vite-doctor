@@ -148,6 +148,20 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
   );
 }
 
+export function isPublicAuthOperation(path: string, method?: string): boolean {
+  const endpoint = path.replace(/\.[cm]?[jt]s$/i, "");
+  const suffix = endpoint.match(/\.(get|post|put|patch|delete|head|options)$/i);
+  const route = (suffix ? endpoint.slice(0, -suffix[0].length) : endpoint).replace(/\/index$/i, "");
+  const verb = (method ?? suffix?.[1])?.toUpperCase();
+  return (
+    (verb === "POST" &&
+      /(?:^|\/)(?:auth\/(?:login|sign-in|signin|register|sign-up|signup|forgot-password|reset-password)|session\/create)$/i.test(
+        route,
+      )) ||
+    (verb === "GET" && /(?:^|\/)auth\/(?:callback|verify-email)$/i.test(route))
+  );
+}
+
 export function rootMiddlewareConfiguration(
   root: string,
 ): { srcDir: string; middleware: string; customServerRegistration: boolean } | null {
@@ -282,14 +296,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
         : null;
     let route = suffix ? endpoint.slice(0, -suffix[0].length) : endpoint;
     if (registeredRoute === undefined) route = route.replace(/\/index$/i, "");
-    const verb = (method ?? suffix?.[1])?.toUpperCase();
-    const publicOperation =
-      (verb === "POST" &&
-        /(?:^|\/)(?:auth\/(?:login|sign-in|signin|register|sign-up|signup|forgot-password|reset-password)|session\/create)$/i.test(
-          route,
-        )) ||
-      (verb === "GET" && /(?:^|\/)auth\/(?:callback|verify-email)$/i.test(route));
-    return sensitive.test(path) && !publicOperation;
+    return sensitive.test(path) && !isPublicAuthOperation(route, method ?? suffix?.[1]);
   };
   return [
     ...new Set(
@@ -609,20 +616,35 @@ function isProviderBinding(
       )
     : undefined;
   for (const node of program.body) {
-    if (exported && node.type !== "ExportNamedDeclaration" && node.type !== "ImportDeclaration")
+    if (
+      exported &&
+      node.type !== "ExportNamedDeclaration" &&
+      node.type !== "ExportAllDeclaration" &&
+      node.type !== "ImportDeclaration"
+    )
       continue;
-    if (node.type !== "ImportDeclaration" && node.type !== "ExportNamedDeclaration") continue;
+    if (
+      node.type !== "ImportDeclaration" &&
+      node.type !== "ExportNamedDeclaration" &&
+      node.type !== "ExportAllDeclaration"
+    )
+      continue;
     if (node.type === "ExportNamedDeclaration" && (!node.source || node.exportKind === "type"))
       continue;
-    const binding = node.specifiers.find((item: AnyNode) =>
-      node.type === "ImportDeclaration"
-        ? ["ImportSpecifier", "ImportDefaultSpecifier"].includes(item.type) &&
-          (exported ? exportedImports!.has(item.local.name) : item.local.name === name)
-        : item.type === "ExportSpecifier" &&
-          item.exportKind !== "type" &&
-          (item.exported.name ?? item.exported.value) === name,
-    );
-    if (!binding) continue;
+    if (node.type === "ExportAllDeclaration" && (!exported || node.exported || name === "default"))
+      continue;
+    const binding =
+      node.type === "ExportAllDeclaration"
+        ? undefined
+        : node.specifiers.find((item: AnyNode) =>
+            node.type === "ImportDeclaration"
+              ? ["ImportSpecifier", "ImportDefaultSpecifier"].includes(item.type) &&
+                (exported ? exportedImports!.has(item.local.name) : item.local.name === name)
+              : item.type === "ExportSpecifier" &&
+                item.exportKind !== "type" &&
+                (item.exported.name ?? item.exported.value) === name,
+          );
+    if (node.type !== "ExportAllDeclaration" && !binding) continue;
     const source = node.source.value as string;
     const layer = [...ctx.project.nuxt!.layers]
       .filter((layer) => {
@@ -667,11 +689,13 @@ function isProviderBinding(
     const parsed = parseSync(target, readProjectFile(target));
     if (parsed.errors.length) continue;
     const targetName =
-      node.type === "ImportDeclaration" && binding.type === "ImportDefaultSpecifier"
-        ? "default"
-        : node.type === "ImportDeclaration"
-          ? binding.imported.name
-          : binding.local.name;
+      node.type === "ExportAllDeclaration"
+        ? name
+        : node.type === "ImportDeclaration" && binding.type === "ImportDefaultSpecifier"
+          ? "default"
+          : node.type === "ImportDeclaration"
+            ? binding.imported.name
+            : binding.local.name;
     if (
       createsProvider(parsed.program, targetName, true) ||
       isProviderBinding(ctx, target, parsed.program, targetName, visited, true)
@@ -702,7 +726,7 @@ function hasUnconditionalAuthGuard(file: string): boolean {
     if (
       factory?.type !== "CallExpression" ||
       factory.callee.type !== "Identifier" ||
-      !["defineEventHandler", "eventHandler"].includes(factory.callee.name)
+      !["defineEventHandler", "eventHandler", "cachedEventHandler"].includes(factory.callee.name)
     )
       return false;
     const handler = factory.arguments[0];

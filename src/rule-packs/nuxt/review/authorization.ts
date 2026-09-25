@@ -6,7 +6,10 @@ import { dirname, extname, relative, resolve } from "pathe";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { autoRegisteredNuxtLayers } from "../../../core/internal/runtime-graph.js";
-import { rootMiddlewareConfiguration } from "../rules/nuxt/no-route-middleware-api-security.js";
+import {
+  isPublicAuthOperation,
+  rootMiddlewareConfiguration,
+} from "../rules/nuxt/no-route-middleware-api-security.js";
 
 export interface AuthorizationReviewSource {
   path: string;
@@ -206,7 +209,12 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             ? [
                 ...new Set(
                   resolvedHandlers
-                    .filter((entry) => !entry.middleware && sensitivePath.test(entry.route ?? ""))
+                    .filter(
+                      (entry) =>
+                        !entry.middleware &&
+                        sensitivePath.test(entry.route ?? "") &&
+                        !isPublicAuthOperation(entry.route ?? "", entry.method),
+                    )
                     .map((entry) => resolve(root, entry.file)),
                 ),
               ]
@@ -227,7 +235,8 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                 fallbackHandlerDirs.some(
                   (directory) =>
                     isWithin(directory, file) &&
-                    sensitivePath.test(`/${relative(directory, file)}`),
+                    sensitivePath.test(`/${relative(directory, file)}`) &&
+                    !isPublicAuthOperation(relative(directory, file)),
                 ),
               );
           const handlers = projectSources(root, handlerFiles);
@@ -301,7 +310,8 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                 (entry) =>
                   !entry.middleware &&
                   resolve(root, entry.file) === resolve(root, handler.path) &&
-                  sensitivePath.test(entry.route ?? ""),
+                  sensitivePath.test(entry.route ?? "") &&
+                  !isPublicAuthOperation(entry.route ?? "", entry.method),
               )
               .map(({ route, method }) => ({ route, method }));
             for (const handlerRoute of handlerRoutes ?? [undefined]) {
