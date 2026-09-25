@@ -21,6 +21,14 @@ test.each([
   ["class Clock { read() { return Date.now() } }; const displayed = new Clock().read()", 1],
   ["class Clock { static read() { return Date.now() } }; const displayed = Clock.read()", 1],
   ["class Clock { read() { return Date.now() } }; const displayed = 'stable'", 0],
+  [
+    "class Clock { read() { return Date.now() }; constructor() { return { read: () => 'stable' } } }; const displayed = new Clock().read()",
+    0,
+  ],
+  [
+    "class Clock { read() { return Date.now() } }; Clock.prototype.read = () => 'stable'; const displayed = new Clock().read()",
+    0,
+  ],
 ])("traces locally invoked class methods: %s", async (script, count) => {
   const result = await runNuxtAppRuleFixture(
     noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
@@ -1008,6 +1016,10 @@ test.each([
   ["const helpers = { label() { return Date.now() } }; const label = helpers.label", "label()", 1],
   ["const displayed = Array.from([1], () => Date.now())", "displayed", 1],
   ["const displayed = Array.from([], () => Date.now())", "displayed", 0],
+  ["const displayed = Array.from('x', () => Date.now())", "displayed", 1],
+  ["const displayed = Array.from('', () => Date.now())", "displayed", 0],
+  ["const displayed = Array.from({ length: 1 }, () => Date.now())", "displayed", 1],
+  ["const displayed = Array.from({ length: 0 }, () => Date.now())", "displayed", 0],
   [
     "const Array = { from: () => [] }; const displayed = Array.from([1], () => Date.now())",
     "displayed",
@@ -1380,6 +1392,7 @@ test("preserves stored member flow when an alias captured a replaced object", as
 test.each([
   ["label", 0],
   ["generatedAt", 1],
+  ["length", 0],
 ])("preserves eager callback result projection %s", async (property, count) => {
   const result = await runNuxtAppRuleFixture(
     noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
@@ -1387,6 +1400,14 @@ test.each([
 <template>{{ displayed[0].${property} }}</template>`,
   );
   expect(result.diagnostics).toHaveLength(count);
+});
+
+test("does not project mapped values into the array length", async () => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>const displayed = [1].map(() => Date.now())</script><template>{{ displayed.length }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
 });
 
 test.each([

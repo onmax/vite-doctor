@@ -343,6 +343,49 @@ function functionFlowsToTemplate(
         continue;
       }
       if (method && !method.static && callee?.type === "NewExpression") {
+        const constructor = binding.body?.body?.find(
+          (entry: AnyNode) => entry.kind === "constructor",
+        );
+        if (
+          constructor?.value?.body?.body?.some(
+            (statement: AnyNode) =>
+              statement.type === "ReturnStatement" &&
+              ["ObjectExpression", "ArrayExpression", "NewExpression", "CallExpression"].includes(
+                unwrapExpression(statement.argument)?.type,
+              ),
+          )
+        )
+          return false;
+        const methodName = method.computed
+          ? method.key?.value
+          : (method.key?.name ?? method.key?.value);
+        let root = callee;
+        while (parents.get(root)) root = parents.get(root);
+        let replaced = false;
+        walkScriptLocal(root, (write) => {
+          if (write.type !== "AssignmentExpression" || write.start >= original.start) return;
+          const member = unwrapExpression(write.left);
+          const prototype = unwrapExpression(member?.object);
+          const owner = unwrapExpression(prototype?.object);
+          if (
+            member?.type === "MemberExpression" &&
+            (member.computed ? member.property?.value : member.property?.name) === methodName &&
+            prototype?.type === "MemberExpression" &&
+            (prototype.computed ? prototype.property?.value : prototype.property?.name) ===
+              "prototype" &&
+            owner?.type === "Identifier" &&
+            resolveLocalBinding(write, owner.name, parents) === binding &&
+            containingFunction(write, parents) === containingFunction(original, parents) &&
+            writeDominatesReference(
+              write,
+              original,
+              containingFunction(original, parents) ?? root,
+              parents,
+            )
+          )
+            replaced = true;
+        });
+        if (replaced) return false;
         callee = callee.callee;
         continue;
       }
@@ -934,8 +977,17 @@ function resultCallbackCall(
     (call.callee.computed ? call.callee.property?.value : call.callee.property?.name) === "from" &&
     call.arguments[1] === expression
   ) {
-    const input = unwrapExpression(call.arguments[0]);
-    return input?.type === "ArrayExpression" && arrayElementCount(input, true) > 0 ? call : null;
+    const input = resolveLocalValue(call.arguments[0], parents, new Set(), [], call);
+    if (input?.type === "ArrayExpression") return arrayElementCount(input, true) > 0 ? call : null;
+    if (input?.type === "Literal" && typeof input.value === "string")
+      return input.value.length > 0 ? call : null;
+    const length = localObjectProperty(input, "length");
+    return length?.type === "Literal" &&
+      Number.isInteger(length.value) &&
+      length.value > 0 &&
+      length.value < 2 ** 32
+      ? call
+      : null;
   }
   if (call.arguments[0] !== expression) return null;
   if (call.callee?.type === "Identifier" && call.callee.name === "computed") {
@@ -1737,6 +1789,7 @@ function projectionIncludes(
     if (member?.type !== "MemberExpression" || member.object !== current) return true;
     const accessed = member.computed ? member.property?.value : member.property?.name;
     if (accessed === undefined) return true;
+    if (key === null && accessed === "length") return false;
     if (key !== null && String(accessed) !== key) return false;
     current = member;
   }
