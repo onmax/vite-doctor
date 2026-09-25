@@ -7,6 +7,23 @@ const optionalPeer = {
 };
 
 test.each([
+  'try { require("peer"); } catch (error) { throw error; }',
+  'try { require("peer"); } catch (error) { if (enabled) { throw error; } else { throw error; } }',
+])("preserves required peer loads through rethrow-only catches: %s", async (source) => {
+  const result = await diagnose({ ...optionalPeer, main: "index.js" }, { "index.js": source });
+  expect(result).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each(['getTarget().peer = require("peer");', 'target[getKey()] = require("peer");'])(
+  "does not require a peer when assignment targets may throw: %s",
+  async (source) => {
+    expect(await diagnose({ ...optionalPeer, main: "index.js" }, { "index.js": source })).toEqual(
+      [],
+    );
+  },
+);
+
+test.each([
   'try {} catch (Promise) {} await Promise.all([import("peer")]);',
   'for (let Promise of []) {} await Promise.all([import("peer")]);',
   'for (let Promise = 0; false;) {} await Promise.all([import("peer")]);',

@@ -208,7 +208,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
         : probe === "main" || (probe === "commonjs" && !sourceResolution)
           ? [
               commonjsFile(path),
-              ...(probe === "main" && manifest.exports === undefined
+              ...(probe === "main" && manifest.exports == null
                 ? [".js", ".json", ".node"].map((suffix) => resolve(root, `index${suffix}`))
                 : []),
             ].filter((file): file is string => file !== undefined)
@@ -275,13 +275,14 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           adjacentDeclaration,
         );
         selected ||= resolved;
+        if (condition === "default") break;
       }
       return selected;
     }
     return false;
   }
 
-  if (manifest.exports !== undefined) {
+  if (manifest.exports != null) {
     const exports = manifest.exports;
     if (
       exports &&
@@ -504,6 +505,8 @@ function resolvePackageImport(
   ): { specifier: string; kind: PackageReference["kind"] }[] | undefined {
     if (value === null) return [];
     if (typeof value === "string") {
+      if (key.includes("*") && !validExportTarget(`./${wildcard}`, selfRoot ?? importsRoot ?? ""))
+        return undefined;
       const substituted = value.replaceAll("*", wildcard);
       if (selfRoot && !validExportTarget(substituted, selfRoot)) return undefined;
       if (importsRoot && value.startsWith(".") && !validExportTarget(substituted, importsRoot))
@@ -718,7 +721,17 @@ function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
   if (
     ts.isBinaryExpression(parent) &&
     isWithin(node, parent.right) &&
-    parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+    !(
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      (ts.isIdentifier(parent.left) ||
+        (ts.isPropertyAccessExpression(parent.left) &&
+          (ts.isIdentifier(parent.left.expression) ||
+            parent.left.expression.kind === ts.SyntaxKind.ThisKeyword)) ||
+        (ts.isElementAccessExpression(parent.left) &&
+          (ts.isIdentifier(parent.left.expression) ||
+            parent.left.expression.kind === ts.SyntaxKind.ThisKeyword) &&
+          isNonAbruptElement(parent.left.argumentExpression)))
+    )
   )
     return !isNonAbruptElement(parent.left);
   if (ts.isArrayLiteralExpression(parent))
@@ -968,7 +981,8 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
         !isWithin(node, parent.expression)) ||
       (ts.isTryStatement(parent) &&
         ((parent.catchClause &&
-          (isWithin(node, parent.tryBlock) || isWithin(node, parent.catchClause))) ||
+          (isWithin(node, parent.catchClause) ||
+            (isWithin(node, parent.tryBlock) && !isRethrowingCatch(parent.catchClause.block)))) ||
           (parent.finallyBlock &&
             !isWithin(node, parent.finallyBlock) &&
             hasAbruptCompletion(parent.finallyBlock, false)))) ||
@@ -1043,6 +1057,22 @@ function isDefinitelyAbrupt(statement: ts.Statement): boolean {
       isDefinitelyAbrupt(statement.elseStatement)
     );
   return false;
+}
+
+function isRethrowingCatch(block: ts.Block): boolean {
+  const last = block.statements.at(-1);
+  return (
+    !!last &&
+    block.statements.slice(0, -1).every(isNonAbruptStatement) &&
+    (ts.isThrowStatement(last) ||
+      (ts.isBlock(last) && isRethrowingCatch(last)) ||
+      (ts.isIfStatement(last) &&
+        !!last.elseStatement &&
+        ts.isBlock(last.thenStatement) &&
+        ts.isBlock(last.elseStatement) &&
+        isRethrowingCatch(last.thenStatement) &&
+        isRethrowingCatch(last.elseStatement)))
+  );
 }
 
 function literalTruthiness(node: ts.Expression): boolean | undefined {

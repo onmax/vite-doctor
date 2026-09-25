@@ -198,6 +198,14 @@ test("selects a non-script export target without scanning later fallbacks", () =
   expect(result.missing).toEqual([]);
 });
 
+test("does not traverse export conditions after default", () => {
+  const result = inventory(
+    { exports: { ".": { default: "./safe.js", node: "./node.js" } } },
+    { "safe.js": 'import "safe-peer";', "node.js": 'import "unreachable-peer";' },
+  )!;
+  expect(result.references.map((reference) => reference.packageName)).toEqual(["safe-peer"]);
+});
+
 test("extracts require.resolve, JSDoc imports, parenthesized calls, and lexical require scopes", () => {
   const result = inventory(
     { main: "index.js" },
@@ -498,6 +506,17 @@ test.each(["%2e%2e", "%2F", "%zz"])(
   },
 );
 
+test("rejects encoded wildcard captures embedded in target segments", () => {
+  const result = inventory(
+    { name: "fixture", exports: { ".": "./index.js", "./*": "./dist/prefix*suffix.js" } },
+    {
+      "index.js": 'import "fixture/%2e%2e";',
+      "dist/prefix%2e%2esuffix.js": 'import "peer";',
+    },
+  )!;
+  expect(result.references).toEqual([]);
+});
+
 test("rejects encoded invalid package-import targets", () => {
   const result = inventory(
     { main: "index.js", imports: { "#adapter": "./dist/%2e%2e/adapter.js" } },
@@ -519,6 +538,15 @@ test.each([".js", ".json", ".node"])(
     expect(result.missing).toEqual([]);
   },
 );
+
+test("falls back to root index when exports is null", () => {
+  const result = inventory(
+    { main: "missing.js", exports: null },
+    { "index.js": 'require("peer");' },
+  )!;
+  expect(result.references).toMatchObject([{ packageName: "peer", required: true }]);
+  expect(result.missing).toEqual([]);
+});
 
 test.each([
   ['import "#adapter";', { import: "./adapter.js", default: "peer" }],
