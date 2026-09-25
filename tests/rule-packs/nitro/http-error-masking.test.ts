@@ -53,6 +53,21 @@ for (const [name, body, expected] of [
     1,
   ],
   [
+    "retains the original base after reassigning its binding",
+    "let Base = class { constructor() { throw createError({ statusCode: 404 }) } }; class Derived extends Base {}; Base = class {}; try { new Derived() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "does not follow a base assigned after the class definition",
+    "let Base = class {}; class Derived extends Base {}; Base = class { constructor() { throw createError({ statusCode: 404 }) } }; try { new Derived() } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "captures the base selected on each definition path",
+    "let Base = class {}; let Derived; if (flag) Base = class { constructor() { throw createError({ statusCode: 404 }) } }; Derived = class extends Base {}; Base = class {}; try { new Derived() } catch { throw new Error() }",
+    1,
+  ],
+  [
     "respects ordered Object.assign status setters",
     "try { throw createError({ statusCode: 404 }) } catch (error) { Object.assign(error, { statusCode: 500, status: 404 }); throw error }",
     0,

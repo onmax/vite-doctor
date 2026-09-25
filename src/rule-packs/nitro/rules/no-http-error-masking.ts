@@ -112,6 +112,7 @@ interface Path {
   conditions: ReadonlyMap<string, boolean>;
   bindings?: Bindings;
   functions?: ReadonlyMap<AnyNode, AnyNode>;
+  superClasses?: ReadonlyMap<AnyNode, AnyNode>;
   objects?: ReadonlyMap<AnyNode, AnyNode>;
   promises?: ReadonlyMap<AnyNode, Value>;
   calls?: readonly AnyNode[];
@@ -574,6 +575,14 @@ function evaluateOutcomes(
       const uninitialized = new Set(current.uninitialized);
       if (node.id) uninitialized.delete(node.id);
       const functions = new Map(current.functions);
+      const superClasses = new Map(current.superClasses);
+      if (node.superClass) {
+        const base = unwrapExpression(node.superClass);
+        const resolved =
+          base?.type === "Identifier" ? current.functions?.get(current.resolveBinding(base)) : base;
+        if (resolved?.type === "ClassDeclaration" || resolved?.type === "ClassExpression")
+          superClasses.set(node, resolved);
+      }
       if (node.type === "ClassDeclaration" && node.id)
         functions.set(
           current.resolveBinding({ name: node.id.name } as AnyNode, node.__doctorParent) ??
@@ -581,7 +590,7 @@ function evaluateOutcomes(
             node.id,
           node,
         );
-      return { ...current, uninitialized, functions, value: undefined };
+      return { ...current, uninitialized, functions, superClasses, value: undefined };
     });
   }
   if (node.type === "UpdateExpression") {
@@ -1179,9 +1188,7 @@ function evaluateOutcomes(
       (member: AnyNode) => member.kind === "constructor" && !member.static,
     )?.value;
     if (!constructor && callee.superClass) {
-      const base = unwrapExpression(callee.superClass);
-      const baseClass =
-        base?.type === "Identifier" ? path.functions?.get(path.resolveBinding(base)) : base;
+      const baseClass = path.superClasses?.get(callee);
       if (baseClass?.type === "ClassDeclaration" || baseClass?.type === "ClassExpression")
         return outcomes(
           { ...call, callee: baseClass } as AnyNode,
