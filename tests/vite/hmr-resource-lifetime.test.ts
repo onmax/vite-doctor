@@ -4,6 +4,41 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "chronological timers preserve intermediate callback state",
+    "let stage = 0; setTimeout(() => { if (stage === 2) setInterval(refresh) }, 30); setTimeout(() => { if (stage === 1) stage = 2 }, 20); setTimeout(() => { stage = 1 }, 10); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "resolver retained by listener settles a pending promise",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); ready.then(() => setInterval(refresh)); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "third listener firing creates an undisposed timer",
+    "let stage = 0; const handler = () => { if (stage === 0) stage = 1; else if (stage === 1) stage = 2; else setInterval(refresh) }; addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "pending fetch fulfillment cannot guarantee late cleanup",
+    "const timer = setInterval(refresh); fetch('/data').then(() => clearInterval(timer)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "listener capture accessor creates a resource",
+    "const options = { get capture() { setInterval(refresh); return false } }; const handler = () => {}; addEventListener('click', handler, options); import.meta.hot.dispose(() => removeEventListener('click', handler, options))",
+    true,
+  ],
+  [
+    "derived constructor reaches work before an unmodeled super",
+    "const fail = () => { throw Error() }; class Worker extends null { first = fail(); constructor() { setInterval(refresh); return {} } }; new Worker(); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "Set iteration skips only harmless added members at its bound",
+    `const sentinel = {}; const timer = setInterval(refresh); const values = new Set([timer, ${Array.from({ length: 2047 }, () => "{}").join(", ")}]); import.meta.hot.dispose(() => values.forEach(value => { clearInterval(value); values.add(sentinel) }))`,
+    false,
+  ],
+  [
     "Set iteration visits members added by the callback",
     "const timers = new Set([setInterval(refresh)]); let added = false; import.meta.hot.dispose(() => timers.forEach(timer => { if (!added) { added = true; timers.add(setInterval(refresh)) } clearInterval(timer) }))",
     false,

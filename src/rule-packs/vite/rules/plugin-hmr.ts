@@ -158,6 +158,10 @@ function undisposedResource(program: AnyNode): string | null {
   const microtasks: { callback: AnyNode; environment: Map<AnyNode, AnyNode> }[] = [];
   const subscriptions: { callback: AnyNode; environment: Map<AnyNode, AnyNode> }[] = [];
   const promiseSettlers = new Map<AnyNode, (value: AnyNode) => void>();
+  const pendingPromiseReactions = new Map<
+    AnyNode,
+    { fulfilled?: AnyNode; rejected?: AnyNode; environment: Map<AnyNode, AnyNode> }[]
+  >();
   const pendingTimeouts: {
     timeout: AnyNode;
     callback: AnyNode;
@@ -322,19 +326,6 @@ function undisposedResource(program: AnyNode): string | null {
   const receiverIdentity = (node: AnyNode, environment: Map<AnyNode, AnyNode>): AnyNode => {
     node = unwrapResourceExpression(node);
     return identity(node, environment);
-  };
-  const capture = (node: AnyNode, environment: Map<AnyNode, AnyNode>): unknown => {
-    node = identity(node, environment);
-    if (!node) return false;
-    if (node.type === "ObjectExpression") {
-      if (properties.get(node)?.has("capture"))
-        return capture(properties.get(node)!.get("capture"), environment);
-      const property = node.properties.find(
-        (item: AnyNode) => (item.key?.name ?? item.key?.value) === "capture",
-      );
-      return property ? capture(property.value, environment) : false;
-    }
-    return node.type === "Literal" ? Boolean(node.value) : node;
   };
   function bindResource(
     pattern: AnyNode,
@@ -1002,6 +993,15 @@ function undisposedResource(program: AnyNode): string | null {
               ? node.arguments[0]
               : undefined;
         const finallyHandler = method === "finally" ? node.arguments[0] : undefined;
+        if (!previous.normal && !previous.abrupt) {
+          const reactions = pendingPromiseReactions.get(promise) ?? [];
+          reactions.push({
+            fulfilled: fulfilledHandler ?? finallyHandler,
+            rejected: rejectedHandler ?? finallyHandler,
+            environment,
+          });
+          pendingPromiseReactions.set(promise, reactions);
+        }
         if (pendingFetchPromises.has(promise)) {
           for (const callback of [
             previous.normal ? fulfilledHandler : undefined,
@@ -1059,7 +1059,7 @@ function undisposedResource(program: AnyNode): string | null {
         if (settled.normal) promises.set(result, settled.value);
         promiseCompletions.set(result, settled);
         returned.set(node, result);
-        return settled.normal || settled.abrupt;
+        return (!previous.normal && !previous.abrupt) || settled.normal || settled.abrupt;
       }
       if (
         method === "from" &&
@@ -1100,9 +1100,47 @@ function undisposedResource(program: AnyNode): string | null {
             ? eventValue.quasis[0].value.cooked
             : (eventValue?.value ?? eventValue);
         const handler = receiverIdentity(node.arguments[1], environment);
-        const options = capture(node.arguments[2], environment);
+        const listenerOptions = identity(node.arguments[2], environment);
+        const captureDescriptor = effectiveProperties(listenerOptions, environment).get("capture");
+        const captureCompletion =
+          captureDescriptor?.accessor &&
+          captureDescriptor.property.kind === "get" &&
+          !properties.get(listenerOptions)?.has("capture")
+            ? inspect(
+                captureDescriptor.property.value,
+                [],
+                environment,
+                module,
+                captureDescriptor.receiver,
+              )
+            : undefined;
+        if (captureCompletion?.abrupt) {
+          abrupt = true;
+          exits.push(new Set(cleaned));
+          thrownExits.add(exits[exits.length - 1]);
+          throwStates.set(exits[exits.length - 1], snapshot());
+        }
+        if (captureCompletion && !captureCompletion.normal) return false;
+        const captureValue = !listenerOptions
+          ? undefined
+          : listenerOptions.type !== "ObjectExpression"
+            ? listenerOptions
+            : captureCompletion
+              ? captureCompletion.value
+              : captureDescriptor || properties.get(listenerOptions)?.has("capture")
+                ? identity(
+                    {
+                      type: "MemberExpression",
+                      object: listenerOptions,
+                      property: { type: "Identifier", name: "capture" },
+                      computed: false,
+                    },
+                    environment,
+                  )
+                : undefined;
+        const options =
+          captureValue?.type === "Literal" ? Boolean(captureValue.value) : (captureValue ?? false);
         if (method === "addEventListener") {
-          const listenerOptions = identity(node.arguments[2], environment);
           const descriptor = effectiveProperties(listenerOptions, environment).get("once");
           const onceCompletion =
             descriptor?.accessor &&
@@ -1273,7 +1311,11 @@ function undisposedResource(program: AnyNode): string | null {
           setIterations.set(array, active);
           for (let position = 0; position < iteration.length; position++) {
             if (position >= iterationLimit) {
-              truncatedSetIteration = true;
+              truncatedSetIteration ||= iteration
+                .slice(position)
+                .some((value) =>
+                  resources.some((resource) => resource.value === value && !cleaned.has(value)),
+                );
               break;
             }
             const element = iteration[position];
@@ -2010,16 +2052,28 @@ function undisposedResource(program: AnyNode): string | null {
               abrupt: completion.abrupt || adopted.abrupt,
               value: adopted.value,
             };
+            promiseCompletions.set(promise, completion);
+            if (completion.normal) promises.set(promise, completion.value);
+            for (const reaction of pendingPromiseReactions.get(promise) ?? []) {
+              if (reaction.fulfilled)
+                microtasks.push({
+                  callback: reaction.fulfilled,
+                  environment: reaction.environment,
+                });
+            }
           });
           promiseSettlers.set(reject, (value) => {
             if (alreadySettled()) return;
             settledPaths.push(new Map(currentPath));
             completion = { ...completion, abrupt: true, value };
+            promiseCompletions.set(promise, completion);
+            for (const reaction of pendingPromiseReactions.get(promise) ?? []) {
+              if (reaction.rejected)
+                microtasks.push({ callback: reaction.rejected, environment: reaction.environment });
+            }
           });
           const executor = inspect(node.arguments[0], [resolve, reject], environment, module);
           if (executor.abrupt && !alreadySettled()) completion.abrupt = true;
-          promiseSettlers.delete(resolve);
-          promiseSettlers.delete(reject);
           promiseCompletions.set(promise, completion);
           if (completion.normal) promises.set(promise, completion.value);
           returned.set(node, promise);
@@ -2089,7 +2143,9 @@ function undisposedResource(program: AnyNode): string | null {
             const builtInResource =
               !constructableBase && ["WebSocket", "EventSource"].includes(base);
             const initializeBase = (baseArgs: AnyNode[]): Completion => {
-              const completion = construct(base, baseArgs, instance);
+              const completion = constructableBase
+                ? construct(base, baseArgs, instance)
+                : { normal: true, abrupt: false };
               if (!completion.normal) return completion;
               if (builtInResource) {
                 resourcePaths.set(instance, new Map(currentPath));
@@ -2109,7 +2165,7 @@ function undisposedResource(program: AnyNode): string | null {
                 ? target
                 : undefined);
             let completion: Completion = { normal: true, abrupt: false };
-            if (constructableBase || builtInResource) {
+            if (derived) {
               if (constructor) superConstructors.set(instance, initializeBase);
               else completion = initializeBase(args);
             } else completion = initialize();
@@ -2682,6 +2738,7 @@ function undisposedResource(program: AnyNode): string | null {
   };
   const disposalStates = [captureDisposalState()];
   const beforeListeners = captureDisposalState();
+  let truncatedListenerOrders = false;
   const fireListener = (listener: Listener) => {
     if (cleaned.has(listener.value)) return;
     const parentPath = currentPath;
@@ -2716,22 +2773,33 @@ function undisposedResource(program: AnyNode): string | null {
         ? listener.handler
         : handler;
     const receiver = callback === handler ? listener.handler : listener.receiver;
-    timerSimulationDepth = 1;
-    inspect(callback, [event], values, false, receiver);
-    timerSimulationDepth = 0;
-    drainMicrotasks();
-    disposalStates.push(captureDisposalState());
-    if (!listener.once && !cleaned.has(listener.value)) {
+    for (let firing = 0; firing < (listener.once ? 1 : 8); firing++) {
+      if (cleaned.has(listener.value)) break;
+      const beforeFiring = captureDisposalState();
       timerSimulationDepth = 1;
       inspect(callback, [event], values, false, receiver);
       timerSimulationDepth = 0;
       drainMicrotasks();
-      disposalStates.push(captureDisposalState());
+      const afterFiring = captureDisposalState();
+      disposalStates.push(afterFiring);
+      if (
+        beforeFiring.resources.length === afterFiring.resources.length &&
+        beforeFiring.cleaned.size === afterFiring.cleaned.size &&
+        beforeFiring.values.size === afterFiring.values.size &&
+        [...beforeFiring.values].every(([key, value]) => afterFiring.values.get(key) === value) &&
+        [...beforeFiring.cleaned].every((value) => afterFiring.cleaned.has(value))
+      )
+        break;
+      if (
+        firing === 7 &&
+        !cleaned.has(listener.value) &&
+        beforeFiring.resources.length === afterFiring.resources.length
+      )
+        truncatedListenerOrders = true;
     }
     currentPath = parentPath;
   };
   let listenerOrderCount = 0;
-  let truncatedListenerOrders = false;
   const fireOrders = (remaining: Listener[]) => {
     if (listenerOrderCount++ >= 2048) {
       truncatedListenerOrders = true;
@@ -2765,27 +2833,26 @@ function undisposedResource(program: AnyNode): string | null {
     }
   };
   fireSubscriptions(beforeListeners, 0);
+  let timerOrderCount = 0;
+  let truncatedTimerOrders = false;
   for (const listenerState of disposalStates.slice()) {
     restoreDisposalState(listenerState);
-    const beforeTimeouts = captureDisposalState();
-    for (const [
-      index,
-      { timeout, callback, args, environment, delay },
-    ] of pendingTimeouts.entries()) {
-      if (!resources.some((resource) => resource.value === timeout)) continue;
-      const sequentialState = captureDisposalState();
-      if (
-        index > 0 &&
-        pendingTimeouts
-          .slice(0, index)
-          .some(
-            (earlier) =>
-              delay?.type !== "Literal" ||
-              earlier.delay?.type !== "Literal" ||
-              Number(delay.value) < Number(earlier.delay.value),
-          )
-      ) {
-        restoreDisposalState(beforeTimeouts);
+    const fireTimeouts = (remaining: typeof pendingTimeouts) => {
+      if (timerOrderCount++ >= 2048) {
+        truncatedTimerOrders = true;
+        return;
+      }
+      if (!remaining.length) return;
+      const before = captureDisposalState();
+      const knownDelays = remaining.every(
+        ({ delay }) => delay?.type === "Literal" && Number.isFinite(Number(delay.value)),
+      );
+      const earliest = knownDelays
+        ? Math.min(...remaining.map(({ delay }) => Number(delay.value)))
+        : undefined;
+      for (const [index, { timeout, callback, args, environment, delay }] of remaining.entries()) {
+        if (knownDelays && Number(delay.value) !== earliest) continue;
+        restoreDisposalState(before);
         if (resources.some((resource) => resource.value === timeout) && !cleaned.has(timeout)) {
           timerSimulationDepth = 1;
           inspect(callback, args, environment, false);
@@ -2794,26 +2861,20 @@ function undisposedResource(program: AnyNode): string | null {
           if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
             cleaned.add(timeout);
           disposalStates.push(captureDisposalState());
+          if (
+            resources.find((resource) => resource.value === timeout)?.kind === "interval" &&
+            !cleaned.has(timeout)
+          ) {
+            inspect(callback, args, environment, false);
+            drainMicrotasks();
+            disposalStates.push(captureDisposalState());
+          }
         }
-        restoreDisposalState(sequentialState);
+        fireTimeouts(remaining.filter((_, position) => position !== index));
       }
-      if (cleaned.has(timeout)) continue;
-      timerSimulationDepth = 1;
-      inspect(callback, args, environment, false);
-      timerSimulationDepth = 0;
-      drainMicrotasks();
-      if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
-        cleaned.add(timeout);
-      disposalStates.push(captureDisposalState());
-      if (
-        resources.find((resource) => resource.value === timeout)?.kind === "interval" &&
-        !cleaned.has(timeout)
-      ) {
-        inspect(callback, args, environment, false);
-        drainMicrotasks();
-        disposalStates.push(captureDisposalState());
-      }
-    }
+      restoreDisposalState(before);
+    };
+    fireTimeouts(pendingTimeouts.slice());
   }
   let disposalLeak: string | undefined;
   for (const state of disposalStates) {
@@ -2858,11 +2919,13 @@ function undisposedResource(program: AnyNode): string | null {
         .slice(resourceStart)
         .find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))?.kind;
       for (const { callback, args, environment } of lateReactions) {
+        const beforeReactionState = captureDisposalState();
         const beforeReaction = resources.length;
         inspect(callback, args, environment);
         disposalLeak ??= resources
           .slice(beforeReaction)
           .find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))?.kind;
+        restoreDisposalState(beforeReactionState);
       }
       resources.splice(resourceStart);
       for (const resource of resources.slice(0, state.resourceCount)) {
@@ -2884,7 +2947,7 @@ function undisposedResource(program: AnyNode): string | null {
           repeated.has(resource.value) || outcomes.some((outcome) => !outcome.has(resource.value)),
       )?.kind;
   }
-  if (!disposalLeak && (truncatedListenerOrders || truncatedSetIteration)) {
+  if (!disposalLeak && (truncatedListenerOrders || truncatedSetIteration || truncatedTimerOrders)) {
     const seen = new Set<object>();
     const mayCreateResource = (node: AnyNode): boolean => {
       if (!node || typeof node !== "object" || seen.has(node)) return false;
