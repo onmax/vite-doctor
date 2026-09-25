@@ -241,83 +241,88 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
               continue;
             }
             const sources = [...middleware, ...serverMiddleware, ...imports.sources];
-            const candidate: AuthorizationReviewCandidate = {
-              handler,
-              sources,
-              handlerRoutes: resolvedHandlers
-                ?.filter(
-                  (entry) =>
-                    !entry.middleware && resolve(root, entry.file) === resolve(root, handler.path),
-                )
-                .map(({ route, method }) => ({ route, method })),
-              serverMiddlewareRoutes: resolvedHandlers
-                ?.filter((entry) => entry.middleware)
-                .map(({ file, route, method }) => ({
-                  path: relative(root, resolve(root, file)).replaceAll("\\", "/"),
-                  route,
-                  method,
-                })),
-            };
-            let review: AuthorizationReviewResult;
-            try {
-              review = parseReviewResult(await reviewer(candidate));
-            } catch {
-              review = {
-                status: "unknown",
-                reason: `Authorization review failed for ${handler.path}; the handler was not reviewed.`,
-                incomplete: true,
-                citations: [],
-              };
-            }
-            if (review.incomplete) {
-              ctx.project.evidenceGaps = [
-                ...(ctx.project.evidenceGaps ?? []),
-                {
-                  source: "vite-doctor/nuxt-authorization-review",
-                  message: review.reason,
-                  files: [handler.path],
-                },
-              ];
-              continue;
-            }
-            const citations = validCitations(candidate, review.citations);
-            const handlerCitation = citations.find((citation) => citation.path === handler.path);
-            if (
-              review.status !== "report" ||
-              !handlerCitation ||
-              !citations.some((citation) => citation.path !== handler.path)
-            )
-              continue;
-            const range = citationRange(handler.text, handlerCitation.line);
-            ctx.report(
-              diagnostics.NUXT0074({
-                why: `This auth-sensitive server route may rely on app route middleware for authorization. ${review.reason.trim().slice(0, 300)}`,
-                fix: "Verify its server-side guard, then enforce authorization in a server handler or server middleware.",
-              }),
-              {
-                ruleId,
-                severity: "warn",
-                category: "middleware",
-                file: resolve(root, handler.path),
-                range,
-                confidence: "heuristic-low",
-                related: citations
-                  .filter((citation) => citation.path !== handler.path)
-                  .map((citation) => ({
-                    file: resolve(root, citation.path),
-                    message: `Review evidence at line ${citation.line}`,
-                    range: citationRange(
-                      sources.find((source) => source.path === citation.path)!.text,
-                      citation.line,
-                    ),
+            const handlerRoutes = resolvedHandlers
+              ?.filter(
+                (entry) =>
+                  !entry.middleware &&
+                  resolve(root, entry.file) === resolve(root, handler.path) &&
+                  sensitivePath.test(entry.route ?? ""),
+              )
+              .map(({ route, method }) => ({ route, method }));
+            for (const handlerRoute of handlerRoutes ?? [undefined]) {
+              const candidate: AuthorizationReviewCandidate = {
+                handler,
+                sources,
+                handlerRoutes: handlerRoute ? [handlerRoute] : undefined,
+                serverMiddlewareRoutes: resolvedHandlers
+                  ?.filter((entry) => entry.middleware)
+                  .map(({ file, route, method }) => ({
+                    path: relative(root, resolve(root, file)).replaceAll("\\", "/"),
+                    route,
+                    method,
                   })),
-                evidence: citations.map((citation) => ({
-                  kind: "facts",
-                  file: resolve(root, citation.path),
-                  summary: `Model review cited ${citation.path}:${citation.line}.`,
-                })),
-              },
-            );
+              };
+              let review: AuthorizationReviewResult;
+              try {
+                review = parseReviewResult(await reviewer(candidate));
+              } catch {
+                review = {
+                  status: "unknown",
+                  reason: `Authorization review failed for ${handler.path}; the handler was not reviewed.`,
+                  incomplete: true,
+                  citations: [],
+                };
+              }
+              if (review.incomplete) {
+                ctx.project.evidenceGaps = [
+                  ...(ctx.project.evidenceGaps ?? []),
+                  {
+                    source: "vite-doctor/nuxt-authorization-review",
+                    message: review.reason,
+                    files: [handler.path],
+                  },
+                ];
+                continue;
+              }
+              const citations = validCitations(candidate, review.citations);
+              const handlerCitation = citations.find((citation) => citation.path === handler.path);
+              if (
+                review.status !== "report" ||
+                !handlerCitation ||
+                !citations.some((citation) => citation.path !== handler.path)
+              )
+                continue;
+              const range = citationRange(handler.text, handlerCitation.line);
+              ctx.report(
+                diagnostics.NUXT0074({
+                  why: `This auth-sensitive server route${handlerRoute?.route ? ` (${handlerRoute.route}${handlerRoute.method ? ` ${handlerRoute.method}` : ""})` : ""} may rely on app route middleware for authorization. ${review.reason.trim().slice(0, 300)}`,
+                  fix: "Verify its server-side guard, then enforce authorization in a server handler or server middleware.",
+                }),
+                {
+                  ruleId,
+                  severity: "warn",
+                  category: "middleware",
+                  file: resolve(root, handler.path),
+                  range,
+                  confidence: "heuristic-low",
+                  related: citations
+                    .filter((citation) => citation.path !== handler.path)
+                    .map((citation) => ({
+                      file: resolve(root, citation.path),
+                      message: `Review evidence at line ${citation.line}`,
+                      range: citationRange(
+                        sources.find((source) => source.path === citation.path)!.text,
+                        citation.line,
+                      ),
+                    })),
+                  evidence: citations.map((citation) => ({
+                    kind: "facts",
+                    file: resolve(root, citation.path),
+                    summary: `Model review cited ${citation.path}:${citation.line}.`,
+                  })),
+                },
+              );
+            }
           }
         },
       };

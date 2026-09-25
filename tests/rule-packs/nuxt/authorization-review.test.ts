@@ -252,7 +252,7 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
     },
     rules: extension.rulePacks![0]!.rules,
   });
-  expect(paths.sort()).toEqual(["server/handlers/entry.ts"]);
+  expect(paths.sort()).toEqual(["server/handlers/entry.ts", "server/handlers/entry.ts"]);
   expect(result.project.evidenceGaps).toContainEqual(
     expect.objectContaining({
       source: "vite-doctor/nuxt-authorization-review",
@@ -260,7 +260,48 @@ test("reviews registered sensitive handlers using middleware from a layer", asyn
     }),
   );
   expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+  expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(2);
+});
+
+test("reviews each sensitive registration independently when a handler has mixed guard coverage", async () => {
+  const reviewedRoutes: string[] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    const route = candidate.handlerRoutes?.[0]?.route ?? "";
+    reviewedRoutes.push(route);
+    return route === "/api/admin"
+      ? { status: "suppress", reason: "Server middleware guards this route", citations: [] }
+      : {
+          status: "report",
+          reason: "This route has no server guard",
+          citations: [
+            { path: candidate.handler.path, line: 1 },
+            { path: candidate.sources[0]!.path, line: 1 },
+          ],
+        };
+  });
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "server/handlers/entry.ts": "export default defineEventHandler(() => ({ private: true }))",
+      "server/guards/admin.ts": "export default defineEventHandler(requireUserSession)",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        appDir: "app",
+        resolvedServerHandlers: [
+          { file: "server/handlers/entry.ts", route: "/api/admin" },
+          { file: "server/handlers/entry.ts", route: "/api/account" },
+          { file: "server/guards/admin.ts", middleware: true, route: "/api/admin" },
+        ],
+      }),
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(reviewedRoutes).toEqual(["/api/admin", "/api/account"]);
   expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(1);
+  expect(result.diagnostics.find((item) => item.code === "NUXT0074")?.why).toContain(
+    "/api/account",
+  );
 });
 
 test.each(["界".repeat(40_000), "x".repeat(119_700), '"'.repeat(40_000)])(
