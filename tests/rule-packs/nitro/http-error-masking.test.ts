@@ -2,6 +2,20 @@ import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
 import { noHttpErrorMasking } from "../../../src/rule-packs/nitro/rules/no-http-error-masking.ts";
 
+test.each([
+  ["options.statusCode = 500", 0],
+  ["options.statusCode = 404", 1],
+])("replays module-level status writes: %s", async (mutation, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `const options = { statusCode: 404 }; ${mutation}; export default defineEventHandler(() => { try { throw createError(options) } catch { throw new Error() } })`,
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
+
 for (const [name, body, expected] of [
   [
     "reclassifies a thrown error after finally changes its status",
@@ -26,6 +40,46 @@ for (const [name, body, expected] of [
   [
     "tracks Object.assign mutations to caught errors",
     "try { throw createError({ statusCode: 404 }) } catch (error) { Object.assign(error, { statusCode: 500 }); throw error }",
+    1,
+  ],
+  [
+    "preserves returned errors through unrelated finalizer mutations",
+    "let other = createError({ statusCode: 404 }); try { throw createError({ statusCode: 401 }) } catch { return createError({ statusCode: 500 }) } finally { other.statusCode = 500 }",
+    0,
+  ],
+  [
+    "follows an implicit derived constructor",
+    "class Base { constructor() { throw createError({ statusCode: 404 }) } }; class Derived extends Base {}; try { new Derived() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "respects ordered Object.assign status setters",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { Object.assign(error, { statusCode: 500, status: 404 }); throw error }",
+    0,
+  ],
+  [
+    "invalidates unknown Object.assign status writes",
+    "try { throw createError({ statusCode: 404 }) } catch (error) { Object.assign(error, { statusCode: 500, status: unknown }); throw error }",
+    0,
+  ],
+  [
+    "stops on tracked nullish object destructuring",
+    "const source = null; try { const {} = source; throw createError({ statusCode: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "adopts a composite async return",
+    "async function missing() { return true ? Promise.reject(createError({ statusCode: 404 })) : null }; try { await missing() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "adopts an awaited promise chain",
+    "async function missing() { throw createError({ statusCode: 404 }) }; try { await missing().then() } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "awaits for-await iterator elements",
+    "try { for await (const value of [Promise.reject(createError({ statusCode: 404 }))]) {} } catch { throw new Error() }",
     1,
   ],
   ...["async ", ""].map((modifier) => [

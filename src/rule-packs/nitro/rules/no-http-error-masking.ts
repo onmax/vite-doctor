@@ -394,8 +394,7 @@ function evaluateOutcomes(
       node.argument,
       {
         ...normal,
-        adoptingAsync:
-          normal.asyncBody && unwrapExpression(node.argument)?.type === "CallExpression",
+        adoptingAsync: normal.asyncBody,
       },
       bindings,
       conditions,
@@ -812,7 +811,11 @@ function evaluateOutcomes(
             ? {
                 ...final,
                 outcome:
-                  current.value && "error" in current.value
+                  (typeof current.outcome === "number" ||
+                    current.outcome === "server-error" ||
+                    current.outcome === "throw") &&
+                  current.value &&
+                  "error" in current.value
                     ? (errorStatus(current.value.error, final) ?? current.outcome)
                     : current.outcome,
                 label: current.label,
@@ -966,7 +969,9 @@ function evaluateOutcomes(
           value:
             (property === "statusCode" || property === "status") && typeof status === "number"
               ? { literal: status }
-              : undefined,
+              : property === "then" && objectValue && "promise" in objectValue
+                ? objectValue
+                : undefined,
         };
       });
     });
@@ -1095,18 +1100,31 @@ function evaluateOutcomes(
         return evaluate(argument, current, evaluatedArguments, values);
       });
     }
-    return paths.flatMap(({ path: current, values, arguments: evaluatedArguments }) =>
-      current.outcome === "normal"
-        ? outcomes(
-            node,
-            { ...current, adoptingAsync: path.adoptingAsync },
-            bindings,
-            conditions,
-            values,
-            evaluatedArguments,
-          )
-        : [current],
-    );
+    return paths.flatMap(({ path: current, values, arguments: evaluatedArguments }) => {
+      if (current.outcome !== "normal") return [current];
+      if (
+        call.type === "CallExpression" &&
+        target?.type === "MemberExpression" &&
+        !call.arguments.length &&
+        (target.computed ? knownLiteral(target.property, current) : target.property.name) ===
+          "then" &&
+        current.value &&
+        "promise" in current.value
+      )
+        return [
+          path.adoptingAsync || assignment.type === "AwaitExpression"
+            ? { ...current, ...current.value.promise }
+            : current,
+        ];
+      return outcomes(
+        node,
+        { ...current, adoptingAsync: path.adoptingAsync },
+        bindings,
+        conditions,
+        values,
+        evaluatedArguments,
+      );
+    });
   }
   if (evaluatedArguments) call = { ...call, arguments: evaluatedArguments };
   let callee = unwrapExpression(call.callee);
@@ -1157,10 +1175,25 @@ function evaluateOutcomes(
   }
   if (callee?.type === "ClassDeclaration" || callee?.type === "ClassExpression") {
     if (call.type !== "NewExpression") return [{ ...normal, outcome: "throw" }];
-    callee = callee.body.body.find(
+    const constructor = callee.body.body.find(
       (member: AnyNode) => member.kind === "constructor" && !member.static,
     )?.value;
-    if (!callee) return [normal];
+    if (!constructor && callee.superClass) {
+      const base = unwrapExpression(callee.superClass);
+      const baseClass =
+        base?.type === "Identifier" ? path.functions?.get(path.resolveBinding(base)) : base;
+      if (baseClass?.type === "ClassDeclaration" || baseClass?.type === "ClassExpression")
+        return outcomes(
+          { ...call, callee: baseClass } as AnyNode,
+          normal,
+          bindings,
+          conditions,
+          argumentValues,
+          evaluatedArguments,
+        );
+    }
+    if (!constructor) return [normal];
+    callee = constructor;
   }
   if (
     call.type === "NewExpression" &&
@@ -1434,11 +1467,26 @@ function evaluateOutcomes(
               errors.set(error.id, "throw");
               continue;
             }
-            const statuses = optionStatuses(object, normal, new Set());
-            const status = statuses.has("statusCode")
-              ? statuses.get("statusCode")
-              : statuses.get("status");
-            if (status !== undefined) errors.set(error.id, status);
+            const applyWrites = (source: AnyNode, visited: Set<AnyNode>) => {
+              if (visited.has(source)) return;
+              visited.add(source);
+              for (const property of source.properties) {
+                if (property.type === "SpreadElement") {
+                  const spread = resolvedObject(property.argument, normal);
+                  if (spread) applyWrites(spread, visited);
+                  else errors.set(error.id, "throw");
+                  continue;
+                }
+                const key = property.computed
+                  ? knownLiteral(property.key, normal)
+                  : (property.key?.name ?? property.key?.value);
+                if (key === "statusCode" || key === "status")
+                  errors.set(error.id, numericStatus(property.value, normal) ?? "throw");
+                else if (property.computed && key === undefined) errors.set(error.id, "throw");
+              }
+              visited.delete(source);
+            };
+            applyWrites(object, new Set());
           }
           return [{ ...normal, errors, value: { error } }];
         }
@@ -1579,7 +1627,7 @@ function patternOutcomes(
   }
   const entries: [AnyNode, AnyNode, AnyNode?][] = [];
   if (pattern.type === "ObjectPattern") {
-    if (source?.type === "Literal" && source.value == null) return [{ ...path, outcome: "throw" }];
+    if (knownNullish(source, parameterSource ?? path)) return [{ ...path, outcome: "throw" }];
     for (const property of pattern.properties) {
       if (property.type === "RestElement") continue;
       const key = property.computed
@@ -1711,14 +1759,14 @@ function loopOutcomes(
                       ...node.left,
                       declarations: node.left.declarations.map((declaration: AnyNode) => ({
                         ...declaration,
-                        init: element,
+                        init: node.await ? { type: "AwaitExpression", argument: element } : element,
                       })),
                     }
                   : {
                       type: "AssignmentExpression",
                       operator: "=",
                       left: node.left,
-                      right: element,
+                      right: node.await ? { type: "AwaitExpression", argument: element } : element,
                     },
                 node.body,
               ],
@@ -2070,6 +2118,35 @@ function moduleBindings(
     containing = containing.__doctorParent;
   if (root.type !== "Program" || !containing) return { literals, objects };
   for (const statement of root.body.slice(0, root.body.indexOf(containing))) {
+    const expression = statement.type === "ExpressionStatement" ? statement.expression : undefined;
+    if (
+      expression?.type === "AssignmentExpression" &&
+      expression.left.type === "MemberExpression" &&
+      expression.left.object.type === "Identifier"
+    ) {
+      const binding = resolveBinding(expression.left.object);
+      const object = objects.get(binding);
+      const key = expression.left.computed
+        ? knownLiteral(expression.left.property, {
+            outcome: "normal",
+            budget: { remaining: 4096 },
+            conditions: new Map(),
+            resolveBinding,
+            literals,
+          })
+        : expression.left.property.name;
+      if (object && (key === "statusCode" || key === "status")) {
+        if (expression.operator === "=")
+          objects.set(binding, {
+            ...object,
+            properties: [
+              ...object.properties,
+              { type: "Property", key: { type: "Identifier", name: key }, value: expression.right },
+            ],
+          });
+        else objects.delete(binding);
+      } else if (object && key === undefined) objects.delete(binding);
+    }
     const declarationStatement =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
     if (
