@@ -1,3 +1,4 @@
+import { nitroRulePack } from "../../../src/rule-packs/nitro/index.js";
 import { typescriptRulePack } from "../../../src/rule-packs/typescript/index.js";
 import { nextTick, ref } from "vue";
 import { expect, test } from "vite-plus/test";
@@ -364,4 +365,12 @@ test("authorization review generates its Rule Catalog and Diagnostic Reference",
   expect(page).toContain(
     "pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules nuxt/review/api-authorization-coverage",
   );
+});
+
+test("documents every Nitro rule and the HTTP masking diagnostic", () => {
+  const ids = getRuleDocuments().map((rule) => rule.id);
+  for (const rule of nitroRulePack.rules) expect(ids).toContain(rule.meta.id);
+  expect(
+    getDiagnosticDocuments().find((diagnostic) => diagnostic.code === "NITRO0018")?.ruleId,
+  ).toBe("nitro/h3/no-http-error-masking");
 });

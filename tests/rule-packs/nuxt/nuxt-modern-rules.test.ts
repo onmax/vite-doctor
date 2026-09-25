@@ -4113,6 +4113,9 @@ test("provider catch-all accepts Nuxt's auto-imported eventHandler wrapper", asy
 test.each([
   "function eventHandler(callback) { return callback };",
   "import { eventHandler } from './unrelated';",
+  "if (true) { var eventHandler = callback => callback }",
+  "for (var eventHandler of []) {}",
+  "try { var eventHandler = callback => callback } catch {}",
 ])("provider catch-all does not trust an unrelated eventHandler binding: %s", async (binding) => {
   const result = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,
@@ -4486,7 +4489,7 @@ test.each([
     ]);
 });
 
-test("NUXT0037 ignores route middleware from stale layer inventory", async () => {
+test("NUXT0037 finds auto-registered layer middleware with a stale manifest", async () => {
   const result = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,
     framework: "nuxt",
@@ -4509,7 +4512,7 @@ test("NUXT0037 ignores route middleware from stale layer inventory", async () =>
       }),
     },
   });
-  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(0);
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
 });
 
 test("NUXT0037 keeps configured middleware when only server inventory is stale", async () => {
@@ -4538,6 +4541,35 @@ test("NUXT0037 discovers configured source and middleware directories without a 
       "nuxt.config.ts":
         "export default defineNuxtConfig({ srcDir: 'src', dir: { middleware: 'guards' } })",
       "src/guards/auth.ts": "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+});
+
+test("NUXT0037 discovers auto-registered layer handlers without a manifest", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "layers/admin/server/api/account.get.ts":
+        "export default defineEventHandler(() => ({ private: true }))",
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+});
+
+test("NUXT0037 ignores unrelated middleware options without a manifest", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts":
+        "export default defineNuxtConfig({ nitro: { handlers: [{ handler: './guard', middleware: true }] } })",
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
       "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
     },
   });

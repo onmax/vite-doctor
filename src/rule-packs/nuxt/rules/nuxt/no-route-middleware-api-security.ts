@@ -4,7 +4,10 @@ import { dirname, extname, join, relative, resolve } from "pathe";
 import { parseSync } from "oxc-parser";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
-import { isNuxtManifestConfigurationCurrent } from "../../../../core/internal/runtime-graph.js";
+import {
+  autoRegisteredNuxtLayers,
+  isNuxtManifestConfigurationCurrent,
+} from "../../../../core/internal/runtime-graph.js";
 
 export const noRouteMiddlewareApiSecurity = createRule({
   meta: {
@@ -47,7 +50,31 @@ export const noRouteMiddlewareApiSecurity = createRule({
         const rootMiddlewareDir = configurationCurrent
           ? undefined
           : resolve(rootAppDir, rootConfig!.middleware);
-        const layers = configurationCurrent ? nuxt.layers : [];
+        const layers = configurationCurrent
+          ? nuxt.layers
+          : autoRegisteredNuxtLayers(ctx.project.root).map((name) => {
+              const root = resolve(ctx.project.root, "layers", name);
+              const config = rootMiddlewareConfiguration(root);
+              return config === null
+                ? null
+                : {
+                    root,
+                    srcDir: resolve(root, config.srcDir),
+                    appMiddlewareDir: resolve(root, config.srcDir, config.middleware),
+                    priority: 0,
+                  };
+            });
+        if (layers.some((layer) => layer === null)) {
+          ctx.project.evidenceGaps = [
+            ...(ctx.project.evidenceGaps ?? []),
+            {
+              source: "vite-doctor/nuxt-middleware-api-security",
+              message: "Nuxt layer directories cannot be resolved without a Doctor manifest.",
+              files: [".nuxt/doctor.manifest.json"],
+            },
+          ];
+          return;
+        }
         for (const layer of [
           {
             root: ctx.project.root,
@@ -55,7 +82,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
             appMiddlewareDir: rootMiddlewareDir,
             priority: -1,
           },
-          ...layers,
+          ...layers.filter((layer) => layer !== null),
         ]) {
           const appDir =
             layer.srcDir ??
@@ -125,20 +152,37 @@ function rootMiddlewareConfiguration(root: string): { srcDir: string; middleware
   const config = ["ts", "js", "mjs", "cjs", "mts", "cts"]
     .map((extension) => join(root, `nuxt.config.${extension}`))
     .find(existsSync);
-  const text = config ? readFileSync(config, "utf8") : "";
-  const srcDir = text.match(/(?:["'`])?\bsrcDir\b(?:["'`])?\s*:\s*["'`]([^"'`]+)["'`]/)?.[1];
-  const middleware = text.match(
-    /(?:["'`])?\bmiddleware\b(?:["'`])?\s*:\s*["'`]([^"'`]+)["'`]/,
-  )?.[1];
+  const parsed = config ? parseSync(config, readFileSync(config, "utf8")) : undefined;
+  if (parsed?.errors.length) return null;
+  const exported: AnyNode = parsed?.program.body.find(
+    (statement: AnyNode) => statement.type === "ExportDefaultDeclaration",
+  );
+  const value = exported?.declaration;
+  const options = value?.type === "CallExpression" ? value.arguments[0] : value;
+  if (config && options?.type !== "ObjectExpression") return null;
+  const property = (object: AnyNode, name: string): AnyNode =>
+    object?.type === "ObjectExpression"
+      ? object.properties.find(
+          (entry: AnyNode) =>
+            entry.type === "Property" &&
+            !entry.computed &&
+            (entry.key.name ?? entry.key.value) === name,
+        )?.value
+      : undefined;
+  const srcDir = property(options, "srcDir");
+  const directory = property(options, "dir");
+  const middleware = property(directory, "middleware");
   if (
-    /(?:["'`])?\bserverDir\b(?:["'`])?\s*:/.test(text) ||
-    (!srcDir && /(?:["'`])?\bsrcDir\b(?:["'`])?\s*:/.test(text)) ||
-    (!middleware && /(?:["'`])?\bmiddleware\b(?:["'`])?\s*:/.test(text))
+    property(options, "serverDir") ||
+    property(options, "extends") ||
+    (srcDir && (srcDir.type !== "Literal" || typeof srcDir.value !== "string")) ||
+    (directory && directory.type !== "ObjectExpression") ||
+    (middleware && (middleware.type !== "Literal" || typeof middleware.value !== "string"))
   )
     return null;
   return {
-    srcDir: srcDir ?? (existsSync(join(root, "app")) ? "app" : "."),
-    middleware: middleware ?? "middleware",
+    srcDir: srcDir?.value ?? (existsSync(join(root, "app")) ? "app" : "."),
+    middleware: middleware?.value ?? "middleware",
   };
 }
 
@@ -148,8 +192,14 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
   const resolvedHandlers = manifest?.isCurrent ? manifest.resolvedServerHandlers : undefined;
   const layerFiles = { api: [] as string[], routes: [] as string[], middleware: [] as string[] };
   const layerPaths = new Map<string, string>();
-  if (!resolvedHandlers && configurationCurrent) {
-    for (const layer of ctx.project.nuxt?.layers ?? []) {
+  if (!resolvedHandlers) {
+    const layers = configurationCurrent
+      ? (ctx.project.nuxt?.layers ?? [])
+      : autoRegisteredNuxtLayers(ctx.project.root).map((name) => ({
+          root: resolve(ctx.project.root, "layers", name),
+          serverDir: undefined,
+        }));
+    for (const layer of layers) {
       const serverDir = resolve(ctx.project.root, layer.serverDir ?? join(layer.root, "server"));
       for (const category of ["api", "routes", "middleware"] as const) {
         const directory = join(serverDir, category);
@@ -328,6 +378,29 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
 }
 
 function hasFrameworkEventHandlerBinding(program: AnyNode, name: string): boolean {
+  const hasHoistedBinding = (node: AnyNode): boolean => {
+    if (!node || typeof node !== "object") return false;
+    if (
+      [
+        "FunctionDeclaration",
+        "FunctionExpression",
+        "ArrowFunctionExpression",
+        "ClassDeclaration",
+        "ClassExpression",
+      ].includes(node.type)
+    )
+      return false;
+    if (
+      node.type === "VariableDeclaration" &&
+      node.kind === "var" &&
+      node.declarations.some((item: AnyNode) => bindsName(item.id, name))
+    )
+      return true;
+    return Object.values(node).some((value) =>
+      Array.isArray(value) ? value.some(hasHoistedBinding) : hasHoistedBinding(value),
+    );
+  };
+  if (hasHoistedBinding(program)) return false;
   return program.body.every((statement: AnyNode) => {
     if (statement.type === "ImportDeclaration")
       return statement.specifiers.every(
