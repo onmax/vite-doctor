@@ -37,7 +37,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
             {
               source: "vite-doctor/nuxt-middleware-api-security",
               message:
-                "Nuxt middleware directories cannot be resolved from changed configuration. Regenerate the Doctor manifest before reviewing server authorization.",
+                "Nuxt middleware or server directories cannot be resolved from changed configuration. Regenerate the Doctor manifest before reviewing server authorization.",
               files: [".nuxt/doctor.manifest.json"],
             },
           ];
@@ -131,6 +131,7 @@ function rootMiddlewareConfiguration(root: string): { srcDir: string; middleware
     /(?:["'`])?\bmiddleware\b(?:["'`])?\s*:\s*["'`]([^"'`]+)["'`]/,
   )?.[1];
   if (
+    /(?:["'`])?\bserverDir\b(?:["'`])?\s*:/.test(text) ||
     (!srcDir && /(?:["'`])?\bsrcDir\b(?:["'`])?\s*:/.test(text)) ||
     (!middleware && /(?:["'`])?\bmiddleware\b(?:["'`])?\s*:/.test(text))
   )
@@ -266,7 +267,9 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
     if (
       factory?.type !== "CallExpression" ||
       factory.callee.type !== "Identifier" ||
-      !["defineEventHandler", "eventHandler"].includes(factory.callee.name)
+      !["defineEventHandler", "eventHandler"].includes(factory.callee.name) ||
+      (factory.callee.name === "eventHandler" &&
+        !hasH3EventHandlerBinding(parsed.program, factory.callee.name))
     )
       return false;
     const callback = factory.arguments[0];
@@ -322,6 +325,37 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
   } catch {
     return false;
   }
+}
+
+function hasH3EventHandlerBinding(program: AnyNode, name: string): boolean {
+  return (
+    program.body.some(
+      (statement: AnyNode) =>
+        statement.type === "ImportDeclaration" &&
+        ["h3", "#imports"].includes(statement.source.value) &&
+        statement.specifiers.some(
+          (specifier: AnyNode) =>
+            specifier.type === "ImportSpecifier" &&
+            specifier.local.name === name &&
+            specifier.imported.name === "eventHandler",
+        ),
+    ) &&
+    program.body.every((statement: AnyNode) => {
+      if (statement.type === "ImportDeclaration")
+        return statement.specifiers.every(
+          (specifier: AnyNode) =>
+            specifier.local.name !== name ||
+            (specifier.type === "ImportSpecifier" &&
+              specifier.imported.name === "eventHandler" &&
+              ["h3", "#imports"].includes(statement.source.value)),
+        );
+      const declaration =
+        statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+      if (declaration?.type === "VariableDeclaration")
+        return declaration.declarations.every((item: AnyNode) => !bindsName(item.id, name));
+      return !bindsName(declaration?.id, name);
+    })
+  );
 }
 
 function bindsName(pattern: AnyNode, name: string): boolean {

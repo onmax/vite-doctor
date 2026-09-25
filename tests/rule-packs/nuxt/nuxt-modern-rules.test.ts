@@ -4095,6 +4095,24 @@ test("provider catch-all accepts the H3 eventHandler wrapper", async () => {
 });
 
 test.each([
+  "function eventHandler(callback) { return callback };",
+  "import { eventHandler } from './unrelated';",
+])("provider catch-all does not trust an unrelated eventHandler binding: %s", async (binding) => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/auth/[...all].ts": `${binding} import { auth } from '../../utils/auth'; export default eventHandler(event => auth.handler(toWebRequest(event)))`,
+      "server/utils/auth.ts":
+        "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+});
+
+test.each([
   ...[
     "if (true) { var toWebRequest = () => new Request('https://example.com') }",
     "for (var toWebRequest of []) {}",
@@ -4619,6 +4637,29 @@ test("NUXT0037 records an evidence gap for nonliteral changed middleware configu
       "src/middleware/auth.ts":
         "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
       "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2000-01-01T00:00:00.000Z",
+        appDir: "app",
+      }),
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(0);
+  expect(
+    result.project.evidenceGaps?.some(
+      (gap) => gap.source === "vite-doctor/nuxt-middleware-api-security",
+    ),
+  ).toBe(true);
+});
+
+test("NUXT0037 requires fresh evidence when changed config moves the server directory", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts": "export default defineNuxtConfig({ serverDir: 'backend' })",
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "backend/api/account.ts": "export default defineEventHandler(() => ({ private: true }))",
       ".nuxt/doctor.manifest.json": JSON.stringify({
         generatedAt: "2000-01-01T00:00:00.000Z",
         appDir: "app",

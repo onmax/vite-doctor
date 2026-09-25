@@ -356,4 +356,12 @@ test("authorization review generates its Rule Catalog and Diagnostic Reference",
   ).toBe(true);
   expect(getDiagnosticDocuments().some((diagnostic) => diagnostic.code === "NUXT0074")).toBe(true);
   expect(await diagnosticsCollectionSource.getKeys()).toContain("diagnostics/NUXT0074.md");
+  const rule = getRuleDocuments().find(
+    (item) => item.id === "nuxt/review/api-authorization-coverage",
+  )!;
+  const page = await rulesCollectionSource.getItem(rule.key);
+  expect(page).toContain("createNuxtAuthorizationReviewExtension");
+  expect(page).toContain(
+    "pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules nuxt/review/api-authorization-coverage",
+  );
 });
