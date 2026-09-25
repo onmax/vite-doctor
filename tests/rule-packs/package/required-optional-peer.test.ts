@@ -536,6 +536,42 @@ test.each(['(0, 1)[require("peer")];', '(!false)[require("peer")];'])(
 );
 
 test.each([
+  '(-{ valueOf: () => { throw 0; } })[require("peer")];',
+  '(~{ valueOf: () => { throw 0; } })[require("peer")];',
+  '`${(() => { throw 0; })()}${require("peer")}`;',
+  '`${{ toString: () => { throw 0; } }}${require("peer")}`;',
+])(
+  "does not require peers after abrupt coercions or template substitutions: %s",
+  async (source) => {
+    expect(await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source })).toEqual(
+      [],
+    );
+  },
+);
+
+test.each(['(-1)[require("peer")];', '(~1n)[require("peer")];', '`safe${require("peer")}`;'])(
+  "requires peers after non-abrupt coercions and template substitutions: %s",
+  async (source) => {
+    expect(
+      await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source }),
+    ).toMatchObject([{ code: "PKG0003" }]);
+  },
+);
+
+test("resolves package imports from the nearest package scope", async () => {
+  expect(
+    await diagnose(
+      { main: "dist/index.js", imports: { "#adapter": "./unused.js" }, ...optionalPeer },
+      {
+        "dist/package.json": JSON.stringify({ imports: { "#adapter": "./adapter.js" } }),
+        "dist/index.js": 'import "#adapter";',
+        "dist/adapter.js": 'import "peer";',
+      },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each([
   'declare var require: (name: string) => unknown; require("peer");',
   'declare const require: (name: string) => unknown; require("peer");',
   'declare function require(name: string): unknown; require("peer");',

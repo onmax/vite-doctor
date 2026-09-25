@@ -172,6 +172,22 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     return false;
   }
 
+  function packageScope(path: string): { directory: string; imports: PackageManifest["imports"] } {
+    for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
+      const scopedManifest = resolve(directory, "package.json");
+      if (existsSync(scopedManifest))
+        return {
+          directory,
+          imports:
+            directory === rootPath
+              ? manifest.imports
+              : parsePackageManifest(JSON.parse(readFileSync(scopedManifest, "utf8"))).imports,
+        };
+      if (directory === rootPath) break;
+    }
+    return { directory: rootPath, imports: manifest.imports };
+  }
+
   function commonjsFile(path: string): string | undefined {
     const suffixes = ["", ".js", ".json", ".node"];
     const findFile = (paths: string[]) =>
@@ -373,6 +389,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       ts.ScriptTarget.Latest,
       true,
     );
+    const scope = packageScope(current.path);
     for (const edge of importEdges(
       source,
       current.kind,
@@ -383,19 +400,19 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       const executionRequired = required && !edge.resolutionOnly;
       for (const { specifier, kind } of resolvePackageImport(
         edge.specifier,
-        manifest.imports,
+        scope.imports,
         edge.kind,
         edge.probe === "commonjs" ? "require" : "import",
         new Set(),
         undefined,
-        root,
+        scope.directory,
       )) {
         if (specifier.startsWith(".")) {
           enqueue(
             specifier,
             kind,
             executionRequired && kind === "runtime",
-            edge.specifier.startsWith("#") ? root : dirname(current.path),
+            edge.specifier.startsWith("#") ? scope.directory : dirname(current.path),
             edge.specifier.startsWith("#")
               ? false
               : edge.probe || kind === "types" || /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
@@ -737,11 +754,12 @@ function isNonAbruptElement(node: ts.Expression): boolean {
   if (ts.isPrefixUnaryExpression(node))
     return (
       (node.operator === ts.SyntaxKind.ExclamationToken ||
-        node.operator === ts.SyntaxKind.TildeToken ||
-        node.operator === ts.SyntaxKind.MinusToken ||
-        (node.operator === ts.SyntaxKind.PlusToken &&
+        ((node.operator === ts.SyntaxKind.TildeToken ||
+          node.operator === ts.SyntaxKind.MinusToken ||
+          node.operator === ts.SyntaxKind.PlusToken) &&
           (ts.isNumericLiteral(node.operand) ||
             ts.isStringLiteral(node.operand) ||
+            (node.operator !== ts.SyntaxKind.PlusToken && ts.isBigIntLiteral(node.operand)) ||
             node.operand.kind === ts.SyntaxKind.TrueKeyword ||
             node.operand.kind === ts.SyntaxKind.FalseKeyword ||
             node.operand.kind === ts.SyntaxKind.NullKeyword))) &&
@@ -801,6 +819,31 @@ function isValidClassHeritage(node: ts.Expression): boolean {
 }
 
 function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
+  if (ts.isTemplateExpression(parent)) {
+    const index = parent.templateSpans.findIndex((span) => isWithin(node, span.expression));
+    return (
+      index >= 0 &&
+      parent.templateSpans.slice(0, index).some((span) => {
+        let expression = span.expression;
+        while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+        return (
+          !isNonAbruptElement(expression) ||
+          !(
+            ts.isLiteralExpression(expression) ||
+            isUndefined(expression) ||
+            expression.kind === ts.SyntaxKind.TrueKeyword ||
+            expression.kind === ts.SyntaxKind.FalseKeyword ||
+            expression.kind === ts.SyntaxKind.NullKeyword ||
+            ts.isVoidExpression(expression) ||
+            ts.isTypeOfExpression(expression) ||
+            ts.isPrefixUnaryExpression(expression)
+          )
+        );
+      })
+    );
+  }
+  if (ts.isTaggedTemplateExpression(parent) && isWithin(node, parent.template))
+    return !isNonAbruptElement(parent.tag);
   if (ts.isElementAccessExpression(parent) && isWithin(node, parent.argumentExpression))
     return !isNonAbruptElement(parent.expression);
   if (
