@@ -72,6 +72,37 @@ export default { define: { VALUE: JSON.stringify(values) } }`,
 });
 
 test.each([
+  ["append()", true],
+  ["append(undefined)", true],
+  ["const undefined = 'public'; append(undefined)", false],
+])("applies defaulted helper arguments for %s", async (invocation, expected) => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const values = [];
+function append(value = process.env.PRIVATE_TOKEN) { values.push(value) }
+${invocation}; export default { define: { VALUE: JSON.stringify(values) } }`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.ruleId === noSecretDefine.meta.id)).toBe(expected);
+});
+
+test("replays separate nested helper calls without recursing forever", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const values = [];
+function append(value) { values.push(value) }
+function wrapper(again) { append('public'); append(process.env.PRIVATE_TOKEN); if (again) wrapper(false) }
+wrapper(true); export default { define: { VALUE: JSON.stringify(values) } }`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
+});
+
+test.each([
   ["safe", "PRIVATE_TOKEN", true],
   ["process.env.PRIVATE_TOKEN", "'safe'", false],
 ])(

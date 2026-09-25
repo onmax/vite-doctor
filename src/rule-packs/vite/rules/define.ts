@@ -480,7 +480,8 @@ function readAliasInitializers(source: string) {
             recordArrayMutation(argument, false, node, executionPosition, argumentsByBinding);
     }
   };
-  const executedFunctions = new Map<AnyNode, Set<number | undefined>>();
+  const executedFunctions = new Map<AnyNode, Set<string>>();
+  const executingFunctions = new Set<AnyNode>();
   let activeBindings: Map<number, AnyNode> | undefined;
   function calledFunction(node: AnyNode): AnyNode {
     if (
@@ -536,25 +537,43 @@ function readAliasInitializers(source: string) {
       propertyName(definition.node.imported) === "defineConfig"
     );
   }
-  function collectExecutedFunction(node?: AnyNode, position?: number, args: AnyNode[] = []) {
-    if (!node || executedFunctions.get(node)?.has(position)) return;
-    const positions = executedFunctions.get(node) ?? new Set<number | undefined>();
-    positions.add(position);
-    executedFunctions.set(node, positions);
-    if (position !== undefined) executionRanges.set(position, node.range);
+  function collectExecutedFunction(
+    node?: AnyNode,
+    position?: number,
+    args: AnyNode[] = [],
+    callSite = position,
+  ) {
+    if (!node || executingFunctions.has(node)) return;
+    const invocation = `${position}:${callSite}`;
+    if (executedFunctions.get(node)?.has(invocation)) return;
+    const invocations = executedFunctions.get(node) ?? new Set<string>();
+    invocations.add(invocation);
+    executedFunctions.set(node, invocations);
+    if (position !== undefined && !executionRanges.has(position))
+      executionRanges.set(position, node.range);
     const previous = activeBindings;
     activeBindings = new Map(previous);
     node.params?.forEach((parameter: AnyNode, index: number) => {
       const identifier = parameter.type === "AssignmentPattern" ? parameter.left : parameter;
-      if (identifier.type === "Identifier" && args[index])
-        activeBindings!.set(identifier.range[0], args[index]);
+      const argument = args[index];
+      const missing =
+        !argument ||
+        (argument.type === "Identifier" &&
+          argument.name === "undefined" &&
+          !references.get(argument.range[0])?.resolved) ||
+        (argument.type === "UnaryExpression" && argument.operator === "void");
+      const value = parameter.type === "AssignmentPattern" && missing ? parameter.right : argument;
+      if (identifier.type === "Identifier" && value)
+        activeBindings!.set(identifier.range[0], value);
     });
+    executingFunctions.add(node);
     collectMutations(
       node.body,
       position !== undefined && (position < node.range[0] || position > node.range[1])
         ? position
         : undefined,
     );
+    executingFunctions.delete(node);
     activeBindings = previous;
   }
   function collectMutations(node: AnyNode, executionPosition?: number) {
@@ -602,11 +621,14 @@ function readAliasInitializers(source: string) {
         calledFunction(node.callee),
         executionPosition ?? node.range[0],
         node.arguments,
+        node.range[0],
       );
       if (isConfigHelper(node.callee))
         collectExecutedFunction(
           calledFunction(node.arguments[0]),
           executionPosition ?? node.range[0],
+          [],
+          node.range[0],
         );
     }
     visitMutation(node, executionPosition, activeBindings);
