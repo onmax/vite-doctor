@@ -4062,6 +4062,22 @@ test.each([
   },
 );
 
+test("provider catch-all permits setup before terminal delegation", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/auth/[...all].ts":
+        "import { auth } from '../../utils/auth'; export default defineEventHandler(event => { setHeader(event, 'x-auth', 'yes'); return auth.handler(toWebRequest(event)) })",
+      "server/utils/auth.ts":
+        "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test.each([
   ...[
     "if (true) { var toWebRequest = () => new Request('https://example.com') }",
@@ -4271,6 +4287,17 @@ test.each([
   ["export { instance as auth } from './server'", "export const instance = betterAuth({})", 0],
   ["export { auth } from './server'", "export const auth = { handler: () => ({}) }", 1],
   ["export { auth } from './server'", "const auth = betterAuth({})", 1],
+  ["import { auth } from './server'; export { auth }", "export const auth = betterAuth({})", 0],
+  [
+    "import { instance as auth } from './server'; export { auth }",
+    "export const instance = betterAuth({})",
+    0,
+  ],
+  [
+    "import { auth } from './server'; export { auth }",
+    "export const auth = { handler: () => ({}) }",
+    1,
+  ],
   ["export { auth } from './auth'", "export { auth } from './index'", 1],
 ])("provider re-exports require exported provenance: %s", async (barrel, provider, count) => {
   const result = await runRuleFixture({
@@ -4516,6 +4543,26 @@ test("NUXT0037 finds new layer handlers when resolved server inventory is stale"
   expect(result.diagnostics[0]?.file).toContain("account.get.ts");
 });
 
+test("NUXT0037 finds new root handlers under a configured serverDir", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "backend/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: "2100-01-01T00:00:00.000Z",
+        layers: [{ root: ".", serverDir: "backend", priority: 0 }],
+        serverInventory: { backend: [] },
+        resolvedServerHandlers: [],
+      }),
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+  expect(result.diagnostics[0]?.file).toContain("account.get.ts");
+});
+
 test.each(["login.post.ts", "sign-in.post.ts", "signin.post.ts", "callback.get.ts"])(
   "NUXT0037 ignores public layer endpoint %s when resolved server inventory is stale",
   async (endpoint) => {
@@ -4646,7 +4693,7 @@ test("Nuxt captures cached wildcard overlaps and nested cache exclusions", async
   });
 });
 
-test("Nuxt expands cached routes using the most-specific wildcard handler", async () => {
+test("Nuxt expands cached routes using the first registered wildcard handler", async () => {
   await withFixture({}, {}, async (root) => {
     const hooks = new Map<string, (payload?: any) => unknown>();
     await nuxtDoctorModule({}, {
@@ -4670,7 +4717,7 @@ test("Nuxt expands cached routes using the most-specific wildcard handler", asyn
     expect(
       manifest.resolvedServerHandlers.find((handler: any) => handler.route === "/api/admin/account")
         ?.file,
-    ).toBe("custom/admin.ts");
+    ).toBe("custom/generic.ts");
   });
 });
 

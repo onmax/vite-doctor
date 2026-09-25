@@ -99,14 +99,13 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
           continue;
         const matching = evidence
           .resolvedServerHandlers!.map((handler, index) => ({ handler, index }))
-          .filter(
+          .find(
             ({ handler }) =>
               !handler.middleware &&
               handler.route &&
               wildcard.test(handler.route) &&
               path.startsWith(`${handler.route.replace(wildcard, "")}/`),
-          )
-          .sort((first, second) => second.handler.route!.length - first.handler.route!.length)[0];
+          );
         if (matching)
           evidence.resolvedServerHandlers!.splice(matching.index, 0, {
             ...matching.handler,

@@ -149,7 +149,6 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
   const layerPaths = new Map<string, string>();
   if (!resolvedHandlers && configurationCurrent) {
     for (const layer of ctx.project.nuxt?.layers ?? []) {
-      if (resolve(ctx.project.root, layer.root) === ctx.project.root) continue;
       const serverDir = resolve(ctx.project.root, layer.serverDir ?? join(layer.root, "server"));
       for (const category of ["api", "routes", "middleware"] as const) {
         const directory = join(serverDir, category);
@@ -277,8 +276,17 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
     if (event?.type !== "Identifier" || callback.params.length !== 1) return false;
     let body = callback.body;
     if (body.type === "BlockStatement") {
-      if (body.body.length !== 1 || body.body[0].type !== "ReturnStatement") return false;
-      body = body.body[0].argument;
+      if (
+        !body.body.length ||
+        !body.body
+          .slice(0, -1)
+          .every((statement: AnyNode) =>
+            ["ExpressionStatement", "VariableDeclaration"].includes(statement.type),
+          ) ||
+        body.body.at(-1)?.type !== "ReturnStatement"
+      )
+        return false;
+      body = body.body.at(-1).argument;
     }
     if (body?.type === "AwaitExpression") body = body.argument;
     return (
@@ -433,15 +441,33 @@ function isProviderBinding(
   if (visited.has(`${file}:${name}`)) return false;
   visited.add(`${file}:${name}`);
   if (createsProvider(program, name, exported)) return true;
+  const exportedImports = exported
+    ? new Set(
+        program.body.flatMap((statement: AnyNode) =>
+          statement.type === "ExportNamedDeclaration" &&
+          !statement.source &&
+          statement.exportKind !== "type"
+            ? statement.specifiers
+                .filter(
+                  (specifier: AnyNode) =>
+                    specifier.exportKind !== "type" &&
+                    (specifier.exported.name ?? specifier.exported.value) === name,
+                )
+                .map((specifier: AnyNode) => specifier.local.name)
+            : [],
+        ),
+      )
+    : undefined;
   for (const node of program.body) {
-    if (exported && node.type !== "ExportNamedDeclaration") continue;
+    if (exported && node.type !== "ExportNamedDeclaration" && node.type !== "ImportDeclaration")
+      continue;
     if (node.type !== "ImportDeclaration" && node.type !== "ExportNamedDeclaration") continue;
     if (node.type === "ExportNamedDeclaration" && (!node.source || node.exportKind === "type"))
       continue;
     const binding = node.specifiers.find((item: AnyNode) =>
       node.type === "ImportDeclaration"
         ? ["ImportSpecifier", "ImportDefaultSpecifier"].includes(item.type) &&
-          item.local.name === name
+          (exported ? exportedImports!.has(item.local.name) : item.local.name === name)
         : item.type === "ExportSpecifier" &&
           item.exportKind !== "type" &&
           (item.exported.name ?? item.exported.value) === name,
