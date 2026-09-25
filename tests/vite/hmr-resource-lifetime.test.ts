@@ -2,6 +2,60 @@ import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../src/core/testkit.ts";
 import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/plugin-hmr.ts";
 
+for (const [name, source, leaks] of [
+  [
+    "interval firing creates a timer",
+    "const outer = setInterval(() => setInterval(refresh), 1000); import.meta.hot.dispose(() => clearInterval(outer))",
+    true,
+  ],
+  [
+    "bound timeout callback fires",
+    "const start = () => setInterval(refresh); const pending = setTimeout(start, 0); import.meta.hot.dispose(() => clearTimeout(pending))",
+    true,
+  ],
+  [
+    "returned declaration retains its parameter",
+    "function make(handle) { function cleanup() { clearInterval(handle) } return cleanup }; const timer = setInterval(refresh); import.meta.hot.dispose(make(timer))",
+    false,
+  ],
+  [
+    "fulfilled empty Promise.all invokes reaction",
+    "Promise.all([]).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "listener receives the actual event type",
+    "const handler = event => { if (event.type !== 'click') setInterval(refresh) }; document.addEventListener('click', handler); import.meta.hot.dispose(() => document.removeEventListener('click', handler))",
+    false,
+  ],
+  [
+    "event listener object can create a timer",
+    "const handler = { handleEvent() { setInterval(refresh) } }; document.addEventListener('click', handler); import.meta.hot.dispose(() => document.removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "listener callback respects registration path",
+    "const enabled = flag; const handler = () => { if (!enabled) setInterval(refresh) }; if (enabled) document.addEventListener('click', handler); import.meta.hot.dispose(() => { if (enabled) document.removeEventListener('click', handler) })",
+    false,
+  ],
+  [
+    "shorter later timeout can replace handle before earlier cleanup",
+    "let timer = setInterval(refresh); const slow = setTimeout(() => clearInterval(timer), 100); const fast = setTimeout(() => { timer = setInterval(refresh) }, 0); import.meta.hot.dispose(() => { clearTimeout(slow); clearTimeout(fast); clearInterval(timer) })",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(
+      result.diagnostics.some((item) => item.ruleId === requireDisposeForSideEffects.meta.id),
+    ).toBe(leaks);
+  });
+}
+
 test("an unrelated dispose callback does not hide a leaked interval", async () => {
   const result = await runRuleFixture({
     framework: "vite",

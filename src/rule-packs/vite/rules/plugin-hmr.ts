@@ -130,6 +130,7 @@ function undisposedResource(program: AnyNode): string | null {
     controller: AnyNode;
     value: AnyNode;
     once: boolean;
+    path: Map<object, boolean>;
   };
   type Completion = { normal: boolean; abrupt: boolean; value?: AnyNode };
   const resources: Resource[] = [];
@@ -154,6 +155,7 @@ function undisposedResource(program: AnyNode): string | null {
     callback: AnyNode;
     args: AnyNode[];
     environment: Map<AnyNode, AnyNode>;
+    delay: AnyNode;
   }[] = [];
   const arrayChoices = new Map<AnyNode, { array: AnyNode; path: Map<object, boolean> }[]>();
   const alternatives = new Map<AnyNode, AnyNode[]>();
@@ -537,7 +539,7 @@ function undisposedResource(program: AnyNode): string | null {
     )
       return { normal: true, abrupt: false };
     visited.add(target);
-    const local = new Map([...(captured ?? []), ...environment]);
+    const local = new Map([...environment, ...(captured ?? [])]);
     if (target.type === "FunctionExpression" && target.id) local.set(target.id, target);
     local.set(thisBinding, receiver);
     for (const [index, param] of target.params.entries()) {
@@ -758,15 +760,14 @@ function undisposedResource(program: AnyNode): string | null {
           alternatives.set(value, created);
           returned.set(node, value);
         }
-        if (module && kinds.has("timeout") && node.arguments[0]) {
-          const callback =
-            node.arguments[0].type === "Identifier"
-              ? identity(node.arguments[0], environment)
-              : node.arguments[0];
+        if (module && (kinds.has("timeout") || kinds.has("interval")) && node.arguments[0]) {
+          const callback = identity(node.arguments[0], environment);
           if (
-            callback?.type === "ArrowFunctionExpression" ||
-            callback?.type === "FunctionExpression" ||
-            callback?.type === "FunctionDeclaration"
+            lexicalEnvironments.has(callback) ||
+            callbacks.has(callback) ||
+            ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
+              callback?.type,
+            )
           ) {
             const timeout = created[0];
             if (timeout)
@@ -777,6 +778,7 @@ function undisposedResource(program: AnyNode): string | null {
                   .slice(2)
                   .map((argument: AnyNode) => identity(argument, environment)),
                 environment,
+                delay: identity(node.arguments[1], environment),
               });
           }
         }
@@ -881,13 +883,29 @@ function undisposedResource(program: AnyNode): string | null {
         return true;
       }
       if (
-        (method === "resolve" || method === "reject") &&
+        (method === "resolve" || method === "reject" || method === "all") &&
         node.callee.type === "MemberExpression" &&
         identity(node.callee.object, environment) === "Promise" &&
         !replacedMethod
       ) {
         const promise = {};
         const value = identity(node.arguments[0], environment);
+        if (method === "all" && value?.type !== "ArrayExpression") return true;
+        if (
+          method === "all" &&
+          arrayElements(value).some((item: AnyNode) => item?.type === "SpreadElement")
+        )
+          return true;
+        if (method === "all") {
+          const items = arrayElements(value).map((item: AnyNode) => identity(item, environment));
+          const completion = {
+            normal: items.every((item: AnyNode) => promiseCompletions.get(item)?.normal !== false),
+            abrupt: items.some((item: AnyNode) => promiseCompletions.get(item)?.abrupt),
+          };
+          promiseCompletions.set(promise, completion);
+          returned.set(node, promise);
+          return true;
+        }
         if (method === "resolve") promises.set(promise, promises.get(value) ?? value);
         promiseCompletions.set(
           promise,
@@ -1044,6 +1062,7 @@ function undisposedResource(program: AnyNode): string | null {
             controller,
             value: node,
             once: once?.type === "Literal" && Boolean(once.value),
+            path: new Map(currentPath),
           });
           resourcePaths.set(node, new Map(currentPath));
           resources.push({
@@ -1526,6 +1545,12 @@ function undisposedResource(program: AnyNode): string | null {
       if (conditionValue !== undefined && !conditions.has(conditionValue))
         conditions.set(conditionValue, {});
       const choice = conditions.get(conditionValue) ?? {};
+      if (parentPath.has(choice)) {
+        const selected = parentPath.get(choice) === !inverted ? left : right;
+        const continues = walk(selected);
+        if (expression) returned.set(expression, identity(selected, environment));
+        return continues;
+      }
       const selectPath = (side: boolean) => {
         if (includeAbrupt) return;
         currentPath = new Map(parentPath).set(choice, side);
@@ -1622,13 +1647,14 @@ function undisposedResource(program: AnyNode): string | null {
       if (
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
       ) {
-        if (node.type !== "FunctionDeclaration") {
+        if (node.type !== "FunctionDeclaration" || environment !== values) {
           const closure = {};
           lexicalEnvironments.set(closure, environment);
           if (node.type === "ArrowFunctionExpression")
             lexicalReceivers.set(closure, environment.get(thisBinding));
           callbacks.set(closure, node);
-          returned.set(node, closure);
+          if (node.type === "FunctionDeclaration") callbacks.set(node.id, closure);
+          else returned.set(node, closure);
         }
         visit(node);
         return true;
@@ -2382,25 +2408,90 @@ function undisposedResource(program: AnyNode): string | null {
     cleaned: new Set(cleaned),
     values: new Map(values),
     properties: new Map([...properties].map(([key, entries]) => [key, new Map(entries)])),
+    resources: [...resources],
     resourceCount: resources.length,
   });
+  const restoreDisposalState = (state: ReturnType<typeof captureDisposalState>) => {
+    cleaned.clear();
+    for (const value of state.cleaned) cleaned.add(value);
+    values.clear();
+    for (const [key, value] of state.values) values.set(key, value);
+    properties.clear();
+    for (const [key, entries] of state.properties) properties.set(key, new Map(entries));
+    resources.splice(0, resources.length, ...state.resources);
+  };
   const disposalStates = [captureDisposalState()];
   for (const listener of listeners) {
     if (cleaned.has(listener.value)) continue;
-    inspect(listener.handler, [listener.event], values, false, listener.receiver);
+    const parentPath = currentPath;
+    currentPath = new Map([...parentPath, ...listener.path]);
+    const event = {
+      type: "ObjectExpression",
+      properties: [
+        {
+          type: "Property",
+          key: { type: "Identifier", name: "type" },
+          value: { type: "Literal", value: listener.event },
+          kind: "init",
+          computed: false,
+        },
+      ],
+    };
+    const handler = identity(
+      {
+        type: "MemberExpression",
+        object: listener.handler,
+        property: { type: "Identifier", name: "handleEvent" },
+        computed: false,
+      },
+      values,
+    );
+    const callback =
+      callbacks.has(listener.handler) ||
+      lexicalEnvironments.has(listener.handler) ||
+      ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(
+        listener.handler?.type,
+      )
+        ? listener.handler
+        : handler;
+    const receiver = callback === handler ? listener.handler : listener.receiver;
+    inspect(callback, [event], values, false, receiver);
     disposalStates.push(captureDisposalState());
     if (!listener.once && !cleaned.has(listener.value)) {
-      inspect(listener.handler, [listener.event], values, false, listener.receiver);
+      inspect(callback, [event], values, false, receiver);
       disposalStates.push(captureDisposalState());
     }
+    currentPath = parentPath;
   }
-  for (const { timeout, callback, args, environment } of pendingTimeouts) {
+  const beforeTimeouts = captureDisposalState();
+  for (const [
+    index,
+    { timeout, callback, args, environment, delay },
+  ] of pendingTimeouts.entries()) {
+    const sequentialState = captureDisposalState();
+    if (
+      index > 0 &&
+      pendingTimeouts
+        .slice(0, index)
+        .some(
+          (earlier) =>
+            delay?.type !== "Literal" ||
+            earlier.delay?.type !== "Literal" ||
+            Number(delay.value) < Number(earlier.delay.value),
+        )
+    ) {
+      restoreDisposalState(beforeTimeouts);
+      inspect(callback, args, environment, false);
+      disposalStates.push(captureDisposalState());
+      restoreDisposalState(sequentialState);
+    }
     if (cleaned.has(timeout)) continue;
     inspect(callback, args, environment, false);
     disposalStates.push(captureDisposalState());
   }
   let disposalLeak: string | undefined;
   for (const state of disposalStates) {
+    restoreDisposalState(state);
     const outcomes = disposers.map(({ callback: disposer, path: disposerPath }) => {
       const resourceStart = resources.length;
       cleaned.clear();
