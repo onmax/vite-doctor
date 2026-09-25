@@ -177,6 +177,42 @@ function undisposedResource(program: AnyNode): string | null {
   >();
   const enqueueReactions = (promise: AnyNode, completion: Completion) => {
     for (const reaction of pendingPromiseReactions.get(promise) ?? []) {
+      if (completion.normal && completion.abrupt) {
+        const response = (callback: AnyNode, fulfilled: boolean): AnyNode =>
+          callback
+            ? {
+                type: "ReturnStatement",
+                argument: {
+                  type: "CallExpression",
+                  callee: callback,
+                  arguments: [completion.value],
+                },
+              }
+            : fulfilled
+              ? { type: "ReturnStatement", argument: completion.value }
+              : { type: "ThrowStatement", argument: completion.value };
+        microtasks.push({
+          callback: {
+            type: "ArrowFunctionExpression",
+            params: [],
+            body: {
+              type: "BlockStatement",
+              body: [
+                {
+                  type: "IfStatement",
+                  test: { type: "Identifier", name: "__doctorMixedPromiseSettlement" },
+                  consequent: response(reaction.fulfilled, true),
+                  alternate: response(reaction.rejected, false),
+                },
+              ],
+            },
+          },
+          environment: reaction.environment,
+          result: reaction.result,
+          resumeAwait: reaction.resumeAwait,
+        });
+        continue;
+      }
       const callback = completion.normal ? reaction.fulfilled : reaction.rejected;
       if (callback)
         microtasks.push({
@@ -528,6 +564,16 @@ function undisposedResource(program: AnyNode): string | null {
         module,
         identity(args[0], environment),
       );
+    }
+    if (["clearInterval", "clearTimeout"].includes(target)) {
+      const handle = identity(args[0], environment);
+      for (const resource of resources)
+        if (
+          ["interval", "timeout"].includes(resource.kind) &&
+          (resource.value === handle || alternatives.get(handle)?.includes(resource.value))
+        )
+          cleaned.add(resource.value);
+      return { normal: true, abrupt: false };
     }
     const captured = lexicalEnvironments.get(target);
     if (captured) {
@@ -978,16 +1024,25 @@ function undisposedResource(program: AnyNode): string | null {
           const canFulfill = (item: AnyNode) => promiseCompletions.get(item)?.normal !== false;
           const canReject = (item: AnyNode) =>
             promiseCompletions.get(item)?.abrupt ?? !promises.has(item);
-          const firstCompletion = promiseCompletions.get(items[0]);
+          const firstSettledIndex = items.findIndex((item: AnyNode) => {
+            const completion = promiseCompletions.get(item);
+            return !completion || completion.normal || completion.abrupt;
+          });
+          const firstCompletion = promiseCompletions.get(items[firstSettledIndex]);
           const firstSettled =
             method === "race" &&
-            items.length > 0 &&
+            firstSettledIndex >= 0 &&
             (!firstCompletion || firstCompletion.normal !== firstCompletion.abrupt);
-          const candidates = firstSettled ? items.slice(0, 1) : items;
+          const candidates = firstSettled
+            ? items.slice(firstSettledIndex, firstSettledIndex + 1)
+            : items;
           const completion = {
             normal:
-              method === "allSettled" ||
-              (method === "all" ? items.every(canFulfill) : candidates.some(canFulfill)),
+              method === "allSettled"
+                ? items.every((item: AnyNode) => canFulfill(item) || canReject(item))
+                : method === "all"
+                  ? items.every(canFulfill)
+                  : candidates.some(canFulfill),
             abrupt:
               method === "allSettled"
                 ? false
@@ -1406,6 +1461,14 @@ function undisposedResource(program: AnyNode): string | null {
           : undefined;
       if (mapCollections.has(array) && !replacedMethod) {
         const entries = arrayElements(array);
+        if (method === "get") {
+          const key = identity(node.arguments[0], environment);
+          const entry = entries.find(
+            (item: AnyNode) => item && sameMapKey(arrayElements(item)[0], key),
+          );
+          returned.set(node, entry ? arrayElements(entry)[1] : undefined);
+          return true;
+        }
         if (method === "set") {
           const key = identity(node.arguments[0], environment);
           const value = identity(node.arguments[1], environment);
@@ -2464,7 +2527,13 @@ function undisposedResource(program: AnyNode): string | null {
           if (value?.type === "UnaryExpression" && value.operator === "typeof") {
             const argument = identity(value.argument, environment);
             if (argument?.type === "Literal") return typeof argument.value;
-            if (knownTruthyResource(argument)) return "object";
+            if (knownTruthyResource(argument))
+              return resources.some(
+                (resource) =>
+                  resource.value === argument && ["interval", "timeout"].includes(resource.kind),
+              )
+                ? "number"
+                : "object";
           }
           if (value?.type === "UnaryExpression" && value.operator === "!") {
             const argument = constant(value.argument);
@@ -2882,7 +2951,9 @@ function undisposedResource(program: AnyNode): string | null {
         if (
           asyncFunction &&
           (pendingFetchPromises.has(awaited) ||
-            (pendingUserPromises.has(awaited) && !completion?.normal && !completion?.abrupt))
+            completion?.normal ||
+            (pendingUserPromises.has(awaited) && !completion?.abrupt) ||
+            !completion)
         )
           pendingAwait = awaited;
         if (completion?.abrupt) {
@@ -3189,6 +3260,7 @@ function undisposedResource(program: AnyNode): string | null {
       for (const [index, { timeout, callback, args, environment, delay }] of remaining.entries()) {
         if (knownDelays && Number(delay.value) !== earliest) continue;
         restoreDisposalState(before);
+        const scheduledBefore = pendingTimeouts.length;
         if (resources.some((resource) => resource.value === timeout) && !cleaned.has(timeout)) {
           timerSimulationDepth = 1;
           inspect(callback, args, environment, false);
@@ -3210,7 +3282,11 @@ function undisposedResource(program: AnyNode): string | null {
               truncatedTimerOrders = true;
           }
         }
-        fireTimeouts(remaining.filter((_, position) => position !== index));
+        fireTimeouts([
+          ...remaining.filter((_, position) => position !== index),
+          ...pendingTimeouts.slice(scheduledBefore),
+        ]);
+        pendingTimeouts.length = scheduledBefore;
       }
       restoreDisposalState(before);
     };

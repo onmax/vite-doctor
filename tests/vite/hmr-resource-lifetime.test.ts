@@ -4,6 +4,41 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "mixed promise settlement preserves rejection-only resource creation",
+    "let resolveReady, rejectReady; const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject }); ready.catch(() => setInterval(refresh)); const handler = () => { if (Math.random()) resolveReady(1); else rejectReady(Error()) }; addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "settled await defers a resource until after synchronous cleanup",
+    "let timer; async function start() { await Promise.resolve(); timer = setInterval(refresh) } start(); clearInterval(timer); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "nested timer callbacks can leave a resource live",
+    "let inner; const outer = setTimeout(() => { inner = setTimeout(() => setInterval(refresh), 0) }, 0); import.meta.hot.dispose(() => { clearTimeout(outer); clearTimeout(inner) })",
+    true,
+  ],
+  [
+    "allSettled waits for every input",
+    "let finish; const pending = new Promise(resolve => { finish = resolve }); const timer = setInterval(refresh); Promise.allSettled([pending]).then(() => clearInterval(timer)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "browser timer typeof guard cleans resource",
+    "const timer = window.setInterval(refresh); import.meta.hot.dispose(() => { if (typeof timer === 'number') clearInterval(timer) })",
+    false,
+  ],
+  [
+    "Map get returns stored resource handle",
+    "const timers = new Map([['refresh', setInterval(refresh)]]); import.meta.hot.dispose(() => clearInterval(timers.get('refresh')))",
+    false,
+  ],
+  [
+    "race skips pending input when selecting settled winner",
+    "let finish; const pending = new Promise(resolve => { finish = resolve }); const timer = setInterval(refresh); Promise.race([pending, Promise.resolve(timer)]).then(clearInterval); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
     "Map delete returns true for an existing key",
     "const timer = setInterval(refresh); const timers = new Map([['refresh', timer]]); import.meta.hot.dispose(() => { if (timers.delete('refresh')) clearInterval(timer) })",
     false,
