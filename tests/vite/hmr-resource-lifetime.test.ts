@@ -44,8 +44,28 @@ for (const [name, source, leaks] of [
     false,
   ],
   [
+    "truncated listener orders without resource creators do not leak",
+    `${Array.from({ length: 7 }, (_, index) => `const handler${index} = () => {}; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 7 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
+    false,
+  ],
+  [
     "subscription callback creates a resource before disposal",
     "const sub = events.subscribe(() => setInterval(refresh)); import.meta.hot.dispose(() => sub.unsubscribe())",
+    true,
+  ],
+  [
+    "second subscription emission creates an undisposed resource",
+    "let emitted = false; const sub = events.subscribe(() => { if (emitted) setInterval(refresh); emitted = true }); import.meta.hot.dispose(() => sub.unsubscribe())",
+    true,
+  ],
+  [
+    "sequential subscriptions create an undisposed resource",
+    "let emitted = false; const first = events.subscribe(() => { emitted = true }); const second = events.subscribe(() => { if (emitted) setInterval(refresh) }); import.meta.hot.dispose(() => { first.unsubscribe(); second.unsubscribe() })",
+    true,
+  ],
+  [
+    "unexplored listener order can create a resource",
+    `let order = 0; ${Array.from({ length: 7 }, (_, index) => `const handler${index} = () => { if (order === ${6 - index}) order++; if (order === 7) setInterval(refresh) }; document.addEventListener('event${index}', handler${index}, { once: true });`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 7 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
     true,
   ],
   [

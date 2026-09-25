@@ -2721,8 +2721,12 @@ function undisposedResource(program: AnyNode): string | null {
     currentPath = parentPath;
   };
   let listenerOrderCount = 0;
+  let truncatedListenerOrders = false;
   const fireOrders = (remaining: Listener[]) => {
-    if (listenerOrderCount++ >= 1024) return;
+    if (listenerOrderCount++ >= 2048) {
+      truncatedListenerOrders = true;
+      return;
+    }
     if (!remaining.length) {
       disposalStates.push(captureDisposalState());
       return;
@@ -2737,14 +2741,20 @@ function undisposedResource(program: AnyNode): string | null {
   };
   fireOrders(listeners);
   restoreDisposalState(beforeListeners);
-  for (const { callback, environment } of subscriptions) {
-    timerSimulationDepth = 1;
-    inspect(callback, [], environment);
-    timerSimulationDepth = 0;
-    drainMicrotasks();
-    disposalStates.push(captureDisposalState());
-    restoreDisposalState(beforeListeners);
-  }
+  const fireSubscriptions = (state: ReturnType<typeof captureDisposalState>, depth: number) => {
+    if (depth === 2) return;
+    for (const { callback, environment } of subscriptions) {
+      restoreDisposalState(state);
+      timerSimulationDepth = 1;
+      inspect(callback, [], environment);
+      timerSimulationDepth = 0;
+      drainMicrotasks();
+      const emitted = captureDisposalState();
+      disposalStates.push(emitted);
+      fireSubscriptions(emitted, depth + 1);
+    }
+  };
+  fireSubscriptions(beforeListeners, 0);
   for (const listenerState of disposalStates.slice()) {
     restoreDisposalState(listenerState);
     const beforeTimeouts = captureDisposalState();
@@ -2863,6 +2873,24 @@ function undisposedResource(program: AnyNode): string | null {
         (resource) =>
           repeated.has(resource.value) || outcomes.some((outcome) => !outcome.has(resource.value)),
       )?.kind;
+  }
+  if (!disposalLeak && truncatedListenerOrders) {
+    const seen = new Set<object>();
+    const mayCreateResource = (node: AnyNode): boolean => {
+      if (!node || typeof node !== "object" || seen.has(node)) return false;
+      seen.add(node);
+      if (Array.isArray(node)) return node.some(mayCreateResource);
+      if (
+        (node.type === "Identifier" &&
+          ["setInterval", "setTimeout", "WebSocket", "EventSource"].includes(node.name)) ||
+        (node.type === "CallExpression" && node.callee?.property?.name === "subscribe")
+      )
+        return true;
+      return Object.entries(node).some(
+        ([key, child]) => key !== "__doctorParent" && mayCreateResource(child),
+      );
+    };
+    if (mayCreateResource(program)) return "resource";
   }
   return disposalLeak ?? null;
 }
