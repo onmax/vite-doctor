@@ -983,9 +983,8 @@ function resultCallbackCall(
       return input.value.length > 0 ? call : null;
     const length = localObjectProperty(input, "length");
     return length?.type === "Literal" &&
-      Number.isInteger(length.value) &&
-      length.value > 0 &&
-      length.value < 2 ** 32
+      ["number", "string", "boolean"].includes(typeof length.value) &&
+      Number(length.value) >= 1
       ? call
       : null;
   }

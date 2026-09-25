@@ -1020,6 +1020,11 @@ test.each([
   ["const displayed = Array.from('', () => Date.now())", "displayed", 0],
   ["const displayed = Array.from({ length: 1 }, () => Date.now())", "displayed", 1],
   ["const displayed = Array.from({ length: 0 }, () => Date.now())", "displayed", 0],
+  ["const displayed = Array.from({ length: '1' }, () => Date.now())", "displayed", 1],
+  ["const displayed = Array.from({ length: true }, () => Date.now())", "displayed", 1],
+  ["const displayed = Array.from({ length: 0.5 }, () => Date.now())", "displayed", 0],
+  ["const displayed = Array.from({ length: '0' }, () => Date.now())", "displayed", 0],
+  ["const displayed = Array.from({ length: false }, () => Date.now())", "displayed", 0],
   [
     "const Array = { from: () => [] }; const displayed = Array.from([1], () => Date.now())",
     "displayed",
