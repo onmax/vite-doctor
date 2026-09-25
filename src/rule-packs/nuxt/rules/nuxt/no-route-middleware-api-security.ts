@@ -297,6 +297,14 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
       body.callee.property.type === "Identifier" &&
       body.callee.property.name === "handler" &&
       body.callee.object.name !== event.name &&
+      callback.id?.name !== body.callee.object.name &&
+      !callback.body.body?.some(
+        (statement: AnyNode) =>
+          statement.type === "VariableDeclaration" &&
+          statement.declarations.some((declaration: AnyNode) =>
+            bindsName(declaration.id, body.callee.object.name),
+          ),
+      ) &&
       isProviderBinding(ctx, file, parsed.program, body.callee.object.name) &&
       body.arguments.length === 1 &&
       isCurrentRequest(body.arguments[0], event.name) &&
@@ -307,6 +315,20 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
   } catch {
     return false;
   }
+}
+
+function bindsName(pattern: AnyNode, name: string): boolean {
+  if (!pattern) return false;
+  if (pattern.type === "Identifier") return pattern.name === name;
+  if (pattern.type === "ObjectPattern")
+    return pattern.properties.some((item: AnyNode) =>
+      bindsName(item.type === "RestElement" ? item.argument : item.value, name),
+    );
+  if (pattern.type === "ArrayPattern")
+    return pattern.elements.some((item: AnyNode) => bindsName(item, name));
+  if (pattern.type === "AssignmentPattern") return bindsName(pattern.left, name);
+  if (pattern.type === "RestElement") return bindsName(pattern.argument, name);
+  return false;
 }
 
 function isCurrentRequest(node: AnyNode, event: string): boolean {

@@ -4098,6 +4098,9 @@ test.each([
   "import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler())",
   "import { auth } from '../../utils/auth'; export default defineEventHandler(event => auth.handler(toWebRequest(other)))",
   "import { auth } from '../../utils/auth'; export default defineEventHandler(auth => auth.handler(toWebRequest(auth)))",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(event => { const auth = { handler() {} }; return auth.handler(toWebRequest(event)) })",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(event => { const { auth } = { auth: { handler() {} } }; return auth.handler(toWebRequest(event)) })",
+  "import { auth } from '../../utils/auth'; export default defineEventHandler(function auth(event) { return auth.handler(toWebRequest(event)) })",
 ])(
   "provider-shaped calls without provenance or request delegation remain sensitive: %s",
   async (handler) => {
