@@ -555,6 +555,7 @@ function importEdges(
   commonjs: boolean,
 ): ImportEdge[] {
   const edges: ImportEdge[] = [];
+  const supportsStaticImports = !commonjs || !source.fileName.endsWith(".cjs");
   function add(
     literal: ts.Node | undefined,
     typeOnly: boolean,
@@ -586,7 +587,7 @@ function importEdges(
           named.elements.length &&
           named.elements.every((item) => item.isTypeOnly)),
       );
-      add(node.moduleSpecifier, typeOnly, true);
+      if (typeOnly || supportsStaticImports) add(node.moduleSpecifier, typeOnly, true);
     } else if (ts.isExportDeclaration(node)) {
       const typeOnly = Boolean(
         node.isTypeOnly ||
@@ -595,7 +596,7 @@ function importEdges(
           node.exportClause.elements.length &&
           node.exportClause.elements.every((item) => item.isTypeOnly)),
       );
-      add(node.moduleSpecifier, typeOnly, true);
+      if (typeOnly || supportsStaticImports) add(node.moduleSpecifier, typeOnly, true);
     } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
@@ -628,6 +629,15 @@ function importEdges(
         !shadowsRequire(node)
       )
         add(node.arguments[0], false, isUnconditional(node, false), "commonjs", true);
+      else if (
+        !commonjs &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "resolve" &&
+        ts.isMetaProperty(node.expression.expression) &&
+        node.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+        node.expression.expression.name.text === "meta"
+      )
+        add(node.arguments[0], false, isUnconditional(node, false), false, true);
     }
     ts.forEachChild(node, visit);
   }
@@ -736,10 +746,18 @@ function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
       parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       (ts.isIdentifier(parent.left) ||
         (ts.isPropertyAccessExpression(parent.left) &&
-          ts.isIdentifier(parent.left.expression) &&
-          parent.left.expression.text === "module" &&
-          parent.left.name.text === "exports" &&
-          !shadowsName(parent, "module")))
+          ((ts.isIdentifier(parent.left.expression) &&
+            parent.left.expression.text === "exports" &&
+            !shadowsName(parent, "exports")) ||
+            (ts.isIdentifier(parent.left.expression) &&
+              parent.left.expression.text === "module" &&
+              parent.left.name.text === "exports" &&
+              !shadowsName(parent, "module")) ||
+            (ts.isPropertyAccessExpression(parent.left.expression) &&
+              ts.isIdentifier(parent.left.expression.expression) &&
+              parent.left.expression.expression.text === "module" &&
+              parent.left.expression.name.text === "exports" &&
+              !shadowsName(parent, "module")))))
     )
   )
     return !isNonAbruptElement(parent.left);

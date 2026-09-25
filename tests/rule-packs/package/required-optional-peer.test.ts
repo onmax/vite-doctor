@@ -469,6 +469,36 @@ test("requires optional peers resolved directly", async () => {
 });
 
 test.each(["index.mjs", "index.js"])(
+  "requires optional peers resolved with import.meta.resolve in ESM %s",
+  async (entrypoint) => {
+    expect(
+      await diagnose(
+        { main: entrypoint, type: "module", ...optionalPeer },
+        { [entrypoint]: 'import.meta.resolve("peer");' },
+      ),
+    ).toMatchObject([{ code: "PKG0003" }]);
+  },
+);
+
+test("does not require peers from invalid static imports in CommonJS", async () => {
+  expect(
+    await diagnose(
+      { main: "index.cjs", ...optionalPeer },
+      { "index.cjs": 'import "peer"; export * from "peer";' },
+    ),
+  ).toEqual([]);
+});
+
+test.each(['exports.peer = require("peer");', 'module.exports.peer = require("peer");'])(
+  "requires optional peers assigned to CommonJS exports: %s",
+  async (source) => {
+    expect(
+      await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source }),
+    ).toMatchObject([{ code: "PKG0003" }]);
+  },
+);
+
+test.each(["index.mjs", "index.js"])(
   "does not treat require.resolve as a peer load in native ESM %s",
   async (entrypoint) => {
     expect(
