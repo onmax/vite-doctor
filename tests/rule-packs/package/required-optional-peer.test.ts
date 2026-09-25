@@ -14,14 +14,23 @@ test.each([
   expect(result).toMatchObject([{ code: "PKG0003" }]);
 });
 
-test.each(['getTarget().peer = require("peer");', 'target[getKey()] = require("peer");'])(
-  "does not require a peer when assignment targets may throw: %s",
-  async (source) => {
-    expect(await diagnose({ ...optionalPeer, main: "index.js" }, { "index.js": source })).toEqual(
-      [],
-    );
-  },
-);
+test("does not require a peer after an abrupt predecessor in a rethrowing try", async () => {
+  expect(
+    await diagnose(
+      { ...optionalPeer, main: "index.js" },
+      { "index.js": 'try { null.peer; require("peer"); } catch (error) { throw error; }' },
+    ),
+  ).toEqual([]);
+});
+
+test.each([
+  'getTarget().peer = require("peer");',
+  'target[getKey()] = require("peer");',
+  'const target = null; target.peer = require("peer");',
+  'null.peer = require("peer");',
+])("does not require a peer when assignment targets may throw: %s", async (source) => {
+  expect(await diagnose({ ...optionalPeer, main: "index.js" }, { "index.js": source })).toEqual([]);
+});
 
 test.each([
   'try {} catch (Promise) {} await Promise.all([import("peer")]);',
@@ -344,6 +353,15 @@ test("checks conditional default exports and package import aliases", async () =
     },
   );
   expect(diagnostics.map((d) => d.code)).toEqual(["PKG0003", "PKG0003"]);
+});
+
+test("continues after an unresolved default export condition", async () => {
+  expect(
+    await diagnose(
+      { exports: { ".": { default: {}, node: "./index.js" } }, ...optionalPeer },
+      { "index.js": 'require("peer");' },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
 });
 
 test.each(["./cli.js", { example: "./cli.js" }, ["./cli.js"]])(
@@ -733,6 +751,8 @@ test("skips invalid import-map array targets before selecting the optional peer"
 
 test.each([
   'class Adapter { static { throw 0; } static peer = require("peer"); }',
+  'class Adapter extends 0 { static peer = require("peer"); }',
+  'class Adapter extends (() => {}) { static peer = require("peer"); }',
   'class Adapter { static first = unknown(); static peer = require("peer"); }',
   'class Adapter { static [unknown()] = require("peer"); }',
   'class Adapter extends unknown() { static peer = require("peer"); }',
@@ -744,6 +764,14 @@ test.each([
   expect(await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source })).toEqual(
     [],
   );
+});
+
+test.each([
+  'require("peer", (() => { throw 0; })());',
+  'await import("peer", (() => { throw 0; })());',
+])("skips loads after abrupt loader arguments: %s", async (source) => {
+  const filename = source.startsWith("await") ? "index.mjs" : "index.cjs";
+  expect(await diagnose({ main: filename, ...optionalPeer }, { [filename]: source })).toEqual([]);
 });
 
 test.each([

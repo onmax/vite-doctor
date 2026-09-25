@@ -275,7 +275,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           adjacentDeclaration,
         );
         selected ||= resolved;
-        if (condition === "default") break;
+        if (condition === "default" && resolved) break;
       }
       return selected;
     }
@@ -717,6 +717,17 @@ function isNonAbruptStatement(statement: ts.Statement): boolean {
   return ts.isEmptyStatement(statement);
 }
 
+function isValidClassHeritage(node: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(node)) return isValidClassHeritage(node.expression);
+  return (
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isClassExpression(node) && !node.heritageClauses?.length && node.members.length === 0) ||
+    (ts.isFunctionExpression(node) &&
+      !node.asteriskToken &&
+      !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword))
+  );
+}
+
 function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
   if (
     ts.isBinaryExpression(parent) &&
@@ -725,12 +736,10 @@ function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
       parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       (ts.isIdentifier(parent.left) ||
         (ts.isPropertyAccessExpression(parent.left) &&
-          (ts.isIdentifier(parent.left.expression) ||
-            parent.left.expression.kind === ts.SyntaxKind.ThisKeyword)) ||
-        (ts.isElementAccessExpression(parent.left) &&
-          (ts.isIdentifier(parent.left.expression) ||
-            parent.left.expression.kind === ts.SyntaxKind.ThisKeyword) &&
-          isNonAbruptElement(parent.left.argumentExpression)))
+          ts.isIdentifier(parent.left.expression) &&
+          parent.left.expression.text === "module" &&
+          parent.left.name.text === "exports" &&
+          !shadowsName(parent, "module")))
     )
   )
     return !isNonAbruptElement(parent.left);
@@ -839,7 +848,8 @@ function isImmediateField(field: ts.PropertyDeclaration): boolean {
 }
 
 function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
-  if (ts.isCallChain(node)) return false;
+  if (ts.isCallChain(node) || node.arguments.slice(1).some((arg) => !isNonAbruptElement(arg)))
+    return false;
   let expression: ts.Node = node;
   while (
     ts.isParenthesizedExpression(expression.parent) ||
@@ -943,7 +953,7 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
         (parent.parent.heritageClauses?.some(
           (clause) =>
             clause.token === ts.SyntaxKind.ExtendsKeyword &&
-            clause.types.some((type) => !isNonAbruptElement(type.expression)),
+            clause.types.some((type) => !isValidClassHeritage(type.expression)),
         ) ||
           (ts.isPropertyDeclaration(parent) &&
             parent.name &&
@@ -982,7 +992,14 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       (ts.isTryStatement(parent) &&
         ((parent.catchClause &&
           (isWithin(node, parent.catchClause) ||
-            (isWithin(node, parent.tryBlock) && !isRethrowingCatch(parent.catchClause.block)))) ||
+            (isWithin(node, parent.tryBlock) &&
+              (!isRethrowingCatch(parent.catchClause.block) ||
+                parent.tryBlock.statements
+                  .slice(
+                    0,
+                    parent.tryBlock.statements.findIndex((statement) => isWithin(node, statement)),
+                  )
+                  .some((statement) => !isNonAbruptStatement(statement)))))) ||
           (parent.finallyBlock &&
             !isWithin(node, parent.finallyBlock) &&
             hasAbruptCompletion(parent.finallyBlock, false)))) ||
