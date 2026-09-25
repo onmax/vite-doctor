@@ -224,6 +224,14 @@ test("includes adjacent declarations, browser and binary entrypoints, and typesV
   expect(result.missing).toEqual([]);
 });
 
+test.each([
+  { main: 42 },
+  { dependencies: { vite: false } },
+  { typesVersions: { "*": { "*": "dist/index.d.ts" } } },
+  { peerDependenciesMeta: { vite: { optional: "yes" } } },
+])("rejects invalid package manifest fields: %j", (manifest) => {
+  expect(() => inventory(manifest, {})).toThrow("Invalid package.json field:");
+});
 test("follows npm-compatible binary arrays and records missing executables", () => {
   const result = inventory(
     { bin: ["cli.js", "missing.js"] },
