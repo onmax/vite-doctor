@@ -54,6 +54,11 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "repeat subscription notifications overwrite an undisposed timer",
+    "let timer; const sub = events.subscribe(() => { timer = setInterval(refresh) }); import.meta.hot.dispose(() => { clearInterval(timer); sub.unsubscribe() })",
+    true,
+  ],
+  [
     "second subscription emission creates an undisposed resource",
     "let emitted = false; const sub = events.subscribe(() => { if (emitted) setInterval(refresh); emitted = true }); import.meta.hot.dispose(() => sub.unsubscribe())",
     true,
@@ -1452,6 +1457,11 @@ for (const [name, source, leaks] of [
   [
     "deferred instance field",
     "class Worker { timer = setInterval(refresh) }; import.meta.hot.dispose(() => save())",
+    false,
+  ],
+  [
+    "throwing instance field skips later resource creation",
+    "const fail = () => { throw Error() }; class Worker { first = fail(); timer = setInterval(refresh) }; try { new Worker() } catch {} import.meta.hot.dispose(() => {})",
     false,
   ],
   [
@@ -3628,6 +3638,11 @@ for (const [name, source, leaks] of [
   [
     "Set forEach cleans handles from a known iterable",
     "const timers = new Set([setInterval(refresh)]); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "Set forEach cleans more than 64 known handles",
+    `const timers = new Set([${Array.from({ length: 65 }, (_, index) => `setInterval(refresh${index})`).join(", ")}]); import.meta.hot.dispose(() => timers.forEach(clearInterval))`,
     false,
   ],
   [

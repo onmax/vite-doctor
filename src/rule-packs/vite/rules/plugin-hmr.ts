@@ -168,6 +168,7 @@ function undisposedResource(program: AnyNode): string | null {
   let timerSimulationDepth = 0;
   const setCollections = new Set<AnyNode>();
   const setIterations = new Map<AnyNode, AnyNode[][]>();
+  let truncatedSetIteration = false;
   const arrayChoices = new Map<AnyNode, { array: AnyNode; path: Map<object, boolean> }[]>();
   const alternatives = new Map<AnyNode, AnyNode[]>();
   const callbackChoices = new Map<AnyNode, AnyNode[]>();
@@ -1266,11 +1267,15 @@ function undisposedResource(program: AnyNode): string | null {
         }
         if (method === "forEach") {
           const iteration: AnyNode[] = [...elements];
+          const iterationLimit = Math.max(2048, iteration.length);
           const active = setIterations.get(array) ?? [];
           active.push(iteration);
           setIterations.set(array, active);
           for (let position = 0; position < iteration.length; position++) {
-            if (position >= 64) break;
+            if (position >= iterationLimit) {
+              truncatedSetIteration = true;
+              break;
+            }
             const element = iteration[position];
             if (element === null) continue;
             const call = {
@@ -2046,14 +2051,17 @@ function undisposedResource(program: AnyNode): string | null {
             const fields = ["ClassDeclaration", "ClassExpression"].includes(target.type)
               ? target.body.body
               : [];
-            const initialize = (): void => {
+            const initialize = (): Completion => {
               for (const field of fields) {
                 if (field.static) continue;
                 const key = field.computed
                   ? identity(field.key, local)?.value
                   : (field.key?.name ?? field.key?.value);
                 if (field.type === "PropertyDefinition") {
-                  if (field.value) evaluate(field.value, local, module);
+                  if (field.value) {
+                    const completion = evaluate(field.value, local, module);
+                    if (!completion.normal) return completion;
+                  }
                   if (key !== undefined)
                     properties.get(instance)!.set(key, identity(field.value, local));
                 } else if (key !== undefined && ["get", "set"].includes(field.kind)) {
@@ -2064,6 +2072,7 @@ function undisposedResource(program: AnyNode): string | null {
                   properties.get(instance)!.set(key, field.value);
                 }
               }
+              return { normal: true, abrupt: false };
             };
             const baseValue = identity(target.superClass, environment);
             const base = callbacks.get(baseValue) ?? baseValue;
@@ -2091,8 +2100,8 @@ function undisposedResource(program: AnyNode): string | null {
                 local.set(thisBinding, instance);
                 if (!properties.has(instance)) properties.set(instance, new Map());
               }
-              initialize();
-              return completion;
+              const initialized = initialize();
+              return initialized.normal ? completion : initialized;
             };
             const constructor =
               fields.find((field: AnyNode) => field.kind === "constructor")?.value ??
@@ -2103,8 +2112,9 @@ function undisposedResource(program: AnyNode): string | null {
             if (constructableBase || builtInResource) {
               if (constructor) superConstructors.set(instance, initializeBase);
               else completion = initializeBase(args);
-            } else initialize();
-            if (constructor) completion = inspect(constructor, args, environment, module, instance);
+            } else completion = initialize();
+            if (constructor && completion.normal)
+              completion = inspect(constructor, args, environment, module, instance);
             superConstructors.delete(allocated);
             constructing.delete(target);
             const replacement = completion.value;
@@ -2874,7 +2884,7 @@ function undisposedResource(program: AnyNode): string | null {
           repeated.has(resource.value) || outcomes.some((outcome) => !outcome.has(resource.value)),
       )?.kind;
   }
-  if (!disposalLeak && truncatedListenerOrders) {
+  if (!disposalLeak && (truncatedListenerOrders || truncatedSetIteration)) {
     const seen = new Set<object>();
     const mayCreateResource = (node: AnyNode): boolean => {
       if (!node || typeof node !== "object" || seen.has(node)) return false;
