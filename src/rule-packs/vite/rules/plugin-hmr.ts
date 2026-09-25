@@ -163,6 +163,7 @@ function undisposedResource(program: AnyNode): string | null {
   const optionalSkipped = new Set<AnyNode>();
   const callbacks = new Map<AnyNode, AnyNode>();
   const properties = new Map<AnyNode, Map<string, AnyNode>>();
+  const classGetters = new Map<AnyNode, Map<string, AnyNode>>();
   const members = new Map<AnyNode, Map<string, AnyNode>>();
   const propertyKey = (node: AnyNode, environment = values): string | undefined => {
     const property = node?.computed ? identity(node.property, environment) : node?.property;
@@ -324,15 +325,25 @@ function undisposedResource(program: AnyNode): string | null {
     argument: AnyNode,
     local: Map<AnyNode, AnyNode>,
     module = false,
-  ): void {
+  ): boolean {
+    const abruptBinding = {};
     const read = (object: AnyNode, key: string): AnyNode => {
       const descriptor = effectiveProperties(object, local).get(key);
       if (
         descriptor?.accessor &&
         descriptor.property.kind === "get" &&
         !properties.get(object)?.has(key)
-      )
-        return inspect(descriptor.property.value, [], local, module, descriptor.receiver).value;
+      ) {
+        const completion = inspect(
+          descriptor.property.value,
+          [],
+          local,
+          module,
+          descriptor.receiver,
+        );
+        if (!completion.normal) throw abruptBinding;
+        return completion.value;
+      }
       const member = {
         type: "MemberExpression",
         object,
@@ -406,7 +417,13 @@ function undisposedResource(program: AnyNode): string | null {
         }
       }
     };
-    bind(pattern, argument);
+    try {
+      bind(pattern, argument);
+      return true;
+    } catch (error) {
+      if (error !== abruptBinding) throw error;
+      return false;
+    }
   }
   const adoptPromise = (completion: Completion): Completion => {
     let settled = completion;
@@ -523,16 +540,21 @@ function undisposedResource(program: AnyNode): string | null {
     if (target.type === "FunctionExpression" && target.id) local.set(target.id, target);
     local.set(thisBinding, receiver);
     for (const [index, param] of target.params.entries()) {
-      if (param.type === "RestElement")
-        bindResource(
-          param.argument,
-          {
-            type: "ArrayExpression",
-            elements: args.slice(index).map((arg) => identity(arg, environment)),
-          },
-          local,
-        );
-      else bindResource(param, identity(args[index], environment), local, module);
+      const bound =
+        param.type === "RestElement"
+          ? bindResource(
+              param.argument,
+              {
+                type: "ArrayExpression",
+                elements: args.slice(index).map((arg) => identity(arg, environment)),
+              },
+              local,
+            )
+          : bindResource(param, identity(args[index], environment), local, module);
+      if (!bound) {
+        visited.delete(target);
+        return { normal: false, abrupt: true };
+      }
     }
     const parentPath = currentPath;
     const completion = evaluate(target.body, local, module);
@@ -659,8 +681,17 @@ function undisposedResource(program: AnyNode): string | null {
           : node.type === "AssignmentExpression"
             ? node.left
             : null;
-      if (handle && ["ObjectPattern", "ArrayPattern"].includes(handle.type))
-        bindResource(handle, identity(node.init ?? node.right, environment), environment);
+      if (handle && ["ObjectPattern", "ArrayPattern"].includes(handle.type)) {
+        if (
+          !bindResource(handle, identity(node.init ?? node.right, environment), environment, module)
+        ) {
+          abrupt = true;
+          exits.push(new Set(cleaned));
+          thrownExits.add(exits[exits.length - 1]);
+          throwStates.set(exits[exits.length - 1], snapshot());
+          return false;
+        }
+      }
       if (handle?.type === "Identifier") {
         const binding = resolve(handle);
         const init = unwrapResourceExpression(
@@ -1588,11 +1619,20 @@ function undisposedResource(program: AnyNode): string | null {
         if (node.id) environment.set(resolve(node.id), node);
         if (!properties.has(node)) properties.set(node, new Map());
         for (const field of node.body.body) {
-          if (field.static && field.type === "MethodDefinition" && field.kind === "method") {
+          if (
+            field.static &&
+            field.type === "MethodDefinition" &&
+            ["method", "get"].includes(field.kind)
+          ) {
             const key = field.computed
               ? identity(field.key, environment)?.value
               : (field.key?.name ?? field.key?.value);
-            if (key !== undefined) properties.get(node)!.set(key, field.value);
+            if (key !== undefined) {
+              if (field.kind === "get") {
+                if (!classGetters.has(node)) classGetters.set(node, new Map());
+                classGetters.get(node)!.set(String(key), field.value);
+              } else properties.get(node)!.set(String(key), field.value);
+            }
           }
         }
         if (!walk(node.superClass)) return false;
@@ -1665,10 +1705,25 @@ function undisposedResource(program: AnyNode): string | null {
           const reject = {};
           let completion: Completion = { normal: false, abrupt: false };
           const settledPaths: Map<object, boolean>[] = [];
-          const alreadySettled = () =>
-            settledPaths.some((path) =>
-              [...path].every(([condition, value]) => currentPath.get(condition) === value),
-            );
+          const alreadySettled = () => {
+            const covers = (path: Map<object, boolean>): boolean => {
+              if (
+                settledPaths.some((settled) =>
+                  [...settled].every(([condition, value]) => path.get(condition) === value),
+                )
+              )
+                return true;
+              const choice = settledPaths
+                .flatMap((settled) => [...settled.keys()])
+                .find((condition) => !path.has(condition));
+              return (
+                choice !== undefined &&
+                covers(new Map(path).set(choice, true)) &&
+                covers(new Map(path).set(choice, false))
+              );
+            };
+            return covers(currentPath);
+          };
           promiseSettlers.set(resolve, (value) => {
             if (alreadySettled()) return;
             settledPaths.push(new Map(currentPath));
@@ -1730,6 +1785,9 @@ function undisposedResource(program: AnyNode): string | null {
                   if (field.value) evaluate(field.value, local, module);
                   if (key !== undefined)
                     properties.get(instance)!.set(key, identity(field.value, local));
+                } else if (key !== undefined && field.kind === "get") {
+                  if (!classGetters.has(instance)) classGetters.set(instance, new Map());
+                  classGetters.get(instance)!.set(String(key), field.value);
                 } else if (key !== undefined && field.kind !== "constructor") {
                   properties.get(instance)!.set(key, field.value);
                 }
@@ -2151,6 +2209,18 @@ function undisposedResource(program: AnyNode): string | null {
           if (node.computed && !walk(node.property)) return false;
           const object = identity(node.object, environment);
           const key = propertyKey(node, environment);
+          const classGetter = classGetters.get(object)?.get(key!);
+          if (classGetter && !properties.get(object)?.has(key!)) {
+            const completion = inspect(classGetter, [], environment, module, object);
+            returned.set(node, completion.value);
+            if (completion.abrupt) {
+              abrupt = true;
+              exits.push(new Set(cleaned));
+              thrownExits.add(exits[exits.length - 1]);
+              throwStates.set(exits[exits.length - 1], snapshot());
+            }
+            return completion.normal;
+          }
           if (object?.type === "ObjectExpression" && key !== undefined) {
             const descriptor = effectiveProperties(object, environment).get(key);
             const property = descriptor?.property;
@@ -2291,6 +2361,11 @@ function undisposedResource(program: AnyNode): string | null {
     resourceCount: resources.length,
   });
   const disposalStates = [captureDisposalState()];
+  for (const listener of listeners) {
+    if (cleaned.has(listener.value)) continue;
+    inspect(listener.handler, [listener.event], values, false, listener.receiver);
+    disposalStates.push(captureDisposalState());
+  }
   for (const { timeout, callback, args, environment } of pendingTimeouts) {
     if (cleaned.has(timeout)) continue;
     inspect(callback, args, environment, false);

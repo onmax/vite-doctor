@@ -2148,6 +2148,36 @@ for (const [name, source, leaks] of [
     false,
   ],
   [
+    "throwing destructured getter stops module evaluation",
+    "const source = { get timer() { throw Error() } }; const { timer } = source; setInterval(refresh); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "static class getter creates a timer",
+    "class Source { static get timer() { return setInterval(refresh) } }; Source.timer; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "static class getter handle can be cleaned",
+    "class Source { static get timer() { return setInterval(refresh) } }; const timer = Source.timer; import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "instance class getter creates a timer",
+    "class Source { get timer() { return setInterval(refresh) } }; new Source().timer; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "listener can fire before disposal and create a timer",
+    "const start = () => setInterval(refresh); addEventListener('click', start); import.meta.hot.dispose(() => removeEventListener('click', start))",
+    true,
+  ],
+  [
+    "dispose can clean a timer created by a listener",
+    "let timer; const start = () => { timer = setInterval(refresh) }; addEventListener('click', start); import.meta.hot.dispose(() => { removeEventListener('click', start); clearInterval(timer) })",
+    false,
+  ],
+  [
     "plain assignment does not read an accessor getter",
     "const owner = { get timer() { return setInterval(refresh) }, set timer(value) {} }; owner.timer = 0; import.meta.hot.dispose(() => {})",
     false,
@@ -2170,6 +2200,11 @@ for (const [name, source, leaks] of [
   [
     "executor throw after resolution cannot trigger catch",
     "new Promise(resolve => { resolve(); throw Error() }).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "executor throw after both branches resolve cannot trigger catch",
+    "new Promise(resolve => { if (flag) resolve(); else resolve(); throw Error() }).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
     false,
   ],
   [
