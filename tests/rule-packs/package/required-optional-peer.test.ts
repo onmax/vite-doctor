@@ -114,6 +114,8 @@ test.each([
   '((peer = require("peer")) => peer)(void 0);',
   'export {}; await (import("peer"));',
   'export {}; await (((import("peer"))));',
+  'export {}; await (0, import("peer"));',
+  'export {}; await (0, 1, import("peer"));',
   '(() => require("peer"))();',
   '(function () { require("peer"); })();',
   '((() => require("peer")))();',
@@ -514,6 +516,24 @@ test.each(['getTarget()[require("peer")];', 'getTarget()[require("peer")] = 1;']
     );
   },
 );
+
+test.each(['(0, 1)[require("peer")];', '(!false)[require("peer")];'])(
+  "requires peers after a non-abrupt computed-access base: %s",
+  async (source) => {
+    expect(
+      await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source }),
+    ).toMatchObject([{ code: "PKG0003" }]);
+  },
+);
+
+test.each([
+  'declare var require: (name: string) => unknown; require("peer");',
+  'declare const require: (name: string) => unknown; require("peer");',
+])("does not treat ambient require declarations as runtime shadows: %s", async (source) => {
+  expect(
+    await diagnose({ main: "index.cts", ...optionalPeer }, { "index.cts": source }),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
 
 test.each(['exports.peer = require("peer");', 'module.exports.peer = require("peer");'])(
   "requires optional peers assigned to CommonJS exports: %s",

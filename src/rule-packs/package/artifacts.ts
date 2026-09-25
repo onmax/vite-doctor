@@ -731,6 +731,11 @@ function isDecoratorExpression(node: ts.Node, ancestor: ts.Node): boolean {
 
 function isNonAbruptElement(node: ts.Expression): boolean {
   if (ts.isParenthesizedExpression(node)) return isNonAbruptElement(node.expression);
+  if (ts.isPrefixUnaryExpression(node)) return isNonAbruptElement(node.operand);
+  if (ts.isVoidExpression(node) || ts.isTypeOfExpression(node))
+    return isNonAbruptElement(node.expression);
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.CommaToken)
+    return isNonAbruptElement(node.left) && isNonAbruptElement(node.right);
   return (
     ts.isLiteralExpression(node) ||
     isUndefined(node) ||
@@ -918,7 +923,12 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
     ts.isAsExpression(expression.parent) ||
     ts.isSatisfiesExpression(expression.parent) ||
     ts.isNonNullExpression(expression.parent) ||
-    ts.isTypeAssertionExpression(expression.parent)
+    ts.isTypeAssertionExpression(expression.parent) ||
+    (dynamic &&
+      ts.isBinaryExpression(expression.parent) &&
+      expression.parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+      expression.parent.right === expression &&
+      isNonAbruptElement(expression.parent.left))
   )
     expression = expression.parent;
   const awaitedCalls = new Set<ts.CallExpression>();
@@ -1438,7 +1448,16 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
     let found = false;
     function search(child: ts.Node) {
       if (
-        (ts.isVariableDeclaration(child) && binds(child.name) && bindingContains(child, node)) ||
+        (ts.isVariableDeclaration(child) &&
+          binds(child.name) &&
+          bindingContains(child, node) &&
+          !(
+            ts.isVariableDeclarationList(child.parent) &&
+            ts.isVariableStatement(child.parent.parent) &&
+            child.parent.parent.modifiers?.some(
+              (modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword,
+            )
+          )) ||
         ((ts.isFunctionDeclaration(child) || ts.isClassDeclaration(child)) &&
           child.name?.text === identifier &&
           isWithin(node, child.parent)) ||
