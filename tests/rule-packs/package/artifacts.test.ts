@@ -484,11 +484,41 @@ test("rejects invalid wildcard captures in self-exports", () => {
   expect(result.references).toEqual([]);
 });
 
-test("falls back to root index.js when legacy main is missing", () => {
-  const result = inventory({ main: "missing.js" }, { "index.js": 'require("peer");' })!;
-  expect(result.references).toMatchObject([{ packageName: "peer", required: true }]);
-  expect(result.missing).toEqual([]);
+test.each(["%2e%2e", "%2F", "%zz"])(
+  "rejects encoded invalid wildcard captures in self-exports: %s",
+  (capture) => {
+    const result = inventory(
+      { name: "fixture", exports: { ".": "./index.js", "./*": "./dist/*/adapter.js" } },
+      {
+        "index.js": `import "fixture/${capture}";`,
+        [`dist/${capture}/adapter.js`]: 'import "peer";',
+      },
+    )!;
+    expect(result.references.every((reference) => !reference.required)).toBe(true);
+  },
+);
+
+test("rejects encoded invalid package-import targets", () => {
+  const result = inventory(
+    { main: "index.js", imports: { "#adapter": "./dist/%2e%2e/adapter.js" } },
+    {
+      "index.js": 'import "#adapter";',
+      "dist/%2e%2e/adapter.js": 'import "peer";',
+    },
+  )!;
+  expect(result.references).toEqual([]);
 });
+
+test.each([".js", ".json", ".node"])(
+  "falls back to root index%s when legacy main is missing",
+  (suffix) => {
+    const result = inventory({ main: "missing.js" }, { [`index${suffix}`]: 'require("peer");' })!;
+    expect(result.references).toMatchObject(
+      suffix === ".js" ? [{ packageName: "peer", required: true }] : [],
+    );
+    expect(result.missing).toEqual([]);
+  },
+);
 
 test.each([
   ['import "#adapter";', { import: "./adapter.js", default: "peer" }],

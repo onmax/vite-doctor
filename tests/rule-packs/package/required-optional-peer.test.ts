@@ -433,6 +433,29 @@ test("requires optional peers resolved directly", async () => {
   ).toMatchObject([{ code: "PKG0003" }]);
 });
 
+test.each(["index.mjs", "index.js"])(
+  "does not treat require.resolve as a peer load in native ESM %s",
+  async (entrypoint) => {
+    expect(
+      await diagnose(
+        { main: entrypoint, type: "module", ...optionalPeer },
+        { [entrypoint]: 'require.resolve("peer");' },
+      ),
+    ).toEqual([]);
+  },
+);
+
+test.each([
+  'await (import("peer") as Promise<unknown>);',
+  'await (import("peer") satisfies Promise<unknown>);',
+  'await import("peer")!;',
+  'await (<Promise<unknown>>import("peer"));',
+])("requires optional peers through erased TypeScript wrappers: %s", async (source) => {
+  expect(
+    await diagnose({ main: "index.ts", ...optionalPeer }, { "index.ts": `export {}; ${source}` }),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
 test.each(["dist/index", "dist"])("resolves legacy main %s", async (main) => {
   expect(
     await diagnose(

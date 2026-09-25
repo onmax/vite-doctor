@@ -209,7 +209,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           ? [
               commonjsFile(path),
               ...(probe === "main" && manifest.exports === undefined
-                ? [resolve(root, "index.js")]
+                ? [".js", ".json", ".node"].map((suffix) => resolve(root, `index${suffix}`))
                 : []),
             ].filter((file): file is string => file !== undefined)
           : [
@@ -259,14 +259,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     adjacentDeclaration = false,
   ): boolean {
     if (typeof value === "string") {
-      if (!value.startsWith("./") || !inside(resolve(root, value))) return false;
-      if (
-        value
-          .slice(2)
-          .split(/[\\/]/)
-          .some((segment) => /^(\.|\.\.|node_modules)$/i.test(segment))
-      )
-        return false;
+      if (!validExportTarget(value, root) || !inside(resolve(root, value))) return false;
       enqueue(value, kind, required, root, false, adjacentDeclaration);
       return true;
     }
@@ -463,7 +456,15 @@ function validExportTarget(value: string, root: string): boolean {
     !value
       .slice(2)
       .split(/[\\/]/)
-      .some((segment) => /^(\.|\.\.|node_modules)$/i.test(segment)) &&
+      .some((segment) => {
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(segment);
+        } catch {
+          return true;
+        }
+        return /^(\.|\.\.|node_modules)$/i.test(decoded) || /[\\/]/.test(decoded);
+      }) &&
     !relative(root, resolve(root, value)).startsWith("../")
   );
 }
@@ -616,6 +617,7 @@ function importEdges(
       )
         add(node.arguments[0], false, isUnconditional(node, false), "commonjs");
       else if (
+        commonjs &&
         ts.isPropertyAccessExpression(node.expression) &&
         ts.isIdentifier(node.expression.expression) &&
         node.expression.expression.text === "require" &&
@@ -826,7 +828,14 @@ function isImmediateField(field: ts.PropertyDeclaration): boolean {
 function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
   if (ts.isCallChain(node)) return false;
   let expression: ts.Node = node;
-  while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  while (
+    ts.isParenthesizedExpression(expression.parent) ||
+    ts.isAsExpression(expression.parent) ||
+    ts.isSatisfiesExpression(expression.parent) ||
+    ts.isNonNullExpression(expression.parent) ||
+    ts.isTypeAssertionExpression(expression.parent)
+  )
+    expression = expression.parent;
   const awaitedCalls = new Set<ts.CallExpression>();
   let awaitedImmediate = false;
   if (dynamic && ts.isArrayLiteralExpression(expression.parent)) {
