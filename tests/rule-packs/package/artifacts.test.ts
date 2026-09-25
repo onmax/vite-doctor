@@ -464,6 +464,32 @@ test("preserves exact self-reference export targets", () => {
   expect(result.missing).toContain("adapter");
 });
 
+test("keeps CommonJS package-import targets exact", () => {
+  const result = inventory(
+    { main: "index.cjs", imports: { "#adapter": "./adapter" } },
+    { "index.cjs": 'require("#adapter");', "adapter.js": 'require("peer");' },
+  )!;
+  expect(result.references).toEqual([]);
+  expect(result.missing).toContain("adapter");
+});
+
+test("rejects invalid wildcard captures in self-exports", () => {
+  const result = inventory(
+    { name: "fixture", exports: { ".": "./index.js", "./*": "./dist/*.js" } },
+    {
+      "index.js": 'import "fixture/../adapter";',
+      "adapter.js": 'import "peer";',
+    },
+  )!;
+  expect(result.references).toEqual([]);
+});
+
+test("falls back to root index.js when legacy main is missing", () => {
+  const result = inventory({ main: "missing.js" }, { "index.js": 'require("peer");' })!;
+  expect(result.references).toMatchObject([{ packageName: "peer", required: true }]);
+  expect(result.missing).toEqual([]);
+});
+
 test.each([
   ['import "#adapter";', { import: "./adapter.js", default: "peer" }],
   ['require("#adapter");', { import: "peer", require: "./adapter.js", default: "peer" }],

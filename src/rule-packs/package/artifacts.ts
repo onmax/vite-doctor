@@ -206,7 +206,12 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       ? kind === "types"
         ? typeCandidates(path)
         : probe === "main" || (probe === "commonjs" && !sourceResolution)
-          ? [commonjsFile(path)].filter((file): file is string => file !== undefined)
+          ? [
+              commonjsFile(path),
+              ...(probe === "main" && manifest.exports === undefined
+                ? [resolve(root, "index.js")]
+                : []),
+            ].filter((file): file is string => file !== undefined)
           : [
               ...(sourceResolution ? sourceCandidates(path) : []),
               path,
@@ -353,7 +358,9 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
             kind,
             executionRequired && kind === "runtime",
             edge.specifier.startsWith("#") ? root : dirname(current.path),
-            edge.probe || kind === "types" || /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
+            edge.specifier.startsWith("#")
+              ? false
+              : edge.probe || kind === "types" || /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
             false,
             /\.(?:[cm]?ts|tsx)$/.test(current.path),
           );
@@ -496,11 +503,12 @@ function resolvePackageImport(
   ): { specifier: string; kind: PackageReference["kind"] }[] | undefined {
     if (value === null) return [];
     if (typeof value === "string") {
-      if (selfRoot && !validExportTarget(value, selfRoot)) return undefined;
-      if (importsRoot && value.startsWith(".") && !validExportTarget(value, importsRoot))
+      const substituted = value.replaceAll("*", wildcard);
+      if (selfRoot && !validExportTarget(substituted, selfRoot)) return undefined;
+      if (importsRoot && value.startsWith(".") && !validExportTarget(substituted, importsRoot))
         return undefined;
       return resolvePackageImport(
-        value.replaceAll("*", wildcard),
+        substituted,
         imports,
         targetKind,
         mode,
@@ -672,6 +680,7 @@ function isNonAbruptElement(node: ts.Expression): boolean {
     node.kind === ts.SyntaxKind.ThisKeyword ||
     ts.isArrowFunction(node) ||
     ts.isFunctionExpression(node) ||
+    (ts.isClassExpression(node) && !node.heritageClauses?.length && node.members.length === 0) ||
     (ts.isArrayLiteralExpression(node) && node.elements.every(isNonAbruptElement)) ||
     (ts.isObjectLiteralExpression(node) &&
       node.properties.every(

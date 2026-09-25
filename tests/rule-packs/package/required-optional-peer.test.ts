@@ -711,6 +711,8 @@ test.each([
   '({ get value() { return 1; }, peer: require("peer") });',
   '({ ["value"]: require("peer") });',
   'class Adapter { static ["value"] = 1; static peer = require("peer"); }',
+  'class Adapter extends class {} { static peer = require("peer"); }',
+  'class Adapter extends (class {}) { static peer = require("peer"); }',
   '{ var require = () => {}; } require("peer");',
   'if (true) { var require = () => {}; } require("peer");',
 ])("respects safe object definitions and nested var scopes: %s", async (source) => {
