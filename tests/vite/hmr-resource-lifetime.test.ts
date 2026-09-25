@@ -2138,6 +2138,73 @@ for (const [name, source, leaks] of [
 
 for (const [name, source, leaks] of [
   [
+    "destructuring invokes a resource-creating getter",
+    "const source = { get timer() { return setInterval(refresh) } }; const { timer } = source; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "destructured getter handle can be cleaned",
+    "const source = { get timer() { return setInterval(refresh) } }; const { timer } = source; import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "plain assignment does not read an accessor getter",
+    "const owner = { get timer() { return setInterval(refresh) }, set timer(value) {} }; owner.timer = 0; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "reaction adopts a rejected promise",
+    "Promise.resolve().then(() => new Promise((resolve, reject) => reject(Error()))).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "first promise settlement wins over later rejection",
+    "new Promise((resolve, reject) => { resolve(); reject(Error()) }).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "first promise rejection wins over later fulfillment",
+    "new Promise((resolve, reject) => { reject(Error()); resolve() }).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "executor throw after resolution cannot trigger catch",
+    "new Promise(resolve => { resolve(); throw Error() }).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "promise resolver adopts a rejected promise",
+    "new Promise(resolve => resolve(Promise.reject(Error()))).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "throwing finally prevents the fulfillment reaction",
+    "Promise.resolve().finally(() => { throw Error() }).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "rejected finally promise prevents the fulfillment reaction",
+    "Promise.resolve().finally(() => Promise.reject(Error())).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "fulfilled finally promise preserves the fulfillment reaction",
+    "Promise.resolve().finally(() => Promise.resolve()).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+] as const) {
+  test(name, async () => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: requireDisposeForSideEffects,
+      files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+    });
+    expect(result.diagnostics.length > 0).toBe(leaks);
+  });
+}
+
+for (const [name, source, leaks] of [
+  [
     "for break skips update",
     "for (; true; setInterval(refresh)) { break }; import.meta.hot.dispose(() => {})",
     false,

@@ -325,16 +325,22 @@ function undisposedResource(program: AnyNode): string | null {
     local: Map<AnyNode, AnyNode>,
     module = false,
   ): void {
-    const read = (object: AnyNode, key: string): AnyNode =>
-      identity(
-        {
-          type: "MemberExpression",
-          object,
-          property: { type: "Literal", value: key },
-          computed: true,
-        },
-        local,
-      );
+    const read = (object: AnyNode, key: string): AnyNode => {
+      const descriptor = effectiveProperties(object, local).get(key);
+      if (
+        descriptor?.accessor &&
+        descriptor.property.kind === "get" &&
+        !properties.get(object)?.has(key)
+      )
+        return inspect(descriptor.property.value, [], local, module, descriptor.receiver).value;
+      const member = {
+        type: "MemberExpression",
+        object,
+        property: { type: "Literal", value: key },
+        computed: true,
+      };
+      return identity(member, local);
+    };
     const bind = (pattern: AnyNode, argument: AnyNode): void => {
       if (!pattern) return;
       if (pattern.type === "Identifier") local.set(pattern, argument);
@@ -402,6 +408,27 @@ function undisposedResource(program: AnyNode): string | null {
     };
     bind(pattern, argument);
   }
+  const adoptPromise = (completion: Completion): Completion => {
+    let settled = completion;
+    const seen = new Set<AnyNode>();
+    while (settled.normal && settled.value && !seen.has(settled.value)) {
+      seen.add(settled.value);
+      const choices = callbackChoices.get(settled.value);
+      const adopted = choices
+        ? {
+            normal: choices.some((choice) => promiseCompletions.get(choice)?.normal ?? true),
+            abrupt: choices.some((choice) => promiseCompletions.get(choice)?.abrupt),
+          }
+        : promiseCompletions.get(settled.value);
+      if (!adopted) break;
+      settled = {
+        ...adopted,
+        normal: adopted.normal,
+        abrupt: settled.abrupt || adopted.abrupt,
+      };
+    }
+    return settled;
+  };
   function inspect(
     target: AnyNode,
     args: AnyNode[] = [],
@@ -518,20 +545,7 @@ function undisposedResource(program: AnyNode): string | null {
     if (target.async) {
       const promise = {};
       promises.set(promise, completion.value);
-      let settled = completion;
-      const seen = new Set<AnyNode>();
-      while (settled.normal && settled.value && !seen.has(settled.value)) {
-        seen.add(settled.value);
-        const choices = callbackChoices.get(settled.value);
-        const adopted = choices
-          ? {
-              normal: choices.some((choice) => promiseCompletions.get(choice)?.normal ?? true),
-              abrupt: choices.some((choice) => promiseCompletions.get(choice)?.abrupt),
-            }
-          : promiseCompletions.get(settled.value);
-        if (!adopted) break;
-        settled = { ...adopted, abrupt: settled.abrupt || adopted.abrupt };
-      }
+      const settled = adoptPromise(completion);
       promiseCompletions.set(promise, settled);
       return { normal: true, abrupt: false, value: promise };
     }
@@ -835,17 +849,19 @@ function undisposedResource(program: AnyNode): string | null {
         return true;
       }
       if (
-        method === "resolve" &&
+        (method === "resolve" || method === "reject") &&
         node.callee.type === "MemberExpression" &&
         identity(node.callee.object, environment) === "Promise" &&
         !replacedMethod
       ) {
         const promise = {};
         const value = identity(node.arguments[0], environment);
-        promises.set(promise, promises.get(value) ?? value);
+        if (method === "resolve") promises.set(promise, promises.get(value) ?? value);
         promiseCompletions.set(
           promise,
-          promiseCompletions.get(value) ?? { normal: true, abrupt: false, value },
+          method === "resolve"
+            ? (promiseCompletions.get(value) ?? { normal: true, abrupt: false, value })
+            : { normal: false, abrupt: true, value },
         );
         returned.set(node, promise);
         return true;
@@ -870,24 +886,37 @@ function undisposedResource(program: AnyNode): string | null {
         const before = mixed ? snapshot() : undefined;
         const parentPath = currentPath;
         const settlement = {};
+        const runFinally = (incoming: Completion | undefined): Completion | undefined => {
+          if (!finallyHandler || !incoming) return incoming;
+          const final = adoptPromise(inspect(finallyHandler, [], environment, module));
+          return final.abrupt
+            ? {
+                normal: incoming.normal && final.normal,
+                abrupt: true,
+                value: final.value,
+              }
+            : incoming;
+        };
         if (mixed) currentPath = new Map(parentPath).set(settlement, true);
-        const fulfilled = previous.normal
-          ? fulfilledHandler
-            ? inspect(fulfilledHandler, [promises.get(promise)], environment, module)
-            : { normal: true, abrupt: false, value: promises.get(promise) }
-          : undefined;
-        if (finallyHandler && fulfilled) inspect(finallyHandler, [], environment, module);
+        const fulfilled = runFinally(
+          previous.normal
+            ? fulfilledHandler
+              ? inspect(fulfilledHandler, [promises.get(promise)], environment, module)
+              : { normal: true, abrupt: false, value: promises.get(promise) }
+            : undefined,
+        );
         const afterFulfilled = mixed ? snapshot() : undefined;
         if (before) {
           restore(before);
           currentPath = new Map(parentPath).set(settlement, false);
         }
-        const rejected = previous.abrupt
-          ? rejectedHandler
-            ? inspect(rejectedHandler, [previous.value], environment, module)
-            : { normal: false, abrupt: true, value: previous.value }
-          : undefined;
-        if (finallyHandler && rejected) inspect(finallyHandler, [], environment, module);
+        const rejected = runFinally(
+          previous.abrupt
+            ? rejectedHandler
+              ? inspect(rejectedHandler, [previous.value], environment, module)
+              : { normal: false, abrupt: true, value: previous.value }
+            : undefined,
+        );
         if (afterFulfilled) merge(afterFulfilled, snapshot());
         currentPath = parentPath;
         const completion: Completion = {
@@ -895,11 +924,12 @@ function undisposedResource(program: AnyNode): string | null {
           abrupt: Boolean(fulfilled?.abrupt || rejected?.abrupt),
           value: fulfilled?.value ?? rejected?.value,
         };
+        const settled = adoptPromise(completion);
         const result = {};
-        if (completion.normal) promises.set(result, completion.value);
-        promiseCompletions.set(result, completion);
+        if (settled.normal) promises.set(result, settled.value);
+        promiseCompletions.set(result, settled);
         returned.set(node, result);
-        return completion.normal || completion.abrupt;
+        return settled.normal || settled.abrupt;
       }
       if (
         method === "from" &&
@@ -1634,14 +1664,29 @@ function undisposedResource(program: AnyNode): string | null {
           const resolve = {};
           const reject = {};
           let completion: Completion = { normal: false, abrupt: false };
+          const settledPaths: Map<object, boolean>[] = [];
+          const alreadySettled = () =>
+            settledPaths.some((path) =>
+              [...path].every(([condition, value]) => currentPath.get(condition) === value),
+            );
           promiseSettlers.set(resolve, (value) => {
-            completion = { ...completion, normal: true, value };
+            if (alreadySettled()) return;
+            settledPaths.push(new Map(currentPath));
+            const adopted = adoptPromise({ normal: true, abrupt: false, value });
+            completion = {
+              ...completion,
+              normal: completion.normal || adopted.normal,
+              abrupt: completion.abrupt || adopted.abrupt,
+              value: adopted.value,
+            };
           });
           promiseSettlers.set(reject, (value) => {
+            if (alreadySettled()) return;
+            settledPaths.push(new Map(currentPath));
             completion = { ...completion, abrupt: true, value };
           });
           const executor = inspect(node.arguments[0], [resolve, reject], environment, module);
-          if (executor.abrupt) completion.abrupt = true;
+          if (executor.abrupt && !alreadySettled()) completion.abrupt = true;
           promiseSettlers.delete(resolve);
           promiseSettlers.delete(reject);
           promiseCompletions.set(promise, completion);
@@ -2151,6 +2196,17 @@ function undisposedResource(program: AnyNode): string | null {
         );
         if (completion.value) returned.set(node, completion.value);
         return completion.normal;
+      }
+      if (
+        node.type === "AssignmentExpression" &&
+        node.operator === "=" &&
+        node.left.type === "MemberExpression"
+      ) {
+        if (!walk(node.left.object)) return false;
+        if (node.left.computed && !walk(node.left.property)) return false;
+        if (!walk(node.right) || visit(node) === false) return false;
+        returned.set(node, identity(node.right, environment));
+        return true;
       }
       const bindsValue =
         node.type === "VariableDeclarator" ||
