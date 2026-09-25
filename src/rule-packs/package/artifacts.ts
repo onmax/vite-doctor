@@ -362,8 +362,11 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
         });
       }
     }
-    const commonjs = commonjsModule(current.path);
     const text = readFileSync(current.path, "utf8");
+    const parsed = ts.createSourceFile(current.path, text, ts.ScriptTarget.Latest, true);
+    const commonjs =
+      commonjsModule(current.path) &&
+      (explicitCommonjsModule(current.path) || !ts.isExternalModule(parsed));
     const source = ts.createSourceFile(
       current.path,
       commonjs ? text : `${text}\nexport {};`,
@@ -547,11 +550,11 @@ function resolvePackageImport(
     if (value === null) return [];
     if (typeof value === "string") {
       if (key.includes("*") && !validExportTarget(`./${wildcard}`, selfRoot ?? importsRoot ?? ""))
-        return undefined;
+        return [];
       const substituted = value.replaceAll("*", wildcard);
-      if (selfRoot && !validExportTarget(substituted, selfRoot)) return undefined;
+      if (selfRoot && !validExportTarget(substituted, selfRoot)) return [];
       if (importsRoot && value.startsWith(".") && !validExportTarget(substituted, importsRoot))
-        return undefined;
+        return [];
       return resolvePackageImport(
         substituted,
         imports,
@@ -731,7 +734,19 @@ function isDecoratorExpression(node: ts.Node, ancestor: ts.Node): boolean {
 
 function isNonAbruptElement(node: ts.Expression): boolean {
   if (ts.isParenthesizedExpression(node)) return isNonAbruptElement(node.expression);
-  if (ts.isPrefixUnaryExpression(node)) return isNonAbruptElement(node.operand);
+  if (ts.isPrefixUnaryExpression(node))
+    return (
+      (node.operator === ts.SyntaxKind.ExclamationToken ||
+        node.operator === ts.SyntaxKind.TildeToken ||
+        node.operator === ts.SyntaxKind.MinusToken ||
+        (node.operator === ts.SyntaxKind.PlusToken &&
+          (ts.isNumericLiteral(node.operand) ||
+            ts.isStringLiteral(node.operand) ||
+            node.operand.kind === ts.SyntaxKind.TrueKeyword ||
+            node.operand.kind === ts.SyntaxKind.FalseKeyword ||
+            node.operand.kind === ts.SyntaxKind.NullKeyword))) &&
+      isNonAbruptElement(node.operand)
+    );
   if (ts.isVoidExpression(node) || ts.isTypeOfExpression(node))
     return isNonAbruptElement(node.expression);
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.CommaToken)
@@ -970,7 +985,13 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
         : call.arguments.length > 1 ||
           (member.name.text === "catch" &&
             call.arguments[0] &&
-            !isNonCallable(call.arguments[0]))) ||
+            !isNonCallable(call.arguments[0]) &&
+            !(
+              (ts.isArrowFunction(call.arguments[0]) ||
+                ts.isFunctionExpression(call.arguments[0])) &&
+              ts.isBlock(call.arguments[0].body) &&
+              isRethrowingCatch(call.arguments[0].body)
+            ))) ||
       !call.arguments.every(isNonAbruptElement)
     )
       break;
@@ -1459,6 +1480,7 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
             )
           )) ||
         ((ts.isFunctionDeclaration(child) || ts.isClassDeclaration(child)) &&
+          !child.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) &&
           child.name?.text === identifier &&
           isWithin(node, child.parent)) ||
         (ts.isImportClause(child) && child.name?.text === identifier) ||

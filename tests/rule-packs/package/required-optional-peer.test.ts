@@ -14,6 +14,15 @@ test.each([
   expect(result).toMatchObject([{ code: "PKG0003" }]);
 });
 
+test("preserves required awaited imports through rethrowing promise catches", async () => {
+  expect(
+    await diagnose(
+      { ...optionalPeer, main: "index.mjs" },
+      { "index.mjs": 'await import("peer").catch(error => { throw error; });' },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
 test("does not require a peer after an abrupt predecessor in a rethrowing try", async () => {
   expect(
     await diagnose(
@@ -529,6 +538,7 @@ test.each(['(0, 1)[require("peer")];', '(!false)[require("peer")];'])(
 test.each([
   'declare var require: (name: string) => unknown; require("peer");',
   'declare const require: (name: string) => unknown; require("peer");',
+  'declare function require(name: string): unknown; require("peer");',
 ])("does not treat ambient require declarations as runtime shadows: %s", async (source) => {
   expect(
     await diagnose({ main: "index.cts", ...optionalPeer }, { "index.cts": source }),
@@ -555,6 +565,15 @@ test.each(["index.mjs", "index.js"])(
     ).toEqual([]);
   },
 );
+
+test("treats typeless JavaScript with ESM syntax as native ESM", async () => {
+  expect(
+    await diagnose(
+      { main: "index.js", ...optionalPeer },
+      { "index.js": 'export {}; require.resolve("peer");' },
+    ),
+  ).toEqual([]);
+});
 
 test.each([
   'await (import("peer") as Promise<unknown>);',
@@ -825,6 +844,19 @@ test("skips invalid import-map array targets before selecting the optional peer"
   ).toMatchObject([{ code: "PKG0003" }]);
 });
 
+test("does not select a conditional import-map fallback after an invalid matched target", async () => {
+  expect(
+    await diagnose(
+      {
+        main: "index.js",
+        imports: { "#adapter": { node: "../invalid.js", default: "peer" } },
+        ...optionalPeer,
+      },
+      { "index.js": 'import "#adapter";' },
+    ),
+  ).toEqual([]);
+});
+
 test.each([
   'class Adapter { static { throw 0; } static peer = require("peer"); }',
   'class Adapter extends 0 { static peer = require("peer"); }',
@@ -833,6 +865,7 @@ test.each([
   'class Adapter { static [unknown()] = require("peer"); }',
   'class Adapter extends unknown() { static peer = require("peer"); }',
   'unknown()(require("peer"));',
+  '(+1n)[require("peer")];',
   'new (unknown())(require("peer"));',
   '({ get run() { throw 0; } }).run(require("peer"));',
   '({ [unknown()]: require("peer") });',
