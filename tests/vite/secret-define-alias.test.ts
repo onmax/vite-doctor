@@ -102,6 +102,23 @@ wrapper(true); export default { define: { VALUE: JSON.stringify(values) } }`,
   expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
 });
 
+test("replays a secret passed only through a recursive helper call", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const values = [];
+function append(value, again) {
+  if (again) append(process.env.PRIVATE_TOKEN, false);
+  else values.push(value);
+}
+append('public', true);
+export default { define: { VALUE: JSON.stringify(values) } }`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
+});
+
 test.each([
   ["safe", "PRIVATE_TOKEN", true],
   ["process.env.PRIVATE_TOKEN", "'safe'", false],

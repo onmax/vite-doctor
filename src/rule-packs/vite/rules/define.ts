@@ -481,7 +481,6 @@ function readAliasInitializers(source: string) {
     }
   };
   const executedFunctions = new Map<AnyNode, Set<string>>();
-  const executingFunctions = new Set<AnyNode>();
   let activeBindings: Map<number, AnyNode> | undefined;
   function calledFunction(node: AnyNode): AnyNode {
     if (
@@ -543,7 +542,7 @@ function readAliasInitializers(source: string) {
     args: AnyNode[] = [],
     callSite = position,
   ) {
-    if (!node || executingFunctions.has(node)) return;
+    if (!node) return;
     const invocation = `${position}:${callSite}`;
     if (executedFunctions.get(node)?.has(invocation)) return;
     const invocations = executedFunctions.get(node) ?? new Set<string>();
@@ -566,14 +565,12 @@ function readAliasInitializers(source: string) {
       if (identifier.type === "Identifier" && value)
         activeBindings!.set(identifier.range[0], value);
     });
-    executingFunctions.add(node);
     collectMutations(
       node.body,
       position !== undefined && (position < node.range[0] || position > node.range[1])
         ? position
         : undefined,
     );
-    executingFunctions.delete(node);
     activeBindings = previous;
   }
   function collectMutations(node: AnyNode, executionPosition?: number) {
