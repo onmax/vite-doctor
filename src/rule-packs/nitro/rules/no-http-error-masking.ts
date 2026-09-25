@@ -120,7 +120,7 @@ interface Path {
   adoptingAsync?: boolean;
 }
 
-type ErrorValue = { id: number; status: Outcome };
+type ErrorValue = { id: number; status: Outcome; instanceofError?: boolean };
 type Value = { error: ErrorValue } | { literal: unknown };
 type Bindings = ReadonlyMap<AnyNode, ErrorValue>;
 
@@ -182,7 +182,31 @@ function outcomes(
       const expression = unwrapExpression(node);
       const status = httpStatus(expression, current);
       if (status !== undefined)
-        return { ...current, value: { error: { id: --current.budget.remaining, status } } };
+        return {
+          ...current,
+          value: {
+            error: {
+              id: --current.budget.remaining,
+              status,
+              instanceofError:
+                expression?.type === "CallExpression" &&
+                isH3Reference(
+                  unwrapExpression(expression.callee),
+                  "createError",
+                  current.resolveBinding,
+                ) &&
+                expression.arguments[0]?.type === "ObjectExpression" &&
+                expression.arguments[0].properties.every(
+                  (property: AnyNode) =>
+                    property.type !== "SpreadElement" &&
+                    !property.computed &&
+                    !["constructor", "__proto__"].includes(
+                      property.key?.name ?? property.key?.value,
+                    ),
+                ),
+            },
+          },
+        };
       if (expression?.type === "Literal")
         return { ...current, value: { literal: expression.value } };
       if (expression?.type === "Identifier") {
@@ -759,7 +783,7 @@ function evaluateOutcomes(
           node.right.type === "Identifier" &&
           node.right.name === "Error" &&
           !right.resolveBinding(node.right) &&
-          typeof errorStatus(leftValue.error, right) === "number"
+          leftValue.error.instanceofError === true
         )
           value = { literal: true };
         if (leftValue && "literal" in leftValue && rightValue && "literal" in rightValue) {

@@ -2737,6 +2737,14 @@ test.each([
     0,
   ],
   [
+    "try { throw createError({ statusCode: 404, constructor: { __h3_error__: true } }) } catch (error) { if (error instanceof Error) throw error; throw new Error() }",
+    1,
+  ],
+  [
+    "const options = { statusCode: 404, constructor: { __h3_error__: true } }; try { throw createError(options) } catch (error) { if (error instanceof Error) throw error; throw new Error() }",
+    1,
+  ],
+  [
     "try { throw createError({ statusCode: 404 }) } catch (error) { function Error() {}; if (error instanceof Error) throw error; throw createError({ statusCode: 500 }) }",
     1,
   ],
