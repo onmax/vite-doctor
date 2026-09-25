@@ -743,7 +743,7 @@ function evaluateOutcomes(
   }
   if (
     node.type === "BinaryExpression" &&
-    ["===", "!==", "==", "!=", "<", "<=", ">", ">="].includes(node.operator)
+    ["===", "!==", "==", "!=", "<", "<=", ">", ">=", "instanceof"].includes(node.operator)
   ) {
     return outcomes(node.left, normal, bindings, conditions).flatMap((left) => {
       if (left.outcome !== "normal") return [left];
@@ -752,6 +752,16 @@ function evaluateOutcomes(
         if (right.outcome !== "normal") return right;
         const rightValue = right.value;
         let value: Value | undefined;
+        if (
+          node.operator === "instanceof" &&
+          leftValue &&
+          "error" in leftValue &&
+          node.right.type === "Identifier" &&
+          node.right.name === "Error" &&
+          !right.resolveBinding(node.right) &&
+          typeof errorStatus(leftValue.error, right) === "number"
+        )
+          value = { literal: true };
         if (leftValue && "literal" in leftValue && rightValue && "literal" in rightValue) {
           const a = leftValue.literal;
           const b = rightValue.literal;
@@ -1446,7 +1456,16 @@ function loopOutcomes(
       : node.type === "ForInStatement" || node.type === "ForOfStatement"
         ? outcomes(node.right, path, bindings, conditions)
         : [path];
-  const pending = initial.map((current) => ({ current, index: 0 }));
+  const right = unwrapExpression(node.right);
+  const pending = initial.map((current) => ({
+    current,
+    index: 0,
+    elements:
+      node.type === "ForOfStatement" && current.arrayIteratorElements !== null
+        ? (current.arrayIteratorElements ??
+          (right?.type === "ArrayExpression" ? right.elements : undefined))
+        : undefined,
+  }));
   const seen = new Set<string>();
   const iteration = (element: AnyNode) =>
     ({
@@ -1483,20 +1502,18 @@ function loopOutcomes(
     }) as AnyNode;
   let first = node.type === "DoWhileStatement";
   while (pending.length) {
-    const { current, index } = pending.pop()!;
+    const { current, index, elements } = pending.pop()!;
     if (current.outcome !== "normal") {
+      result.push(current);
+      continue;
+    }
+    if (elements?.length === 0) {
       result.push(current);
       continue;
     }
     const key = pathKey([loopStateKey(current), index]);
     if (!first && seen.has(key)) continue;
     if (!first) seen.add(key);
-    const right = unwrapExpression(node.right);
-    const elements =
-      node.type === "ForOfStatement" && current.arrayIteratorElements !== null
-        ? (current.arrayIteratorElements ??
-          (right?.type === "ArrayExpression" ? right.elements : undefined))
-        : undefined;
     const element = elements?.[index] ?? { type: "Identifier", name: "" };
     const paths = outcomes(first ? node.body : iteration(element), current, bindings, conditions);
     first = false;
@@ -1510,7 +1527,11 @@ function loopOutcomes(
           result.push(...updated.map((current) => ({ ...current, outcome: "normal" as const })));
         else
           pending.push(
-            ...updated.map((current) => ({ current, index: elements?.length ? index + 1 : 0 })),
+            ...updated.map((current) => ({
+              current,
+              index: elements?.length ? index + 1 : 0,
+              elements,
+            })),
           );
       } else result.push(next);
     }
@@ -1803,7 +1824,8 @@ function httpStatus(node: AnyNode, path: Path): number | "server-error" | undefi
     return "server-error";
   if (node?.type !== "CallExpression" || !isH3Reference(callee, "createError", path.resolveBinding))
     return;
-  const options = unwrapExpression(node.arguments?.[0]);
+  let options = unwrapExpression(node.arguments?.[0]);
+  if (options?.type === "Identifier") options = path.objects?.get(path.resolveBinding(options));
   if (!options || (options.type === "Literal" && typeof options.value === "string")) return 500;
   if (options.type !== "ObjectExpression") return;
   const statuses = new Map<string, number | undefined>();
@@ -2129,7 +2151,7 @@ function enclosingPaths(node: AnyNode, initial: Path, conditions: Set<string>): 
             })
           )
             return [];
-          const values = elements?.length ? elements : [{ type: "UnknownExpression" }];
+          const values = elements ?? [{ type: "UnknownExpression" }];
           return values.flatMap((value: AnyNode) =>
             patternOutcomes(
               target,

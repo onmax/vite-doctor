@@ -2162,7 +2162,7 @@ test.each([
   [
     "empty array iteration",
     "try { for (const item of []) throw createError({ statusCode: 404 }) } catch { throw new Error() }",
-    1,
+    0,
   ],
   [
     "empty object iteration",
@@ -2700,12 +2700,56 @@ test.each([
   ["for (const code of [404]) throw createError({ statusCode: code })", 1],
   ["for (const code of [500]) throw createError({ statusCode: code })", 0],
   ["for (const code of []) throw createError({ statusCode: code })", 0],
+  [
+    "for (const code of [500, 404]) { if (code === 500) { Array.prototype[Symbol.iterator] = function* () { yield 500 }; continue }; throw createError({ statusCode: code }) }",
+    1,
+  ],
+  [
+    "for (const code of [404, 500]) { if (code === 404) { Array.prototype[Symbol.iterator] = function* () { yield 404 }; continue }; throw createError({ statusCode: code }) }",
+    0,
+  ],
+  [
+    "Array.prototype[Symbol.iterator] = function* () {}; for (const code of [404]) throw createError({ statusCode: code })",
+    0,
+  ],
 ])("binds literal values inside protected for-of loops: %s", async (statement, count) => {
   const result = await runRuleFixture({
     framework: "nitro",
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => { try { ${statement} } catch { throw new Error() } })`,
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
+
+test.each([
+  [
+    "const options = { statusCode: 404 }; try { throw createError(options) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "const options = { statusCode: 404 }; const alias = options; try { throw createError(alias) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "try { throw createError({ statusCode: 404 }) } catch (error) { if (error instanceof Error) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "try { throw createError({ statusCode: 404 }) } catch (error) { function Error() {}; if (error instanceof Error) throw error; throw createError({ statusCode: 500 }) }",
+    1,
+  ],
+  [
+    "Array.prototype[Symbol.iterator] = function* () {}; for (const code of [404]) { try { throw createError({ statusCode: code }) } catch { throw new Error() } }",
+    0,
+  ],
+])("preserves known HTTP errors through local options and guards: %s", async (statement, count) => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `export default defineEventHandler(() => { ${statement} })`,
     },
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
