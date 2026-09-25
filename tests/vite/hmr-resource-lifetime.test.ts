@@ -3540,6 +3540,26 @@ for (const [name, source, leaks] of [
     "const timers = []; const same = timers.sort(); same.push(setInterval(refresh)); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
     false,
   ],
+  [
+    "listener-scheduled timeout can leak a nested interval",
+    "let pending; const start = () => { pending = setTimeout(() => setInterval(refresh), 0) }; document.addEventListener('click', start); import.meta.hot.dispose(() => { document.removeEventListener('click', start); clearTimeout(pending) })",
+    true,
+  ],
+  [
+    "expired timeout does not require guarded disposal",
+    "let pending = setTimeout(() => { pending = null }, 0); import.meta.hot.dispose(() => { if (pending !== null) clearTimeout(pending) })",
+    false,
+  ],
+  [
+    "Set forEach cleans handles added before disposal",
+    "const timers = new Set(); timers.add(setInterval(refresh)); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "Set forEach cleans handles from a known iterable",
+    "const timers = new Set([setInterval(refresh)]); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({

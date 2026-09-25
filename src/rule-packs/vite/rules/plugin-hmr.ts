@@ -164,6 +164,8 @@ function undisposedResource(program: AnyNode): string | null {
     environment: Map<AnyNode, AnyNode>;
     delay: AnyNode;
   }[] = [];
+  let timerSimulationDepth = 0;
+  const setCollections = new Set<AnyNode>();
   const arrayChoices = new Map<AnyNode, { array: AnyNode; path: Map<object, boolean> }[]>();
   const alternatives = new Map<AnyNode, AnyNode[]>();
   const callbackChoices = new Map<AnyNode, AnyNode[]>();
@@ -787,7 +789,11 @@ function undisposedResource(program: AnyNode): string | null {
           alternatives.set(value, created);
           returned.set(node, value);
         }
-        if (module && (kinds.has("timeout") || kinds.has("interval")) && node.arguments[0]) {
+        if (
+          (module || timerSimulationDepth === 1) &&
+          (kinds.has("timeout") || kinds.has("interval")) &&
+          node.arguments[0]
+        ) {
           const callback = identity(node.arguments[0], environment);
           if (
             lexicalEnvironments.has(callback) ||
@@ -1179,6 +1185,31 @@ function undisposedResource(program: AnyNode): string | null {
         node.callee.type === "MemberExpression"
           ? identity(node.callee.object, environment)
           : undefined;
+      if (setCollections.has(array) && !replacedMethod) {
+        const elements = arrayElements(array);
+        if (method === "add") {
+          const value = identity(node.arguments[0], environment);
+          if (!elements.includes(value)) {
+            const stored = properties.get(array) ?? new Map();
+            stored.set(String(elements.length), value);
+            stored.set("length", { type: "Literal", value: elements.length + 1 });
+            properties.set(array, stored);
+          }
+          returned.set(node, array);
+          return true;
+        }
+        if (method === "forEach") {
+          for (const element of elements) {
+            const call = {
+              type: "CallExpression",
+              callee: identity(node.arguments[0], environment),
+              arguments: [element, element, array],
+            };
+            if (visit(call, identity(node.arguments[1], environment)) === false) return false;
+          }
+          return true;
+        }
+      }
       if (
         array?.type === "ArrayExpression" &&
         !arrayChoices.has(array) &&
@@ -1817,6 +1848,25 @@ function undisposedResource(program: AnyNode): string | null {
         if (!walk(node.callee)) return false;
         const value = identity(node.callee, environment);
         const target = callbacks.get(value) ?? value;
+        if (value === "Set" && !resolve(node.callee) && !node.arguments[0]) {
+          const collection = { type: "ArrayExpression", elements: [] };
+          setCollections.add(collection);
+          returned.set(node, collection);
+          return true;
+        }
+        if (value === "Set" && !resolve(node.callee)) {
+          if (!walk(node.arguments)) return false;
+          const source = identity(node.arguments[0], environment);
+          if (source?.type === "ArrayExpression") {
+            const collection = {
+              type: "ArrayExpression",
+              elements: [...new Set(expand(arrayElements(source), environment))],
+            };
+            setCollections.add(collection);
+            returned.set(node, collection);
+          }
+          return true;
+        }
         if (
           value === "Promise" ||
           (value?.type === "MemberExpression" &&
@@ -2547,10 +2597,14 @@ function undisposedResource(program: AnyNode): string | null {
         ? listener.handler
         : handler;
     const receiver = callback === handler ? listener.handler : listener.receiver;
+    timerSimulationDepth = 1;
     inspect(callback, [event], values, false, receiver);
+    timerSimulationDepth = 0;
     disposalStates.push(captureDisposalState());
     if (!listener.once && !cleaned.has(listener.value)) {
+      timerSimulationDepth = 1;
       inspect(callback, [event], values, false, receiver);
+      timerSimulationDepth = 0;
       disposalStates.push(captureDisposalState());
     }
     currentPath = parentPath;
@@ -2575,6 +2629,7 @@ function undisposedResource(program: AnyNode): string | null {
     index,
     { timeout, callback, args, environment, delay },
   ] of pendingTimeouts.entries()) {
+    if (!resources.some((resource) => resource.value === timeout)) continue;
     const sequentialState = captureDisposalState();
     if (
       index > 0 &&
@@ -2588,12 +2643,20 @@ function undisposedResource(program: AnyNode): string | null {
         )
     ) {
       restoreDisposalState(beforeTimeouts);
+      timerSimulationDepth = 1;
       inspect(callback, args, environment, false);
+      timerSimulationDepth = 0;
+      if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
+        cleaned.add(timeout);
       disposalStates.push(captureDisposalState());
       restoreDisposalState(sequentialState);
     }
     if (cleaned.has(timeout)) continue;
+    timerSimulationDepth = 1;
     inspect(callback, args, environment, false);
+    timerSimulationDepth = 0;
+    if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
+      cleaned.add(timeout);
     disposalStates.push(captureDisposalState());
     if (
       resources.find((resource) => resource.value === timeout)?.kind === "interval" &&
