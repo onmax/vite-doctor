@@ -91,17 +91,27 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
           )
         )
           continue;
-        for (const [index, handler] of evidence.resolvedServerHandlers!.entries()) {
-          if (!handler.route || handler.middleware) continue;
-          if (handler.route === path) break;
-          if (
-            !wildcard.test(handler.route) ||
-            !path.startsWith(`${handler.route.replace(wildcard, "")}/`)
+        if (
+          evidence.resolvedServerHandlers!.some(
+            (handler) => !handler.middleware && handler.route === path,
           )
-            continue;
-          evidence.resolvedServerHandlers!.splice(index, 0, { ...handler, route: path });
-          break;
-        }
+        )
+          continue;
+        const matching = evidence
+          .resolvedServerHandlers!.map((handler, index) => ({ handler, index }))
+          .filter(
+            ({ handler }) =>
+              !handler.middleware &&
+              handler.route &&
+              wildcard.test(handler.route) &&
+              path.startsWith(`${handler.route.replace(wildcard, "")}/`),
+          )
+          .sort((first, second) => second.handler.route!.length - first.handler.route!.length)[0];
+        if (matching)
+          evidence.resolvedServerHandlers!.splice(matching.index, 0, {
+            ...matching.handler,
+            route: path,
+          });
       }
       const directories = new Set<string>([
         resolve(nuxt.options.rootDir, nuxt.options.serverDir ?? "server"),

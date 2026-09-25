@@ -2419,6 +2419,8 @@ test("a guard in one API handler does not hide an unguarded sensitive handler", 
 
 test.each([
   "auth/login.post.ts",
+  "auth/sign-in.post.ts",
+  "auth/signin.post.ts",
   "auth/callback.get.ts",
   "session/create.post.ts",
   "auth/register/index.post.ts",
@@ -2547,7 +2549,7 @@ test.each([
   ["async (event) => { const { user } = await requireUserSession(event) }", 0],
   ["async (event) => { const session = await requireAuth(event) }", 0],
   ["(event) => { const session = requireAuth(event) }", 1],
-  ["(event) => { requireAuth(event); return { private: true } }", 0],
+  ["(event) => { requireAuth(event); return { private: true } }", 1],
   ["(event) => { requireAuth(otherEvent); return { private: true } }", 1],
   ["async (event) => { const session = await requireAuth(otherEvent) }", 1],
   ["(event) => { const guard = () => requireAuth(event) }", 1],
@@ -4514,6 +4516,31 @@ test("NUXT0037 finds new layer handlers when resolved server inventory is stale"
   expect(result.diagnostics[0]?.file).toContain("account.get.ts");
 });
 
+test.each(["login.post.ts", "sign-in.post.ts", "signin.post.ts", "callback.get.ts"])(
+  "NUXT0037 ignores public layer endpoint %s when resolved server inventory is stale",
+  async (endpoint) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        [`layers/admin/backend/api/auth/${endpoint}`]:
+          "export default defineEventHandler(() => ({ public: true }))",
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: "2100-01-01T00:00:00.000Z",
+          layers: [{ root: "layers/admin", serverDir: "layers/admin/backend", priority: 0 }],
+          serverInventory: { "layers/admin/backend": [] },
+          resolvedServerHandlers: [],
+        }),
+      },
+    });
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(
+      0,
+    );
+  },
+);
+
 test("NUXT0037 records an evidence gap for nonliteral changed middleware configuration", async () => {
   const result = await runRuleFixture({
     rule: noRouteMiddlewareApiSecurity,
@@ -4616,6 +4643,34 @@ test("Nuxt captures cached wildcard overlaps and nested cache exclusions", async
     expect(manifest.resolvedServerHandlers.every((handler: any) => handler.method === "get")).toBe(
       true,
     );
+  });
+});
+
+test("Nuxt expands cached routes using the most-specific wildcard handler", async () => {
+  await withFixture({}, {}, async (root) => {
+    const hooks = new Map<string, (payload?: any) => unknown>();
+    await nuxtDoctorModule({}, {
+      _version: "4.5.1",
+      options: { rootDir: root, srcDir: "app", buildDir: ".nuxt", modules: [] },
+      hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
+      async callHook() {},
+    } as any);
+    await hooks.get("nitro:init")!({
+      options: {
+        handlers: [
+          { handler: join(root, "custom/generic.ts"), route: "/api/**" },
+          { handler: join(root, "custom/admin.ts"), route: "/api/admin/**" },
+        ],
+        routeRules: { "/api/admin/account": { cache: { maxAge: 60 } } },
+      },
+      scannedHandlers: [],
+      hooks: { hook() {} },
+    });
+    const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+    expect(
+      manifest.resolvedServerHandlers.find((handler: any) => handler.route === "/api/admin/account")
+        ?.file,
+    ).toBe("custom/admin.ts");
   });
 });
 

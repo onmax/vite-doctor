@@ -146,7 +146,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
   const manifest = ctx.project.nuxt?.manifest;
   const resolvedHandlers = manifest?.isCurrent ? manifest.resolvedServerHandlers : undefined;
   const layerFiles = { api: [] as string[], routes: [] as string[], middleware: [] as string[] };
-  const layerRoutes = new Map<string, string>();
+  const layerPaths = new Map<string, string>();
   if (!resolvedHandlers && configurationCurrent) {
     for (const layer of ctx.project.nuxt?.layers ?? []) {
       if (resolve(ctx.project.root, layer.root) === ctx.project.root) continue;
@@ -159,7 +159,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
           if (/\.[cm]?[jt]s$/.test(file) && statSync(file).isFile()) {
             layerFiles[category].push(file);
             if (category !== "middleware")
-              layerRoutes.set(
+              layerPaths.set(
                 file,
                 `${category === "api" ? "/api" : ""}/${toPosixPath(relative(directory, file))}`,
               );
@@ -190,7 +190,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
           ...layerFiles.routes,
         ].map((file) => ({
           file,
-          route: layerRoutes.get(file),
+          route: undefined,
           method: undefined,
         })),
         ...registered.filter((handler) => !handler.middleware),
@@ -208,7 +208,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
     const verb = (method ?? suffix?.[1])?.toUpperCase();
     const publicOperation =
       (verb === "POST" &&
-        /(?:^|\/)(?:auth\/(?:login|register|sign-up|signup|forgot-password|reset-password)|session\/create)$/i.test(
+        /(?:^|\/)(?:auth\/(?:login|sign-in|signin|register|sign-up|signup|forgot-password|reset-password)|session\/create)$/i.test(
           route,
         )) ||
       (verb === "GET" && /(?:^|\/)auth\/(?:callback|verify-email)$/i.test(route));
@@ -223,7 +223,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
             (isSensitive(
               resolvedHandlers
                 ? (handler.route ?? "")
-                : (layerRoutes.get(handler.file) ??
+                : (layerPaths.get(handler.file) ??
                     toPosixPath(relative(ctx.project.root, handler.file))),
               handler.method,
               handler.route,
@@ -546,13 +546,10 @@ function hasUnconditionalAuthGuard(file: string): boolean {
       );
     };
     if (handler.body.type !== "BlockStatement") return isGuard(handler.body);
-    for (const [index, statement] of handler.body.body.entries()) {
+    for (const statement of handler.body.body) {
       if (statement.type === "ReturnStatement") return isGuard(statement.argument);
       if (statement.type === "ExpressionStatement") {
-        if (
-          isGuard(statement.expression) &&
-          (statement.expression.type === "AwaitExpression" || index < handler.body.body.length - 1)
-        )
+        if (isGuard(statement.expression) && statement.expression.type === "AwaitExpression")
           return true;
       } else if (statement.type === "VariableDeclaration") {
         if (
