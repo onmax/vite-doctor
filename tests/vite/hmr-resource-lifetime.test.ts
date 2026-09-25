@@ -24,6 +24,21 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "own static getter shadows inherited setter",
+    "class Base { static set value(handle) { setInterval(refresh) } }; class State extends Base { static get value() { return 1 } }; State.value = 1; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "own static setter shadows inherited getter",
+    "class Base { static get value() { return setInterval(refresh) } }; class State extends Base { static set value(handle) {} }; State.value = 1; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "null guard retains cleanup of a known timer",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (timer != null) clearInterval(timer) })",
+    false,
+  ],
+  [
     "static setter can clean a resource",
     "const timer = setInterval(refresh); class State { static set value(handle) { clearInterval(handle) } }; import.meta.hot.dispose(() => { State.value = timer })",
     false,
@@ -31,6 +46,11 @@ for (const [name, source, leaks] of [
   [
     "later one-shot listener can replace a timer before an earlier listener clears it",
     "let timer = setInterval(refresh); const clear = () => clearInterval(timer); const replace = () => { timer = setInterval(refresh) }; document.addEventListener('click', clear, { once: true }); document.addEventListener('click', replace, { once: true }); import.meta.hot.dispose(() => { clearInterval(timer); document.removeEventListener('click', clear); document.removeEventListener('click', replace) })",
+    true,
+  ],
+  [
+    "three listener ordering can overwrite a live timer",
+    "let timer = setInterval(refresh); let armed = false; const reset = () => { clearInterval(timer); armed = false }; const arm = () => { armed = true }; const replace = () => { if (armed) timer = setInterval(refresh) }; document.addEventListener('reset', reset, { once: true }); document.addEventListener('arm', arm, { once: true }); document.addEventListener('replace', replace, { once: true }); import.meta.hot.dispose(() => { clearInterval(timer); document.removeEventListener('reset', reset); document.removeEventListener('arm', arm); document.removeEventListener('replace', replace) })",
     true,
   ],
   [
@@ -52,6 +72,16 @@ for (const [name, source, leaks] of [
     "fetch fulfillment can create an interval",
     "fetch('/data').then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
     true,
+  ],
+  [
+    "fetch fulfillment can create a timer after disposal",
+    "let timer; fetch('/data').then(() => { timer = setInterval(refresh) }); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "microtask cleanup runs before disposal",
+    "const timer = setInterval(refresh); queueMicrotask(() => clearInterval(timer)); import.meta.hot.dispose(() => {})",
+    false,
   ],
   [
     "fetch rejection can create an interval",

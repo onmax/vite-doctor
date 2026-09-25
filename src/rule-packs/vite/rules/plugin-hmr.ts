@@ -149,6 +149,13 @@ function undisposedResource(program: AnyNode): string | null {
   const lexicalEnvironments = new Map<AnyNode, Map<AnyNode, AnyNode>>();
   const promises = new Map<AnyNode, AnyNode>();
   const promiseCompletions = new Map<AnyNode, Completion>();
+  const pendingFetchPromises = new Set<AnyNode>();
+  const lateReactions: {
+    callback: AnyNode;
+    args: AnyNode[];
+    environment: Map<AnyNode, AnyNode>;
+  }[] = [];
+  const microtasks: { callback: AnyNode; environment: Map<AnyNode, AnyNode> }[] = [];
   const promiseSettlers = new Map<AnyNode, (value: AnyNode) => void>();
   const pendingTimeouts: {
     timeout: AnyNode;
@@ -595,6 +602,14 @@ function undisposedResource(program: AnyNode): string | null {
     });
     const visit = (node: AnyNode, receiver?: AnyNode): boolean | undefined => {
       if (node.type === "CallExpression") {
+        if (
+          identity(node.callee, environment) === "queueMicrotask" &&
+          node.arguments[0] &&
+          (node.callee.type !== "Identifier" || !resolve(node.callee))
+        ) {
+          microtasks.push({ callback: identity(node.arguments[0], environment), environment });
+          return true;
+        }
         if (node.arguments.some((argument: AnyNode) => argument?.type === "SpreadElement")) {
           const expanded = expand(node.arguments, environment);
           if (!expanded.some((argument: AnyNode) => argument?.type === "SpreadElement")) {
@@ -937,6 +952,7 @@ function undisposedResource(program: AnyNode): string | null {
       if (node.type === "CallExpression" && identity(node.callee, environment) === "fetch") {
         const promise = {};
         promiseCompletions.set(promise, { normal: true, abrupt: true });
+        pendingFetchPromises.add(promise);
         returned.set(node, promise);
         return true;
       }
@@ -956,6 +972,11 @@ function undisposedResource(program: AnyNode): string | null {
               ? node.arguments[0]
               : undefined;
         const finallyHandler = method === "finally" ? node.arguments[0] : undefined;
+        if (pendingFetchPromises.has(promise)) {
+          for (const callback of [fulfilledHandler, rejectedHandler, finallyHandler]) {
+            if (callback) lateReactions.push({ callback, args: [], environment });
+          }
+        }
         const mixed = previous.normal && previous.abrupt;
         const before = mixed ? snapshot() : undefined;
         const parentPath = currentPath;
@@ -1000,6 +1021,7 @@ function undisposedResource(program: AnyNode): string | null {
         };
         const settled = adoptPromise(completion);
         const result = {};
+        if (pendingFetchPromises.has(promise)) pendingFetchPromises.add(result);
         if (settled.normal) promises.set(result, settled.value);
         promiseCompletions.set(result, settled);
         returned.set(node, result);
@@ -1715,13 +1737,21 @@ function undisposedResource(program: AnyNode): string | null {
             properties.get(node)!.set(key, value);
         }
         for (const [key, getter] of classGetters.get(superclass) ?? []) {
-          if (!properties.get(node)!.has(key) && !classGetters.get(node)?.has(key)) {
+          if (
+            !properties.get(node)!.has(key) &&
+            !classGetters.get(node)?.has(key) &&
+            !classSetters.get(node)?.has(key)
+          ) {
             if (!classGetters.has(node)) classGetters.set(node, new Map());
             classGetters.get(node)!.set(key, getter);
           }
         }
         for (const [key, setter] of classSetters.get(superclass) ?? []) {
-          if (!properties.get(node)!.has(key) && !classSetters.get(node)?.has(key)) {
+          if (
+            !properties.get(node)!.has(key) &&
+            !classGetters.get(node)?.has(key) &&
+            !classSetters.get(node)?.has(key)
+          ) {
             if (!classSetters.has(node)) classSetters.set(node, new Map());
             classSetters.get(node)!.set(key, setter);
           }
@@ -1963,6 +1993,7 @@ function undisposedResource(program: AnyNode): string | null {
         const constant = (expression: AnyNode): unknown => {
           const value = identity(expression, environment);
           if (value?.type === "Literal") return value.value;
+          if (knownTruthyResource(value)) return true;
           if (value?.type === "UnaryExpression" && value.operator === "!") {
             const argument = constant(value.argument);
             if (argument !== undefined) return !argument;
@@ -1970,7 +2001,15 @@ function undisposedResource(program: AnyNode): string | null {
           if (value?.type === "BinaryExpression") {
             const left = constant(value.left);
             const right = constant(value.right);
-            if (left === undefined || right === undefined) return undefined;
+            if (left === undefined || right === undefined) {
+              if (
+                ["===", "!==", "==", "!="].includes(value.operator) &&
+                ((knownTruthyResource(identity(value.left, environment)) && right === null) ||
+                  (knownTruthyResource(identity(value.right, environment)) && left === null))
+              )
+                return value.operator === "!==" || value.operator === "!=";
+              return undefined;
+            }
             if (value.operator === "===") return left === right;
             if (value.operator === "!==") return left !== right;
             if (value.operator === "==") return left == right;
@@ -2451,6 +2490,7 @@ function undisposedResource(program: AnyNode): string | null {
     return { normal, abrupt, value };
   }
   evaluate(program, values, true);
+  for (const { callback, environment } of microtasks) inspect(callback, [], environment, true);
   const captureDisposalState = () => ({
     cleaned: new Set(cleaned),
     values: new Map(values),
@@ -2511,16 +2551,21 @@ function undisposedResource(program: AnyNode): string | null {
     }
     currentPath = parentPath;
   };
-  for (const listener of listeners) fireListener(listener);
-  const afterListeners = captureDisposalState();
-  for (let index = 1; index < listeners.length; index++) {
-    restoreDisposalState(beforeListeners);
-    fireListener(listeners[index]);
-    for (let next = 0; next < listeners.length; next++) {
-      if (next !== index) fireListener(listeners[next]);
+  const fireOrders = (remaining: Listener[]) => {
+    if (!remaining.length) {
+      disposalStates.push(captureDisposalState());
+      return;
     }
-  }
-  restoreDisposalState(afterListeners);
+    const before = captureDisposalState();
+    for (const [index, listener] of remaining.entries()) {
+      restoreDisposalState(before);
+      fireListener(listener);
+      fireOrders(remaining.filter((_, position) => position !== index));
+    }
+    restoreDisposalState(before);
+  };
+  fireOrders(listeners);
+  restoreDisposalState(beforeListeners);
   const beforeTimeouts = captureDisposalState();
   for (const [
     index,
@@ -2596,6 +2641,13 @@ function undisposedResource(program: AnyNode): string | null {
       disposalLeak ??= resources
         .slice(resourceStart)
         .find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))?.kind;
+      for (const { callback, args, environment } of lateReactions) {
+        const beforeReaction = resources.length;
+        inspect(callback, args, environment);
+        disposalLeak ??= resources
+          .slice(beforeReaction)
+          .find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))?.kind;
+      }
       resources.splice(resourceStart);
       for (const resource of resources.slice(0, state.resourceCount)) {
         const createdPath = resourcePaths.get(resource.value);
