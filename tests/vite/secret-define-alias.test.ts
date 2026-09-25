@@ -2,6 +2,96 @@ import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../src/core/testkit.ts";
 import { noRuntimeObjectDefine, noSecretDefine } from "../../src/rule-packs/vite/rules/define.ts";
 
+test("binds the containing object when reading a define getter", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const config = {
+  definitions: { VALUE: process.env.PRIVATE_TOKEN },
+  get define() { return this.definitions }
+}; export default config`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
+});
+
+test("ignores array writes after an unconditional helper return", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const replacement = [];
+function add() { return; replacement.push(process.env.PRIVATE_TOKEN) }
+add(); export default { define: { VALUE: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.ruleId === noSecretDefine.meta.id)).toBe(false);
+});
+
+test("tracks array writes through destructured aliases", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const [replacement] = [[]];
+replacement.push(process.env.PRIVATE_TOKEN);
+export default { define: { VALUE: JSON.stringify(replacement) } }`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
+});
+
+test("binds helper arguments when recording array writes", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const values = [];
+const append = value => values.push(value);
+append(process.env.PRIVATE_TOKEN);
+export default { define: { VALUE: JSON.stringify(values) } }`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
+});
+
+test("binds arguments separately for repeated helper calls", async () => {
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: noSecretDefine,
+    files: {
+      "vite.config.ts": `const values = [];
+const append = value => values.push(value);
+append(process.env.PUBLIC_VERSION);
+append(process.env.PRIVATE_TOKEN);
+export default { define: { VALUE: JSON.stringify(values) } }`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.ruleId)).toContain(noSecretDefine.meta.id);
+});
+
+test.each([
+  ["safe", "PRIVATE_TOKEN", true],
+  ["process.env.PRIVATE_TOKEN", "'safe'", false],
+])(
+  "uses the effective object write when serializing an alias",
+  async (original, replacement, expected) => {
+    const result = await runRuleFixture({
+      framework: "vite",
+      rule: noSecretDefine,
+      files: {
+        "vite.config.ts": `const value = { token: ${original} };
+value.token = ${replacement};
+export default { define: { VALUE: JSON.stringify(value) } }`,
+      },
+    });
+    expect(result.diagnostics.some((item) => item.ruleId === noSecretDefine.meta.id)).toBe(
+      expected,
+    );
+  },
+);
+
 test("finds a secret source hidden behind local define aliases", async () => {
   const result = await runRuleFixture({
     framework: "vite",

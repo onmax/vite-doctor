@@ -237,7 +237,7 @@ function readAliasInitializers(source: string) {
     ),
   );
   function resolveImmutable(node: AnyNode, seen = new Set<AnyNode>()): AnyNode {
-    if (node.type !== "Identifier" || seen.has(node)) return node;
+    if (!node || node.type !== "Identifier" || seen.has(node)) return node;
     seen.add(node);
     const reference = references.get(node.range[0]);
     const definition = reference?.resolved?.defs[0];
@@ -249,18 +249,66 @@ function readAliasInitializers(source: string) {
       definition.node.init
     )
       return resolveImmutable(definition.node.init, seen);
+    if (
+      reference?.resolved?.defs.length === 1 &&
+      definition?.type === "Variable" &&
+      definition.parent.kind === "const" &&
+      definition.node.init
+    ) {
+      const project = (pattern: AnyNode, input: AnyNode): AnyNode => {
+        input = resolveImmutable(input, new Set(seen));
+        if (pattern.type === "Identifier") return pattern.name === node.name ? input : undefined;
+        if (pattern.type === "AssignmentPattern") {
+          const value = project(pattern.left, input);
+          return value?.type === "Identifier" && value.name === "undefined"
+            ? pattern.right
+            : (value ?? project(pattern.left, pattern.right));
+        }
+        if (pattern.type === "ArrayPattern" && input?.type === "ArrayExpression") {
+          for (const [index, element] of pattern.elements.entries()) {
+            if (!element) continue;
+            const value = project(element, input.elements[index]);
+            if (value) return value;
+          }
+        }
+        if (pattern.type === "ObjectPattern" && input?.type === "ObjectExpression") {
+          for (const property of pattern.properties) {
+            if (property.type !== "Property") continue;
+            const key = propertyName(property.key);
+            const match = input.properties.findLast(
+              (item: AnyNode) => item.type === "Property" && propertyName(item.key) === key,
+            );
+            const value = project(property.value, match?.value);
+            if (value) return value;
+          }
+        }
+      };
+      const value = project(definition.node.id, definition.node.init);
+      if (value) return resolveImmutable(value, seen);
+    }
     return node;
   }
   const arrayMutations = new Map<
     AnyNode,
-    Array<{ position: number; member?: AnyNode; mutation?: AnyNode }>
+    Array<{
+      position: number;
+      member?: AnyNode;
+      mutation?: AnyNode;
+      argumentsByBinding?: Map<number, AnyNode>;
+    }>
   >();
+  const objectMutations = new Map<
+    AnyNode,
+    Array<{ position: number; key: string; value: AnyNode }>
+  >();
+  const syntheticObjects: Array<[number, number]> = [];
   const executionRanges = new Map<number, [number, number]>();
   function recordArrayMutation(
     node: AnyNode,
     memberWrite = false,
     mutation?: AnyNode,
     executionPosition?: number,
+    argumentsByBinding?: Map<number, AnyNode>,
   ) {
     if (!node) return;
     const member = memberWrite && node.type === "MemberExpression" ? node : undefined;
@@ -278,6 +326,7 @@ function readAliasInitializers(source: string) {
         : (executionPosition ?? mutation?.range[1] ?? node.range[1]),
       member,
       mutation,
+      argumentsByBinding,
     });
     arrayMutations.set(value, events);
   }
@@ -288,9 +337,16 @@ function readAliasInitializers(source: string) {
       (element: AnyNode) => element?.range,
     );
     let changed = false;
-    for (const { position: writePosition, member, mutation } of events.toSorted(
+    for (const { position: writePosition, member, mutation, argumentsByBinding } of events.toSorted(
       (left, right) => left.position - right.position,
     )) {
+      const argumentValue = (argument: AnyNode) => {
+        const binding =
+          argument?.type === "Identifier"
+            ? references.get(argument.range[0])?.resolved?.identifiers[0]?.range[0]
+            : undefined;
+        return (binding !== undefined && argumentsByBinding?.get(binding)) || argument;
+      };
       if (writePosition > position) break;
       if (
         member &&
@@ -301,11 +357,13 @@ function readAliasInitializers(source: string) {
         Number.isInteger(member.property.value) &&
         member.property.value >= 0
       ) {
-        elements[member.property.value] = mutation.right.range;
+        elements[member.property.value] = argumentValue(mutation.right).range;
         changed = true;
       } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "push") {
         elements.push(
-          ...mutation.arguments.flatMap((argument: AnyNode) => expandMutationArgument(argument)),
+          ...mutation.arguments.flatMap((argument: AnyNode) =>
+            expandMutationArgument(argumentValue(argument)),
+          ),
         );
         changed = true;
       } else if (
@@ -313,7 +371,9 @@ function readAliasInitializers(source: string) {
         mutation.callee.property?.name === "unshift"
       ) {
         elements.unshift(
-          ...mutation.arguments.flatMap((argument: AnyNode) => expandMutationArgument(argument)),
+          ...mutation.arguments.flatMap((argument: AnyNode) =>
+            expandMutationArgument(argumentValue(argument)),
+          ),
         );
         changed = true;
       } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "pop") {
@@ -339,7 +399,7 @@ function readAliasInitializers(source: string) {
           mutation.arguments[1].value,
           ...mutation.arguments
             .slice(2)
-            .flatMap((argument: AnyNode) => expandMutationArgument(argument)),
+            .flatMap((argument: AnyNode) => expandMutationArgument(argumentValue(argument))),
         );
         changed = true;
       } else if (mutation?.type === "CallExpression" && mutation.callee.property?.name === "fill") {
@@ -361,7 +421,7 @@ function readAliasInitializers(source: string) {
         )
           return null;
         elements.fill(
-          mutation.arguments[0].range,
+          argumentValue(mutation.arguments[0]).range,
           bounds[0] as number | undefined,
           bounds[1] as number | undefined,
         );
@@ -383,27 +443,45 @@ function readAliasInitializers(source: string) {
       element ? expandMutationArgument(element, new Set([...seen, value])) : [],
     );
   }
-  const visitMutation = (node: AnyNode, executionPosition?: number) => {
-    if (node.type === "AssignmentExpression")
-      recordArrayMutation(node.left, true, node, executionPosition);
-    else if (
+  const visitMutation = (
+    node: AnyNode,
+    executionPosition?: number,
+    argumentsByBinding?: Map<number, AnyNode>,
+  ) => {
+    if (node.type === "AssignmentExpression") {
+      recordArrayMutation(node.left, true, node, executionPosition, argumentsByBinding);
+      if (node.operator === "=" && node.left.type === "MemberExpression") {
+        const object = resolveImmutable(node.left.object);
+        const key = node.left.computed
+          ? node.left.property.type === "Literal"
+            ? String(node.left.property.value)
+            : undefined
+          : node.left.property.name;
+        if (object.type === "ObjectExpression" && key !== undefined) {
+          const writes = objectMutations.get(object) ?? [];
+          writes.push({ position: executionPosition ?? node.range[1], key, value: node.right });
+          objectMutations.set(object, writes);
+        }
+      }
+    } else if (
       node.type === "UpdateExpression" ||
       (node.type === "UnaryExpression" && node.operator === "delete")
     )
-      recordArrayMutation(node.argument, true, node, executionPosition);
+      recordArrayMutation(node.argument, true, node, executionPosition, argumentsByBinding);
     else if (node.type === "CallExpression") {
       if (node.callee.type === "MemberExpression")
-        recordArrayMutation(node.callee, true, node, executionPosition);
+        recordArrayMutation(node.callee, true, node, executionPosition, argumentsByBinding);
       const serializesArray =
         memberPath(node.callee) === "JSON.stringify" &&
         !references.get(node.callee.object.range[0])?.resolved;
       if (!serializesArray)
         for (const argument of node.arguments)
           if (argument.type !== "SpreadElement")
-            recordArrayMutation(argument, false, node, executionPosition);
+            recordArrayMutation(argument, false, node, executionPosition, argumentsByBinding);
     }
   };
-  const executedFunctions = new Set<AnyNode>();
+  const executedFunctions = new Map<AnyNode, Set<number | undefined>>();
+  let activeBindings: Map<number, AnyNode> | undefined;
   function calledFunction(node: AnyNode): AnyNode {
     if (
       ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
@@ -458,16 +536,26 @@ function readAliasInitializers(source: string) {
       propertyName(definition.node.imported) === "defineConfig"
     );
   }
-  function collectExecutedFunction(node?: AnyNode, position?: number) {
-    if (!node || executedFunctions.has(node)) return;
-    executedFunctions.add(node);
+  function collectExecutedFunction(node?: AnyNode, position?: number, args: AnyNode[] = []) {
+    if (!node || executedFunctions.get(node)?.has(position)) return;
+    const positions = executedFunctions.get(node) ?? new Set<number | undefined>();
+    positions.add(position);
+    executedFunctions.set(node, positions);
     if (position !== undefined) executionRanges.set(position, node.range);
+    const previous = activeBindings;
+    activeBindings = new Map(previous);
+    node.params?.forEach((parameter: AnyNode, index: number) => {
+      const identifier = parameter.type === "AssignmentPattern" ? parameter.left : parameter;
+      if (identifier.type === "Identifier" && args[index])
+        activeBindings!.set(identifier.range[0], args[index]);
+    });
     collectMutations(
       node.body,
       position !== undefined && (position < node.range[0] || position > node.range[1])
         ? position
         : undefined,
     );
+    activeBindings = previous;
   }
   function collectMutations(node: AnyNode, executionPosition?: number) {
     if (!node) return;
@@ -475,6 +563,13 @@ function readAliasInitializers(source: string) {
       ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
     )
       return;
+    if (node.type === "BlockStatement" || node.type === "Program") {
+      for (const statement of node.body) {
+        collectMutations(statement, executionPosition);
+        if (visitReturnValues(statement, () => {})) break;
+      }
+      return;
+    }
     if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
       const condition = staticBoolean(node.test);
       collectMutations(node.test, executionPosition);
@@ -503,14 +598,18 @@ function readAliasInitializers(source: string) {
     if (node.type === "ExportDefaultDeclaration")
       collectExecutedFunction(calledFunction(node.declaration), node.range[0]);
     if (node.type === "CallExpression") {
-      collectExecutedFunction(calledFunction(node.callee), executionPosition ?? node.range[0]);
+      collectExecutedFunction(
+        calledFunction(node.callee),
+        executionPosition ?? node.range[0],
+        node.arguments,
+      );
       if (isConfigHelper(node.callee))
         collectExecutedFunction(
           calledFunction(node.arguments[0]),
           executionPosition ?? node.range[0],
         );
     }
-    visitMutation(node, executionPosition);
+    visitMutation(node, executionPosition, activeBindings);
     for (const key of parsed.visitorKeys[node.type] ?? []) {
       const child = node[key];
       if (Array.isArray(child))
@@ -603,10 +702,19 @@ function readAliasInitializers(source: string) {
           if (name === "mergeConfig") mergeHelpers.add(reference.identifier.range[0]);
         }
       }
+      const projectedArray =
+        id.type === "Identifier"
+          ? undefined
+          : arrayElementsAt(resolveImmutable(reference.identifier), reference.identifier.range[0]);
       if (id.type === "Identifier") {
         const effective = arrayElementsAt(resolveImmutable(init), reference.identifier.range[0]);
-        if (effective === undefined) initializers.set(reference.identifier.range[0], [init.range]);
+        if (effective === undefined)
+          initializers.set(reference.identifier.range[0], [
+            objectValueAt(resolveImmutable(init), reference.identifier.range[0]) ?? init.range,
+          ]);
         else if (effective) initializers.set(reference.identifier.range[0], effective);
+      } else if (projectedArray) {
+        initializers.set(reference.identifier.range[0], projectedArray);
       } else if (
         id.type === "ObjectPattern" &&
         init.type === "MemberExpression" &&
@@ -662,6 +770,47 @@ function readAliasInitializers(source: string) {
     }
   }
   collect(parsed.ast);
+  function objectValueAt(value: AnyNode, position: number): [number, number] | undefined {
+    const writes = objectMutations.get(value)?.filter((write) => write.position <= position);
+    if (!writes?.length) return;
+    const start = source.length;
+    const append = (range: [number, number]) => {
+      const offset = source.length - range[0];
+      const fragment = source.slice(...range);
+      for (const map of [bindingKeys, initializers, memberReturns, serializationHooks]) {
+        for (const [key, entry] of map)
+          if (key >= range[0] && key < range[1])
+            (map as Map<number, unknown>).set(key + offset, entry);
+      }
+      source += fragment;
+    };
+    append([value.range[0], value.range[1] - 1]);
+    if (!source.slice(start).trimEnd().endsWith("{") && !source.trimEnd().endsWith(","))
+      source += ",";
+    for (const [index, write] of writes.entries()) {
+      if (index) source += ",";
+      source += `${JSON.stringify(write.key)}:`;
+      append(write.value.range);
+    }
+    source += "}";
+    syntheticObjects.push([start, source.length]);
+    return [start, source.length];
+  }
+  for (const [start, end] of syntheticObjects) {
+    const expression = parseForESLint(`(${source.slice(start, end)})`, { range: true }).ast
+      .body[0] as AnyNode;
+    const move = (node: AnyNode) => {
+      if (!node || typeof node !== "object") return;
+      node.range = [node.range[0] + start - 1, node.range[1] + start - 1];
+      nodesByRange.set(node.range.join(":"), node);
+      for (const key of parsed.visitorKeys[node.type] ?? []) {
+        const child = node[key];
+        if (Array.isArray(child)) child.forEach(move);
+        else if (child) move(child);
+      }
+    };
+    move(expression.expression);
+  }
   const getters = new Set<AnyNode>();
   function staticKey(property: AnyNode, seen = new Set<AnyNode>()): string | null {
     if (!property.computed) return propertyName(property.key);
@@ -1888,10 +2037,34 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
       (node?.type === "UnaryExpression" && node.operator === "void")
     );
   }
-  function propertyValues(property: AnyNode): AnyNode[] {
+  function propertyValues(property: AnyNode, receiver?: AnyNode): AnyNode[] {
     if (property.kind !== "get") return [property.value];
+    const previous = new Map<number, [number, number][] | undefined>();
+    if (receiver) {
+      const bindThis = (node: AnyNode) => {
+        if (
+          !node ||
+          typeof node !== "object" ||
+          ["FunctionDeclaration", "FunctionExpression"].includes(node.type)
+        )
+          return;
+        if (node.type === "ThisExpression") {
+          previous.set(node.start, initializers.get(node.start));
+          initializers.set(node.start, [[receiver.start, receiver.end]]);
+        }
+        for (const child of Object.values(node)) {
+          if (Array.isArray(child)) child.forEach(bindThis);
+          else if (child && typeof child === "object") bindThis(child);
+        }
+      };
+      bindThis(property.value.body);
+    }
     const values: AnyNode[] = [];
     visitReturnValues(property.value.body, (value) => values.push(resolve(value)));
+    for (const [position, ranges] of previous) {
+      if (ranges) initializers.set(position, ranges);
+      else initializers.delete(position);
+    }
     return values;
   }
   function effectiveProperty(property: AnyNode): AnyNode {
@@ -2477,7 +2650,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
         );
         if (option) {
           if (option.kind === "get")
-            return propertyValues(option).flatMap((value) =>
+            return propertyValues(option, node).flatMap((value) =>
               readConfig({
                 ...node,
                 properties: [{ ...option, kind: "init", value }],
@@ -2501,7 +2674,7 @@ function readDefineEntriesFromCurrentFile(ctx: RuleContext, program: unknown) {
             if (key !== null) properties.set(key, property);
           }
           for (const [key, property] of properties) {
-            for (const value of propertyValues(property)) {
+            for (const value of propertyValues(property, values)) {
               const valueStart = value.start;
               result.push({
                 key,
