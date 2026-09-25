@@ -836,13 +836,26 @@ function undisposedResource(program: AnyNode): string | null {
         return true;
       }
       if (
-        method === "then" &&
+        (method === "then" || method === "catch") &&
         node.callee.type === "MemberExpression" &&
         !replacedMethod &&
-        promiseCompletions.get(identity(node.callee.object, environment))?.normal
+        promiseCompletions.has(identity(node.callee.object, environment))
       ) {
         const promise = identity(node.callee.object, environment);
-        const completion = inspect(node.arguments[0], [promises.get(promise)], environment, module);
+        const previous = promiseCompletions.get(promise)!;
+        const handler =
+          method === "catch" ? node.arguments[0] : node.arguments[previous.normal ? 0 : 1];
+        const runsHandler =
+          method === "catch" ? previous.abrupt : previous.normal || previous.abrupt;
+        const completion =
+          handler && runsHandler
+            ? inspect(
+                handler,
+                [previous.normal ? promises.get(promise) : previous.value],
+                environment,
+                module,
+              )
+            : previous;
         const result = {};
         if (completion.normal) promises.set(result, completion.value);
         promiseCompletions.set(result, completion);
@@ -1618,13 +1631,15 @@ function undisposedResource(program: AnyNode): string | null {
               ].includes(base?.type) &&
               !base.async &&
               !base.generator;
-            if (!constructableBase && ["WebSocket", "EventSource"].includes(base)) {
-              resourcePaths.set(instance, new Map(currentPath));
-              resources.push({ value: instance, kind: base, cleanup: "close", method: true });
-            }
+            const builtInResource =
+              !constructableBase && ["WebSocket", "EventSource"].includes(base);
             const initializeBase = (baseArgs: AnyNode[]): Completion => {
               const completion = construct(base, baseArgs, instance);
               if (!completion.normal) return completion;
+              if (builtInResource) {
+                resourcePaths.set(instance, new Map(currentPath));
+                resources.push({ value: instance, kind: base, cleanup: "close", method: true });
+              }
               if (completion.value) {
                 instance = completion.value;
                 local.set(thisBinding, instance);
@@ -1639,7 +1654,7 @@ function undisposedResource(program: AnyNode): string | null {
                 ? target
                 : undefined);
             let completion: Completion = { normal: true, abrupt: false };
-            if (constructableBase) {
+            if (constructableBase || builtInResource) {
               if (constructor) superConstructors.set(instance, initializeBase);
               else completion = initializeBase(args);
             } else initialize();
@@ -1691,8 +1706,10 @@ function undisposedResource(program: AnyNode): string | null {
             const left = constant(value.left);
             const right = constant(value.right);
             if (left === undefined || right === undefined) return undefined;
-            if (value.operator === "===" || value.operator === "==") return left === right;
-            if (value.operator === "!==" || value.operator === "!=") return left !== right;
+            if (value.operator === "===") return left === right;
+            if (value.operator === "!==") return left !== right;
+            if (value.operator === "==") return left == right;
+            if (value.operator === "!=") return left != right;
           }
           return undefined;
         };
@@ -2146,14 +2163,14 @@ function undisposedResource(program: AnyNode): string | null {
     properties: new Map([...properties].map(([key, entries]) => [key, new Map(entries)])),
     resourceCount: resources.length,
   });
-  const canceledState = captureDisposalState();
+  const disposalStates = [captureDisposalState()];
   for (const { timeout, callback, environment } of pendingTimeouts) {
     if (cleaned.has(timeout)) continue;
     inspect(callback, [], environment, false);
+    disposalStates.push(captureDisposalState());
   }
-  const firedState = captureDisposalState();
   let disposalLeak: string | undefined;
-  for (const state of pendingTimeouts.length ? [canceledState, firedState] : [firedState]) {
+  for (const state of disposalStates) {
     const outcomes = disposers.map(({ callback: disposer, path: disposerPath }) => {
       const resourceStart = resources.length;
       cleaned.clear();

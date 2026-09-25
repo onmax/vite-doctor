@@ -2938,6 +2938,11 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "intermediate timeout firing leaves a live interval",
+    "let timer; const first = setTimeout(() => { timer = setInterval(refresh) }, 0); const second = setTimeout(() => clearInterval(timer), 100); import.meta.hot.dispose(() => { clearTimeout(first); clearTimeout(second) })",
+    true,
+  ],
+  [
     "built-in superclass creates a socket",
     "class Socket extends WebSocket {}; new Socket(url); import.meta.hot.dispose(() => {})",
     true,
@@ -2948,8 +2953,38 @@ for (const [name, source, leaks] of [
     false,
   ],
   [
+    "built-in superclass never creates a socket before throwing",
+    "class Socket extends WebSocket { constructor() { throw Error() } }; try { new Socket() } catch {}; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "built-in superclass creates a socket after explicit super",
+    "class Socket extends WebSocket { constructor(url) { super(url) } }; new Socket(url); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
     "constant comparison guards cleanup",
     "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (1 === 1) clearInterval(timer) })",
+    false,
+  ],
+  [
+    "coercive equality guard cannot credit unreachable cleanup",
+    'const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (0 == "0") saveState(); else clearInterval(timer) })',
+    true,
+  ],
+  [
+    "coercive equality guard selects cleanup",
+    'const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (0 == "0") clearInterval(timer) })',
+    false,
+  ],
+  [
+    "coercive inequality guard cannot credit unreachable cleanup",
+    'const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (0 != "0") clearInterval(timer) })',
+    true,
+  ],
+  [
+    "coercive inequality guard selects cleanup",
+    'const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (0 != "1") clearInterval(timer) })',
     false,
   ],
   [
@@ -2960,6 +2995,21 @@ for (const [name, source, leaks] of [
   [
     "resolved rejecting promise skips fulfilled reaction",
     "async function fail() { throw Error('no') }; Promise.resolve(fail()).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "rejected promise catch creates a timer",
+    "async function fail() { throw Error('no') }; fail().catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "rejected promise then handler creates a timer",
+    "async function fail() { throw Error('no') }; fail().then(undefined, () => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "fulfilled promise skips catch handler",
+    "Promise.resolve().catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
     false,
   ],
   [
