@@ -31,6 +31,18 @@ test("resolves a module-scoped status constant in a handler", async () => {
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
 });
 
+test("follows a stored promise rejection into a later catch", async () => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "export default defineEventHandler(async () => { async function missing() { throw createError({ statusCode: 404 }) }; const pending = missing(); try { await pending } catch { throw new Error() } })",
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+});
+
 test("keeps a catch that preserves intentional HTTP errors", async () => {
   const result = await runRuleFixture({
     framework: "nitro",
@@ -439,6 +451,24 @@ test.each([
   [
     "awaited local throw",
     "async function missing() { throw createError({ statusCode: 404 }) }; await missing()",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "awaited stored rejection",
+    "async function missing() { throw createError({ statusCode: 404 }) }; const pending = missing(); await pending",
+    "throw new Error()",
+    true,
+  ],
+  [
+    "stored rejection not awaited",
+    "async function missing() { throw createError({ statusCode: 404 }) }; const pending = missing()",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "callback passed to local helper",
+    "function missing() { throw createError({ statusCode: 404 }) }; function invoke(callback) { callback() }; invoke(missing)",
     "throw new Error()",
     true,
   ],

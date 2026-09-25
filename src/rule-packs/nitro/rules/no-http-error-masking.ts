@@ -111,6 +111,7 @@ interface Path {
   bindings?: Bindings;
   functions?: ReadonlyMap<AnyNode, AnyNode>;
   objects?: ReadonlyMap<AnyNode, AnyNode>;
+  promises?: ReadonlyMap<AnyNode, Value>;
   calls?: readonly AnyNode[];
   value?: Value;
   errors?: ReadonlyMap<number, Outcome>;
@@ -122,7 +123,10 @@ interface Path {
 }
 
 type ErrorValue = { id: number; status: Outcome; instanceofError?: boolean };
-type Value = { error: ErrorValue } | { literal: unknown };
+type Value =
+  | { error: ErrorValue }
+  | { literal: unknown }
+  | { promise: { outcome: Outcome; value?: Value } };
 type Bindings = ReadonlyMap<AnyNode, ErrorValue>;
 
 function pathKey(value: unknown): string {
@@ -218,7 +222,7 @@ function outcomes(
           value: error
             ? { error }
             : binding
-              ? current.literals?.get(binding)
+              ? (current.promises?.get(binding) ?? current.literals?.get(binding))
               : expression.name === "undefined"
                 ? { literal: undefined }
                 : undefined,
@@ -259,8 +263,10 @@ function evaluateOutcomes(
     const locals = blockBindings(node);
     const functions = new Map(path.functions);
     const objects = new Map(path.objects);
+    const promises = new Map(path.promises);
     for (const name of locals) functions.delete(path.resolveBinding({ name } as AnyNode, node));
     for (const name of locals) objects.delete(path.resolveBinding({ name } as AnyNode, node));
+    for (const name of locals) promises.delete(path.resolveBinding({ name } as AnyNode, node));
     for (const statement of node.body) {
       if (statement.type === "FunctionDeclaration" && statement.id)
         functions.set(path.resolveBinding(statement.id), statement);
@@ -278,6 +284,7 @@ function evaluateOutcomes(
         bindings: scopedBindings,
         functions,
         objects,
+        promises,
         conditions: scopedConditions,
         uninitialized,
       },
@@ -306,6 +313,7 @@ function evaluateOutcomes(
               [...(current.objects ?? [])]
                 .map(([binding, object]) => [binding.start, object.start])
                 .sort(([a], [b]) => a - b),
+              [...(current.promises ?? [])].map(([binding, value]) => [binding.start, value]),
             ]),
             current,
           ]),
@@ -327,19 +335,23 @@ function evaluateOutcomes(
       }
       const restoredFunctions = new Map(current.functions);
       const restoredObjects = new Map(current.objects);
+      const restoredPromises = new Map(current.promises);
       for (const name of locals) {
         const binding = path.resolveBinding({ name } as AnyNode, node);
         restoredFunctions.delete(binding);
         restoredObjects.delete(binding);
+        restoredPromises.delete(binding);
         if (path.functions?.has(binding))
           restoredFunctions.set(binding, path.functions.get(binding)!);
         if (path.objects?.has(binding)) restoredObjects.set(binding, path.objects.get(binding)!);
+        if (path.promises?.has(binding)) restoredPromises.set(binding, path.promises.get(binding)!);
       }
       return {
         ...current,
         bindings: restoredBindings,
         functions: restoredFunctions,
         objects: restoredObjects,
+        promises: restoredPromises,
         conditions: restored,
       };
     });
@@ -481,6 +493,7 @@ function evaluateOutcomes(
                 next.set(conditionKey(declaration.id, evaluated), declaration.init.value);
             }
             const literals = new Map(evaluated.literals);
+            const promises = new Map(evaluated.promises);
             const uninitialized = new Set(evaluated.uninitialized);
             for (const name of bindingNames(declaration.id)) {
               const reference =
@@ -490,6 +503,7 @@ function evaluateOutcomes(
               const binding = evaluated.resolveBinding(reference, declaration.id);
               if (binding) {
                 if (declaration.id.type === "Identifier") literals.delete(binding);
+                if (declaration.id.type === "Identifier") promises.delete(binding);
                 uninitialized.delete(binding);
                 if (
                   declaration.id.type === "Identifier" &&
@@ -497,6 +511,12 @@ function evaluateOutcomes(
                   "literal" in evaluated.value
                 )
                   literals.set(binding, evaluated.value);
+                if (
+                  declaration.id.type === "Identifier" &&
+                  evaluated.value &&
+                  "promise" in evaluated.value
+                )
+                  promises.set(binding, evaluated.value);
                 else if (declaration.id.type === "Identifier" && !declaration.init)
                   literals.set(binding, { literal: undefined });
               }
@@ -509,6 +529,7 @@ function evaluateOutcomes(
               objects,
               conditions: next,
               literals,
+              promises,
               uninitialized,
             };
           });
@@ -702,9 +723,12 @@ function evaluateOutcomes(
           const value = assignment.operator === "=" ? evaluated.value : undefined;
           if (value && "error" in value) values.set(binding, value.error);
           const literals = new Map(evaluated.literals);
+          const promises = new Map(evaluated.promises);
           if (binding) {
             literals.delete(binding);
+            promises.delete(binding);
             if (value && "literal" in value) literals.set(binding, value);
+            if (value && "promise" in value) promises.set(binding, value);
           }
           next.delete(conditionKey(assignment.left, evaluated));
           if (
@@ -714,7 +738,15 @@ function evaluateOutcomes(
             conditions.has(assignment.left.name)
           )
             next.set(conditionKey(assignment.left, evaluated), assignment.right.value);
-          return { ...evaluated, bindings: values, functions, objects, conditions: next, literals };
+          return {
+            ...evaluated,
+            bindings: values,
+            functions,
+            objects,
+            conditions: next,
+            literals,
+            promises,
+          };
         }
         const values = new Map(evaluated.bindings);
         const functions = new Map(evaluated.functions);
@@ -732,7 +764,8 @@ function evaluateOutcomes(
       return outcomes(node.left, normal, bindings, conditions).flatMap((current) => {
         if (current.outcome !== "normal") return [current];
         const value = current.value;
-        if (value && ("error" in value || value.literal != null)) return [current];
+        if (value && ("error" in value || "promise" in value || value.literal != null))
+          return [current];
         const right = outcomes(node.right, current, bindings, conditions);
         return value ? right : [current, ...right];
       });
@@ -965,7 +998,7 @@ function evaluateOutcomes(
           value && "literal" in value && value.literal != null
             ? []
             : outcomes({ ...assignment, argument: call.right }, path, bindings, conditions);
-        return value && ("error" in value || value.literal != null)
+        return value && ("error" in value || "promise" in value || value.literal != null)
           ? [path]
           : value
             ? right
@@ -977,7 +1010,11 @@ function evaluateOutcomes(
           ? outcomes({ ...assignment, argument: call.right }, path, bindings, conditions)
           : [path],
       );
-    return outcomes(call, normal, bindings, conditions);
+    return outcomes(call, normal, bindings, conditions).map((current) =>
+      current.outcome === "normal" && current.value && "promise" in current.value
+        ? { ...current, ...current.value.promise }
+        : current,
+    );
   }
   if (!argumentValues && (call.type === "CallExpression" || call.type === "NewExpression")) {
     const target = unwrapExpression(call.callee);
@@ -1107,6 +1144,31 @@ function evaluateOutcomes(
   )
     return [{ ...normal, outcome: "throw" }];
   if (
+    call.type === "CallExpression" &&
+    isFunction(callee) &&
+    callee.async &&
+    !callee.generator &&
+    assignment.type !== "AwaitExpression" &&
+    !path.adoptingAsync
+  ) {
+    return outcomes(
+      assignment,
+      { ...normal, adoptingAsync: true },
+      bindings,
+      conditions,
+      argumentValues,
+      evaluatedArguments,
+    ).map((result) => ({
+      ...result,
+      outcome: "normal",
+      adoptingAsync: path.adoptingAsync,
+      value:
+        result.outcome === "normal"
+          ? undefined
+          : { promise: { outcome: result.outcome, value: result.value } },
+    }));
+  }
+  if (
     (call.type === "CallExpression" ||
       (call.type === "NewExpression" && callee?.type !== "ArrowFunctionExpression")) &&
     isFunction(callee) &&
@@ -1225,6 +1287,7 @@ function evaluateOutcomes(
             if (boolean !== undefined) booleans.set(conditionKey(target, result), boolean);
             const literals = new Map(result.literals);
             const objects = new Map(result.objects);
+            const functions = new Map(result.functions);
             const binding = result.resolveBinding(target);
             const object =
               arg?.type === "Identifier"
@@ -1233,9 +1296,23 @@ function evaluateOutcomes(
                   ? arg
                   : undefined;
             if (object) objects.set(binding, object);
+            const fn =
+              arg?.type === "Identifier"
+                ? source.functions?.get(source.resolveBinding(arg))
+                : isFunction(arg)
+                  ? arg
+                  : undefined;
+            if (fn) functions.set(binding, fn);
             literals.delete(binding);
             if (value && "literal" in value) literals.set(binding, value);
-            return { ...result, bindings: values, conditions: booleans, literals, objects };
+            return {
+              ...result,
+              bindings: values,
+              conditions: booleans,
+              literals,
+              objects,
+              functions,
+            };
           });
         });
       });
@@ -1762,7 +1839,7 @@ function conditionPaths(
       typeof caught === "number"
         ? true
         : current.value
-          ? "error" in current.value || Boolean(current.value.literal)
+          ? "error" in current.value || "promise" in current.value || Boolean(current.value.literal)
           : valueNode.type === "Literal"
             ? Boolean(valueNode.value)
             : valueNode.type === "Identifier"
