@@ -282,38 +282,68 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
 
   function targets(
     value: unknown,
-    required: boolean,
     kind: "runtime" | "types" = "runtime",
-    adjacentDeclaration = false,
     mode: "import" | "require" = "import",
-  ): boolean {
+    addons = true,
+  ): string[] | "blocked" | undefined {
     if (typeof value === "string") {
-      if (!validExportTarget(value, root) || !inside(resolve(root, value))) return false;
-      enqueue(value, kind, required, root, false, adjacentDeclaration);
-      return true;
+      if (!validExportTarget(value, root) || !inside(resolve(root, value))) return "blocked";
+      return [value];
     }
-    if (Array.isArray(value))
-      return value.some((item) => targets(item, required, kind, adjacentDeclaration, mode));
+    if (value === null) return "blocked";
+    if (Array.isArray(value)) {
+      let blocked = value.length === 0;
+      for (const item of value) {
+        const result = targets(item, kind, mode, addons);
+        if (Array.isArray(result)) return result;
+        if (result === "blocked") blocked = true;
+      }
+      return blocked ? "blocked" : undefined;
+    }
     if (value && typeof value === "object") {
-      for (const [condition, item] of Object.entries(value))
-        if (condition === "types" || condition.startsWith("types@"))
-          targets(item, required, "types", adjacentDeclaration, mode);
-      let selected = false;
+      if (kind === "runtime")
+        for (const [condition, item] of Object.entries(value))
+          if (condition === "types" || condition.startsWith("types@")) {
+            const declarations = targets(item, "types", mode, addons);
+            if (Array.isArray(declarations))
+              for (const declaration of declarations)
+                enqueue(declaration, "types", false, root, false, true);
+          }
       for (const [condition, item] of Object.entries(value)) {
         if (
           condition !== "default" &&
           condition !== "node" &&
-          condition !== "node-addons" &&
+          !(addons && condition === "node-addons") &&
           condition !== mode
         )
           continue;
-        const resolved = targets(item, required, kind, adjacentDeclaration, mode);
-        selected ||= resolved;
-        if (resolved || item === null) break;
+        const resolved = targets(item, kind, mode, addons);
+        if (resolved) return resolved;
       }
-      return selected;
     }
-    return false;
+    return undefined;
+  }
+
+  function addTargets(value: unknown, required: boolean, mode: "import" | "require") {
+    const active = targets(value, "runtime", mode);
+    const inactive = targets(value, "runtime", mode, false);
+    const selected = new Set([
+      ...(Array.isArray(active) ? active : []),
+      ...(Array.isArray(inactive) ? inactive : []),
+    ]);
+    for (const target of selected)
+      enqueue(
+        target,
+        "runtime",
+        required &&
+          Array.isArray(active) &&
+          active.includes(target) &&
+          Array.isArray(inactive) &&
+          inactive.includes(target),
+        root,
+        false,
+        true,
+      );
   }
 
   if (manifest.exports != null) {
@@ -325,12 +355,12 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
       Object.keys(exports).some((key) => key.startsWith("."))
     ) {
       for (const [subpath, value] of Object.entries(exports)) {
-        targets(value, subpath === ".", "runtime", true, "import");
-        targets(value, subpath === ".", "runtime", true, "require");
+        addTargets(value, subpath === ".", "import");
+        addTargets(value, subpath === ".", "require");
       }
     } else {
-      targets(exports, true, "runtime", true, "import");
-      targets(exports, true, "runtime", true, "require");
+      addTargets(exports, true, "import");
+      addTargets(exports, true, "require");
     }
   } else if (!manifest.main && !manifest.module) {
     if (existsSync(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
@@ -409,7 +439,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
     )) {
       const required = current.required && edge.required;
       const executionRequired = required && !edge.resolutionOnly;
-      for (const { specifier, kind } of resolvePackageImport(
+      for (const { specifier, kind, required: selectedRequired } of resolvePackageImport(
         edge.specifier,
         scope.manifest.imports,
         edge.kind,
@@ -422,7 +452,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           enqueue(
             specifier,
             kind,
-            executionRequired && kind === "runtime",
+            executionRequired && selectedRequired && kind === "runtime",
             edge.specifier.startsWith("#") ? scope.directory : dirname(current.path),
             edge.specifier.startsWith("#")
               ? false
@@ -458,7 +488,10 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
               enqueue(
                 target.specifier,
                 target.kind,
-                executionRequired && target.kind === "runtime",
+                executionRequired &&
+                  selectedRequired &&
+                  target.required &&
+                  target.kind === "runtime",
                 scope.directory,
                 exports === undefined ? "main" : false,
               );
@@ -471,7 +504,7 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           packageName,
           typeReference: edge.typeReference ?? false,
           kind,
-          required: required && kind === "runtime",
+          required: required && selectedRequired && kind === "runtime",
           file: current.path,
           range: {
             start: edge.start,
@@ -542,6 +575,12 @@ function validExportTarget(value: string, root: string): boolean {
   );
 }
 
+type ResolvedPackageImport = {
+  specifier: string;
+  kind: PackageReference["kind"];
+  required: boolean;
+};
+
 function resolvePackageImport(
   specifier: string,
   imports: PackageManifest["imports"],
@@ -550,8 +589,8 @@ function resolvePackageImport(
   seen = new Set<string>(),
   selfRoot?: string,
   importsRoot?: string,
-): { specifier: string; kind: PackageReference["kind"] }[] {
-  if (!specifier.startsWith("#")) return [{ specifier, kind }];
+): ResolvedPackageImport[] {
+  if (!specifier.startsWith("#")) return [{ specifier, kind, required: true }];
   if (seen.has(specifier)) return [];
   seen.add(specifier);
   const entries = Object.entries(imports ?? {}).sort(
@@ -574,7 +613,8 @@ function resolvePackageImport(
   function flatten(
     value: unknown,
     targetKind = kind,
-  ): { specifier: string; kind: PackageReference["kind"] }[] | undefined {
+    addons = true,
+  ): ResolvedPackageImport[] | undefined {
     if (value === null) return [];
     if (typeof value === "string") {
       if (key.includes("*") && !validExportTarget(`./${wildcard}`, selfRoot ?? importsRoot ?? ""))
@@ -596,26 +636,62 @@ function resolvePackageImport(
     if (Array.isArray(value)) {
       let selected: ReturnType<typeof flatten> = value.length ? undefined : [];
       for (const entry of value) {
-        const targets = flatten(entry, targetKind);
+        const targets = flatten(entry, targetKind, addons);
         if (targets?.length) return targets;
         if (targets !== undefined) selected = targets;
       }
       return selected;
     }
     if (isRecord(value)) {
-      for (const [condition, entry] of Object.entries(value)) {
-        const types = condition === "types" || condition.startsWith("types@");
-        if (
-          condition !== "default" &&
-          condition !== "node" &&
-          condition !== "node-addons" &&
-          condition !== mode &&
-          !(types && targetKind === "types")
-        )
-          continue;
-        const targets = flatten(entry, types ? "types" : targetKind);
-        if (targets !== undefined) return targets;
+      if (addons && Object.hasOwn(value, "node-addons")) {
+        const active = flattenConditions(value, targetKind, true);
+        const inactive = flattenConditions(value, targetKind, false);
+        if (active === undefined) return inactive;
+        if (inactive === undefined) return active.map((entry) => ({ ...entry, required: false }));
+        const selected = new Map<string, ResolvedPackageImport>();
+        for (const entry of [...active, ...inactive]) {
+          const key = `${entry.kind}:${entry.specifier}`;
+          selected.set(key, {
+            ...entry,
+            required:
+              entry.required &&
+              active.some(
+                (candidate) =>
+                  candidate.kind === entry.kind &&
+                  candidate.specifier === entry.specifier &&
+                  candidate.required,
+              ) &&
+              inactive.some(
+                (candidate) =>
+                  candidate.kind === entry.kind &&
+                  candidate.specifier === entry.specifier &&
+                  candidate.required,
+              ),
+          });
+        }
+        return [...selected.values()];
       }
+      return flattenConditions(value, targetKind, addons);
+    }
+    return undefined;
+  }
+  function flattenConditions(
+    value: Record<string, unknown>,
+    targetKind: PackageReference["kind"],
+    addons: boolean,
+  ): ResolvedPackageImport[] | undefined {
+    for (const [condition, entry] of Object.entries(value)) {
+      const types = condition === "types" || condition.startsWith("types@");
+      if (
+        condition !== "default" &&
+        condition !== "node" &&
+        !(addons && condition === "node-addons") &&
+        condition !== mode &&
+        !(types && targetKind === "types")
+      )
+        continue;
+      const targets = flatten(entry, types ? "types" : targetKind, addons);
+      if (targets !== undefined) return targets;
     }
     return undefined;
   }
@@ -1598,6 +1674,13 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
           binds(child.name) &&
           bindingContains(child, node) &&
           !(
+            identifier === "require" &&
+            ts.isSourceFile(scope) &&
+            !child.initializer &&
+            ts.isVariableDeclarationList(child.parent) &&
+            !(child.parent.flags & ts.NodeFlags.BlockScoped)
+          ) &&
+          !(
             ts.isVariableDeclarationList(child.parent) &&
             ts.isVariableStatement(child.parent.parent) &&
             child.parent.parent.modifiers?.some(
@@ -1608,10 +1691,22 @@ function shadowsName(node: ts.Node, identifier: string): boolean {
           !child.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) &&
           child.name?.text === identifier &&
           isWithin(node, child.parent)) ||
-        (ts.isImportClause(child) && child.name?.text === identifier) ||
+        (ts.isImportClause(child) && !child.isTypeOnly && child.name?.text === identifier) ||
         ((ts.isImportSpecifier(child) ||
           ts.isNamespaceImport(child) ||
           ts.isImportEqualsDeclaration(child)) &&
+          !(ts.isImportSpecifier(child) && child.isTypeOnly) &&
+          !(ts.isImportEqualsDeclaration(child) && child.isTypeOnly) &&
+          !(
+            ts.isNamespaceImport(child) &&
+            ts.isImportClause(child.parent) &&
+            child.parent.isTypeOnly
+          ) &&
+          !(
+            ts.isImportSpecifier(child) &&
+            ts.isImportClause(child.parent.parent) &&
+            child.parent.parent.isTypeOnly
+          ) &&
           child.name.text === identifier)
       )
         found = true;

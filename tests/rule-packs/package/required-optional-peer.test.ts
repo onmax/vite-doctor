@@ -393,6 +393,18 @@ test("does not follow export conditions after import and require have selected t
   ).toEqual([]);
 });
 
+test.each([[], [null], "../invalid.js"])(
+  "does not fall through blocked or invalid export targets: %j",
+  async (node) => {
+    expect(
+      await diagnose(
+        { exports: { node, default: "./peer.js" }, ...optionalPeer },
+        { "peer.js": 'require("peer");' },
+      ),
+    ).toEqual([]);
+  },
+);
+
 test.each(["./cli.js", { example: "./cli.js" }, ["./cli.js"]])(
   "allows optional peers loaded only by standalone binaries: %j",
   async (bin) => {
@@ -619,6 +631,16 @@ test.each([
   'declare const require: (name: string) => unknown; require("peer");',
   'declare function require(name: string): unknown; require("peer");',
 ])("does not treat ambient require declarations as runtime shadows: %s", async (source) => {
+  expect(
+    await diagnose({ main: "index.cts", ...optionalPeer }, { "index.cts": source }),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each([
+  'var require; require("peer");',
+  'import type require from "./types.ts"; require("peer");',
+  'import { type require } from "./types.ts"; require("peer");',
+])("preserves the CommonJS loader after erased declarations: %s", async (source) => {
   expect(
     await diagnose({ main: "index.cts", ...optionalPeer }, { "index.cts": source }),
   ).toMatchObject([{ code: "PKG0003" }]);
@@ -892,7 +914,7 @@ test("uses the fallback without evidence for the module-sync condition", async (
 });
 
 test.each(["import", "require"])(
-  "selects node-addons before the fallback for %s",
+  "does not require node-addons when the fallback is safe for %s",
   async (condition) => {
     const source = condition === "import" ? 'import "#adapter";' : 'require("#adapter");';
     expect(
@@ -904,11 +926,11 @@ test.each(["import", "require"])(
         },
         { "index.js": source, "safe.js": "export {};" },
       ),
-    ).toMatchObject([{ code: "PKG0003" }]);
+    ).toEqual([]);
   },
 );
 
-test("selects the node-addons export before the fallback", async () => {
+test("does not require a peer exclusive to the node-addons export", async () => {
   expect(
     await diagnose(
       {
@@ -916,6 +938,49 @@ test("selects the node-addons export before the fallback", async () => {
         ...optionalPeer,
       },
       { "addon.js": 'require("peer");', "safe.js": "export {};" },
+    ),
+  ).toEqual([]);
+});
+
+test("does not require a peer exclusive to the no-addons export", async () => {
+  expect(
+    await diagnose(
+      { exports: { "node-addons": "./safe.js", default: "./peer.js" }, ...optionalPeer },
+      { "safe.js": "export {};", "peer.js": 'require("peer");' },
+    ),
+  ).toEqual([]);
+});
+
+test("requires a peer shared by both node-addons selections", async () => {
+  expect(
+    await diagnose(
+      { exports: { "node-addons": "./peer.js", default: "./peer.js" }, ...optionalPeer },
+      { "peer.js": 'require("peer");' },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each([
+  { "node-addons": "./safe.js", default: "peer" },
+  { "node-addons": "peer", default: "./safe.js" },
+])("does not require an import-map peer exclusive to one addon mode: %j", async (mapping) => {
+  expect(
+    await diagnose(
+      { main: "index.mjs", imports: { "#adapter": mapping }, ...optionalPeer },
+      { "index.mjs": 'import "#adapter";', "safe.js": "export {};" },
+    ),
+  ).toEqual([]);
+});
+
+test("requires an import-map peer shared by both addon modes", async () => {
+  expect(
+    await diagnose(
+      {
+        main: "index.mjs",
+        imports: { "#adapter": { "node-addons": "peer", default: "peer" } },
+        ...optionalPeer,
+      },
+      { "index.mjs": 'import "#adapter";' },
     ),
   ).toMatchObject([{ code: "PKG0003" }]);
 });
