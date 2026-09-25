@@ -31,6 +31,18 @@ test("resolves a module-scoped status constant in a handler", async () => {
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
 });
 
+test("resolves an exported module-scoped status constant", async () => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "export const NOT_FOUND = 404; export default defineEventHandler(() => { try { throw createError({ statusCode: NOT_FOUND }) } catch { throw new Error() } })",
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+});
+
 test("follows a stored promise rejection into a later catch", async () => {
   const result = await runRuleFixture({
     framework: "nitro",
@@ -477,6 +489,18 @@ test.each([
     "async function missing() { throw createError({ statusCode: 404 }) }; await Promise.all([missing()])",
     "throw new Error()",
     true,
+  ],
+  [
+    "Promise.all does not adopt a non-iterable rejected promise",
+    "async function missing() { throw createError({ statusCode: 404 }) }; await Promise.all(missing())",
+    "throw new Error()",
+    false,
+  ],
+  [
+    "Promise.race does not prove which settled input wins",
+    "await Promise.race([Promise.resolve(1), Promise.reject(createError({ statusCode: 404 }))])",
+    "throw new Error()",
+    false,
   ],
   [
     "undefined binding uses default parameter",

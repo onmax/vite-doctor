@@ -1024,9 +1024,8 @@ function evaluateOutcomes(
       target.object.type === "Identifier" &&
       target.object.name === "Promise" &&
       !path.resolveBinding(target.object) &&
-      ["all", "race"].includes(
-        target.computed ? knownLiteral(target.property, path) : target.property.name,
-      );
+      (target.computed ? knownLiteral(target.property, path) : target.property.name) === "all" &&
+      unwrapExpression(call.arguments[0])?.type === "ArrayExpression";
     let paths = outcomes(
       call.callee,
       { ...normal, adoptingAsync: false },
@@ -1983,8 +1982,14 @@ function moduleBindings(
     containing = containing.__doctorParent;
   if (root.type !== "Program" || !containing) return { literals, objects };
   for (const statement of root.body.slice(0, root.body.indexOf(containing))) {
-    if (statement.type !== "VariableDeclaration" || statement.kind !== "const") continue;
-    for (const declaration of statement.declarations) {
+    const declarationStatement =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (
+      declarationStatement?.type !== "VariableDeclaration" ||
+      declarationStatement.kind !== "const"
+    )
+      continue;
+    for (const declaration of declarationStatement.declarations) {
       if (declaration.id.type !== "Identifier") continue;
       const binding = resolveBinding(declaration.id);
       if (!binding) continue;
