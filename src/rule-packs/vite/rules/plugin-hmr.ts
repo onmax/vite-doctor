@@ -1209,6 +1209,27 @@ function undisposedResource(program: AnyNode): string | null {
           returned.set(node, array);
           return true;
         }
+        if (method === "delete") {
+          const value = identity(node.arguments[0], environment);
+          const index = elements.findIndex(
+            (element: AnyNode) =>
+              element === value ||
+              (resolve(node.arguments[0]) && resolve(element) === resolve(node.arguments[0])),
+          );
+          if (index !== -1) {
+            const remaining = elements.filter((_, position) => position !== index);
+            const stored = new Map<string, AnyNode>();
+            remaining.forEach((element, position) => stored.set(String(position), element));
+            stored.set("length", { type: "Literal", value: remaining.length });
+            properties.set(array, stored);
+          }
+          returned.set(node, { type: "Literal", value: index !== -1 });
+          return true;
+        }
+        if (method === "clear") {
+          properties.set(array, new Map([["length", { type: "Literal", value: 0 }]]));
+          return true;
+        }
         if (method === "forEach") {
           for (const element of elements) {
             const call = {
@@ -2663,46 +2684,51 @@ function undisposedResource(program: AnyNode): string | null {
   };
   fireOrders(listeners);
   restoreDisposalState(beforeListeners);
-  const beforeTimeouts = captureDisposalState();
-  for (const [
-    index,
-    { timeout, callback, args, environment, delay },
-  ] of pendingTimeouts.entries()) {
-    if (!resources.some((resource) => resource.value === timeout)) continue;
-    const sequentialState = captureDisposalState();
-    if (
-      index > 0 &&
-      pendingTimeouts
-        .slice(0, index)
-        .some(
-          (earlier) =>
-            delay?.type !== "Literal" ||
-            earlier.delay?.type !== "Literal" ||
-            Number(delay.value) < Number(earlier.delay.value),
-        )
-    ) {
-      restoreDisposalState(beforeTimeouts);
+  for (const listenerState of disposalStates.slice()) {
+    restoreDisposalState(listenerState);
+    const beforeTimeouts = captureDisposalState();
+    for (const [
+      index,
+      { timeout, callback, args, environment, delay },
+    ] of pendingTimeouts.entries()) {
+      if (!resources.some((resource) => resource.value === timeout)) continue;
+      const sequentialState = captureDisposalState();
+      if (
+        index > 0 &&
+        pendingTimeouts
+          .slice(0, index)
+          .some(
+            (earlier) =>
+              delay?.type !== "Literal" ||
+              earlier.delay?.type !== "Literal" ||
+              Number(delay.value) < Number(earlier.delay.value),
+          )
+      ) {
+        restoreDisposalState(beforeTimeouts);
+        if (resources.some((resource) => resource.value === timeout) && !cleaned.has(timeout)) {
+          timerSimulationDepth = 1;
+          inspect(callback, args, environment, false);
+          timerSimulationDepth = 0;
+          if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
+            cleaned.add(timeout);
+          disposalStates.push(captureDisposalState());
+        }
+        restoreDisposalState(sequentialState);
+      }
+      if (cleaned.has(timeout)) continue;
       timerSimulationDepth = 1;
       inspect(callback, args, environment, false);
       timerSimulationDepth = 0;
       if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
         cleaned.add(timeout);
       disposalStates.push(captureDisposalState());
-      restoreDisposalState(sequentialState);
-    }
-    if (cleaned.has(timeout)) continue;
-    timerSimulationDepth = 1;
-    inspect(callback, args, environment, false);
-    timerSimulationDepth = 0;
-    if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
-      cleaned.add(timeout);
-    disposalStates.push(captureDisposalState());
-    if (
-      resources.find((resource) => resource.value === timeout)?.kind === "interval" &&
-      !cleaned.has(timeout)
-    ) {
-      inspect(callback, args, environment, false);
-      disposalStates.push(captureDisposalState());
+      if (
+        resources.find((resource) => resource.value === timeout)?.kind === "interval" &&
+        !cleaned.has(timeout)
+      ) {
+        inspect(callback, args, environment, false);
+        disposalStates.push(captureDisposalState());
+      }
     }
   }
   let disposalLeak: string | undefined;

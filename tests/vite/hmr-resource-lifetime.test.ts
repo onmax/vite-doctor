@@ -3561,6 +3561,31 @@ for (const [name, source, leaks] of [
     false,
   ],
   [
+    "Set delete removes cleanup credit",
+    "const timer = setInterval(refresh); const timers = new Set([timer]); timers.delete(timer); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "Set clear removes cleanup credit",
+    "const timers = new Set([setInterval(refresh)]); timers.clear(); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    true,
+  ],
+  [
+    "Set re-add restores cleanup credit",
+    "const timer = setInterval(refresh); const timers = new Set([timer]); timers.delete(timer); timers.add(timer); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
+    false,
+  ],
+  [
+    "canceled short timer does not fire in alternate ordering",
+    "const long = setTimeout(() => {}, 100); const short = setTimeout(() => setInterval(refresh), 0); clearTimeout(short); import.meta.hot.dispose(() => clearTimeout(long))",
+    false,
+  ],
+  [
+    "one-shot listener timer can leak a nested interval",
+    "const start = () => { setTimeout(() => setInterval(refresh), 0) }; document.addEventListener('click', start, { once: true }); import.meta.hot.dispose(() => document.removeEventListener('click', start))",
+    true,
+  ],
+  [
     "Promise.resolve adopts possible rejection from unknown calls",
     "Promise.resolve(getPromise()).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
     true,
