@@ -973,7 +973,11 @@ function undisposedResource(program: AnyNode): string | null {
               : undefined;
         const finallyHandler = method === "finally" ? node.arguments[0] : undefined;
         if (pendingFetchPromises.has(promise)) {
-          for (const callback of [fulfilledHandler, rejectedHandler, finallyHandler]) {
+          for (const callback of [
+            previous.normal ? fulfilledHandler : undefined,
+            previous.abrupt ? rejectedHandler : undefined,
+            previous.normal || previous.abrupt ? finallyHandler : undefined,
+          ]) {
             if (callback) lateReactions.push({ callback, args: [], environment });
           }
         }

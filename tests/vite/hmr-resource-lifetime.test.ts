@@ -89,6 +89,16 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "fetch rejection cannot run a later fulfillment handler",
+    "fetch('/data').then(() => Promise.reject(Error()), () => Promise.reject(Error())).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "fetch fulfillment cannot run a later rejection handler",
+    "fetch('/data').then(() => Promise.resolve(), () => Promise.resolve()).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
     "inherited static method creates an interval",
     "class Base { static start() { setInterval(refresh) } }; class Child extends Base {}; Child.start(); import.meta.hot.dispose(() => {})",
     true,
