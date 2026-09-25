@@ -4094,6 +4094,22 @@ test("provider catch-all accepts the H3 eventHandler wrapper", async () => {
   expect(result.diagnostics).toHaveLength(0);
 });
 
+test("provider catch-all accepts Nuxt's auto-imported eventHandler wrapper", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "app/middleware/auth.ts":
+        "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/auth/[...all].ts":
+        "import { auth } from '../../utils/auth'; export default eventHandler(event => auth.handler(toWebRequest(event)))",
+      "server/utils/auth.ts":
+        "import { betterAuth } from 'better-auth'; export const auth = betterAuth({})",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test.each([
   "function eventHandler(callback) { return callback };",
   "import { eventHandler } from './unrelated';",
@@ -4513,6 +4529,47 @@ test("NUXT0037 keeps configured middleware when only server inventory is stale",
   });
   expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
 });
+
+test("NUXT0037 discovers configured source and middleware directories without a manifest", async () => {
+  const result = await runRuleFixture({
+    rule: noRouteMiddlewareApiSecurity,
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts":
+        "export default defineNuxtConfig({ srcDir: 'src', dir: { middleware: 'guards' } })",
+      "src/guards/auth.ts": "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+      "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(1);
+});
+
+test.each([
+  "const source = 'src'; export default defineNuxtConfig({ srcDir: source })",
+  "export default defineNuxtConfig({ serverDir: 'backend' })",
+])(
+  "NUXT0037 records an evidence gap for unresolved config without a manifest: %s",
+  async (config) => {
+    const result = await runRuleFixture({
+      rule: noRouteMiddlewareApiSecurity,
+      framework: "nuxt",
+      files: {
+        "nuxt.config.ts": config,
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        "server/api/account.get.ts": "export default defineEventHandler(() => ({ private: true }))",
+      },
+    });
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0037")).toHaveLength(
+      0,
+    );
+    expect(
+      result.project.evidenceGaps?.some(
+        (gap) => gap.source === "vite-doctor/nuxt-middleware-api-security",
+      ),
+    ).toBe(true);
+  },
+);
 
 test.each([
   ["identifier keys", "srcDir: 'src'", "middleware"],

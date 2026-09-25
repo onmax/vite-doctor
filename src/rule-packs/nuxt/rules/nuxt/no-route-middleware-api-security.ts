@@ -24,10 +24,10 @@ export const noRouteMiddlewareApiSecurity = createRule({
         const nuxt = ctx.project.nuxt;
         if (!nuxt) return;
         const middlewareFiles = new Set<string>();
-        const configurationCurrent =
-          nuxt.manifest?.hasManifest && !nuxt.manifest.isCurrent
-            ? isNuxtManifestConfigurationCurrent(ctx.project.root, nuxt.manifestPath)
-            : true;
+        const configurationCurrent = nuxt.manifest?.hasManifest
+          ? nuxt.manifest.isCurrent ||
+            isNuxtManifestConfigurationCurrent(ctx.project.root, nuxt.manifestPath)
+          : false;
         const rootConfig = configurationCurrent
           ? undefined
           : rootMiddlewareConfiguration(ctx.project.root);
@@ -37,7 +37,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
             {
               source: "vite-doctor/nuxt-middleware-api-security",
               message:
-                "Nuxt middleware or server directories cannot be resolved from changed configuration. Regenerate the Doctor manifest before reviewing server authorization.",
+                "Nuxt middleware or server directories cannot be resolved from configuration. Generate the Doctor manifest before reviewing server authorization.",
               files: [".nuxt/doctor.manifest.json"],
             },
           ];
@@ -269,7 +269,7 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
       factory.callee.type !== "Identifier" ||
       !["defineEventHandler", "eventHandler"].includes(factory.callee.name) ||
       (factory.callee.name === "eventHandler" &&
-        !hasH3EventHandlerBinding(parsed.program, factory.callee.name))
+        !hasFrameworkEventHandlerBinding(parsed.program, factory.callee.name))
     )
       return false;
     const callback = factory.arguments[0];
@@ -327,35 +327,22 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
   }
 }
 
-function hasH3EventHandlerBinding(program: AnyNode, name: string): boolean {
-  return (
-    program.body.some(
-      (statement: AnyNode) =>
-        statement.type === "ImportDeclaration" &&
-        ["h3", "#imports"].includes(statement.source.value) &&
-        statement.specifiers.some(
-          (specifier: AnyNode) =>
-            specifier.type === "ImportSpecifier" &&
-            specifier.local.name === name &&
-            specifier.imported.name === "eventHandler",
-        ),
-    ) &&
-    program.body.every((statement: AnyNode) => {
-      if (statement.type === "ImportDeclaration")
-        return statement.specifiers.every(
-          (specifier: AnyNode) =>
-            specifier.local.name !== name ||
-            (specifier.type === "ImportSpecifier" &&
-              specifier.imported.name === "eventHandler" &&
-              ["h3", "#imports"].includes(statement.source.value)),
-        );
-      const declaration =
-        statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-      if (declaration?.type === "VariableDeclaration")
-        return declaration.declarations.every((item: AnyNode) => !bindsName(item.id, name));
-      return !bindsName(declaration?.id, name);
-    })
-  );
+function hasFrameworkEventHandlerBinding(program: AnyNode, name: string): boolean {
+  return program.body.every((statement: AnyNode) => {
+    if (statement.type === "ImportDeclaration")
+      return statement.specifiers.every(
+        (specifier: AnyNode) =>
+          specifier.local.name !== name ||
+          (specifier.type === "ImportSpecifier" &&
+            specifier.imported.name === "eventHandler" &&
+            ["h3", "#imports"].includes(statement.source.value)),
+      );
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type === "VariableDeclaration")
+      return declaration.declarations.every((item: AnyNode) => !bindsName(item.id, name));
+    return !bindsName(declaration?.id, name);
+  });
 }
 
 function bindsName(pattern: AnyNode, name: string): boolean {
