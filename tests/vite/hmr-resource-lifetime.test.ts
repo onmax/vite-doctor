@@ -2178,6 +2178,16 @@ for (const [name, source, leaks] of [
     false,
   ],
   [
+    "truthy once option only fires a listener once",
+    "let timer; const start = () => { timer = setInterval(refresh) }; addEventListener('click', start, { once: 1 }); import.meta.hot.dispose(() => { removeEventListener('click', start); clearInterval(timer) })",
+    false,
+  ],
+  [
+    "falsey once option leaves a listener repeatable",
+    "let timer; const start = () => { timer = setInterval(refresh) }; addEventListener('click', start, { once: 0 }); import.meta.hot.dispose(() => { removeEventListener('click', start); clearInterval(timer) })",
+    true,
+  ],
+  [
     "repeatable listener overwrites an interval before disposal",
     "let timer; const start = () => { timer = setInterval(refresh) }; addEventListener('click', start); import.meta.hot.dispose(() => { removeEventListener('click', start); clearInterval(timer) })",
     true,

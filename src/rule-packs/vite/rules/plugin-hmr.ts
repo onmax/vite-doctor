@@ -1043,7 +1043,7 @@ function undisposedResource(program: AnyNode): string | null {
             capture: options,
             controller,
             value: node,
-            once: once?.type === "Literal" && once.value === true,
+            once: once?.type === "Literal" && Boolean(once.value),
           });
           resourcePaths.set(node, new Map(currentPath));
           resources.push({
