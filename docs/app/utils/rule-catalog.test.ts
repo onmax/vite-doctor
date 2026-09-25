@@ -1,3 +1,4 @@
+import { nitroRulePack } from "../../../src/rule-packs/nitro/index.js";
 import { typescriptRulePack } from "../../../src/rule-packs/typescript/index.js";
 import { nextTick, ref } from "vue";
 import { expect, test } from "vite-plus/test";
@@ -348,4 +349,12 @@ test("rule explorer model filters and sorts rules", async () => {
   expect(model.filteredRules.value.map((rule) => rule.ruleId)).toEqual([
     "vue/reactivity/no-ref-as-operand",
   ]);
+});
+
+test("documents every Nitro rule and the HTTP masking diagnostic", () => {
+  const ids = getRuleDocuments().map((rule) => rule.id);
+  for (const rule of nitroRulePack.rules) expect(ids).toContain(rule.meta.id);
+  expect(
+    getDiagnosticDocuments().find((diagnostic) => diagnostic.code === "NITRO0018")?.ruleId,
+  ).toBe("nitro/h3/no-http-error-masking");
 });

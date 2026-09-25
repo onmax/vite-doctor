@@ -15,6 +15,7 @@ import { preferValidatedRouterParams } from "./prefer-validated-router-params.js
 import { preferAssertMethod } from "./prefer-assert-method.js";
 import { preferRouteMethodSuffix } from "./prefer-route-method-suffix.js";
 import { preferGetRequestIp } from "./prefer-get-request-ip.js";
+import { noHttpErrorMasking } from "./no-http-error-masking.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -33,6 +34,7 @@ export {
   preferAssertMethod,
   preferRouteMethodSuffix,
   preferGetRequestIp,
+  noHttpErrorMasking,
 };
 
 const rules = [
@@ -52,6 +54,7 @@ const rules = [
   preferAssertMethod,
   preferRouteMethodSuffix,
   preferGetRequestIp,
+  noHttpErrorMasking,
 ];
 
 const nitroRulePack = defineRulePack({

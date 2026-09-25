@@ -167,6 +167,7 @@ function undisposedResource(program: AnyNode): string | null {
   const callbacks = new Map<AnyNode, AnyNode>();
   const properties = new Map<AnyNode, Map<string, AnyNode>>();
   const classGetters = new Map<AnyNode, Map<string, AnyNode>>();
+  const classSetters = new Map<AnyNode, Map<string, AnyNode>>();
   const members = new Map<AnyNode, Map<string, AnyNode>>();
   const propertyKey = (node: AnyNode, environment = values): string | undefined => {
     const property = node?.computed ? identity(node.property, environment) : node?.property;
@@ -641,6 +642,17 @@ function undisposedResource(program: AnyNode): string | null {
         if (key !== undefined) {
           const object = identity(node.left.object, environment);
           const descriptor = effectiveProperties(object, environment).get(key);
+          const classSetter = classSetters.get(object)?.get(key);
+          if (classSetter && !properties.get(object)?.has(key)) {
+            const completion = inspect(classSetter, [node.right], environment, module, object);
+            if (completion.abrupt) {
+              abrupt = true;
+              exits.push(new Set(cleaned));
+              thrownExits.add(exits[exits.length - 1]);
+              throwStates.set(exits[exits.length - 1], snapshot());
+            }
+            return completion.normal;
+          }
           if (
             descriptor?.accessor &&
             descriptor.property.kind === "set" &&
@@ -902,6 +914,12 @@ function undisposedResource(program: AnyNode): string | null {
             normal: items.every((item: AnyNode) => promiseCompletions.get(item)?.normal !== false),
             abrupt: items.some((item: AnyNode) => promiseCompletions.get(item)?.abrupt),
           };
+          promises.set(promise, {
+            type: "ArrayExpression",
+            elements: items.map((item: AnyNode) =>
+              promises.has(item) ? promises.get(item) : item,
+            ),
+          });
           promiseCompletions.set(promise, completion);
           returned.set(node, promise);
           return true;
@@ -1672,15 +1690,16 @@ function undisposedResource(program: AnyNode): string | null {
           if (
             field.static &&
             field.type === "MethodDefinition" &&
-            ["method", "get"].includes(field.kind)
+            ["method", "get", "set"].includes(field.kind)
           ) {
             const key = field.computed
               ? identity(field.key, environment)?.value
               : (field.key?.name ?? field.key?.value);
             if (key !== undefined) {
-              if (field.kind === "get") {
-                if (!classGetters.has(node)) classGetters.set(node, new Map());
-                classGetters.get(node)!.set(String(key), field.value);
+              if (field.kind === "get" || field.kind === "set") {
+                const accessors = field.kind === "get" ? classGetters : classSetters;
+                if (!accessors.has(node)) accessors.set(node, new Map());
+                accessors.get(node)!.set(String(key), field.value);
               } else properties.get(node)!.set(String(key), field.value);
             }
           }
@@ -1688,13 +1707,23 @@ function undisposedResource(program: AnyNode): string | null {
         if (!walk(node.superClass)) return false;
         const superclass = identity(node.superClass, environment);
         for (const [key, value] of properties.get(superclass) ?? []) {
-          if (!properties.get(node)!.has(key) && !classGetters.get(node)?.has(key))
+          if (
+            !properties.get(node)!.has(key) &&
+            !classGetters.get(node)?.has(key) &&
+            !classSetters.get(node)?.has(key)
+          )
             properties.get(node)!.set(key, value);
         }
         for (const [key, getter] of classGetters.get(superclass) ?? []) {
           if (!properties.get(node)!.has(key) && !classGetters.get(node)?.has(key)) {
             if (!classGetters.has(node)) classGetters.set(node, new Map());
             classGetters.get(node)!.set(key, getter);
+          }
+        }
+        for (const [key, setter] of classSetters.get(superclass) ?? []) {
+          if (!properties.get(node)!.has(key) && !classSetters.get(node)?.has(key)) {
+            if (!classSetters.has(node)) classSetters.set(node, new Map());
+            classSetters.get(node)!.set(key, setter);
           }
         }
         const walkStatic = (field: AnyNode, key?: string): boolean => {
@@ -1846,9 +1875,10 @@ function undisposedResource(program: AnyNode): string | null {
                   if (field.value) evaluate(field.value, local, module);
                   if (key !== undefined)
                     properties.get(instance)!.set(key, identity(field.value, local));
-                } else if (key !== undefined && field.kind === "get") {
-                  if (!classGetters.has(instance)) classGetters.set(instance, new Map());
-                  classGetters.get(instance)!.set(String(key), field.value);
+                } else if (key !== undefined && ["get", "set"].includes(field.kind)) {
+                  const accessors = field.kind === "get" ? classGetters : classSetters;
+                  if (!accessors.has(instance)) accessors.set(instance, new Map());
+                  accessors.get(instance)!.set(String(key), field.value);
                 } else if (key !== undefined && field.kind !== "constructor") {
                   properties.get(instance)!.set(key, field.value);
                 }
@@ -2438,8 +2468,9 @@ function undisposedResource(program: AnyNode): string | null {
     resources.splice(0, resources.length, ...state.resources);
   };
   const disposalStates = [captureDisposalState()];
-  for (const listener of listeners) {
-    if (cleaned.has(listener.value)) continue;
+  const beforeListeners = captureDisposalState();
+  const fireListener = (listener: Listener) => {
+    if (cleaned.has(listener.value)) return;
     const parentPath = currentPath;
     currentPath = new Map([...parentPath, ...listener.path]);
     const event = {
@@ -2479,7 +2510,17 @@ function undisposedResource(program: AnyNode): string | null {
       disposalStates.push(captureDisposalState());
     }
     currentPath = parentPath;
+  };
+  for (const listener of listeners) fireListener(listener);
+  const afterListeners = captureDisposalState();
+  for (let index = 1; index < listeners.length; index++) {
+    restoreDisposalState(beforeListeners);
+    fireListener(listeners[index]);
+    for (let next = 0; next < listeners.length; next++) {
+      if (next !== index) fireListener(listeners[next]);
+    }
   }
+  restoreDisposalState(afterListeners);
   const beforeTimeouts = captureDisposalState();
   for (const [
     index,

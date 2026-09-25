@@ -4,6 +4,36 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "Promise.all passes fulfilled values to reactions",
+    "Promise.all([Promise.resolve(false)]).then(([start]) => { if (start) setInterval(refresh) }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "Promise.all passes resolved resource handles to reactions",
+    "let timer; Promise.all([Promise.resolve(setInterval(refresh))]).then(([handle]) => { timer = handle }); import.meta.hot.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "static setter can create a resource",
+    "class State { static set value(handle) { setInterval(refresh) } }; State.value = 1; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "inherited static setter can create a resource",
+    "class Base { static set value(handle) { setInterval(refresh) } }; class State extends Base {}; State.value = 1; import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "static setter can clean a resource",
+    "const timer = setInterval(refresh); class State { static set value(handle) { clearInterval(handle) } }; import.meta.hot.dispose(() => { State.value = timer })",
+    false,
+  ],
+  [
+    "later one-shot listener can replace a timer before an earlier listener clears it",
+    "let timer = setInterval(refresh); const clear = () => clearInterval(timer); const replace = () => { timer = setInterval(refresh) }; document.addEventListener('click', clear, { once: true }); document.addEventListener('click', replace, { once: true }); import.meta.hot.dispose(() => { clearInterval(timer); document.removeEventListener('click', clear); document.removeEventListener('click', replace) })",
+    true,
+  ],
+  [
     "interval firing creates a timer",
     "const outer = setInterval(() => setInterval(refresh), 1000); import.meta.hot.dispose(() => clearInterval(outer))",
     true,

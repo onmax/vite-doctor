@@ -461,7 +461,14 @@ function isTypeOnlyContext(node: unknown): boolean {
     const type = parent?.type;
     return (
       typeof type === "string" &&
-      (type.startsWith("TS") ||
+      ((type.startsWith("TS") &&
+        ![
+          "TSAsExpression",
+          "TSSatisfiesExpression",
+          "TSNonNullExpression",
+          "TSTypeAssertion",
+          "TSInstantiationExpression",
+        ].includes(type)) ||
         type === "TypeAnnotation" ||
         type === "TypeAlias" ||
         type === "InterfaceDeclaration")

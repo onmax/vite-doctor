@@ -13,7 +13,7 @@ const RULE_ID = "nitro/request/prefer-route-method-suffix";
 
 export const preferRouteMethodSuffix = createRule({
   meta: {
-    id: RULE_ID,
+    id: "nitro/request/prefer-route-method-suffix",
     title: "Use Nitro route method suffixes",
     description:
       "File-routed Nitro handlers should use HTTP method filename suffixes instead of manual request method gates.",
