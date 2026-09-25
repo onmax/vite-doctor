@@ -1618,6 +1618,10 @@ function undisposedResource(program: AnyNode): string | null {
               ].includes(base?.type) &&
               !base.async &&
               !base.generator;
+            if (!constructableBase && ["WebSocket", "EventSource"].includes(base)) {
+              resourcePaths.set(instance, new Map(currentPath));
+              resources.push({ value: instance, kind: base, cleanup: "close", method: true });
+            }
             const initializeBase = (baseArgs: AnyNode[]): Completion => {
               const completion = construct(base, baseArgs, instance);
               if (!completion.normal) return completion;
@@ -1676,13 +1680,29 @@ function undisposedResource(program: AnyNode): string | null {
       if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
         if (!walk(node.test)) return false;
         const test = identity(node.test, environment);
+        const constant = (expression: AnyNode): unknown => {
+          const value = identity(expression, environment);
+          if (value?.type === "Literal") return value.value;
+          if (value?.type === "UnaryExpression" && value.operator === "!") {
+            const argument = constant(value.argument);
+            if (argument !== undefined) return !argument;
+          }
+          if (value?.type === "BinaryExpression") {
+            const left = constant(value.left);
+            const right = constant(value.right);
+            if (left === undefined || right === undefined) return undefined;
+            if (value.operator === "===" || value.operator === "==") return left === right;
+            if (value.operator === "!==" || value.operator === "!=") return left !== right;
+          }
+          return undefined;
+        };
+        const known = constant(node.test);
         if (
-          test?.type === "Literal" ||
+          known !== undefined ||
           memberPath(node.test) === "import.meta.hot" ||
           knownTruthyResource(test)
         ) {
-          const selected =
-            test?.type === "Literal" && !test.value ? node.alternate : node.consequent;
+          const selected = known !== undefined && !known ? node.alternate : node.consequent;
           const continues = walk(selected);
           if (node.type === "ConditionalExpression")
             returned.set(node, identity(selected, environment));
@@ -2120,73 +2140,80 @@ function undisposedResource(program: AnyNode): string | null {
     return { normal, abrupt, value };
   }
   evaluate(program, values, true);
+  const captureDisposalState = () => ({
+    cleaned: new Set(cleaned),
+    values: new Map(values),
+    properties: new Map([...properties].map(([key, entries]) => [key, new Map(entries)])),
+    resourceCount: resources.length,
+  });
+  const canceledState = captureDisposalState();
   for (const { timeout, callback, environment } of pendingTimeouts) {
     if (cleaned.has(timeout)) continue;
-    const priorCleaned = new Set(cleaned);
-    const priorResources = new Set(resources.map((resource) => resource.value));
     inspect(callback, [], environment, false);
-    for (const value of priorResources) if (!priorCleaned.has(value)) cleaned.delete(value);
   }
-  const initialCleaned = new Set(cleaned);
-  const initialValues = new Map(values);
-  const initialProperties = new Map(
-    [...properties].map(([key, entries]) => [key, new Map(entries)]),
-  );
+  const firedState = captureDisposalState();
   let disposalLeak: string | undefined;
-  const outcomes = disposers.map(({ callback: disposer, path: disposerPath }) => {
-    const resourceStart = resources.length;
-    cleaned.clear();
-    for (const value of initialCleaned) cleaned.add(value);
-    values.clear();
-    for (const [key, value] of initialValues) values.set(key, value);
-    properties.clear();
-    for (const [key, entries] of initialProperties) properties.set(key, new Map(entries));
-    inspect(
-      callbacks.get(disposer) && !lexicalEnvironments.has(disposer)
-        ? callbacks.get(disposer)
-        : disposer,
-      [
-        identity({
-          type: "MemberExpression",
-          object: {
+  for (const state of pendingTimeouts.length ? [canceledState, firedState] : [firedState]) {
+    const outcomes = disposers.map(({ callback: disposer, path: disposerPath }) => {
+      const resourceStart = resources.length;
+      cleaned.clear();
+      for (const value of state.cleaned) cleaned.add(value);
+      values.clear();
+      for (const [key, value] of state.values) values.set(key, value);
+      properties.clear();
+      for (const [key, entries] of state.properties) properties.set(key, new Map(entries));
+      inspect(
+        callbacks.get(disposer) && !lexicalEnvironments.has(disposer)
+          ? callbacks.get(disposer)
+          : disposer,
+        [
+          identity({
             type: "MemberExpression",
-            object: { type: "MetaProperty", meta: { name: "import" }, property: { name: "meta" } },
-            property: { name: "hot" },
+            object: {
+              type: "MemberExpression",
+              object: {
+                type: "MetaProperty",
+                meta: { name: "import" },
+                property: { name: "meta" },
+              },
+              property: { name: "hot" },
+              computed: false,
+            },
+            property: { name: "data" },
             computed: false,
-          },
-          property: { name: "data" },
-          computed: false,
-        }),
-      ],
-    );
-    if (
-      resources.some((resource) => resource.value === disposer && resource.kind === "subscription")
-    )
-      cleaned.add(disposer);
-    disposalLeak ??= resources
-      .slice(resourceStart)
-      .find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))?.kind;
-    resources.splice(resourceStart);
-    for (const resource of resources) {
-      const createdPath = resourcePaths.get(resource.value);
+          }),
+        ],
+      );
       if (
-        createdPath &&
-        [...createdPath].some(
-          ([choice, side]) => disposerPath.has(choice) && disposerPath.get(choice) !== side,
+        resources.some(
+          (resource) => resource.value === disposer && resource.kind === "subscription",
         )
       )
-        cleaned.add(resource.value);
-    }
-    return new Set(cleaned);
-  });
-  for (const value of cleaned)
-    if (outcomes.some((outcome) => !outcome.has(value))) cleaned.delete(value);
-  return (
-    disposalLeak ??
-    resources.find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))
-      ?.kind ??
-    null
-  );
+        cleaned.add(disposer);
+      disposalLeak ??= resources
+        .slice(resourceStart)
+        .find((resource) => repeated.has(resource.value) || !cleaned.has(resource.value))?.kind;
+      resources.splice(resourceStart);
+      for (const resource of resources.slice(0, state.resourceCount)) {
+        const createdPath = resourcePaths.get(resource.value);
+        if (
+          createdPath &&
+          [...createdPath].some(
+            ([choice, side]) => disposerPath.has(choice) && disposerPath.get(choice) !== side,
+          )
+        )
+          cleaned.add(resource.value);
+      }
+      return new Set(cleaned);
+    });
+    disposalLeak ??= resources
+      .slice(0, state.resourceCount)
+      .find(
+        (resource) =>
+          repeated.has(resource.value) || outcomes.some((outcome) => !outcome.has(resource.value)),
+      )?.kind;
+  }
+  return disposalLeak ?? null;
 }
 
 function unwrapResourceExpression(node: AnyNode): AnyNode {

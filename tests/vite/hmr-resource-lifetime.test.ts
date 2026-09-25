@@ -2928,6 +2928,31 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
+    "timeout replacement is cleaned in both disposal orderings",
+    "let timer = setInterval(refresh); const pending = setTimeout(() => { clearInterval(timer); timer = setInterval(refresh) }, 0); import.meta.hot.dispose(() => { clearTimeout(pending); clearInterval(timer) })",
+    false,
+  ],
+  [
+    "uncanceled timeout replacement leaks after disposal",
+    "let timer = setInterval(refresh); setTimeout(() => { clearInterval(timer); timer = setInterval(refresh) }, 0); import.meta.hot.dispose(() => clearInterval(timer))",
+    true,
+  ],
+  [
+    "built-in superclass creates a socket",
+    "class Socket extends WebSocket {}; new Socket(url); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "built-in superclass socket closes",
+    "class Socket extends WebSocket {}; const socket = new Socket(url); import.meta.hot.dispose(() => socket.close())",
+    false,
+  ],
+  [
+    "constant comparison guards cleanup",
+    "const timer = setInterval(refresh); import.meta.hot.dispose(() => { if (1 === 1) clearInterval(timer) })",
+    false,
+  ],
+  [
     "subscription results have unknown truthiness",
     "const sub = events.subscribe(refresh); import.meta.hot.dispose(() => { if (sub) sub.unsubscribe() })",
     true,
