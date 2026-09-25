@@ -39,6 +39,7 @@ test("accepts direct consumer declarations, optional peers, built-ins and self r
         "dist/index.js":
           'import "direct/subpath"; import "peer"; try { require("optional") } catch {}; import "node:fs"; import "fs/promises"; import "example-library/subpath";',
       },
+      { config: { rules: { "package/no-required-optional-peer": "off" } } },
     ),
   ).toEqual([]);
 });

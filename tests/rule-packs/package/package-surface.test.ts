@@ -42,7 +42,9 @@ test("is available in the distribution but only runs when explicitly selected", 
       cache: false,
       config: {
         extends: ["package/recommended"],
-        rules: { [packageRulePack.rules[0]!.meta.id]: "off" },
+        rules: Object.fromEntries(
+          packageRulePack.rules.map((rule) => [rule.meta.id, "off" as const]),
+        ),
       },
     });
     expect(disabled.diagnostics).toEqual([]);
