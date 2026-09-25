@@ -89,7 +89,7 @@ export const requireDisposeForSideEffects = createRule({
         if (isServerSidePath(ctx.file.relativePath) || isFixturePath(ctx.file.relativePath)) return;
         const text = stripCommentsAndStrings(ctx.file.text);
         if (!/import\.meta\.hot\.accept\s*\(/.test(text)) return;
-        const hasDispose = /import\.meta\.hot\.dispose\s*\(/.test(text);
+        const hasDispose = /import\.meta\.hot(?:\?\.|\.)dispose(?:\?\.)?\s*\(/.test(text);
         const undisposed = hasDispose ? undisposedResource(node) : null;
         if (hasDispose && !undisposed) return;
         if (
@@ -141,14 +141,17 @@ function undisposedResource(program: AnyNode): string | null {
   const repeated = new Set<AnyNode>();
   let loopDepth = 0;
   const listeners: Listener[] = [];
+  const abortedControllers = new Map<AnyNode, Map<object, boolean>[]>();
   const thisBinding = {};
   const lexicalReceivers = new Map<AnyNode, AnyNode>();
   const lexicalEnvironments = new Map<AnyNode, Map<AnyNode, AnyNode>>();
   const promises = new Map<AnyNode, AnyNode>();
   const promiseCompletions = new Map<AnyNode, Completion>();
+  const promiseSettlers = new Map<AnyNode, (value: AnyNode) => void>();
   const pendingTimeouts: {
     timeout: AnyNode;
     callback: AnyNode;
+    args: AnyNode[];
     environment: Map<AnyNode, AnyNode>;
   }[] = [];
   const arrayChoices = new Map<AnyNode, { array: AnyNode; path: Map<object, boolean> }[]>();
@@ -562,6 +565,10 @@ function undisposedResource(program: AnyNode): string | null {
           }
         }
         const target = identity(node.callee, environment);
+        if (promiseSettlers.has(target)) {
+          promiseSettlers.get(target)!(identity(node.arguments[0], environment));
+          return true;
+        }
         if (
           target?.type === "MemberExpression" &&
           ["call", "apply"].includes(propertyKey(target)!)
@@ -716,7 +723,15 @@ function undisposedResource(program: AnyNode): string | null {
             callback?.type === "FunctionDeclaration"
           ) {
             const timeout = created[0];
-            if (timeout) pendingTimeouts.push({ timeout, callback, environment });
+            if (timeout)
+              pendingTimeouts.push({
+                timeout,
+                callback,
+                args: node.arguments
+                  .slice(2)
+                  .map((argument: AnyNode) => identity(argument, environment)),
+                environment,
+              });
           }
         }
       }
@@ -836,26 +851,50 @@ function undisposedResource(program: AnyNode): string | null {
         return true;
       }
       if (
-        (method === "then" || method === "catch") &&
+        (method === "then" || method === "catch" || method === "finally") &&
         node.callee.type === "MemberExpression" &&
         !replacedMethod &&
         promiseCompletions.has(identity(node.callee.object, environment))
       ) {
         const promise = identity(node.callee.object, environment);
         const previous = promiseCompletions.get(promise)!;
-        const handler =
-          method === "catch" ? node.arguments[0] : node.arguments[previous.normal ? 0 : 1];
-        const runsHandler =
-          method === "catch" ? previous.abrupt : previous.normal || previous.abrupt;
-        const completion =
-          handler && runsHandler
-            ? inspect(
-                handler,
-                [previous.normal ? promises.get(promise) : previous.value],
-                environment,
-                module,
-              )
-            : previous;
+        const fulfilledHandler = method === "then" ? node.arguments[0] : undefined;
+        const rejectedHandler =
+          method === "then"
+            ? node.arguments[1]
+            : method === "catch"
+              ? node.arguments[0]
+              : undefined;
+        const finallyHandler = method === "finally" ? node.arguments[0] : undefined;
+        const mixed = previous.normal && previous.abrupt;
+        const before = mixed ? snapshot() : undefined;
+        const parentPath = currentPath;
+        const settlement = {};
+        if (mixed) currentPath = new Map(parentPath).set(settlement, true);
+        const fulfilled = previous.normal
+          ? fulfilledHandler
+            ? inspect(fulfilledHandler, [promises.get(promise)], environment, module)
+            : { normal: true, abrupt: false, value: promises.get(promise) }
+          : undefined;
+        if (finallyHandler && fulfilled) inspect(finallyHandler, [], environment, module);
+        const afterFulfilled = mixed ? snapshot() : undefined;
+        if (before) {
+          restore(before);
+          currentPath = new Map(parentPath).set(settlement, false);
+        }
+        const rejected = previous.abrupt
+          ? rejectedHandler
+            ? inspect(rejectedHandler, [previous.value], environment, module)
+            : { normal: false, abrupt: true, value: previous.value }
+          : undefined;
+        if (finallyHandler && rejected) inspect(finallyHandler, [], environment, module);
+        if (afterFulfilled) merge(afterFulfilled, snapshot());
+        currentPath = parentPath;
+        const completion: Completion = {
+          normal: Boolean(fulfilled?.normal || rejected?.normal),
+          abrupt: Boolean(fulfilled?.abrupt || rejected?.abrupt),
+          value: fulfilled?.value ?? rejected?.value,
+        };
         const result = {};
         if (completion.normal) promises.set(result, completion.value);
         promiseCompletions.set(result, completion);
@@ -917,6 +956,15 @@ function undisposedResource(program: AnyNode): string | null {
             signal?.type === "MemberExpression" && propertyKey(signal) === "signal"
               ? identity(signal.object, environment)
               : undefined;
+          if (
+            controller &&
+            abortedControllers
+              .get(controller)
+              ?.some((path) =>
+                [...path].every(([condition, side]) => currentPath.get(condition) === side),
+              )
+          )
+            return true;
           listeners.push({ receiver, event, handler, capture: options, controller, value: node });
           resourcePaths.set(node, new Map(currentPath));
           resources.push({
@@ -941,6 +989,10 @@ function undisposedResource(program: AnyNode): string | null {
       }
       if (method === "abort" && !replacedMethod) {
         const controller = identity(node.callee.object, environment);
+        abortedControllers.set(controller, [
+          ...(abortedControllers.get(controller) ?? []),
+          new Map(currentPath),
+        ]);
         for (const listener of listeners) {
           if (listener.controller && listener.controller === controller)
             cleaned.add(listener.value);
@@ -1416,10 +1468,14 @@ function undisposedResource(program: AnyNode): string | null {
       restore(before);
       if (catches) {
         const throws = leftExits.filter((exit) => thrownExits.has(exit));
-        if (throws.length) {
-          restore(throwStates.get(throws[0])!);
-          for (const exit of throws.slice(1)) merge(snapshot(), throwStates.get(exit)!);
+        if (!throws.length) {
+          restore(afterLeft);
+          currentPath = parentPath;
+          abrupt ||= leftAbrupt;
+          return leftContinues;
         }
+        restore(throwStates.get(throws[0])!);
+        for (const exit of throws.slice(1)) merge(snapshot(), throwStates.get(exit)!);
       }
       selectPath(inverted);
       const rightContinues = walk(right);
@@ -1574,8 +1630,23 @@ function undisposedResource(program: AnyNode): string | null {
             ["window", "globalThis", "self"].includes(identity(value.object, environment)))
         ) {
           if (!walk(node.arguments)) return false;
-          inspect(node.arguments[0], [{}, {}], environment, module);
-          returned.set(node, {});
+          const promise = {};
+          const resolve = {};
+          const reject = {};
+          let completion: Completion = { normal: false, abrupt: false };
+          promiseSettlers.set(resolve, (value) => {
+            completion = { ...completion, normal: true, value };
+          });
+          promiseSettlers.set(reject, (value) => {
+            completion = { ...completion, abrupt: true, value };
+          });
+          const executor = inspect(node.arguments[0], [resolve, reject], environment, module);
+          if (executor.abrupt) completion.abrupt = true;
+          promiseSettlers.delete(resolve);
+          promiseSettlers.delete(reject);
+          promiseCompletions.set(promise, completion);
+          if (completion.normal) promises.set(promise, completion.value);
+          returned.set(node, promise);
           return true;
         }
         if (
@@ -2164,9 +2235,9 @@ function undisposedResource(program: AnyNode): string | null {
     resourceCount: resources.length,
   });
   const disposalStates = [captureDisposalState()];
-  for (const { timeout, callback, environment } of pendingTimeouts) {
+  for (const { timeout, callback, args, environment } of pendingTimeouts) {
     if (cleaned.has(timeout)) continue;
-    inspect(callback, [], environment, false);
+    inspect(callback, args, environment, false);
     disposalStates.push(captureDisposalState());
   }
   let disposalLeak: string | undefined;

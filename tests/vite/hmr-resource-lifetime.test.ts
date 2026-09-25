@@ -1551,9 +1551,9 @@ for (const [name, source, leaks] of [
     false,
   ],
   [
-    "try catch incomplete cleanup",
+    "unreachable catch cannot undo completed cleanup",
     "const timer = setInterval(refresh); import.meta.hot.dispose(() => { try { clearInterval(timer) } catch {} })",
-    true,
+    false,
   ],
   [
     "disposal loop creates timer",
@@ -3011,6 +3011,66 @@ for (const [name, source, leaks] of [
     "fulfilled promise skips catch handler",
     "Promise.resolve().catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
     false,
+  ],
+  [
+    "mixed async rejection handler creates timer",
+    "async function maybe() { if (flag) return 1; throw Error() }; maybe().then(undefined, () => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "mixed async catch handler creates timer",
+    "async function maybe() { if (flag) return 1; throw Error() }; maybe().catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "mixed promise fulfillment cleanup cannot hide rejection leak",
+    "const timer = setInterval(refresh); async function maybe() { if (flag) return 1; throw Error() }; maybe().then(() => clearInterval(timer), () => {}); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "fulfilled promise finally handler creates timer",
+    "Promise.resolve().finally(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "rejected promise finally handler creates timer",
+    "async function fail() { throw Error() }; fail().finally(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "timeout callback receives timer arguments",
+    "const pending = setTimeout(start => { if (start) setInterval(refresh) }, 0, false); import.meta.hot.dispose(() => clearTimeout(pending))",
+    false,
+  ],
+  [
+    "aborted signal skips listener registration",
+    "const controller = new AbortController(); controller.abort(); window.addEventListener('resize', refresh, { signal: controller.signal }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "conditional abort cannot skip listener registration",
+    "const controller = new AbortController(); if (flag) controller.abort(); window.addEventListener('resize', refresh, { signal: controller.signal }); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "optional dispose registers cleanup",
+    "const timer = setInterval(refresh); import.meta.hot?.dispose(() => clearInterval(timer))",
+    false,
+  ],
+  [
+    "unreachable catch does not create timer",
+    "try {} catch { setInterval(refresh) }; import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "Promise constructor fulfillment handler creates timer",
+    "new Promise(resolve => resolve()).then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "Promise constructor rejection handler creates timer",
+    "new Promise((resolve, reject) => reject(Error())).catch(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
   ],
   [
     "Array.at retains the interval handle",
