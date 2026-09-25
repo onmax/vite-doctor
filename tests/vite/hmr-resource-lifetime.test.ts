@@ -4,6 +4,21 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "Map delete returns true for an existing key",
+    "const timer = setInterval(refresh); const timers = new Map([['refresh', timer]]); import.meta.hot.dispose(() => { if (timers.delete('refresh')) clearInterval(timer) })",
+    false,
+  ],
+  [
+    "Set constructor deduplicates aliased values",
+    "const marker = {}; const values = new Set([marker, marker]); let first = true; values.forEach(() => { if (!first) setInterval(refresh); first = false }); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "pending promise fulfillment propagates past a missing handler",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); ready.catch(() => {}).then(() => setInterval(refresh)); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
     "Map constructor overwrites duplicate keys",
     "const first = setInterval(refresh); const second = setInterval(refresh); const timers = new Map([['key', first], ['key', second]]); import.meta.hot.dispose(() => timers.forEach(clearInterval))",
     true,
@@ -3424,6 +3439,21 @@ for (const [name, source, leaks] of [
   [
     "resolved promise reaction creates a timer",
     "Promise.resolve().then(() => setInterval(refresh)); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "resolved promise reaction runs after synchronous cleanup",
+    "let timer; Promise.resolve().then(() => { timer = setInterval(refresh) }); clearInterval(timer); import.meta.hot.dispose(() => {})",
+    true,
+  ],
+  [
+    "null event listener does not register a resource",
+    "addEventListener('click', null); import.meta.hot.dispose(() => {})",
+    false,
+  ],
+  [
+    "listener-rejected await creates an undisposed resource in catch",
+    "let rejectReady; const ready = new Promise((resolve, reject) => { rejectReady = reject }); async function start() { try { await ready } catch { setInterval(refresh) } } start(); const handler = () => rejectReady(Error()); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
     true,
   ],
   [

@@ -157,10 +157,11 @@ function undisposedResource(program: AnyNode): string | null {
     environment: Map<AnyNode, AnyNode>;
   }[] = [];
   const microtasks: {
-    callback: AnyNode;
+    callback?: AnyNode;
     environment: Map<AnyNode, AnyNode>;
     result?: AnyNode;
     resumeAwait?: boolean;
+    task?: () => void;
   }[] = [];
   const subscriptions: { callback: AnyNode; environment: Map<AnyNode, AnyNode> }[] = [];
   const promiseSettlers = new Map<AnyNode, (value: AnyNode) => void>();
@@ -174,6 +175,27 @@ function undisposedResource(program: AnyNode): string | null {
       resumeAwait?: boolean;
     }[]
   >();
+  const enqueueReactions = (promise: AnyNode, completion: Completion) => {
+    for (const reaction of pendingPromiseReactions.get(promise) ?? []) {
+      const callback = completion.normal ? reaction.fulfilled : reaction.rejected;
+      if (callback)
+        microtasks.push({
+          callback,
+          environment: reaction.environment,
+          result: reaction.result,
+          resumeAwait: reaction.resumeAwait,
+        });
+      else
+        microtasks.push({
+          environment: reaction.environment,
+          task: () => {
+            promiseCompletions.set(reaction.result, completion);
+            if (completion.normal) promises.set(reaction.result, completion.value);
+            enqueueReactions(reaction.result, completion);
+          },
+        });
+    }
+  };
   const pendingTimeouts: {
     timeout: AnyNode;
     callback: AnyNode;
@@ -611,6 +633,7 @@ function undisposedResource(program: AnyNode): string | null {
     const returns: AnyNode[] = [];
     const returnPaths: Map<object, boolean>[] = [];
     let pendingAwait: unknown;
+    let suspendedAwait: AnyNode;
     walkEvaluation(root, (node) => {
       if (node.type === "FunctionDeclaration" && node.id) callbacks.set(node.id, node);
     });
@@ -1063,6 +1086,10 @@ function undisposedResource(program: AnyNode): string | null {
             result,
           });
           pendingPromiseReactions.set(promise, reactions);
+          pendingUserPromises.add(result);
+          promiseCompletions.set(result, { normal: false, abrupt: false });
+          returned.set(node, result);
+          return true;
         }
         if (pendingFetchPromises.has(promise)) {
           for (const callback of [
@@ -1073,54 +1100,61 @@ function undisposedResource(program: AnyNode): string | null {
             if (callback) lateReactions.push({ callback, args: [], environment });
           }
         }
-        const mixed = previous.normal && previous.abrupt;
-        const before = mixed ? snapshot() : undefined;
-        const parentPath = currentPath;
-        const settlement = {};
-        const runFinally = (incoming: Completion | undefined): Completion | undefined => {
-          if (!finallyHandler || !incoming) return incoming;
-          const final = adoptPromise(inspect(finallyHandler, [], environment, module));
-          return final.abrupt
-            ? {
-                normal: incoming.normal && final.normal,
-                abrupt: true,
-                value: final.value,
-              }
-            : incoming;
-        };
-        if (mixed) currentPath = new Map(parentPath).set(settlement, true);
-        const fulfilled = runFinally(
-          previous.normal
-            ? fulfilledHandler
-              ? inspect(fulfilledHandler, [promises.get(promise)], environment, module)
-              : { normal: true, abrupt: false, value: promises.get(promise) }
-            : undefined,
-        );
-        const afterFulfilled = mixed ? snapshot() : undefined;
-        if (before) {
-          restore(before);
-          currentPath = new Map(parentPath).set(settlement, false);
-        }
-        const rejected = runFinally(
-          previous.abrupt
-            ? rejectedHandler
-              ? inspect(rejectedHandler, [previous.value], environment, module)
-              : { normal: false, abrupt: true, value: previous.value }
-            : undefined,
-        );
-        if (afterFulfilled) merge(afterFulfilled, snapshot());
-        currentPath = parentPath;
-        const completion: Completion = {
-          normal: Boolean(fulfilled?.normal || rejected?.normal),
-          abrupt: Boolean(fulfilled?.abrupt || rejected?.abrupt),
-          value: fulfilled?.value ?? rejected?.value,
-        };
-        const settled = adoptPromise(completion);
-        if (pendingFetchPromises.has(promise)) pendingFetchPromises.add(result);
-        if (settled.normal) promises.set(result, settled.value);
-        promiseCompletions.set(result, settled);
+        promiseCompletions.set(result, { normal: false, abrupt: false });
         returned.set(node, result);
-        return (!previous.normal && !previous.abrupt) || settled.normal || settled.abrupt;
+        microtasks.push({
+          environment,
+          task: () => {
+            const mixed = previous.normal && previous.abrupt;
+            const before = mixed ? snapshot() : undefined;
+            const parentPath = currentPath;
+            const settlement = {};
+            const runFinally = (incoming: Completion | undefined): Completion | undefined => {
+              if (!finallyHandler || !incoming) return incoming;
+              const final = adoptPromise(inspect(finallyHandler, [], environment, module));
+              return final.abrupt
+                ? {
+                    normal: incoming.normal && final.normal,
+                    abrupt: true,
+                    value: final.value,
+                  }
+                : incoming;
+            };
+            if (mixed) currentPath = new Map(parentPath).set(settlement, true);
+            const fulfilled = runFinally(
+              previous.normal
+                ? fulfilledHandler
+                  ? inspect(fulfilledHandler, [promises.get(promise)], environment, module)
+                  : { normal: true, abrupt: false, value: promises.get(promise) }
+                : undefined,
+            );
+            const afterFulfilled = mixed ? snapshot() : undefined;
+            if (before) {
+              restore(before);
+              currentPath = new Map(parentPath).set(settlement, false);
+            }
+            const rejected = runFinally(
+              previous.abrupt
+                ? rejectedHandler
+                  ? inspect(rejectedHandler, [previous.value], environment, module)
+                  : { normal: false, abrupt: true, value: previous.value }
+                : undefined,
+            );
+            if (afterFulfilled) merge(afterFulfilled, snapshot());
+            currentPath = parentPath;
+            const completion: Completion = {
+              normal: Boolean(fulfilled?.normal || rejected?.normal),
+              abrupt: Boolean(fulfilled?.abrupt || rejected?.abrupt),
+              value: fulfilled?.value ?? rejected?.value,
+            };
+            const settled = adoptPromise(completion);
+            if (pendingFetchPromises.has(promise)) pendingFetchPromises.add(result);
+            if (settled.normal) promises.set(result, settled.value);
+            promiseCompletions.set(result, settled);
+            enqueueReactions(result, settled);
+          },
+        });
+        return true;
       }
       if (
         method === "from" &&
@@ -1161,6 +1195,8 @@ function undisposedResource(program: AnyNode): string | null {
             ? eventValue.quasis[0].value.cooked
             : (eventValue?.value ?? eventValue);
         const handler = receiverIdentity(node.arguments[1], environment);
+        if (method === "addEventListener" && (handler === undefined || handler?.value === null))
+          return true;
         const listenerOptions = identity(node.arguments[2], environment);
         const captureDescriptor = effectiveProperties(listenerOptions, environment).get("capture");
         const captureCompletion =
@@ -1391,6 +1427,9 @@ function undisposedResource(program: AnyNode): string | null {
         }
         if (method === "clear" || method === "delete") {
           const key = identity(node.arguments[0], environment);
+          const deleted = entries.some(
+            (entry: AnyNode) => entry && sameMapKey(arrayElements(entry)[0], key),
+          );
           const stored = new Map<string, AnyNode>();
           entries.forEach((entry: AnyNode, index: number) =>
             stored.set(
@@ -1402,6 +1441,7 @@ function undisposedResource(program: AnyNode): string | null {
           );
           stored.set("length", { type: "Literal", value: entries.length });
           properties.set(array, stored);
+          if (method === "delete") returned.set(node, { type: "Literal", value: deleted });
           return true;
         }
         if (method === "forEach") {
@@ -2030,6 +2070,7 @@ function undisposedResource(program: AnyNode): string | null {
           if (pendingAwait) {
             const awaited = pendingAwait;
             pendingAwait = undefined;
+            suspendedAwait = awaited;
             if (index + 1 < node.body.length) {
               const callback = {
                 type: "ArrowFunctionExpression",
@@ -2216,7 +2257,12 @@ function undisposedResource(program: AnyNode): string | null {
           if (source?.type === "ArrayExpression") {
             const collection = {
               type: "ArrayExpression",
-              elements: [...new Set(expand(arrayElements(source), environment))],
+              elements: expand(arrayElements(source), environment)
+                .map((element: AnyNode) => identity(element, environment))
+                .filter(
+                  (element: AnyNode, index: number, elements: AnyNode[]) =>
+                    elements.findIndex((other) => sameMapKey(element, other)) === index,
+                ),
             };
             setCollections.add(collection);
             returned.set(node, collection);
@@ -2267,30 +2313,14 @@ function undisposedResource(program: AnyNode): string | null {
             };
             promiseCompletions.set(promise, completion);
             if (completion.normal) promises.set(promise, completion.value);
-            for (const reaction of pendingPromiseReactions.get(promise) ?? []) {
-              if (reaction.fulfilled)
-                microtasks.push({
-                  callback: reaction.fulfilled,
-                  environment: reaction.environment,
-                  result: reaction.result,
-                  resumeAwait: reaction.resumeAwait,
-                });
-            }
+            enqueueReactions(promise, completion);
           });
           promiseSettlers.set(reject, (value) => {
             if (alreadySettled()) return;
             settledPaths.push(new Map(currentPath));
             completion = { ...completion, abrupt: true, value };
             promiseCompletions.set(promise, completion);
-            for (const reaction of pendingPromiseReactions.get(promise) ?? []) {
-              if (reaction.rejected)
-                microtasks.push({
-                  callback: reaction.rejected,
-                  environment: reaction.environment,
-                  result: reaction.result,
-                  resumeAwait: reaction.resumeAwait,
-                });
-            }
+            enqueueReactions(promise, completion);
           });
           const executor = inspect(node.arguments[0], [resolve, reject], environment, module);
           if (executor.abrupt && !alreadySettled()) completion.abrupt = true;
@@ -2542,6 +2572,8 @@ function undisposedResource(program: AnyNode): string | null {
         );
       }
       if (node.type === "TryStatement") {
+        const priorAwait = suspendedAwait;
+        suspendedAwait = undefined;
         const firstExit = exits.length;
         const continues = branch(
           node.block,
@@ -2550,6 +2582,21 @@ function undisposedResource(program: AnyNode): string | null {
           true,
           Boolean(node.handler),
         );
+        if (suspendedAwait && node.handler && pendingUserPromises.has(suspendedAwait)) {
+          const reactions = pendingPromiseReactions.get(suspendedAwait) ?? [];
+          reactions.push({
+            rejected: {
+              type: "ArrowFunctionExpression",
+              params: [],
+              body: node.handler.body,
+            },
+            environment: new Map(environment),
+            result: {},
+            resumeAwait: true,
+          });
+          pendingPromiseReactions.set(suspendedAwait, reactions);
+        }
+        suspendedAwait = priorAwait;
         if (!node.finalizer) return continues;
         const beforeFinally = new Set(cleaned);
         const finalizerExit = exits.length;
@@ -2830,6 +2877,7 @@ function undisposedResource(program: AnyNode): string | null {
       if (node.type === "AwaitExpression") {
         if (!walk(node.argument)) return false;
         const awaited = identity(node.argument, environment);
+        if (!asyncFunction && microtasks.length) drainMicrotasks();
         const completion = promiseCompletions.get(awaited);
         if (
           asyncFunction &&
@@ -2942,10 +2990,13 @@ function undisposedResource(program: AnyNode): string | null {
     }
     return { normal, abrupt, value };
   }
-  evaluate(program, values, true);
   const drainMicrotasks = () => {
     while (microtasks.length) {
-      const { callback, environment, result, resumeAwait } = microtasks.shift()!;
+      const { callback, environment, result, resumeAwait, task } = microtasks.shift()!;
+      if (task) {
+        task();
+        continue;
+      }
       const completion = adoptPromise(inspect(callback, [], environment, true));
       if (resumeAwait)
         for (const binding of values.keys()) {
@@ -2954,19 +3005,11 @@ function undisposedResource(program: AnyNode): string | null {
       if (result) {
         promiseCompletions.set(result, completion);
         if (completion.normal) promises.set(result, completion.value);
-        for (const reaction of pendingPromiseReactions.get(result) ?? []) {
-          const next = completion.normal ? reaction.fulfilled : reaction.rejected;
-          if (next)
-            microtasks.push({
-              callback: next,
-              environment: reaction.environment,
-              result: reaction.result,
-              resumeAwait: reaction.resumeAwait,
-            });
-        }
+        enqueueReactions(result, completion);
       }
     }
   };
+  evaluate(program, values, true);
   drainMicrotasks();
   const captureDisposalState = () => ({
     cleaned: new Set(cleaned),
