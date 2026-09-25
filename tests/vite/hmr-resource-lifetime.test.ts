@@ -4,6 +4,41 @@ import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/pl
 
 for (const [name, source, leaks] of [
   [
+    "pending promise passes its resolved handle to a reaction",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); ready.then(clearInterval); const handler = () => finish(setInterval(refresh)); addEventListener('click', handler, { once: true }); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    false,
+  ],
+  [
+    "Promise.all reacts to a later settled input",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); Promise.all([ready]).then(() => setInterval(refresh)); const handler = () => finish(1); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "Promise.allSettled reacts only after all inputs settle",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); Promise.allSettled([ready]).then(() => setInterval(refresh)); const handler = () => finish(1); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "Promise.allSettled retains the value of an input settled later",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); Promise.allSettled([ready]).then(results => clearInterval(results[0].value)); const handler = () => finish(setInterval(refresh)); addEventListener('click', handler, { once: true }); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    false,
+  ],
+  [
+    "Promise.race reacts when its first input settles later",
+    "let finish; const ready = new Promise(resolve => { finish = resolve }); Promise.race([ready]).then(() => setInterval(refresh)); const handler = () => finish(1); addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
+    true,
+  ],
+  [
+    "array callbacks read slots after preceding callbacks mutate the array",
+    "const timers = [setInterval(a), setInterval(b)]; import.meta.hot.dispose(() => timers.forEach((timer, index) => { if (!index) timers.pop(); clearInterval(timer) }))",
+    true,
+  ],
+  [
+    "timer callbacks can register listeners that create resources",
+    "const handler = () => setInterval(refresh); const timer = setTimeout(() => addEventListener('click', handler), 0); import.meta.hot.dispose(() => { clearTimeout(timer); removeEventListener('click', handler) })",
+    true,
+  ],
+  [
     "mixed promise settlement preserves rejection-only resource creation",
     "let resolveReady, rejectReady; const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject }); ready.catch(() => setInterval(refresh)); const handler = () => { if (Math.random()) resolveReady(1); else rejectReady(Error()) }; addEventListener('click', handler); import.meta.hot.dispose(() => removeEventListener('click', handler))",
     true,

@@ -158,6 +158,7 @@ function undisposedResource(program: AnyNode): string | null {
   }[] = [];
   const microtasks: {
     callback?: AnyNode;
+    args?: AnyNode[];
     environment: Map<AnyNode, AnyNode>;
     result?: AnyNode;
     resumeAwait?: boolean;
@@ -173,10 +174,15 @@ function undisposedResource(program: AnyNode): string | null {
       environment: Map<AnyNode, AnyNode>;
       result: AnyNode;
       resumeAwait?: boolean;
+      settled?: () => void;
     }[]
   >();
   const enqueueReactions = (promise: AnyNode, completion: Completion) => {
     for (const reaction of pendingPromiseReactions.get(promise) ?? []) {
+      if (reaction.settled) {
+        microtasks.push({ environment: reaction.environment, task: reaction.settled });
+        continue;
+      }
       if (completion.normal && completion.abrupt) {
         const response = (callback: AnyNode, fulfilled: boolean): AnyNode =>
           callback
@@ -210,6 +216,7 @@ function undisposedResource(program: AnyNode): string | null {
           environment: reaction.environment,
           result: reaction.result,
           resumeAwait: reaction.resumeAwait,
+          args: [completion.value],
         });
         continue;
       }
@@ -220,6 +227,7 @@ function undisposedResource(program: AnyNode): string | null {
           environment: reaction.environment,
           result: reaction.result,
           resumeAwait: reaction.resumeAwait,
+          args: [completion.value],
         });
       else
         microtasks.push({
@@ -1021,71 +1029,90 @@ function undisposedResource(program: AnyNode): string | null {
           return true;
         if (aggregate) {
           const items = arrayElements(value).map((item: AnyNode) => identity(item, environment));
-          const canFulfill = (item: AnyNode) => promiseCompletions.get(item)?.normal !== false;
-          const canReject = (item: AnyNode) =>
-            promiseCompletions.get(item)?.abrupt ?? !promises.has(item);
-          const firstSettledIndex = items.findIndex((item: AnyNode) => {
-            const completion = promiseCompletions.get(item);
-            return !completion || completion.normal || completion.abrupt;
-          });
-          const firstCompletion = promiseCompletions.get(items[firstSettledIndex]);
-          const firstSettled =
-            method === "race" &&
-            firstSettledIndex >= 0 &&
-            (!firstCompletion || firstCompletion.normal !== firstCompletion.abrupt);
-          const candidates = firstSettled
-            ? items.slice(firstSettledIndex, firstSettledIndex + 1)
-            : items;
-          const completion = {
-            normal:
-              method === "allSettled"
-                ? items.every((item: AnyNode) => canFulfill(item) || canReject(item))
-                : method === "all"
-                  ? items.every(canFulfill)
-                  : candidates.some(canFulfill),
-            abrupt:
-              method === "allSettled"
-                ? false
-                : method === "any"
-                  ? items.every(canReject)
-                  : candidates.some(canReject),
+          const updateAggregate = () => {
+            const settled = (item: AnyNode) => {
+              const completion = promiseCompletions.get(item);
+              return !completion || completion.normal || completion.abrupt;
+            };
+            const canFulfill = (item: AnyNode) => promiseCompletions.get(item)?.normal !== false;
+            const canReject = (item: AnyNode) =>
+              promiseCompletions.get(item)?.abrupt ?? !promises.has(item);
+            const firstSettledIndex = items.findIndex(settled);
+            const firstCompletion = promiseCompletions.get(items[firstSettledIndex]);
+            const firstSettled =
+              method === "race" &&
+              firstSettledIndex >= 0 &&
+              (!firstCompletion || firstCompletion.normal !== firstCompletion.abrupt);
+            const candidates = firstSettled
+              ? items.slice(firstSettledIndex, firstSettledIndex + 1)
+              : items.filter(settled);
+            const completion = {
+              normal:
+                method === "allSettled"
+                  ? items.every(settled)
+                  : method === "all"
+                    ? items.every((item: AnyNode) => settled(item) && canFulfill(item))
+                    : candidates.some(canFulfill),
+              abrupt:
+                method === "allSettled"
+                  ? false
+                  : method === "any"
+                    ? items.every((item: AnyNode) => settled(item) && canReject(item))
+                    : candidates.some(canReject),
+            };
+            if (method === "all" || method === "allSettled")
+              promises.set(promise, {
+                type: "ArrayExpression",
+                elements: items.map((item: AnyNode) => {
+                  const settled = promiseCompletions.get(item);
+                  const result = promises.has(item) ? promises.get(item) : item;
+                  if (method === "all") return result;
+                  const fulfilled = settled?.normal !== false;
+                  return {
+                    type: "ObjectExpression",
+                    properties: [
+                      {
+                        type: "Property",
+                        kind: "init",
+                        key: { type: "Identifier", name: "status" },
+                        value: { type: "Literal", value: fulfilled ? "fulfilled" : "rejected" },
+                      },
+                      {
+                        type: "Property",
+                        kind: "init",
+                        key: { type: "Identifier", name: fulfilled ? "value" : "reason" },
+                        value: fulfilled ? result : settled?.value,
+                      },
+                    ],
+                  };
+                }),
+              });
+            else if (method === "race" || method === "any") {
+              const winner = method === "any" ? candidates.find(canFulfill) : candidates[0];
+              promises.set(promise, winner ? (promises.get(winner) ?? winner) : undefined);
+            }
+            if (method === "any" && !items.length) completion.abrupt = true;
+            const previous = promiseCompletions.get(promise);
+            const next = {
+              ...completion,
+              value: method === "race" && !completion.normal ? firstCompletion?.value : undefined,
+            };
+            promiseCompletions.set(promise, next);
+            if ((next.normal || next.abrupt) && !previous?.normal && !previous?.abrupt)
+              enqueueReactions(promise, {
+                ...next,
+                value: next.normal ? promises.get(promise) : next.value,
+              });
           };
-          if (method === "all" || method === "allSettled")
-            promises.set(promise, {
-              type: "ArrayExpression",
-              elements: items.map((item: AnyNode) => {
-                const settled = promiseCompletions.get(item);
-                const result = promises.has(item) ? promises.get(item) : item;
-                if (method === "all") return result;
-                const fulfilled = settled?.normal !== false;
-                return {
-                  type: "ObjectExpression",
-                  properties: [
-                    {
-                      type: "Property",
-                      kind: "init",
-                      key: { type: "Identifier", name: "status" },
-                      value: { type: "Literal", value: fulfilled ? "fulfilled" : "rejected" },
-                    },
-                    {
-                      type: "Property",
-                      kind: "init",
-                      key: { type: "Identifier", name: fulfilled ? "value" : "reason" },
-                      value: fulfilled ? result : settled?.value,
-                    },
-                  ],
-                };
-              }),
-            });
-          else if (method === "race" || method === "any") {
-            const winner = method === "any" ? items.find(canFulfill) : candidates[0];
-            promises.set(promise, winner ? (promises.get(winner) ?? winner) : undefined);
+          updateAggregate();
+          for (const item of new Set(items)) {
+            if (!pendingUserPromises.has(item)) continue;
+            const reactions = pendingPromiseReactions.get(item) ?? [];
+            reactions.push({ environment, result: promise, settled: updateAggregate });
+            pendingPromiseReactions.set(item, reactions);
           }
-          if (method === "any" && !items.length) completion.abrupt = true;
-          promiseCompletions.set(promise, {
-            ...completion,
-            value: method === "race" && !completion.normal ? firstCompletion?.value : undefined,
-          });
+          if (items.some((item: AnyNode) => pendingUserPromises.has(item)))
+            pendingUserPromises.add(promise);
           returned.set(node, promise);
           return true;
         }
@@ -1787,7 +1814,11 @@ function undisposedResource(program: AnyNode): string | null {
         const entries = [...expand(arrayElements(array), environment).entries()];
         if (["reduceRight", "findLast", "findLastIndex"].includes(method!)) entries.reverse();
         let optionalTail: ReturnType<typeof snapshot> | undefined;
-        for (const [index, element] of entries) {
+        for (const [index] of entries) {
+          const current = arrayElements(array);
+          const element = current.some((item) => item?.type === "SpreadElement")
+            ? expand(current, environment)[index]
+            : current[index];
           if ((!element && !searching) || element?.type === "SpreadElement") continue;
           if (reducing && !hasAccumulator) {
             accumulator = identity(element, environment);
@@ -3063,12 +3094,12 @@ function undisposedResource(program: AnyNode): string | null {
   }
   const drainMicrotasks = () => {
     while (microtasks.length) {
-      const { callback, environment, result, resumeAwait, task } = microtasks.shift()!;
+      const { callback, args, environment, result, resumeAwait, task } = microtasks.shift()!;
       if (task) {
         task();
         continue;
       }
-      const completion = adoptPromise(inspect(callback, [], environment, true));
+      const completion = adoptPromise(inspect(callback, args ?? [], environment, true));
       if (resumeAwait)
         for (const binding of values.keys()) {
           if (environment.has(binding)) values.set(binding, environment.get(binding));
@@ -3262,6 +3293,7 @@ function undisposedResource(program: AnyNode): string | null {
         restoreDisposalState(before);
         const scheduledBefore = pendingTimeouts.length;
         if (resources.some((resource) => resource.value === timeout) && !cleaned.has(timeout)) {
+          const listenerCount = listeners.length;
           timerSimulationDepth = 1;
           inspect(callback, args, environment, false);
           timerSimulationDepth = 0;
@@ -3269,11 +3301,14 @@ function undisposedResource(program: AnyNode): string | null {
           if (resources.find((resource) => resource.value === timeout)?.kind === "timeout")
             cleaned.add(timeout);
           disposalStates.push(captureDisposalState());
+          for (const listener of listeners.slice(listenerCount)) fireListener(listener);
           if (resources.find((resource) => resource.value === timeout)?.kind === "interval") {
             for (let firing = 1; firing < 8 && !cleaned.has(timeout); firing++) {
+              const nextListenerCount = listeners.length;
               inspect(callback, args, environment, false);
               drainMicrotasks();
               disposalStates.push(captureDisposalState());
+              for (const listener of listeners.slice(nextListenerCount)) fireListener(listener);
             }
             if (
               !cleaned.has(timeout) &&
