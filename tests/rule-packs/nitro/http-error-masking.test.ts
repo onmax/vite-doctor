@@ -55,6 +55,18 @@ test("follows a stored promise rejection into a later catch", async () => {
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
 });
 
+test("follows a stored promise through a local helper parameter", async () => {
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "export default defineEventHandler(async () => { async function missing() { throw createError({ statusCode: 404 }) }; async function forward(value) { await value }; const pending = missing(); try { await forward(pending) } catch { throw new Error() } })",
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+});
+
 test("keeps a catch that preserves intentional HTTP errors", async () => {
   const result = await runRuleFixture({
     framework: "nitro",

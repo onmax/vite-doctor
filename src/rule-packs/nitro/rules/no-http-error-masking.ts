@@ -1188,6 +1188,7 @@ function evaluateOutcomes(
     for (const param of callee.params) for (const name of bindingNames(param)) shadows.add(name);
     const functions = new Map(path.functions);
     const objects = new Map(path.objects);
+    const promises = new Map(path.promises);
     if (
       callee.type === "FunctionExpression" &&
       callee.id &&
@@ -1201,6 +1202,7 @@ function evaluateOutcomes(
       local.delete(path.resolveBinding({ name } as AnyNode, callee));
       functions.delete(path.resolveBinding({ name } as AnyNode, callee));
       objects.delete(path.resolveBinding({ name } as AnyNode, callee));
+      promises.delete(path.resolveBinding({ name } as AnyNode, callee));
       localConditions.delete(conditionKey({ name } as AnyNode, path, callee));
     }
     if (
@@ -1215,6 +1217,7 @@ function evaluateOutcomes(
         bindings: local,
         functions,
         objects,
+        promises,
         conditions: localConditions,
         literals: localLiterals,
         calls: [...(path.calls ?? []), callee],
@@ -1287,6 +1290,7 @@ function evaluateOutcomes(
             const literals = new Map(result.literals);
             const objects = new Map(result.objects);
             const functions = new Map(result.functions);
+            const promises = new Map(result.promises);
             const binding = result.resolveBinding(target);
             const object =
               arg?.type === "Identifier"
@@ -1304,6 +1308,8 @@ function evaluateOutcomes(
             if (fn) functions.set(binding, fn);
             literals.delete(binding);
             if (value && "literal" in value) literals.set(binding, value);
+            promises.delete(binding);
+            if (value && "promise" in value) promises.set(binding, value);
             return {
               ...result,
               bindings: values,
@@ -1311,6 +1317,7 @@ function evaluateOutcomes(
               literals,
               objects,
               functions,
+              promises,
             };
           });
         });
@@ -1334,14 +1341,18 @@ function evaluateOutcomes(
         const restoredObjects = new Map(current.objects);
         const restoredConditions = new Map(current.conditions);
         const restoredLiterals = new Map(current.literals);
+        const restoredPromises = new Map(current.promises);
         for (const name of shadows) {
           const binding = path.resolveBinding({ name } as AnyNode, callee);
           restored.delete(binding);
           restoredFunctions.delete(binding);
           restoredObjects.delete(binding);
           restoredLiterals.delete(binding);
+          restoredPromises.delete(binding);
           if (path.literals?.has(binding))
             restoredLiterals.set(binding, path.literals.get(binding)!);
+          if (path.promises?.has(binding))
+            restoredPromises.set(binding, path.promises.get(binding)!);
           const key = conditionKey({ name } as AnyNode, path, callee);
           restoredConditions.delete(key);
           if (bindings.has(binding)) restored.set(binding, bindings.get(binding)!);
@@ -1362,6 +1373,7 @@ function evaluateOutcomes(
           objects: restoredObjects,
           conditions: restoredConditions,
           literals: restoredLiterals,
+          promises: restoredPromises,
           calls: path.calls,
           asyncBody: path.asyncBody,
           adoptingAsync: path.adoptingAsync,
