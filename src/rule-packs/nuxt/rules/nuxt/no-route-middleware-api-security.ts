@@ -150,7 +150,7 @@ function isAuthLikeMiddleware(relativePath: string, text: string): boolean {
 
 export function rootMiddlewareConfiguration(
   root: string,
-): { srcDir: string; middleware: string } | null {
+): { srcDir: string; middleware: string; customServerRegistration: boolean } | null {
   const config = ["ts", "js", "mjs", "cjs", "mts", "cts"]
     .map((extension) => join(root, `nuxt.config.${extension}`))
     .find(existsSync);
@@ -185,6 +185,11 @@ export function rootMiddlewareConfiguration(
   return {
     srcDir: srcDir?.value ?? defaultSourceDirectory(root, middleware?.value ?? "middleware"),
     middleware: middleware?.value ?? "middleware",
+    customServerRegistration: Boolean(
+      property(options, "nitro") ||
+      property(options, "serverHandlers") ||
+      property(options, "devServerHandlers"),
+    ),
   };
 }
 

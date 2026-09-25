@@ -1237,3 +1237,53 @@ test.each(["changed", "since"])(
     );
   },
 );
+
+test.each(["changed", "since"])(
+  "authorization review retains reports when a cited guard changes under %s",
+  async (mode) => {
+    await withFixture(
+      {
+        "nuxt.config.ts": "export default defineNuxtConfig({})",
+        "app/middleware/auth.ts":
+          "export default defineNuxtRouteMiddleware(() => navigateTo('/login'))",
+        "server/api/account.get.ts":
+          "import { guard } from '../guard'; export default defineEventHandler(guard)",
+        "server/guard.ts": "export const guard = event => requireUserSession(event)",
+      },
+      async (root) => {
+        git(root, "init");
+        git(root, "add", ".");
+        git(
+          root,
+          "-c",
+          "user.name=Doctor",
+          "-c",
+          "user.email=doctor@example.com",
+          "commit",
+          "-m",
+          "fixture",
+        );
+        writeFileSync(
+          join(root, "server/guard.ts"),
+          "export const guard = event => ({ private: true })",
+        );
+        const result = await runDoctor({
+          root,
+          framework: "nuxt",
+          ...(mode === "changed" ? { changed: true } : { since: "HEAD" }),
+          extensions: [
+            createNuxtAuthorizationReviewExtension(async () => ({
+              status: "report",
+              reason: "The imported guard no longer authorizes the request.",
+              citations: [
+                { path: "server/api/account.get.ts", line: 1 },
+                { path: "server/guard.ts", line: 1 },
+              ],
+            })),
+          ],
+        });
+        expect(result.diagnostics.filter((item) => item.code === "NUXT0074")).toHaveLength(1);
+      },
+    );
+  },
+);

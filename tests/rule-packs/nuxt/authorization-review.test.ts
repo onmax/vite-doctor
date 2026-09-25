@@ -13,6 +13,50 @@ const files = {
   "server/api/account.get.ts": `export default defineEventHandler(() => ({ private: true }))`,
 };
 
+test.each(["nitro", "serverHandlers", "devServerHandlers"])(
+  "requires a manifest for custom %s server registrations",
+  async (option) => {
+    let calls = 0;
+    const extension = createNuxtAuthorizationReviewExtension(async () => {
+      calls++;
+      return { status: "unknown", reason: "Collected", citations: [] };
+    });
+    const registration =
+      option === "nitro"
+        ? "nitro: { scanDirs: ['custom'], handlers: [{ route: '/api/account', handler: 'custom/account.ts' }] }"
+        : `${option}: [{ route: '/api/account', handler: 'custom/account.ts' }]`;
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ...files,
+        "nuxt.config.ts": `export default defineNuxtConfig({ ${registration} })`,
+        "custom/account.ts": files["server/api/account.get.ts"],
+      },
+      rules: extension.rulePacks![0]!.rules,
+    });
+    expect(calls).toBe(0);
+    expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
+  },
+);
+
+test("matches manifest-free layer handlers by runtime route, not layer name", async () => {
+  const reviewed: string[] = [];
+  const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
+    reviewed.push(candidate.handler.path);
+    return { status: "unknown", reason: "Collected", citations: [] };
+  });
+  await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...files,
+      "layers/admin/server/api/health.ts": "export default defineEventHandler(() => 'ok')",
+      "layers/admin/server/api/account.ts": files["server/api/account.get.ts"],
+    },
+    rules: extension.rulePacks![0]!.rules,
+  });
+  expect(reviewed).toEqual(["server/api/account.get.ts", "layers/admin/server/api/account.ts"]);
+});
+
 async function runReview(reviewer: AuthorizationReviewer) {
   const extension = createNuxtAuthorizationReviewExtension(reviewer);
   return runProjectFixture({

@@ -88,13 +88,13 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             layerRoot,
             config: rootMiddlewareConfiguration(layerRoot),
           }));
-          if (fallbackConfig.some(({ config }) => !config)) {
+          if (fallbackConfig.some(({ config }) => !config || config.customServerRegistration)) {
             ctx.project.evidenceGaps = [
               ...(ctx.project.evidenceGaps ?? []),
               {
                 source: "vite-doctor/nuxt-authorization-review",
                 message:
-                  "Authorization review cannot resolve Nuxt middleware or server directories without a current Doctor manifest.",
+                  "Authorization review cannot resolve Nuxt middleware, server directories, or custom server registrations without a current Doctor manifest.",
                 files: [".nuxt/doctor.manifest.json"],
               },
             ];
@@ -194,6 +194,14 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             ];
             return;
           }
+          const fallbackHandlerDirs = fallbackRoots.flatMap((layerRoot) => [
+            resolve(layerRoot, "server", "api"),
+            resolve(layerRoot, "server", "routes"),
+          ]);
+          if (fallbackRoots.length) {
+            fallbackHandlerDirs.push(resolve(root, "app", "server", "api"));
+            fallbackHandlerDirs.push(resolve(root, "app", "server", "routes"));
+          }
           const handlerFiles = resolvedHandlers
             ? [
                 ...new Set(
@@ -215,7 +223,13 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                       ]),
                     ),
                 ]),
-              ].filter((file) => sensitivePath.test(relative(root, file)));
+              ].filter((file) =>
+                fallbackHandlerDirs.some(
+                  (directory) =>
+                    isWithin(directory, file) &&
+                    sensitivePath.test(`/${relative(directory, file)}`),
+                ),
+              );
           const handlers = projectSources(root, handlerFiles);
           const collectedHandlers = new Set(handlers.map((source) => resolve(root, source.path)));
           const omittedHandlers = handlerFiles.filter((file) => !collectedHandlers.has(file));
