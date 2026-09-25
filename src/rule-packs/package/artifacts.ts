@@ -300,7 +300,13 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
           targets(item, required, "types", adjacentDeclaration, mode);
       let selected = false;
       for (const [condition, item] of Object.entries(value)) {
-        if (condition !== "default" && condition !== "node" && condition !== mode) continue;
+        if (
+          condition !== "default" &&
+          condition !== "node" &&
+          condition !== "node-addons" &&
+          condition !== mode
+        )
+          continue;
         const resolved = targets(item, required, kind, adjacentDeclaration, mode);
         selected ||= resolved;
         if (resolved || item === null) break;
@@ -602,6 +608,7 @@ function resolvePackageImport(
         if (
           condition !== "default" &&
           condition !== "node" &&
+          condition !== "node-addons" &&
           condition !== mode &&
           !(types && targetKind === "types")
         )
@@ -616,6 +623,16 @@ function resolvePackageImport(
 }
 
 function hasRuntimeModuleSyntax(source: ts.SourceFile): boolean {
+  let importMeta = false;
+  function visit(node: ts.Node): void {
+    if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
+      importMeta = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  if (importMeta) return true;
   return source.statements.some((statement) => {
     if (ts.isImportDeclaration(statement)) {
       const clause = statement.importClause;
@@ -1233,6 +1250,15 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
 }
 
 function isDefinitelyAbrupt(statement: ts.Statement): boolean {
+  if (ts.isExpressionStatement(statement)) {
+    let expression = statement.expression;
+    while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+    if (ts.isPropertyAccessExpression(expression) && !expression.questionDotToken) {
+      let base: ts.Expression = expression.expression;
+      while (ts.isParenthesizedExpression(base)) base = base.expression;
+      if (base.kind === ts.SyntaxKind.NullKeyword) return true;
+    }
+  }
   if (
     ts.isWhileStatement(statement) ||
     ts.isDoStatement(statement) ||

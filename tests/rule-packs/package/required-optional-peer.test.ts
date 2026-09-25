@@ -656,6 +656,15 @@ test("treats typeless JavaScript with ESM syntax as native ESM", async () => {
   ).toEqual([]);
 });
 
+test("treats import.meta in typeless JavaScript as native ESM", async () => {
+  expect(
+    await diagnose(
+      { main: "index.js", ...optionalPeer },
+      { "index.js": 'import.meta.resolve("peer");' },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
 test.each([
   'import type { Value } from "./types.ts"; require("peer");',
   'import { type Value } from "./types.ts"; require("peer");',
@@ -867,21 +876,56 @@ test.each([{ node: [] }, { node: [null] }, { node: [{ browser: "peer" }, null] }
   },
 );
 
-test.each(["node-addons", "module-sync"])(
-  "uses the fallback without evidence for runtime-dependent condition %s",
+test("uses the fallback without evidence for the module-sync condition", async () => {
+  for (const source of ['import "#adapter";', 'require("#adapter");']) {
+    expect(
+      await diagnose(
+        {
+          main: "index.js",
+          imports: { "#adapter": { "module-sync": "peer", default: "./safe.js" } },
+          ...optionalPeer,
+        },
+        { "index.js": source, "safe.js": "export {};" },
+      ),
+    ).toEqual([]);
+  }
+});
+
+test.each(["import", "require"])(
+  "selects node-addons before the fallback for %s",
   async (condition) => {
-    for (const source of ['import "#adapter";', 'require("#adapter");']) {
-      expect(
-        await diagnose(
-          {
-            main: "index.js",
-            imports: { "#adapter": { [condition]: "peer", default: "./safe.js" } },
-            ...optionalPeer,
-          },
-          { "index.js": source, "safe.js": "export {};" },
-        ),
-      ).toEqual([]);
-    }
+    const source = condition === "import" ? 'import "#adapter";' : 'require("#adapter");';
+    expect(
+      await diagnose(
+        {
+          main: "index.js",
+          imports: { "#adapter": { "node-addons": "peer", default: "./safe.js" } },
+          ...optionalPeer,
+        },
+        { "index.js": source, "safe.js": "export {};" },
+      ),
+    ).toMatchObject([{ code: "PKG0003" }]);
+  },
+);
+
+test("selects the node-addons export before the fallback", async () => {
+  expect(
+    await diagnose(
+      {
+        exports: { "node-addons": "./addon.js", default: "./safe.js" },
+        ...optionalPeer,
+      },
+      { "addon.js": 'require("peer");', "safe.js": "export {};" },
+    ),
+  ).toMatchObject([{ code: "PKG0003" }]);
+});
+
+test.each(['null.peer; require("peer");', '(null).peer; require("peer");'])(
+  "skips loads after a definitely throwing property access: %s",
+  async (source) => {
+    expect(await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source })).toEqual(
+      [],
+    );
   },
 );
 
