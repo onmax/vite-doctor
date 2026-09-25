@@ -17,6 +17,18 @@ const displayed = label()
   );
 });
 
+test.each([
+  ["class Clock { read() { return Date.now() } }; const displayed = new Clock().read()", 1],
+  ["class Clock { static read() { return Date.now() } }; const displayed = Clock.read()", 1],
+  ["class Clock { read() { return Date.now() } }; const displayed = 'stable'", 0],
+])("traces locally invoked class methods: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>${script}</script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
 test("does not report a helper used only by an event handler", async () => {
   const result = await runNuxtAppRuleFixture(
     noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
@@ -212,6 +224,10 @@ test.each([
   "let value = clock(); value++; return value",
   'let value = clock(); function stabilize() { value = "stable" }; stabilize(); return value',
   'let value = clock(); const stabilize = () => { value = "stable" }; stabilize(); return value',
+  'let value = clock(); function stabilize() { value = "stable" }; const run = stabilize; run(); return value',
+  'let value = clock(); const helpers = { stabilize() { value = "stable" } }; helpers.stabilize(); return value',
+  'let value = clock(); function stabilize() { value = "stable" }; stabilize.call(null); return value',
+  'let value = clock(); function stabilize() { value = "stable" }; stabilize.apply(null, []); return value',
   'let value = clock(); if (flag) { value = "stable"; return value }; return "stable"',
 ])("does not follow reassigned return aliases: %s", async (body) => {
   const result = await runNuxtAppRuleFixture(
@@ -683,6 +699,22 @@ test.each([
 async function label() { return Date.now() }
 const displayed = ${expression}
 </script><template>{{ displayed }}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["const pending = [clock()]; const displayed = await Promise.all(pending)", 1],
+  [
+    "const pending = [clock()]; const alias = pending; const displayed = await Promise.all(alias)",
+    1,
+  ],
+  ["let pending = [clock()]; pending = []; const displayed = await Promise.all(pending)", 0],
+  ["const pending = [clock()]; const displayed = Promise.all(pending)", 0],
+])("tracks collected promise results: %s", async (script, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>async function clock() { return Date.now() }; ${script}</script><template>{{ displayed }}</template>`,
   );
   expect(result.diagnostics).toHaveLength(count);
 });

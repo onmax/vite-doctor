@@ -280,13 +280,14 @@ function functionFlowsToTemplate(
       return true;
   }
   const getter = parents.get(fn)?.kind === "get";
+  const method = parents.get(fn)?.type === "MethodDefinition" ? parents.get(fn) : null;
   const binding = functionBinding(fn, parents);
   const functionName = binding.id?.type === "Identifier" ? binding.id.name : null;
   if (!functionName) return false;
   const memberPath: string[] = [];
   for (let current = fn; current && current !== binding; current = parents.get(current)) {
     const parent = parents.get(current);
-    if (parent?.type !== "Property") continue;
+    if (parent?.type !== "Property" && parent?.type !== "MethodDefinition") continue;
     const key = parent.computed ? parent.key?.value : (parent.key?.name ?? parent.key?.value);
     if (key === undefined) return false;
     memberPath.unshift(String(key));
@@ -339,6 +340,10 @@ function functionFlowsToTemplate(
         const accessed = callee.computed ? callee.property?.value : callee.property?.name;
         if (!path.length || String(accessed) !== path.pop()) return false;
         callee = callee.object;
+        continue;
+      }
+      if (method && !method.static && callee?.type === "NewExpression") {
+        callee = callee.callee;
         continue;
       }
       if (callee?.type !== "Identifier") return false;
@@ -603,6 +608,28 @@ function resultAliases(
   if (seen.has(node)) return [];
   seen.add(node);
   const results = [node];
+  const array = parents.get(node);
+  if (array?.type === "ArrayExpression" && array.elements.includes(node)) {
+    let scope = array;
+    while (parents.get(scope)) scope = parents.get(scope);
+    walkScriptLocal(scope, (aggregate) => {
+      if (
+        aggregate.type === "CallExpression" &&
+        aggregate.start > array.end &&
+        aggregate.callee?.type === "MemberExpression" &&
+        aggregate.callee.object?.name === "Promise" &&
+        ["all", "race", "any", "allSettled"].includes(
+          aggregate.callee.computed
+            ? aggregate.callee.property?.value
+            : aggregate.callee.property?.name,
+        ) &&
+        !resolveLocalBinding(aggregate, "Promise", parents) &&
+        containingFunction(aggregate, parents) === containingFunction(array, parents) &&
+        resolveLocalValue(aggregate.arguments[0], parents) === array
+      )
+        results.push(...resultAliases(aggregate, parents, seen));
+    });
+  }
   let expression = node;
   while (
     parents.get(expression) &&
@@ -1423,21 +1450,36 @@ function asyncResultIsConsumed(
         )
           continue;
         if (parent.type !== "ArrayExpression") return false;
-        const aggregate = parentOf(parent);
-        if (
-          aggregate?.type !== "CallExpression" ||
-          aggregate.arguments[0] !== parent ||
-          aggregate.callee?.type !== "MemberExpression" ||
-          aggregate.callee.object?.type !== "Identifier" ||
-          aggregate.callee.object.name !== "Promise" ||
-          !(effectOnly ? ["all", "allSettled"] : ["all", "race", "any", "allSettled"]).includes(
+        const isAggregate = (aggregate: AnyNode): boolean =>
+          aggregate?.type === "CallExpression" &&
+          aggregate.callee?.type === "MemberExpression" &&
+          aggregate.callee.object?.type === "Identifier" &&
+          aggregate.callee.object.name === "Promise" &&
+          (effectOnly ? ["all", "allSettled"] : ["all", "race", "any", "allSettled"]).includes(
             aggregate.callee.computed
               ? aggregate.callee.property?.value
               : aggregate.callee.property?.name,
-          ) ||
-          !hasNativePromise(aggregate)
-        )
-          return false;
+          ) &&
+          hasNativePromise(aggregate);
+        const aggregate = parentOf(parent);
+        if (aggregate?.arguments?.[0] !== parent || !isAggregate(aggregate)) {
+          let root = parent;
+          while (parentOf(root)) root = parentOf(root);
+          const parents = new WeakMap<AnyNode, AnyNode>();
+          walkScriptLocal(root, (child) => parents.set(child, parentOf(child)));
+          let collected = false;
+          walkScriptLocal(root, (candidate) => {
+            if (
+              isAggregate(candidate) &&
+              candidate.start > parent.end &&
+              containingFunction(candidate, parents) === containingFunction(parent, parents) &&
+              resolveLocalValue(candidate.arguments[0], parents) === parent &&
+              asyncResultIsConsumed(candidate, parentOf, hasNativePromise, effectOnly)
+            )
+              collected = true;
+          });
+          if (!collected) return false;
+        }
         current = parent;
       }
     } else if (parent.type === "AssignmentExpression" && parent.right === current) {
@@ -2043,20 +2085,17 @@ function hasPriorAliasWrite(
         )
       )
         return;
-      const declaration = parents.get(nested);
-      const binding = declaration?.type === "VariableDeclarator" ? declaration : nested;
       let invocation: AnyNode;
       walkScriptLocal(owner.body, (candidate) => {
+        if (candidate.type !== "CallExpression") return;
+        const method = invocationMethod(candidate.callee);
+        const callee = method ? candidate.callee.object : candidate.callee;
         if (
-          candidate.type === "CallExpression" &&
-          candidate.callee?.type === "Identifier" &&
           containingFunction(candidate, parents) === (owner.type === "Program" ? null : owner) &&
           candidate.start > source.start &&
           candidate.start < reference.start &&
-          resolveLocalBinding(candidate, candidate.callee.name, parents) === binding &&
-          (!declaration ||
-            declaration.type !== "VariableDeclarator" ||
-            declaration.start < candidate.start) &&
+          nested.start < candidate.start &&
+          resolveLocalValue(callee, parents) === nested &&
           writeDominatesReference(candidate, reference, owner, parents)
         )
           invocation = candidate;
@@ -2185,6 +2224,13 @@ function getScriptParents(ctx: RuleContext): WeakMap<AnyNode, AnyNode> {
 
 function functionBinding(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>) {
   let expression = fn;
+  if (parents.get(expression)?.type === "MethodDefinition") {
+    const classNode = parents.get(parents.get(expression));
+    if (classNode?.type !== "ClassBody") return fn;
+    expression = parents.get(classNode);
+    if (expression?.type === "ClassDeclaration") return expression;
+    if (expression?.type !== "ClassExpression") return fn;
+  }
   while (parents.get(expression)?.type === "Property") {
     const property = parents.get(expression);
     const object = parents.get(property);
