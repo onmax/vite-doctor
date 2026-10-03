@@ -15,10 +15,9 @@ export const noSecretInPublicConfig = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Property") return;
-        const key = node.key?.name ?? node.key?.value;
+        const key = staticKey(node);
         if (typeof key === "string" && /(secret|token|password|private|key)$/i.test(key)) {
-          const nearby = ctx.file.text.slice(Math.max(0, node.start - 120), node.start);
-          if (nearby.includes("public")) {
+          if (isInPublicRuntimeConfig(node)) {
             report(
               ctx,
               node,
@@ -34,3 +33,40 @@ export const noSecretInPublicConfig = createRule({
     };
   },
 });
+
+function isInPublicRuntimeConfig(node: AnyNode): boolean {
+  let current = node;
+  while (current) {
+    if (current.type === "Property" && staticKey(current) === "public") {
+      let owner = current.__doctorParent?.__doctorParent;
+      while (isTypeWrapper(owner)) owner = owner.__doctorParent;
+      if (owner?.type === "Property" && staticKey(owner) === "runtimeConfig") return true;
+    }
+    const parent = current.__doctorParent;
+    if (
+      parent &&
+      !["Property", "ObjectExpression", "ArrayExpression"].includes(parent.type) &&
+      !isTypeWrapper(parent)
+    )
+      return false;
+    current = parent;
+  }
+  return false;
+}
+
+function staticKey(property: AnyNode): string | undefined {
+  const key = property.key;
+  if (!property.computed && key?.type === "Identifier") return key.name;
+  if (key?.type === "Literal" && typeof key.value === "string") return key.value;
+  if (key?.type === "TemplateLiteral" && key.expressions.length === 0)
+    return key.quasis[0]?.value.cooked ?? undefined;
+}
+
+function isTypeWrapper(node: AnyNode): boolean {
+  return [
+    "TSAsExpression",
+    "TSSatisfiesExpression",
+    "TSNonNullExpression",
+    "ParenthesizedExpression",
+  ].includes(node?.type);
+}
