@@ -1,5 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, relative, resolve } from "pathe";
 import MagicString from "magic-string";
 import type { DoctorConfig } from "../config.js";
@@ -110,11 +119,12 @@ function applyFixes(
     applied.skipped += candidates.length - edits.length;
     if (!edits.length) continue;
     for (const edit of edits) ms.overwrite(edit.range.start, edit.range.end, edit.text);
-    mkdirSync(dirname(file), { recursive: true });
-    const temporary = `${file}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
+    const target = lstatSync(file).isSymbolicLink() ? realpathSync(file) : file;
+    mkdirSync(dirname(target), { recursive: true });
+    const temporary = `${target}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, ms.toString(), { mode: statSync(file).mode });
-      renameSync(temporary, file);
+      writeFileSync(temporary, ms.toString(), { mode: statSync(target).mode });
+      renameSync(temporary, target);
     } finally {
       rmSync(temporary, { force: true });
     }
