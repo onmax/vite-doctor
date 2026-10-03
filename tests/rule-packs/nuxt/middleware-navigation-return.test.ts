@@ -12,9 +12,6 @@ test.each([
   `() => condition && navigateTo("/login")`,
   `() => condition || navigateTo("/login")`,
   `() => condition ?? navigateTo("/login")`,
-  `() => navigateTo("/login") && condition`,
-  `() => navigateTo("/login") || condition`,
-  `() => navigateTo("/login") ?? condition`,
   `() => { return condition && navigateTo("/login") }`,
   `async () => condition || await navigateTo("/login")`,
   `() => condition && (navigateTo("/login") as Promise<void>)`,
@@ -65,6 +62,9 @@ test("does not insert a return inside a variable initializer", async () => {
 test.each([
   `() => { condition && navigateTo("/login") }`,
   `() => { navigateTo("/login") && undefined }`,
+  `() => navigateTo("/login") && condition`,
+  `() => navigateTo("/login") || condition`,
+  `() => navigateTo("/login") ?? condition`,
 ])("reports a navigation result that is not returned: %s", async (handler) => {
   const result = await runRuleFixture({
     framework: "nuxt",
