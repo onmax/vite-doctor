@@ -128,7 +128,10 @@ function applyFixes(
     const edits = planNonOverlappingFixes(items).sort((a, b) => b.range.start - a.range.start);
     applied.skipped += candidates.length - edits.length;
     if (!edits.length) continue;
-    for (const edit of edits) ms.overwrite(edit.range.start, edit.range.end, edit.text);
+    for (const edit of edits) {
+      if (edit.range.start === edit.range.end) ms.appendLeft(edit.range.start, edit.text);
+      else ms.overwrite(edit.range.start, edit.range.end, edit.text);
+    }
     mkdirSync(dirname(file), { recursive: true });
     const temporary = `${file}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
     try {
