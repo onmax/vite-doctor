@@ -1236,17 +1236,17 @@ export const ruleDocumentationMetadata = {
   },
   "vite/assets/no-src-absolute-public-url": {
     description:
-      "Flags src absolute public URL in Vite assets code before it leaks into runtime behavior.",
-    why: "Vite configuration runs in both dev and build pipelines. Narrow, explicit settings reduce surprises across SSR, workers, and local file access.",
+      "Flags /src/ asset URLs in native Vue template attributes that are not transformed by default.",
+    why: "Vite's Vue plugin imports static asset URLs on img, video, source, image, and use elements, including absolute /src/ paths. Bound string literals and other native URL attributes remain runtime URLs and can point to source files that are absent from the production output. This rule assumes the default Vue asset transforms; custom component props and custom transformAssetUrls mappings are not inferred.",
     recommendedReplacement:
-      "Remove src absolute public URL, or move it to the Vite runtime/API that owns that behavior.",
+      "Import source assets and bind the generated URL, or move unchanged assets into public and reference them from /.",
     examples: [
       {
         title: "Import src assets",
         language: "vue",
-        invalid: '<template>\n  <img src="/src/assets/logo.svg" alt="Logo">\n</template>',
+        invalid: '<template>\n  <img :src="\'/src/assets/logo.svg\'" alt="Logo">\n</template>',
         valid:
-          '<script setup lang="ts">\nimport logoUrl from \'~/assets/logo.svg\'\n</script>\n\n<template>\n  <img :src="logoUrl" alt="Logo">\n</template>',
+          '<script setup lang="ts">\nimport logoUrl from \'./assets/logo.svg\'\n</script>\n\n<template>\n  <img :src="logoUrl" alt="Logo">\n</template>',
       },
     ],
   },

@@ -45,12 +45,20 @@ export const noSrcAbsolutePublicUrl = createRule({
   create(ctx) {
     return {
       TemplateNode(node: AnyNode) {
-        const value = node.type === "VAttribute" ? node.value?.value : null;
+        if (node.type !== "VAttribute") return;
+        const element = node.parent?.parent;
+        const tag = element?.rawName;
+        const attribute = node.directive ? node.key.argument?.name : node.key.name;
+        if (!Object.hasOwn(assetAttributes, tag) || !assetAttributes[tag]!.includes(attribute))
+          return;
+        if (node.directive && node.key.name.name !== "bind") return;
+        if (!node.directive && transformedVueAssets[tag]?.includes(attribute)) return;
+        const value = node.directive ? staticString(node.value?.expression) : node.value?.value;
         if (typeof value !== "string" || !value.startsWith("/src/")) return;
         ctx.report(
           diagnostics.VITE0003({
-            why: `Source asset "${value}" is referenced as a public URL.`,
-            fix: "Import source assets or use a relative URL so Vite can transform them.",
+            why: `Source asset "${value}" is referenced by a URL attribute Vue does not transform by default.`,
+            fix: "Import the source asset and bind its generated URL, or move it to public and reference it from /.",
           }),
           {
             ruleId: "vite/assets/no-src-absolute-public-url",
@@ -64,6 +72,26 @@ export const noSrcAbsolutePublicUrl = createRule({
     };
   },
 });
+
+const transformedVueAssets: Record<string, string[]> = {
+  video: ["src", "poster"],
+  source: ["src", "srcset"],
+  img: ["src", "srcset"],
+  image: ["href", "xlink:href"],
+  use: ["href", "xlink:href"],
+};
+
+const assetAttributes: Record<string, string[]> = {
+  ...transformedVueAssets,
+  audio: ["src"],
+  track: ["src"],
+  iframe: ["src"],
+  embed: ["src"],
+  object: ["data"],
+  input: ["src"],
+  a: ["href"],
+  link: ["href"],
+};
 
 export const noDynamicNewUrl = createRule({
   meta: {
