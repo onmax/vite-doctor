@@ -1,3 +1,4 @@
+import { isBuiltin } from "node:module";
 import { dirname, resolve } from "pathe";
 import { createRule, type RuleContext } from "../../../core/index.js";
 import { memberPath, readProjectSources, staticString, type AnyNode } from "./shared.js";
@@ -88,6 +89,12 @@ export const noNodeApiInWorker = createRule({
     if (!isExplicitWorkerEntry(ctx.file.relativePath) && !workerEntries.has(ctx.file.path)) return;
     return {
       ImportDeclaration(node: AnyNode) {
+        if (
+          node.importKind === "type" ||
+          (node.specifiers?.length > 0 &&
+            node.specifiers.every((specifier: AnyNode) => specifier.importKind === "type"))
+        )
+          return;
         const source = String(node.source?.value ?? "");
         if (!isNodeModule(source)) return;
         ctx.report(
@@ -145,10 +152,7 @@ function isStaticStringOrNewUrl(node: AnyNode): boolean {
 }
 
 function isNodeModule(source: string): boolean {
-  return (
-    source.startsWith("node:") ||
-    ["fs", "path", "crypto", "child_process", "worker_threads", "stream"].includes(source)
-  );
+  return source.startsWith("node:") || isBuiltin(source);
 }
 
 function isExplicitWorkerEntry(path: string): boolean {
