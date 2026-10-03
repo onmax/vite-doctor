@@ -209,7 +209,8 @@ async function browserWorkerEntries(ctx: RuleContext) {
     )) {
       entries.add(resolve(dirname(source.file), match[1]!));
     }
-    for (const match of source.text.matchAll(/from\s+["'`]([^"'`?]+)\?worker(?:&[^"'`]*)?["'`]/g)) {
+    for (const match of source.text.matchAll(/from\s+["'`]([^"'`?]+)\?([^"'`]*)["'`]/g)) {
+      if (!/(?:^|&)(?:worker|sharedworker)(?:&|$)/.test(match[2]!)) continue;
       entries.add(resolve(dirname(source.file), match[1]!));
     }
   }
