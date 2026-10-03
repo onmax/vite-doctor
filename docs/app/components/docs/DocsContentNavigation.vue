@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { appendRulesNavigation, createRulesNavigation } from "../../utils/rules-navigation";
+import { appendRulesNavigation } from "../../utils/rules-navigation";
 
 defineProps<{
   trailingIcon?: string;
@@ -7,17 +7,9 @@ defineProps<{
 }>();
 
 const { sidebarNavigation } = useSubNavigation();
-const { data: rules } = await useAsyncData("rules-sidebar-navigation-v2", () =>
-  Promise.all([
-    queryCollection("rules").select("path", "title", "ruleId", "framework", "category").all(),
-    queryCollection("diagnostics").select("code", "ruleId").all(),
-  ]),
-);
+const { navigation: rulesNavigation, groupKey, ready } = useRulesNavigation();
+await ready;
 
-const rulesNavigation = computed(() => {
-  const [ruleItems = [], diagnosticItems = []] = rules.value || [];
-  return createRulesNavigation(ruleItems, diagnosticItems);
-});
 const navigation = computed(() =>
   appendRulesNavigation(sidebarNavigation.value || [], rulesNavigation.value),
 );
@@ -25,8 +17,8 @@ const navigation = computed(() =>
 
 <template>
   <UContentNavigation
+    :key="groupKey"
     highlight
-    default-open
     :navigation="navigation"
     :trailing-icon="trailingIcon"
     :ui="ui"

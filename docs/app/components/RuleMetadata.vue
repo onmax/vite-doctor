@@ -9,12 +9,30 @@ const props = defineProps<{
   source: string;
   sourceUrl: string;
   docsUrl?: string;
+  ruleId?: string;
+  rulePath?: string;
+  diagnosticCodes?: string;
 }>();
+
+const codes = computed(() =>
+  (props.diagnosticCodes ?? "")
+    .split(",")
+    .map((code) => code.trim())
+    .filter(Boolean),
+);
 </script>
 
 <template>
   <div class="not-prose mt-4 border-y border-default py-4">
     <div class="flex flex-wrap items-center gap-2">
+      <ULink
+        v-for="code in codes"
+        :key="code"
+        :to="`/diagnostics/${code}`"
+        class="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
+      >
+        {{ code }}
+      </ULink>
       <UBadge color="neutral" variant="soft" class="rounded-md font-mono">
         {{ pack }}
       </UBadge>
@@ -33,7 +51,18 @@ const props = defineProps<{
       </UBadge>
     </div>
 
-    <div class="mt-3 flex flex-wrap items-center gap-3 text-sm/6">
+    <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm/6">
+      <UButton
+        v-if="ruleId && rulePath"
+        :to="rulePath"
+        color="neutral"
+        variant="link"
+        icon="i-lucide-book-open"
+        class="px-0 font-mono"
+      >
+        {{ ruleId }}
+      </UButton>
+      <code v-else-if="ruleId" class="font-mono text-sm text-muted">{{ ruleId }}</code>
       <UButton
         :to="sourceUrl"
         target="_blank"

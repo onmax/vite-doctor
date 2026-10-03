@@ -269,7 +269,7 @@ const activeFrameworkLinkClass = computed(
         <UInput
           v-model="search"
           name="rules-search"
-          :placeholder="`Search ${title} rule IDs, categories, or descriptions...`"
+          placeholder="Search rule IDs, diagnostic codes, categories, or descriptions..."
           icon="i-lucide-search"
           size="md"
           variant="outline"
@@ -483,6 +483,12 @@ const activeFrameworkLinkClass = computed(
                       {{ part }}
                     </span>
                   </a>
+                  <span
+                    v-if="rule.diagnosticCodes.length"
+                    class="hidden shrink-0 font-mono text-xs text-neutral-400 md:inline dark:text-neutral-600"
+                  >
+                    {{ rule.diagnosticCodes.join(", ") }}
+                  </span>
                 </div>
 
                 <div class="flex items-center gap-3 text-sm">
