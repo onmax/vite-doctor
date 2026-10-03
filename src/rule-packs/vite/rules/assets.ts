@@ -83,7 +83,12 @@ export const noDynamicNewUrl = createRule({
         const [first, second] = node.arguments ?? [];
         if (!second || !ctx.file.text.slice(second.start, second.end).endsWith("import.meta.url"))
           return;
-        if (staticString(first) !== null || isAssetUrlTemplate(first)) return;
+        if (
+          staticString(first) !== null ||
+          isAssetUrlTemplate(first) ||
+          isConfiguredAliasTemplate(first, ctx.project.inventory?.vite)
+        )
+          return;
         if (!isAssetUrlContext(node)) return;
         ctx.report(
           diagnostics.VITE0001({
@@ -107,6 +112,23 @@ function isAssetUrlTemplate(node: AnyNode): boolean {
   return (
     node?.type === "TemplateLiteral" && /^(?:\.{1,2}\/|\/)/.test(node.quasis?.[0]?.value?.raw ?? "")
   );
+}
+
+function isConfiguredAliasTemplate(node: AnyNode, viteInventory: unknown): boolean {
+  if (node?.type !== "TemplateLiteral") return false;
+  const prefix = node.quasis?.[0]?.value?.raw ?? "";
+  if (!prefix || /^(?:\.{1,2}\/|\/)/.test(prefix)) return false;
+  const aliases = (viteInventory as { aliases?: unknown })?.aliases;
+  if (Array.isArray(aliases)) {
+    return aliases.some((alias) => {
+      const find = typeof alias === "string" ? alias : (alias as { find?: unknown })?.find;
+      return typeof find === "string" && (prefix === find || prefix.startsWith(`${find}/`));
+    });
+  }
+  if (aliases && typeof aliases === "object") {
+    return Object.keys(aliases).some((find) => prefix === find || prefix.startsWith(`${find}/`));
+  }
+  return false;
 }
 
 function isPublicImport(source: string): boolean {
