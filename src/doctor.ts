@@ -1,6 +1,8 @@
 import {
   defineDoctorExtension,
+  cleanCache,
   runDoctor,
+  type DoctorConfig,
   type DoctorExtension,
   type DoctorFramework,
   type DoctorRunOptions,
@@ -59,17 +61,16 @@ export async function runViteDoctor(options: DoctorRunOptions) {
   const extensions = await viteDoctorExtensions(options);
   const result = await runDoctor({
     ...options,
-    config: {
-      ...options.config,
-      cache:
-        framework === "nuxt"
-          ? { dir: ".nuxt/doctor/cache", ...options.config?.cache }
-          : options.config?.cache,
-    },
+    config: surfaceDoctorConfig(options, framework),
     framework,
     extensions: [...extensions, ...(options.extensions ?? [])],
   });
   return { ...result, version: viteDoctorVersion };
+}
+
+export function cleanViteDoctorCache(root: string, config?: DoctorConfig): void {
+  const framework = detectRequestedFramework({ root, config });
+  cleanCache(root, surfaceDoctorConfig({ config }, framework));
 }
 
 export function shouldFailDoctorRun(result: DoctorRunResult, maxWarnings?: number) {
@@ -96,6 +97,17 @@ function detectRequestedFramework(options: DoctorRunOptions): DoctorFramework {
   if (deps.nitro || deps.nitropack || hasConfig(root, "nitro.config")) return "nitro";
   if (deps.vue || hasVueFiles(root)) return "vue";
   return "vite";
+}
+
+function surfaceDoctorConfig(
+  options: Pick<DoctorRunOptions, "config">,
+  framework: DoctorFramework,
+): DoctorConfig {
+  if (framework !== "nuxt") return options.config ?? {};
+  return {
+    ...options.config,
+    cache: { dir: ".nuxt/doctor/cache", ...options.config?.cache },
+  };
 }
 
 function withDistributionVersion<T extends { version: string }>(item: T): T {

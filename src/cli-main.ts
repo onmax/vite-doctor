@@ -3,7 +3,6 @@ import { cac } from "cac";
 import { consola } from "consola";
 import { resolve } from "pathe";
 import {
-  cleanCache,
   createReport,
   createRulesReport,
   explainRule,
@@ -15,7 +14,12 @@ import {
 } from "./core/index.js";
 import { selectDoctorPresentation } from "./core/internal/agent-runtime.js";
 import { applyDoctorOptions, stringFlag } from "./core/internal/cli.js";
-import { runViteDoctor, shouldFailDoctorRun, viteDoctorRulePacks } from "./doctor.js";
+import {
+  cleanViteDoctorCache,
+  runViteDoctor,
+  shouldFailDoctorRun,
+  viteDoctorRulePacks,
+} from "./doctor.js";
 import { viteDoctorVersion } from "./version.js";
 import { createMigrationReport, formatMigrationReport } from "./migration.js";
 
@@ -109,9 +113,9 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       }
       process.stdout.write(report);
     });
-  cli.command("cache <action>", "Manage Doctor cache.").action((action: string) => {
+  cli.command("cache <action>", "Manage Doctor cache.").action(async (action: string) => {
     if (action === "clean") {
-      cleanCache(cwd);
+      cleanViteDoctorCache(cwd, await loadCliConfig(cwd));
       consola.log("Doctor cache cleaned");
       return;
     }
