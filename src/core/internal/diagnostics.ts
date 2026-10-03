@@ -143,7 +143,7 @@ function applyFixes(
       continue;
     }
     const ms = new MagicString(text);
-    const planned = planNonOverlappingFixes(candidates);
+    const planned = planNonOverlappingFixes(candidates, text.length);
     const edits = [
       ...planned
         .filter((edit) => edit.range.start !== edit.range.end)
@@ -426,16 +426,23 @@ function isPathInside(root: string, path: string): boolean {
 
 type FixEdit = NonNullable<Diagnostic["fix"]>["edits"][number];
 
-function uniqueFixEdits(items: Diagnostic[]): FixEdit[] {
+function uniqueFixEdits(items: Diagnostic[]): unknown[] {
   const edits = new Map<string, FixEdit>();
+  const malformed: unknown[] = [];
   for (const edit of items.flatMap((item) => item.fix?.edits ?? [])) {
+    if (!hasFixEditShape(edit)) {
+      malformed.push(edit);
+      continue;
+    }
     edits.set(`${edit.range.start}:${edit.range.end}:${edit.text}`, edit);
   }
-  return [...edits.values()];
+  return [...edits.values(), ...malformed];
 }
 
-function planNonOverlappingFixes(items: FixEdit[]) {
-  const sorted = items.sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
+function planNonOverlappingFixes(items: unknown[], sourceLength: number): FixEdit[] {
+  const sorted = items
+    .filter((edit): edit is FixEdit => isValidEdit(edit, sourceLength))
+    .sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
   const planned: typeof sorted = [];
   let lastEnd = -1;
   for (const edit of sorted) {
@@ -444,6 +451,33 @@ function planNonOverlappingFixes(items: FixEdit[]) {
     lastEnd = edit.range.end;
   }
   return planned;
+}
+
+function hasFixEditShape(edit: unknown): edit is FixEdit {
+  if (typeof edit !== "object" || edit === null || !("text" in edit) || !("range" in edit))
+    return false;
+  const range = edit.range;
+  return (
+    typeof edit.text === "string" &&
+    typeof range === "object" &&
+    range !== null &&
+    "start" in range &&
+    "end" in range &&
+    typeof range.start === "number" &&
+    typeof range.end === "number" &&
+    Number.isInteger(range.start) &&
+    Number.isInteger(range.end) &&
+    range.start >= 0 &&
+    range.end >= range.start
+  );
+}
+
+function isValidEdit(edit: unknown, sourceLength: number): edit is FixEdit {
+  if (!hasFixEditShape(edit)) return false;
+  const { range } = edit;
+  return (
+    range.end <= sourceLength
+  );
 }
 
 function readFileSyncIfExists(file: string): string | null {
