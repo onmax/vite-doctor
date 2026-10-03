@@ -74,7 +74,12 @@ export function isAfterAwaitInWatcherCallback(node: AnyNode): boolean {
       foundCleanup = true;
       return;
     }
-    if (!foundCleanup && current.type === "AwaitExpression") seenAwait = true;
+    if (
+      !foundCleanup &&
+      current.type === "AwaitExpression" &&
+      nearestFunctionAncestor(current) === callback
+    )
+      seenAwait = true;
   });
   return seenAwait;
 }
