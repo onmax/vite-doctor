@@ -24,6 +24,7 @@ test.each([
   `runtimeConfig: { public: { padding: "${"x".repeat(160)}", apiSecret: "exposed" } }`,
   `runtimeConfig: { public: { service: { apiSecret: "exposed" } } }`,
   `runtimeConfig: { public: { ...{ apiSecret: "exposed" } } }`,
+  `runtimeConfig: { public: { ...({ apiSecret: "exposed" } satisfies Record<string, unknown>) } }`,
   `'runtimeConfig': { 'public': { apiSecret: "exposed" } }`,
   `runtimeConfig: ({ public: { apiSecret: "exposed" } } satisfies Record<string, unknown>)`,
   `runtimeConfig: { [\`public\`]: { apiSecret: "exposed" } }`,
