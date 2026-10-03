@@ -45,7 +45,7 @@ function isInPublicRuntimeConfig(node: AnyNode): boolean {
     const parent = current.__doctorParent;
     if (
       parent &&
-      !["Property", "ObjectExpression", "ArrayExpression"].includes(parent.type) &&
+      !["Property", "ObjectExpression", "ArrayExpression", "SpreadElement"].includes(parent.type) &&
       !isTypeWrapper(parent)
     )
       return false;
