@@ -175,7 +175,10 @@ test("safe insertion fixes do not abort the Doctor Run", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-fix-insertion-"));
   try {
     await mkdir(join(root, "src"), { recursive: true });
-    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { vite: "^7.0.0" } }));
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+    );
     const source = join(root, "src/app.ts");
     await writeFile(source, "export const value = true;\n");
     const result = await runDoctor({
