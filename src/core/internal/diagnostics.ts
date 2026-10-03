@@ -103,9 +103,20 @@ function applyFixes(
   }
   const applied: AppliedFixes = { files: 0, edits: 0, skipped: 0 };
   for (const [file, items] of byFile) {
-    const text = readFileSync(file, "utf8");
-    const ms = new MagicString(text);
     const candidates = items.flatMap((item) => item.fix?.edits ?? []);
+    let text: string;
+    let mode: number;
+    try {
+      text = readFileSync(file, "utf8");
+      mode = statSync(file).mode;
+    } catch {
+      // A rule can report a generated or deleted source location. Keep the
+      // finding reportable and account for unappliable edits instead of
+      // aborting the run while trying to apply a fix.
+      applied.skipped += candidates.length;
+      continue;
+    }
+    const ms = new MagicString(text);
     const edits = planNonOverlappingFixes(items).sort((a, b) => b.range.start - a.range.start);
     applied.skipped += candidates.length - edits.length;
     if (!edits.length) continue;
@@ -113,7 +124,7 @@ function applyFixes(
     mkdirSync(dirname(file), { recursive: true });
     const temporary = `${file}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, ms.toString(), { mode: statSync(file).mode });
+      writeFileSync(temporary, ms.toString(), { mode });
       renameSync(temporary, file);
     } finally {
       rmSync(temporary, { force: true });
