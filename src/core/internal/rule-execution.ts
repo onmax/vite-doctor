@@ -42,7 +42,9 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
   const fallbackFile = session.handles[0] ?? createEmptySourceFileHandle(session);
   for (const rule of session.enabledRules) {
     if (rule.meta.execution !== "manifest" && rule.meta.execution !== "workspace") continue;
-    const visitor = await rule.create(createRuleContext(session, fallbackFile, rule, "manifest"));
+    const visitor = await rule.create(
+      createRuleContext(session, fallbackFile, rule, rule.meta.execution),
+    );
     await visitor?.onWorkspaceStart?.();
     await visitor?.onProjectStart?.(session.project);
     if (session.project.nuxt) visitor?.NuxtManifest?.(session.project.nuxt);
