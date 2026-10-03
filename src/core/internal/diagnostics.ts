@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -9,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, relative, resolve } from "pathe";
+import { dirname, isAbsolute, relative, resolve } from "pathe";
 import MagicString from "magic-string";
 import type { DoctorConfig } from "../config.js";
 import type {
@@ -40,6 +39,7 @@ export function applyRequestedFixes(session: ScanSession): AppliedFixes | undefi
     return undefined;
   const started = performance.now();
   const applied = applyFixes(session.diagnostics, {
+    root: session.root,
     includeUnsafe: session.options.unsafeFix,
     includeStructuralReview: session.options.structuralReview,
   });
@@ -98,33 +98,48 @@ function severityRank(severity: DoctorSeverity): number {
 
 function applyFixes(
   diagnostics: Diagnostic[],
-  options: { includeUnsafe?: boolean; includeStructuralReview?: boolean } = {},
+  options: {
+    root: string;
+    includeUnsafe?: boolean;
+    includeStructuralReview?: boolean;
+  },
 ): AppliedFixes {
+  const applied: AppliedFixes = { files: 0, edits: 0, skipped: 0 };
+  const canonicalRoot = realpathSync(options.root);
   const byFile = new Map<string, Diagnostic[]>();
   for (const diagnostic of diagnostics) {
     if (!diagnostic.fix) continue;
     if (diagnostic.fix.kind === "suggestion") continue;
     if (diagnostic.fix.kind === "unsafe" && !options.includeUnsafe) continue;
     if (diagnostic.fix.kind === "structural-review" && !options.includeStructuralReview) continue;
-    const list = byFile.get(diagnostic.file) ?? [];
+    let target: string;
+    try {
+      target = realpathSync(diagnostic.file);
+    } catch {
+      applied.skipped += diagnostic.fix.edits.length;
+      continue;
+    }
+    if (!isPathInside(canonicalRoot, target)) {
+      applied.skipped += diagnostic.fix.edits.length;
+      continue;
+    }
+    const list = byFile.get(target) ?? [];
     list.push(diagnostic);
-    byFile.set(diagnostic.file, list);
+    byFile.set(target, list);
   }
-  const applied: AppliedFixes = { files: 0, edits: 0, skipped: 0 };
   for (const [file, items] of byFile) {
     const text = readFileSync(file, "utf8");
     const ms = new MagicString(text);
-    const candidates = items.flatMap((item) => item.fix?.edits ?? []);
-    const edits = planNonOverlappingFixes(items).sort((a, b) => b.range.start - a.range.start);
+    const candidates = uniqueFixEdits(items);
+    const edits = planNonOverlappingFixes(candidates).sort((a, b) => b.range.start - a.range.start);
     applied.skipped += candidates.length - edits.length;
     if (!edits.length) continue;
     for (const edit of edits) ms.overwrite(edit.range.start, edit.range.end, edit.text);
-    const target = lstatSync(file).isSymbolicLink() ? realpathSync(file) : file;
-    mkdirSync(dirname(target), { recursive: true });
-    const temporary = `${target}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
+    mkdirSync(dirname(file), { recursive: true });
+    const temporary = `${file}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, ms.toString(), { mode: statSync(target).mode });
-      renameSync(temporary, target);
+      writeFileSync(temporary, ms.toString(), { mode: statSync(file).mode });
+      renameSync(temporary, file);
     } finally {
       rmSync(temporary, { force: true });
     }
@@ -363,10 +378,23 @@ export function evidenceKindForPhase(phase: Diagnostic["analysisPhase"]) {
   return "facts";
 }
 
-function planNonOverlappingFixes(items: Diagnostic[]) {
-  const sorted = items
-    .flatMap((item) => item.fix?.edits ?? [])
-    .sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
+function isPathInside(root: string, path: string): boolean {
+  const relativePath = relative(root, path);
+  return relativePath !== ".." && !relativePath.startsWith("../") && !isAbsolute(relativePath);
+}
+
+type FixEdit = NonNullable<Diagnostic["fix"]>["edits"][number];
+
+function uniqueFixEdits(items: Diagnostic[]): FixEdit[] {
+  const edits = new Map<string, FixEdit>();
+  for (const edit of items.flatMap((item) => item.fix?.edits ?? [])) {
+    edits.set(`${edit.range.start}:${edit.range.end}:${edit.text}`, edit);
+  }
+  return [...edits.values()];
+}
+
+function planNonOverlappingFixes(items: FixEdit[]) {
+  const sorted = items.sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
   const planned: typeof sorted = [];
   let lastEnd = -1;
   for (const edit of sorted) {
