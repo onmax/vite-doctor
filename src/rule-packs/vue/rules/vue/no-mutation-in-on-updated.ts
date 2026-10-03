@@ -15,7 +15,7 @@ export const noMutationInOnUpdated = createRule({
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "onUpdated")) return;
         const snippet = ctx.file.text.slice(node.start, node.end);
-        if (!/(\.value\s*=|\+\+|--|\.push\s*\(|\.splice\s*\(|=)/.test(snippet)) return;
+        if (!/(\.value\s*=|\+\+|--|\.push\s*\(|\.splice\s*\()/.test(snippet)) return;
         report(
           ctx,
           node,

@@ -222,6 +222,24 @@ onUpdated(() => {
   );
 });
 
+test("no mutation in onUpdated ignores non-reactive local bookkeeping assignments", async () => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+let previousChildren: unknown[] = []
+onUpdated(() => {
+  if (!previousChildren.length) return
+  previousChildren = []
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test("vue browser API rule terminates on recursive client-only call chains", async () => {
   const result = await runRuleFixture({
     rule: noBrowserApiInSetup,
