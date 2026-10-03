@@ -214,14 +214,13 @@ test("rules navigation groups generated rules by category under rule titles", ()
   const rulePath = "/nuxt/rules/hydration/no-time-dependent-render-without-nuxttime-or-clientonly";
   const navigation = createRulesNavigation(rules, diagnostics, { activePath: rulePath });
   const nuxt = navigation.find((item) => item.path === "/nuxt");
-  const hydration = nuxt?.children?.find((child) => child.path === "/nuxt/rules/hydration");
+  const hydration = nuxt?.children?.find((child) => child.title === "Hydration & SSR");
 
   expect(nuxt?.defaultOpen).toBe(true);
   expect(hydration?.title).toBe("Hydration & SSR");
+  expect(hydration?.path).toBe("/nuxt/rules");
   expect(hydration?.defaultOpen).toBe(true);
-  expect(nuxt?.children?.find((child) => child.path === "/nuxt/rules/fetching")?.defaultOpen).toBe(
-    false,
-  );
+  expect(nuxt?.children?.find((child) => child.title === "Data fetching")?.defaultOpen).toBe(false);
   expect(hydration?.children?.find((child) => child.path === rulePath)?.title).toBe(
     getRuleDocuments().find(
       (rule) =>

@@ -44,11 +44,11 @@ export function createRulesNavigation(
     const rulesPath = `/${framework}/rules`;
     const frameworkRules = rules.filter((rule) => ruleFramework(rule) === framework);
     const categories = groupRulesByCategory(frameworkRules).map(([category, items]) => {
-      const path = `${rulesPath}/${category}`;
+      const categoryPath = `${rulesPath}/${category}`;
       return {
         title: categoryLabel(category),
-        path,
-        defaultOpen: isWithin(activePath, path),
+        path: rulesPath,
+        defaultOpen: isWithin(activePath, categoryPath),
         children: items.map((rule) => ({ title: rule.title, path: rule.path })),
       };
     });
