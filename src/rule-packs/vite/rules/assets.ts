@@ -68,7 +68,7 @@ export const noSrcAbsolutePublicUrl = createRule({
 export const noDynamicNewUrl = createRule({
   meta: {
     id: "vite/assets/no-dynamic-new-url",
-    title: "Keep new URL asset paths static",
+    title: "Keep new URL asset paths analyzable",
     category: "assets",
     severity: "warn",
     docsUrl: "https://vite.dev/guide/assets.html#new-url-url-import-meta-url",
@@ -83,12 +83,12 @@ export const noDynamicNewUrl = createRule({
         const [first, second] = node.arguments ?? [];
         if (!second || !ctx.file.text.slice(second.start, second.end).endsWith("import.meta.url"))
           return;
-        if (staticString(first)) return;
+        if (staticString(first) !== null || isAssetUrlTemplate(first)) return;
         if (!isAssetUrlContext(node)) return;
         ctx.report(
           diagnostics.VITE0001({
             why: "Vite cannot reliably include assets from a dynamic new URL() path.",
-            fix: "Use a static string path or import.meta.glob for dynamic asset sets.",
+            fix: "Use a static path, a relative template such as ./images/${name}.png, or import.meta.glob for dynamic asset sets.",
           }),
           {
             ruleId: "vite/assets/no-dynamic-new-url",
@@ -102,6 +102,12 @@ export const noDynamicNewUrl = createRule({
     };
   },
 });
+
+function isAssetUrlTemplate(node: AnyNode): boolean {
+  return (
+    node?.type === "TemplateLiteral" && /^(?:\.{1,2}\/|\/)/.test(node.quasis?.[0]?.value?.raw ?? "")
+  );
+}
 
 function isPublicImport(source: string): boolean {
   if (isStaticDataImport(source)) return false;
