@@ -69,3 +69,19 @@ test("keeps Node process imports diagnostic even when the binding is local", asy
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.why).toContain('imports Node module "node:process"');
 });
+
+test("reports global process in a TSX Vue worker", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noNodeApiInWorker],
+    files: {
+      "src/main.ts": `new Worker(new URL("./task.worker.vue", import.meta.url))`,
+      "src/task.worker.vue": `<script setup lang="tsx">
+const view = <span>{process.env.NODE_ENV}</span>
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.why).toContain("should not rely on process");
+});

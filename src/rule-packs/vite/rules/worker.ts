@@ -133,14 +133,20 @@ export const noNodeApiInWorker = createRule({
 });
 
 function globalProcessReferences(ctx: RuleContext): Set<number> {
-  const source = ctx.file.sfc
-    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text).text
-    : ctx.file.text;
+  const parsedVueScript = ctx.file.sfc
+    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
+    : undefined;
+  const source = parsedVueScript?.text ?? ctx.file.text;
   try {
     const { scopeManager } = parseForESLint(source, {
       range: true,
       sourceType: "module",
-      ecmaFeatures: { jsx: /\.[jt]sx$/.test(ctx.file.relativePath) },
+      ecmaFeatures: {
+        jsx:
+          parsedVueScript?.lang === "jsx" ||
+          parsedVueScript?.lang === "tsx" ||
+          /\.[jt]sx$/.test(ctx.file.relativePath),
+      },
     });
     return new Set(
       scopeManager.globalScope?.through
