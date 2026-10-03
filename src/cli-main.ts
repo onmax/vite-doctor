@@ -9,7 +9,6 @@ import {
   loadDoctorConfig,
   reportStatus,
   type DoctorConfig,
-  type DoctorFramework,
   type DoctorReportFormat,
   type DoctorRunOptions,
 } from "./core/index.js";
@@ -120,10 +119,13 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
     .option("--framework <framework>", "Framework override: vite, vue, nitro, or nuxt.")
     .action(async (action: string, options) => {
       if (action === "clean") {
+        const runOptions: DoctorRunOptions = { root: cwd };
+        applyDoctorOptions(runOptions, options);
+        validateCliRunOptions(runOptions);
         await cleanViteDoctorCache(
           cwd,
           await loadCliConfig(cwd, stringFlag(options.config)),
-          stringFlag(options.framework) as DoctorFramework | undefined,
+          runOptions.framework === "auto" ? undefined : runOptions.framework,
         );
         consola.log("Doctor cache cleaned");
         return;

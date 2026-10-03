@@ -185,8 +185,9 @@ export function cleanCache(root = process.cwd(), config?: DoctorConfig): void {
   let stats;
   try {
     stats = lstatSync(dir);
-  } catch {
-    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
   }
   if (stats.isSymbolicLink()) {
     try {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -62,14 +62,54 @@ test("CLI cache clean rejects a regular file target", async () => {
 });
 
 test("CLI cache clean removes a dangling cache symlink", async () => {
+  await withFixture(
+    {
+      "doctor.config.json": JSON.stringify({ cache: { dir: "dangling-cache" } }),
+    },
+    async (root) => {
+      const cache = join(root, "dangling-cache");
+      symlinkSync(join(root, "missing-cache"), cache, "junction");
+      expect(lstatSync(cache).isSymbolicLink()).toBe(true);
+
+      const result = await main(["cache", "clean", "--framework", "vite"], root);
+
+      expect(result).toBe(0);
+      expect(() => lstatSync(cache)).toThrow();
+    },
+  );
+});
+
+test("CLI cache clean rejects an invalid framework without deleting caches", async () => {
+  await withFixture(
+    { "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }) },
+    async (root) => {
+      const caches = [join(root, ".nuxt/doctor/cache"), join(root, ".vite-doctor/cache")];
+      for (const cache of caches) mkdirSync(cache, { recursive: true });
+
+      const result = await main(["cache", "clean", "--framework", "banana"], root);
+
+      expect(result).toBe(2);
+      for (const cache of caches) expect(existsSync(cache)).toBe(true);
+    },
+  );
+});
+
+test("CLI cache clean reports filesystem errors for an invalid cache parent", async () => {
+  await withFixture(
+    {
+      "doctor.config.json": JSON.stringify({ cache: { dir: "cache-parent/cache" } }),
+      "cache-parent": "not a directory",
+    },
+    async (root) => {
+      expect(await main(["cache", "clean"], root)).toBe(2);
+      expect(existsSync(join(root, "cache-parent"))).toBe(true);
+    },
+  );
+});
+
+test("CLI cache clean succeeds when the cache is absent", async () => {
   await withFixture({}, async (root) => {
-    const cache = join(root, "dangling-cache");
-    symlinkSync(join(root, "missing-cache"), cache, "junction");
-
-    const result = await main(["cache", "clean", "--framework", "vite"], root);
-
-    expect(result).toBe(0);
-    expect(existsSync(cache)).toBe(false);
+    expect(await main(["cache", "clean"], root)).toBe(0);
   });
 });
 
