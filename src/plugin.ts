@@ -57,8 +57,14 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       }
 
       if (report) {
-        if (shouldFail || result.diagnostics.length > 0) resolved.logger.warn(report);
-        else resolved.logger.info(report);
+        if (
+          shouldFail ||
+          result.summary.blocker > 0 ||
+          result.summary.error > 0 ||
+          result.summary.warn > 0
+        ) {
+          resolved.logger.warn(report);
+        } else resolved.logger.info(report);
       }
     },
   };
