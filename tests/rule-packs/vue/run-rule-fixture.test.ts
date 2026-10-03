@@ -92,6 +92,7 @@ test("runs a Nuxt manifest rule fixture", async () => {
       title: "Read Nuxt manifest",
       category: "architecture",
       severity: "warn",
+      execution: "manifest",
       requires: { nuxt: true, crossFile: true },
     },
     create(ctx) {

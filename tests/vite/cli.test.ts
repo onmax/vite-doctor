@@ -592,6 +592,7 @@ test("Vite plugin contributes resolved config inventory to Doctor Run", async ()
       title: "Vite surface inventory",
       category: "inventory",
       severity: "warn",
+      execution: "workspace",
     },
     create(ctx) {
       return {

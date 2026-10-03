@@ -138,6 +138,33 @@ test("visitor keys fall back to node-shaped children", () => {
   ).toEqual(["child", "children"]);
 });
 
+test("file rules are not created during the manifest phase", async () => {
+  let creates = 0;
+  const fileRule = createRule({
+    meta: {
+      id: "test/file-only",
+      title: "File-only rule",
+      category: "architecture",
+      severity: "warn",
+      requires: { script: true },
+    },
+    create() {
+      creates++;
+      return {};
+    },
+  });
+
+  await withFixture({ "src/app.ts": "const app = true" }, async (root) => {
+    await runDoctor({
+      root,
+      framework: "vue",
+      extensions: [pluginWith(fileRule)],
+    });
+  });
+
+  expect(creates).toBe(1);
+});
+
 const secondRule = createRule({
   meta: {
     id: "test/second-rule",

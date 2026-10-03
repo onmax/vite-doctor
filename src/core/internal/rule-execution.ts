@@ -41,6 +41,7 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
   const started = performance.now();
   const fallbackFile = session.handles[0] ?? createEmptySourceFileHandle(session);
   for (const rule of session.enabledRules) {
+    if ((rule.meta.execution ?? "file") === "file") continue;
     const visitor = await rule.create(createRuleContext(session, fallbackFile, rule, "manifest"));
     await visitor?.onWorkspaceStart?.();
     await visitor?.onProjectStart?.(session.project);

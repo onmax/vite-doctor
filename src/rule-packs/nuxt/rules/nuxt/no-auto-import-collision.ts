@@ -8,6 +8,7 @@ export const noAutoImportCollision = createRule({
     category: "imports",
     severity: "warn",
     fixable: "suggestion",
+    execution: "manifest",
     docsUrl: "https://nuxt.com/docs/4.x/guide/concepts/auto-imports#directory-based-auto-imports",
     requires: { nuxt: true, crossFile: true },
   },
