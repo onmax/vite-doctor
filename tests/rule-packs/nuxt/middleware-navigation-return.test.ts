@@ -9,6 +9,13 @@ test.each([
   `() => { return true ? navigateTo("/login") : undefined }`,
   `() => true ? navigateTo("/login") : undefined`,
   `() => navigateTo("/login") as Promise<void>`,
+  `() => condition && navigateTo("/login")`,
+  `() => condition || navigateTo("/login")`,
+  `() => condition ?? navigateTo("/login")`,
+  `() => { return condition && navigateTo("/login") }`,
+  `async () => condition || await navigateTo("/login")`,
+  `() => condition && (navigateTo("/login") as Promise<void>)`,
+  `() => condition ? otherCondition && navigateTo("/login") : undefined`,
 ])("accepts a returned navigation result: %s", async (handler) => {
   const result = await runRuleFixture({
     framework: "nuxt",
@@ -46,6 +53,20 @@ test("does not insert a return inside a variable initializer", async () => {
   const navigation = navigateTo("/login")
 })`,
     },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.fix).toBeFalsy();
+});
+
+test.each([
+  `() => { condition && navigateTo("/login") }`,
+  `() => navigateTo("/login") && undefined`,
+])("reports a navigation result that is not returned: %s", async (handler) => {
+  const result = await runRuleFixture({
+    framework: "nuxt",
+    rule: returnNavigateToInMiddleware,
+    files: { "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(${handler})` },
   });
 
   expect(result.diagnostics).toHaveLength(1);

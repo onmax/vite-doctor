@@ -77,5 +77,7 @@ function isReturned(node: AnyNode): boolean {
     (parent.consequent === node || parent.alternate === node)
   )
     return isReturned(navigationExpression(parent));
+  if (parent.type === "LogicalExpression" && parent.right === node)
+    return isReturned(navigationExpression(parent));
   return false;
 }
