@@ -165,6 +165,32 @@ test("file rules are not created during the manifest phase", async () => {
   expect(creates).toBe(1);
 });
 
+test.each(["graph", "duplication", "health"] as const)(
+  "%s rules are not created during the manifest lifecycle",
+  async (execution) => {
+    let creates = 0;
+    const rule = createRule({
+      meta: {
+        id: `test/${execution}-only`,
+        title: `${execution} rule`,
+        category: "architecture",
+        severity: "warn",
+        execution,
+      },
+      create() {
+        creates++;
+        return {};
+      },
+    });
+
+    await withFixture({ "src/app.ts": "const app = true" }, async (root) => {
+      await runDoctor({ root, framework: "vue", extensions: [pluginWith(rule)] });
+    });
+
+    expect(creates).toBe(0);
+  },
+);
+
 const secondRule = createRule({
   meta: {
     id: "test/second-rule",
