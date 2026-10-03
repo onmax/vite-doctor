@@ -45,11 +45,14 @@ class MemoryRuleCache implements RuleCache {
 }
 
 class PersistentRuleCache extends MemoryRuleCache {
+  private root: string;
   private dir: string;
 
   constructor(root: string, config: DoctorConfig) {
     super();
+    this.root = resolve(root);
     this.dir = resolve(root, config.cache?.dir ?? ".vite-doctor/cache");
+    assertCachePath(this.root, this.dir);
   }
 
   override get<T = unknown>(key: string): T | undefined {
@@ -57,9 +60,8 @@ class PersistentRuleCache extends MemoryRuleCache {
     if (memory !== undefined) return memory;
     if (!key.startsWith("fileFacts:")) return undefined;
     try {
-      const value = JSON.parse(
-        readFileSync(resolve(this.dir, `${safeCacheKey(key)}.json`), "utf8"),
-      );
+      const path = this.cachePath(key);
+      const value = JSON.parse(readFileSync(path, "utf8"));
       super.set(key, value);
       return value as T;
     } catch {
@@ -72,10 +74,16 @@ class PersistentRuleCache extends MemoryRuleCache {
     if (!key.startsWith("fileFacts:")) return;
     try {
       mkdirSync(this.dir, { recursive: true });
-      writeFileSync(resolve(this.dir, `${safeCacheKey(key)}.json`), JSON.stringify(value));
+      writeFileSync(this.cachePath(key), JSON.stringify(value));
     } catch {
       // Cache writes are best-effort and must not change diagnostics.
     }
+  }
+
+  private cachePath(key: string): string {
+    const path = resolve(this.dir, `${safeCacheKey(key)}.json`);
+    assertCachePath(this.root, path);
+    return path;
   }
 }
 
@@ -217,6 +225,35 @@ function assertCacheDirectory(root: string, dir: string): void {
     relativeDir.startsWith(`..${sep}`)
   ) {
     throw new Error("Doctor cache directory must be inside the project root.");
+  }
+}
+
+function assertCacheInside(root: string, path: string): void {
+  const relativePath = relative(root, path);
+  if (isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(`..${sep}`)) {
+    throw new Error("Doctor cache directory must be inside the project root.");
+  }
+}
+
+function assertCachePath(root: string, path: string): void {
+  assertCacheDirectory(root, path);
+  const canonicalRoot = realpathSync(root);
+  let current = path;
+  while (true) {
+    const stats = lstatSync(current, { throwIfNoEntry: false });
+    if (stats) {
+      let canonical: string;
+      try {
+        canonical = realpathSync(current);
+      } catch {
+        throw new Error("Doctor cache directory must be inside the project root.");
+      }
+      assertCacheInside(canonicalRoot, canonical);
+      return;
+    }
+    const parent = resolve(current, "..");
+    if (parent === current) return;
+    current = parent;
   }
 }
 

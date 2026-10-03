@@ -1,7 +1,16 @@
-import { existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
@@ -46,6 +55,95 @@ test("CLI cache clean respects declarative cache configuration", async () => {
     },
   );
 });
+
+test("Doctor rejects a cache directory outside the project root", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "src/main.ts": "export const value = true;",
+    },
+    async (root) => {
+      const outsideCache = join(root, "..", `${basename(root)}-doctor-cache-outside`);
+      mkdirSync(outsideCache, { recursive: true });
+      try {
+        await expect(
+          runViteDoctor({
+            root,
+            framework: "vite",
+            config: { cache: { dir: outsideCache } },
+            cache: true,
+          }),
+        ).rejects.toThrow("inside the project root");
+        expect(existsSync(join(outsideCache, "entry.json"))).toBe(false);
+        expect(readdirSync(outsideCache)).toHaveLength(0);
+      } finally {
+        rmSync(outsideCache, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+test("Doctor rejects a cache directory that escapes through a symlink", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "src/main.ts": "export const value = true;",
+    },
+    async (root) => {
+      const parent = dirname(root);
+      const outsideCache = join(parent, `${basename(root)}-doctor-cache-symlink-outside`);
+      mkdirSync(outsideCache, { recursive: true });
+      symlinkSync(outsideCache, join(root, "linked"), "junction");
+      try {
+        await expect(
+          runViteDoctor({
+            root,
+            framework: "vite",
+            config: { cache: { dir: "linked/cache" } },
+            cache: true,
+          }),
+        ).rejects.toThrow("inside the project root");
+        expect(existsSync(join(outsideCache, "entry.json"))).toBe(false);
+        expect(readdirSync(outsideCache)).toHaveLength(0);
+      } finally {
+        rmSync(outsideCache, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+test.skipIf(process.platform === "win32")(
+  "Doctor does not follow a cache entry symlink outside the project",
+  async () => {
+    await withFixture(
+      {
+        "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+        "src/main.ts": "export const value = true;",
+      },
+      async (root) => {
+        await runViteDoctor({ root, framework: "vite", cache: true });
+        const cache = join(root, ".vite-doctor/cache");
+        const entry = readdirSync(cache)[0];
+        expect(entry).toBeTruthy();
+
+        const outside = join(root, "..", `${basename(root)}-doctor-cache-entry-outside`);
+        mkdirSync(outside, { recursive: true });
+        const target = join(outside, "sentinel.json");
+        writeFileSync(target, '{"sentinel":true}\n');
+        const cacheEntry = join(cache, entry!);
+        rmSync(cacheEntry);
+        symlinkSync(target, cacheEntry);
+        try {
+          await runViteDoctor({ root, framework: "vite", cache: true });
+          expect(readFileSync(target, "utf8")).toBe('{"sentinel":true}\n');
+          expect(readdirSync(outside)).toEqual(["sentinel.json"]);
+        } finally {
+          rmSync(outside, { recursive: true, force: true });
+        }
+      },
+    );
+  },
+);
 
 test("CLI cache clean rejects a regular file target", async () => {
   await withFixture(
