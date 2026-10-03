@@ -1,6 +1,7 @@
 import {
   defineDoctorExtension,
   cleanCache,
+  detectProject,
   runDoctor,
   type DoctorConfig,
   type DoctorExtension,
@@ -8,6 +9,7 @@ import {
   type DoctorRunOptions,
   type DoctorRunResult,
 } from "./core/index.js";
+import { resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "pathe";
 import { nitroRulePack } from "./rule-packs/nitro/index.js";
@@ -61,16 +63,16 @@ export async function runViteDoctor(options: DoctorRunOptions) {
   const extensions = await viteDoctorExtensions(options);
   const result = await runDoctor({
     ...options,
-    config: surfaceDoctorConfig(options, framework),
     framework,
     extensions: [...extensions, ...(options.extensions ?? [])],
   });
   return { ...result, version: viteDoctorVersion };
 }
 
-export function cleanViteDoctorCache(root: string, config?: DoctorConfig): void {
+export async function cleanViteDoctorCache(root: string, config?: DoctorConfig): Promise<void> {
   const framework = detectRequestedFramework({ root, config });
-  cleanCache(root, surfaceDoctorConfig({ config }, framework));
+  const project = await detectProject(root, framework);
+  cleanCache(root, resolveProjectDoctorConfig(project, config));
 }
 
 export function shouldFailDoctorRun(result: DoctorRunResult, maxWarnings?: number) {
@@ -97,17 +99,6 @@ function detectRequestedFramework(options: DoctorRunOptions): DoctorFramework {
   if (deps.nitro || deps.nitropack || hasConfig(root, "nitro.config")) return "nitro";
   if (deps.vue || hasVueFiles(root)) return "vue";
   return "vite";
-}
-
-function surfaceDoctorConfig(
-  options: Pick<DoctorRunOptions, "config">,
-  framework: DoctorFramework,
-): DoctorConfig {
-  if (framework !== "nuxt") return options.config ?? {};
-  return {
-    ...options.config,
-    cache: { dir: ".nuxt/doctor/cache", ...options.config?.cache },
-  };
 }
 
 function withDistributionVersion<T extends { version: string }>(item: T): T {

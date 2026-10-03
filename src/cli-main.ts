@@ -113,14 +113,17 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       }
       process.stdout.write(report);
     });
-  cli.command("cache <action>", "Manage Doctor cache.").action(async (action: string) => {
-    if (action === "clean") {
-      cleanViteDoctorCache(cwd, await loadCliConfig(cwd));
-      consola.log("Doctor cache cleaned");
-      return;
-    }
-    throw new Error(`Unknown cache action: ${action}`);
-  });
+  cli
+    .command("cache <action>", "Manage Doctor cache.")
+    .option("--config <path>", "Explicitly load an executable Doctor config.")
+    .action(async (action: string, options) => {
+      if (action === "clean") {
+        await cleanViteDoctorCache(cwd, await loadCliConfig(cwd, stringFlag(options.config)));
+        consola.log("Doctor cache cleaned");
+        return;
+      }
+      throw new Error(`Unknown cache action: ${action}`);
+    });
   cli.help();
 
   try {
