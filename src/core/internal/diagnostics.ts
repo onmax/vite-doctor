@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  type Stats,
+} from "node:fs";
 import { dirname, relative, resolve } from "pathe";
 import MagicString from "magic-string";
 import type { DoctorConfig } from "../config.js";
@@ -105,10 +113,10 @@ function applyFixes(
   for (const [file, items] of byFile) {
     const candidates = items.flatMap((item) => item.fix?.edits ?? []);
     let text: string;
-    let mode: number;
+    let original: Stats;
     try {
+      original = statSync(file);
       text = readFileSync(file, "utf8");
-      mode = statSync(file).mode;
     } catch {
       // A rule can report a generated or deleted source location. Keep the
       // finding reportable and account for unappliable edits instead of
@@ -124,7 +132,25 @@ function applyFixes(
     mkdirSync(dirname(file), { recursive: true });
     const temporary = `${file}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, ms.toString(), { mode });
+      writeFileSync(temporary, ms.toString(), { mode: original.mode });
+      let unchanged = false;
+      try {
+        const current = statSync(file);
+        unchanged =
+          current.dev === original.dev &&
+          current.ino === original.ino &&
+          current.mode === original.mode &&
+          current.size === original.size &&
+          current.mtimeMs === original.mtimeMs &&
+          current.ctimeMs === original.ctimeMs &&
+          readFileSync(file, "utf8") === text;
+      } catch {
+        unchanged = false;
+      }
+      if (!unchanged) {
+        applied.skipped += edits.length;
+        continue;
+      }
       renameSync(temporary, file);
     } finally {
       rmSync(temporary, { force: true });

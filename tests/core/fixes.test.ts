@@ -1,9 +1,27 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
-import { expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { allDiagnostics, runDoctor } from "../../src/core/index.ts";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../src/extension.ts";
+
+const hooks = vi.hoisted(() => ({ afterWrite: undefined as ((file: string) => void) | undefined }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+      fs.writeFileSync(...args);
+      hooks.afterWrite?.(String(args[0]));
+    },
+  };
+});
+
+afterEach(() => {
+  hooks.afterWrite = undefined;
+});
 
 const missingFileFixRule = createRule({
   meta: {
@@ -29,7 +47,7 @@ const missingFileFixRule = createRule({
             file: join(ctx.project.root, "generated/missing.ts"),
             fix: {
               kind: "safe",
-              edits: [{ range: { start: 0, end: 0 }, text: "export {}\n" }],
+              edits: [{ range: { start: 0, end: 5 }, text: "let" }],
             },
           },
         );
@@ -72,3 +90,52 @@ test("safe fixes for missing source files are skipped without aborting the run",
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test.each(["deleted", "replaced", "modified", "unchanged"] as const)(
+  "safe fixes respect a source that is %s before replacement",
+  async (change) => {
+    const root = await mkdtemp(join(tmpdir(), "vite-doctor-fixes-"));
+    const generated = join(root, "generated");
+    const target = join(generated, "missing.ts");
+    try {
+      await writeFile(join(root, "package.json"), "{}");
+      await writeFile(join(root, "src.ts"), "const source = true;\n");
+      await mkdir(generated);
+      await writeFile(target, "const original = true;\n");
+      hooks.afterWrite = (file) => {
+        if (!file.startsWith(`${target}.vite-doctor-`)) return;
+        if (change === "unchanged") return;
+        if (change !== "modified") rmSync(target);
+        if (change !== "deleted") writeFileSync(target, "const replacement = true;\n");
+      };
+
+      const result = await runDoctor({
+        root,
+        framework: "vite",
+        fix: true,
+        cache: false,
+        extensions: [extension],
+      });
+
+      expect(result.diagnostics).toEqual([
+        expect.objectContaining({ ruleId: "fixture/missing-file-fix" }),
+      ]);
+      expect(result.fixes).toEqual(
+        change === "unchanged"
+          ? { files: 1, edits: 1, skipped: 0 }
+          : { files: 0, edits: 0, skipped: 1 },
+      );
+      if (change === "deleted") {
+        expect(existsSync(target)).toBe(false);
+        expect(readdirSync(generated)).toEqual([]);
+      } else {
+        expect(readFileSync(target, "utf8")).toBe(
+          change === "unchanged" ? "let original = true;\n" : "const replacement = true;\n",
+        );
+        expect(readdirSync(generated)).toEqual(["missing.ts"]);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
