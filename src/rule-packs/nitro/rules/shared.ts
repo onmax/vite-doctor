@@ -49,8 +49,16 @@ export function report(
 
 export function isObjectPropertyKey(node: AnyNode) {
   const parent = node.parent ?? node.__doctorParent;
+  if (
+    parent?.type === "Property" &&
+    (parent.key === node || parent.value === node) &&
+    !parent.computed
+  ) {
+    const container = parent.parent ?? parent.__doctorParent;
+    if (parent.shorthand && container?.type === "ObjectPattern") return true;
+    return !parent.shorthand;
+  }
   return (
-    (parent?.type === "Property" && parent.key === node && !parent.computed && !parent.shorthand) ||
     (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) ||
     (parent?.type === "StaticMemberExpression" && parent.property === node)
   );

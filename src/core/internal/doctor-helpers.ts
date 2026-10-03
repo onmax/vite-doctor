@@ -487,7 +487,7 @@ function hasLocalBindingBefore(node: unknown, source: string): boolean {
   const name = value.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const before = source.slice(0, value.start);
   return new RegExp(
-    String.raw`(?:\b(?:const|let|var)\s+${name}\b|[,(]\s*${name}\s*(?::[^)=]+)?=>|\(\s*${name}\s*(?::[^)]*)?\)\s*=>|function[^(]*\([^)]*\b${name}\b|[,(]\s*\{[^)]*\b${name}\b[^)]*\}\s*(?::[^)=]+)?=>|function[^(]*\([^)]*\{[^)]*\b${name}\b)`,
+    String.raw`(?:\b(?:const|let|var)\s+${name}\b|\b(?:const|let|var)\s*\{[^}]*\b${name}\b[^}]*\}|\{[^}]*\b${name}\b[^}]*\}\s*\)\s*=>|[,(]\s*${name}\s*(?::[^)=]+)?=>|\(\s*${name}\s*(?::[^)]*)?\)\s*=>|function[^(]*\([^)]*\b${name}\b|[,(]\s*\{[^)]*\b${name}\b[^)]*\}\s*(?::[^)=]+)?=>|function[^(]*\([^)]*\{[^)]*\b${name}\b)`,
   ).test(before);
 }
 
