@@ -24,6 +24,7 @@ export const noBrokenInternalToLink = createRule({
     category: "content",
     severity: "warn",
     fixable: "suggestion",
+    execution: "manifest",
     requires: { nuxt: true, crossFile: true },
   },
   create(ctx) {

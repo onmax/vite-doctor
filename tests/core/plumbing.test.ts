@@ -138,6 +138,106 @@ test("visitor keys fall back to node-shaped children", () => {
   ).toEqual(["child", "children"]);
 });
 
+test("file rules are not created during the manifest phase", async () => {
+  let creates = 0;
+  const fileRule = createRule({
+    meta: {
+      id: "test/file-only",
+      title: "File-only rule",
+      category: "architecture",
+      severity: "warn",
+      requires: { script: true },
+    },
+    create() {
+      creates++;
+      return {};
+    },
+  });
+
+  await withFixture({ "src/app.ts": "const app = true" }, async (root) => {
+    await runDoctor({
+      root,
+      framework: "vue",
+      extensions: [pluginWith(fileRule)],
+    });
+  });
+
+  expect(creates).toBe(1);
+});
+
+test.each(["graph", "duplication", "health"] as const)(
+  "%s rules are not created during the manifest lifecycle",
+  async (execution) => {
+    let creates = 0;
+    const rule = createRule({
+      meta: {
+        id: `test/${execution}-only`,
+        title: `${execution} rule`,
+        category: "architecture",
+        severity: "warn",
+        execution,
+      },
+      create() {
+        creates++;
+        return {};
+      },
+    });
+
+    await withFixture({ "src/app.ts": "const app = true" }, async (root) => {
+      await runDoctor({ root, framework: "vue", extensions: [pluginWith(rule)] });
+    });
+
+    expect(creates).toBe(0);
+  },
+);
+
+test("workspace diagnostics use workspace phase metadata", async () => {
+  const workspaceRule = createRule({
+    meta: {
+      id: "test/workspace-phase",
+      title: "Workspace phase",
+      category: "architecture",
+      severity: "warn",
+      execution: "workspace",
+    },
+    create(ctx) {
+      return {
+        onProjectStart() {
+          ctx.report(
+            allDiagnostics.DOC9999({
+              why: "Workspace phase metadata is preserved.",
+              fix: "Inspect the workspace diagnostic.",
+            }),
+            {
+              ruleId: "test/workspace-phase",
+              severity: "warn",
+              category: "architecture",
+              file: ctx.file.path,
+            },
+          );
+        },
+      };
+    },
+  });
+
+  await withFixture({ "src/app.ts": "const app = true" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      extensions: [pluginWith(workspaceRule)],
+    });
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        ruleId: "test/workspace-phase",
+        analysisPhase: "workspace",
+        confidence: "heuristic-medium",
+        evidence: [{ kind: "graph", summary: "workspace analysis" }],
+      }),
+    ]);
+  });
+});
+
 const secondRule = createRule({
   meta: {
     id: "test/second-rule",

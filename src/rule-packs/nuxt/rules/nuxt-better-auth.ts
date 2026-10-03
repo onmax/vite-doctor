@@ -8,6 +8,7 @@ export const requireStandardAuthHandlerMount = createRule({
     category: "auth",
     severity: "warn",
     fixable: "suggestion",
+    execution: "manifest",
     requires: { nuxt: true, crossFile: true },
   },
   create(ctx) {
