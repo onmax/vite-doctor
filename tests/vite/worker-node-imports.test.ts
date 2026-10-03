@@ -6,8 +6,6 @@ describe("browser worker Node imports", () => {
   test.each([
     'import type { Stats } from "node:fs"',
     'import type * as fs from "fs"',
-    'import { type Stats, type Dirent } from "node:fs"',
-    'import { type Stats } from "fs"',
     'import fs from "fs-extra"',
     'import assert from "assertion-library"',
   ])("allows erased type imports and non-builtin packages: %s", async (source) => {
@@ -26,13 +24,18 @@ describe("browser worker Node imports", () => {
     'import { fileURLToPath } from "url"',
     'import { createRequire } from "module"',
     'import { type Stats, readFile } from "node:fs"',
+    'import { type Stats, type Dirent } from "node:fs"',
+    'import { type Stats } from "fs"',
     'import "node:fs"',
     'import {} from "fs"',
   ])("reports runtime Node builtin imports: %s", async (source) => {
     const result = await runRuleFixture({
       rule: noNodeApiInWorker,
       framework: "vite",
-      files: { "src/task.worker.ts": source },
+      files: {
+        "src/task.worker.ts": source,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }),
+      },
     });
     expect(result.diagnostics.map(({ code }) => code)).toEqual(["VITE0020"]);
   });
