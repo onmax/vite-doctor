@@ -2,7 +2,7 @@
 
 The [engineering campaign issue](https://github.com/onmax/vite-doctor/issues/72) owns the roadmap and reproduction fixtures, following the repository's issue-tracker convention.
 
-The queue contains 100 candidates: 35 observed mismatches and 65 investigations. An investigation becomes a PR only after demonstrating a defect or a meaningful coverage/documentation gap. Existing correct behavior can retire a candidate without a PR. These counts describe the review queue, not completed improvements or promised PRs.
+The queue contains 100 candidates: 35 observed mismatches and 65 investigations. An investigation becomes a PR only after demonstrating a defect or a meaningful coverage/documentation gap. Existing correct behavior can retire a candidate without a PR. An absent literal Rule ID in tests does not establish missing coverage; trace imported rule objects and grouped fixtures first. Recheck linked PR states and current source before starting any queued work. These counts describe the review queue, not completed improvements or promised PRs.
 
 ## Published changes
 
