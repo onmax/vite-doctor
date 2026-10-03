@@ -1,8 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, relative, resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import type { Diagnostic } from "../primitives.js";
 import { parseScript } from "./script.js";
+
+const require = createRequire(import.meta.url);
 
 export interface DiagnosticPolicyInput {
   root: string;
@@ -152,68 +155,84 @@ function findSuppression(
 
 function collectInlineSuppressions(file: string, lines: string[]): Map<number, InlineSuppression> {
   const source = lines.join("\n");
-  const parsed = parseScript(file, source);
-  if (parsed && !source.includes("<!--")) {
-    const directives = new Map<number, InlineSuppression>();
-    for (const comment of (parsed.comments as Array<{ start?: number; value?: string }>) ?? []) {
-      if (typeof comment.start !== "number" || typeof comment.value !== "string") continue;
-      const line = source.slice(0, comment.start).split("\n").length - 1;
-      addInlineSuppression(directives, line, comment.value);
-    }
-    return directives;
-  }
+  if (!source.includes("doctor-disable")) return new Map();
   const directives = new Map<number, InlineSuppression>();
-  let inBlockComment = false;
-  let inHtmlComment = false;
-  let quote: string | undefined;
-  for (let line = 0; line < lines.length; line++) {
-    const currentLine = lines[line]!;
-    for (let offset = 0; offset < currentLine.length;) {
-      if (inBlockComment) {
-        const end = currentLine.indexOf("*/", offset);
-        const commentEnd = end === -1 ? currentLine.length : end;
-        addInlineSuppression(directives, line, currentLine.slice(offset, commentEnd));
-        if (end === -1) break;
-        inBlockComment = false;
-        offset = end + 2;
-        continue;
-      }
-      if (inHtmlComment) {
-        const end = currentLine.indexOf("-->", offset);
-        if (end === -1) {
-          addInlineSuppression(directives, line, currentLine.slice(offset));
-          break;
-        }
-        addInlineSuppression(directives, line, currentLine.slice(offset, end));
-        inHtmlComment = false;
-        offset = end + 3;
-        continue;
-      }
-      if (currentLine.startsWith("//", offset)) {
-        addInlineSuppression(directives, line, currentLine.slice(offset + 2));
-        break;
-      }
-      if (currentLine.startsWith("/*", offset)) {
-        inBlockComment = true;
-        offset += 2;
-        continue;
-      }
-      if (currentLine.startsWith("<!--", offset)) {
-        addInlineSuppression(directives, line, currentLine.slice(offset + 4));
-        inHtmlComment = !currentLine.slice(offset + 4).includes("-->");
-        break;
-      }
-      const currentQuote = quote ?? currentLine[offset];
-      if (currentQuote === "'" || currentQuote === '"' || currentQuote === "`") {
-        const next = skipQuoted(currentLine, quote ? offset - 1 : offset, currentQuote);
-        quote = next === currentLine.length ? currentQuote : undefined;
-        offset = next;
-        continue;
-      }
-      offset++;
-    }
+  const comments = file.endsWith(".vue")
+    ? collectVueComments(source)
+    : collectScriptComments(file, source);
+  for (const comment of comments) {
+    addCommentSuppressions(directives, source, comment.start, comment.end);
   }
   return directives;
+}
+
+interface SourceComment {
+  start: number;
+  end: number;
+}
+
+function collectScriptComments(file: string, source: string): SourceComment[] {
+  const parsed = parseScript(file, source);
+  if (!parsed) return [];
+  return ((parsed.comments as Array<{ start?: number; end?: number }>) ?? []).filter(
+    (comment): comment is { start: number; end: number } =>
+      typeof comment.start === "number" && typeof comment.end === "number",
+  );
+}
+
+function collectVueComments(source: string): SourceComment[] {
+  try {
+    const vueParser = require("vue-eslint-parser") as {
+      parseForESLint: (
+        text: string,
+        options: Record<string, unknown>,
+      ) => {
+        ast: {
+          comments?: Array<{ range?: [number, number] }>;
+          templateBody?: { comments?: Array<{ range?: [number, number] }> };
+        };
+      };
+    };
+    const tsParser = require("@typescript-eslint/parser") as { parseForESLint: unknown };
+    const parsed = vueParser.parseForESLint(source, {
+      comment: true,
+      ecmaVersion: "latest",
+      loc: true,
+      parser: tsParser,
+      parserOptions: { comment: true, ecmaVersion: "latest", sourceType: "module" },
+      range: true,
+      sourceType: "module",
+      tokens: true,
+    });
+    const comments = [...(parsed.ast.comments ?? []), ...(parsed.ast.templateBody?.comments ?? [])];
+    return comments.flatMap((comment) => {
+      const range = comment.range;
+      return range ? [{ start: range[0], end: range[1] }] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function addCommentSuppressions(
+  directives: Map<number, InlineSuppression>,
+  source: string,
+  start: number,
+  end: number,
+): void {
+  const rawComment = source.slice(start, end);
+  const comment = rawComment.startsWith("<!--")
+    ? rawComment.slice(4, rawComment.endsWith("-->") ? -3 : undefined)
+    : rawComment.startsWith("/*")
+      ? rawComment.slice(2, rawComment.endsWith("*/") ? -2 : undefined)
+      : rawComment.startsWith("//")
+        ? rawComment.slice(2)
+        : rawComment;
+  let line = source.slice(0, start).split("\n").length - 1;
+  for (const segment of comment.split("\n")) {
+    addInlineSuppression(directives, line, segment);
+    line++;
+  }
 }
 
 function addInlineSuppression(
@@ -229,17 +248,6 @@ function addInlineSuppression(
   const rules = match[2]!.split(",").map((item) => item.trim());
   const reason = (match[3] ?? match[4] ?? "").trim() || "missing suppression reason";
   directives.set(line, { nextLine: Boolean(match[1]), rules, reason });
-}
-
-function skipQuoted(source: string, start: number, quote: string): number {
-  for (let offset = start + 1; offset < source.length; offset++) {
-    if (source[offset] === "\\") {
-      offset++;
-      continue;
-    }
-    if (source[offset] === quote) return offset + 1;
-  }
-  return source.length;
 }
 
 function nativeMatch(value: string, pattern: string): boolean {
