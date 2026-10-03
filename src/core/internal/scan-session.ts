@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { isAbsolute, relative, sep } from "node:path";
 import { resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import {
@@ -124,17 +125,8 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
 
   started = performance.now();
   const project = await detectProject(root, options.framework ?? "auto", options.runtimeTarget);
-  const projectDefaults =
-    project.framework === "nuxt"
-      ? mergeDoctorConfig(DEFAULT_CONFIG, { cache: { dir: ".nuxt/doctor/cache" } })
-      : DEFAULT_CONFIG;
-  if (projectDefaults !== DEFAULT_CONFIG || project.nuxt?.doctorConfig) {
-    config = mergeDoctorConfig(
-      mergeDoctorConfig(projectDefaults, project.nuxt?.doctorConfig),
-      options.config,
-    );
-    sessionBase.config = config;
-  }
+  config = resolveProjectDoctorConfig(project, options.config);
+  sessionBase.config = config;
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
@@ -189,7 +181,43 @@ export async function runPhase(
 
 export function cleanCache(root = process.cwd(), config?: DoctorConfig): void {
   const dir = resolve(root, config?.cache?.dir ?? ".vite-doctor/cache");
-  if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+  assertCacheDirectory(resolve(root), dir);
+  let stats;
+  try {
+    stats = lstatSync(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (stats.isSymbolicLink()) {
+    try {
+      assertCacheDirectory(realpathSync(root), realpathSync(dir));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        rmSync(dir, { force: true });
+        return;
+      }
+      throw error;
+    }
+  } else {
+    assertCacheDirectory(realpathSync(root), realpathSync(dir));
+    if (!stats.isDirectory()) {
+      throw new Error("Doctor cache directory must be a directory.");
+    }
+  }
+  rmSync(dir, { recursive: true, force: true });
+}
+
+function assertCacheDirectory(root: string, dir: string): void {
+  const relativeDir = relative(root, dir);
+  if (
+    !relativeDir ||
+    isAbsolute(relativeDir) ||
+    relativeDir === ".." ||
+    relativeDir.startsWith(`..${sep}`)
+  ) {
+    throw new Error("Doctor cache directory must be inside the project root.");
+  }
 }
 
 export function mergeDoctorConfig(defaults: DoctorConfig, config: DoctorConfig = {}): DoctorConfig {
@@ -204,6 +232,17 @@ export function mergeDoctorConfig(defaults: DoctorConfig, config: DoctorConfig =
       weights: { ...defaults.score?.weights, ...config.score?.weights },
     },
   };
+}
+
+export function resolveProjectDoctorConfig(
+  project: ProjectInfo,
+  config?: DoctorConfig,
+): DoctorConfig {
+  const defaults =
+    project.framework === "nuxt"
+      ? mergeDoctorConfig(DEFAULT_CONFIG, { cache: { dir: ".nuxt/doctor/cache" } })
+      : DEFAULT_CONFIG;
+  return mergeDoctorConfig(mergeDoctorConfig(defaults, project.nuxt?.doctorConfig), config);
 }
 
 async function collectRulePacks(extensions: DoctorExtension[]): Promise<{

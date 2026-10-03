@@ -3,7 +3,6 @@ import { cac } from "cac";
 import { consola } from "consola";
 import { resolve } from "pathe";
 import {
-  cleanCache,
   createReport,
   createRulesReport,
   explainRule,
@@ -15,7 +14,12 @@ import {
 } from "./core/index.js";
 import { selectDoctorPresentation } from "./core/internal/agent-runtime.js";
 import { applyDoctorOptions, stringFlag } from "./core/internal/cli.js";
-import { runViteDoctor, shouldFailDoctorRun, viteDoctorRulePacks } from "./doctor.js";
+import {
+  cleanViteDoctorCache,
+  runViteDoctor,
+  shouldFailDoctorRun,
+  viteDoctorRulePacks,
+} from "./doctor.js";
 import { viteDoctorVersion } from "./version.js";
 import { createMigrationReport, formatMigrationReport } from "./migration.js";
 
@@ -109,14 +113,25 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       }
       process.stdout.write(report);
     });
-  cli.command("cache <action>", "Manage Doctor cache.").action((action: string) => {
-    if (action === "clean") {
-      cleanCache(cwd);
-      consola.log("Doctor cache cleaned");
-      return;
-    }
-    throw new Error(`Unknown cache action: ${action}`);
-  });
+  cli
+    .command("cache <action>", "Manage Doctor cache.")
+    .option("--config <path>", "Explicitly load an executable Doctor config.")
+    .option("--framework <framework>", "Framework override: vite, vue, nitro, or nuxt.")
+    .action(async (action: string, options) => {
+      if (action === "clean") {
+        const runOptions: DoctorRunOptions = { root: cwd };
+        applyDoctorOptions(runOptions, options);
+        validateCliRunOptions(runOptions);
+        await cleanViteDoctorCache(
+          cwd,
+          await loadCliConfig(cwd, stringFlag(options.config)),
+          runOptions.framework === "auto" ? undefined : runOptions.framework,
+        );
+        consola.log("Doctor cache cleaned");
+        return;
+      }
+      throw new Error(`Unknown cache action: ${action}`);
+    });
   cli.help();
 
   try {

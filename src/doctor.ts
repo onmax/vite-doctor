@@ -1,11 +1,15 @@
 import {
   defineDoctorExtension,
+  cleanCache,
+  detectProject,
   runDoctor,
+  type DoctorConfig,
   type DoctorExtension,
   type DoctorFramework,
   type DoctorRunOptions,
   type DoctorRunResult,
 } from "./core/index.js";
+import { resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "pathe";
 import { nitroRulePack } from "./rule-packs/nitro/index.js";
@@ -59,17 +63,20 @@ export async function runViteDoctor(options: DoctorRunOptions) {
   const extensions = await viteDoctorExtensions(options);
   const result = await runDoctor({
     ...options,
-    config: {
-      ...options.config,
-      cache:
-        framework === "nuxt"
-          ? { dir: ".nuxt/doctor/cache", ...options.config?.cache }
-          : options.config?.cache,
-    },
     framework,
     extensions: [...extensions, ...(options.extensions ?? [])],
   });
   return { ...result, version: viteDoctorVersion };
+}
+
+export async function cleanViteDoctorCache(
+  root: string,
+  config?: DoctorConfig,
+  requestedFramework?: DoctorFramework,
+): Promise<void> {
+  const framework = detectRequestedFramework({ root, config, framework: requestedFramework });
+  const project = await detectProject(root, framework);
+  cleanCache(root, resolveProjectDoctorConfig(project, config));
 }
 
 export function shouldFailDoctorRun(result: DoctorRunResult, maxWarnings?: number) {
