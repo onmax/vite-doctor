@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
@@ -182,10 +182,29 @@ export async function runPhase(
 export function cleanCache(root = process.cwd(), config?: DoctorConfig): void {
   const dir = resolve(root, config?.cache?.dir ?? ".vite-doctor/cache");
   assertCacheDirectory(resolve(root), dir);
-  if (existsSync(dir)) {
-    assertCacheDirectory(realpathSync(root), realpathSync(dir));
-    rmSync(dir, { recursive: true, force: true });
+  let stats;
+  try {
+    stats = lstatSync(dir);
+  } catch {
+    return;
   }
+  if (stats.isSymbolicLink()) {
+    try {
+      assertCacheDirectory(realpathSync(root), realpathSync(dir));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        rmSync(dir, { force: true });
+        return;
+      }
+      throw error;
+    }
+  } else {
+    assertCacheDirectory(realpathSync(root), realpathSync(dir));
+    if (!stats.isDirectory()) {
+      throw new Error("Doctor cache directory must be a directory.");
+    }
+  }
+  rmSync(dir, { recursive: true, force: true });
 }
 
 function assertCacheDirectory(root: string, dir: string): void {

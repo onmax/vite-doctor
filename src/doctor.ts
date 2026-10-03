@@ -69,8 +69,12 @@ export async function runViteDoctor(options: DoctorRunOptions) {
   return { ...result, version: viteDoctorVersion };
 }
 
-export async function cleanViteDoctorCache(root: string, config?: DoctorConfig): Promise<void> {
-  const framework = detectRequestedFramework({ root, config });
+export async function cleanViteDoctorCache(
+  root: string,
+  config?: DoctorConfig,
+  requestedFramework?: DoctorFramework,
+): Promise<void> {
+  const framework = detectRequestedFramework({ root, config, framework: requestedFramework });
   const project = await detectProject(root, framework);
   cleanCache(root, resolveProjectDoctorConfig(project, config));
 }

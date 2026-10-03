@@ -47,6 +47,48 @@ test("CLI cache clean respects declarative cache configuration", async () => {
   );
 });
 
+test("CLI cache clean rejects a regular file target", async () => {
+  await withFixture(
+    { "doctor.config.json": JSON.stringify({ cache: { dir: "package.json" } }) },
+    async (root) => {
+      writeFileSync(join(root, "package.json"), "{}");
+
+      const result = await main(["cache", "clean"], root);
+
+      expect(result).toBe(2);
+      expect(existsSync(join(root, "package.json"))).toBe(true);
+    },
+  );
+});
+
+test("CLI cache clean removes a dangling cache symlink", async () => {
+  await withFixture({}, async (root) => {
+    const cache = join(root, "dangling-cache");
+    symlinkSync(join(root, "missing-cache"), cache, "junction");
+
+    const result = await main(["cache", "clean", "--framework", "vite"], root);
+
+    expect(result).toBe(0);
+    expect(existsSync(cache)).toBe(false);
+  });
+});
+
+test("CLI cache clean honors an explicit framework", async () => {
+  await withFixture(
+    { "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }) },
+    async (root) => {
+      const viteCache = join(root, ".vite-doctor/cache");
+      mkdirSync(viteCache, { recursive: true });
+      writeFileSync(join(viteCache, "entry.json"), "{}");
+
+      const result = await main(["cache", "clean", "--framework", "vite"], root);
+
+      expect(result).toBe(0);
+      expect(existsSync(viteCache)).toBe(false);
+    },
+  );
+});
+
 test.each([false, true])(
   "Nuxt cache cleanup shares Doctor Run configuration (override: %s)",
   async (override) => {
