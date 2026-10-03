@@ -92,7 +92,10 @@ export function memberPath(node: AnyNode): string | null {
   if (node.type === "MetaProperty") return `${node.meta?.name}.${node.property?.name}`;
   if (node.type !== "MemberExpression") return null;
   const object = memberPath(node.object);
-  const property = propertyName(node.property);
+  const property =
+    node.computed && node.property?.type !== "Literal"
+      ? staticString(node.property)
+      : propertyName(node.property);
   return object && property ? `${object}.${property}` : null;
 }
 
