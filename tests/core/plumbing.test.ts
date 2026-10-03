@@ -1004,7 +1004,7 @@ test("sarif reporter includes partial fingerprints", async () => {
     const sarif = JSON.parse(createSarifReport(result));
 
     expect(sarif.runs[0].results[0].partialFingerprints["vite-doctor/v1"]).toBeTruthy();
-    expect(sarif.runs[0].results[0].ruleId).toBe("test/report-program");
+    expect(sarif.runs[0].results[0].ruleId).toBe("test/report-program:DOC9999");
   });
 });
 

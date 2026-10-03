@@ -179,13 +179,7 @@ export function createAgentReport(result: DoctorRunResult): string {
 }
 
 export function createSarifReport(result: DoctorRunResult): string {
-  const counts = new Map<string, number>();
-  for (const diagnostic of result.diagnostics)
-    counts.set(diagnostic.ruleId, (counts.get(diagnostic.ruleId) ?? 0) + 1);
-  const ruleId = (diagnostic: Diagnostic) =>
-    (counts.get(diagnostic.ruleId) ?? 0) > 1
-      ? `${diagnostic.ruleId}:${diagnostic.code}`
-      : diagnostic.ruleId;
+  const ruleId = (diagnostic: Diagnostic) => `${diagnostic.ruleId}:${diagnostic.code}`;
   const rules = new Map<string, Diagnostic>();
   for (const diagnostic of result.diagnostics) rules.set(ruleId(diagnostic), diagnostic);
   return `${JSON.stringify(
