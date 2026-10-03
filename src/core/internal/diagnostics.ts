@@ -125,7 +125,15 @@ function applyFixes(
       continue;
     }
     const ms = new MagicString(text);
-    const edits = planNonOverlappingFixes(items).sort((a, b) => b.range.start - a.range.start);
+    const planned = planNonOverlappingFixes(items);
+    const edits = [
+      ...planned
+        .filter((edit) => edit.range.start !== edit.range.end)
+        .sort((a, b) => b.range.start - a.range.start),
+      ...planned
+        .filter((edit) => edit.range.start === edit.range.end)
+        .sort((a, b) => b.range.start - a.range.start),
+    ];
     applied.skipped += candidates.length - edits.length;
     if (!edits.length) continue;
     for (const edit of edits) {

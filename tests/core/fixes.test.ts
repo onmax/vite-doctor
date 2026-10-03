@@ -207,3 +207,70 @@ test("safe insertion fixes do not abort the Doctor Run", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("safe insertions at replacement boundaries are preserved", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-fix-boundary-"));
+  try {
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+    );
+    const source = join(root, "src/app.ts");
+    await writeFile(source, "abc\n");
+    const boundaryRule = createRule({
+      meta: {
+        id: "test/fix-boundary",
+        title: "Fix boundary",
+        category: "correctness",
+        severity: "error",
+        requires: { script: true },
+      },
+      create(ctx) {
+        return {
+          ScriptNode(node: any) {
+            if (node.type !== "Program") return;
+            const report = (edits: { start: number; end: number; text: string }[]) =>
+              ctx.report(
+                allDiagnostics.DOC9999({ why: "The fixture needs an edit.", fix: "Apply the edit." }),
+                {
+                  ruleId: "test/fix-boundary",
+                  severity: "error",
+                  category: "correctness",
+                  file: ctx.file.path,
+                  range: ctx.range(node),
+                  fix: { kind: "safe", edits: edits.map((edit) => ({ range: edit, text: edit.text })) },
+                },
+              );
+            report([{ start: 0, end: 1, text: "A" }]);
+            report([{ start: 1, end: 1, text: "!" }]);
+          },
+        };
+      },
+    });
+    const result = await runDoctor({
+      root,
+      framework: "vite",
+      fix: true,
+      cache: false,
+      extensions: [
+        defineDoctorExtension({
+          name: "test-fix-boundary",
+          rulePacks: [
+            defineRulePack({
+              name: "test-fix-boundary",
+              version: "0.0.0",
+              rules: [boundaryRule],
+              presets: { recommended: [boundaryRule.meta.id] },
+            }),
+          ],
+        }),
+      ],
+    });
+
+    expect(readFileSync(source, "utf8")).toBe("A!bc\n");
+    expect(result.fixes).toEqual({ files: 1, edits: 2, skipped: 0 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
