@@ -196,7 +196,7 @@ export function createSarifReport(result: DoctorRunResult): string {
                 id: ruleId(diagnostic),
                 name: diagnostic.code,
                 shortDescription: { text: diagnostic.code },
-                helpUri: diagnosticReferenceUrl(diagnostic.code),
+                helpUri: diagnostic.docs,
                 properties: {
                   diagnosticCode: diagnostic.code,
                   category: diagnostic.category,
@@ -217,7 +217,7 @@ export function createSarifReport(result: DoctorRunResult): string {
             properties: {
               confidence: diagnostic.confidence,
               diagnosticCode: diagnostic.code,
-              docs: diagnosticReferenceUrl(diagnostic.code),
+              docs: diagnostic.docs,
               evidenceKinds: diagnostic.evidence?.map((item) => item.kind),
               analysisPhase: diagnostic.analysisPhase,
             },
@@ -353,7 +353,7 @@ function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
     category: diagnostic.category,
     message: diagnostic.why,
     remediation: diagnostic.diagnostic.fix,
-    docs: diagnosticReferenceUrl(diagnostic.code),
+    docs: diagnostic.docs,
     location: {
       path: relative(result.root, diagnostic.file),
       ...(diagnostic.range
@@ -408,7 +408,7 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
     },
     message: diagnostic.why,
     remediation: diagnostic.diagnostic.fix,
-    docs: diagnosticReferenceUrl(diagnostic.code),
+    docs: diagnostic.docs,
     evidence: evidence?.length ? evidence : undefined,
     editPlan: diagnostic.fix,
     related: diagnostic.related?.map((item) => ({
