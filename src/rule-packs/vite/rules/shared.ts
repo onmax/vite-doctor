@@ -71,6 +71,7 @@ export function isLikelySsrFile(path: string): boolean {
 }
 
 export function staticString(node: AnyNode): string | null {
+  node = unwrapTypeExpression(node);
   if (!node) return null;
   if (typeof node.value === "string") return node.value;
   if (node.type === "TemplateLiteral" && node.expressions?.length === 0)
@@ -87,16 +88,30 @@ export function propertyName(node: AnyNode): string | null {
 }
 
 export function memberPath(node: AnyNode): string | null {
+  node = unwrapTypeExpression(node);
   if (!node) return null;
   if (node.type === "Identifier") return node.name;
   if (node.type === "MetaProperty") return `${node.meta?.name}.${node.property?.name}`;
   if (node.type !== "MemberExpression") return null;
   const object = memberPath(node.object);
-  const property =
-    node.computed && node.property?.type !== "Literal"
-      ? staticString(node.property)
-      : propertyName(node.property);
+  const key = unwrapTypeExpression(node.property);
+  const property = node.computed && key?.type !== "Literal" ? staticString(key) : propertyName(key);
   return object && property ? `${object}.${property}` : null;
+}
+
+function unwrapTypeExpression(node: AnyNode): AnyNode {
+  while (
+    node &&
+    [
+      "TSAsExpression",
+      "TSTypeAssertion",
+      "TSSatisfiesExpression",
+      "TSNonNullExpression",
+      "ParenthesizedExpression",
+    ].includes(node.type)
+  )
+    node = node.expression;
+  return node;
 }
 
 export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false): boolean {

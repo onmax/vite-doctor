@@ -11,6 +11,8 @@ describe("Vite env static keys", () => {
     "const VITE_SECRET = 'VITE_PUBLIC'; console.log(import.meta.env[VITE_SECRET])",
     "const env = 'other'; console.log(import.meta[env].VITE_SECRET)",
     "const env = 'other'; const { VITE_SECRET } = import.meta[env]",
+    "const VITE_SECRET = 'VITE_PUBLIC'; console.log(import.meta.env[VITE_SECRET as string])",
+    "const env = 'other'; console.log(import.meta[env as string].VITE_SECRET)",
   ])("does not invent env names from computed variables: %s", async (source) => {
     const result = await runProjectFixture({
       framework: "vite",
@@ -27,6 +29,16 @@ describe("Vite env static keys", () => {
     "import.meta['env']['VITE_SECRET']",
     "import.meta.env[`VITE_SECRET`]",
     "import.meta[`env`].VITE_SECRET",
+    'import.meta.env["VITE_SECRET" as const]',
+    'import.meta.env["VITE_SECRET" satisfies string]',
+    'import.meta.env["VITE_SECRET"!]',
+    'import.meta.env[("VITE_SECRET")]',
+    'import.meta.env[<string>"VITE_SECRET"]',
+    'import.meta["env" as const].VITE_SECRET',
+    'import.meta["env" satisfies string].VITE_SECRET',
+    'import.meta["env"!].VITE_SECRET',
+    'import.meta[("env")].VITE_SECRET',
+    "import.meta.env[(`VITE_SECRET` as const)!]",
   ])("reports statically known env names: %s", async (expression) => {
     const result = await runProjectFixture({
       framework: "vite",
