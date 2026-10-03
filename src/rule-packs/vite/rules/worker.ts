@@ -106,6 +106,11 @@ export const noNodeApiInWorker = createRule({
       },
       ScriptNode(node: AnyNode) {
         if (node.type !== "Identifier" || node.name !== "process") return;
+        if (
+          ctx.helpers.isTypeOnlyContext(node) ||
+          ctx.helpers.hasLocalBindingBefore(node, ctx.file.text)
+        )
+          return;
         ctx.report(
           diagnostics.VITE0020({
             why: "Browser workers should not rely on process.",
