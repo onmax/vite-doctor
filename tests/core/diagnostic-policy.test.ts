@@ -144,6 +144,54 @@ test("plain inline suppressions still apply to nearby diagnostics", () => {
   ]);
 });
 
+test("suppression text inside string literals does not hide diagnostics", () => {
+  const { root, file } = fixture(
+    'const text = "doctor-disable test/example -- this is data";\nconst value = 1;',
+  );
+  const diagnostic = finding(file, 1);
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [diagnostic],
+  });
+  expect(result.diagnostics).toEqual([diagnostic]);
+  expect(result.suppressedDiagnostics).toEqual([]);
+});
+
+test.each([
+  "const text = `\n// doctor-disable test/example -- template data\n`;\nconst value = 1;",
+  "const pattern = /doctor-disable test\\/example -- regex/;\nconst value = 1;",
+])("suppression text inside multiline literals does not hide diagnostics", (text) => {
+  const { root, file } = fixture(text);
+  const diagnostic = finding(file, 1);
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [diagnostic],
+  });
+  expect(result.diagnostics).toEqual([diagnostic]);
+  expect(result.suppressedDiagnostics).toEqual([]);
+});
+
+test("multiline block and HTML comments still support suppressions", () => {
+  const block = fixture(
+    "/*\n * doctor-disable test/example -- block reason\n */\nconst value = 1;",
+  );
+  const html = fixture("<!--\n doctor-disable test/example -- html reason\n-->\nconst value = 1;");
+  for (const [index, { root, file }] of [block, html].entries()) {
+    const result = applyDiagnosticPolicy({
+      root,
+      config: {},
+      options: {},
+      diagnostics: [finding(file, 1)],
+    });
+    expect(result.diagnostics, `fixture ${index}`).toEqual([]);
+    expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: expect.any(String) }]);
+  }
+});
+
 test("a suppression without a reason does not consume the next source line as its reason", () => {
   const { root, file } = fixture("// doctor-disable-next-line test/example\nconst ignored = 2;");
   const result = applyDiagnosticPolicy({
