@@ -1,4 +1,4 @@
-import { AnyNode, createRule } from "./shared.js";
+import { AnyNode, createRule, nearestFunctionOrProgram } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 export const returnNavigateToInMiddleware = createRule({
@@ -21,29 +21,61 @@ export const returnNavigateToInMiddleware = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "navigateTo")) return;
-        const fixStart =
-          node.__doctorParent?.type === "AwaitExpression" ? node.__doctorParent.start : node.start;
-        const before = ctx.file.text.slice(Math.max(0, fixStart - 20), fixStart);
-        if (!/\breturn\s+$/.test(before)) {
-          ctx.report(
-            diagnostics.NUXT0052({
-              why: "Route middleware must return navigateTo() so Nuxt can stop or redirect the navigation.",
-              fix: "Add return before navigateTo().",
-            }),
-            {
-              ruleId: "nuxt/routing/return-navigateto-in-middleware",
-              severity: "error",
-              category: "routing",
-              file: ctx.file.path,
-              range: ctx.range(node),
-              fix: {
-                kind: "safe",
-                edits: [{ range: { start: fixStart, end: fixStart }, text: "return " }],
-              },
-            },
-          );
-        }
+        const expression = navigationExpression(node);
+        if (isReturned(expression)) return;
+        const statement = expression.__doctorParent;
+        const scope = nearestFunctionOrProgram(expression);
+        const fixStart = expression.start;
+        ctx.report(
+          diagnostics.NUXT0052({
+            why: "Route middleware must return navigateTo() so Nuxt can stop or redirect the navigation.",
+            fix: "Return the navigateTo() result from the route middleware.",
+          }),
+          {
+            ruleId: "nuxt/routing/return-navigateto-in-middleware",
+            severity: "error",
+            category: "routing",
+            file: ctx.file.path,
+            range: ctx.range(node),
+            fix:
+              statement?.type === "ExpressionStatement" && scope && scope.type !== "Program"
+                ? {
+                    kind: "safe",
+                    edits: [{ range: { start: fixStart, end: fixStart }, text: "return " }],
+                  }
+                : null,
+          },
+        );
       },
     };
   },
 });
+
+function navigationExpression(node: AnyNode): AnyNode {
+  let current = node;
+  while (
+    [
+      "AwaitExpression",
+      "ParenthesizedExpression",
+      "TSAsExpression",
+      "TSSatisfiesExpression",
+      "TSNonNullExpression",
+      "TSTypeAssertion",
+    ].includes(current.__doctorParent?.type)
+  )
+    current = current.__doctorParent;
+  return current;
+}
+
+function isReturned(node: AnyNode): boolean {
+  const parent = node.__doctorParent;
+  if (!parent) return false;
+  if (parent.type === "ReturnStatement" && parent.argument === node) return true;
+  if (parent.type === "ArrowFunctionExpression" && parent.body === node) return true;
+  if (
+    parent.type === "ConditionalExpression" &&
+    (parent.consequent === node || parent.alternate === node)
+  )
+    return isReturned(navigationExpression(parent));
+  return false;
+}
