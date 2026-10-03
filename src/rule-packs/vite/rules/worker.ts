@@ -1,5 +1,7 @@
 import { dirname, resolve } from "pathe";
+import { parseForESLint } from "@typescript-eslint/parser";
 import { createRule, type RuleContext } from "../../../core/index.js";
+import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
 import { memberPath, readProjectSources, staticString, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
@@ -86,6 +88,7 @@ export const noNodeApiInWorker = createRule({
     if (isServerSidePath(ctx.file.relativePath)) return;
     const workerEntries = await browserWorkerEntries(ctx);
     if (!isExplicitWorkerEntry(ctx.file.relativePath) && !workerEntries.has(ctx.file.path)) return;
+    let processReferences: Set<number> | undefined;
     return {
       ImportDeclaration(node: AnyNode) {
         const source = String(node.source?.value ?? "");
@@ -106,6 +109,11 @@ export const noNodeApiInWorker = createRule({
       },
       ScriptNode(node: AnyNode) {
         if (node.type !== "Identifier" || node.name !== "process") return;
+        if (
+          ctx.helpers.isTypeOnlyContext(node) ||
+          !(processReferences ??= globalProcessReferences(ctx)).has(node.start)
+        )
+          return;
         ctx.report(
           diagnostics.VITE0020({
             why: "Browser workers should not rely on process.",
@@ -123,6 +131,32 @@ export const noNodeApiInWorker = createRule({
     };
   },
 });
+
+function globalProcessReferences(ctx: RuleContext): Set<number> {
+  const parsedVueScript = ctx.file.sfc
+    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
+    : undefined;
+  const source = parsedVueScript?.text ?? ctx.file.text;
+  try {
+    const { scopeManager } = parseForESLint(source, {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: {
+        jsx:
+          parsedVueScript?.lang === "jsx" ||
+          parsedVueScript?.lang === "tsx" ||
+          /\.[jt]sx$/.test(ctx.file.relativePath),
+      },
+    });
+    return new Set(
+      scopeManager.globalScope?.through
+        .filter((reference) => reference.identifier.name === "process")
+        .map((reference) => reference.identifier.range[0]),
+    );
+  } catch {
+    return new Set();
+  }
+}
 
 function isWorkerConstructor(node: AnyNode): boolean {
   return (
