@@ -325,6 +325,32 @@ for (const item of cases) {
   });
 }
 
+test("nitro/server/no-browser-api reports browser globals used in object shorthand", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInServer,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": "export default defineEventHandler(() => ({ window }))",
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual(["nitro/server/no-browser-api"]);
+});
+
+test("nuxt/hydration/no-browser-global-in-universal-code reports browser globals used in object shorthand", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": '<script setup lang="ts">const state = { window }</script>',
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "nuxt/hydration/no-browser-global-in-universal-code",
+  ]);
+});
+
 test("nuxt/context/no-legacy-process-client-server activates for compatibility 5", async () => {
   const result = await runProjectFixture({
     framework: "nuxt",

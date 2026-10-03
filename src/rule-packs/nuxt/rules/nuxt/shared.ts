@@ -144,8 +144,7 @@ export function includeTrailingNewline(text: string, end: number) {
 export function isObjectPropertyKey(node: AnyNode) {
   const parent = node.parent ?? node.__doctorParent;
   return (
-    (parent?.type === "Property" &&
-      ((parent.key === node && !parent.computed) || parent.shorthand)) ||
+    (parent?.type === "Property" && parent.key === node && !parent.computed && !parent.shorthand) ||
     (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) ||
     (parent?.type === "StaticMemberExpression" && parent.property === node)
   );
