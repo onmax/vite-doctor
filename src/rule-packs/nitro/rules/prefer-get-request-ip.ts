@@ -1,4 +1,4 @@
-import { type AnyNode, createRule, report } from "./shared.js";
+import { type AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 import { isIpHeaderRead, isRequestSensitiveUse } from "./request-helpers.js";
 
 export const preferGetRequestIp = createRule({
@@ -16,7 +16,7 @@ export const preferGetRequestIp = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    if (!isNitroServerFile(ctx)) return;
     return {
       ScriptNode(node: AnyNode) {
         if (!isIpHeaderRead(node, ctx.file.text)) return;

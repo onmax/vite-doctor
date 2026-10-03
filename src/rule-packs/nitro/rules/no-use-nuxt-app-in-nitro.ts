@@ -1,4 +1,4 @@
-import { AnyNode, createRule, report } from "./shared.js";
+import { AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 
 export const noUseNuxtAppInNitro = createRule({
   meta: {
@@ -14,7 +14,7 @@ export const noUseNuxtAppInNitro = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    if (!isNitroServerFile(ctx)) return;
     return {
       ScriptNode(node: AnyNode) {
         if (ctx.helpers.isCall(node, "useNuxtApp"))

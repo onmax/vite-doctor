@@ -1,11 +1,14 @@
 import {
   type AnyNode,
   createRule,
+  isNitroServerFile,
   nearestFunctionOrProgram,
   report,
   sourceForNode,
   walkScriptLocal,
 } from "./shared.js";
+export { isNitroRouteFile } from "./shared.js";
+
 import type { RuleContext } from "../../../core/index.js";
 
 export interface RawInputMatch {
@@ -46,7 +49,7 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
       requires: { script: true, nitro: true },
     },
     create(ctx) {
-      if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+      if (!isNitroServerFile(ctx)) return;
       return {
         ScriptNode(node: AnyNode) {
           const match = rawInputValidatedNearby(
@@ -150,11 +153,6 @@ export function isInIfStatementTest(node: AnyNode) {
     current = parent;
   }
   return false;
-}
-
-export function isNitroRouteFile(relativePath: string) {
-  const path = normalizePath(relativePath);
-  return /^(?:(?:app\/)?server\/)?(?:api|routes)\/.+\.[cm]?[jt]s$/.test(path);
 }
 
 export function routeMethodSuffix(relativePath: string) {

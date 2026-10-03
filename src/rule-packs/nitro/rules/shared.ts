@@ -63,3 +63,17 @@ export function isObjectPropertyKey(node: AnyNode) {
     (parent?.type === "StaticMemberExpression" && parent.property === node)
   );
 }
+
+export function isNitroRouteFile(relativePath: string) {
+  const path = relativePath.replace(/\\/g, "/");
+  return /^(?:(?:app\/)?server\/)?(?:api|routes)\/.+\.[cm]?[jt]s$/.test(path);
+}
+
+export function isNitroServerFile(ctx: RuleContext) {
+  const path = ctx.file.relativePath.replace(/\\/g, "/");
+  return (
+    ctx.helpers.isNuxtServerFile(path) ||
+    (ctx.project.framework === "nitro" &&
+      (isNitroRouteFile(path) || /^middleware\/.+\.[cm]?[jt]s$/.test(path)))
+  );
+}

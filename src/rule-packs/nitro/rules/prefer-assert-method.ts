@@ -1,4 +1,4 @@
-import { type AnyNode, createRule, report } from "./shared.js";
+import { type AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 import { isNitroRouteFile, isSingleMethodCheck } from "./request-helpers.js";
 
 export const preferAssertMethod = createRule({
@@ -16,7 +16,7 @@ export const preferAssertMethod = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    if (!isNitroServerFile(ctx)) return;
     if (isNitroRouteFile(ctx.file.relativePath)) return;
     return {
       ScriptNode(node: AnyNode) {
