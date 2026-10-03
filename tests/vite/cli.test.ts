@@ -585,6 +585,65 @@ test("Vite plugin reports but does not fail in warn mode", async () => {
   });
 });
 
+test("Vite plugin keeps info-only reports at info log level", async () => {
+  const infoRule = createRule({
+    meta: {
+      id: "fixture/info-only",
+      title: "Info-only fixture",
+      category: "style",
+      severity: "info",
+      execution: "workspace",
+    },
+    create(ctx) {
+      return {
+        onProjectStart(project) {
+          ctx.report(
+            allDiagnostics.DOC9999({
+              why: "The fixture emits an informational diagnostic.",
+              fix: "Review the informational diagnostic.",
+            }),
+            {
+              ruleId: "fixture/info-only",
+              severity: "info",
+              category: "style",
+              file: project.root,
+            },
+          );
+        },
+      };
+    },
+  });
+
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+    },
+    async (root) => {
+      const plugin = doctor({
+        extensions: [
+          defineDoctorExtension({
+            name: "fixture/info-only",
+            rulePacks: [
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules: [infoRule],
+                presets: { recommended: ["fixture/info-only"] },
+              }),
+            ],
+          }),
+        ],
+      });
+      const levels = { info: [] as string[], warn: [] as string[] };
+      const logs = await runVitePlugin(plugin, root, "build", levels);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain("fixture/info-only");
+      expect(levels.info).toEqual(logs);
+      expect(levels.warn).toEqual([]);
+    },
+  );
+});
+
 test("Vite plugin contributes resolved config inventory to Doctor Run", async () => {
   const surfaceInventoryRule = createRule({
     meta: {
@@ -1146,11 +1205,18 @@ async function runVitePlugin(
   plugin: ReturnType<typeof doctor>,
   root: string,
   command: "build" | "serve",
+  levels?: { info: string[]; warn: string[] },
 ) {
   const logs: string[] = [];
   const logger = {
-    info: (message: string) => logs.push(message),
-    warn: (message: string) => logs.push(message),
+    info: (message: string) => {
+      logs.push(message);
+      levels?.info.push(message);
+    },
+    warn: (message: string) => {
+      logs.push(message);
+      levels?.warn.push(message);
+    },
   };
   const context: any = {
     error(message: string) {
