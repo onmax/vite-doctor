@@ -150,7 +150,7 @@ export function isObjectPropertyKey(node: AnyNode) {
   ) {
     const container = parent.parent ?? parent.__doctorParent;
     if (parent.shorthand && container?.type === "ObjectPattern") return true;
-    return !parent.shorthand;
+    return parent.key === node && !parent.shorthand;
   }
   return (
     (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) ||

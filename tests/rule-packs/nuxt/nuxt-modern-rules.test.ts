@@ -337,6 +337,18 @@ test("nitro/server/no-browser-api reports browser globals used in object shortha
   expect(result.diagnostics.map((item) => item.ruleId)).toEqual(["nitro/server/no-browser-api"]);
 });
 
+test("nitro/server/no-browser-api reports browser globals used in explicit property values", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInServer,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": "export default defineEventHandler(() => ({ value: window }))",
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual(["nitro/server/no-browser-api"]);
+});
+
 test("nitro/server/no-browser-api ignores browser-global names bound by destructuring", async () => {
   const result = await runRuleFixture({
     rule: noBrowserApiInServer,
@@ -355,6 +367,20 @@ test("nuxt/hydration/no-browser-global-in-universal-code reports browser globals
     framework: "nuxt",
     files: {
       "app/pages/index.vue": '<script setup lang="ts">const state = { window }</script>',
+    },
+  });
+
+  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+    "nuxt/hydration/no-browser-global-in-universal-code",
+  ]);
+});
+
+test("nuxt/hydration/no-browser-global-in-universal-code reports browser globals used in explicit property values", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserGlobalInUniversalCode,
+    framework: "nuxt",
+    files: {
+      "app/pages/index.vue": '<script setup lang="ts">const state = { value: window }</script>',
     },
   });
 
