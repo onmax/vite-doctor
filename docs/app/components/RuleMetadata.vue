@@ -23,7 +23,7 @@ const codes = computed(() =>
 </script>
 
 <template>
-  <div class="not-prose mt-4 border-y border-default py-4">
+  <div class="not-prose border-b border-default pb-6">
     <div class="flex flex-wrap items-center gap-2">
       <ULink
         v-for="code in codes"
@@ -62,7 +62,7 @@ const codes = computed(() =>
       >
         {{ ruleId }}
       </UButton>
-      <code v-else-if="ruleId" class="font-mono text-sm text-muted">{{ ruleId }}</code>
+      <code v-else-if="ruleId" class="font-mono text-sm text-highlighted">{{ ruleId }}</code>
       <UButton
         :to="sourceUrl"
         target="_blank"
