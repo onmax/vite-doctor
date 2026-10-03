@@ -240,72 +240,57 @@ function toggleTheme() {
         </div>
 
         <div class="relative min-w-0">
-          <div
-            class="overflow-hidden rounded-lg bg-[#0a0a0a] shadow-lg shadow-neutral-950/15 ring-1 ring-neutral-950/90 dark:shadow-black/30 dark:ring-white/10"
-          >
-            <div
-              class="flex items-center gap-2 border-b border-white/[0.08] bg-white/[0.025] px-4 py-2 text-xs font-medium text-neutral-500 sm:py-2.5"
-            >
-              <span class="inline-flex size-2 rounded-full bg-[#ff5f57]/80" aria-hidden="true" />
-              <span class="inline-flex size-2 rounded-full bg-[#ffbd2e]/80" aria-hidden="true" />
-              <span class="inline-flex size-2 rounded-full bg-[#28c840]/80" aria-hidden="true" />
-              <span class="ml-2 min-w-0 truncate font-mono text-neutral-500">~/your-app</span>
-              <span class="ml-auto hidden font-mono text-neutral-500 sm:inline">vite-doctor</span>
-            </div>
-            <div
-              class="space-y-3 px-4.5 py-4 font-mono text-[0.75rem]/5 text-neutral-300 sm:px-5 sm:py-5 sm:text-[0.8125rem]/6"
-            >
-              <p class="flex items-start gap-2">
-                <span class="select-none text-emerald-400/90" aria-hidden="true">$</span>
-                <span class="min-w-0 break-words text-neutral-100/95">
-                  pnpm dlx vite-doctor . --rules nuxt/hydration
-                </span>
+          <TerminalPanel cwd="~/your-app" title="vite-doctor">
+            <p class="flex items-start gap-2">
+              <span class="select-none text-emerald-400/90" aria-hidden="true">$</span>
+              <span class="min-w-0 break-words text-neutral-100/95">
+                pnpm dlx vite-doctor . --rules nuxt/hydration
+              </span>
+            </p>
+            <div class="space-y-0.5 text-neutral-400">
+              <p>
+                <span class="text-neutral-500">Detected:</span>
+                <span class="text-neutral-200"> Nuxt 4.4.6 + Vue 3.5.35</span>
               </p>
-              <div class="space-y-0.5 text-neutral-400">
-                <p>
-                  <span class="text-neutral-500">Detected:</span>
-                  <span class="text-neutral-200"> Nuxt 4.4.6 + Vue 3.5.35</span>
-                </p>
-                <p>
-                  <span class="text-neutral-500">Runtime:</span>
-                  Nuxt 4.4.6 → Nitro 2.13.4 → H3 1.15.11
-                </p>
-                <p>
-                  <span class="text-neutral-500">Confidence:</span>
-                  <span class="text-neutral-200"> 4 proven, 2 probable</span>
-                </p>
-              </div>
-              <div class="space-y-3 border-t border-white/[0.08] pt-3">
-                <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5">
-                  <span class="font-medium text-rose-300/90">NUXT0029</span>
-                  <div class="min-w-0">
-                    <p class="break-words text-neutral-100">
-                      window is browser-only and this file can run during SSR.
-                    </p>
-                    <p class="break-words text-neutral-600">app/components/IssuePanel.vue:14:15</p>
-                  </div>
-                </div>
-                <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5">
-                  <span class="font-medium text-amber-300/90">NUXT0031</span>
-                  <div class="min-w-0">
-                    <p class="break-words text-neutral-100">
-                      This template branches on client-only state during SSR.
-                    </p>
-                    <p class="break-words text-neutral-600">app/components/IssuePanel.vue:3:5</p>
-                  </div>
+              <p>
+                <span class="text-neutral-500">Runtime:</span>
+                Nuxt 4.4.6 → Nitro 2.13.4 → H3 1.15.11
+              </p>
+              <p>
+                <span class="text-neutral-500">Confidence:</span>
+                <span class="text-neutral-200"> 4 proven, 2 probable</span>
+              </p>
+            </div>
+            <div class="space-y-3 border-t border-white/[0.08] pt-3">
+              <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5">
+                <span class="font-medium text-rose-300/90">NUXT0029</span>
+                <div class="min-w-0">
+                  <p class="break-words text-neutral-100">
+                    window is browser-only and this file can run during SSR.
+                  </p>
+                  <p class="break-words text-neutral-600">app/components/IssuePanel.vue:14:15</p>
                 </div>
               </div>
-              <div
-                class="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-white/[0.08] pt-3 text-neutral-500"
-              >
-                <span class="font-medium text-rose-300/90">4 errors</span>
-                <span class="text-neutral-700" aria-hidden="true">/</span>
-                <span class="text-amber-300/90">2 warnings</span>
-                <span class="text-neutral-700" aria-hidden="true">/</span>
-                <span>0 safe fixes available</span>
+              <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5">
+                <span class="font-medium text-amber-300/90">NUXT0031</span>
+                <div class="min-w-0">
+                  <p class="break-words text-neutral-100">
+                    This template branches on client-only state during SSR.
+                  </p>
+                  <p class="break-words text-neutral-600">app/components/IssuePanel.vue:3:5</p>
+                </div>
               </div>
             </div>
-          </div>
+            <div
+              class="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-white/[0.08] pt-3 text-neutral-500"
+            >
+              <span class="font-medium text-rose-300/90">4 errors</span>
+              <span class="text-neutral-700" aria-hidden="true">/</span>
+              <span class="text-amber-300/90">2 warnings</span>
+              <span class="text-neutral-700" aria-hidden="true">/</span>
+              <span>0 safe fixes available</span>
+            </div>
+          </TerminalPanel>
         </div>
       </section>
 
@@ -379,16 +364,61 @@ function toggleTheme() {
           />
         </div>
 
-        <div
-          class="overflow-hidden rounded-lg bg-[#0a0a0a] shadow-lg shadow-neutral-950/15 ring-1 ring-neutral-950/90 dark:shadow-black/30 dark:ring-white/10"
-        >
-          <img
-            src="https://drop.vitehub.dev/i/403daee7-8a77-4cfa-8fbd-1ebf6c2ce67f.png"
-            alt="Vite Doctor migration report for a Nuxt 5 upgrade, including the command and the source, dependency, and configuration changes that need to land together."
-            class="block h-auto w-full"
-            loading="lazy"
-          />
-        </div>
+        <TerminalPanel cwd="~/your-app" title="vite-doctor migrate">
+          <p class="flex items-start gap-2">
+            <span class="select-none text-emerald-400/90" aria-hidden="true">$</span>
+            <span class="min-w-0 break-words text-neutral-100/95">
+              pnpm dlx vite-doctor migrate . --to nuxt@5
+            </span>
+          </p>
+          <p class="text-neutral-400">
+            <span class="text-neutral-500">Target:</span>
+            <span class="text-neutral-200"> nuxt@5</span>
+            <span class="text-neutral-500"> from Nuxt 4.4.6 → Nitro 2.13.4 → H3 1.15.11</span>
+          </p>
+          <div class="space-y-2 border-t border-white/[0.08] pt-3">
+            <p class="text-neutral-500">Fix now on the installed runtime</p>
+            <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-1">
+              <span class="font-medium text-rose-300/90">NITRO0014</span>
+              <div class="min-w-0">
+                <p class="break-words text-neutral-100">
+                  nitropack/config is not a supported Nitro 3 import.
+                </p>
+                <p class="break-words text-neutral-600">→ import defineConfig from "nitro"</p>
+              </div>
+              <span class="font-medium text-amber-300/90">NITRO0016</span>
+              <div class="min-w-0">
+                <p class="break-words text-neutral-100">
+                  sendRedirect(event, ...) is an H3 v2 compatibility API.
+                </p>
+                <p class="break-words text-neutral-600">→ return redirect(location, status)</p>
+              </div>
+            </div>
+          </div>
+          <div class="space-y-2 border-t border-white/[0.08] pt-3">
+            <p class="text-neutral-500">Land with the upgrade</p>
+            <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-1">
+              <span class="font-medium text-sky-300/90">nuxt</span>
+              <p class="min-w-0 break-words text-neutral-100">
+                4.4.6 → nuxt@5, future.compatibilityVersion 5
+              </p>
+              <span class="font-medium text-amber-300/90">NUXT0073</span>
+              <div class="min-w-0">
+                <p class="break-words text-neutral-100">Compatibility 5 ignores unhead.legacy.</p>
+                <p class="break-words text-neutral-100">
+                  Compatibility 5 ignores experimental.parseErrorData.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div
+            class="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-white/[0.08] pt-3 text-neutral-500"
+          >
+            <span class="font-medium text-neutral-200">4 diagnostics</span>
+            <span class="text-neutral-700" aria-hidden="true">/</span>
+            <span>2 dependency and config changes</span>
+          </div>
+        </TerminalPanel>
       </section>
 
       <section id="rules" class="pb-16 sm:pb-20">
@@ -410,14 +440,20 @@ function toggleTheme() {
             </p>
           </div>
 
-          <div
-            class="hidden rounded-lg border border-neutral-950/10 px-3 py-2 text-sm text-neutral-500 lg:flex dark:border-white/10 dark:text-neutral-400"
-            aria-hidden="true"
+          <NuxtLink
+            to="/diagnostics/NUXT0032"
+            class="hidden items-center gap-2.5 rounded-lg border border-neutral-950/10 px-3 py-2 text-sm text-neutral-600 transition-colors hover:border-neutral-950/20 hover:bg-neutral-50/70 lg:inline-flex dark:border-white/10 dark:text-neutral-400 dark:hover:border-white/20 dark:hover:bg-white/[0.03] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
           >
-            <span class="font-mono text-neutral-900 dark:text-neutral-100">NUXT0032</span>
-            <span class="mx-2 text-neutral-300 dark:text-neutral-700">-></span>
-            <span>Nuxt installation</span>
-          </div>
+            <span class="font-mono font-medium text-neutral-900 dark:text-neutral-100"
+              >NUXT0032</span
+            >
+            <UIcon
+              name="i-lucide-arrow-right"
+              class="size-3.5 shrink-0 text-neutral-400 dark:text-neutral-500"
+              aria-hidden="true"
+            />
+            <span>Open the diagnostic page</span>
+          </NuxtLink>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
