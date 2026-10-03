@@ -31,6 +31,7 @@ export default defineContentConfig({
         source: z.string(),
         sourceUrl: z.string(),
         docsUrl: z.string().optional(),
+        diagnosticCodes: z.array(z.string()),
       }),
     }),
     diagnostics: defineCollection({
@@ -42,6 +43,7 @@ export default defineContentConfig({
         fix: z.string(),
         docsUrl: z.string().optional(),
         ruleId: z.string(),
+        rulePath: z.string(),
         pack: z.string(),
         severity: z.enum(["error", "warn", "info"]),
         category: z.string(),

@@ -29,6 +29,11 @@ export default defineNuxtConfig({
 
   css: ["~/assets/css/main.css"],
 
+  site: {
+    name: "Vite Doctor",
+    url: "https://vite-doctor.onmax.me",
+  },
+
   icon: {
     clientBundle: {
       icons: [

@@ -18,8 +18,12 @@ if (!rule.value) {
   throw createError({ statusCode: 404, statusMessage: "Rule not found" });
 }
 
+const headline = computed(() =>
+  [meta.value.label, ...(rule.value?.diagnosticCodes ?? [])].join(" · "),
+);
+
 useHead(() => ({
-  title: `${rule.value?.title || "Rule"} - ${meta.value.label} Doctor`,
+  title: rule.value?.title || "Rule",
   meta: [
     {
       name: "description",
@@ -34,7 +38,7 @@ useHead(() => ({
     <UPageHeader
       :title="rule.title"
       :description="rule.description"
-      :headline="meta.label"
+      :headline="headline"
       :ui="{ wrapper: 'flex-row items-center flex-wrap justify-between' }"
     >
       <template #links>

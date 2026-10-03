@@ -32,6 +32,7 @@ export interface RuleDocument {
   fixable: RuleFix;
   docsUrl: string;
   sourceUrl: string;
+  diagnosticCodes: string[];
 }
 
 export interface DiagnosticDocument {
@@ -48,6 +49,9 @@ export interface DiagnosticDocument {
   framework: RuleFramework;
   source: string;
   sourceUrl: string;
+  rulePath: string;
+  fixable: RuleFix;
+  examples: RuleExample[];
   path: string;
   key: string;
 }
@@ -66,6 +70,7 @@ export interface RuleCatalogEntry {
   framework: RuleFramework;
   source: string;
   sourceUrl: string;
+  diagnosticCodes: string[];
 }
 
 export interface RulesReport {
@@ -159,6 +164,9 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
         framework: rule.framework,
         source: rule.source,
         sourceUrl: rule.sourceUrl,
+        rulePath: rule.path,
+        fixable: rule.fixable,
+        examples: rule.examples,
         path,
         key: `${path.slice(1)}.md`,
       };
@@ -182,6 +190,9 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       framework: "nuxt",
       source,
       sourceUrl: githubSourceUrl(source),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
       path: "/diagnostics/DOC0022",
       key: "diagnostics/DOC0022.md",
     },
@@ -214,7 +225,7 @@ function readDiagnosticCodeMaps() {
 }
 
 function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
-  return [
+  const lines = [
     "---",
     `title: ${yamlString(diagnostic.title)}`,
     `description: ${yamlString(diagnostic.description)}`,
@@ -223,6 +234,7 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
     `fix: ${yamlString(diagnostic.fix)}`,
     `docsUrl: ${yamlString(diagnostic.docsUrl || "")}`,
     `ruleId: ${yamlString(diagnostic.ruleId)}`,
+    `rulePath: ${yamlString(diagnostic.rulePath)}`,
     `pack: ${yamlString(diagnostic.pack)}`,
     `severity: ${yamlString(diagnostic.severity)}`,
     `category: ${yamlString(diagnostic.category)}`,
@@ -231,26 +243,55 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
     `sourceUrl: ${yamlString(diagnostic.sourceUrl)}`,
     "---",
     "",
-    `\`${diagnostic.code}\``,
-    "",
-    diagnostic.description,
+    renderMdcComponent("rule-metadata", {
+      pack: diagnostic.pack,
+      category: diagnostic.category,
+      severity: diagnostic.severity,
+      fix: diagnostic.fixable,
+      source: diagnostic.source,
+      sourceUrl: diagnostic.sourceUrl,
+      docsUrl: diagnostic.docsUrl || "",
+      ruleId: diagnostic.ruleId,
+      rulePath: diagnostic.rulePath,
+    }),
     "",
     "## Why it happens",
     "",
-    diagnostic.why,
+    escapeMarkdownText(diagnostic.why),
     "",
     "## Fix",
     "",
-    diagnostic.fix,
+    escapeMarkdownText(diagnostic.fix),
     "",
-    ...(diagnostic.docsUrl
-      ? ["## Useful links", "", `- [Upstream docs](${diagnostic.docsUrl})`, ""]
-      : []),
-    "## Related rule",
+  ];
+
+  if (diagnostic.examples.length) {
+    lines.push("## Example", "", ...diagnostic.examples.flatMap(renderExample));
+  }
+  if (diagnostic.rulePath) {
+    lines.push(
+      "## Verify the fix",
+      "",
+      "Run only this rule after editing so the report stays focused on the diagnostic you are closing:",
+      "",
+      "```bash",
+      renderRuleCommand({ id: diagnostic.ruleId, framework: diagnostic.framework }),
+      "```",
+      "",
+    );
+  }
+  if (diagnostic.docsUrl) {
+    lines.push("## Useful links", "", `- [Upstream docs](${diagnostic.docsUrl})`, "");
+  }
+  lines.push("## Related rule", "");
+  lines.push(
+    diagnostic.rulePath
+      ? `- [\`${diagnostic.ruleId}\`](${diagnostic.rulePath})`
+      : `- \`${diagnostic.ruleId}\``,
     "",
-    `- \`${diagnostic.ruleId}\``,
-    "",
-  ].join("\n");
+  );
+
+  return lines.join("\n");
 }
 
 function collectRuleDocuments() {
@@ -288,8 +329,9 @@ function collectRuleDocuments() {
     .filter((file) => file.endsWith(".ts") && file !== "shared.ts")
     .sort()
     .map((file) => join(shadcnRulesDir, file));
+  const codesByRuleId = readDiagnosticCodeMaps();
 
-  return [
+  return withDiagnosticCodes(codesByRuleId, [
     ...withRulePath(
       collectRules(packageSources, "vite-doctor/package", "package"),
       "/package/rules",
@@ -303,7 +345,14 @@ function collectRuleDocuments() {
     ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
     ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
     ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
-  ];
+  ]);
+}
+
+function withDiagnosticCodes(
+  codesByRuleId: Map<string, string[]>,
+  rules: Array<Omit<RuleDocument, "diagnosticCodes">>,
+): RuleDocument[] {
+  return rules.map((rule) => ({ ...rule, diagnosticCodes: codesByRuleId.get(rule.id) ?? [] }));
 }
 
 function collectRules(files: string[], defaultPack: string, framework: RuleFramework) {
@@ -359,7 +408,9 @@ function loadParser() {
   return parser;
 }
 
-function applyDocumentationMetadata<T extends Omit<RuleDocument, "path" | "key">>(rule: T): T {
+function applyDocumentationMetadata<
+  T extends Omit<RuleDocument, "path" | "key" | "diagnosticCodes">,
+>(rule: T): T {
   const metadata = ruleDocumentationMetadata[rule.id as keyof typeof ruleDocumentationMetadata];
   const documented = {
     ...rule,
@@ -372,7 +423,9 @@ function applyDocumentationMetadata<T extends Omit<RuleDocument, "path" | "key">
   return documented;
 }
 
-function assertCompleteRuleDocumentation(rule: Omit<RuleDocument, "path" | "key">) {
+function assertCompleteRuleDocumentation(
+  rule: Omit<RuleDocument, "path" | "key" | "diagnosticCodes">,
+) {
   const missing: string[] = [];
   if (!rule.description) missing.push("description");
   if (!rule.why) missing.push("why");
@@ -401,9 +454,9 @@ function ruleSourcesFromIndex(indexFile: string) {
 }
 
 function withRulePath(
-  rules: Array<Omit<RuleDocument, "path" | "key">>,
+  rules: Array<Omit<RuleDocument, "path" | "key" | "diagnosticCodes">>,
   basePath: string,
-): RuleDocument[] {
+): Array<Omit<RuleDocument, "diagnosticCodes">> {
   return rules.map((rule) => {
     const path = `${basePath}/${rulePath(rule)}`;
     return {
@@ -432,14 +485,13 @@ function renderRulePage(rule: RuleDocument) {
     `source: ${yamlString(rule.source)}`,
     `sourceUrl: ${yamlString(rule.sourceUrl)}`,
     `docsUrl: ${yamlString(rule.docsUrl || "")}`,
+    `diagnosticCodes: ${JSON.stringify(rule.diagnosticCodes)}`,
     "---",
     "",
-    `\`${rule.id}\``,
+    renderBadgeRow(rule),
     "",
   ];
 
-  if (rule.description) lines.push(escapeMarkdownText(rule.description), "");
-  lines.push(renderBadgeRow(rule), "");
   if (rule.id === "nuxt/review/api-authorization-coverage")
     lines.push(
       "This opt-in rule requires a `doctor.config.ts` that registers `createNuxtAuthorizationReviewExtension`. See the [Nuxt authorization review setup](/nuxt#optional-api-authorization-review) before running it.",
@@ -467,6 +519,8 @@ function renderBadgeRow(rule: RuleDocument) {
     source: rule.source,
     sourceUrl: rule.sourceUrl,
     docsUrl: rule.docsUrl || "",
+    ruleId: rule.id,
+    diagnosticCodes: rule.diagnosticCodes.join(","),
   });
 }
 
@@ -804,5 +858,6 @@ function toCatalogRule(rule: RuleDocument) {
     framework: rule.framework,
     source: rule.source,
     sourceUrl: rule.sourceUrl,
+    diagnosticCodes: rule.diagnosticCodes,
   };
 }

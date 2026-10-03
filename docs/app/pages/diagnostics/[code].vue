@@ -1,20 +1,30 @@
 <script setup lang="ts">
+import { categoryLabel, FRAMEWORK_META, type Framework } from "../../utils/rule-metadata";
+
+definePageMeta({ layout: "docs" });
+
 const route = useRoute();
 const code = computed(() => String(route.params.code));
-const path = computed(() => `/diagnostics/${code.value}`);
 
 const { data: diagnostic } = await useAsyncData(
-  () => `diagnostic-content-${path.value}`,
+  () => `diagnostic-content-${code.value}`,
   () => queryCollection("diagnostics").where("code", "=", code.value).first(),
-  { watch: [path] },
+  { watch: [code] },
 );
 
 if (!diagnostic.value) {
   throw createError({ statusCode: 404, statusMessage: "Diagnostic not found" });
 }
 
+const meta = computed(() => FRAMEWORK_META[diagnostic.value?.framework as Framework]);
+const ruleTitle = computed(() => diagnostic.value?.title.replace(/^[A-Z]+\d+:\s*/, "") ?? "");
+const headline = computed(() =>
+  [meta.value?.label, categoryLabel(diagnostic.value?.category ?? "")].filter(Boolean).join(" · "),
+);
+const tocPage = computed(() => diagnostic.value as any);
+
 useHead(() => ({
-  title: `${diagnostic.value?.code || "Diagnostic"} - Doctor`,
+  title: diagnostic.value?.title || code.value,
   meta: [
     {
       name: "description",
@@ -25,25 +35,49 @@ useHead(() => ({
 </script>
 
 <template>
-  <main class="mx-auto max-w-4xl px-6 py-10 sm:px-10">
-    <div class="mb-8">
-      <UButton
-        to="/vite/rules"
-        color="neutral"
-        variant="link"
-        icon="i-lucide-arrow-left"
-        class="px-0"
-      >
-        Rules
-      </UButton>
-      <h1 class="mt-3 text-3xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-100">
-        {{ diagnostic?.code }}
-      </h1>
-      <p class="mt-3 text-base text-neutral-600 dark:text-neutral-400">
-        {{ diagnostic?.description }}
-      </p>
-    </div>
+  <UPage v-if="diagnostic">
+    <UPageHeader
+      :headline="headline"
+      :description="diagnostic.description"
+      :ui="{ wrapper: 'flex-row items-center flex-wrap justify-between' }"
+    >
+      <template #title>
+        <span class="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <code
+            class="rounded-md bg-primary/10 px-2 py-0.5 font-mono text-[0.7em] font-semibold text-primary"
+          >
+            {{ diagnostic.code }}
+          </code>
+          <span>{{ ruleTitle }}</span>
+        </span>
+      </template>
+      <template #links>
+        <UButton
+          v-if="diagnostic.rulePath"
+          :to="diagnostic.rulePath"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-book-open"
+        >
+          Rule page
+        </UButton>
+        <UButton
+          :to="`/${diagnostic.framework}/rules`"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-list-checks"
+        >
+          {{ meta?.label }} rules
+        </UButton>
+      </template>
+    </UPageHeader>
 
-    <ContentRenderer v-if="diagnostic" :value="diagnostic" />
-  </main>
+    <UPageBody>
+      <RuleContent :rule="diagnostic" />
+    </UPageBody>
+
+    <template #right>
+      <DocsAsideRight :page="tocPage" />
+    </template>
+  </UPage>
 </template>

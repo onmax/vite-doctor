@@ -11,7 +11,7 @@ const framework = computed(() => String(route.params.framework) as Framework);
 const meta = computed(() => FRAMEWORK_META[framework.value]);
 
 useHead(() => ({
-  title: `${meta.value.label} rules - Vite Doctor`,
+  title: `${meta.value.label} rules`,
   meta: [
     {
       name: "description",

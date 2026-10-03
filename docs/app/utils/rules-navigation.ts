@@ -1,7 +1,7 @@
 import type { ContentNavigationItem } from "@nuxt/content";
-import { FRAMEWORK_META, frameworkOfPack, type Framework } from "./rule-metadata.js";
+import { categoryLabel, FRAMEWORK_META, frameworkOfPack, type Framework } from "./rule-metadata.js";
 
-type RuleNavigationEntry = {
+export type RuleNavigationEntry = {
   path: string;
   title: string;
   ruleId: string;
@@ -10,10 +10,17 @@ type RuleNavigationEntry = {
   pack?: string;
 };
 
-type DiagnosticNavigationEntry = {
+export type DiagnosticNavigationEntry = {
   code: string;
   ruleId: string;
+  path?: string;
+  framework?: Framework;
 };
+
+export interface RulesNavigationOptions {
+  activePath?: string;
+  includeDiagnostics?: boolean;
+}
 
 const frameworkNavigationOrder = [
   "typescript",
@@ -21,43 +28,67 @@ const frameworkNavigationOrder = [
   "vue",
   "vite",
   "nitro",
+  "package",
 ] as const satisfies Framework[];
 
 export function createRulesNavigation(
   rules: RuleNavigationEntry[],
   diagnostics: DiagnosticNavigationEntry[] = [],
+  options: RulesNavigationOptions = {},
 ): ContentNavigationItem[] {
-  const diagnosticCodeByRuleId = new Map(
-    diagnostics.map((diagnostic) => [diagnostic.ruleId, diagnostic.code]),
-  );
+  const activePath = options.activePath ?? "";
+  const frameworkOfRule = new Map(rules.map((rule) => [rule.ruleId, ruleFramework(rule)]));
+
   return frameworkNavigationOrder.map((framework) => {
     const meta = FRAMEWORK_META[framework];
-    const frameworkRules = rules
-      .filter((rule) => ruleFramework(rule) === framework)
-      .toSorted(compareRules);
+    const rulesPath = `/${framework}/rules`;
+    const frameworkRules = rules.filter((rule) => ruleFramework(rule) === framework);
+    const categories = groupRulesByCategory(frameworkRules).map(([category, items]) => {
+      const categoryPath = `${rulesPath}/${category}`;
+      return {
+        title: categoryLabel(category),
+        path: rulesPath,
+        defaultOpen: isWithin(activePath, categoryPath),
+        children: items.map((rule) => ({ title: rule.title, path: rule.path })),
+      };
+    });
+    const children: ContentNavigationItem[] = [
+      { title: "Installation", path: `/${framework}`, icon: "i-lucide-book-open" },
+      {
+        title: `${meta.label} rules`,
+        path: rulesPath,
+        icon: "i-lucide-list-checks",
+        badge: frameworkRules.length,
+      },
+      ...categories,
+    ];
+
+    if (options.includeDiagnostics) {
+      const frameworkDiagnostics = diagnostics
+        .filter(
+          (diagnostic) =>
+            (diagnostic.framework ?? frameworkOfRule.get(diagnostic.ruleId)) === framework,
+        )
+        .toSorted((left, right) => left.code.localeCompare(right.code));
+      if (frameworkDiagnostics.length) {
+        children.push({
+          title: "Diagnostic codes",
+          path: `/${framework}/diagnostics`,
+          defaultOpen: false,
+          children: frameworkDiagnostics.map((diagnostic) => ({
+            title: diagnostic.code,
+            path: diagnostic.path ?? `/diagnostics/${diagnostic.code}`,
+          })),
+        });
+      }
+    }
 
     return {
       title: meta.label,
       path: `/${framework}`,
       icon: meta.icon,
-      children: [
-        {
-          title: "Installation",
-          path: `/${framework}`,
-          icon: "i-lucide-book-open",
-        },
-        {
-          title: `${meta.label} rules`,
-          path: `/${framework}/rules`,
-          icon: "i-lucide-list-checks",
-          badge: frameworkRules.length,
-        },
-        ...frameworkRules.map((rule) => ({
-          title: diagnosticCodeByRuleId.get(rule.ruleId) || rule.ruleId,
-          path: rule.path,
-          ruleId: rule.ruleId,
-        })),
-      ],
+      defaultOpen: isWithin(activePath, `/${framework}`),
+      children,
     };
   });
 }
@@ -81,12 +112,54 @@ export function appendRulesNavigation(
   return [...merged, ...rulesNavigation.filter((item) => !existingPaths.has(item.path))];
 }
 
+// Nuxt UI search only indexes files reachable through navigation leaves, and it
+// turns every top-level item into a result group. Standalone pages such as /cli
+// need a group of their own so they stay searchable next to the framework groups.
+export function groupSearchNavigation(
+  navigation: ContentNavigationItem[],
+  label = "Docs",
+): ContentNavigationItem[] {
+  const pages = navigation.filter((item) => !item.children?.length);
+  const groups = navigation.filter((item) => item.children?.length);
+  if (!pages.length) return groups;
+  return [{ title: label, path: "/", children: pages }, ...groups];
+}
+
+// The sidebar shows diagnostics as their owning rule, so a diagnostic URL
+// resolves to that rule path when deciding which groups start open.
+export function resolveRulesActivePath(
+  routePath: string,
+  rules: Pick<RuleNavigationEntry, "path" | "ruleId">[],
+  diagnostics: Pick<DiagnosticNavigationEntry, "code" | "ruleId">[],
+) {
+  const code = routePath.match(/^\/diagnostics\/([^/]+)$/)?.[1];
+  if (!code) return routePath;
+  const ruleId = diagnostics.find((diagnostic) => diagnostic.code === code)?.ruleId;
+  return rules.find((rule) => rule.ruleId === ruleId)?.path ?? routePath;
+}
+
+export function rulesNavigationGroupKey(activePath: string) {
+  return activePath.split("/").slice(0, 4).join("/");
+}
+
+function groupRulesByCategory(rules: RuleNavigationEntry[]) {
+  const groups = new Map<string, RuleNavigationEntry[]>();
+  for (const rule of rules) {
+    const items = groups.get(rule.category) ?? [];
+    items.push(rule);
+    groups.set(rule.category, items);
+  }
+  return [...groups.entries()]
+    .toSorted(([left], [right]) => categoryLabel(left).localeCompare(categoryLabel(right)))
+    .map(([category, items]) => [category, items.toSorted(compareRules)] as const);
+}
+
+function isWithin(routePath: string, basePath: string) {
+  return routePath === basePath || routePath.startsWith(`${basePath}/`);
+}
+
 function compareRules(left: RuleNavigationEntry, right: RuleNavigationEntry) {
-  return (
-    left.category.localeCompare(right.category) ||
-    left.ruleId.localeCompare(right.ruleId) ||
-    left.title.localeCompare(right.title)
-  );
+  return left.title.localeCompare(right.title) || left.ruleId.localeCompare(right.ruleId);
 }
 
 function ruleFramework(rule: RuleNavigationEntry): Framework {

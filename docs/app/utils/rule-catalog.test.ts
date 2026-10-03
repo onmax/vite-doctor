@@ -11,7 +11,13 @@ import {
 } from "../../rules/source.js";
 import { useRuleExplorer } from "../composables/useRuleExplorer.js";
 import { normalizeCatalogRules, type RawRuleEntry } from "./rule-catalog.js";
-import { appendRulesNavigation, createRulesNavigation } from "./rules-navigation.js";
+import {
+  appendRulesNavigation,
+  createRulesNavigation,
+  groupSearchNavigation,
+  resolveRulesActivePath,
+  rulesNavigationGroupKey,
+} from "./rules-navigation.js";
 import { allDiagnostics } from "../../../src/core/index.ts";
 
 const internalDiagnosticCodes = [
@@ -195,39 +201,69 @@ test("rule source emits complete documentation for every rule", async () => {
   }
 });
 
-test("rules navigation uses diagnostic codes for multi-line registry entries", () => {
+test("rules navigation groups generated rules by category under rule titles", () => {
   const diagnostics = getDiagnosticDocuments();
-  const navigation = createRulesNavigation(
-    getRuleDocuments().map((rule) => ({
-      path: rule.path,
-      title: rule.title,
-      ruleId: rule.id,
-      category: rule.category,
-      framework: rule.framework,
-      pack: rule.pack,
-    })),
-    diagnostics,
-  );
+  const rules = getRuleDocuments().map((rule) => ({
+    path: rule.path,
+    title: rule.title,
+    ruleId: rule.id,
+    category: rule.category,
+    framework: rule.framework,
+    pack: rule.pack,
+  }));
+  const rulePath = "/nuxt/rules/hydration/no-time-dependent-render-without-nuxttime-or-clientonly";
+  const navigation = createRulesNavigation(rules, diagnostics, { activePath: rulePath });
+  const nuxt = navigation.find((item) => item.path === "/nuxt");
+  const hydration = nuxt?.children?.find((child) => child.title === "Hydration & SSR");
 
-  expect(
-    diagnostics.find(
-      (diagnostic) =>
-        diagnostic.ruleId ===
-        "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
-    )?.code,
-  ).toBe("NUXT0032");
-  expect(
-    navigation
-      .find((item) => item.path === "/nuxt")
-      ?.children?.find(
-        (child) =>
-          child.path ===
-          "/nuxt/rules/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
-      )?.title,
-  ).toBe("NUXT0032");
+  expect(nuxt?.defaultOpen).toBe(true);
+  expect(hydration?.title).toBe("Hydration & SSR");
+  expect(hydration?.path).toBe("/nuxt/rules");
+  expect(hydration?.defaultOpen).toBe(true);
+  expect(nuxt?.children?.find((child) => child.title === "Data fetching")?.defaultOpen).toBe(false);
+  expect(hydration?.children?.find((child) => child.path === rulePath)?.title).toBe(
+    getRuleDocuments().find(
+      (rule) =>
+        rule.id === "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
+    )?.title,
+  );
+  expect(navigation.find((item) => item.path === "/vue")?.defaultOpen).toBe(false);
+  expect(nuxt?.children?.some((child) => child.title === "Diagnostic codes")).toBe(false);
 });
 
-test("rules navigation keeps framework overview pages above rule links", () => {
+test("search navigation exposes diagnostic codes as reachable leaves", () => {
+  const diagnostics = getDiagnosticDocuments();
+  const rules = getRuleDocuments().map((rule) => ({
+    path: rule.path,
+    title: rule.title,
+    ruleId: rule.id,
+    category: rule.category,
+    framework: rule.framework,
+    pack: rule.pack,
+  }));
+  const navigation = createRulesNavigation(rules, diagnostics, { includeDiagnostics: true });
+  const codes = navigation
+    .find((item) => item.path === "/nuxt")
+    ?.children?.find((child) => child.title === "Diagnostic codes");
+
+  expect(codes?.defaultOpen).toBe(false);
+  expect(codes?.children?.find((child) => child.title === "NUXT0032")?.path).toBe(
+    "/diagnostics/NUXT0032",
+  );
+  expect(resolveRulesActivePath("/diagnostics/NUXT0032", rules, diagnostics)).toBe(
+    "/nuxt/rules/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
+  );
+  expect(resolveRulesActivePath("/cli", rules, diagnostics)).toBe("/cli");
+  expect(rulesNavigationGroupKey("/nuxt/rules/hydration/no-browser-global")).toBe(
+    "/nuxt/rules/hydration",
+  );
+  expect(groupSearchNavigation([{ title: "CLI", path: "/cli" }, ...navigation])[0]).toMatchObject({
+    title: "Docs",
+    children: [{ title: "CLI", path: "/cli" }],
+  });
+});
+
+test("rules navigation keeps framework overview pages above category groups", () => {
   const navigation = createRulesNavigation(sampleRules, [
     { code: "VUE0001", ruleId: "vue/reactivity/no-ref-as-operand" },
     { code: "NUXT0001", ruleId: "nuxt/fetch/no-raw-fetch-in-setup" },
@@ -240,6 +276,7 @@ test("rules navigation keeps framework overview pages above rule links", () => {
     "Vue",
     "Vite",
     "Nitro",
+    "Package",
   ]);
 
   expect(navigation.flatMap((item) => item.children?.map((child) => child.title) ?? [])).toEqual([
@@ -247,36 +284,29 @@ test("rules navigation keeps framework overview pages above rule links", () => {
     "TypeScript rules",
     "Installation",
     "Nuxt rules",
-    "NUXT0001",
+    "Data fetching",
     "Installation",
     "Vue rules",
-    "VUE0001",
+    "Reactivity",
     "Installation",
     "Vite rules",
-    "VITE0001",
+    "env",
     "Installation",
     "Nitro rules",
-  ]);
-
-  expect(navigation.flatMap((item) => item.children?.map((child) => child.path) ?? [])).toEqual([
-    "/typescript",
-    "/typescript/rules",
-    "/nuxt",
-    "/nuxt/rules",
-    "/nuxt/rules/fetch/no-raw-fetch-in-setup",
-    "/vue",
-    "/vue/rules",
-    "/vue/rules/reactivity/no-ref-as-operand",
-    "/vite",
-    "/vite/rules",
-    "/vite/rules/env/no-secret-prefix",
-    "/nitro",
-    "/nitro/rules",
+    "Installation",
+    "Package rules",
   ]);
 
   expect(
+    navigation
+      .find((item) => item.title === "Nuxt")
+      ?.children?.find((child) => child.title === "Data fetching")
+      ?.children?.map((rule) => [rule.title, rule.path]),
+  ).toEqual([["Avoid raw fetch in setup", "/nuxt/rules/fetch/no-raw-fetch-in-setup"]]);
+
+  expect(
     appendRulesNavigation([{ title: "CLI", path: "/cli" }], navigation).map((item) => item.title),
-  ).toEqual(["CLI", "TypeScript", "Nuxt", "Vue", "Vite", "Nitro"]);
+  ).toEqual(["CLI", "TypeScript", "Nuxt", "Vue", "Vite", "Nitro", "Package"]);
 });
 
 test("rule examples do not reuse generic placeholders", () => {

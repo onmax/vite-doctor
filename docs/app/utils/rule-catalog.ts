@@ -23,6 +23,7 @@ export interface RawRuleEntry {
   body?: unknown;
   source?: string;
   sourceUrl?: string;
+  diagnosticCodes?: string[];
 }
 
 export interface RulesReport {
@@ -46,6 +47,7 @@ export interface CatalogRule {
   source?: string;
   sourceUrl?: string;
   docsUrl?: string;
+  diagnosticCodes: string[];
 }
 
 export function normalizeCatalogRules(
@@ -72,11 +74,13 @@ export function normalizeCatalogRules(
       source: rule.source,
       sourceUrl: rule.sourceUrl,
       docsUrl: rule.docsUrl,
+      diagnosticCodes: rule.diagnosticCodes ?? [],
     };
     return {
       ...normalized,
       searchText: [
         normalized.ruleId,
+        ...normalized.diagnosticCodes,
         normalized.title,
         normalized.description,
         normalized.pack,
