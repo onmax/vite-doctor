@@ -23,4 +23,12 @@ test("uses Tailwind package activation and composed presets", () => {
     "shadcn/no-arbitrary-values",
     "shadcn/no-inline-styles",
   ]);
+  expect(shadcnRulePack.presets.strict).toEqual([
+    "shadcn/no-restyle",
+    "shadcn/no-raw-colors",
+    "shadcn/no-arbitrary-values",
+    "shadcn/no-inline-styles",
+    "shadcn/require-static-classes",
+    "shadcn/no-unknown-classes",
+  ]);
 });
