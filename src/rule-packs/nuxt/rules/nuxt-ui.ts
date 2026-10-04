@@ -1,3 +1,4 @@
+import { parse as parseVueSfc } from "@vue/compiler-sfc";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "pathe";
 import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
@@ -19,7 +20,7 @@ export const requireUAppRoot = createRule({
   },
   create(ctx) {
     const usesAppService = /\b(useToast|useOverlay)\s*\(/.test(ctx.file.text);
-    if (!usesAppService || projectHasUAppRoot(ctx.project.root) || /<\s*UApp\b/.test(ctx.file.text))
+    if (!usesAppService || projectHasUAppRoot(ctx.project.root) || hasUAppTemplate(ctx.file.text))
       return;
     return {
       ScriptNode(node: AnyNode) {
@@ -125,9 +126,17 @@ function projectHasUAppRoot(root: string): boolean {
   return ["app/app.vue", "app.vue", "app/layouts/default.vue", "layouts/default.vue"].some(
     (file) => {
       const absolute = join(root, file);
-      return existsSync(absolute) && /<\s*UApp\b/.test(readFileSync(absolute, "utf8"));
+      return existsSync(absolute) && hasUAppTemplate(readFileSync(absolute, "utf8"));
     },
   );
+}
+
+function hasUAppTemplate(source: string): boolean {
+  const ast = parseVueSfc(source).descriptor.template?.ast;
+  const hasProvider = (node: AnyNode): boolean =>
+    (node.type === 1 && node.tagType === 1 && ["UApp", "u-app"].includes(node.tag)) ||
+    (node.children ?? []).some(hasProvider);
+  return ast ? hasProvider(ast) : false;
 }
 
 function hasDoctorIgnore(ctx: Parameters<DoctorRule["create"]>[0], node: AnyNode): boolean {
