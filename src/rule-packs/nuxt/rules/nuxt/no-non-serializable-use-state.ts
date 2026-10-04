@@ -17,8 +17,8 @@ export const noNonSerializableUseState = createRule({
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useState")) return;
         if (!evidence.isPayloadSerialized(node)) return;
-        const init = node.arguments?.[1];
-        if (init && hasNonSerializableUseStateValue(init, ctx.file.text)) {
+        const init = node.arguments?.[1] ?? node.arguments?.[0];
+        if (init && hasNonSerializableUseStateValue(init)) {
           report(
             ctx,
             node,
@@ -34,25 +34,136 @@ export const noNonSerializableUseState = createRule({
   },
 });
 
-function hasNonSerializableUseStateValue(node: AnyNode, source: string): boolean {
-  if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression") {
-    return initializerReturnsNonSerializableValue(node.body, source);
+function unwrap(node: AnyNode): AnyNode {
+  while (
+    [
+      "TSAsExpression",
+      "TSSatisfiesExpression",
+      "TSNonNullExpression",
+      "ParenthesizedExpression",
+    ].includes(node?.type)
+  )
+    node = node.expression;
+  return node;
+}
+
+function hasNonSerializableUseStateValue(value: AnyNode): boolean {
+  const node = unwrap(value);
+  if (node?.type === "ArrowFunctionExpression" || node?.type === "FunctionExpression") {
+    return node.body.type === "BlockStatement"
+      ? returnedValue(node.body).unsupported
+      : hasUnsupportedPayloadValue(node.body);
   }
-  return expressionTextHasNonSerializableValue(node, source);
+  return false;
 }
 
-function initializerReturnsNonSerializableValue(body: AnyNode, source: string): boolean {
-  if (body.type !== "BlockStatement") return expressionTextHasNonSerializableValue(body, source);
-  return (body.body ?? []).some((statement: AnyNode) => {
+function returnedValue(node: AnyNode): { unsupported: boolean; terminates: boolean } {
+  const empty = { unsupported: false, terminates: false };
+  if (!node) return empty;
+  if (node.type === "ReturnStatement")
+    return { unsupported: hasUnsupportedPayloadValue(node.argument), terminates: true };
+  if (node.type === "ThrowStatement") return { unsupported: false, terminates: true };
+  if (node.type === "BlockStatement") {
+    let unsupported = false;
+    for (const statement of node.body) {
+      const result = returnedValue(statement);
+      unsupported ||= result.unsupported;
+      if (result.terminates) return { unsupported, terminates: true };
+    }
+    return { unsupported, terminates: false };
+  }
+  if (node.type === "TryStatement") {
+    const finalizer = returnedValue(node.finalizer);
+    if (finalizer.terminates) return finalizer;
+    const block = returnedValue(node.block);
+    const handler = returnedValue(node.handler?.body);
+    return {
+      unsupported: finalizer.unsupported || block.unsupported || handler.unsupported,
+      terminates: block.terminates && (!node.handler || handler.terminates),
+    };
+  }
+  if (node.type === "IfStatement") {
+    if (node.test.type === "Literal" && typeof node.test.value === "boolean")
+      return returnedValue(node.test.value ? node.consequent : node.alternate);
+    const consequent = returnedValue(node.consequent);
+    const alternate = returnedValue(node.alternate);
+    return {
+      unsupported: consequent.unsupported || alternate.unsupported,
+      terminates: consequent.terminates && alternate.terminates,
+    };
+  }
+  return empty;
+}
+
+function hasUnsupportedPayloadValue(value: AnyNode): boolean {
+  const node = unwrap(value);
+  if (!node) return false;
+  if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression") return true;
+  if (node.type === "ConditionalExpression") {
+    if (node.test.type === "Literal" && typeof node.test.value === "boolean")
+      return hasUnsupportedPayloadValue(node.test.value ? node.consequent : node.alternate);
     return (
-      statement.type === "ReturnStatement" &&
-      statement.argument &&
-      expressionTextHasNonSerializableValue(statement.argument, source)
+      hasUnsupportedPayloadValue(node.consequent) || hasUnsupportedPayloadValue(node.alternate)
     );
-  });
+  }
+  if (node.type === "SequenceExpression")
+    return hasUnsupportedPayloadValue(node.expressions.at(-1));
+  if (node.type === "ArrayExpression") return node.elements.some(hasUnsupportedPayloadValue);
+  if (node.type === "SpreadElement") return hasUnsupportedPayloadValue(node.argument);
+  if (node.type === "ObjectExpression")
+    return [...payloadProperties(node).values()].some((property) => property.unsupported);
+  if (node.type === "NewExpression" && node.callee?.type === "Identifier") {
+    if (node.callee.name === "WebSocket") return true;
+    if (node.callee.name === "Set") return hasUnsupportedPayloadValue(node.arguments[0]);
+    if (node.callee.name === "Map") return hasUnsupportedMapValue(node.arguments[0]);
+  }
+  return false;
 }
 
-function expressionTextHasNonSerializableValue(node: AnyNode, source: string): boolean {
-  const text = source.slice(node.start, node.end);
-  return /new\s+WebSocket\b|function\s*\(|=>\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(text);
+type PayloadProperty = { unsupported: boolean; kind: string };
+
+function payloadProperties(node: AnyNode): Map<unknown, PayloadProperty> {
+  const properties = new Map<unknown, PayloadProperty>();
+  for (const property of node.properties) {
+    if (property.type === "SpreadElement") {
+      const spread = unwrap(property.argument);
+      if (spread?.type === "ObjectExpression")
+        for (const [key, value] of payloadProperties(spread))
+          properties.set(key, { ...value, kind: "init" });
+      continue;
+    }
+    const key =
+      !property.computed && property.key.type === "Identifier"
+        ? property.key.name
+        : property.key.type === "Literal"
+          ? String(property.key.value)
+          : property;
+    if (property.kind === "set" && properties.get(key)?.kind === "get") continue;
+    properties.set(key, {
+      kind: property.kind,
+      unsupported:
+        property.kind === "set"
+          ? false
+          : property.kind === "get"
+            ? returnedValue(property.value.body).unsupported
+            : hasUnsupportedPayloadValue(property.value),
+    });
+  }
+  return properties;
+}
+
+function hasUnsupportedMapValue(value: AnyNode): boolean {
+  const node = unwrap(value);
+  if (node?.type !== "ArrayExpression") return false;
+  const entries = new Map<unknown, boolean>();
+  for (const element of node.elements) {
+    const entry = unwrap(element);
+    if (entry?.type !== "ArrayExpression") continue;
+    const key = unwrap(entry.elements[0]);
+    entries.set(
+      key?.type === "Literal" ? key.value : entry,
+      hasUnsupportedPayloadValue(key) || hasUnsupportedPayloadValue(entry.elements[1]),
+    );
+  }
+  return [...entries.values()].some(Boolean);
 }
