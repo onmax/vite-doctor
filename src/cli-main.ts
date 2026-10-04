@@ -400,6 +400,9 @@ function isLoadedConfigValidationError(error: unknown, options: DoctorRunOptions
   if (error.name === "DOC0019" || error.name === "DOC0020") return true;
   return (
     options.extends === undefined &&
-    (error.name === "DOC0016" || error.name === "DOC0017" || error.name === "DOC0018")
+    (error.name === "DOC0016" ||
+      error.name === "DOC0017" ||
+      error.name === "DOC0018" ||
+      error.name === "DOC0024")
   );
 }
