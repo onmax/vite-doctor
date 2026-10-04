@@ -4,6 +4,7 @@ import { requireEventRuntimeConfigInServer } from "../../../src/rule-packs/nitro
 
 test.each([
   "export default defineNitroPlugin(() => { console.log(useRuntimeConfig()) })",
+  "export default defineNitroPlugin(() => { (() => useRuntimeConfig())() })",
   "export default defineNitroPlugin(async () => { await initialize(); configure(useRuntimeConfig()) })",
   "export default defineNitroPlugin(function configure(app) { initialize(useRuntimeConfig()) })",
   "import { defineNitroPlugin as plugin } from 'nitropack/runtime'; export default plugin(() => initialize(useRuntimeConfig()))",

@@ -78,7 +78,8 @@ function pluginStartupCalls(ctx: RuleContext): Set<number> {
           (pluginFile && parent?.type === "ExportDefaultDeclaration") ||
           (parent?.type === "CallExpression" &&
             parent.arguments[0] === node &&
-            isPluginFactory(parent.callee));
+            isPluginFactory(parent.callee)) ||
+          (startup && parent?.type === "CallExpression" && parent.callee === node);
       }
       if (startup && node.type === "CallExpression") result.add(node.range[0]);
       for (const key of visitorKeys[node.type] ?? []) {
