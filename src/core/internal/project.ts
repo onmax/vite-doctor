@@ -150,31 +150,55 @@ async function detectVueScriptLanguages(root: string, file: string): Promise<Pro
 
 function recoverVueScriptLanguages(source: string): ProjectLanguage[] {
   const languages = new Set<ProjectLanguage>();
+  let quote = "";
   for (let index = 0; index < source.length; index++) {
     if (source.startsWith("<!--", index)) {
       const end = source.indexOf("-->", index + 4);
       index = end === -1 ? source.length : end + 2;
       continue;
     }
-    if (source[index] !== "<" || !/^<script(?:\s|>)/i.test(source.slice(index))) continue;
-    let cursor = index + 1;
-    let quote = "";
-    for (; cursor < source.length; cursor++) {
-      const character = source[cursor];
-      if (quote) {
-        if (character === quote) quote = "";
-      } else if (character === '"' || character === "'") {
-        quote = character;
-      } else if (character === ">") {
-        break;
+    if (source[index] === "<" && /^<script(?:\s|>)/i.test(source.slice(index))) {
+      let cursor = index + 1;
+      let attributeQuote = "";
+      for (; cursor < source.length; cursor++) {
+        const character = source[cursor];
+        if (attributeQuote) {
+          if (character === attributeQuote) attributeQuote = "";
+        } else if (character === '"' || character === "'") {
+          attributeQuote = character;
+        } else if (character === ">") {
+          break;
+        }
       }
+      const attributes = source.slice(index + 7, cursor);
+      const langMatch = attributes.match(/\blang\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/i);
+      const lang = (langMatch?.[1] ?? langMatch?.[2] ?? langMatch?.[3] ?? "js").toLowerCase();
+      if (lang === "ts" || lang === "tsx") languages.add("typescript");
+      if (lang === "js" || lang === "jsx") languages.add("javascript");
+      const close = source.indexOf("</script", cursor + 1);
+      index = close === -1 ? cursor : close + 8;
+      quote = "";
+      continue;
     }
-    const attributes = source.slice(index + 7, cursor);
-    const langMatch = attributes.match(/\blang\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/i);
-    const lang = (langMatch?.[1] ?? langMatch?.[2] ?? langMatch?.[3] ?? "js").toLowerCase();
-    if (lang === "ts" || lang === "tsx") languages.add("typescript");
-    if (lang === "js" || lang === "jsx") languages.add("javascript");
-    index = cursor;
+    if (quote) {
+      if (source[index] === quote) quote = "";
+      continue;
+    }
+    if (source[index] === '"' || source[index] === "'") {
+      quote = source[index];
+      continue;
+    }
+    const customBlock = source.slice(index).match(/^<([A-Za-z][\w-]*)(?:\s[^>]*)?>/);
+    if (
+      customBlock &&
+      !/^(?:template|script|style|div|p|span|section|main|header|footer|component)$/i.test(
+        customBlock[1],
+      )
+    ) {
+      const close = source.search(new RegExp(`</${customBlock[1]}\\s*>`, "i"));
+      index = close === -1 ? source.length : close + customBlock[0].length;
+      continue;
+    }
   }
   return [...languages];
 }

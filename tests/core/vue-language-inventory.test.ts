@@ -38,6 +38,14 @@ test.each([
       '<docs><script lang="ts">const example: string = "docs"</script></docs><template><p>Example</p></template>',
     languages: [],
   },
+  {
+    source: '<template><div>{{</template><docs><script lang="ts"></script></docs>',
+    languages: [],
+  },
+  {
+    source: '<template><div>{{</template><script>const text = "<script lang=\\"ts\\">"</script>',
+    languages: ["javascript"],
+  },
 ])("ignores script-like text in $source", async ({ source, languages }) => {
   await withProject(source, async (root) => {
     const project = await detectProject(root, "vite");
