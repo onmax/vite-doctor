@@ -445,12 +445,20 @@ function assertCompleteRuleDocumentation(
 }
 
 function ruleSourcesFromIndex(indexFile: string) {
-  const dir = dirname(indexFile);
-  return readFileSync(indexFile, "utf8")
-    .split(/\r?\n/)
-    .map((line) => line.match(/^export \{ \w+ \} from "\.\/(.+)\.js";$/)?.[1])
-    .filter(Boolean)
-    .map((file) => join(dir, `${file}.ts`));
+  const { parseSync } = loadParser();
+  const ast = parseSync(indexFile, readFileSync(indexFile, "utf8"), {
+    sourceType: "module",
+    lang: "ts",
+  }).program;
+  const sources = new Set<string>();
+  for (const statement of ast.body) {
+    if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
+    if (!statement.specifiers.some((specifier) => specifier.exportKind !== "type")) continue;
+    const source = statement.source?.value;
+    if (source?.startsWith("./") && source.endsWith(".js"))
+      sources.add(join(dirname(indexFile), `${source.slice(0, -3)}.ts`));
+  }
+  return [...sources];
 }
 
 function withRulePath(
