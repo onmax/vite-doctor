@@ -119,8 +119,7 @@ function resolveSourceFile(path: string): string | null {
   const entry = statSync(path, { throwIfNoEntry: false });
   if (entry?.isFile()) return path;
   if ((entry && !entry.isDirectory()) || (!entry && extname(path))) return null;
-  if (statSync(resolve(path, "package.json"), { throwIfNoEntry: false }))
-    return null;
+  if (statSync(resolve(path, "package.json"), { throwIfNoEntry: false })) return null;
   const extensions = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
   const candidates = [path, resolve(path, "index")].flatMap((base) =>
     extensions.map((extension) => `${base}${extension}`),
