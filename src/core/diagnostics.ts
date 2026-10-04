@@ -67,6 +67,11 @@ export function defineDoctorDiagnostics<const Entries extends readonly DoctorDia
 ): DoctorDiagnosticRegistry<Entries[number]["code"], Entries[number]["ruleId"]> {
   type Code = Entries[number]["code"];
   type RuleId = Entries[number]["ruleId"];
+  const seenCodes = new Set<string>();
+  for (const entry of entries) {
+    if (seenCodes.has(entry.code)) throw doctorInternalDiagnostics.DOC0012({ code: entry.code });
+    seenCodes.add(entry.code);
+  }
   const codes = Object.fromEntries(
     entries.map((entry) => [
       entry.code,
