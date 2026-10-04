@@ -126,12 +126,18 @@ async function detectVueScriptLanguages(root: string, file: string): Promise<Pro
     let hasJavaScript = false;
     const source = readFileSync(join(root, file), "utf8");
     const { parse } = await import("@vue/compiler-sfc");
-    const { descriptor } = parse(source, { filename: file, sourceMap: false });
+    const { descriptor, errors } = parse(source, { filename: file, sourceMap: false });
     for (const block of [descriptor.script, descriptor.scriptSetup]) {
       if (!block) continue;
       const lang = (block.lang ?? "js").toLowerCase();
       if (lang === "ts" || lang === "tsx") hasTypeScript = true;
       if (lang === "js" || lang === "jsx") hasJavaScript = true;
+    }
+    if (errors.length && !hasTypeScript && !hasJavaScript) {
+      for (const lang of recoverVueScriptLanguages(source)) {
+        if (lang === "typescript") hasTypeScript = true;
+        if (lang === "javascript") hasJavaScript = true;
+      }
     }
     return [
       ...(hasTypeScript ? (["typescript"] as const) : []),
@@ -140,6 +146,37 @@ async function detectVueScriptLanguages(root: string, file: string): Promise<Pro
   } catch {
     return [];
   }
+}
+
+function recoverVueScriptLanguages(source: string): ProjectLanguage[] {
+  const languages = new Set<ProjectLanguage>();
+  for (let index = 0; index < source.length; index++) {
+    if (source.startsWith("<!--", index)) {
+      const end = source.indexOf("-->", index + 4);
+      index = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    if (source[index] !== "<" || !/^<script(?:\s|>)/i.test(source.slice(index))) continue;
+    let cursor = index + 1;
+    let quote = "";
+    for (; cursor < source.length; cursor++) {
+      const character = source[cursor];
+      if (quote) {
+        if (character === quote) quote = "";
+      } else if (character === '"' || character === "'") {
+        quote = character;
+      } else if (character === ">") {
+        break;
+      }
+    }
+    const attributes = source.slice(index + 7, cursor);
+    const langMatch = attributes.match(/\blang\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/i);
+    const lang = (langMatch?.[1] ?? langMatch?.[2] ?? langMatch?.[3] ?? "js").toLowerCase();
+    if (lang === "ts" || lang === "tsx") languages.add("typescript");
+    if (lang === "js" || lang === "jsx") languages.add("javascript");
+    index = cursor;
+  }
+  return [...languages];
 }
 
 function hasVueSsrEvidence(

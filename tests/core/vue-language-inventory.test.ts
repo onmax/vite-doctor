@@ -46,6 +46,15 @@ test.each([
   });
 });
 
+test("recovers script language evidence from a partially malformed SFC", async () => {
+  await withProject(
+    '<template><div>{{</template>\n<script setup lang="ts">const value: string = "ok"</script>',
+    async (root) => {
+      expect((await detectProject(root, "vite")).languages).toEqual(["typescript"]);
+    },
+  );
+});
+
 test.each([
   {
     source: '<script setup lang="tsx">const render = () => <p />;</script>',
