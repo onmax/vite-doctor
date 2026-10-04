@@ -46,7 +46,7 @@ export function createTextReport(result: DoctorRunResult): string {
   lines.push(
     `Confidence mix: ${confidence.proven} proven, ${confidence.probable} probable, ${confidence.sourceOnly} source-only`,
   );
-  if (result.fixes?.edits) {
+  if (result.fixes && (result.fixes.edits || result.fixes.skipped)) {
     lines.push(
       `Fixes applied: ${result.fixes.edits} edits in ${result.fixes.files} files${result.fixes.skipped ? `, ${result.fixes.skipped} skipped` : ""}`,
     );
