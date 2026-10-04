@@ -29,8 +29,7 @@ export async function parseSfcFile(
       return (descriptor.template?.ast as unknown as Record<string, unknown>) ?? null;
     },
     getScriptAst() {
-      const script = createVueScriptForParsing(descriptor, source);
-      return script.text.trim() ? parseScript(file, script.text, script.lang) : null;
+      return parseVueScripts(file, descriptor, source);
     },
     async getTemplateTokens() {
       return parseTemplate(
@@ -58,8 +57,12 @@ export function createVueScriptForParsing(
   descriptor: any,
   source: string,
 ): { text: string; lang: ScriptParseLang } {
-  const blocks = [descriptor?.script, descriptor?.scriptSetup].filter(Boolean);
-  const text = source.split("").map((char) => (char === "\n" || char === "\r" ? char : " "));
+  const blocks = [descriptor?.script, descriptor?.scriptSetup]
+    .filter(Boolean)
+    .sort((left, right) => (left.loc?.start?.offset ?? 0) - (right.loc?.start?.offset ?? 0));
+  const text: string[] = source
+    .split("")
+    .map((char) => (char === "\n" || char === "\r" ? char : " "));
   for (const block of blocks) {
     const start = block.loc?.start?.offset;
     if (typeof start !== "number" || !block.content) continue;
@@ -68,6 +71,31 @@ export function createVueScriptForParsing(
     }
   }
   return { text: text.join(""), lang: vueScriptLang(blocks) };
+}
+
+export function parseVueScripts(
+  file: string,
+  descriptor: any,
+  source: string,
+): Record<string, unknown> | null {
+  const blocks = [descriptor?.script, descriptor?.scriptSetup]
+    .filter(Boolean)
+    .sort((left, right) => (left.loc?.start?.offset ?? 0) - (right.loc?.start?.offset ?? 0));
+  const lang = vueScriptLang(blocks);
+  let program: Record<string, unknown> | null = null;
+  for (const block of blocks) {
+    const script = createVueScriptForParsing({ script: block }, source);
+    if (!script.text.trim()) continue;
+    const ast = parseScript(file, script.text.slice(0, block.loc.end.offset), lang);
+    if (!ast) return null;
+    if (!program) program = ast;
+    else {
+      (program.body as unknown[]).push(...(ast.body as unknown[]));
+      (program.comments as unknown[]).push(...(ast.comments as unknown[]));
+    }
+  }
+  if (program) program.end = source.length;
+  return program;
 }
 
 function vueScriptLang(blocks: any[]): ScriptParseLang {
