@@ -22,6 +22,12 @@ test.each([
   'if (event.method !== "POST") { if (reject) throw new Error("unsupported") }',
   'if (event.method !== "POST") { function reject() { throw new Error("unsupported") } }',
   'if (event.method !== "POST") { return "allowed"; throw new Error("unreachable") }',
+  'if (event.method === "GET") { if (event.method !== "POST") throw new Error("unsupported") } return "ok"',
+  'if (reject) { if (event.method !== "POST") throw new Error("unsupported") } return "ok"',
+  'if (allowOther) return "allowed"; if (event.method !== "POST") throw new Error("unsupported")',
+  'if (allowOther) return "allowed"; else if (event.method !== "POST") throw new Error("unsupported")',
+  'while (reject) { if (event.method !== "POST") throw new Error("unsupported"); break } return "ok"',
+  'try { if (event.method !== "POST") throw new Error("unsupported") } catch {} return "ok"',
 ])("does not turn method-dependent behavior into a rejecting assertion: %s", async (body) => {
   expect((await diagnose(body)).diagnostics).toEqual([]);
 });
@@ -31,6 +37,7 @@ test.each([
   'if (event.method != "POST") { throw createError({ statusCode: 405 }) }',
   'if ("POST" !== event.method) { console.log("rejected"); throw createError({ statusCode: 405 }) }',
   'const method = getMethod(event); if (method !== "POST") throw createError({ statusCode: 405 })',
+  '{ if (event.method !== "POST") throw createError({ statusCode: 405 }) }',
 ])("retains advice for a rejecting single-method guard: %s", async (body) => {
   const result = await diagnose(body);
   expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([

@@ -20,7 +20,7 @@ export const preferAssertMethod = createRule({
     if (isNitroRouteFile(ctx.file.relativePath)) return;
     return {
       ScriptNode(node: AnyNode) {
-        if (node.type !== "IfStatement") return;
+        if (node.type !== "IfStatement" || !isUnconditionalGuard(node)) return;
         const check = singleMethodCheck(node.test, ctx.file.text, node);
         if (!check?.isNegative || !rejectsRequest(node.consequent)) return;
         const method = check.method;
@@ -37,6 +37,31 @@ export const preferAssertMethod = createRule({
     };
   },
 });
+
+function isUnconditionalGuard(node: AnyNode): boolean {
+  let current = node;
+  while (current.__doctorParent) {
+    const parent = current.__doctorParent;
+    if (parent.type === "BlockStatement" || parent.type === "Program") {
+      for (const statement of parent.body) {
+        if (statement === current) break;
+        if (
+          !["ExpressionStatement", "VariableDeclaration", "EmptyStatement"].includes(statement.type)
+        )
+          return false;
+      }
+      if (parent.type === "Program") return true;
+      current = parent;
+      continue;
+    }
+    return (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+        parent.type,
+      ) && parent.body === current
+    );
+  }
+  return false;
+}
 
 function rejectsRequest(node: AnyNode): boolean {
   if (node.type === "ThrowStatement") return true;
