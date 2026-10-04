@@ -1,4 +1,11 @@
-import { AnyNode, createRule, report } from "./shared.js";
+import { parseForESLint } from "@typescript-eslint/parser";
+import type { RuleContext } from "../../../../core/index.js";
+import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
+import { AnyNode, createRule, report, walkScriptLocal } from "./shared.js";
+
+const RESOURCE_CALLS = new Set(["setInterval", "addEventListener"]);
+const RESOURCE_CONSTRUCTORS = new Set(["ResizeObserver", "IntersectionObserver", "WebSocket"]);
+const GLOBAL_RECEIVERS = new Set(["window", "document", "globalThis", "self"]);
 
 export const requireLifecycleCleanup = createRule({
   meta: {
@@ -21,12 +28,7 @@ export const requireLifecycleCleanup = createRule({
         )
           hasCleanup = true;
         if (node.type !== "Program") return;
-        if (
-          !/(setInterval|addEventListener|new\s+(ResizeObserver|IntersectionObserver|WebSocket))/.test(
-            ctx.file.text,
-          )
-        )
-          return;
+        if (!createsBrowserResource(ctx, node)) return;
         if (
           /(clearInterval|removeEventListener|disconnect|close)\s*\(/.test(ctx.file.text) ||
           hasCleanup ||
@@ -46,6 +48,60 @@ export const requireLifecycleCleanup = createRule({
     };
   },
 });
+
+function createsBrowserResource(ctx: RuleContext, program: AnyNode): boolean {
+  const candidates: number[] = [];
+  walkScriptLocal(program, (node) => {
+    const names =
+      node.type === "CallExpression"
+        ? RESOURCE_CALLS
+        : node.type === "NewExpression"
+          ? RESOURCE_CONSTRUCTORS
+          : undefined;
+    if (!names) return;
+    const callee = node.callee;
+    if (callee?.type === "Identifier" && names.has(callee.name)) {
+      candidates.push(callee.start);
+    } else if (callee?.type === "MemberExpression") {
+      const member = staticMemberName(callee);
+      if (!member || !names.has(member)) return;
+      const receiver = callee.object;
+      if (receiver?.type === "Identifier" && GLOBAL_RECEIVERS.has(receiver.name))
+        candidates.push(receiver.start);
+    }
+  });
+  if (!candidates.length) return false;
+  const parsedVueScript = ctx.file.sfc
+    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
+    : undefined;
+  const source = parsedVueScript?.text ?? ctx.file.text;
+  let globalReferences: Set<number>;
+  try {
+    const { scopeManager } = parseForESLint(source, {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: {
+        jsx:
+          parsedVueScript?.lang === "jsx" ||
+          parsedVueScript?.lang === "tsx" ||
+          /\.[jt]sx$/.test(ctx.file.relativePath),
+      },
+    });
+    globalReferences = new Set(
+      scopeManager.globalScope?.through.map((reference) => reference.identifier.range[0]),
+    );
+  } catch {
+    return false;
+  }
+  return candidates.some((position) => globalReferences.has(position));
+}
+
+function staticMemberName(node: AnyNode): string | null {
+  if (!node.computed && node.property?.type === "Identifier") return node.property.name;
+  if (node.property?.type === "Literal" && typeof node.property.value === "string")
+    return node.property.value;
+  return null;
+}
 
 function returnsLongLivedResource(source: string) {
   const resource =
