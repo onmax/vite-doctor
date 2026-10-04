@@ -10,7 +10,7 @@ import type {
   TemplateFact,
 } from "../primitives.js";
 import { createVueScriptForParsing, parseSfcFile } from "./sfc.js";
-import { parseScript } from "./script.js";
+import { parseScriptResult } from "./script.js";
 import { parseTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
 import { createCacheKey, markSession, type ScanSession } from "./scan-session.js";
@@ -48,7 +48,24 @@ async function parseSourceFile(
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
   const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor as any, text) : undefined;
   const scriptText = isVueSfc ? (script?.text ?? "") : text;
-  const scriptAst = scriptText.trim() ? parseScript(absolute, scriptText, script?.lang) : null;
+  const parsedScript = scriptText.trim()
+    ? parseScriptResult(absolute, scriptText, script?.lang)
+    : undefined;
+  const scriptAst = parsedScript?.ast ?? null;
+  if (
+    parsedScript?.errors.length &&
+    (!scriptAst || (scriptAst.body as unknown[])?.length === 0) &&
+    (isVueSfc || ["js", "jsx", "ts", "tsx"].includes(detectLang(absolute)))
+  ) {
+    session.project.evidenceGaps = [
+      ...(session.project.evidenceGaps ?? []),
+      {
+        source: "script-parser",
+        message: `Cannot parse ${file.displayPath}: ${parsedScript.errors.join("; ")}. Correct the source syntax and rerun Doctor.`,
+        files: [absolute],
+      },
+    ];
+  }
   const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text) : null;
   const facts =
     cachedFacts && cachedFacts.fileHash === hash
