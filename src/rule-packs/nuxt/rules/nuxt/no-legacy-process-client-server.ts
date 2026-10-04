@@ -1,4 +1,5 @@
 import * as typescriptParser from "@typescript-eslint/parser";
+import type { SFCDescriptor } from "@vue/compiler-sfc";
 import { parseForESLint as parseVueForESLint } from "vue-eslint-parser";
 import type { RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule } from "./shared.js";
@@ -57,10 +58,16 @@ export const noLegacyProcessClientServer = createRule({
 
 function findGlobalProcessReferences(ctx: RuleContext): Set<number> {
   try {
+    const descriptor = ctx.file.sfc?.descriptor as SFCDescriptor | undefined;
+    const script = descriptor?.scriptSetup ?? descriptor?.script;
     const options = {
       range: true,
       sourceType: "module" as const,
-      ecmaFeatures: { jsx: true },
+      ecmaFeatures: {
+        jsx: ctx.file.sfc
+          ? ["jsx", "tsx"].includes(script?.lang ?? "")
+          : /\.[jt]sx$/.test(ctx.file.relativePath),
+      },
     };
     const { scopeManager } = ctx.file.sfc
       ? parseVueForESLint(ctx.file.text, {

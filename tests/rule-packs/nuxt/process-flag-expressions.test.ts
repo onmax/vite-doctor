@@ -163,6 +163,70 @@ test.each(cases)("process flag expressions: $name", async ({ source, replacement
   for (const diagnostic of result.diagnostics) expect(diagnostic.fix?.kind).toBe("safe");
 });
 
+test.each([
+  {
+    name: "TypeScript assertion",
+    file: "app/plugins/flags.ts",
+    source: "export const flag = <boolean>process.client",
+    expression: "process.client",
+  },
+  {
+    name: "TSX expression",
+    file: "app/components/Flags.tsx",
+    source: "export const flag = <div>{process.server}</div>",
+    expression: "process.server",
+  },
+  {
+    name: "JSX expression",
+    file: "app/components/Flags.jsx",
+    source: "export const flag = <div>{process.client}</div>",
+    expression: "process.client",
+  },
+  {
+    name: "Vue normal TypeScript assertion",
+    file: "app/pages/index.vue",
+    source: '<script lang="ts">export const flag = <boolean>process.server</script>',
+    expression: "process.server",
+  },
+  {
+    name: "Vue setup TypeScript assertion",
+    file: "app/pages/index.vue",
+    source: '<script setup lang="ts">const flag = <boolean>process.client</script>',
+    expression: "process.client",
+  },
+  {
+    name: "Vue TSX expression",
+    file: "app/pages/index.vue",
+    source: '<script setup lang="tsx">const flag = <div>{process.server}</div></script>',
+    expression: "process.server",
+  },
+  {
+    name: "Vue JSX expression",
+    file: "app/pages/index.vue",
+    source: '<script lang="jsx">export const flag = <div>{process.client}</div></script>',
+    expression: "process.client",
+  },
+])("process flag parsing: $name", async ({ file, source, expression }) => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [noLegacyProcessClientServer],
+    run: {
+      runtimeTarget: {
+        nuxt: "4.5.1",
+        nitro: "2.13.4",
+        h3: "1.15.11",
+        vue: "3.5.0",
+        nuxtCompatibility: 5,
+      },
+    },
+    files: { [file]: source },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  const edit = result.diagnostics[0]!.fix!.edits[0]!;
+  expect(source.slice(edit.range.start, edit.range.end)).toBe(expression);
+  expect(edit.text).toBe(expression.replace("process.", "import.meta."));
+});
+
 test("process flag edits preserve Vue script offsets and neighboring literals", async () => {
   const source = `<template><p>process.client</p></template>\n<script setup lang="ts">\nconst label = 'process.client'\nconst flag = process.client\n</script>`;
   const result = await runProjectFixture({
