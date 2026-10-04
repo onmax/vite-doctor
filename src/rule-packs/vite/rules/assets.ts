@@ -1,4 +1,5 @@
-import { createRule } from "../../../core/index.js";
+import { dirname, relative, resolve } from "pathe";
+import { createRule, type RuleContext } from "../../../core/index.js";
 import { staticString, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
@@ -15,7 +16,7 @@ export const noPublicSrcImport = createRule({
     return {
       ImportDeclaration(node: AnyNode) {
         const source = String(node.source?.value ?? "");
-        if (!isPublicImport(source)) return;
+        if (!isPublicImport(ctx, source)) return;
         ctx.report(
           diagnostics.VITE0002({
             why: `Public media and font assets should be referenced by URL, not imported: ${source}`,
@@ -103,11 +104,23 @@ export const noDynamicNewUrl = createRule({
   },
 });
 
-function isPublicImport(source: string): boolean {
-  if (isStaticDataImport(source)) return false;
-  return (
-    source.startsWith("/public/") || source.startsWith("public/") || source.includes("/public/")
-  );
+function isPublicImport(ctx: RuleContext, source: string): boolean {
+  const path = source.split(/[?#]/)[0]!;
+  if (isStaticDataImport(path)) return false;
+  let target: string | undefined;
+  if (path.startsWith("./") || path.startsWith("../"))
+    target = resolve(dirname(ctx.file.path), path);
+  else if (path.startsWith("/") && !path.startsWith("//"))
+    target = resolve(ctx.project.root, `.${path}`);
+  else if (ctx.project.nuxt) {
+    if (path.startsWith("~~/") || path.startsWith("@@/"))
+      target = resolve(ctx.project.root, path.slice(3));
+    else if (path.startsWith("~/") || path.startsWith("@/"))
+      target = resolve(ctx.project.nuxt.appDir, path.slice(2));
+  }
+  if (!target) return false;
+  const publicPath = relative(resolve(ctx.project.root, "public"), target);
+  return publicPath !== ".." && !publicPath.startsWith("../") && !publicPath.startsWith("/");
 }
 
 function isStaticDataImport(source: string): boolean {
