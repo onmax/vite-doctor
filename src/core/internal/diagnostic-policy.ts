@@ -76,7 +76,10 @@ function readBaseline(root: string, baseline?: string): Set<string> {
   let entries: unknown[];
   if (Array.isArray(json)) entries = json;
   else if (json && typeof json === "object" && "diagnostics" in json) {
-    if ("version" in json && json.version !== 1) throw invalid("Expected baseline version 1.");
+    if ("reportVersion" in json) {
+      if (json.reportVersion !== 3) throw invalid("Expected Doctor JSON report version 3.");
+    } else if ("version" in json && json.version !== 1)
+      throw invalid("Expected baseline version 1.");
     if (!Array.isArray(json.diagnostics)) throw invalid('Expected a "diagnostics" array.');
     entries = json.diagnostics;
   } else throw invalid('Expected an array or an object containing a "diagnostics" array.');

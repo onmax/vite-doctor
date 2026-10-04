@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { applyDiagnosticPolicy } from "../../src/core/internal/diagnostic-policy.ts";
-import { normalizeDiagnosticFromRuleCode } from "../../src/core/internal/diagnostics.ts";
+import {
+  createResult,
+  normalizeDiagnosticFromRuleCode,
+} from "../../src/core/internal/diagnostics.ts";
+import { createJsonReport } from "../../src/core/reports.ts";
 import { main } from "../../src/cli.ts";
 
 const roots: string[] = [];
@@ -45,6 +49,9 @@ test.each([
   ["non-array diagnostics", '{"diagnostics":{}}'],
   ["unsupported version", '{"version":2,"diagnostics":[]}'],
   ["string version", '{"version":"1","diagnostics":[]}'],
+  ["unsupported report version", '{"version":"0.0.12","reportVersion":4,"diagnostics":[]}'],
+  ["string report version", '{"version":"0.0.12","reportVersion":"3","diagnostics":[]}'],
+  ["malformed report entry", '{"version":"0.0.12","reportVersion":3,"diagnostics":[null]}'],
   ["null entry", "[null]"],
   ["numeric entry", "[42]"],
   ["boolean entry", "[true]"],
@@ -90,6 +97,28 @@ test.each(["strings", "objects", "unversioned", "versioned"])(
     ]);
   },
 );
+
+test("Doctor JSON reports remain usable as baselines and can be updated", () => {
+  const { root, baseline, diagnostic, input } = fixture();
+  const project = {
+    root,
+    framework: "vite" as const,
+    ssr: false,
+    isMonorepo: false,
+    vueVersion: ">=3.5",
+  };
+  const report = createJsonReport(createResult(project, root, [diagnostic], [], {}));
+  writeFileSync(baseline, report);
+  const result = applyDiagnosticPolicy(input);
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([
+    { fingerprint: diagnostic.fingerprint, suppressionReason: "baseline" },
+  ]);
+  expect(readFileSync(baseline, "utf8")).toBe(report);
+  applyDiagnosticPolicy({ ...input, options: { ...input.options, updateBaseline: true } });
+  expect(JSON.parse(readFileSync(baseline, "utf8"))).toMatchObject({ version: 1 });
+  expect(applyDiagnosticPolicy(input).diagnostics).toEqual([]);
+});
 
 test("a missing baseline can still be initialized and used on the next run", () => {
   const { baseline, diagnostic, input } = fixture();
