@@ -1,7 +1,16 @@
 import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
+import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
+
+function isCachedEventHandler(node: AnyNode) {
+  return (
+    node.type === "CallExpression" &&
+    node.callee?.type === "Identifier" &&
+    (node.callee.name === "cachedEventHandler" || node.callee.name === "defineCachedEventHandler")
+  );
+}
 
 export const noPersonalizedCachedHandler = createRule({
   meta: {
@@ -17,7 +26,7 @@ export const noPersonalizedCachedHandler = createRule({
     if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
     return {
       ScriptNode(node: AnyNode) {
-        if (!ctx.helpers.isCall(node, "cachedEventHandler")) return;
+        if (!isCachedEventHandler(node)) return;
         const snippet = ctx.file.text.slice(node.start, node.end);
         if (!/(getUserSession|getCookie|getHeader|authorization|tenant|user)/i.test(snippet))
           return;
@@ -55,7 +64,11 @@ export const preferCachedEventHandler = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
-        if (/cachedEventHandler/.test(ctx.file.text)) return;
+        let hasCachedHandler = false;
+        walkScriptLocal(node, (child) => {
+          if (isCachedEventHandler(child)) hasCachedHandler = true;
+        });
+        if (hasCachedHandler) return;
         if (!/(await\s+\$fetch|queryCollection|hubDatabase|hubKV|readBody)/.test(ctx.file.text))
           return;
         if (/(getUserSession|getCookie|getHeader|authorization|tenant|user)/i.test(ctx.file.text))
