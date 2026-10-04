@@ -110,6 +110,9 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
         if (initializer?.type !== "CallExpression") continue;
         if (
           vueFunction(initializer.callee, ["reactive", "shallowReactive", "defineProps"]) ||
+          (vueFunction(initializer.callee, ["withDefaults"]) &&
+            initializer.arguments[0]?.type === "CallExpression" &&
+            vueFunction(initializer.arguments[0].callee, ["defineProps"])) ||
           (property === "value" &&
             vueFunction(initializer.callee, [
               "ref",
@@ -123,7 +126,13 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
       }
       return property === "value" && !plainValue;
     };
-    type ReadState = { after: boolean; found: boolean; continues: boolean; breakAfter?: boolean };
+    type ReadState = {
+      after: boolean;
+      found: boolean;
+      continues: boolean;
+      breakAfter?: boolean;
+      continueAfter?: boolean;
+    };
     const scan = (node: AnyNode, after = false, parent?: AnyNode): ReadState => {
       const state: ReadState = { after, found: false, continues: true };
       if (
@@ -139,7 +148,11 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
         const initializer = scan(node.init, after, node);
         const condition = scan(node.test, initializer.after, node);
         const body = scan(node.body, condition.after, node);
-        const update = body.continues ? scan(node.update, body.after, node) : body;
+        const updateAfter = (body.continues && body.after) || (body.continueAfter ?? false);
+        const update =
+          body.continues || body.continueAfter !== undefined
+            ? scan(node.update, updateAfter, node)
+            : body;
         return {
           after: condition.after || body.after || update.after,
           found: initializer.found || condition.found || body.found || update.found,
@@ -156,13 +169,16 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
         let fallthrough = false;
         let afterSwitch = discriminant.after;
         let found = discriminant.found;
+        let continueAfter: boolean | undefined;
         for (const branch of node.cases) {
           const selected = scan(branch, discriminant.after || fallthrough, node);
           found ||= selected.found;
           afterSwitch ||= selected.breakAfter ?? false;
+          if (selected.continueAfter !== undefined)
+            continueAfter = (continueAfter ?? false) || selected.continueAfter;
           fallthrough = selected.continues && selected.after;
         }
-        return { after: afterSwitch || fallthrough, found, continues: true };
+        return { after: afterSwitch || fallthrough, found, continues: true, continueAfter };
       }
       if (node.type === "LogicalExpression") {
         const left = scan(node.left, after, node);
@@ -197,6 +213,10 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
           found: condition.found || consequent.found || alternate.found,
           continues: consequent.continues || alternate.continues,
           breakAfter: consequent.breakAfter || alternate.breakAfter,
+          continueAfter:
+            consequent.continueAfter === undefined && alternate.continueAfter === undefined
+              ? undefined
+              : Boolean(consequent.continueAfter || alternate.continueAfter),
         };
       }
       for (const key of visitorKeys[node.type] ?? []) {
@@ -208,6 +228,8 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
           state.found ||= next.found;
           state.continues = next.continues;
           state.breakAfter ||= next.breakAfter;
+          if (next.continueAfter !== undefined)
+            state.continueAfter = (state.continueAfter ?? false) || next.continueAfter;
         }
       }
       if (state.after && reactiveRead(node, parent)) state.found = true;
@@ -218,6 +240,7 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
       )
         state.continues = false;
       if (node.type === "BreakStatement") state.breakAfter = state.after;
+      if (node.type === "ContinueStatement") state.continueAfter = state.after;
       return state;
     };
     const result = new Set<number>();

@@ -4,6 +4,9 @@ import { noAsyncWatchEffectAfterAwaitRead } from "../../../src/rule-packs/vue/ru
 
 test.each([
   "const count = ref(0); watchEffect(async () => { for (let i=0;i<1;await load(),i++) { console.log(count.value) } })",
+  "const count = ref(0); watchEffect(async () => { for (let i=0;i<1;console.log(count.value),i++) { await load(); break } })",
+  "const count = ref(0); watchEffect(async () => { for (let i=0;i<1;console.log(count.value),i++) { await load(); return } })",
+  "const count = ref(0); watchEffect(async () => { for (let i=0;i<1;console.log(count.value),i++) { await load(); throw new Error() } })",
   "const count = ref(0); watchEffect(async () => { do { console.log(count.value) } while (await load(), false) })",
   "const count = ref(0); watchEffect(async () => { switch (mode) { case 1: await load(); break; case 2: console.log(count.value) } })",
   "const count = ref(0); watchEffect(async () => { switch (mode) { case 1: if (enabled) { await load(); break }; case 2: console.log(count.value) } })",
@@ -48,9 +51,12 @@ test.each([
   "const doubled = computed(() => 2); watchEffect(async () => { await load(); console.log(doubled.value) })",
   "const state = reactive({ count: 0 }); watchEffect(async () => { await load(); console.log(state.count) })",
   "const state = shallowReactive({ count: 0 }); watchEffect(async () => { await load(); console.log(state['count']) })",
+  "const props = withDefaults(defineProps<{ count: number }>(), { count: 0 }); watchEffect(async () => { await load(); console.log(props.count) })",
   "const count = ref(0); watchEffect(async () => { if (enabled) await load(); console.log(count.value) })",
   "const count = ref(0); watchEffect(async () => { consume(await load(), count.value) })",
   "const count = ref(0); watchEffect(async () => { await load(); count.value++ })",
+  "const count = ref(0); watchEffect(async () => { for (let i=0;i<1;await load(),console.log(count.value),i++) { continue } })",
+  "const count = ref(0); watchEffect(async () => { for (let i=0;i<1;console.log(count.value),i++) { await load(); continue } })",
   "import { ref as reference, watchEffect as observe } from 'vue'; const count = reference(0); observe(async () => { await load(); console.log(count.value) })",
   "import * as Vue from 'vue'; const count = Vue.ref(0); Vue.watchEffect(async () => { await load(); console.log(count.value) })",
 ])("reports a reactive dependency read after suspension: %s", async (script) => {
