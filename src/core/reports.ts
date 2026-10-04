@@ -14,6 +14,10 @@ import {
 } from "./diagnostic-code-map.js";
 import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
+import {
+  workspaceDiagnosticMetadataByCode,
+  workspaceDiagnosticMetadataByRuleId,
+} from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
 
 export interface DoctorReportContext {
@@ -355,7 +359,46 @@ export function explainRule(
         item.rule.meta.diagnosticCodes?.includes(ruleId) ||
         codeListForRule(item.rule.meta.id).includes(ruleId),
     );
-  if (!match) return "";
+  if (!match) {
+    const metadata =
+      workspaceDiagnosticMetadataByCode.get(ruleId) ??
+      workspaceDiagnosticMetadataByRuleId.get(ruleId);
+    if (!metadata) return "";
+    const diagnosticCodes = [metadata.code];
+    const meta = {
+      id: metadata.ruleId,
+      title: metadata.title,
+      description: metadata.description,
+      why: metadata.why,
+      recommendedReplacement: metadata.fix,
+      category: metadata.category,
+      severity: metadata.severity,
+      fixable: "no" as const,
+      docsUrl: diagnosticReferenceUrl(metadata.code),
+      diagnosticCodes,
+      analysis: metadata.analysis,
+    };
+    const payload = {
+      ...meta,
+      diagnosticCodes,
+      diagnostics: diagnosticCodes.map((code) => ({ code, docs: diagnosticReferenceUrl(code) })),
+    };
+    if (format === "json") return `${JSON.stringify(payload, null, 2)}\n`;
+    if (format === "agent") {
+      return `${JSON.stringify({ schema: "vite-doctor.explain/v1", status: "ready", ...payload })}\n`;
+    }
+    return (
+      [
+        `${meta.id} (${meta.severity})`,
+        meta.title,
+        meta.description,
+        `Why: ${meta.why}`,
+        `Prefer: ${meta.recommendedReplacement}`,
+        `Diagnostics: ${diagnosticCodes.join(", ")}`,
+        ...diagnosticCodes.map((code) => `Docs: ${diagnosticReferenceUrl(code)}`),
+      ].join("\n") + "\n"
+    );
+  }
   const diagnosticCodes = match.rule.meta.diagnosticCodes ?? codeListForRule(match.rule.meta.id);
   const documentedCodes =
     (allDiagnosticCodeListsByRuleId as Record<string, readonly string[]>)[match.rule.meta.id] ?? [];
