@@ -87,6 +87,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
     });
   cli
     .command("rules", "List available Doctor rules.")
+    .option("--config <path>", "Explicitly load an executable Doctor config.")
     .option("--format <format>", "Output: text, json, or agent.")
     .option("--framework <framework>", "Framework override.")
     .action(async (options) => {
@@ -94,10 +95,12 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       const runOptions: DoctorRunOptions = { root: cwd, format };
       applyDoctorOptions(runOptions, options);
       validateCliRunOptions(runOptions);
+      runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
       process.stdout.write(createRulesReport(await viteDoctorRulePacks(runOptions), format));
     });
   cli
     .command("explain <diagnostic>", "Explain a Doctor Diagnostic Code or Rule.")
+    .option("--config <path>", "Explicitly load an executable Doctor config.")
     .option("--format <format>", "Output: text, json, or agent.")
     .option("--framework <framework>", "Framework override.")
     .action(async (diagnostic: string, options) => {
@@ -105,6 +108,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       const runOptions: DoctorRunOptions = { root: cwd, format };
       applyDoctorOptions(runOptions, options);
       validateCliRunOptions(runOptions);
+      runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
       const report = explainRule(await viteDoctorRulePacks(runOptions), diagnostic, format);
       if (!report) {
         await writeCliError(`Unknown Diagnostic Code or Rule: ${diagnostic}`, format);

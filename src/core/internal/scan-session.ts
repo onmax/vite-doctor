@@ -282,7 +282,7 @@ export function resolveProjectDoctorConfig(
   return mergeDoctorConfig(mergeDoctorConfig(defaults, project.nuxt?.doctorConfig), config);
 }
 
-async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
+export async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
   packs: RulePack[];
   rules: DoctorRule[];
   inventoryContributors: ProjectInventoryContributor[];
