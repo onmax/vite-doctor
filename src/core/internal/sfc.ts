@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SfcBlockHashes, SfcHandle, SourceRange } from "../primitives.js";
-import { parseScript, parseScriptResult, type ScriptParseLang } from "./script.js";
+import { parseScriptResult, type ScriptParseLang } from "./script.js";
 import { parseTemplate } from "./template.js";
 
 const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
