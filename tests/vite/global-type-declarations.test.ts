@@ -26,6 +26,8 @@ test.each([
   "declare const __BUILD__: string; interface ImportMetaEnv { get VITE_API_URL(): string }",
   "declare const __BUILD__: string; interface ImportMetaEnv { set VITE_API_URL(value: string) }",
   "declare const __BUILD__: string; interface ImportMetaEnv { OTHER: string }; interface ImportMetaEnv { VITE_API_URL: string }",
+  "declare const __BUILD__: string; interface BaseEnv { VITE_API_URL: string }; interface ImportMetaEnv extends BaseEnv {}",
+  "declare const __BUILD__: string; interface BaseEnv { OTHER: string }; interface MiddleEnv extends BaseEnv { VITE_API_URL: string }; interface ImportMetaEnv extends MiddleEnv {}",
 ])("accepts global declaration evidence: %s", async (source) => {
   expect((await diagnose(source)).diagnostics).toEqual([]);
 });
@@ -52,6 +54,8 @@ test.each([
   "interface ImportMetaEnv { OTHER: 'VITE_API_URL' }",
   "interface ImportMetaEnv { /* VITE_API_URL: string */ }",
   "interface ImportMetaEnv { [VITE_API_URL]: string }",
+  "interface BaseEnv { VITE_API_URL: string }; interface ImportMetaEnv extends Other.BaseEnv {}",
+  "interface BaseEnv extends ImportMetaEnv {}; interface ImportMetaEnv extends BaseEnv {}",
 ])("requires an actual ImportMetaEnv property: %s", async (source) => {
   const result = await diagnose(`declare const __BUILD__: string; ${source}`);
   expect(result.diagnostics.map(({ code }) => code)).toEqual(["VITE0011"]);
@@ -59,6 +63,14 @@ test.each([
 
 test.each([
   ["declare const __BUILD__: string; interface ImportMetaEnv { VITE_API_URL: string }", true],
+  [
+    "declare const __BUILD__: string; interface Environment { VITE_API_URL: string }; interface ImportMetaEnv extends Environment {}",
+    true,
+  ],
+  [
+    "export {}; declare global { const __BUILD__: string; interface Environment { VITE_API_URL: string }; interface ImportMetaEnv extends Environment {} }",
+    true,
+  ],
   [
     "export {}; declare global { const __BUILD__: string; interface ImportMetaEnv { VITE_API_URL: string } }",
     true,

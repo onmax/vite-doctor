@@ -151,6 +151,7 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
   let declarations = ctx.cache.get<{ globals: Set<string>; env: Set<string> }>(cacheKey);
   if (declarations) return (env ? declarations.env : declarations.globals).has(name);
   declarations = { globals: new Set(), env: new Set() };
+  const interfaces = new Map<string, ts.InterfaceDeclaration[]>();
   const collect = (statements: ts.NodeArray<ts.Statement>) => {
     for (const statement of statements) {
       if (ts.isVariableStatement(statement)) {
@@ -158,23 +159,11 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
           if (ts.isIdentifier(declaration.name)) declarations.globals.add(declaration.name.text);
         }
       }
-      if (ts.isInterfaceDeclaration(statement) && statement.name.text === "ImportMetaEnv") {
-        for (const member of statement.members) {
-          if (
-            !ts.isPropertySignature(member) &&
-            !ts.isMethodSignature(member) &&
-            !ts.isGetAccessorDeclaration(member) &&
-            !ts.isSetAccessorDeclaration(member)
-          )
-            continue;
-          let key = member.name;
-          if (ts.isComputedPropertyName(key)) {
-            if (!ts.isStringLiteral(key.expression)) continue;
-            key = key.expression;
-          }
-          if (ts.isIdentifier(key) || ts.isStringLiteral(key)) declarations.env.add(key.text);
-        }
-      }
+      if (ts.isInterfaceDeclaration(statement))
+        interfaces.set(statement.name.text, [
+          ...(interfaces.get(statement.name.text) ?? []),
+          statement,
+        ]);
     }
   };
   for (const file of findDeclarationFiles(ctx.project.root)) {
@@ -192,6 +181,34 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
       }
     }
   }
+  const visitInterface = (name: string, seen = new Set<string>()) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    for (const declaration of interfaces.get(name) ?? []) {
+      for (const member of declaration.members) {
+        if (
+          !ts.isPropertySignature(member) &&
+          !ts.isMethodSignature(member) &&
+          !ts.isGetAccessorDeclaration(member) &&
+          !ts.isSetAccessorDeclaration(member)
+        )
+          continue;
+        let key = member.name;
+        if (ts.isComputedPropertyName(key)) {
+          if (!ts.isStringLiteral(key.expression)) continue;
+          key = key.expression;
+        }
+        if (ts.isIdentifier(key) || ts.isStringLiteral(key)) declarations.env.add(key.text);
+      }
+      for (const heritage of declaration.heritageClauses ?? []) {
+        if (heritage.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+        for (const type of heritage.types) {
+          if (ts.isIdentifier(type.expression)) visitInterface(type.expression.text, seen);
+        }
+      }
+    }
+  };
+  visitInterface("ImportMetaEnv");
   ctx.cache.set(cacheKey, declarations);
   return (env ? declarations.env : declarations.globals).has(name);
 }
