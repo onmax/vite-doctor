@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve } from "pathe";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { ruleDocumentationMetadata } from "./metadata.js";
+import { workspaceDiagnosticMetadata } from "./workspace-diagnostics.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
 export type RuleFix = "safe" | "suggestion" | "no";
@@ -46,7 +47,8 @@ export interface DiagnosticDocument {
   pack: string;
   severity: RuleSeverity;
   category: string;
-  framework: RuleFramework;
+  framework?: RuleFramework;
+  analysis?: "graph" | "dead-code" | "dupes" | "health";
   source: string;
   sourceUrl: string;
   rulePath: string;
@@ -175,6 +177,22 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
   const source = "src/core/internal/diagnostics.ts";
   return [
     ...ruleDiagnostics,
+    ...workspaceDiagnosticMetadata.map((diagnostic) => {
+      const source = "src/core/internal/workspace-graph.ts";
+      return {
+        ...diagnostic,
+        title: `${diagnostic.code}: ${diagnostic.title}`,
+        docsUrl: "",
+        pack: "vite-doctor/core",
+        source,
+        sourceUrl: githubSourceUrl(source),
+        rulePath: "",
+        fixable: "no" as const,
+        examples: [],
+        path: `/diagnostics/${diagnostic.code}`,
+        key: `diagnostics/${diagnostic.code}.md`,
+      };
+    }),
     {
       code: "DOC0022",
       title: "DOC0022: Resolve the runtime graph",
@@ -238,7 +256,7 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
     `pack: ${yamlString(diagnostic.pack)}`,
     `severity: ${yamlString(diagnostic.severity)}`,
     `category: ${yamlString(diagnostic.category)}`,
-    `framework: ${yamlString(diagnostic.framework)}`,
+    ...(diagnostic.framework ? [`framework: ${yamlString(diagnostic.framework)}`] : []),
     `source: ${yamlString(diagnostic.source)}`,
     `sourceUrl: ${yamlString(diagnostic.sourceUrl)}`,
     "---",
@@ -268,7 +286,18 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
   if (diagnostic.examples.length) {
     lines.push("## Example", "", ...diagnostic.examples.flatMap(renderExample));
   }
-  if (diagnostic.rulePath) {
+  if (diagnostic.analysis) {
+    lines.push(
+      "## Verify the fix",
+      "",
+      "Rerun the workspace analysis after editing:",
+      "",
+      "```bash",
+      `pnpm vite-doctor . --analyses ${diagnostic.analysis}`,
+      "```",
+      "",
+    );
+  } else if (diagnostic.rulePath && diagnostic.framework) {
     lines.push(
       "## Verify the fix",
       "",
@@ -445,12 +474,20 @@ function assertCompleteRuleDocumentation(
 }
 
 function ruleSourcesFromIndex(indexFile: string) {
-  const dir = dirname(indexFile);
-  return readFileSync(indexFile, "utf8")
-    .split(/\r?\n/)
-    .map((line) => line.match(/^export \{ \w+ \} from "\.\/(.+)\.js";$/)?.[1])
-    .filter(Boolean)
-    .map((file) => join(dir, `${file}.ts`));
+  const { parseSync } = loadParser();
+  const ast = parseSync(indexFile, readFileSync(indexFile, "utf8"), {
+    sourceType: "module",
+    lang: "ts",
+  }).program;
+  const sources = new Set<string>();
+  for (const statement of ast.body) {
+    if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
+    if (!statement.specifiers.some((specifier) => specifier.exportKind !== "type")) continue;
+    const source = statement.source?.value;
+    if (source?.startsWith("./") && source.endsWith(".js"))
+      sources.add(join(dirname(indexFile), `${source.slice(0, -3)}.ts`));
+  }
+  return [...sources];
 }
 
 function withRulePath(
