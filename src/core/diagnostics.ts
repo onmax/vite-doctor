@@ -22,6 +22,7 @@ export type DoctorDiagnosticRegistry<
   RuleId extends string = string,
 > = {
   codesByRuleId: Record<RuleId, Code>;
+  codesByRuleIdAll: Record<RuleId, readonly Code[]>;
   diagnostics: { readonly [Key in Code]: DoctorDiagnosticHandle };
 };
 
@@ -67,6 +68,11 @@ export function defineDoctorDiagnostics<const Entries extends readonly DoctorDia
 ): DoctorDiagnosticRegistry<Entries[number]["code"], Entries[number]["ruleId"]> {
   type Code = Entries[number]["code"];
   type RuleId = Entries[number]["ruleId"];
+  const seenCodes = new Set<string>();
+  for (const entry of entries) {
+    if (seenCodes.has(entry.code)) throw doctorInternalDiagnostics.DOC0012({ code: entry.code });
+    seenCodes.add(entry.code);
+  }
   const codes = Object.fromEntries(
     entries.map((entry) => [
       entry.code,
@@ -84,11 +90,20 @@ export function defineDoctorDiagnostics<const Entries extends readonly DoctorDia
       docs?: string | false;
     }
   >;
+  const codesByRuleIdAll = new Map<string, string[]>();
+  for (const entry of entries) {
+    const codes = codesByRuleIdAll.get(entry.ruleId) ?? [];
+    codes.push(entry.code);
+    codesByRuleIdAll.set(entry.ruleId, codes);
+  }
   return {
     codesByRuleId: Object.fromEntries(entries.map((entry) => [entry.ruleId, entry.code])) as Record<
       RuleId,
       Code
     >,
+    codesByRuleIdAll: Object.fromEntries(
+      [...codesByRuleIdAll].map(([ruleId, codes]) => [ruleId, codes]),
+    ) as unknown as Record<RuleId, readonly Code[]>,
     diagnostics: defineNosticsDiagnostics({
       docsBase: (code) => `${DOCTOR_DIAGNOSTICS_DOCS_BASE}/${String(code)}`,
       codes,

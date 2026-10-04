@@ -8,7 +8,10 @@ import type {
   DoctorRunResult,
   RulePack,
 } from "./primitives.js";
-import { allDiagnosticCodesByRuleId } from "./diagnostic-code-map.js";
+import {
+  allDiagnosticCodeListsByRuleId,
+  allDiagnosticCodesByRuleId,
+} from "./diagnostic-code-map.js";
 import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
 import type { DoctorRunOptions } from "./config.js";
@@ -53,7 +56,7 @@ export function createTextReport(result: DoctorRunResult): string {
   lines.push(
     `Confidence mix: ${confidence.proven} proven, ${confidence.probable} probable, ${confidence.sourceOnly} source-only`,
   );
-  if (result.fixes?.edits) {
+  if (result.fixes && (result.fixes.edits || result.fixes.skipped)) {
     lines.push(
       `Fixes applied: ${result.fixes.edits} edits in ${result.fixes.files} files${result.fixes.skipped ? `, ${result.fixes.skipped} skipped` : ""}`,
     );
@@ -210,6 +213,7 @@ export function createSarifReport(result: DoctorRunResult): string {
       $schema: "https://json.schemastore.org/sarif-2.1.0.json",
       runs: [
         {
+          columnKind: "utf16CodeUnits",
           tool: {
             driver: {
               name: "Vite Doctor",
@@ -246,7 +250,7 @@ export function createSarifReport(result: DoctorRunResult): string {
             locations: [
               {
                 physicalLocation: {
-                  artifactLocation: { uri: relative(result.root, diagnostic.file) },
+                  artifactLocation: { uri: sarifArtifactUri(result.root, diagnostic.file) },
                   region: diagnostic.range
                     ? {
                         startLine: diagnostic.range.line,
@@ -258,7 +262,7 @@ export function createSarifReport(result: DoctorRunResult): string {
             ],
             relatedLocations: diagnostic.related?.map((item) => ({
               physicalLocation: {
-                artifactLocation: { uri: relative(result.root, item.file) },
+                artifactLocation: { uri: sarifArtifactUri(result.root, item.file) },
                 region: item.range
                   ? { startLine: item.range.line, startColumn: item.range.column }
                   : undefined,
@@ -283,6 +287,10 @@ export function createReport(
   if (format === "sarif") return createSarifReport(result);
   if (format === "agent") return createAgentReport(result, context);
   return `${createTextReport(result)}\n`;
+}
+
+function sarifArtifactUri(root: string, file: string): string {
+  return relative(root, file).split("/").map(encodeURIComponent).join("/");
 }
 
 export function createRulesReport(
@@ -324,7 +332,8 @@ export function explainRule(
     );
   if (!match) return "";
   const diagnosticCodes = match.rule.meta.diagnosticCodes ?? codeListForRule(match.rule.meta.id);
-  const documentedCodes = codeListForRule(match.rule.meta.id);
+  const documentedCodes =
+    (allDiagnosticCodeListsByRuleId as Record<string, readonly string[]>)[match.rule.meta.id] ?? [];
   const diagnostics = diagnosticCodes.map((code) => ({
     code,
     docs: documentedCodes.includes(code) ? diagnosticReferenceUrl(code) : undefined,

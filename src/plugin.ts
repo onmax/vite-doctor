@@ -28,6 +28,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     name: "vite-doctor",
     configResolved(resolved) {
       config = resolved;
+      ran = false;
     },
     async buildStart() {
       if (options.enabled === false || ran) return;
@@ -84,6 +85,7 @@ function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
             base: config.base,
             publicDir: config.publicDir,
             envDir: config.envDir,
+            aliases: config.resolve?.alias ?? [],
             plugins: config.plugins?.map((plugin) => plugin.name).filter(Boolean) ?? [],
           };
         },
