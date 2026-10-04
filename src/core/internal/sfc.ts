@@ -29,8 +29,7 @@ export async function parseSfcFile(
       return (descriptor.template?.ast as unknown as Record<string, unknown>) ?? null;
     },
     getScriptAst() {
-      const script = createVueScriptForParsing(descriptor, source);
-      return script.text.trim() ? parseScript(file, script.text, script.lang) : null;
+      return parseVueScripts(file, descriptor, source);
     },
     async getTemplateTokens() {
       return parseTemplate(file, source);
@@ -67,15 +66,31 @@ export function createVueScriptForParsing(
       text[start + index] = block.content[index]!;
     }
   }
-  // Keep parser offsets stable while isolating blocks from comment and ASI coupling.
-  for (let index = 0; index < blocks.length - 1; index++) {
-    const end = blocks[index]?.loc?.end?.offset;
-    const nextStart = blocks[index + 1]?.loc?.start?.offset;
-    if (typeof end !== "number" || typeof nextStart !== "number" || end >= nextStart) continue;
-    text[end] = "\n";
-    if (end + 1 < nextStart) text[end + 1] = ";";
-  }
   return { text: text.join(""), lang: vueScriptLang(blocks) };
+}
+
+export function parseVueScripts(
+  file: string,
+  descriptor: any,
+  source: string,
+): Record<string, unknown> | null {
+  const blocks = [descriptor?.script, descriptor?.scriptSetup]
+    .filter(Boolean)
+    .sort((left, right) => (left.loc?.start?.offset ?? 0) - (right.loc?.start?.offset ?? 0));
+  const lang = vueScriptLang(blocks);
+  let program: Record<string, unknown> | null = null;
+  for (const block of blocks) {
+    const script = createVueScriptForParsing({ script: block }, source);
+    if (!script.text.trim()) continue;
+    const ast = parseScript(file, script.text, lang);
+    if (!ast) return null;
+    if (!program) program = ast;
+    else {
+      (program.body as unknown[]).push(...(ast.body as unknown[]));
+      (program.comments as unknown[]).push(...(ast.comments as unknown[]));
+    }
+  }
+  return program;
 }
 
 function vueScriptLang(blocks: any[]): ScriptParseLang {

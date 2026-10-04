@@ -9,7 +9,7 @@ import type {
   SourceFileHandle,
   TemplateFact,
 } from "../primitives.js";
-import { createVueScriptForParsing, parseSfcFile } from "./sfc.js";
+import { parseSfcFile, parseVueScripts } from "./sfc.js";
 import { parseScript } from "./script.js";
 import { parseTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
@@ -17,7 +17,7 @@ import { createCacheKey, markSession, type ScanSession } from "./scan-session.js
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 
-const FILE_FACTS_VERSION = 2;
+const FILE_FACTS_VERSION = 3;
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
@@ -46,9 +46,11 @@ async function parseSourceFile(
   const cachedFacts = session.cache.get<FileFacts>(cacheKey);
   const isVueSfc = absolute.endsWith(".vue");
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
-  const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor as any, text) : undefined;
-  const scriptText = isVueSfc ? (script?.text ?? "") : text;
-  const scriptAst = scriptText.trim() ? parseScript(absolute, scriptText, script?.lang) : null;
+  const scriptAst = isVueSfc
+    ? parseVueScripts(absolute, sfc?.descriptor, text)
+    : text.trim()
+      ? parseScript(absolute, text)
+      : null;
   const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text) : null;
   const facts =
     cachedFacts && cachedFacts.fileHash === hash

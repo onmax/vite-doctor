@@ -1,12 +1,11 @@
 import { parse } from "@vue/compiler-sfc";
 import { expect, test } from "vite-plus/test";
-import { createVueScriptForParsing } from "../../src/core/internal/sfc.ts";
-import { parseScript } from "../../src/core/internal/script.ts";
+import { createVueScriptForParsing, parseVueScripts } from "../../src/core/internal/sfc.ts";
 
 function parseAdjacentScripts(source: string) {
   const { descriptor } = parse(source, { filename: "app.vue" });
   const script = createVueScriptForParsing(descriptor, source);
-  const ast = parseScript("app.vue", script.text, script.lang) as { body: any[] } | null;
+  const ast = parseVueScripts("app.vue", descriptor, source) as { body: any[] } | null;
   return { source, script, ast };
 }
 
@@ -43,4 +42,19 @@ test("orders script blocks by their source offsets", () => {
   expect(fixture.ast?.body).toHaveLength(2);
   expect(fixture.ast?.body[0]?.type).toBe("VariableDeclaration");
   expect(fixture.ast?.body[1]?.type).toBe("ImportDeclaration");
+});
+
+test.each([
+  "const value = 1",
+  "import { ref } from 'vue'",
+  "export default {}",
+  "const value = fn // trailing",
+])("preserves statement ends at script content boundaries: %s", (statement) => {
+  const fixture = parseAdjacentScripts(
+    `<script>${statement}</script><script setup>(function () {})()</script>`,
+  );
+  const expectedEnd =
+    fixture.source.indexOf("</script>") - (statement.includes(" //") ? " // trailing".length : 0);
+  expect(fixture.ast?.body).toHaveLength(2);
+  expect(fixture.ast?.body[0]?.end).toBe(expectedEnd);
 });
