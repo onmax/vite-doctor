@@ -78,8 +78,6 @@ export function isNitroServerFile(ctx: RuleContext) {
   return (
     (ctx.project.framework === "nuxt" && ctx.helpers.isNuxtServerFile(path)) ||
     (ctx.project.framework === "nitro" &&
-      (path.startsWith("server/") ||
-        isNitroRouteFile(ctx) ||
-        /^middleware\/.+\.[cm]?[jt]s$/.test(path)))
+      (isNitroRouteFile(ctx) || /^(?:server\/)?middleware\/.+\.[cm]?[jt]s$/.test(path)))
   );
 }

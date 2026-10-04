@@ -26,32 +26,36 @@ const serverRules = [
   [preferValidatedRouterParams, "const params = getRouterParams(event); schema.parse(params)"],
 ] as const;
 
-describe.each(["routes/index.ts", "routes/api/users.get.ts", "middleware/auth.ts"])(
-  "standalone Nitro server file %s",
-  (file) => {
-    test.each(serverRules)("runs $0.meta.id", async (rule, source) => {
-      const result = await runRuleFixture({
-        rule,
-        framework: "nitro",
-        dependencies: { nitro: "3.0.0-beta.1", h3: "2.0.0-beta.1" },
-        files: { [file]: `export default defineHandler(async (event) => { ${source} })` },
-      });
-      expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([rule.meta.id]);
+describe.each([
+  "routes/index.ts",
+  "routes/api/users.get.ts",
+  "middleware/auth.ts",
+  "server/api/users.ts",
+  "server/routes/index.ts",
+  "server/middleware/auth.ts",
+])("standalone Nitro server file %s", (file) => {
+  test.each(serverRules)("runs $0.meta.id", async (rule, source) => {
+    const result = await runRuleFixture({
+      rule,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.0-beta.1", h3: "2.0.0-beta.1" },
+      files: { [file]: `export default defineHandler(async (event) => { ${source} })` },
     });
+    expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([rule.meta.id]);
+  });
 
-    test("applies Nitro 3 runtime config advice", async () => {
-      const result = await runRuleFixture({
-        rule: noEventRuntimeConfigInServer,
-        framework: "nitro",
-        dependencies: { nitro: "3.0.0-beta.1" },
-        files: { [file]: "export default defineHandler((event) => useRuntimeConfig(event))" },
-      });
-      expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([
-        noEventRuntimeConfigInServer.meta.id,
-      ]);
+  test("applies Nitro 3 runtime config advice", async () => {
+    const result = await runRuleFixture({
+      rule: noEventRuntimeConfigInServer,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.0-beta.1" },
+      files: { [file]: "export default defineHandler((event) => useRuntimeConfig(event))" },
     });
-  },
-);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([
+      noEventRuntimeConfigInServer.meta.id,
+    ]);
+  });
+});
 
 test.each(["api/index.ts", "routes/index.ts", "server/api/index.ts"])(
   "preserves Nitro 2 event-aware runtime config advice in %s",
@@ -67,19 +71,24 @@ test.each(["api/index.ts", "routes/index.ts", "server/api/index.ts"])(
   },
 );
 
-test.each(["src/main.ts", "nitro.config.ts", "components/widget.ts", "routes/index.vue"])(
-  "does not classify unrelated files as server files: %s",
-  async (file) => {
-    const result = await runRuleFixture({
-      rule: noBrowserApiInServer,
-      framework: "nitro",
-      files: {
-        [file]: file.endsWith(".vue") ? "<script setup>document.title</script>" : "document.title",
-      },
-    });
-    expect(result.diagnostics).toEqual([]);
-  },
-);
+test.each([
+  "src/main.ts",
+  "nitro.config.ts",
+  "components/widget.ts",
+  "routes/index.vue",
+  "server/scripts/generate.ts",
+  "server/components/widget.ts",
+  "server/api/widget.vue",
+])("does not classify unrelated files as server files: %s", async (file) => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInServer,
+    framework: "nitro",
+    files: {
+      [file]: file.endsWith(".vue") ? "<script setup>document.title</script>" : "document.title",
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
 
 test.each(["routes/index.ts", "api/index.ts", "middleware/auth.ts"])(
   "does not treat Nuxt application files as standalone Nitro files: %s",
