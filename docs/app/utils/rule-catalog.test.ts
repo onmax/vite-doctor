@@ -31,6 +31,7 @@ const internalDiagnosticCodes = [
   "DOC0019",
   "DOC0020",
   "DOC0021",
+  "DOC0023",
   "DOC0024",
 ] as const;
 
