@@ -1,5 +1,9 @@
+import { readFileSync, rmSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { expect, test } from "vite-plus/test";
+import { join } from "pathe";
 import { runNuxtManifestRuleFixture } from "../../../src/core/testkit.ts";
+import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import { noAutoImportCollision } from "../../../src/rule-packs/nuxt/rules/nuxt/no-auto-import-collision.ts";
 
 async function runCollisionFixture(autoImports: unknown[]) {
@@ -69,4 +73,44 @@ test("ignores repeated auto-import entries from the same source", async () => {
   ]);
 
   expect(result.diagnostics).toEqual([]);
+});
+
+test("Nuxt imports context keeps duplicate entries in the generated manifest", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vite-doctor-nuxt-imports-"));
+  const hooks = new Map<string, Array<(payload: any) => unknown>>();
+  const nuxt = {
+    _version: "4.5.1",
+    options: {
+      rootDir: root,
+      srcDir: "app",
+      buildDir: ".nuxt",
+      modules: [],
+      imports: { autoImport: true, imports: [], transform: { include: [], exclude: [] } },
+    },
+    hook(name: string, callback: (payload: any) => unknown) {
+      hooks.set(name, [...(hooks.get(name) ?? []), callback]);
+    },
+    async callHook() {},
+  };
+
+  try {
+    await nuxtDoctorModule({}, nuxt as any);
+    for (const hook of hooks.get("imports:context") ?? [])
+      await hook({
+        getImports: () => [
+          { name: "useShared", from: join(root, "app/composables/a.ts") },
+          { name: "useShared", from: join(root, "app/composables/b.ts") },
+        ],
+      });
+    for (const hook of hooks.get("prepare:types") ?? []) await hook(undefined);
+
+    const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+    expect(manifest.autoImports).toHaveLength(2);
+    expect(manifest.autoImports.map((entry: { from: string }) => entry.from)).toEqual([
+      join(root, "app/composables/a.ts"),
+      join(root, "app/composables/b.ts"),
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
