@@ -690,9 +690,18 @@ test("malformed rule config fails predictably", async () => {
 });
 
 test("internal diagnostic guards use stable codes", async () => {
+  expect(
+    thrownBy(() =>
+      defineDoctorDiagnostics([
+        { code: "DOC9001", ruleId: "test/duplicate-a" },
+        { code: "DOC9001", ruleId: "test/duplicate-b" },
+      ]),
+    ),
+  ).toMatchObject({ name: "DOC0012" });
+
   const registry = defineDoctorDiagnostics([
     { code: "DOC9001", ruleId: "test/duplicate-a" },
-    { code: "DOC9001", ruleId: "test/duplicate-b" },
+    { code: "DOC9002", ruleId: "test/duplicate-a" },
   ]);
   const host = createDoctorDiagnosticsHost();
   host.register(registry);
