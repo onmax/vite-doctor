@@ -194,12 +194,18 @@ function collectVueComments(source: string): SourceComment[] {
       };
     };
     const tsParser = require("@typescript-eslint/parser") as { parseForESLint: unknown };
+    const isTsx = /<script\b[^>]*\blang\s*=\s*["']tsx["'][^>]*>/i.test(source);
     const parsed = vueParser.parseForESLint(source, {
       comment: true,
       ecmaVersion: "latest",
       loc: true,
       parser: tsParser,
-      parserOptions: { comment: true, ecmaVersion: "latest", sourceType: "module" },
+      parserOptions: {
+        comment: true,
+        ecmaFeatures: { jsx: isTsx },
+        ecmaVersion: "latest",
+        sourceType: "module",
+      },
       range: true,
       sourceType: "module",
       tokens: true,

@@ -242,6 +242,33 @@ test("HTML comments in Vue SFCs support suppressions", () => {
   expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "html reason" }]);
 });
 
+test("TSX Vue SFCs preserve script and template suppressions", () => {
+  const { root, file } = fixture(
+    [
+      "<template>",
+      "  <!-- doctor-disable test/example -- template reason -->",
+      "  <div />",
+      "</template>",
+      '<script setup lang="tsx">',
+      "// doctor-disable test/example -- script reason",
+      "const component = () => <div />;",
+      "</script>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 3), finding(file, 6)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([
+    { suppressionReason: "template reason" },
+    { suppressionReason: "script reason" },
+  ]);
+});
+
 test("multiline Vue HTML next-line suppressions target the following source line", () => {
   const { root, file } = fixture(
     [
