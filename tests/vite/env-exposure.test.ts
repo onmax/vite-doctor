@@ -100,6 +100,52 @@ test("does not treat server-only environment defines as client exposure", async 
   });
 });
 
+test.each([
+  ["browser", "client", true],
+  ["client", "server", false],
+] as const)("uses the resolved consumer for %s (%s)", async (environment, consumer, exposed) => {
+  await withProject("PRIVATE_API_SECRET", async (root) => {
+    const result = hostBuild(root, {
+      envPrefix: "PUBLIC_",
+      environments: {
+        ssr: {},
+        [environment]: {
+          consumer,
+          define: { "import.meta.env.PRIVATE_API_SECRET": '"fixture-value"' },
+        },
+      },
+    });
+    if (exposed) await expect(result).rejects.toThrow(rule);
+    else await expect(result).resolves.toBeDefined();
+  });
+});
+
+test("keeps unresolved environment consumers conservative", async () => {
+  await withProject("PRIVATE_API_SECRET", async (root) => {
+    let clearConsumer: () => void;
+    await expect(
+      hostBuild(root, {
+        envPrefix: "PUBLIC_",
+        environments: { browser: { consumer: "client" } },
+        plugins: [
+          {
+            name: "fixture/unresolved-consumer",
+            configResolved(config) {
+              clearConsumer = () => {
+                Object.assign(config.environments.browser, { consumer: undefined });
+              };
+            },
+            buildStart() {
+              clearConsumer();
+            },
+          },
+          doctor({ rules: rule, cache: false }),
+        ],
+      }),
+    ).rejects.toThrow(rule);
+  });
+});
+
 test("lets Vite reject an empty public prefix before the Doctor Run", async () => {
   await withProject("PRIVATE_API_SECRET", async (root) => {
     await expect(hostBuild(root, { envPrefix: "" })).rejects.toThrow(/envPrefix/);
