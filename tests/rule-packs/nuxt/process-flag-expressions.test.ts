@@ -299,6 +299,30 @@ test("mixed Vue script languages preserve JSX parsing", async () => {
   ]);
 });
 
+test("mixed Vue script languages preserve TypeScript assertions", async () => {
+  const source = `<template><p>flags</p></template>
+<script lang="ts">export const flag = process.client as boolean</script>
+<script setup lang="jsx">const view = <div>{process.server}</div></script>`;
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [noLegacyProcessClientServer],
+    run: {
+      runtimeTarget: {
+        nuxt: "4.5.1",
+        nitro: "2.13.4",
+        h3: "1.15.11",
+        vue: "3.5.0",
+        nuxtCompatibility: 5,
+      },
+    },
+    files: { "app/pages/index.vue": source },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.fix?.edits[0]?.text)).toEqual([
+    "import.meta.client",
+    "import.meta.server",
+  ]);
+});
+
 test.each([
   {
     name: "setup binding leaves normal-script global unresolved",

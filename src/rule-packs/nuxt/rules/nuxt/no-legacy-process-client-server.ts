@@ -1,6 +1,5 @@
 import * as typescriptParser from "@typescript-eslint/parser";
-import type { SFCDescriptor } from "@vue/compiler-sfc";
-import { parseForESLint as parseVueForESLint } from "vue-eslint-parser";
+import type { SFCBlock, SFCDescriptor } from "@vue/compiler-sfc";
 import type { RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -59,31 +58,72 @@ export const noLegacyProcessClientServer = createRule({
 function findGlobalProcessReferences(ctx: RuleContext): Set<number> {
   try {
     const descriptor = ctx.file.sfc?.descriptor as SFCDescriptor | undefined;
-    const usesJsx = descriptor
-      ? [descriptor.script, descriptor.scriptSetup].some((block) =>
-          ["jsx", "tsx"].includes(block?.lang ?? ""),
-        )
-      : /\.[jt]sx$/.test(ctx.file.relativePath);
-    const options = {
-      range: true,
-      sourceType: "module" as const,
-      ecmaFeatures: {
-        jsx: usesJsx,
-      },
-    };
-    const { scopeManager } = ctx.file.sfc
-      ? parseVueForESLint(ctx.file.text, {
-          ...options,
-          parser: typescriptParser,
-          ecmaVersion: "latest",
-        })
-      : typescriptParser.parseForESLint(ctx.file.text, options);
-    return new Set(
-      scopeManager?.globalScope?.through
-        .filter((reference) => reference.identifier.name === "process")
-        .flatMap((reference) => reference.identifier.range?.slice(0, 1) ?? []),
-    );
+    if (!descriptor) {
+      return new Set(
+        collectGlobalProcessReferences(
+          typescriptParser.parseForESLint(
+            ctx.file.text,
+            parserOptions(/\.[jt]sx$/.test(ctx.file.relativePath)),
+          ),
+        ),
+      );
+    }
+    const normal = descriptor.script ? parseVueBlock(descriptor.script) : undefined;
+    const setup = descriptor.scriptSetup ? parseVueBlock(descriptor.scriptSetup) : undefined;
+    const normalHasProcessBinding = normal?.scopeManager.scopes
+      .find((scope) => scope.type === "module")
+      ?.variables.some((variable) => variable.name === "process");
+    const refs = new Set([
+      ...collectGlobalProcessReferences(normal, descriptor.script),
+      ...(normalHasProcessBinding
+        ? []
+        : collectGlobalProcessReferences(setup, descriptor.scriptSetup)),
+    ]);
+    return refs;
   } catch {
     return new Set();
   }
+}
+
+function parserOptions(jsx: boolean) {
+  return {
+    range: true,
+    sourceType: "module" as const,
+    ecmaFeatures: { jsx },
+    ecmaVersion: "latest" as const,
+    filePath: jsx ? "file.tsx" : "file.ts",
+  };
+}
+
+function parseVueBlock(block: SFCBlock) {
+  return typescriptParser.parseForESLint(
+    block.content,
+    parserOptions(["jsx", "tsx"].includes(block.lang ?? "")),
+  );
+}
+
+function collectGlobalProcessReferences(
+  parsed: ReturnType<typeof typescriptParser.parseForESLint> | undefined,
+  block?: SFCBlock,
+) {
+  if (!parsed) return [];
+  const offset = block?.loc.start.offset ?? 0;
+  const references =
+    parsed.scopeManager?.globalScope?.through
+      .filter((reference) => reference.identifier.name === "process")
+      .flatMap((reference) => {
+        const range = reference.identifier.range;
+        return range ? [range[0] + offset] : [];
+      }) ?? [];
+  if (
+    references.length ||
+    parsed.scopeManager.scopes.some((scope) =>
+      scope.variables.some((variable) => variable.name === "process"),
+    )
+  )
+    return references;
+  const source = block?.content ?? "";
+  return [...source.matchAll(/\bprocess\.(?:client|server)\b/g)].map(
+    (match) => match.index! + offset,
+  );
 }
