@@ -81,3 +81,12 @@ test.each(["NuxtImg", "nuxt-img", "nuxtImg", "Nuxt-Img", "nuxt-Img"])(
     expect(result.diagnostics.map((d) => d.ruleId)).toEqual([preferNuxtPictureForFormats.meta.id]);
   },
 );
+
+test.each(["Nuxt_Img", "nuxt--img"])("ignores unsupported component spelling %s", async (tag) => {
+  const result = await runRuleFixture({
+    rule: requireImageAlt,
+    framework: "nuxt",
+    files: { "app/app.vue": `<template><${tag} src="/image.png" /></template>` },
+  });
+  expect(result.diagnostics).toEqual([]);
+});

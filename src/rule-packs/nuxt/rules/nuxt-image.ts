@@ -3,10 +3,8 @@ import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
 
-const normalizeComponentName = (name: string) => name.replace(/[-_]/g, "").toLowerCase();
-const isNuxtImageTag = (name: string) =>
-  ["nuxtimg", "nuxtpicture"].includes(normalizeComponentName(name));
-const isNuxtImgTag = (name: string) => normalizeComponentName(name) === "nuxtimg";
+const isNuxtImageTag = (name: string) => /^nuxt-?(?:img|picture)$/i.test(name);
+const isNuxtImgTag = (name: string) => /^nuxt-?img$/i.test(name);
 
 export const preferNuxtImg = createRule({
   meta: {
