@@ -1,5 +1,5 @@
 import { type AnyNode, createRule, report } from "./shared.js";
-import { isNitroRouteFile, isSingleMethodCheck } from "./request-helpers.js";
+import { isNitroRouteFile, singleMethodCheck } from "./request-helpers.js";
 
 export const preferAssertMethod = createRule({
   meta: {
@@ -20,8 +20,10 @@ export const preferAssertMethod = createRule({
     if (isNitroRouteFile(ctx.file.relativePath)) return;
     return {
       ScriptNode(node: AnyNode) {
-        const method = isSingleMethodCheck(node, ctx.file.text);
-        if (!method) return;
+        if (node.type !== "IfStatement") return;
+        const check = singleMethodCheck(node.test, ctx.file.text, node);
+        if (!check?.isNegative || !rejectsRequest(node.consequent)) return;
+        const method = check.method;
         report(
           ctx,
           node,
@@ -35,3 +37,14 @@ export const preferAssertMethod = createRule({
     };
   },
 });
+
+function rejectsRequest(node: AnyNode): boolean {
+  if (node.type === "ThrowStatement") return true;
+  if (node.type !== "BlockStatement") return false;
+  for (const statement of node.body) {
+    if (rejectsRequest(statement)) return true;
+    if (!["ExpressionStatement", "VariableDeclaration", "EmptyStatement"].includes(statement.type))
+      return false;
+  }
+  return false;
+}
