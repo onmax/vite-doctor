@@ -29,7 +29,7 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
           ? resolveImportTarget(session, fact, item.source, byRelativePath)
           : undefined,
         specifier: item.source,
-        kind: item.source ? "re-export" : "export",
+        kind: item.source ? (item.kind === "type" ? "type-re-export" : "re-export") : "export",
       });
       const exports = exportsByName.get(item.name) ?? [];
       exports.push(item);
@@ -92,7 +92,10 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
     reverseIndex: { importersByFile, refsByExport, exportsByName },
     sccs: computeSccs(
       session.facts.map((fact) => fact.fileId),
-      [...importEdges.filter((edge) => edge.kind !== "dynamic-import"), ...exportEdges],
+      [
+        ...importEdges.filter((edge) => edge.kind === "import"),
+        ...exportEdges.filter((edge) => edge.kind === "re-export"),
+      ],
     ),
   };
 }
@@ -237,8 +240,14 @@ function workspacePackageRoots(session: ScanSession): string[] {
 
 function importCandidates(base: string): string[] {
   const clean = base.replace(/^\.\//, "");
+  const outputExtension = clean.match(/\.(?:js|jsx|mjs|cjs)$/)?.[0];
+  const sourceCandidates = outputExtension
+    ? [
+        clean.slice(0, -outputExtension.length) + outputExtension.replace("js", "ts"),
+        ...(outputExtension === ".js" ? [clean.slice(0, -3) + ".tsx"] : []),
+      ]
+    : [];
   const exts = [
-    "",
     ".ts",
     ".tsx",
     ".d.ts",
@@ -254,7 +263,7 @@ function importCandidates(base: string): string[] {
     "/index.json",
     "/index.vue",
   ];
-  return exts.map((ext) => `${clean}${ext}`);
+  return [clean, ...sourceCandidates, ...exts.map((ext) => `${clean}${ext}`)];
 }
 
 export function runStructuralGraphRules(session: ScanSession, graph: WorkspaceGraph) {
@@ -757,7 +766,7 @@ function isIgnoredDependencyForUnusedReport(dep: string): boolean {
 }
 
 function isTypeSurfaceFile(relativePath: string): boolean {
-  return relativePath.endsWith(".d.ts") || /(^|\/)(types|shared\/types)\//.test(relativePath);
+  return /\.d\.[cm]?ts$/.test(relativePath) || /(^|\/)(types|shared\/types)\//.test(relativePath);
 }
 
 function findExportFile(graph: WorkspaceGraph, target: ExportFact): string | undefined {

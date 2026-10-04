@@ -1,4 +1,5 @@
-import { createRule } from "../../../core/index.js";
+import { dirname, relative, resolve } from "pathe";
+import { createRule, type RuleContext } from "../../../core/index.js";
 import { staticString, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
@@ -15,7 +16,7 @@ export const noPublicSrcImport = createRule({
     return {
       ImportDeclaration(node: AnyNode) {
         const source = String(node.source?.value ?? "");
-        if (!isPublicImport(source)) return;
+        if (!isPublicImport(ctx, source)) return;
         ctx.report(
           diagnostics.VITE0002({
             why: `Public media and font assets should be referenced by URL, not imported: ${source}`,
@@ -96,7 +97,7 @@ const assetAttributes: Record<string, string[]> = {
 export const noDynamicNewUrl = createRule({
   meta: {
     id: "vite/assets/no-dynamic-new-url",
-    title: "Keep new URL asset paths static",
+    title: "Keep new URL asset paths analyzable",
     category: "assets",
     severity: "warn",
     docsUrl: "https://vite.dev/guide/assets.html#new-url-url-import-meta-url",
@@ -111,12 +112,17 @@ export const noDynamicNewUrl = createRule({
         const [first, second] = node.arguments ?? [];
         if (!second || !ctx.file.text.slice(second.start, second.end).endsWith("import.meta.url"))
           return;
-        if (staticString(first)) return;
+        if (
+          staticString(first) !== null ||
+          isAssetUrlTemplate(first) ||
+          isConfiguredAliasTemplate(first, ctx.project.inventory?.vite)
+        )
+          return;
         if (!isAssetUrlContext(node)) return;
         ctx.report(
           diagnostics.VITE0001({
             why: "Vite cannot reliably include assets from a dynamic new URL() path.",
-            fix: "Use a static string path or import.meta.glob for dynamic asset sets.",
+            fix: "Use a static path, a relative template such as ./images/${name}.png, or import.meta.glob for dynamic asset sets.",
           }),
           {
             ruleId: "vite/assets/no-dynamic-new-url",
@@ -131,11 +137,61 @@ export const noDynamicNewUrl = createRule({
   },
 });
 
-function isPublicImport(source: string): boolean {
-  if (isStaticDataImport(source)) return false;
+function isAssetUrlTemplate(node: AnyNode): boolean {
   return (
-    source.startsWith("/public/") || source.startsWith("public/") || source.includes("/public/")
+    node?.type === "TemplateLiteral" && /^(?:\.{1,2}\/|\/)/.test(node.quasis?.[0]?.value?.raw ?? "")
   );
+}
+
+function isConfiguredAliasTemplate(node: AnyNode, viteInventory: unknown): boolean {
+  if (node?.type !== "TemplateLiteral") return false;
+  const prefix = node.quasis?.[0]?.value?.raw ?? "";
+  if (!prefix || /^(?:\.{1,2}\/|\/)/.test(prefix)) return false;
+  const aliases = (viteInventory as { aliases?: unknown })?.aliases;
+  if (Array.isArray(aliases)) {
+    return aliases.some((alias) => {
+      const find = typeof alias === "string" ? alias : (alias as { find?: unknown })?.find;
+      if (typeof find === "string") return prefix === find || prefix.startsWith(`${find}/`);
+      if (find instanceof RegExp) {
+        // Stateful aliases depend on resolver call order and must not be probed here.
+        if (find.global || find.sticky) return false;
+        return find.test(prefix);
+      }
+      return false;
+    });
+  }
+  if (aliases && typeof aliases === "object") {
+    return Object.keys(aliases).some((find) => prefix === find || prefix.startsWith(`${find}/`));
+  }
+  return false;
+}
+
+function isPublicImport(ctx: RuleContext, source: string): boolean {
+  const viteInventory = ctx.project.inventory?.vite;
+  const publicDir =
+    viteInventory && typeof viteInventory === "object" && "publicDir" in viteInventory
+      ? viteInventory.publicDir
+      : undefined;
+  if (publicDir === false || publicDir === "") return false;
+  const path = source.split(/[?#]/)[0]!;
+  if (isStaticDataImport(path)) return false;
+  let target: string | undefined;
+  if (path.startsWith("./") || path.startsWith("../"))
+    target = resolve(dirname(ctx.file.path), path);
+  else if (path.startsWith("/") && !path.startsWith("//"))
+    target = resolve(ctx.project.root, `.${path}`);
+  else if (ctx.project.nuxt) {
+    if (path.startsWith("~~/") || path.startsWith("@@/"))
+      target = resolve(ctx.project.root, path.slice(3));
+    else if (path.startsWith("~/") || path.startsWith("@/"))
+      target = resolve(ctx.project.nuxt.appDir, path.slice(2));
+  }
+  if (!target) return false;
+  const publicPath = relative(
+    resolve(ctx.project.root, typeof publicDir === "string" ? publicDir : "public"),
+    target,
+  );
+  return publicPath !== ".." && !publicPath.startsWith("../") && !publicPath.startsWith("/");
 }
 
 function isStaticDataImport(source: string): boolean {

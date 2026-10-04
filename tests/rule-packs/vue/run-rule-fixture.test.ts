@@ -222,6 +222,24 @@ onUpdated(() => {
   );
 });
 
+test("no mutation in onUpdated ignores non-reactive local bookkeeping assignments", async () => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+let previousChildren: unknown[] = []
+onUpdated(() => {
+  if (!previousChildren.length) return
+  previousChildren = []
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
 test("vue browser API rule terminates on recursive client-only call chains", async () => {
   const result = await runRuleFixture({
     rule: noBrowserApiInSetup,
@@ -937,4 +955,271 @@ const doubled = count + 1
     expect(result.diagnostics[0]?.ruleId).toBe(item.id);
     expect(result.diagnostics[0]?.tags).toContain("eslint-plugin-vue");
   }
+});
+
+test("no mutation in onUpdated detects reactive object property assignments", async () => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+const state = reactive({ count: 0 })
+onUpdated(() => {
+  state.count = 1
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("no mutation in onUpdated ignores local updates, comparisons, and text that resembles mutations", async () => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+let index = 0
+const state = { value: 1 }
+onUpdated(() => {
+  index++
+  if (state.value == 1) {
+    const message = "items.push(value)"
+    // items.push(value)
+    console.log(message)
+  }
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  `onUpdated((count) => { count.value++ })`,
+  `onUpdated(() => { { const count = { value: 0 }; count.value++ } })`,
+  `function other() { const count = ref(0) }; onUpdated(() => { const count = { value: 0 }; count.value++ })`,
+  `onUpdated(() => { const update = () => { count.value++ } })`,
+])(
+  "no mutation in onUpdated excludes shadowed refs and uncalled nested callbacks: %s",
+  async (callback) => {
+    const result = await runRuleFixture({
+      rule: noMutationInOnUpdated,
+      framework: "vue",
+      files: { "app.vue": `<script setup lang="ts">const count = ref(0); ${callback}</script>` },
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test.each([
+  `import { ref as makeRef } from 'vue'; const count = makeRef(0); onUpdated(() => { count.value++ })`,
+  `import * as Vue from 'vue'; const state = Vue.reactive({ count: 0 }); onUpdated(() => { state.count++ })`,
+  `const list = ref([]); onUpdated(() => { list.value.push(1) })`,
+  `const list = reactive([]); onUpdated(() => { list.push(1) })`,
+  `const state = ref({ count: 0 }); onUpdated(() => { state.value.count++ })`,
+  `const state = reactive({ values: [] }); onUpdated(() => { state.values.splice(0, 1) })`,
+])("no mutation in onUpdated follows reactive imports and mutations: %s", async (source) => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: { "app.vue": `<script setup lang="ts">${source}</script>` },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  `function ref(value) { return { value } }; const count = ref(0); onUpdated(() => { count.value++ })`,
+  `import { reactive } from 'other'; const state = reactive({ count: 0 }); onUpdated(() => { state.count++ })`,
+  `const factory = ref; onUpdated(() => { factory.value++ })`,
+  `const count = ref(0); const value = 'other'; onUpdated(() => { count[value] = 2 })`,
+])("no mutation in onUpdated excludes locally supplied reactive factories: %s", async (source) => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: { "app.vue": `<script setup lang="ts">${source}</script>` },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  `const count = ref(0) as Ref<number>; onUpdated(() => count.value++)`,
+  `const state = reactive({ count: 0 }) satisfies Shape; onUpdated(() => state.count++)`,
+  `const count = ref(0)!; onUpdated(() => count.value++)`,
+  `const count = <Ref<number>>ref(0); onUpdated(() => count.value++)`,
+  `const count = (ref(0)! as Ref<number>) satisfies Shape; onUpdated(() => count.value++)`,
+])("no mutation in onUpdated unwraps TypeScript factory expressions: %s", async (source) => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: { "app.vue": `<script setup lang="ts">${source}</script>` },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  [`const state = shallowRef({ count: 0 }); onUpdated(() => state.value = { count: 1 })`, 1],
+  [`const state = shallowRef({ count: 0 }); onUpdated(() => state.value.count++)`, 0],
+  [`const state = shallowRef([]); onUpdated(() => state.value.push(1))`, 0],
+  [`const state = shallowReactive({ count: 0 }); onUpdated(() => state.count++)`, 1],
+  [
+    `const state = shallowReactive({ nested: { count: 0 } }); onUpdated(() => state.nested.count++)`,
+    0,
+  ],
+  [`const state = shallowReactive({ values: [] }); onUpdated(() => state.values.splice(0, 1))`, 0],
+  [`const state = shallowReactive([]); onUpdated(() => state.push(1))`, 1],
+  [`const state = shallowReactive([]); onUpdated(() => state.splice(0, 1))`, 1],
+  [
+    `import { shallowRef as makeRef } from 'vue'; const state = makeRef([]); onUpdated(() => state.value.push(1))`,
+    0,
+  ],
+  [
+    `import { shallowReactive as makeReactive } from 'vue'; const state = makeReactive({ count: 0 }); onUpdated(() => state.count++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const state = Vue.shallowReactive({ values: [] }); onUpdated(() => state.values.push(1))`,
+    0,
+  ],
+  [
+    `import * as Vue from 'vue'; const state = Vue.shallowRef(0); onUpdated(() => state.value++)`,
+    1,
+  ],
+])("no mutation in onUpdated respects shallow binding depth: %s", async (source, expected) => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: { "app.vue": `<script setup lang="ts">${source}</script>` },
+  });
+  expect(result.diagnostics).toHaveLength(expected);
+});
+
+test.each([
+  [`const model = defineModel<number>(); onUpdated(() => model.value++)`, 1],
+  [`const [model, modifiers] = defineModel<number>(); onUpdated(() => model.value++)`, 1],
+  [`const [model, modifiers] = defineModel<number>(); onUpdated(() => modifiers.value++)`, 0],
+  [
+    `import { useModel } from 'vue'; const model = useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import { useModel as makeModel } from 'vue'; const model = makeModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const model = Vue.useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import { useModel } from 'vue'; const [model] = useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const [model, modifiers] = Vue.useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import { useModel as makeModel } from 'vue'; const [model = ref(0)] = makeModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import { useModel } from 'vue'; const [model, modifiers] = useModel(props, 'modelValue'); onUpdated(() => modifiers.value++)`,
+    0,
+  ],
+  [
+    `import { useModel } from 'vue'; const [...rest] = useModel(props, 'modelValue'); onUpdated(() => rest.value++)`,
+    0,
+  ],
+  [
+    `import { useModel } from 'other'; const [model] = useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `function useModel() { return [{ value: 0 }] }; const [model] = useModel(); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `import { useModel } from 'vue'; const [model] = useModel(props, 'modelValue'); onUpdated((model) => model.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs, reactive } from 'vue'; const [first] = toRefs(reactive([1])); onUpdated(() => first.value++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const [, second] = Vue.toRefs(Vue.reactive([1, 2])); onUpdated(() => second.value++)`,
+    1,
+  ],
+  [
+    `import { toRefs as makeRefs } from 'vue'; const [first = ref(0)] = makeRefs(state); onUpdated(() => first.value++)`,
+    1,
+  ],
+  [
+    `import { toRefs } from 'vue'; const [first, ...rest] = toRefs(state); onUpdated(() => rest.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs } from 'other'; const [first] = toRefs(state); onUpdated(() => first.value++)`,
+    0,
+  ],
+  [
+    `function toRefs() { return [{ value: 0 }] }; const [first] = toRefs(); onUpdated(() => first.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs } from 'vue'; const [first] = toRefs(state); onUpdated((first) => first.value++)`,
+    0,
+  ],
+  [`const [model = ref(0)] = defineModel<number>(); onUpdated(() => model.value++)`, 1],
+  [`const [, modifiers = {}] = defineModel<number>(); onUpdated(() => modifiers.value++)`, 0],
+  [`const [...rest] = defineModel<number>(); onUpdated(() => rest.value++)`, 0],
+  [`const [first] = ref([1]); onUpdated(() => first.value++)`, 0],
+  [
+    `import { toRefs, reactive } from 'vue'; const { count } = toRefs(reactive({ count: 0 })); onUpdated(() => count.value++)`,
+    1,
+  ],
+  [
+    `import { toRefs as makeRefs } from 'vue'; const { count: total } = makeRefs(state); onUpdated(() => total.value++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const { count = ref(0) } = Vue.toRefs(state); onUpdated(() => count.value++)`,
+    1,
+  ],
+  [
+    `import { toRefs } from 'vue'; const { ...rest } = toRefs(state); onUpdated(() => rest.value++)`,
+    0,
+  ],
+  [
+    `function defineModel() { return { value: 0 } }; const model = defineModel(); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `function useModel() { return { value: 0 } }; const model = useModel(); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `function toRefs() { return { count: { value: 0 } } }; const { count } = toRefs(); onUpdated(() => count.value++)`,
+    0,
+  ],
+  [
+    `import { useModel } from 'other'; const model = useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs } from 'other'; const { count } = toRefs(state); onUpdated(() => count.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs } from 'vue'; const { count } = toRefs(state); onUpdated((count) => count.value++)`,
+    0,
+  ],
+])("no mutation in onUpdated follows Vue model and property refs: %s", async (source, expected) => {
+  const result = await runVueSfcRuleFixture(
+    noMutationInOnUpdated,
+    `<script setup lang="ts">${source}</script>`,
+  );
+  expect(result.diagnostics).toHaveLength(expected);
 });

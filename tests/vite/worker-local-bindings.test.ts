@@ -1,6 +1,9 @@
-import { expect, test } from "vite-plus/test";
+import * as parser from "@typescript-eslint/parser";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { runProjectFixture } from "../../src/core/testkit.ts";
 import { noNodeApiInWorker } from "../../src/rule-packs/vite/rules/worker.ts";
+
+afterEach(() => vi.restoreAllMocks());
 
 test("does not report a worker's local process binding as a Node API", async () => {
   const result = await runProjectFixture({
@@ -85,3 +88,25 @@ const view = <span>{process.env.NODE_ENV}</span>
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.why).toContain("should not rely on process");
 });
+
+test.each(["ts", "vue"])(
+  "keeps worker diagnostics when lexical parsing fails: %s",
+  async (extension) => {
+    vi.spyOn(parser, "parseForESLint").mockImplementation(() => {
+      throw new SyntaxError("Unsupported syntax");
+    });
+    const source = "await using resource = acquire(); console.log(process.env.NODE_ENV)";
+    const text = extension === "vue" ? `<script setup lang="ts">${source}</script>` : source;
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noNodeApiInWorker],
+      files: {
+        "src/main.ts": `new Worker(new URL("./task.worker.${extension}", import.meta.url))`,
+        [`src/task.worker.${extension}`]: text,
+      },
+    });
+
+    expect(result.diagnostics.map(({ code }) => code)).toEqual(["VITE0020"]);
+    expect(result.diagnostics[0]?.range?.start).toBe(text.indexOf("process.env"));
+  },
+);

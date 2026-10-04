@@ -598,8 +598,8 @@ test("changed scope reports diagnostics whose source ranges overlap changed line
     );
     const agent = JSON.parse(createAgentReport(result));
     expect(agent.commands).toEqual({
-      explain: "vite-doctor explain <code> --framework vue --format agent",
-      verify: `vite-doctor . --framework vue --since ${result.scope.base} --rules <rule> --format agent`,
+      explain: "vite-doctor explain '<code>' --framework vue --format agent",
+      verify: `vite-doctor . --framework vue --since ${result.scope.base} --rules '<rule>' --format agent`,
       rerun: `vite-doctor . --framework vue --since ${result.scope.base} --format agent`,
     });
     expect(agent.next).not.toHaveProperty("cwd");
@@ -690,9 +690,18 @@ test("malformed rule config fails predictably", async () => {
 });
 
 test("internal diagnostic guards use stable codes", async () => {
+  expect(
+    thrownBy(() =>
+      defineDoctorDiagnostics([
+        { code: "DOC9001", ruleId: "test/duplicate-a" },
+        { code: "DOC9001", ruleId: "test/duplicate-b" },
+      ]),
+    ),
+  ).toMatchObject({ name: "DOC0012" });
+
   const registry = defineDoctorDiagnostics([
     { code: "DOC9001", ruleId: "test/duplicate-a" },
-    { code: "DOC9001", ruleId: "test/duplicate-b" },
+    { code: "DOC9002", ruleId: "test/duplicate-a" },
   ]);
   const host = createDoctorDiagnosticsHost();
   host.register(registry);
@@ -787,6 +796,121 @@ test("rule diagnostics must include actionable fix text", async () => {
   });
 });
 
+test.each([false, true])(
+  "ambiguous short Rule Pack aliases fail regardless of registration order (%s)",
+  async (reverse) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const extensions = [
+        defineDoctorExtension({
+          name: "test/first",
+          rulePacks: [testPack("ä-vendor/vite", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second",
+          rulePacks: [testPack("z-vendor/vite", secondRule)],
+        }),
+      ];
+      if (reverse) extensions.reverse();
+
+      const thrown = await runDoctor({
+        root,
+        framework: "vue",
+        extends: ["vite/recommended"],
+        extensions,
+      }).catch((error) => error);
+      expect(thrown).toMatchObject({ name: "DOC0024" });
+      expect(thrown.message).toBe(
+        'Config Extends entry "vite/recommended" matches multiple Rule Packs through the name "vite": z-vendor/vite, ä-vendor/vite.',
+      );
+    });
+  },
+);
+
+test.each([false, true])(
+  "duplicate full Rule Pack names fail regardless of registration order (%s)",
+  async (reverse) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const extensions = [
+        defineDoctorExtension({
+          name: "test/first",
+          rulePacks: [testPack("vendor/vite", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second",
+          rulePacks: [testPack("vendor/vite", secondRule)],
+        }),
+      ];
+      if (reverse) extensions.reverse();
+
+      await expect(
+        runDoctor({
+          root,
+          framework: "vue",
+          extends: ["vendor/vite/recommended"],
+          extensions,
+        }),
+      ).rejects.toMatchObject({
+        name: "DOC0023",
+        message: 'Rule Pack name "vendor/vite" was registered more than once.',
+      });
+    });
+  },
+);
+
+test("fully qualified Rule Pack selectors bypass short alias collisions", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      extends: ["vendor-b/vite/recommended"],
+      extensions: [
+        defineDoctorExtension({
+          name: "test/first",
+          rulePacks: [testPack("vendor-a/vite", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second",
+          rulePacks: [testPack("vendor-b/vite", secondRule)],
+        }),
+      ],
+    });
+
+    const ruleIds = result.diagnostics.map((item) => item.ruleId);
+    expect(ruleIds).toContain("test/second-rule");
+    expect(ruleIds).not.toContain("test/report-program");
+  });
+});
+
+test.each([false, true])(
+  "exact Rule Pack names take precedence over short aliases (%s)",
+  async (reverse) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const extensions = [
+        defineDoctorExtension({
+          name: "test/exact",
+          rulePacks: [testPack("vite", secondRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/alias",
+          rulePacks: [testPack("vendor-a/vite", reportProgramRule)],
+        }),
+      ];
+      if (reverse) extensions.reverse();
+
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        extends: ["vite/recommended"],
+        extensions,
+      });
+
+      const ruleIds = result.diagnostics.map((item) => item.ruleId);
+      expect(ruleIds).toContain("test/second-rule");
+      expect(ruleIds).not.toContain("test/report-program");
+    });
+  },
+);
+
 test("extends selection runs configured pack rules and config overrides extends", async () => {
   await withFixture(
     {
@@ -875,6 +999,141 @@ test("defineRulePack requires a recommended preset", () => {
   expect(thrown).toMatchObject({ name: "DOC0015" });
   expect(thrown).toBeInstanceOf(Error);
   expect((thrown as Error).message).toMatch(/recommended preset/);
+});
+
+test("defineDoctorExtension rejects duplicate Rule Pack names", () => {
+  const pack = testPack("test/duplicate", reportProgramRule);
+  expect(() => defineDoctorExtension({ name: "test", rulePacks: [pack, pack] })).toThrowError(
+    expect.objectContaining({ name: "DOC0023" }),
+  );
+});
+
+test("Doctor rejects duplicate Rule Pack names across extensions", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
+        extends: ["test/duplicate/recommended"],
+        extensions: [
+          defineDoctorExtension({
+            name: "test/first",
+            rulePacks: [testPack("test/duplicate", reportProgramRule)],
+          }),
+          defineDoctorExtension({
+            name: "test/second",
+            rulePacks: [testPack("test/duplicate", secondRule)],
+          }),
+        ],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0023" });
+  });
+});
+
+test("Doctor rejects duplicate Rule Pack names registered during setup", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const pack = testPack("test/setup", reportProgramRule);
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
+        extensions: [
+          defineDoctorExtension({
+            name: "test/first",
+            setup(api) {
+              api.registerRulePack(pack);
+            },
+          }),
+          defineDoctorExtension({
+            name: "test/second",
+            setup(api) {
+              api.registerRulePack(pack);
+            },
+          }),
+        ],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0023" });
+  });
+});
+
+test.each([
+  ["foo/vue", "bar/vue"],
+  ["vue", "foo/vue"],
+  ["bar/vue", "foo/vue"],
+  ["foo/vue", "vue"],
+])("Doctor resolves shared aliases for distinct full names %s and %s", async (first, second) => {
+  const extension = defineDoctorExtension({
+    name: "test/collision",
+    rulePacks: [testPack(first, reportProgramRule), testPack(second, secondRule)],
+  });
+  const setupExtensions = [
+    defineDoctorExtension({
+      name: "test/first",
+      rulePacks: [testPack(first, reportProgramRule)],
+    }),
+    defineDoctorExtension({
+      name: "test/second",
+      setup(api) {
+        api.registerRulePack(testPack(second, secondRule));
+      },
+    }),
+  ];
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    for (const extensions of [[extension], setupExtensions]) {
+      for (const [name, rule] of [
+        [first, reportProgramRule],
+        [second, secondRule],
+      ] as const) {
+        const selected = await runDoctor({
+          root,
+          framework: "vue",
+          extends: [`${name}/recommended`],
+          extensions,
+        });
+        expect(selected.diagnostics.map((item) => item.ruleId)).toEqual([rule.meta.id]);
+      }
+      const selection = runDoctor({
+        root,
+        framework: "vue",
+        extends: ["vue/recommended"],
+        extensions,
+      });
+      if (first === "vue" || second === "vue") {
+        const selected = await selection;
+        const expected = first === "vue" ? reportProgramRule : secondRule;
+        expect(selected.diagnostics.map((item) => item.ruleId)).toEqual([expected.meta.id]);
+      } else {
+        await expect(selection).rejects.toMatchObject({
+          name: "DOC0024",
+          message: expect.stringContaining('"vue"'),
+        });
+      }
+    }
+  });
+});
+
+test("unique Rule Pack names remain independently selectable", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      extends: ["first/recommended", "test/second/recommended"],
+      extensions: [
+        defineDoctorExtension({
+          name: "test/first-extension",
+          rulePacks: [testPack("test/first", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second-extension",
+          rulePacks: [testPack("test/second", secondRule)],
+        }),
+      ],
+    });
+
+    const ruleIds = result.diagnostics.map((item) => item.ruleId);
+    expect(ruleIds).toContain("test/report-program");
+    expect(ruleIds).toContain("test/second-rule");
+  });
 });
 
 test("auto extends selects active recommended presets only", async () => {
@@ -1019,8 +1278,8 @@ test("agent reporter is compact and includes a complete remediation path", async
       ],
     });
     expect(agent.commands).toEqual({
-      explain: "vite-doctor explain <code> --framework vue --format agent",
-      verify: "vite-doctor . --framework vue --rules <rule> --format agent",
+      explain: "vite-doctor explain '<code>' --framework vue --format agent",
+      verify: "vite-doctor . --framework vue --rules '<rule>' --format agent",
       rerun: "vite-doctor . --framework vue --format agent",
     });
     expect(agent.next).not.toHaveProperty("cwd");
@@ -1276,6 +1535,15 @@ function pluginWith(...rules: any[]) {
         presets: { recommended: rules.map((rule) => rule.meta.id) },
       }),
     ],
+  });
+}
+
+function testPack(name: string, ...rules: any[]) {
+  return defineRulePack({
+    name,
+    version: "0.0.0",
+    rules,
+    presets: { recommended: rules.map((rule) => rule.meta.id) },
   });
 }
 
