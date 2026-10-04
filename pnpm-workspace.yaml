@@ -37,7 +37,7 @@ catalogs:
     "@nuxt/fonts": ^0.14.0
     "@nuxt/kit": ^4.5.1
     "@nuxt/scripts": ^1.3.2
-    "@nuxt/ui": ^4.10.0
+    "@nuxt/ui": ^4.11.0
     "@resvg/resvg-js": ^2.6.2
     "@tiptap/core": ^3.29.2
     "@tiptap/extensions": ^3.29.2
@@ -46,8 +46,8 @@ catalogs:
     "@vue/server-renderer": ^3.5.40
     "@vueuse/core": ^14.4.0
     better-auth: ^1.6.25
-    docus: 5.12.3
-    nuxt: ^4.5.1
+    docus: 5.13.0
+    nuxt: ^4.5.2
     nuxt-better-auth: ^0.6.0
     satori: ^0.29.0
     tailwindcss: ^4.3.3
