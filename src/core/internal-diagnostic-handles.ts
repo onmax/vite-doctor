@@ -62,8 +62,8 @@ export const doctorInternalDiagnostics = defineDiagnostics({
     },
     DOC0023: {
       why: (params: { pack: string }) =>
-        `Rule Pack "${params.pack}" was registered more than once.`,
-      fix: "Give each registered Rule Pack a unique name so Config Extends resolves one preset owner.",
+        `Rule Pack lookup key "${params.pack}" was registered more than once.`,
+      fix: "Give each registered Rule Pack a unique name and final slash-delimited segment so Config Extends resolves one preset owner.",
     },
   },
 });

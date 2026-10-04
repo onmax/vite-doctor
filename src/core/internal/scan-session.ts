@@ -310,8 +310,10 @@ async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
   ].map((pack) => defineRulePack(pack));
   const names = new Set<string>();
   for (const pack of packs) {
-    if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
-    names.add(pack.name);
+    for (const key of new Set([pack.name, pack.name.split("/").at(-1) ?? pack.name])) {
+      if (names.has(key)) throw doctorInternalDiagnostics.DOC0023({ pack: key });
+      names.add(key);
+    }
   }
   return {
     packs,

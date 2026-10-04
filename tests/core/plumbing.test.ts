@@ -932,12 +932,48 @@ test("Doctor rejects duplicate Rule Pack names registered during setup", async (
   });
 });
 
+test.each([
+  ["foo/vue", "bar/vue"],
+  ["vue", "foo/vue"],
+  ["bar/vue", "foo/vue"],
+  ["foo/vue", "vue"],
+])("Doctor rejects colliding Rule Pack lookup keys %s and %s", async (first, second) => {
+  expect(() =>
+    defineDoctorExtension({
+      name: "test/collision",
+      rulePacks: [testPack(first, reportProgramRule), testPack(second, secondRule)],
+    }),
+  ).toThrowError(expect.objectContaining({ name: "DOC0023" }));
+
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
+        extends: ["vue/recommended"],
+        extensions: [
+          defineDoctorExtension({
+            name: "test/first",
+            rulePacks: [testPack(first, reportProgramRule)],
+          }),
+          defineDoctorExtension({
+            name: "test/second",
+            setup(api) {
+              api.registerRulePack(testPack(second, secondRule));
+            },
+          }),
+        ],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0023", message: expect.stringContaining('"vue"') });
+  });
+});
+
 test("unique Rule Pack names remain independently selectable", async () => {
   await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
     const result = await runDoctor({
       root,
       framework: "vue",
-      extends: ["test/first/recommended", "test/second/recommended"],
+      extends: ["first/recommended", "test/second/recommended"],
       extensions: [
         defineDoctorExtension({
           name: "test/first-extension",
