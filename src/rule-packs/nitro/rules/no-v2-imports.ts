@@ -20,7 +20,13 @@ export const noV2Imports = createRule({
   },
   create(ctx) {
     return {
-      ImportDeclaration(node: AnyNode) {
+      ScriptNode(node: AnyNode) {
+        if (
+          !["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration"].includes(
+            node.type,
+          )
+        )
+          return;
         const source = node.source?.value;
         if (typeof source !== "string") return;
         const replacement = v3Replacement(source, node);
@@ -43,7 +49,8 @@ function v3Replacement(source: string, node: AnyNode): string | null {
   if (source === "nitropack") return rootPackageReplacement(node);
   if (source === "nitropack/config") {
     const importsDefineNitroConfig = node.specifiers?.some(
-      (specifier: AnyNode) => specifier.imported?.name === "defineNitroConfig",
+      (specifier: AnyNode) =>
+        (specifier.imported?.name ?? specifier.local?.name) === "defineNitroConfig",
     );
     return importsDefineNitroConfig
       ? 'Replace defineNitroConfig with defineConfig and import it from "nitro".'
@@ -66,14 +73,18 @@ function v3Replacement(source: string, node: AnyNode): string | null {
 }
 
 function rootPackageReplacement(node: AnyNode): string {
-  const typeOnlyDeclaration = node.importKind === "type";
+  const typeOnlyDeclaration = (node.importKind ?? node.exportKind) === "type";
   const typeImports =
     typeOnlyDeclaration ||
-    node.specifiers?.some((specifier: AnyNode) => specifier.importKind === "type");
+    node.specifiers?.some(
+      (specifier: AnyNode) => (specifier.importKind ?? specifier.exportKind) === "type",
+    );
   const valueImports =
     !typeOnlyDeclaration &&
     (node.specifiers?.length === 0 ||
-      node.specifiers?.some((specifier: AnyNode) => specifier.importKind !== "type"));
+      node.specifiers?.some(
+        (specifier: AnyNode) => (specifier.importKind ?? specifier.exportKind) !== "type",
+      ));
 
   if (typeImports && valueImports) {
     return 'Import runtime values from "nitro" and types from "nitro/types".';

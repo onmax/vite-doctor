@@ -1,6 +1,13 @@
+import { isBuiltin } from "node:module";
 import { dirname, resolve } from "pathe";
 import { createRule, type RuleContext } from "../../../core/index.js";
-import { memberPath, readProjectSources, staticString, type AnyNode } from "./shared.js";
+import {
+  globalReferenceStarts,
+  memberPath,
+  readProjectSources,
+  staticString,
+  type AnyNode,
+} from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
 export const requireWorkerUrlPattern = createRule({
@@ -86,8 +93,10 @@ export const noNodeApiInWorker = createRule({
     if (isServerSidePath(ctx.file.relativePath)) return;
     const workerEntries = await browserWorkerEntries(ctx);
     if (!isExplicitWorkerEntry(ctx.file.relativePath) && !workerEntries.has(ctx.file.path)) return;
+    let processReferences: Set<number> | null | undefined;
     return {
       ImportDeclaration(node: AnyNode) {
+        if (node.importKind === "type") return;
         const source = String(node.source?.value ?? "");
         if (!isNodeModule(source)) return;
         ctx.report(
@@ -106,6 +115,10 @@ export const noNodeApiInWorker = createRule({
       },
       ScriptNode(node: AnyNode) {
         if (node.type !== "Identifier" || node.name !== "process") return;
+        if (processReferences === undefined)
+          processReferences = globalReferenceStarts(ctx, new Set(["process"]));
+        if (ctx.helpers.isTypeOnlyContext(node) || processReferences?.has(node.start) === false)
+          return;
         ctx.report(
           diagnostics.VITE0020({
             why: "Browser workers should not rely on process.",
@@ -145,10 +158,7 @@ function isStaticStringOrNewUrl(node: AnyNode): boolean {
 }
 
 function isNodeModule(source: string): boolean {
-  return (
-    source.startsWith("node:") ||
-    ["fs", "path", "crypto", "child_process", "worker_threads", "stream"].includes(source)
-  );
+  return source.startsWith("node:") || isBuiltin(source);
 }
 
 function isExplicitWorkerEntry(path: string): boolean {
@@ -175,7 +185,8 @@ async function browserWorkerEntries(ctx: RuleContext) {
     )) {
       entries.add(resolve(dirname(source.file), match[1]!));
     }
-    for (const match of source.text.matchAll(/from\s+["'`]([^"'`?]+)\?worker(?:&[^"'`]*)?["'`]/g)) {
+    for (const match of source.text.matchAll(/from\s+["'`]([^"'`?]+)\?([^"'`]*)["'`]/g)) {
+      if (!/(?:^|&)(?:worker|sharedworker)(?:&|$)/.test(match[2]!)) continue;
       entries.add(resolve(dirname(source.file), match[1]!));
     }
   }

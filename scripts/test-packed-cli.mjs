@@ -37,6 +37,12 @@ try {
     env,
     stdio: "pipe",
   });
+  execFileSync(process.execPath, ["--input-type=module", "-"], {
+    cwd: temporary,
+    env,
+    input: 'await import("vite-doctor/cli");\n',
+    stdio: "pipe",
+  });
   verifyExports();
   writeFileSync(
     join(fixture, "package.json"),
