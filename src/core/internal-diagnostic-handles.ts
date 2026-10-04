@@ -60,5 +60,10 @@ export const doctorInternalDiagnostics = defineDiagnostics({
         `Doctor could not resolve the governing runtime graph: ${params.details}`,
       fix: "Install project dependencies and run Doctor from the target project package. For computed Nuxt config, make future.compatibilityVersion statically provable or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.",
     },
+    DOC0025: {
+      why: (params: { file: string; reason: string }) =>
+        `Invalid Doctor baseline "${params.file}": ${params.reason}`,
+      fix: "Restore a readable baseline containing fingerprint strings or a version 1 diagnostics array before retrying the Doctor Run.",
+    },
   },
 });
