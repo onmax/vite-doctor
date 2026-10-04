@@ -81,7 +81,7 @@ class PersistentRuleCache extends MemoryRuleCache {
   }
 
   private cachePath(key: string): string {
-    const path = resolve(this.dir, `${safeCacheKey(key)}.json`);
+    const path = resolve(this.dir, `${sha256(key)}.json`);
     assertCachePath(this.root, path);
     return path;
   }
@@ -467,8 +467,4 @@ export function createCacheKey(session: ScanSession, phase: string, input: strin
       tsconfig: session.project.tsconfigPath,
     }),
   )}`;
-}
-
-function safeCacheKey(key: string): string {
-  return key.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
