@@ -22,9 +22,15 @@ export const requireUAppRoot = createRule({
     const usesAppService = /\b(useToast|useOverlay)\s*\(/.test(ctx.file.text);
     if (!usesAppService || projectHasUAppRoot(ctx.project.root) || hasUAppTemplate(ctx.file.text))
       return;
+    let reported = false;
     return {
       ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+        if (
+          reported ||
+          (!ctx.helpers.isCall(node, "useToast") && !ctx.helpers.isCall(node, "useOverlay"))
+        )
+          return;
+        reported = true;
         ctx.report(
           diagnostics.NUXT0015({
             why: "Nuxt UI toast and overlay services require a UApp root provider.",
