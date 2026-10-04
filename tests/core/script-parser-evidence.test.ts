@@ -56,8 +56,7 @@ test("keeps diagnostics from successfully parsed files and clears the gap after 
 test("retains an earlier Vue script diagnostic when a later block is malformed", async () => {
   await withProject(
     {
-      "App.vue":
-        `<script>export const secret = import.meta.env.VITE_SECRET_TOKEN;</script><script setup>const broken = ;</script>`,
+      "App.vue": `<script>export const secret = import.meta.env.VITE_SECRET_TOKEN;</script><script setup>const broken = ;</script>`,
     },
     async (root) => {
       const result = await runViteDoctor({
