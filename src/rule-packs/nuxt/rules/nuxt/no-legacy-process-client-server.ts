@@ -1,3 +1,6 @@
+import { parseForESLint } from "@typescript-eslint/parser";
+import type { RuleContext } from "../../../../core/index.js";
+import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
@@ -13,6 +16,7 @@ export const noLegacyProcessClientServer = createRule({
     applicability: { nuxtCompatibility: ">=5" },
   },
   create(ctx) {
+    let globalProcessReferences: Set<number> | undefined;
     return {
       ScriptNode(node: AnyNode) {
         if (
@@ -24,6 +28,8 @@ export const noLegacyProcessClientServer = createRule({
           node.property?.type !== "Identifier" ||
           !["client", "server"].includes(node.property.name)
         )
+          return;
+        if (!(globalProcessReferences ??= findGlobalProcessReferences(ctx)).has(node.object.start))
           return;
         const name = `process.${node.property.name}`;
         const replacement = `import.meta.${node.property.name}`;
@@ -48,3 +54,23 @@ export const noLegacyProcessClientServer = createRule({
     };
   },
 });
+
+function findGlobalProcessReferences(ctx: RuleContext): Set<number> {
+  const script = ctx.file.sfc
+    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
+    : { text: ctx.file.text, lang: /\.[jt]sx$/.test(ctx.file.relativePath) ? "tsx" : "ts" };
+  try {
+    const { scopeManager } = parseForESLint(script.text, {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: { jsx: ["jsx", "tsx"].includes(script.lang) },
+    });
+    return new Set(
+      scopeManager.globalScope?.through
+        .filter((reference) => reference.identifier.name === "process")
+        .map((reference) => reference.identifier.range[0]),
+    );
+  } catch {
+    return new Set();
+  }
+}

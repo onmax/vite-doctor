@@ -46,9 +46,51 @@ const cases = [
     replacements: [],
   },
   {
-    name: "host-substituted local dotted flag",
+    name: "local dotted flag",
     source: "const process = { client: 'local' }; export const value = process.client",
-    replacements: ["import.meta.client"],
+    replacements: [],
+  },
+  {
+    name: "imported process",
+    source: "import process from 'node:process'; export const value = process.server",
+    replacements: [],
+  },
+  {
+    name: "function parameter",
+    source: "export function flag(process) { return process.client }",
+    replacements: [],
+  },
+  {
+    name: "destructured parameter",
+    source: "export function flag({ process }) { return process.server }",
+    replacements: [],
+  },
+  {
+    name: "hoisted var",
+    source:
+      "export function flag() { const flag = process.client; if (flag) { var process = { client: true } }; return flag }",
+    replacements: [],
+  },
+  {
+    name: "block binding and global reference",
+    source:
+      "{ const process = { client: 'local' }; console.log(process.client) }; export const value = process.server",
+    replacements: ["import.meta.server"],
+  },
+  {
+    name: "catch binding",
+    source: "try {} catch (process) { console.log(process.server) }",
+    replacements: [],
+  },
+  {
+    name: "loop binding",
+    source: "for (const process of []) { console.log(process.client) }",
+    replacements: [],
+  },
+  {
+    name: "named function expression",
+    source: "export const flag = function process() { return process.server }",
+    replacements: [],
   },
   { name: "string value", source: "export const value = 'process.client'", replacements: [] },
   {
@@ -143,4 +185,28 @@ test("process flag edits preserve Vue script offsets and neighboring literals", 
   expect(source.slice(0, edit.range.start) + edit.text + source.slice(edit.range.end)).toContain(
     "const label = 'process.client'\nconst flag = import.meta.client",
   );
+});
+
+test("local process bindings suppress Vue script diagnostics", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [noLegacyProcessClientServer],
+    run: {
+      runtimeTarget: {
+        nuxt: "4.5.1",
+        nitro: "2.13.4",
+        h3: "1.15.11",
+        vue: "3.5.0",
+        nuxtCompatibility: 5,
+      },
+    },
+    files: {
+      "app/pages/index.vue": `<template><p>flags</p></template>
+<script setup lang="ts">
+const process = { client: 'local', server: 'local' }
+const flags = [process.client, process.server]
+</script>`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
 });
