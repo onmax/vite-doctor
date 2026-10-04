@@ -154,6 +154,8 @@ function serverFsFacts(ctx: RuleContext): ServerFsFact[] {
         const right = propertyValue(object.right, key, new Set(seen).add(object));
         if (right === absent || (right?.type === "Literal" && right.value == null)) return left;
         if (left === absent || (left?.type === "Literal" && left.value == null)) return right;
+        if (left?.type === "ArrayExpression" && !right) return left;
+        if (right?.type === "ArrayExpression" && !left) return right;
         if (!left || !right) return undefined;
         if (left.type === "ArrayExpression" || right.type === "ArrayExpression")
           return {

@@ -96,12 +96,21 @@ test.each([
   "import { mergeConfig } from 'vite'; export default (mergeConfig) => mergeConfig({}, { server: { fs: { strict: false, allow: ['/'] } } })",
   "import { mergeConfig } from 'vite'; export default mergeConfig(unknown, { server: { fs: { strict: false, allow: ['/'] } } })",
   "import { mergeConfig } from 'vite'; export default mergeConfig({ server: { fs: { strict: false, allow: ['/'] } } }, loadConfig())",
-  "import { mergeConfig } from 'vite'; export default mergeConfig({ server: { fs: { strict: false, allow: ['/'] } } }, { server: { fs: { ...unknown } } })",
   "import { mergeConfig } from 'vite'; export default mergeConfig({ server: { fs: { strict: false } } }, { server: { fs: { strict: true } } })",
   "export default { server: { fs: { allow: [...unknown] } } }",
   "const allow = [...allow]; export default { server: { fs: { allow: [...allow] } } }",
 ])("keeps unknown compositions and effective safe overrides conservative: %s", async (source) => {
   expect((await diagnose(source)).diagnostics).toEqual([]);
+});
+
+test("preserves known allow entries across unknown merge properties", async () => {
+  const source =
+    "import { mergeConfig } from 'vite'; export default mergeConfig({ server: { fs: { allow: ['/'] } } }, { server: { fs: { ...unknown } } })";
+  const result = await diagnose(source);
+  expect(result.diagnostics.map(({ code }) => code)).toEqual(["VITE0016"]);
+  expect(source.slice(result.diagnostics[0]!.range!.start, result.diagnostics[0]!.range!.end)).toBe(
+    "'/'",
+  );
 });
 
 test("matches Vite deep merge overrides and allow-list concatenation", async () => {
