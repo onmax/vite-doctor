@@ -84,7 +84,7 @@ export const ruleDocumentationMetadata = {
   },
   "shadcn/no-unknown-classes": {
     description: "Avoid classes that are not declared by the project's Tailwind theme.",
-    why: "Misspelled or unsupported class names generate no CSS. Without a resolvable Tailwind theme, the Rule uses a reduced bundled utility grammar, as in the example below. That fallback cannot validate project-specific tokens or utilities.",
+    why: "Misspelled or unsupported class names generate no CSS. Without a resolvable Tailwind theme, the Rule uses a reduced fallback that includes bundled utility names plus discovered @utility names and CSS class selectors, as in the example below. That fallback cannot validate theme tokens or provide spelling suggestions.",
     recommendedReplacement:
       "Correct the class name or declare the intended utility in the theme. Allow external stylesheet classes by exact name only when the application loads their CSS.",
     examples: [
