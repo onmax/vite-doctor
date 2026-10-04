@@ -3,7 +3,7 @@ import { dirname, join, relative, resolve } from "pathe";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { ruleDocumentationMetadata } from "./metadata.js";
-import { workspaceDiagnosticMetadata } from "./workspace-diagnostics.js";
+import { workspaceDiagnosticMetadata } from "../../src/core/diagnostic-metadata.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
 export type RuleFix = "safe" | "suggestion" | "no";
