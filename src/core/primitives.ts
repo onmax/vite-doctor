@@ -425,7 +425,14 @@ export interface GraphEdge {
   from: number;
   to?: number;
   specifier?: string;
-  kind: "import" | "type-import" | "dynamic-import" | "export" | "re-export" | "virtual-root";
+  kind:
+    | "import"
+    | "type-import"
+    | "dynamic-import"
+    | "export"
+    | "re-export"
+    | "type-re-export"
+    | "virtual-root";
 }
 
 export interface VirtualRootNode {

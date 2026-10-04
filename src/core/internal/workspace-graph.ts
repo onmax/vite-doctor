@@ -29,7 +29,7 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
           ? resolveImportTarget(session, fact, item.source, byRelativePath)
           : undefined,
         specifier: item.source,
-        kind: item.source ? "re-export" : "export",
+        kind: item.source ? (item.kind === "type" ? "type-re-export" : "re-export") : "export",
       });
       const exports = exportsByName.get(item.name) ?? [];
       exports.push(item);
@@ -92,7 +92,10 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
     reverseIndex: { importersByFile, refsByExport, exportsByName },
     sccs: computeSccs(
       session.facts.map((fact) => fact.fileId),
-      [...importEdges.filter((edge) => edge.kind !== "dynamic-import"), ...exportEdges],
+      [
+        ...importEdges.filter((edge) => edge.kind === "import"),
+        ...exportEdges.filter((edge) => edge.kind === "re-export"),
+      ],
     ),
   };
 }
