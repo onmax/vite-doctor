@@ -26,15 +26,15 @@ export const ruleDocumentationMetadata = {
   },
   "shadcn/no-raw-colors": {
     description: "Prefer theme colors over raw color values.",
-    why: "Raw palette colors and undeclared color tokens bypass the project's theme. The Rule also checks literal SVG colors and uses a readable theme to suggest replacements.",
+    why: "Raw palette colors and literal SVG colors bypass the project's theme. Checking undeclared color tokens and suggesting theme replacements requires a readable theme; without one, those checks are unavailable.",
     recommendedReplacement:
       "Use a color token declared by the theme. For SVG, use currentColor with a theme color class or reference a theme variable.",
     examples: [
       {
-        title: "Use a declared theme color",
+        title: "Inherit the SVG color without theme lookup",
         language: "tsx",
-        invalid: '<div className="bg-pink-500">Account settings</div>',
-        valid: '<div className="bg-primary">Account settings</div>',
+        invalid: '<svg><path fill="#ec4899" d="M0 0h10v10H0z" /></svg>',
+        valid: '<svg><path fill="currentColor" d="M0 0h10v10H0z" /></svg>',
       },
     ],
   },
@@ -84,12 +84,12 @@ export const ruleDocumentationMetadata = {
   },
   "shadcn/no-unknown-classes": {
     description: "Avoid classes that are not declared by the project's Tailwind theme.",
-    why: "Misspelled or unsupported class names generate no CSS. The Rule checks the project's Tailwind theme and utilities, with reduced coverage when that theme cannot be loaded.",
+    why: "Misspelled or unsupported class names generate no CSS. Without a resolvable Tailwind theme, the Rule uses a reduced bundled utility grammar, as in the example below. That fallback cannot validate project-specific tokens or utilities.",
     recommendedReplacement:
       "Correct the class name or declare the intended utility in the theme. Allow external stylesheet classes by exact name only when the application loads their CSS.",
     examples: [
       {
-        title: "Correct a utility name",
+        title: "Correct a utility name using the fallback grammar",
         language: "tsx",
         invalid: '<div className="flex-cols" />',
         valid: '<div className="flex-col" />',

@@ -37,25 +37,30 @@ test.each(shadcnRulePack.rules)("documents helper-authored $meta.id", async (rul
   expect(markdown).toContain(`vite-doctor . --extends shadcn/strict --rules ${rule.meta.id}`);
 });
 
-test.each(shadcnRulePack.rules)("the documented replacement clears $meta.id", async (rule) => {
-  const document = getRuleDocuments().find((entry) => entry.id === rule.meta.id)!;
-  const componentRule = ["shadcn/no-restyle", "shadcn/require-static-classes"].includes(
-    rule.meta.id,
-  );
-  const options = componentRule ? { componentImports: ["^@/components/ui/"] } : {};
-  for (const example of document.examples) {
-    const diagnose = (source: string) =>
-      runProjectFixture({
-        rules: [rule],
-        config: { rules: { [rule.meta.id]: ["warn", options] } },
-        framework: "vite",
-        files: { "src/Example.tsx": source },
-      });
-    const before = await diagnose(example.invalid);
-    const after = await diagnose(example.valid);
-    expect(before.diagnostics.some((diagnostic) => diagnostic.ruleId === rule.meta.id)).toBe(true);
-    expect(after.diagnostics.filter((diagnostic) => diagnostic.ruleId === rule.meta.id)).toEqual(
-      [],
+test.each(shadcnRulePack.rules)(
+  "the documented replacement clears $meta.id without a theme",
+  async (rule) => {
+    const document = getRuleDocuments().find((entry) => entry.id === rule.meta.id)!;
+    const componentRule = ["shadcn/no-restyle", "shadcn/require-static-classes"].includes(
+      rule.meta.id,
     );
-  }
-});
+    const options = componentRule ? { componentImports: ["^@/components/ui/"] } : {};
+    for (const example of document.examples) {
+      const diagnose = (source: string) =>
+        runProjectFixture({
+          rules: [rule],
+          config: { rules: { [rule.meta.id]: ["warn", options] } },
+          framework: "vite",
+          files: { "src/Example.tsx": source },
+        });
+      const before = await diagnose(example.invalid);
+      const after = await diagnose(example.valid);
+      expect(before.diagnostics.some((diagnostic) => diagnostic.ruleId === rule.meta.id)).toBe(
+        true,
+      );
+      expect(after.diagnostics.filter((diagnostic) => diagnostic.ruleId === rule.meta.id)).toEqual(
+        [],
+      );
+    }
+  },
+);
