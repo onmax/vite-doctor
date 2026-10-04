@@ -1,3 +1,4 @@
+import { packageRulePack } from "../../src/rule-packs/package/index.ts";
 import { createNuxtAuthorizationReviewExtension } from "../../src/rule-packs/nuxt/review/authorization.ts";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -1466,6 +1467,14 @@ test("rules and explain reports expose rule metadata as json", () => {
 
   expect(rules.rules[0].id).toBe("test/report-program");
   expect(explain.id).toBe("test/report-program");
+
+  const packageExplain = JSON.parse(
+    explainRule([packageRulePack], "package/no-phantom-dependencies", "json"),
+  );
+  expect(packageExplain.diagnostics).toEqual([
+    { code: "PKG0001", docs: "https://vite-doctor.onmax.me/diagnostics/PKG0001" },
+    { code: "PKG0002", docs: "https://vite-doctor.onmax.me/diagnostics/PKG0002" },
+  ]);
 });
 
 test("executable config preserves Doctor preset selection without loading config layers", async () => {

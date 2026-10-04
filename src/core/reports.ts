@@ -8,7 +8,10 @@ import type {
   DoctorRunResult,
   RulePack,
 } from "./primitives.js";
-import { allDiagnosticCodesByRuleId } from "./diagnostic-code-map.js";
+import {
+  allDiagnosticCodeListsByRuleId,
+  allDiagnosticCodesByRuleId,
+} from "./diagnostic-code-map.js";
 import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
 import type { DoctorRunOptions } from "./config.js";
@@ -157,6 +160,7 @@ export function createAgentReport(
       "<code>",
       "--framework",
       result.framework,
+      ...(context.configFile ? ["--config", context.configFile] : []),
       "--format",
       "agent",
     ],
@@ -353,10 +357,16 @@ export function explainRule(
     );
   if (!match) return "";
   const diagnosticCodes = match.rule.meta.diagnosticCodes ?? codeListForRule(match.rule.meta.id);
+  const documentedCodes =
+    (allDiagnosticCodeListsByRuleId as Record<string, readonly string[]>)[match.rule.meta.id] ?? [];
+  const diagnostics = diagnosticCodes.map((code) => ({
+    code,
+    docs: documentedCodes.includes(code) ? diagnosticReferenceUrl(code) : undefined,
+  }));
   const payload = {
     pack: match.pack,
     diagnosticCodes,
-    diagnostics: diagnosticCodes.map((code) => ({ code, docs: diagnosticReferenceUrl(code) })),
+    diagnostics,
     ...match.rule.meta,
   };
   if (format === "json") return `${JSON.stringify(payload, null, 2)}\n`;
@@ -372,7 +382,8 @@ export function explainRule(
       meta.why ? `Why: ${meta.why}` : undefined,
       meta.recommendedReplacement ? `Prefer: ${meta.recommendedReplacement}` : undefined,
       `Diagnostics: ${diagnosticCodes.join(", ")}`,
-      ...diagnosticCodes.map((code) => `Docs: ${diagnosticReferenceUrl(code)}`),
+      ...diagnostics.flatMap((diagnostic) => (diagnostic.docs ? [`Docs: ${diagnostic.docs}`] : [])),
+      meta.docsUrl ? `Reference: ${meta.docsUrl}` : undefined,
     ]
       .filter(Boolean)
       .join("\n") + "\n"
