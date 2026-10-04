@@ -297,10 +297,16 @@ async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
         registeredPacks.push(pack);
       },
       registerProjectInventoryContributor(contributor) {
-        inventoryContributors.push(contributor);
+        inventoryContributors.push({
+          name: contributor.name,
+          contribute: contributor.contribute.bind(contributor),
+        });
       },
       registerRuntimeEvidenceContributor(contributor) {
-        runtimeEvidenceContributors.push(contributor);
+        runtimeEvidenceContributors.push({
+          name: contributor.name,
+          contribute: contributor.contribute.bind(contributor),
+        });
       },
     });
   }

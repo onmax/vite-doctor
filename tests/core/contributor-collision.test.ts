@@ -5,6 +5,55 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "pathe";
 import { tmpdir } from "node:os";
 
+test.each(["inventory", "runtimeEvidence"] as const)(
+  "preserves registered %s identities when contributors mutate names",
+  async (namespace) => {
+    const root = await mkdtemp(join(tmpdir(), "doctor-contributor-mutation-"));
+    try {
+      await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
+      const later = {
+        name: "later",
+        contribute() {
+          this.name = "first";
+          return { from: "later" };
+        },
+      };
+      const first = {
+        name: "first",
+        contribute() {
+          later.name = "first";
+          return { from: "first" };
+        },
+      };
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        cache: false,
+        extensions: [
+          defineDoctorExtension({
+            name: "mutable-contributors",
+            setup(api) {
+              if (namespace === "inventory") {
+                api.registerProjectInventoryContributor(first);
+                api.registerProjectInventoryContributor(later);
+              } else {
+                api.registerRuntimeEvidenceContributor(first);
+                api.registerRuntimeEvidenceContributor(later);
+              }
+            },
+          }),
+        ],
+      });
+      expect(result.project[namespace]).toMatchObject({
+        first: { from: "first" },
+        later: { from: "later" },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test("rejects duplicate contributor names within each evidence namespace", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-contributor-collision-"));
   try {
