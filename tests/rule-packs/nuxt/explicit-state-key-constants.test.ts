@@ -8,6 +8,7 @@ test.each([
   'const { key } = { key: "counter" }; export function useCounter() { return useState(key, () => 0) }',
   'const { state: key } = { state: "counter" }; export function useCounter() { return useState(key, () => 0) }',
   'const { ["key"]: key } = { key: "counter" }; export function useCounter() { return useState(key, () => 0) }',
+  'const { ["__proto__"]: key } = { ["__proto__"]: "counter" }; export function useCounter() { return useState(key, () => 0) }',
   'const field = "key"; const { [field]: key } = { key: "counter" }; export function useCounter() { return useState(key, () => 0) }',
   'const { state: [key] } = { state: ["counter" as const] } as const; export function useCounter() { return useState(key, () => 0) }',
   'const prefix = "counter"; const [key] = [prefix + ":count"]; export function useCounter() { return useState(key, () => 0) }',

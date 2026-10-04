@@ -100,7 +100,7 @@ function constantStringKeys(source: string, path: string): Set<number> {
           const key = propertyName(property, resolve);
           if (
             key === undefined ||
-            (key === "__proto__" && !property.shorthand) ||
+            (key === "__proto__" && !property.computed && !property.shorthand) ||
             properties.has(key)
           )
             return;
