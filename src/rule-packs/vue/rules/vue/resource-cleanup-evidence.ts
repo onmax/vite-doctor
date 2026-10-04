@@ -409,11 +409,21 @@ function createResourceEvidence(ctx: RuleContext) {
 
   function transfers(resource: Resource): boolean {
     if (!resource.handle || resource.owner.type === "Program") return false;
+    if (discardedCallbackReturn(resource.owner)) return false;
     return executes(
       resource.owner.body,
       (node) => node.type === "ReturnStatement" && identity(node.argument) === resource.handle,
       resource,
     );
+  }
+
+  function discardedCallbackReturn(functionNode: AnyNode): boolean {
+    const call = parents.get(functionNode);
+    if (call?.type !== "CallExpression" || !call.arguments.includes(functionNode)) return false;
+    const api = vueApi(call.callee);
+    if (api && WATCHERS.has(api)) return true;
+    const callee = unwrap(call.callee);
+    return callee?.type === "MemberExpression" && memberName(callee) === "forEach";
   }
 
   function cleans(resource: Resource): boolean {

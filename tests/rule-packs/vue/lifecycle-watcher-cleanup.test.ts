@@ -17,6 +17,8 @@ test.each([
     `watchEffect(() => { const timer = setInterval(() => {}, 1000); onWatcherCleanup(() => clearInterval(timer)) })`,
     0,
   ],
+  [`watchEffect(() => { const timer = setInterval(() => {}, 1000); return timer })`, 1],
+  [`items.forEach(() => { const timer = setInterval(() => {}, 1000); return timer })`, 1],
   [
     `watchEffect(() => { const timer = setInterval(() => {}, 1000); onWatcherCleanup(() => clearInterval(other)) })`,
     1,
