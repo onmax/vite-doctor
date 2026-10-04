@@ -8,6 +8,7 @@ const FACTORIES = new Map<string, ReactiveKind>([
   ["customRef", "ref"],
   ["ref", "ref"],
   ["toRef", "ref"],
+  ["useModel", "ref"],
   ["shallowRef", "shallow-ref"],
   ["reactive", "reactive"],
   ["shallowReactive", "shallow-reactive"],
@@ -52,9 +53,10 @@ interface ReactiveBindings {
 }
 
 type ReactiveKind = "ref" | "reactive" | "shallow-ref" | "shallow-reactive";
-type BindingKind = ReactiveKind | `${ReactiveKind}-factory` | "namespace-vue";
+type BindingKind = ReactiveKind | `${ReactiveKind}-factory` | "namespace-vue" | "refs-factory";
 
 function factoryBindingKind(name: string): BindingKind | undefined {
+  if (name === "toRefs") return "refs-factory";
   const kind = FACTORIES.get(name);
   return kind ? `${kind}-factory` : undefined;
 }
@@ -102,7 +104,12 @@ function reactiveBindings(ctx: RuleContext): ReactiveBindings {
       }
     }
     for (const variable of variables) {
-      const kind = variableKind(variable, references, kinds);
+      const kind = variableKind(
+        variable,
+        references,
+        kinds,
+        !!ctx.file.sfc?.blockHashes.scriptSetup,
+      );
       if (kind) kinds.set(variable, kind);
     }
 
@@ -136,12 +143,43 @@ function variableKind(
   variable: any,
   references: Map<string, any>,
   kinds: Map<object, BindingKind>,
+  scriptSetup: boolean,
 ) {
   for (const definition of variable.defs ?? []) {
     if (definition.type !== "Variable") continue;
     const init = unwrapExpression(definition.node?.init);
     if (init?.type !== "CallExpression") continue;
-    const initKind = factoryKind(init.callee, references, kinds);
+    const pattern = definition.node.id;
+    const callee = init.callee;
+    const reference = references.get(rangeKey(callee.range?.[0], callee.range?.[1]));
+    if (
+      scriptSetup &&
+      callee.type === "Identifier" &&
+      callee.name === "defineModel" &&
+      !reference?.resolved
+    ) {
+      if (
+        pattern.type === "Identifier" ||
+        (pattern.type === "ArrayPattern" && pattern.elements[0] === definition.name)
+      )
+        return "ref";
+      continue;
+    }
+    const initKind = factoryKind(callee, references, kinds);
+    if (initKind === "refs-factory" && pattern.type === "ObjectPattern") {
+      if (
+        pattern.properties.some(
+          (property: AnyNode) =>
+            property.type === "Property" &&
+            (property.value === definition.name ||
+              (property.value?.type === "AssignmentPattern" &&
+                property.value.left === definition.name)),
+        )
+      )
+        return "ref";
+      continue;
+    }
+    if (pattern.type !== "Identifier") continue;
     if (initKind?.endsWith("-factory")) {
       return reactiveKind(initKind.slice(0, -"-factory".length) as BindingKind);
     }

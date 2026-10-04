@@ -1095,3 +1095,67 @@ test.each([
   });
   expect(result.diagnostics).toHaveLength(expected);
 });
+
+test.each([
+  [`const model = defineModel<number>(); onUpdated(() => model.value++)`, 1],
+  [`const [model, modifiers] = defineModel<number>(); onUpdated(() => model.value++)`, 1],
+  [`const [model, modifiers] = defineModel<number>(); onUpdated(() => modifiers.value++)`, 0],
+  [
+    `import { useModel } from 'vue'; const model = useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import { useModel as makeModel } from 'vue'; const model = makeModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const model = Vue.useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import { toRefs, reactive } from 'vue'; const { count } = toRefs(reactive({ count: 0 })); onUpdated(() => count.value++)`,
+    1,
+  ],
+  [
+    `import { toRefs as makeRefs } from 'vue'; const { count: total } = makeRefs(state); onUpdated(() => total.value++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const { count = ref(0) } = Vue.toRefs(state); onUpdated(() => count.value++)`,
+    1,
+  ],
+  [
+    `import { toRefs } from 'vue'; const { ...rest } = toRefs(state); onUpdated(() => rest.value++)`,
+    0,
+  ],
+  [
+    `function defineModel() { return { value: 0 } }; const model = defineModel(); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `function useModel() { return { value: 0 } }; const model = useModel(); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `function toRefs() { return { count: { value: 0 } } }; const { count } = toRefs(); onUpdated(() => count.value++)`,
+    0,
+  ],
+  [
+    `import { useModel } from 'other'; const model = useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs } from 'other'; const { count } = toRefs(state); onUpdated(() => count.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs } from 'vue'; const { count } = toRefs(state); onUpdated((count) => count.value++)`,
+    0,
+  ],
+])("no mutation in onUpdated follows Vue model and property refs: %s", async (source, expected) => {
+  const result = await runVueSfcRuleFixture(
+    noMutationInOnUpdated,
+    `<script setup lang="ts">${source}</script>`,
+  );
+  expect(result.diagnostics).toHaveLength(expected);
+});
