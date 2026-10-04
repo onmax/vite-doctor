@@ -534,6 +534,75 @@ test("CLI rejects invalid run options before starting a Doctor Run", async () =>
   }
 });
 
+test.each([
+  ["framework", "vue", "typo"],
+  ["rules", "vue", "vite"],
+  ["severity", "warn", "info"],
+  ["extends", "vite-doctor/vue/recommended", "vite-doctor/vue/strict"],
+  ["analyses", "graph", "health"],
+  ["since", "main", "HEAD"],
+  ["baseline", "first.json", "second.json"],
+  ["config", "first.config.ts", "second.config.ts"],
+  ["max-warnings", "0", "1"],
+])("CLI rejects repeated --%s values before starting a Doctor Run", async (flag, first, second) => {
+  await withFixture({ "package.json": "{}", "index.js": "export {}" }, async (root) => {
+    const result = await runCli(
+      [".", `--${flag}`, first, `--${flag}`, second, "--format", "agent"],
+      root,
+    );
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.output)).toMatchObject({
+      status: "failed",
+      error: { kind: "invocation", message: `Option --${flag} may only be provided once.` },
+      next: { action: "correct-invocation" },
+    });
+  });
+});
+
+test("CLI rejects repeated report formats without silently switching presentation", async () => {
+  const result = await runWithCapturedStdout(() =>
+    main(["rules", "--format=json", "--format=json"], findRepoRoot()),
+  );
+  expect(result.code).toBe(2);
+  expect(JSON.parse(result.output)).toMatchObject({
+    schema: "vite-doctor.report/v3",
+    status: "failed",
+    error: { kind: "invocation", message: "Option --format may only be provided once." },
+  });
+});
+
+test("CLI rejects repeated migration targets", async () => {
+  const result = await runCli(
+    ["migrate", ".", "--to", "nuxt@5", "--to", "nitro@3", "--format", "agent"],
+    findRepoRoot(),
+  );
+  expect(result.code).toBe(2);
+  expect(JSON.parse(result.output)).toMatchObject({
+    error: { kind: "invocation", message: "Option --to may only be provided once." },
+  });
+});
+
+test("CLI keeps comma-separated selectors and repeated boolean flags", async () => {
+  await withFixture({ "package.json": "{}", "index.js": "export {}" }, async (root) => {
+    const result = await runCli(
+      [
+        ".",
+        "--rules",
+        "vite,vue",
+        "--analyses",
+        "graph,health",
+        "--no-cache",
+        "--no-cache",
+        "--format",
+        "json",
+      ],
+      root,
+    );
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.output).status).not.toBe("failed");
+  });
+});
+
 test("CLI returns structured failures for unknown Diagnostic Codes", async () => {
   const result = await runWithCapturedStdout(() =>
     main(["explain", "DOES_NOT_EXIST", "--format", "agent"], findRepoRoot()),
