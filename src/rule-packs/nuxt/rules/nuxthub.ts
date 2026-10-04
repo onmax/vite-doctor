@@ -59,10 +59,27 @@ function hasMeaningfulCacheControl(node: AnyNode) {
         ["ArrowFunctionExpression", "FunctionExpression"].includes(value?.type) ||
         isDynamicOption(value)
       );
+    if (name === "allowCookies") {
+      if (value?.type === "ArrayExpression") return hasNonEmptyStringArray(value);
+      return isDynamicOption(value);
+    }
+    if (name === "allowAuthorization") return value?.type === "Literal" && value.value === true;
     if (name !== "varies") return false;
     if (value?.type === "ArrayExpression") return value.elements.some(hasVaryHeader);
     return isDynamicOption(value);
   });
+}
+
+function hasNonEmptyStringArray(node: AnyNode): boolean {
+  return (
+    node.elements.length > 0 &&
+    node.elements.every((element: AnyNode) => {
+      element = unwrap(element);
+      return (
+        element?.type === "Literal" && typeof element.value === "string" && element.value.length > 0
+      );
+    })
+  );
 }
 
 function hasVaryHeader(node: AnyNode): boolean {

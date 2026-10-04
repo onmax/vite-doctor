@@ -50,6 +50,10 @@ test.each([
   "{ getKey: profileKey, ...{ getKey: null } }",
   '{ varies: ["cookie"], ...unknownOptions }',
   '{ varies: ["cookie"], [optionName]: [] }',
+  "{ allowCookies: [] }",
+  '{ allowCookies: [""] }',
+  '{ allowCookies: ["session", 1] }',
+  "{ allowAuthorization: false }",
 ])("only effective top-level vary options satisfy the rule: %s", async (options) => {
   expect((await diagnose("return user", options)).diagnostics.map((d) => d.ruleId)).toEqual([
     noPersonalizedCachedHandler.meta.id,
@@ -71,6 +75,9 @@ test.each([
   '{ varies: [...["cookie"]] }',
   '{ ...unknownOptions, varies: ["cookie"] }',
   '{ varies: ["cookie"], ...{ maxAge: 60 } }',
+  '{ allowCookies: ["session"] }',
+  "{ allowCookies: cookieNames }",
+  "{ allowAuthorization: true }",
 ])("preserves explicit cache vary strategies: %s", async (options) => {
   expect((await diagnose("return { name: user.name }", options)).diagnostics).toEqual([]);
 });
