@@ -97,7 +97,7 @@ function constantStringKeys(source: string, path: string): Set<number> {
       if (pattern.type === "ObjectPattern" && value.type === "ObjectExpression") {
         const properties = new Map<string, AnyNode>();
         for (const property of value.properties) {
-          const key = propertyName(property);
+          const key = propertyName(property, resolve);
           if (
             key === undefined ||
             (key === "__proto__" && !property.shorthand) ||
@@ -107,7 +107,7 @@ function constantStringKeys(source: string, path: string): Set<number> {
           properties.set(key, property.value);
         }
         for (const property of pattern.properties) {
-          const key = propertyName(property);
+          const key = propertyName(property, resolve);
           if (key === undefined) continue;
           const result = resolveBinding(property.value, properties.get(key), name, seen);
           if (result !== undefined) return result;
@@ -141,8 +141,12 @@ function unwrap(node: AnyNode): AnyNode {
   return node;
 }
 
-function propertyName(node: AnyNode): string | undefined {
-  if (node.type !== "Property" || node.kind !== "init" || node.method || node.computed) return;
+function propertyName(
+  node: AnyNode,
+  resolve: (node: AnyNode) => string | undefined,
+): string | undefined {
+  if (node.type !== "Property" || node.kind !== "init" || node.method) return;
+  if (node.computed) return resolve(node.key);
   if (node.key.type === "Identifier") return node.key.name;
   if (node.key.type === "Literal") return String(node.key.value);
 }
