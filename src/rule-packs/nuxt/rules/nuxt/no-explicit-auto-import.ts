@@ -1,4 +1,5 @@
-import { dirname, isAbsolute, resolve } from "pathe";
+import { statSync } from "node:fs";
+import { dirname, extname, isAbsolute, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
 import {
   AnyNode,
@@ -85,7 +86,11 @@ export const noExplicitAutoImport = createRule({
 function sameImportSource(ctx: RuleContext, source: string, autoImportSource: string) {
   const explicit = resolveImportSource(ctx, source);
   const automatic = resolveImportSource(ctx, autoImportSource);
-  return explicit && automatic ? explicit === automatic : source === autoImportSource;
+  if (!explicit || !automatic) return source === autoImportSource;
+  if (explicit === automatic) return true;
+  const explicitFile = resolveSourceFile(explicit);
+  const automaticFile = resolveSourceFile(automatic);
+  return explicitFile !== null && explicitFile === automaticFile;
 }
 
 function resolveImportSource(ctx: RuleContext, source: string): string | null {
@@ -107,9 +112,21 @@ function resolveImportSource(ctx: RuleContext, source: string): string | null {
 }
 
 function canonicalPath(path: string) {
-  return toPosixPath(resolve(path))
-    .replace(/\.(?:[cm]?[jt]sx?|vue)$/, "")
-    .replace(/\/index$/, "");
+  return toPosixPath(resolve(path));
+}
+
+function resolveSourceFile(path: string): string | null {
+  if (statSync(path, { throwIfNoEntry: false })?.isFile()) return path;
+  if (extname(path) || statSync(resolve(path, "package.json"), { throwIfNoEntry: false }))
+    return null;
+  const extensions = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
+  const candidates = [path, resolve(path, "index")].flatMap((base) =>
+    extensions.map((extension) => `${base}${extension}`),
+  );
+  const files = candidates.filter((candidate) =>
+    statSync(candidate, { throwIfNoEntry: false })?.isFile(),
+  );
+  return files.length === 1 ? files[0]! : null;
 }
 
 function isAutoImportTransformEnabled(
