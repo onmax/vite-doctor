@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { runViteDoctor } from "../../src/doctor.ts";
 
@@ -79,6 +79,47 @@ test.each([false, true])(
     }
   },
 );
+
+test("does not turn a sibling outside directories.bin path into a workspace root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-bin-boundary-"));
+  const outside = `${root}-escape`;
+  try {
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, "command.js"), 'console.log("outside");\n');
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "example-tool", directories: { bin: `../${basename(outside)}` } }),
+    );
+
+    const result = await runViteDoctor({ root, analyses: "graph", cache: false });
+    expect(result.graph?.virtualRoots).toBe(1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("limits directory bins to the configured source inventory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-bin-inventory-"));
+  try {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "example-tool", directories: { bin: "." } }),
+    );
+    await writeFile(join(root, "command.js"), 'console.log("command");\n');
+    await writeFile(join(root, "excluded.js"), 'console.log("excluded");\n');
+
+    const result = await runViteDoctor({
+      root,
+      analyses: "graph",
+      cache: false,
+      config: { exclude: ["excluded.js"] },
+    });
+    expect(result.graph?.virtualRoots).toBe(2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test.each([
   { directories: { bin: "missing" } },

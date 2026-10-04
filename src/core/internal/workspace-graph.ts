@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { dirname, relative, resolve } from "pathe";
 import type {
   Diagnostic,
@@ -115,7 +116,10 @@ function createVirtualRoots(
   };
 
   addRoot("package", "package.json", "package metadata");
-  for (const file of readPackageDeps(session.root).entryFiles) {
+  for (const file of readPackageDeps(
+    session.root,
+    session.files.map((entry) => entry.path),
+  ).entryFiles) {
     roots.push({
       id: `package-entry:${file}`,
       kind: "package",
@@ -265,7 +269,10 @@ export function runStructuralGraphRules(session: ScanSession, graph: WorkspaceGr
 
 function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
   const live = reachableFiles(graph);
-  const packageDeps = readPackageDeps(session.root);
+  const packageDeps = readPackageDeps(
+    session.root,
+    session.files.map((entry) => entry.path),
+  );
   const importedPackages = new Set<string>();
   const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
 
@@ -563,7 +570,7 @@ interface PackageDependencyFacts {
   entryFiles: Set<string>;
 }
 
-function readPackageDeps(root: string): PackageDependencyFacts {
+function readPackageDeps(root: string, inventoryPaths: readonly string[]): PackageDependencyFacts {
   const all = new Set<string>();
   const runtime = new Set<string>();
   const foreignRoots = new Set<string>();
@@ -596,7 +603,8 @@ function readPackageDeps(root: string): PackageDependencyFacts {
       ) {
         foreignRoots.add(relative(root, packageRoot));
       }
-      for (const entry of packageEntryCandidates(root, packageRoot, json)) entryFiles.add(entry);
+      for (const entry of packageEntryCandidates(root, packageRoot, json, inventoryPaths))
+        entryFiles.add(entry);
     } catch {
       continue;
     }
@@ -675,6 +683,7 @@ function packageEntryCandidates(
   root: string,
   packageRoot: string,
   json: Record<string, unknown>,
+  inventoryPaths: readonly string[],
 ): string[] {
   const candidates = new Set<string>();
   const binEntries =
@@ -690,17 +699,14 @@ function packageEntryCandidates(
   const directories = json.directories as Record<string, unknown> | undefined;
   if (!json.bin && typeof directories?.bin === "string" && directories.bin) {
     const binRoot = resolve(packageRoot, directories.bin);
-    try {
-      for (const entry of readdirSync(binRoot, { recursive: true, withFileTypes: true })) {
-        const file = resolve(entry.parentPath, entry.name);
+    if (isPathInside(packageRoot, binRoot)) {
+      for (const file of inventoryPaths) {
+        if (!isPathInside(binRoot, file)) continue;
         const path = relative(packageRoot, file);
-        if (!entry.isFile() || /(^|\/)\./.test(relative(binRoot, file))) continue;
         for (const candidate of sourceCandidatesForPackageEntry(packageRoot, path)) {
           candidates.add(candidate);
         }
       }
-    } catch {
-      // Missing or unreadable executable directories contribute no entrypoints.
     }
   }
   collectPackageExportEntries(packageRoot, json.exports, candidates);
@@ -708,7 +714,20 @@ function packageEntryCandidates(
     const absolute = resolve(packageRoot, standard);
     if (existsSync(absolute)) candidates.add(absolute);
   }
-  return [...candidates].filter((file) => file.startsWith(root));
+  return [...candidates].filter((file) => isPathInside(root, file));
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const path = relative(resolve(parent), resolve(child));
+  return (
+    path === "" ||
+    (!isAbsolute(path) &&
+      path !== ".." &&
+      !path.startsWith("../") &&
+      !path.startsWith("..\\") &&
+      !path.startsWith("/") &&
+      !path.startsWith("\\"))
+  );
 }
 
 function collectPackageExportEntries(
