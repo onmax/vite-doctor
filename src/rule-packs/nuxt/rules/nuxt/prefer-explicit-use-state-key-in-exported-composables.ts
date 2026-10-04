@@ -57,15 +57,8 @@ function constantStringKeys(source: string, path: string): Set<number> {
       if (node.type === "Literal" && typeof node.value === "string") return node.value;
       if (node.type === "TemplateLiteral" && node.expressions.length === 0)
         return node.quasis[0]?.value.cooked ?? undefined;
-      if (
-        [
-          "TSAsExpression",
-          "TSTypeAssertion",
-          "TSSatisfiesExpression",
-          "TSNonNullExpression",
-        ].includes(node.type)
-      )
-        return resolve(node.expression, seen);
+      const expression = unwrap(node);
+      if (expression !== node) return resolve(expression, seen);
       if (node.type === "BinaryExpression" && node.operator === "+") {
         const left = resolve(node.left, seen);
         const right = resolve(node.right, seen);
@@ -75,13 +68,50 @@ function constantStringKeys(source: string, path: string): Set<number> {
       const variable = references.get(node)?.resolved;
       if (!variable || seen.has(variable)) return;
       for (const definition of variable.defs) {
-        if (
-          definition.type !== "Variable" ||
-          definition.parent.kind !== "const" ||
-          definition.node.id.type !== "Identifier"
-        )
-          continue;
-        return resolve(definition.node.init, new Set([...seen, variable]));
+        if (definition.type !== "Variable" || definition.parent.kind !== "const") continue;
+        return resolveBinding(
+          definition.node.id,
+          definition.node.init,
+          node.name,
+          new Set([...seen, variable]),
+        );
+      }
+    };
+    const resolveBinding = (
+      pattern: AnyNode,
+      initializer: AnyNode,
+      name: string,
+      seen: Set<unknown>,
+    ): string | undefined => {
+      if (!pattern || !initializer) return;
+      if (pattern.type === "Identifier")
+        return pattern.name === name ? resolve(initializer, seen) : undefined;
+      const value = unwrap(initializer);
+      if (pattern.type === "ArrayPattern" && value.type === "ArrayExpression") {
+        if (value.elements.some((element: AnyNode) => element?.type === "SpreadElement")) return;
+        for (const [index, element] of pattern.elements.entries()) {
+          const key = resolveBinding(element, value.elements[index], name, seen);
+          if (key !== undefined) return key;
+        }
+      }
+      if (pattern.type === "ObjectPattern" && value.type === "ObjectExpression") {
+        const properties = new Map<string, AnyNode>();
+        for (const property of value.properties) {
+          const key = propertyName(property);
+          if (
+            key === undefined ||
+            (key === "__proto__" && !property.shorthand) ||
+            properties.has(key)
+          )
+            return;
+          properties.set(key, property.value);
+        }
+        for (const property of pattern.properties) {
+          const key = propertyName(property);
+          if (key === undefined) continue;
+          const result = resolveBinding(property.value, properties.get(key), name, seen);
+          if (result !== undefined) return result;
+        }
       }
     };
     const visit = (node: AnyNode) => {
@@ -99,4 +129,20 @@ function constantStringKeys(source: string, path: string): Set<number> {
     return result;
   }
   return result;
+}
+
+function unwrap(node: AnyNode): AnyNode {
+  while (
+    ["TSAsExpression", "TSTypeAssertion", "TSSatisfiesExpression", "TSNonNullExpression"].includes(
+      node.type,
+    )
+  )
+    node = node.expression;
+  return node;
+}
+
+function propertyName(node: AnyNode): string | undefined {
+  if (node.type !== "Property" || node.kind !== "init" || node.method || node.computed) return;
+  if (node.key.type === "Identifier") return node.key.name;
+  if (node.key.type === "Literal") return String(node.key.value);
 }
