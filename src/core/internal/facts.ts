@@ -60,15 +60,7 @@ async function parseSourceFile(
   const parsedScript = isVueSfc
     ? parseVueScriptsResult(absolute, sfc?.descriptor, text)
     : text.trim()
-      ? (() => {
-          const parsed = parseScriptResult(absolute, text);
-          return {
-            ...parsed,
-            incomplete: Boolean(
-              parsed.errors.length && (!parsed.ast || !(parsed.ast.body as unknown[])?.length),
-            ),
-          };
-        })()
+      ? parseScriptResult(absolute, text)
       : undefined;
   const scriptAst = parsedScript?.ast ?? null;
   if (

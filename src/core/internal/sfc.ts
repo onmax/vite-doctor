@@ -95,9 +95,7 @@ export function parseVueScriptsResult(
     if (!script.text.trim()) continue;
     const parsed = parseScriptResult(file, script.text.slice(0, block.loc.end.offset), lang);
     errors.push(...parsed.errors);
-    if (parsed.errors.length && (!parsed.ast || !(parsed.ast.body as unknown[])?.length)) {
-      incomplete = true;
-    }
+    incomplete ||= parsed.incomplete;
     const ast = parsed.ast;
     if (!ast) continue;
     if (!program) program = ast;
