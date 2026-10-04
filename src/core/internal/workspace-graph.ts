@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { isBuiltin } from "node:module";
 import { dirname, relative, resolve } from "pathe";
 import type {
@@ -120,7 +121,10 @@ function createVirtualRoots(
   };
 
   addRoot("package", "package.json", "package metadata");
-  for (const file of readPackageDeps(session.root).entryFiles) {
+  for (const file of readPackageDeps(
+    session.root,
+    session.files.map((entry) => entry.path),
+  ).entryFiles) {
     roots.push({
       id: `package-entry:${file}`,
       kind: "package",
@@ -276,7 +280,10 @@ export function runStructuralGraphRules(session: ScanSession, graph: WorkspaceGr
 
 function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
   const live = reachableFiles(graph);
-  const packageDeps = readPackageDeps(session.root);
+  const packageDeps = readPackageDeps(
+    session.root,
+    session.files.map((entry) => entry.path),
+  );
   const importedPackages = new Set<string>();
   const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
 
@@ -574,7 +581,7 @@ interface PackageDependencyFacts {
   entryFiles: Set<string>;
 }
 
-function readPackageDeps(root: string): PackageDependencyFacts {
+function readPackageDeps(root: string, inventoryPaths: readonly string[]): PackageDependencyFacts {
   const all = new Set<string>();
   const runtime = new Set<string>();
   const foreignRoots = new Set<string>();
@@ -607,7 +614,8 @@ function readPackageDeps(root: string): PackageDependencyFacts {
       ) {
         foreignRoots.add(relative(root, packageRoot));
       }
-      for (const entry of packageEntryCandidates(root, packageRoot, json)) entryFiles.add(entry);
+      for (const entry of packageEntryCandidates(root, packageRoot, json, inventoryPaths))
+        entryFiles.add(entry);
     } catch {
       continue;
     }
@@ -686,18 +694,52 @@ function packageEntryCandidates(
   root: string,
   packageRoot: string,
   json: Record<string, unknown>,
+  inventoryPaths: readonly string[],
 ): string[] {
   const candidates = new Set<string>();
-  for (const value of [json.main, json.module, json.types, json.typings]) {
+  const inventoriedFiles = new Set(inventoryPaths.map((file) => resolve(file)));
+  const binEntries =
+    typeof json.bin === "string"
+      ? [json.bin]
+      : json.bin && typeof json.bin === "object" && !Array.isArray(json.bin)
+        ? Object.values(json.bin)
+        : [];
+  for (const value of [json.main, json.module, json.types, json.typings, ...binEntries]) {
     if (typeof value !== "string") continue;
     for (const file of sourceCandidatesForPackageEntry(packageRoot, value)) candidates.add(file);
+  }
+  const directories = json.directories as Record<string, unknown> | undefined;
+  if (!json.bin && typeof directories?.bin === "string" && directories.bin) {
+    const binRoot = resolve(packageRoot, directories.bin);
+    if (isPathInside(packageRoot, binRoot)) {
+      for (const file of inventoryPaths) {
+        if (!isPathInside(binRoot, file)) continue;
+        const path = relative(packageRoot, file);
+        for (const candidate of sourceCandidatesForPackageEntry(packageRoot, path)) {
+          if (inventoriedFiles.has(candidate)) candidates.add(candidate);
+        }
+      }
+    }
   }
   collectPackageExportEntries(packageRoot, json.exports, candidates);
   for (const standard of ["src/index.ts", "src/module.ts", "src/preview.ts"]) {
     const absolute = resolve(packageRoot, standard);
     if (existsSync(absolute)) candidates.add(absolute);
   }
-  return [...candidates].filter((file) => file.startsWith(root));
+  return [...candidates].filter((file) => isPathInside(root, file));
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const path = relative(resolve(parent), resolve(child));
+  return (
+    path === "" ||
+    (!isAbsolute(path) &&
+      path !== ".." &&
+      !path.startsWith("../") &&
+      !path.startsWith("..\\") &&
+      !path.startsWith("/") &&
+      !path.startsWith("\\"))
+  );
 }
 
 function collectPackageExportEntries(
