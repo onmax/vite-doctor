@@ -956,3 +956,90 @@ const doubled = count + 1
     expect(result.diagnostics[0]?.tags).toContain("eslint-plugin-vue");
   }
 });
+
+test("no mutation in onUpdated detects reactive object property assignments", async () => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+const state = reactive({ count: 0 })
+onUpdated(() => {
+  state.count = 1
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("no mutation in onUpdated ignores local updates, comparisons, and text that resembles mutations", async () => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: {
+      "app.vue": `<script setup lang="ts">
+let index = 0
+const state = { value: 1 }
+onUpdated(() => {
+  index++
+  if (state.value == 1) {
+    const message = "items.push(value)"
+    // items.push(value)
+    console.log(message)
+  }
+})
+</script>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  `onUpdated((count) => { count.value++ })`,
+  `onUpdated(() => { { const count = { value: 0 }; count.value++ } })`,
+  `function other() { const count = ref(0) }; onUpdated(() => { const count = { value: 0 }; count.value++ })`,
+  `onUpdated(() => { const update = () => { count.value++ } })`,
+])(
+  "no mutation in onUpdated excludes shadowed refs and uncalled nested callbacks: %s",
+  async (callback) => {
+    const result = await runRuleFixture({
+      rule: noMutationInOnUpdated,
+      framework: "vue",
+      files: { "app.vue": `<script setup lang="ts">const count = ref(0); ${callback}</script>` },
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test.each([
+  `import { ref as makeRef } from 'vue'; const count = makeRef(0); onUpdated(() => { count.value++ })`,
+  `import * as Vue from 'vue'; const state = Vue.reactive({ count: 0 }); onUpdated(() => { state.count++ })`,
+  `const list = ref([]); onUpdated(() => { list.value.push(1) })`,
+  `const list = reactive([]); onUpdated(() => { list.push(1) })`,
+  `const state = ref({ count: 0 }); onUpdated(() => { state.value.count++ })`,
+  `const state = reactive({ values: [] }); onUpdated(() => { state.values.splice(0, 1) })`,
+])("no mutation in onUpdated follows reactive imports and mutations: %s", async (source) => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: { "app.vue": `<script setup lang="ts">${source}</script>` },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  `function ref(value) { return { value } }; const count = ref(0); onUpdated(() => { count.value++ })`,
+  `import { reactive } from 'other'; const state = reactive({ count: 0 }); onUpdated(() => { state.count++ })`,
+  `const factory = ref; onUpdated(() => { factory.value++ })`,
+  `const count = ref(0); const value = 'other'; onUpdated(() => { count[value] = 2 })`,
+])("no mutation in onUpdated excludes locally supplied reactive factories: %s", async (source) => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: { "app.vue": `<script setup lang="ts">${source}</script>` },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
