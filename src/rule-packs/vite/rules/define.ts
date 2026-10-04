@@ -28,11 +28,16 @@ export const noUnusedDefine = createRule({
     return {
       async onWorkspaceEnd() {
         const configs = await readViteConfigFacts(ctx);
-        const sources = await readProjectSources(ctx);
+        const sources = (await readProjectSources(ctx)).map((source) => ({
+          ...source,
+          references: defineReferences(source.file, source.text),
+        }));
         for (const config of configs) {
           for (const entry of config.define) {
             const used = sources.some(
-              (source) => source.file !== config.file && source.text.includes(entry.key),
+              (source) =>
+                source.file !== config.file &&
+                (source.references?.has(entry.key) ?? source.text.includes(entry.key)),
             );
             if (used) continue;
             ctx.report(
@@ -54,6 +59,79 @@ export const noUnusedDefine = createRule({
     };
   },
 });
+
+function defineReferences(file: string, text: string): Set<string> | undefined {
+  if (file.endsWith(".vue")) return undefined;
+  try {
+    const { ast, scopeManager, visitorKeys } = parseForESLint(text, {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: { jsx: /\.[jt]sx$/.test(file) },
+    });
+    const parents = new Map<AnyNode, AnyNode>();
+    const visit = (node: AnyNode) => {
+      if (!node?.type) return;
+      for (const key of visitorKeys[node.type] ?? []) {
+        for (const child of Array.isArray(node[key]) ? node[key] : [node[key]]) {
+          if (!child?.type) continue;
+          parents.set(child, node);
+          visit(child);
+        }
+      }
+    };
+    visit(ast);
+    const names = new Set<string>();
+    for (const scope of scopeManager.scopes) {
+      for (const reference of scope.references) {
+        const runtimeBinding = reference.resolved?.defs.some((definition) => {
+          const node = definition.node as AnyNode;
+          const parent = definition.parent as AnyNode;
+          return (
+            !node.declare &&
+            !parent?.declare &&
+            node.importKind !== "type" &&
+            parent?.importKind !== "type"
+          );
+        });
+        if (
+          runtimeBinding ||
+          !reference.isRead() ||
+          !reference.isValueReference ||
+          reference.identifier.type === "JSXIdentifier"
+        )
+          continue;
+        let ancestor = parents.get(reference.identifier);
+        while (ancestor && ancestor.type !== "TSTypeQuery") ancestor = parents.get(ancestor);
+        if (ancestor) continue;
+        let node: AnyNode = reference.identifier;
+        names.add(node.name);
+        while (true) {
+          const parent = parents.get(node);
+          if (
+            [
+              "TSAsExpression",
+              "TSTypeAssertion",
+              "TSNonNullExpression",
+              "TSSatisfiesExpression",
+            ].includes(parent?.type) &&
+            parent.expression === node
+          ) {
+            node = parent;
+            continue;
+          }
+          if (parent?.type !== "MemberExpression" || parent.object !== node) break;
+          const path = memberPath(parent);
+          if (path === null) break;
+          names.add(path);
+          node = parent;
+        }
+      }
+    }
+    return names;
+  } catch {
+    return undefined;
+  }
+}
 
 export const noUntypedDefine = createRule({
   meta: {

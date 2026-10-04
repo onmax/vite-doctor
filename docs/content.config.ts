@@ -47,7 +47,7 @@ export default defineContentConfig({
         pack: z.string(),
         severity: z.enum(["error", "warn", "info"]),
         category: z.string(),
-        framework: z.enum(["vue", "vite", "nuxt", "nitro"]),
+        framework: z.enum(["vue", "vite", "nuxt", "nitro"]).optional(),
         source: z.string(),
         sourceUrl: z.string(),
       }),

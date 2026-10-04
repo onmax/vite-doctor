@@ -81,7 +81,7 @@ class PersistentRuleCache extends MemoryRuleCache {
   }
 
   private cachePath(key: string): string {
-    const path = resolve(this.dir, `${safeCacheKey(key)}.json`);
+    const path = resolve(this.dir, `${sha256(key)}.json`);
     assertCachePath(this.root, path);
     return path;
   }
@@ -308,6 +308,13 @@ async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
     ...extensions.flatMap((extension) => extension.rulePacks ?? []),
     ...registeredPacks,
   ].map((pack) => defineRulePack(pack));
+  const names = new Set<string>();
+  for (const pack of packs) {
+    for (const key of new Set([pack.name, pack.name.split("/").at(-1) ?? pack.name])) {
+      if (names.has(key)) throw doctorInternalDiagnostics.DOC0023({ pack: key });
+      names.add(key);
+    }
+  }
   return {
     packs,
     rules: packs.flatMap((pack) => pack.rules),
@@ -460,8 +467,4 @@ export function createCacheKey(session: ScanSession, phase: string, input: strin
       tsconfig: session.project.tsconfigPath,
     }),
   )}`;
-}
-
-function safeCacheKey(key: string): string {
-  return key.replace(/[^a-zA-Z0-9._-]/g, "_");
 }

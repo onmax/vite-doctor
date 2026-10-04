@@ -92,7 +92,10 @@ function readBaseline(root: string, baseline?: string): Set<string> {
   let entries: unknown[];
   if (Array.isArray(json)) entries = json;
   else if (json && typeof json === "object" && "diagnostics" in json) {
-    if ("version" in json && json.version !== 1) throw invalid("Expected baseline version 1.");
+    if ("reportVersion" in json) {
+      if (json.reportVersion !== 3) throw invalid("Expected Doctor JSON report version 3.");
+    } else if ("version" in json && json.version !== 1)
+      throw invalid("Expected baseline version 1.");
     if (!Array.isArray(json.diagnostics)) throw invalid('Expected a "diagnostics" array.');
     entries = json.diagnostics;
   } else throw invalid('Expected an array or an object containing a "diagnostics" array.');
@@ -190,6 +193,7 @@ function findSuppression(
     return true;
   });
   if (configured) return configured.reason;
+  if (!diagnostic.range) return null;
   let lines = sourceLines.get(diagnostic.file);
   if (!lines) {
     try {
@@ -199,9 +203,9 @@ function findSuppression(
     }
     sourceLines.set(diagnostic.file, lines);
   }
-  const line = diagnostic.range?.line;
-  const start = line ? Math.max(0, line - 3) : 0;
-  const end = line ? Math.min(lines.length, line + 1) : lines.length;
+  const line = diagnostic.range.line;
+  const start = Math.max(0, line - 3);
+  const end = Math.min(lines.length, line + 1);
   for (let index = start; index < end; index++) {
     const inline = lines[index]!.match(
       /doctor-disable(-next-line)?\s+([^\s]+)(?:\s+--\s+(.+)|\s+(.+))?/,
