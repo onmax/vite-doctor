@@ -178,6 +178,8 @@ export interface NuxtProjectInfo {
   autoImportEnabled: boolean;
   autoImportsAuthoritative: boolean;
   autoImports: Map<string, AutoImportEntry>;
+  /** All resolved auto-import entries, including names shadowed in the lookup map. */
+  autoImportEntries?: AutoImportEntry[];
   components: Map<
     string,
     { name: string; file: string; mode?: "client" | "server" | "all"; sourceLayer?: string }

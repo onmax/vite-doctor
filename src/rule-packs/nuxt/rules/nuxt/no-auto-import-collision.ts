@@ -16,7 +16,7 @@ export const noAutoImportCollision = createRule({
     return {
       NuxtManifest(manifest) {
         const names = new Map<string, string[]>();
-        for (const entry of manifest.autoImports.values()) {
+        for (const entry of manifest.autoImportEntries ?? manifest.autoImports.values()) {
           const key = entry.as ?? entry.name;
           names.set(key, [...(names.get(key) ?? []), entry.from]);
         }

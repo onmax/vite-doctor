@@ -183,6 +183,7 @@ async function normalizeNuxtProject(
   manifest: NuxtDoctorManifest | null,
   manifestPath?: string,
 ): Promise<NuxtProjectInfo> {
+  const autoImportEntries = (manifest?.autoImports ?? coreAutoImports()) as AutoImportEntry[];
   return {
     version: cleanVersion(manifest?.nuxtVersion ?? version),
     appDir: resolve(root, manifest?.appDir ?? (existsSync(join(root, "app")) ? "app" : ".")),
@@ -192,12 +193,8 @@ async function normalizeNuxtProject(
     autoImportEnabled: manifest ? manifest.autoImportEnabled === true : true,
     autoImportsAuthoritative:
       manifest?.autoImportEnabled !== undefined && isNuxtManifestCurrent(root, manifest),
-    autoImports: new Map(
-      (manifest?.autoImports ?? coreAutoImports()).map((entry: any) => [
-        entry.as ?? entry.name,
-        entry,
-      ]),
-    ),
+    autoImports: new Map(autoImportEntries.map((entry) => [entry.as ?? entry.name, entry])),
+    autoImportEntries,
     components: new Map(
       (manifest?.components ?? []).map((component: any) => [component.name, component]),
     ),
