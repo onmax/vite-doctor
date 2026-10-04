@@ -1850,11 +1850,10 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "vue/watch/no-async-watcheffect-after-await-read": {
-    description:
-      "Flags async watcheffect after await read in Vue watch code before it leaks into runtime behavior.",
-    why: "Effects that outlive their component create leaks and stale updates. Register cleanup where Vue or VueUse can dispose it automatically.",
+    description: "Flags reactive dependency reads after an await in an async watchEffect callback.",
+    why: "Vue tracks watchEffect dependencies during synchronous execution. Reads after await do not establish dependencies that rerun the effect; ordinary object and method accesses do not establish reactive dependencies.",
     recommendedReplacement:
-      "Remove async watcheffect after await read, or move it to the Vue runtime/API that owns that behavior.",
+      "Read reactive values before awaiting, or use watch() with an explicit source.",
     examples: [
       {
         title: "Read watchEffect dependencies before await",
