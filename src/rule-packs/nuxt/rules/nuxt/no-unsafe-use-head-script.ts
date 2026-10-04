@@ -38,11 +38,72 @@ export const noUnsafeUseHeadScript = createRule({
 });
 
 function hasExecutableScriptHeadEntry(node: AnyNode): boolean {
-  if (!node || typeof node !== "object" || node.type !== "ObjectExpression") return false;
+  if (!node || typeof node !== "object") return false;
+  if (
+    [
+      "ParenthesizedExpression",
+      "TSAsExpression",
+      "TSSatisfiesExpression",
+      "TSTypeAssertion",
+      "TSNonNullExpression",
+    ].includes(node.type)
+  )
+    return hasExecutableScriptHeadEntry(node.expression);
+  if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression") {
+    return node.body.type === "BlockStatement"
+      ? returnedHead(node.body).hasScript
+      : hasExecutableScriptHeadEntry(node.body);
+  }
+  if (node.type === "ConditionalExpression") {
+    if (node.test.type === "Literal" && typeof node.test.value === "boolean")
+      return hasExecutableScriptHeadEntry(node.test.value ? node.consequent : node.alternate);
+    return (
+      hasExecutableScriptHeadEntry(node.consequent) || hasExecutableScriptHeadEntry(node.alternate)
+    );
+  }
+  if (node.type !== "ObjectExpression") return false;
   return (node.properties ?? []).some((property: AnyNode) => {
     if (property?.type !== "Property" || propertyKeyName(property) !== "script") return false;
     return hasExecutableScriptValue(property.value);
   });
+}
+
+function returnedHead(node: AnyNode): { hasScript: boolean; terminates: boolean } {
+  const empty = { hasScript: false, terminates: false };
+  if (!node) return empty;
+  if (node.type === "ReturnStatement")
+    return { hasScript: hasExecutableScriptHeadEntry(node.argument), terminates: true };
+  if (node.type === "ThrowStatement") return { hasScript: false, terminates: true };
+  if (node.type === "BlockStatement") {
+    let hasScript = false;
+    for (const statement of node.body) {
+      const result = returnedHead(statement);
+      hasScript ||= result.hasScript;
+      if (result.terminates) return { hasScript, terminates: true };
+    }
+    return { hasScript, terminates: false };
+  }
+  if (node.type === "TryStatement") {
+    const finalizer = returnedHead(node.finalizer);
+    if (finalizer.terminates) return finalizer;
+    const block = returnedHead(node.block);
+    const handler = returnedHead(node.handler?.body);
+    return {
+      hasScript: finalizer.hasScript || block.hasScript || handler.hasScript,
+      terminates: block.terminates && (!node.handler || handler.terminates),
+    };
+  }
+  if (node.type === "IfStatement") {
+    if (node.test.type === "Literal" && typeof node.test.value === "boolean")
+      return returnedHead(node.test.value ? node.consequent : node.alternate);
+    const consequent = returnedHead(node.consequent);
+    const alternate = returnedHead(node.alternate);
+    return {
+      hasScript: consequent.hasScript || alternate.hasScript,
+      terminates: consequent.terminates && alternate.terminates,
+    };
+  }
+  return empty;
 }
 
 function hasExecutableScriptValue(node: AnyNode): boolean {
