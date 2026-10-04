@@ -13,6 +13,58 @@ function isCachedEventHandler(node: AnyNode) {
   );
 }
 
+function propertyName(property: AnyNode) {
+  if (!property.computed && property.key?.type === "Identifier") return property.key.name;
+  if (property.key?.type === "Literal" && typeof property.key.value === "string")
+    return property.key.value;
+  return undefined;
+}
+
+function hasMeaningfulCacheControl(node: AnyNode) {
+  const options = node.arguments?.[1];
+  if (options?.type !== "ObjectExpression") return false;
+  const controls = new Map<string, AnyNode>();
+  for (const property of options.properties) {
+    if (property.type !== "Property") {
+      controls.clear();
+      continue;
+    }
+    const name = propertyName(property);
+    if (name === undefined) controls.clear();
+    else controls.set(name, property.value);
+  }
+  return [...controls].some(([name, value]) => {
+    if (name === "shouldBypassCache") {
+      if (!["ArrowFunctionExpression", "FunctionExpression"].includes(value?.type)) return false;
+      const body = value.body;
+      const result =
+        body.type === "BlockStatement"
+          ? body.body.length === 1 && body.body[0].type === "ReturnStatement"
+            ? body.body[0].argument
+            : undefined
+          : body;
+      return result?.type === "Literal" && result.value === true;
+    }
+    if (name === "getKey")
+      return value?.type === "Identifier"
+        ? value.name !== "undefined"
+        : ["ArrowFunctionExpression", "FunctionExpression", "MemberExpression"].includes(
+            value?.type,
+          );
+    if (name !== "varies") return false;
+    if (value?.type === "ArrayExpression")
+      return value.elements.some(
+        (element: AnyNode) =>
+          element?.type === "Literal" &&
+          typeof element.value === "string" &&
+          element.value.trim().length > 0,
+      );
+    return value?.type === "Identifier"
+      ? value.name !== "undefined"
+      : ["MemberExpression", "CallExpression"].includes(value?.type);
+  });
+}
+
 export const noPersonalizedCachedHandler = createRule({
   meta: {
     id: "nuxthub/no-personalized-cached-handler",
@@ -31,7 +83,7 @@ export const noPersonalizedCachedHandler = createRule({
         const snippet = ctx.file.text.slice(node.start, node.end);
         if (!/(getUserSession|getCookie|getHeader|authorization|tenant|user)/i.test(snippet))
           return;
-        if (/(varies|headers|group|name|getKey)/i.test(snippet)) return;
+        if (hasMeaningfulCacheControl(node)) return;
         ctx.helpers.report(
           ctx,
           node,
