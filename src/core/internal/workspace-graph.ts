@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { isBuiltin } from "node:module";
 import { dirname, relative, resolve } from "pathe";
 import type {
   Diagnostic,
@@ -285,7 +286,8 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         !item.source.startsWith(".") &&
         !item.source.startsWith("~/") &&
         !item.source.startsWith("@/") &&
-        !item.source.startsWith("~~/")
+        !item.source.startsWith("~~/") &&
+        !isNodeBuiltin(item.source)
       )
         importedPackages.add(packageNameFromSpecifier(item.source));
       if (
@@ -375,7 +377,6 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
   for (const dep of importedPackages) {
     if (
       !packageDeps.all.has(dep) &&
-      !isNodeBuiltin(dep) &&
       !dep.startsWith("#") &&
       !isIgnoredDependencyForUnusedReport(dep)
     ) {
@@ -656,7 +657,7 @@ function isLocalSpecifier(specifier: string): boolean {
 }
 
 function isNodeBuiltin(name: string): boolean {
-  return /^(node:|fs$|path$|url$|crypto$|os$|util$|stream$|events$|buffer$|process$)/.test(name);
+  return name.startsWith("node:") || isBuiltin(name);
 }
 
 function isLikelyTestOrConfig(relativePath: string): boolean {
