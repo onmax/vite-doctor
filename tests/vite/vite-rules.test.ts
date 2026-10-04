@@ -190,7 +190,7 @@ console.log(data, nuxtData, rawData)`,
 
   test("still reports public media imports", async () => {
     const result = await runProjectFixture({
-      framework: "vite",
+      framework: "nuxt",
       rules: [noPublicSrcImport],
       files: {
         "src/main.ts": `import logo from '~~/public/logo.svg'

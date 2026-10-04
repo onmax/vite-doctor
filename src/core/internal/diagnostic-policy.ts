@@ -135,6 +135,7 @@ function findSuppression(
     return true;
   });
   if (configured) return configured.reason;
+  if (!diagnostic.range) return null;
   let lines = sourceLines.get(diagnostic.file);
   if (!lines) {
     try {
@@ -144,9 +145,9 @@ function findSuppression(
     }
     sourceLines.set(diagnostic.file, lines);
   }
-  const line = diagnostic.range?.line;
-  const start = line ? Math.max(0, line - 3) : 0;
-  const end = line ? Math.min(lines.length, line + 1) : lines.length;
+  const line = diagnostic.range.line;
+  const start = Math.max(0, line - 3);
+  const end = Math.min(lines.length, line + 1);
   for (let index = start; index < end; index++) {
     const inline = lines[index]!.match(
       /doctor-disable(-next-line)?\s+([^\s]+)(?:\s+--\s+(.+)|\s+(.+))?/,

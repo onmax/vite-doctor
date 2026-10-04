@@ -16,6 +16,7 @@ import type { ScanFileEntry } from "./source-inventory.js";
 import { createCacheKey, markSession, type ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
+import { isCachedFileFacts } from "./cached-file-facts.js";
 
 const FILE_FACTS_VERSION = 2;
 
@@ -43,7 +44,7 @@ async function parseSourceFile(
     "fileFacts",
     `${FILE_FACTS_VERSION}:${absolute}:${hash}`,
   );
-  const cachedFacts = session.cache.get<FileFacts>(cacheKey);
+  const cachedFacts = session.cache.get<unknown>(cacheKey);
   const isVueSfc = absolute.endsWith(".vue");
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
   const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor as any, text) : undefined;
@@ -51,7 +52,12 @@ async function parseSourceFile(
   const scriptAst = scriptText.trim() ? parseScript(absolute, scriptText, script?.lang) : null;
   const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text) : null;
   const facts =
-    cachedFacts && cachedFacts.fileHash === hash
+    isCachedFileFacts(cachedFacts) &&
+    cachedFacts.fileHash === hash &&
+    cachedFacts.path === absolute &&
+    cachedFacts.relativePath === file.displayPath &&
+    cachedFacts.sourceKind === file.sourceKind &&
+    cachedFacts.moduleName === file.moduleName
       ? { ...cachedFacts, fileId }
       : createFileFacts(session, file, fileId, text, hash, scriptAst, templateAst, sfc);
   session.cache.set(cacheKey, facts);

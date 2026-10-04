@@ -42,8 +42,8 @@ The standalone CLI also works for Nuxt one-off runs, CI fallback, or monorepo sc
 2. Read `status`, `scope`, and every Diagnostic's code, message, remediation, confidence, relative location, evidence, and optional edit plan.
 3. Work only on Diagnostics owned by the requested change. Do not widen the task to unrelated findings.
 4. Apply the smallest fix that satisfies the remediation and preserves project conventions. Treat structured edit plans as proposed edits, not permission to skip review.
-5. Substitute the Diagnostic's Rule ID into `commands.verify` and run it after editing.
-6. Run `commands.rerun` before finishing. Report remaining Diagnostics or incomplete evidence exactly.
+5. Replace the `<rule>` item in `commandArgs.verify` with the Diagnostic's Rule ID. Execute the first array item with the remaining items as literal arguments, without a shell, from `project.cwd`.
+6. Execute `commandArgs.rerun` the same way before finishing. Report remaining Diagnostics or incomplete evidence exactly. If only shell execution is available, `commands` contains quoted POSIX command templates; replace placeholders with correctly quoted literal arguments before running them.
 7. Use the Diagnostic Reference URL when the inline remediation is ambiguous or framework behavior needs confirmation. Routine fixes should not require network access.
 
 ## Rules

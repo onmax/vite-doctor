@@ -46,7 +46,7 @@ export function createTextReport(result: DoctorRunResult): string {
   lines.push(
     `Confidence mix: ${confidence.proven} proven, ${confidence.probable} probable, ${confidence.sourceOnly} source-only`,
   );
-  if (result.fixes?.edits) {
+  if (result.fixes && (result.fixes.edits || result.fixes.skipped)) {
     lines.push(
       `Fixes applied: ${result.fixes.edits} edits in ${result.fixes.files} files${result.fixes.skipped ? `, ${result.fixes.skipped} skipped` : ""}`,
     );
@@ -140,7 +140,19 @@ export function createJsonReport(result: DoctorRunResult): string {
 
 export function createAgentReport(result: DoctorRunResult): string {
   const status = reportStatus(result);
-  const rerun = agentRunCommand(result);
+  const commandArgs = {
+    explain: [
+      "vite-doctor",
+      "explain",
+      "<code>",
+      "--framework",
+      result.framework,
+      "--format",
+      "agent",
+    ],
+    verify: agentRunArguments(result, true),
+    rerun: agentRunArguments(result),
+  };
   return `${JSON.stringify({
     schema: "vite-doctor.agent/v1",
     status,
@@ -155,11 +167,10 @@ export function createAgentReport(result: DoctorRunResult): string {
     ),
     fixes: result.fixes,
     evidenceGaps: result.project.evidenceGaps,
-    commands: {
-      explain: `vite-doctor explain <code> --framework ${result.framework} --format agent`,
-      verify: agentRunCommand(result, true),
-      rerun,
-    },
+    commands: Object.fromEntries(
+      Object.entries(commandArgs).map(([name, args]) => [name, args.map(shellArgument).join(" ")]),
+    ),
+    commandArgs,
     next:
       status === "clean"
         ? { action: "none" }
@@ -420,7 +431,7 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
   };
 }
 
-function agentRunCommand(result: DoctorRunResult, focused = false): string {
+function agentRunArguments(result: DoctorRunResult, focused = false): string[] {
   const args = ["vite-doctor", ".", "--framework", result.framework];
   if (result.scope.mode === "changed") {
     if (result.scope.base) args.push("--since", result.scope.base);
@@ -430,7 +441,11 @@ function agentRunCommand(result: DoctorRunResult, focused = false): string {
     args.push("--extends", result.extends.join(","));
   if (focused) args.push("--rules", "<rule>");
   args.push("--format", "agent");
-  return args.join(" ");
+  return args;
+}
+
+function shellArgument(value: string): string {
+  return /^[a-zA-Z0-9_./:@,+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function diagnosticReferenceUrl(code: string) {
