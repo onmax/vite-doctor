@@ -24,27 +24,24 @@ function hasMeaningfulCacheControl(node: AnyNode) {
   const options = unwrap(node.arguments?.[1]);
   if (options?.type !== "ObjectExpression") return false;
   const controls = new Map<string, AnyNode>();
-  for (const property of options.properties) {
-    if (property.type === "SpreadElement") {
-      const spread = unwrap(property.argument);
-      if (spread?.type !== "ObjectExpression") controls.clear();
-      else {
-        for (const nested of spread.properties) {
-          if (nested.type !== "Property") continue;
-          const nestedName = propertyName(nested);
-          controls.set(nestedName, nested.kind === "init" ? unwrap(nested.value) : undefined);
-        }
-      }
-      continue;
-    }
-    if (property.type !== "Property") {
+  const collect = (value: AnyNode) => {
+    value = unwrap(value);
+    if (value?.type !== "ObjectExpression") {
       controls.clear();
-      continue;
+      return;
     }
-    const name = propertyName(property);
-    if (name === undefined) controls.clear();
-    else controls.set(name, property.kind === "init" ? unwrap(property.value) : undefined);
-  }
+    for (const property of value.properties) {
+      if (property.type === "SpreadElement") {
+        collect(property.argument);
+        continue;
+      }
+      if (property.type !== "Property") continue;
+      const name = propertyName(property);
+      if (name === undefined) controls.clear();
+      else controls.set(name, property.kind === "init" ? unwrap(property.value) : undefined);
+    }
+  };
+  collect(options);
   return [...controls].some(([name, value]) => {
     if (name === "shouldBypassCache") {
       if (!["ArrowFunctionExpression", "FunctionExpression"].includes(value?.type)) return false;
@@ -57,7 +54,11 @@ function hasMeaningfulCacheControl(node: AnyNode) {
           : body;
       return result?.type === "Literal" && result.value === true;
     }
-    if (name === "getKey") return isDynamicOption(value);
+    if (name === "getKey")
+      return (
+        ["ArrowFunctionExpression", "FunctionExpression"].includes(value?.type) ||
+        isDynamicOption(value)
+      );
     if (name !== "varies") return false;
     if (value?.type === "ArrayExpression") return value.elements.some(hasVaryHeader);
     return isDynamicOption(value);
@@ -69,15 +70,18 @@ function hasVaryHeader(node: AnyNode): boolean {
   if (node?.type === "Literal") return typeof node.value === "string" && node.value.length > 0;
   if (node?.type === "TemplateLiteral")
     return node.expressions.length > 0 || node.quasis.some((part: AnyNode) => part.value.cooked);
-  if (node?.type === "SpreadElement") return isDynamicOption(unwrap(node.argument));
+  if (node?.type === "SpreadElement") {
+    const value = unwrap(node.argument);
+    return value?.type === "ArrayExpression"
+      ? value.elements.some(hasVaryHeader)
+      : isDynamicOption(value);
+  }
   return isDynamicOption(node);
 }
 
 function isDynamicOption(node: AnyNode): boolean {
   if (node?.type === "Identifier") return node.name !== "undefined";
   return [
-    "ArrowFunctionExpression",
-    "FunctionExpression",
     "MemberExpression",
     "CallExpression",
     "ChainExpression",
@@ -116,7 +120,9 @@ export const noPersonalizedCachedHandler = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (!isCachedEventHandler(node)) return;
-        const snippet = ctx.file.text.slice(node.start, node.end);
+        const handler = node.arguments?.[0];
+        if (!handler) return;
+        const snippet = ctx.file.text.slice(handler.start, handler.end);
         if (!/(getUserSession|getCookie|getHeader|authorization|tenant|user)/i.test(snippet))
           return;
         if (hasMeaningfulCacheControl(node)) return;
