@@ -1043,3 +1043,55 @@ test.each([
   });
   expect(result.diagnostics).toHaveLength(0);
 });
+
+test.each([
+  `const count = ref(0) as Ref<number>; onUpdated(() => count.value++)`,
+  `const state = reactive({ count: 0 }) satisfies Shape; onUpdated(() => state.count++)`,
+  `const count = ref(0)!; onUpdated(() => count.value++)`,
+  `const count = <Ref<number>>ref(0); onUpdated(() => count.value++)`,
+  `const count = (ref(0)! as Ref<number>) satisfies Shape; onUpdated(() => count.value++)`,
+])("no mutation in onUpdated unwraps TypeScript factory expressions: %s", async (source) => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: { "app.vue": `<script setup lang="ts">${source}</script>` },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  [`const state = shallowRef({ count: 0 }); onUpdated(() => state.value = { count: 1 })`, 1],
+  [`const state = shallowRef({ count: 0 }); onUpdated(() => state.value.count++)`, 0],
+  [`const state = shallowRef([]); onUpdated(() => state.value.push(1))`, 0],
+  [`const state = shallowReactive({ count: 0 }); onUpdated(() => state.count++)`, 1],
+  [
+    `const state = shallowReactive({ nested: { count: 0 } }); onUpdated(() => state.nested.count++)`,
+    0,
+  ],
+  [`const state = shallowReactive({ values: [] }); onUpdated(() => state.values.splice(0, 1))`, 0],
+  [`const state = shallowReactive([]); onUpdated(() => state.push(1))`, 1],
+  [`const state = shallowReactive([]); onUpdated(() => state.splice(0, 1))`, 1],
+  [
+    `import { shallowRef as makeRef } from 'vue'; const state = makeRef([]); onUpdated(() => state.value.push(1))`,
+    0,
+  ],
+  [
+    `import { shallowReactive as makeReactive } from 'vue'; const state = makeReactive({ count: 0 }); onUpdated(() => state.count++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const state = Vue.shallowReactive({ values: [] }); onUpdated(() => state.values.push(1))`,
+    0,
+  ],
+  [
+    `import * as Vue from 'vue'; const state = Vue.shallowRef(0); onUpdated(() => state.value++)`,
+    1,
+  ],
+])("no mutation in onUpdated respects shallow binding depth: %s", async (source, expected) => {
+  const result = await runRuleFixture({
+    rule: noMutationInOnUpdated,
+    framework: "vue",
+    files: { "app.vue": `<script setup lang="ts">${source}</script>` },
+  });
+  expect(result.diagnostics).toHaveLength(expected);
+});

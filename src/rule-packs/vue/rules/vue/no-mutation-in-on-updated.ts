@@ -3,8 +3,15 @@ import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
 import { AnyNode, createRule, report } from "./shared.js";
 import type { RuleContext } from "../../../../core/index.js";
 
-const REF_FACTORIES = new Set(["computed", "customRef", "ref", "shallowRef", "toRef"]);
-const REACTIVE_FACTORIES = new Set(["reactive", "shallowReactive"]);
+const FACTORIES = new Map<string, ReactiveKind>([
+  ["computed", "ref"],
+  ["customRef", "ref"],
+  ["ref", "ref"],
+  ["toRef", "ref"],
+  ["shallowRef", "shallow-ref"],
+  ["reactive", "reactive"],
+  ["shallowReactive", "shallow-reactive"],
+]);
 const MUTATING_METHODS = new Set(["push", "splice"]);
 
 export const noMutationInOnUpdated = createRule({
@@ -41,10 +48,27 @@ export const noMutationInOnUpdated = createRule({
 });
 
 interface ReactiveBindings {
-  byReference: Map<string, "ref" | "reactive">;
+  byReference: Map<string, ReactiveKind>;
 }
 
-type BindingKind = "ref-factory" | "reactive-factory" | "ref" | "reactive" | "namespace-vue";
+type ReactiveKind = "ref" | "reactive" | "shallow-ref" | "shallow-reactive";
+type BindingKind = ReactiveKind | `${ReactiveKind}-factory` | "namespace-vue";
+
+function factoryBindingKind(name: string): BindingKind | undefined {
+  const kind = FACTORIES.get(name);
+  return kind ? `${kind}-factory` : undefined;
+}
+
+function reactiveKind(kind: BindingKind | undefined): ReactiveKind | undefined {
+  if (
+    kind === "ref" ||
+    kind === "reactive" ||
+    kind === "shallow-ref" ||
+    kind === "shallow-reactive"
+  )
+    return kind;
+  return undefined;
+}
 
 function reactiveBindings(ctx: RuleContext): ReactiveBindings {
   const parsedVueScript = ctx.file.sfc
@@ -82,10 +106,10 @@ function reactiveBindings(ctx: RuleContext): ReactiveBindings {
       if (kind) kinds.set(variable, kind);
     }
 
-    const byReference = new Map<string, "ref" | "reactive">();
+    const byReference = new Map<string, ReactiveKind>();
     for (const reference of references.values()) {
-      const kind = referenceKind(reference, kinds);
-      if (kind === "ref" || kind === "reactive") {
+      const kind = reactiveKind(referenceKind(reference, kinds));
+      if (kind) {
         const range = reference.identifier.range;
         byReference.set(rangeKey(range[0], range[1]), kind);
       }
@@ -103,8 +127,7 @@ function importedFactoryKind(variable: any): BindingKind | undefined {
     if (source !== "vue") continue;
     if (definition.node?.type === "ImportNamespaceSpecifier") return "namespace-vue";
     const imported = definition.node?.imported?.name;
-    if (REF_FACTORIES.has(imported)) return "ref-factory";
-    if (REACTIVE_FACTORIES.has(imported)) return "reactive-factory";
+    return factoryBindingKind(imported);
   }
   return undefined;
 }
@@ -116,11 +139,12 @@ function variableKind(
 ) {
   for (const definition of variable.defs ?? []) {
     if (definition.type !== "Variable") continue;
-    const init = definition.node?.init;
+    const init = unwrapExpression(definition.node?.init);
     if (init?.type !== "CallExpression") continue;
     const initKind = factoryKind(init.callee, references, kinds);
-    if (initKind === "ref-factory") return "ref";
-    if (initKind === "reactive-factory") return "reactive";
+    if (initKind?.endsWith("-factory")) {
+      return reactiveKind(initKind.slice(0, -"-factory".length) as BindingKind);
+    }
   }
   return undefined;
 }
@@ -129,17 +153,15 @@ function factoryKind(node: any, references: Map<string, any>, kinds: Map<object,
   if (node?.type === "Identifier") {
     const reference = references.get(rangeKey(node.range?.[0], node.range?.[1]));
     const kind = referenceKind(reference, kinds);
-    if (kind === "ref-factory" || kind === "reactive-factory") return kind;
-    if (!reference?.resolved && REF_FACTORIES.has(node.name)) return "ref-factory";
-    if (!reference?.resolved && REACTIVE_FACTORIES.has(node.name)) return "reactive-factory";
+    if (kind?.endsWith("-factory")) return kind;
+    if (!reference?.resolved) return factoryBindingKind(node.name);
     return undefined;
   }
   if (isMemberExpression(node) && node.object?.type === "Identifier") {
     const reference = references.get(rangeKey(node.object.range?.[0], node.object.range?.[1]));
     if (referenceKind(reference, kinds) === "namespace-vue") {
       const member = memberName(node);
-      if (member && REF_FACTORIES.has(member)) return "ref-factory";
-      if (member && REACTIVE_FACTORIES.has(member)) return "reactive-factory";
+      if (member) return factoryBindingKind(member);
     }
   }
   return undefined;
@@ -147,9 +169,7 @@ function factoryKind(node: any, references: Map<string, any>, kinds: Map<object,
 
 function referenceKind(reference: any, kinds: Map<object, BindingKind>): BindingKind | undefined {
   if (reference?.resolved) return kinds.get(reference.resolved);
-  if (REF_FACTORIES.has(reference?.identifier?.name)) return "ref-factory";
-  if (REACTIVE_FACTORIES.has(reference?.identifier?.name)) return "reactive-factory";
-  return undefined;
+  return factoryBindingKind(reference?.identifier?.name);
 }
 
 function rangeKey(start: number | undefined, end: number | undefined) {
@@ -173,12 +193,7 @@ function hasReactiveMutation(callback: AnyNode, bindings: ReactiveBindings) {
       if (!isMemberExpression(callee)) return;
       const method = memberName(callee);
       found =
-        !!method &&
-        MUTATING_METHODS.has(method) &&
-        (isReactiveExpression(callee.object, bindings) ||
-          (callee.object?.type === "Identifier" &&
-            bindings.byReference.get(rangeKey(callee.object.start, callee.object.end)) ===
-              "reactive"));
+        !!method && MUTATING_METHODS.has(method) && isReactiveCollection(callee.object, bindings);
     }
   });
   return found;
@@ -190,10 +205,32 @@ function isReactiveExpression(node: AnyNode, bindings: ReactiveBindings): boolea
   if (!root?.start && root?.start !== 0) return false;
   const kind = bindings.byReference.get(rangeKey(root.start, root.end));
   if (kind === "reactive") return true;
-  if (kind !== "ref") return false;
+  if (kind === "shallow-reactive") return node.object?.type === "Identifier";
+  if (kind !== "ref" && kind !== "shallow-ref") return false;
+  if (kind === "shallow-ref" && node.object?.type !== "Identifier") return false;
   let current = node;
   while (isMemberExpression(current.object)) current = current.object;
   return memberName(current) === "value";
+}
+
+function isReactiveCollection(node: AnyNode, bindings: ReactiveBindings): boolean {
+  const root = rootIdentifier(node);
+  if (!root) return false;
+  const kind = bindings.byReference.get(rangeKey(root.start, root.end));
+  if (node.type === "Identifier") return kind === "reactive" || kind === "shallow-reactive";
+  if (kind === "shallow-ref" || kind === "shallow-reactive") return false;
+  return isReactiveExpression(node, bindings);
+}
+
+function unwrapExpression(node: AnyNode): AnyNode {
+  while (
+    ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "TSTypeAssertion"].includes(
+      node?.type,
+    )
+  ) {
+    node = node.expression;
+  }
+  return node;
 }
 
 function rootIdentifier(node: AnyNode): AnyNode {
