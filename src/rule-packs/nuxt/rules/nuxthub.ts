@@ -21,17 +21,29 @@ function propertyName(property: AnyNode) {
 }
 
 function hasMeaningfulCacheControl(node: AnyNode) {
-  const options = node.arguments?.[1];
+  const options = unwrap(node.arguments?.[1]);
   if (options?.type !== "ObjectExpression") return false;
   const controls = new Map<string, AnyNode>();
   for (const property of options.properties) {
+    if (property.type === "SpreadElement") {
+      const spread = unwrap(property.argument);
+      if (spread?.type !== "ObjectExpression") controls.clear();
+      else {
+        for (const nested of spread.properties) {
+          if (nested.type !== "Property") continue;
+          const nestedName = propertyName(nested);
+          controls.set(nestedName, nested.kind === "init" ? unwrap(nested.value) : undefined);
+        }
+      }
+      continue;
+    }
     if (property.type !== "Property") {
       controls.clear();
       continue;
     }
     const name = propertyName(property);
     if (name === undefined) controls.clear();
-    else controls.set(name, property.value);
+    else controls.set(name, property.kind === "init" ? unwrap(property.value) : undefined);
   }
   return [...controls].some(([name, value]) => {
     if (name === "shouldBypassCache") {
@@ -45,24 +57,48 @@ function hasMeaningfulCacheControl(node: AnyNode) {
           : body;
       return result?.type === "Literal" && result.value === true;
     }
-    if (name === "getKey")
-      return value?.type === "Identifier"
-        ? value.name !== "undefined"
-        : ["ArrowFunctionExpression", "FunctionExpression", "MemberExpression"].includes(
-            value?.type,
-          );
+    if (name === "getKey") return isDynamicOption(value);
     if (name !== "varies") return false;
-    if (value?.type === "ArrayExpression")
-      return value.elements.some(
-        (element: AnyNode) =>
-          element?.type === "Literal" &&
-          typeof element.value === "string" &&
-          element.value.trim().length > 0,
-      );
-    return value?.type === "Identifier"
-      ? value.name !== "undefined"
-      : ["MemberExpression", "CallExpression"].includes(value?.type);
+    if (value?.type === "ArrayExpression") return value.elements.some(hasVaryHeader);
+    return isDynamicOption(value);
   });
+}
+
+function hasVaryHeader(node: AnyNode): boolean {
+  node = unwrap(node);
+  if (node?.type === "Literal") return typeof node.value === "string" && node.value.length > 0;
+  if (node?.type === "TemplateLiteral")
+    return node.expressions.length > 0 || node.quasis.some((part: AnyNode) => part.value.cooked);
+  if (node?.type === "SpreadElement") return isDynamicOption(unwrap(node.argument));
+  return isDynamicOption(node);
+}
+
+function isDynamicOption(node: AnyNode): boolean {
+  if (node?.type === "Identifier") return node.name !== "undefined";
+  return [
+    "ArrowFunctionExpression",
+    "FunctionExpression",
+    "MemberExpression",
+    "CallExpression",
+    "ChainExpression",
+    "ConditionalExpression",
+    "LogicalExpression",
+    "AwaitExpression",
+    "NewExpression",
+    "TaggedTemplateExpression",
+  ].includes(node?.type);
+}
+
+function unwrap(node: AnyNode): AnyNode {
+  return [
+    "ParenthesizedExpression",
+    "TSAsExpression",
+    "TSSatisfiesExpression",
+    "TSTypeAssertion",
+    "TSNonNullExpression",
+  ].includes(node?.type)
+    ? unwrap(node.expression)
+    : node;
 }
 
 export const noPersonalizedCachedHandler = createRule({
