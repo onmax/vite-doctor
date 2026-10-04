@@ -1,5 +1,5 @@
 import { createRule } from "../../../core/index.js";
-import { isLikelySsrFile, type AnyNode } from "./shared.js";
+import { globalReferenceStarts, isLikelySsrFile, staticString, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
 export const noBrowserGlobalInSsrEntry = createRule({
@@ -13,17 +13,23 @@ export const noBrowserGlobalInSsrEntry = createRule({
   },
   create(ctx) {
     if (!isLikelySsrFile(ctx.file.relativePath)) return;
+    let globalReferences: Set<number> | undefined;
     return {
       ScriptNode(node: AnyNode) {
-        if (node.type !== "Identifier" || !browserGlobals.has(node.name)) return;
+        if (node.type !== "Identifier" || !globalNames.has(node.name)) return;
+        const name = node.name === "globalThis" ? staticMemberName(node.__doctorParent) : node.name;
+        if (!name || !browserGlobals.has(name)) return;
         if (
+          !(globalReferences ??= globalReferenceStarts(ctx, globalNames)).has(node.start) ||
+          ctx.helpers.isTypeOnlyContext(node) ||
           ctx.helpers.isTypeofOperand(node) ||
-          ctx.helpers.hasLocalBindingBefore(node, ctx.file.text)
+          (node.name === "globalThis" && ctx.helpers.isTypeofOperand(node.__doctorParent)) ||
+          isExcludedFromSsr(node)
         )
           return;
         ctx.report(
           diagnostics.VITE0018({
-            why: `Vite SSR entry "${ctx.file.relativePath}" reads browser global "${node.name}".`,
+            why: `Vite SSR entry "${ctx.file.relativePath}" reads browser global "${name}".`,
             fix: "Guard browser-only code behind client execution or move it to the client entry.",
           }),
           {
@@ -46,3 +52,69 @@ const browserGlobals = new Set([
   "sessionStorage",
   "navigator",
 ]);
+
+const globalNames = new Set([...browserGlobals, "globalThis"]);
+
+function staticMemberName(node: AnyNode): string | null {
+  if (node?.type !== "MemberExpression") return null;
+  return node.computed ? staticString(node.property) : (node.property?.name ?? null);
+}
+
+function isExcludedFromSsr(node: AnyNode): boolean {
+  let child = node;
+  for (let parent = child.__doctorParent; parent; parent = child.__doctorParent) {
+    if (parent.type === "IfStatement" || parent.type === "ConditionalExpression") {
+      const condition = ssrBoolean(parent.test);
+      if (child === parent.consequent && condition === false) return true;
+      if (child === parent.alternate && condition === true) return true;
+    }
+    if (parent.type === "LogicalExpression" && child === parent.right) {
+      const condition = ssrBoolean(parent.left);
+      if (parent.operator === "&&" && condition === false) return true;
+      if (parent.operator === "||" && condition === true) return true;
+    }
+    child = parent;
+  }
+  return false;
+}
+
+function ssrBoolean(node: AnyNode): boolean | undefined {
+  if (!node) return undefined;
+  if (node.type === "Literal" && typeof node.value === "boolean") return node.value;
+  if (["TSAsExpression", "TSNonNullExpression", "TSSatisfiesExpression"].includes(node.type))
+    return ssrBoolean(node.expression);
+  if (node.type === "MemberExpression" && staticMemberName(node) === "SSR") {
+    const env = node.object;
+    const meta = env?.object;
+    if (
+      staticMemberName(env) === "env" &&
+      meta?.type === "MetaProperty" &&
+      meta.meta?.name === "import" &&
+      meta.property?.name === "meta"
+    )
+      return true;
+  }
+  if (node.type === "UnaryExpression" && node.operator === "!") {
+    const value = ssrBoolean(node.argument);
+    return value === undefined ? undefined : !value;
+  }
+  if (node.type === "LogicalExpression") {
+    const left = ssrBoolean(node.left);
+    const right = ssrBoolean(node.right);
+    if (node.operator === "&&") {
+      if (left === false || right === false) return false;
+      if (left === true && right === true) return true;
+    }
+    if (node.operator === "||") {
+      if (left === true || right === true) return true;
+      if (left === false && right === false) return false;
+    }
+  }
+  if (node.type === "BinaryExpression" && ["===", "!==", "==", "!="].includes(node.operator)) {
+    const left = ssrBoolean(node.left);
+    const right = ssrBoolean(node.right);
+    if (left !== undefined && right !== undefined)
+      return ["===", "=="].includes(node.operator) ? left === right : left !== right;
+  }
+  return undefined;
+}

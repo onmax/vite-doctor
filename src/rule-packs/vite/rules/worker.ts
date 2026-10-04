@@ -1,9 +1,13 @@
 import { isBuiltin } from "node:module";
 import { dirname, resolve } from "pathe";
-import { parseForESLint } from "@typescript-eslint/parser";
 import { createRule, type RuleContext } from "../../../core/index.js";
-import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
-import { memberPath, readProjectSources, staticString, type AnyNode } from "./shared.js";
+import {
+  globalReferenceStarts,
+  memberPath,
+  readProjectSources,
+  staticString,
+  type AnyNode,
+} from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
 export const requireWorkerUrlPattern = createRule({
@@ -113,7 +117,7 @@ export const noNodeApiInWorker = createRule({
         if (node.type !== "Identifier" || node.name !== "process") return;
         if (
           ctx.helpers.isTypeOnlyContext(node) ||
-          !(processReferences ??= globalProcessReferences(ctx)).has(node.start)
+          !(processReferences ??= globalReferenceStarts(ctx, new Set(["process"]))).has(node.start)
         )
           return;
         ctx.report(
@@ -133,32 +137,6 @@ export const noNodeApiInWorker = createRule({
     };
   },
 });
-
-function globalProcessReferences(ctx: RuleContext): Set<number> {
-  const parsedVueScript = ctx.file.sfc
-    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
-    : undefined;
-  const source = parsedVueScript?.text ?? ctx.file.text;
-  try {
-    const { scopeManager } = parseForESLint(source, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: {
-        jsx:
-          parsedVueScript?.lang === "jsx" ||
-          parsedVueScript?.lang === "tsx" ||
-          /\.[jt]sx$/.test(ctx.file.relativePath),
-      },
-    });
-    return new Set(
-      scopeManager.globalScope?.through
-        .filter((reference) => reference.identifier.name === "process")
-        .map((reference) => reference.identifier.range[0]),
-    );
-  } catch {
-    return new Set();
-  }
-}
 
 function isWorkerConstructor(node: AnyNode): boolean {
   return (

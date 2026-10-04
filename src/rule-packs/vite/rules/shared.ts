@@ -1,9 +1,36 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { resolve } from "pathe";
+import { parseForESLint } from "@typescript-eslint/parser";
 import type { RuleContext, SourceRange } from "../../../core/index.js";
+import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
 
 export type AnyNode = any;
+
+export function globalReferenceStarts(ctx: RuleContext, names: ReadonlySet<string>): Set<number> {
+  const parsedVueScript = ctx.file.sfc
+    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
+    : undefined;
+  try {
+    const { scopeManager } = parseForESLint(parsedVueScript?.text ?? ctx.file.text, {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: {
+        jsx:
+          parsedVueScript?.lang === "jsx" ||
+          parsedVueScript?.lang === "tsx" ||
+          /\.[jt]sx$/.test(ctx.file.relativePath),
+      },
+    });
+    return new Set(
+      scopeManager.globalScope?.through
+        .filter((reference) => names.has(reference.identifier.name))
+        .map((reference) => reference.identifier.range[0]),
+    );
+  } catch {
+    return new Set();
+  }
+}
 
 export const SECRET_NAME_RE = /(SECRET|TOKEN|PASSWORD|PRIVATE|API_?KEY|ACCESS_?KEY)/i;
 export const VITE_CONFIG_RE = /(?:^|\/)(?:vite|vitest)\.config\.[cm]?[jt]s$/;
