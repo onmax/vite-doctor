@@ -15,9 +15,18 @@ export const noLegacyProcessClientServer = createRule({
   create(ctx) {
     return {
       ScriptNode(node: AnyNode) {
-        const name = ctx.helpers.getNodeName(node);
-        if (name !== "process.client" && name !== "process.server") return;
-        const replacement = name === "process.client" ? "import.meta.client" : "import.meta.server";
+        if (
+          node.type !== "MemberExpression" ||
+          node.computed ||
+          node.optional ||
+          node.object?.type !== "Identifier" ||
+          node.object.name !== "process" ||
+          node.property?.type !== "Identifier" ||
+          !["client", "server"].includes(node.property.name)
+        )
+          return;
+        const name = `process.${node.property.name}`;
+        const replacement = `import.meta.${node.property.name}`;
         ctx.report(
           diagnostics.NUXT0021({
             why: `${name} loses its Nuxt type augmentation under Nuxt compatibility 5.`,
