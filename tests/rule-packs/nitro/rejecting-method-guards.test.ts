@@ -37,6 +37,8 @@ test.each([
   'if (event.method != "POST") { throw createError({ statusCode: 405 }) }',
   'if ("POST" !== event.method) { console.log("rejected"); throw createError({ statusCode: 405 }) }',
   'const method = getMethod(event); if (method !== "POST") throw createError({ statusCode: 405 })',
+  'function audit() {} if (event.method !== "POST") throw createError({ statusCode: 405 })',
+  'if (event.method !== "POST") { function audit() {} throw createError({ statusCode: 405 }) }',
   '{ if (event.method !== "POST") throw createError({ statusCode: 405 }) }',
 ])("retains advice for a rejecting single-method guard: %s", async (body) => {
   const result = await diagnose(body);

@@ -46,7 +46,12 @@ function isUnconditionalGuard(node: AnyNode): boolean {
       for (const statement of parent.body) {
         if (statement === current) break;
         if (
-          !["ExpressionStatement", "VariableDeclaration", "EmptyStatement"].includes(statement.type)
+          ![
+            "ExpressionStatement",
+            "VariableDeclaration",
+            "FunctionDeclaration",
+            "EmptyStatement",
+          ].includes(statement.type)
         )
           return false;
       }
@@ -68,7 +73,14 @@ function rejectsRequest(node: AnyNode): boolean {
   if (node.type !== "BlockStatement") return false;
   for (const statement of node.body) {
     if (rejectsRequest(statement)) return true;
-    if (!["ExpressionStatement", "VariableDeclaration", "EmptyStatement"].includes(statement.type))
+    if (
+      ![
+        "ExpressionStatement",
+        "VariableDeclaration",
+        "FunctionDeclaration",
+        "EmptyStatement",
+      ].includes(statement.type)
+    )
       return false;
   }
   return false;
