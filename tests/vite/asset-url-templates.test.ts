@@ -124,4 +124,45 @@ describe("Vite asset URL templates", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("allows regex Vite aliases selected by a dynamic URL template", async () => {
+    const root = await mkdtemp(join(tmpdir(), "doctor-asset-regex-alias-"));
+    try {
+      await mkdir(join(root, "src/images"), { recursive: true });
+      await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
+      await writeFile(
+        join(root, "index.html"),
+        '<script type="module" src="/src/main.ts"></script>',
+      );
+      await writeFile(
+        join(root, "src/main.ts"),
+        "const name = location.hash.slice(1); const image = new URL(`@assets/${name}.svg`, import.meta.url); console.log(image.href)",
+      );
+      await writeFile(
+        join(root, "src/images/red.svg"),
+        '<svg xmlns="http://www.w3.org/2000/svg"/>',
+      );
+
+      const result = await build({
+        root,
+        configFile: false,
+        logLevel: "silent",
+        resolve: { alias: [{ find: /^@assets/, replacement: join(root, "src/images") }] },
+        plugins: [
+          doctor({
+            rules: "vite/assets/no-dynamic-new-url",
+            mode: "error",
+            maxWarnings: 0,
+            cache: false,
+          }),
+        ],
+        build: { write: false, assetsInlineLimit: 0 },
+      });
+      const outputs = Array.isArray(result) ? result : [result];
+      const assets = outputs.flatMap((output) => ("output" in output ? output.output : []));
+      expect(assets.filter(({ fileName }) => fileName.endsWith(".svg"))).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -122,7 +122,12 @@ function isConfiguredAliasTemplate(node: AnyNode, viteInventory: unknown): boole
   if (Array.isArray(aliases)) {
     return aliases.some((alias) => {
       const find = typeof alias === "string" ? alias : (alias as { find?: unknown })?.find;
-      return typeof find === "string" && (prefix === find || prefix.startsWith(`${find}/`));
+      if (typeof find === "string") return prefix === find || prefix.startsWith(`${find}/`);
+      if (find instanceof RegExp) {
+        find.lastIndex = 0;
+        return find.test(prefix);
+      }
+      return false;
     });
   }
   if (aliases && typeof aliases === "object") {
