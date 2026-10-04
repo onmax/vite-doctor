@@ -94,10 +94,34 @@ function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
       api.registerRuntimeEvidenceContributor({
         name: "vite",
         contribute() {
+          const prefixes = config.envPrefix ?? "VITE_";
+          const environments = Object.values(config.environments ?? {});
+          const hasResolvedConsumers = environments.every(
+            ({ consumer }) => consumer === "client" || consumer === "server",
+          );
+          const defineKeys = [
+            ...new Set([
+              ...Object.keys(config.define ?? {}),
+              ...environments
+                .filter(({ consumer }) => consumer === "client")
+                .flatMap((environment) => Object.keys(environment.define ?? {})),
+            ]),
+          ];
           return {
             buildSsr: Boolean(config.build?.ssr),
             ssrExternal: config.ssr?.external ?? [],
             ssrNoExternal: config.ssr?.noExternal ?? [],
+            envExposure: hasResolvedConsumers
+              ? {
+                  root: config.root,
+                  prefixes: typeof prefixes === "string" ? [prefixes] : [...prefixes],
+                  defineKeys: defineKeys
+                    .filter((key) => key.startsWith("import.meta.env."))
+                    .map((key) => key.slice("import.meta.env.".length)),
+                  hasObjectDefine:
+                    defineKeys.includes("import.meta.env") || defineKeys.includes("import.meta"),
+                }
+              : undefined,
           };
         },
       });
