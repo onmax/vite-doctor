@@ -43,6 +43,14 @@ test.each([
     languages: [],
   },
   {
+    source: '<template><div>{{</template><style>.x { content: <script lang="ts">; }</style>',
+    languages: [],
+  },
+  {
+    source: "<template><div>{{</template><style>.x { content: <script>; }</style>",
+    languages: [],
+  },
+  {
     source: '<template><div>{{</template><script>const text = "<script lang=\\"ts\\">"</script>',
     languages: ["javascript"],
   },
@@ -57,6 +65,18 @@ test.each([
 test("recovers script language evidence from a partially malformed SFC", async () => {
   await withProject(
     '<template><div>{{</template>\n<script setup lang="ts">const value: string = "ok"</script>',
+    async (root) => {
+      expect((await detectProject(root, "vite")).languages).toEqual(["typescript"]);
+    },
+  );
+});
+
+test.each([
+  '<docs data-description="a sufficiently long custom block opening attribute"></docs>',
+  '<style>.x { content: <script lang="js">; }</style>',
+])("recovers a real script after %s in a malformed SFC", async (block) => {
+  await withProject(
+    `<template><div>{{</template>${block}<script setup lang="ts">const value: string = "ok"</script>`,
     async (root) => {
       expect((await detectProject(root, "vite")).languages).toEqual(["typescript"]);
     },

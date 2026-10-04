@@ -191,12 +191,11 @@ function recoverVueScriptLanguages(source: string): ProjectLanguage[] {
     const customBlock = source.slice(index).match(/^<([A-Za-z][\w-]*)(?:\s[^>]*)?>/);
     if (
       customBlock &&
-      !/^(?:template|script|style|div|p|span|section|main|header|footer|component)$/i.test(
-        customBlock[1],
-      )
+      !/^(?:template|script|div|p|span|section|main|header|footer|component)$/i.test(customBlock[1])
     ) {
-      const close = source.search(new RegExp(`</${customBlock[1]}\\s*>`, "i"));
-      index = close === -1 ? source.length : close + customBlock[0].length;
+      const contentStart = index + customBlock[0].length;
+      const close = new RegExp(`</${customBlock[1]}\\s*>`, "i").exec(source.slice(contentStart));
+      index = close ? contentStart + close.index + close[0].length - 1 : source.length;
       continue;
     }
   }
