@@ -1,5 +1,16 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, relative, resolve } from "pathe";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { randomUUID } from "node:crypto";
+import { dirname, isAbsolute, relative, resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import type { Diagnostic } from "../primitives.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
@@ -14,6 +25,11 @@ export interface DiagnosticPolicyInput {
 export interface DiagnosticPolicyResult {
   diagnostics: Diagnostic[];
   suppressedDiagnostics: Diagnostic[];
+}
+
+export interface BaselineWriteHooks {
+  writeFileSync?: typeof writeFileSync;
+  renameSync?: typeof renameSync;
 }
 
 export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticPolicyResult {
@@ -92,30 +108,72 @@ function readBaseline(root: string, baseline?: string): Set<string> {
   return fingerprints;
 }
 
-function writeBaseline(root: string, baseline: string, diagnostics: Diagnostic[]): void {
+export function writeBaseline(
+  root: string,
+  baseline: string,
+  diagnostics: Diagnostic[],
+  hooks: BaselineWriteHooks = {},
+): void {
   const file = resolve(root, baseline);
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(
-    file,
-    `${JSON.stringify(
-      {
-        version: 1,
-        diagnostics: diagnostics
-          .map((diagnostic) => ({
-            ruleId: diagnostic.ruleId,
-            file: relative(root, diagnostic.file),
-            fingerprint: diagnostic.fingerprint,
-          }))
-          .sort((a, b) =>
-            `${a.ruleId}:${a.file}:${a.fingerprint}`.localeCompare(
-              `${b.ruleId}:${b.file}:${b.fingerprint}`,
-            ),
+  const target = baselineTarget(file);
+  const text = `${JSON.stringify(
+    {
+      version: 1,
+      diagnostics: diagnostics
+        .map((diagnostic) => ({
+          ruleId: diagnostic.ruleId,
+          file: relative(root, diagnostic.file),
+          fingerprint: diagnostic.fingerprint,
+        }))
+        .sort((a, b) =>
+          `${a.ruleId}:${a.file}:${a.fingerprint}`.localeCompare(
+            `${b.ruleId}:${b.file}:${b.fingerprint}`,
           ),
-      },
-      null,
-      2,
-    )}\n`,
-  );
+        ),
+    },
+    null,
+    2,
+  )}\n`;
+  const temporary = `${target.path}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
+  const mode = target.mode === undefined ? undefined : target.mode & 0o7777;
+  try {
+    const write = hooks.writeFileSync ?? writeFileSync;
+    if (mode === undefined) write(temporary, text);
+    else {
+      write(temporary, text, { mode });
+      chmodSync(temporary, mode);
+    }
+    (hooks.renameSync ?? renameSync)(temporary, target.path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
+function baselineTarget(file: string): { path: string; mode?: number } {
+  let target = file;
+  const visited = new Set<string>();
+  while (true) {
+    let entry;
+    try {
+      entry = lstatSync(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { path: target };
+      throw error;
+    }
+    if (!entry.isSymbolicLink()) return { path: target, mode: entry.mode };
+    if (visited.has(target)) {
+      const error = new Error(
+        `Baseline path contains a symlink loop: ${file}`,
+      ) as NodeJS.ErrnoException;
+      error.code = "ELOOP";
+      throw error;
+    }
+    visited.add(target);
+    const link = readlinkSync(target);
+    if (isAbsolute(link)) target = link;
+    else target = resolve(realpathSync(dirname(target)), link);
+  }
 }
 
 function findSuppression(
