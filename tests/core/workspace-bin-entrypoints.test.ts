@@ -121,6 +121,28 @@ test("limits directory bins to the configured source inventory", async () => {
   }
 });
 
+test("does not infer excluded source candidates for directory bins", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-bin-inferred-"));
+  try {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "example-tool", directories: { bin: "." } }),
+    );
+    await writeFile(join(root, "command.js"), 'console.log("command");\n');
+    await writeFile(join(root, "command.ts"), 'console.log("source");\n');
+
+    const result = await runViteDoctor({
+      root,
+      analyses: "graph",
+      cache: false,
+      config: { exclude: ["command.ts"] },
+    });
+    expect(result.graph?.virtualRoots).toBe(2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test.each([
   { directories: { bin: "missing" } },
   { directories: { bin: "" } },

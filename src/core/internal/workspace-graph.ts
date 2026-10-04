@@ -686,6 +686,7 @@ function packageEntryCandidates(
   inventoryPaths: readonly string[],
 ): string[] {
   const candidates = new Set<string>();
+  const inventoriedFiles = new Set(inventoryPaths.map((file) => resolve(file)));
   const binEntries =
     typeof json.bin === "string"
       ? [json.bin]
@@ -704,7 +705,7 @@ function packageEntryCandidates(
         if (!isPathInside(binRoot, file)) continue;
         const path = relative(packageRoot, file);
         for (const candidate of sourceCandidatesForPackageEntry(packageRoot, path)) {
-          candidates.add(candidate);
+          if (inventoriedFiles.has(candidate)) candidates.add(candidate);
         }
       }
     }
