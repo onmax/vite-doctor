@@ -15,6 +15,10 @@ test.each([
   "import { defineComponent } from 'vue'; export default defineComponent({ setup(input) { const { count } = input; return { count } } })",
   "import { defineComponent as component } from 'vue'; export default component({ setup(input) { const { count } = input; return { count } } })",
   "import { defineComponent } from 'vue'; export default defineComponent(input => { const { count } = input; return () => count })",
+  "export default ({ setup(props) { const { count } = props } } satisfies ComponentOptions)",
+  "export default ({ setup(props) { const { count } = props } } as ComponentOptions)",
+  "export default { setup: ((props: Props) => { const { count } = props }) satisfies SetupFunction }",
+  "export default { setup: ((props: Props) => { const { count } = props }) as SetupFunction }",
 ])("tracks the actual setup prop parameter: %s", async (script) => {
   const result = await runVueSfcRuleFixture(
     noSetupPropsDestructure,

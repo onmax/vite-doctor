@@ -74,6 +74,13 @@ function setupPropSnapshots(ctx: RuleContext): Set<string> {
       }
     };
     collect(ast);
+    const isTypeScriptWrapper = (node: AnyNode | undefined): boolean =>
+      ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression"].includes(node?.type);
+    const unwrapParent = (node: AnyNode): AnyNode | undefined => {
+      let parent = parents.get(node);
+      while (isTypeScriptWrapper(parent)) parent = parents.get(parent!);
+      return parent;
+    };
     const isDefineComponent = (node: AnyNode): boolean => {
       const namespace =
         node?.type === "MemberExpression" &&
@@ -102,10 +109,14 @@ function setupPropSnapshots(ctx: RuleContext): Set<string> {
     };
     const isComponentObject = (object: AnyNode): boolean => {
       if (object?.type !== "ObjectExpression") return false;
-      const container = parents.get(object);
+      const container = unwrapParent(object);
       if (container?.type === "ExportDefaultDeclaration") return true;
-      if (container?.type === "CallExpression" && container.arguments[0] === object)
-        return isDefineComponent(container.callee);
+      if (container?.type === "CallExpression") {
+        let argument = container.arguments[0];
+        while (isTypeScriptWrapper(argument)) argument = argument.expression;
+        if (argument === object) return isDefineComponent(container.callee);
+        return false;
+      }
       if (
         container?.type !== "VariableDeclarator" ||
         container.id.type !== "Identifier" ||
@@ -123,10 +134,17 @@ function setupPropSnapshots(ctx: RuleContext): Set<string> {
       );
     };
     const isComponentSetup = (node: AnyNode): boolean => {
-      const parent = parents.get(node);
-      if (parent?.type === "CallExpression" && parent.arguments[0] === node)
-        return isDefineComponent(parent.callee);
-      if (parent?.type !== "Property" || parent.value !== node) return false;
+      const parent = unwrapParent(node);
+      if (parent?.type === "CallExpression") {
+        let argument = parent.arguments[0];
+        while (isTypeScriptWrapper(argument)) argument = argument.expression;
+        if (argument === node) return isDefineComponent(parent.callee);
+        return false;
+      }
+      if (parent?.type !== "Property") return false;
+      let value = parent.value;
+      while (isTypeScriptWrapper(value)) value = value.expression;
+      if (value !== node) return false;
       const key = parent.computed ? parent.key.value : (parent.key.name ?? parent.key.value);
       if (key !== "setup") return false;
       return isComponentObject(parents.get(parent));
