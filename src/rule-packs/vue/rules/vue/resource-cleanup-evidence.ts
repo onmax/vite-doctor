@@ -19,6 +19,7 @@ interface Resource {
 const GLOBAL_RECEIVERS = new Set(["window", "document", "globalThis", "self"]);
 const LIFECYCLE_CLEANUP = new Set(["onUnmounted", "onBeforeUnmount", "onScopeDispose"]);
 const MOUNT_HOOKS = new Set(["onMounted", "onBeforeMount"]);
+const WATCHERS = new Set(["watch", "watchEffect", "watchPostEffect", "watchSyncEffect"]);
 
 export function uncleanedLifecycleResources(
   ctx: RuleContext,
@@ -26,7 +27,12 @@ export function uncleanedLifecycleResources(
   if (!mayAcquireResource(ctx.file.scriptAst)) return [];
   const evidence = createResourceEvidence(ctx);
   return evidence.resources
-    .filter((resource) => !evidence.transfers(resource) && !evidence.cleans(resource))
+    .filter(
+      (resource) =>
+        !evidence.transfers(resource) &&
+        !evidence.cleans(resource) &&
+        !evidence.cleansWatcher(resource),
+    )
     .map((resource) => ({ start: resource.node.start, end: resource.node.end }));
 }
 
@@ -39,7 +45,7 @@ function mayAcquireResource(node: AnyNode): boolean {
       : callee?.type === "MemberExpression"
         ? memberName(callee)
         : undefined;
-  if (node.type === "CallExpression" && (name === "setInterval" || name === "addEventListener"))
+  if (node.type === "CallExpression" && ["setInterval", "addEventListener"].includes(name))
     return true;
   if (
     node.type === "NewExpression" &&
@@ -174,12 +180,16 @@ function createResourceEvidence(ctx: RuleContext) {
     }
   }
 
-  function owner(node: AnyNode): AnyNode {
+  function owner(node: AnyNode, includeMountHooks = true): AnyNode {
     let current = parents.get(node);
     while (current) {
       if (isFunction(current)) {
         const call = parents.get(current);
-        if (call?.type === "CallExpression" && MOUNT_HOOKS.has(vueApi(call.callee) ?? "")) {
+        if (
+          includeMountHooks &&
+          call?.type === "CallExpression" &&
+          MOUNT_HOOKS.has(vueApi(call.callee) ?? "")
+        ) {
           current = parents.get(call);
           continue;
         }
@@ -420,7 +430,91 @@ function createResourceEvidence(ctx: RuleContext) {
     );
   }
 
-  return { resources, cleans, transfers };
+  const watchers = new Map<AnyNode, AnyNode>();
+  for (const node of nodes) {
+    if (node.type !== "CallExpression") continue;
+    const api = vueApi(node.callee);
+    if (!WATCHERS.has(api ?? "")) continue;
+    const effect = callback(node.arguments[api === "watch" ? 1 : 0]);
+    if (!effect) continue;
+    const parameter = effect.params[api === "watch" ? 2 : 0];
+    watchers.set(effect, parameter?.type === "AssignmentPattern" ? parameter.left : parameter);
+  }
+
+  function suspendsBefore(node: AnyNode, registration: AnyNode, resource: Resource): boolean {
+    if (!node || isFunction(node) || node.start >= registration.end) return false;
+    const containsRegistration = (candidate: AnyNode) =>
+      candidate && candidate.start <= registration.start && candidate.end >= registration.end;
+    if (node.type === "AwaitExpression" && !containsRegistration(node)) return true;
+    if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
+      if (suspendsBefore(node.test, registration, resource)) return true;
+      if (containsRegistration(node.test)) return false;
+      for (const branch of [node.consequent, node.alternate]) {
+        if (containsRegistration(branch)) return suspendsBefore(branch, registration, resource);
+      }
+      const value = conditionValue(node.test, resource);
+      if (value !== undefined)
+        return suspendsBefore(value ? node.consequent : node.alternate, registration, resource);
+      return (
+        suspendsBefore(node.consequent, registration, resource) ||
+        suspendsBefore(node.alternate, registration, resource)
+      );
+    }
+    if (node.type === "BlockStatement") {
+      for (const statement of node.body) {
+        if (suspendsBefore(statement, registration, resource)) return true;
+        if (
+          containsRegistration(statement) ||
+          executes(
+            statement,
+            (candidate) =>
+              candidate.type === "ReturnStatement" || candidate.type === "ThrowStatement",
+            resource,
+          )
+        )
+          break;
+      }
+      return false;
+    }
+    return children(node).some((child) => suspendsBefore(child, registration, resource));
+  }
+
+  function cleansWatcher(resource: Resource): boolean {
+    if (!watchers.has(resource.owner) || owner(resource.node, false) !== resource.owner)
+      return false;
+    const parameter = watchers.get(resource.owner);
+    const registrar = parameter?.type === "Identifier" ? bindings.get(parameter) : undefined;
+    return executes(
+      resource.owner.body,
+      (node) => {
+        if (owner(node, false) !== resource.owner) return false;
+        if (node.start > resource.node.start && disposes(node, resource)) return true;
+        if (node.type !== "CallExpression") return false;
+        const callee = unwrap(node.callee);
+        const boundCleanup =
+          registrar &&
+          bindings.get(callee) === registrar &&
+          !registrar.references.some(
+            (reference) =>
+              reference.isWrite() && (reference.identifier as AnyNode).start < node.start,
+          );
+        const watcherCleanup =
+          vueApi(callee) === "onWatcherCleanup" &&
+          !suspendsBefore(resource.owner.body, node, resource);
+        if (!boundCleanup && !watcherCleanup) return false;
+        const cleanup = callback(node.arguments[0]);
+        return !!cleanup && executes(cleanup.body, (call) => disposes(call, resource), resource);
+      },
+      resource,
+    );
+  }
+
+  return {
+    resources,
+    cleans,
+    cleansWatcher,
+    transfers,
+  };
 }
 
 function unwrap(node: AnyNode): AnyNode {
