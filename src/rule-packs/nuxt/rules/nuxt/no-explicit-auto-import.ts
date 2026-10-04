@@ -116,8 +116,10 @@ function canonicalPath(path: string) {
 }
 
 function resolveSourceFile(path: string): string | null {
-  if (statSync(path, { throwIfNoEntry: false })?.isFile()) return path;
-  if (extname(path) || statSync(resolve(path, "package.json"), { throwIfNoEntry: false }))
+  const entry = statSync(path, { throwIfNoEntry: false });
+  if (entry?.isFile()) return path;
+  if ((entry && !entry.isDirectory()) || (!entry && extname(path))) return null;
+  if (statSync(resolve(path, "package.json"), { throwIfNoEntry: false }))
     return null;
   const extensions = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
   const candidates = [path, resolve(path, "index")].flatMap((base) =>

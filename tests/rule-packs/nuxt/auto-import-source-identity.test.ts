@@ -85,6 +85,13 @@ const cases = [
     expected: true,
   },
   {
+    name: "dotted directory index",
+    source: "~/lib.v1",
+    automatic: "app/lib.v1/index.ts",
+    files: ["app/lib.v1/index.ts"],
+    expected: true,
+  },
+  {
     name: "explicit index module",
     source: "~/lib/value/index",
     automatic: "app/lib/value/index.ts",
