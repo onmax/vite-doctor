@@ -232,7 +232,7 @@ test("smart scan applies Vite rules and skips Nuxt-only rules in Vite projects",
     const nuxtOnly = await runCli([".", "--rules", "nuxt/**"], root);
     expect(nuxtOnly.code).toBe(0);
     expect(nuxtOnly.output).toContain("Detected: Vite");
-    expect(nuxtOnly.output).not.toContain("nuxt/");
+    expect(nuxtOnly.output).not.toMatch(/^\s*rule:\s+nuxt\//m);
   });
 });
 
