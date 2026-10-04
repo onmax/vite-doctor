@@ -97,7 +97,11 @@ function readBaseline(root: string, baseline?: string): Set<string> {
     } else if ("version" in json && json.version !== 1)
       throw invalid("Expected baseline version 1.");
     if (!Array.isArray(json.diagnostics)) throw invalid('Expected a "diagnostics" array.');
-    entries = json.diagnostics;
+    const suppressedEntries =
+      "suppressedDiagnostics" in json ? json.suppressedDiagnostics : undefined;
+    if (suppressedEntries !== undefined && !Array.isArray(suppressedEntries))
+      throw invalid('Expected a "suppressedDiagnostics" array.');
+    entries = [...json.diagnostics, ...(suppressedEntries ?? [])];
   } else throw invalid('Expected an array or an object containing a "diagnostics" array.');
 
   const fingerprints = new Set<string>();
