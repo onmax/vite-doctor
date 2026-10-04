@@ -1,4 +1,4 @@
-import { type AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
+import { type AnyNode, createRule, isNitroServerFile, report, walkScriptLocal } from "./shared.js";
 import { isNitroRouteFile, singleMethodCheck } from "./request-helpers.js";
 
 export const preferAssertMethod = createRule({
@@ -22,7 +22,12 @@ export const preferAssertMethod = createRule({
       ScriptNode(node: AnyNode) {
         if (node.type !== "IfStatement" || !isUnconditionalGuard(node)) return;
         const check = singleMethodCheck(node.test, ctx.file.text, node);
-        if (!check?.isNegative || !rejectsRequest(node.consequent)) return;
+        if (
+          !check?.isNegative ||
+          (usesGetMethod(node.test) && shadowsGetMethod(node)) ||
+          !rejectsRequest(node.consequent)
+        )
+          return;
         const method = check.method;
         report(
           ctx,
@@ -65,6 +70,58 @@ function isUnconditionalGuard(node: AnyNode): boolean {
       ) && parent.body === current
     );
   }
+  return false;
+}
+
+function usesGetMethod(node: AnyNode): boolean {
+  let found = false;
+  walkScriptLocal(node, (child) => {
+    if (child.type === "CallExpression" && child.callee?.type === "Identifier")
+      found ||= child.callee.name === "getMethod";
+  });
+  return found;
+}
+
+function shadowsGetMethod(node: AnyNode): boolean {
+  let scope = node;
+  while (scope.__doctorParent) {
+    scope = scope.__doctorParent;
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "Program"].includes(
+        scope.type,
+      )
+    )
+      break;
+  }
+  const params = scope.params ?? [];
+  if (params.some((param: AnyNode) => patternContainsName(param, "getMethod"))) return true;
+  const body = scope.type === "Program" ? scope : scope.body;
+  return (body?.body ?? []).some((statement: AnyNode) =>
+    declarationContainsName(statement, "getMethod"),
+  );
+}
+
+function declarationContainsName(node: AnyNode, name: string): boolean {
+  if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration")
+    return node.id?.name === name;
+  if (node.type === "VariableDeclaration")
+    return node.declarations?.some((declaration: AnyNode) =>
+      patternContainsName(declaration.id, name),
+    );
+  if (node.type === "ImportDeclaration")
+    return node.specifiers?.some((specifier: AnyNode) => specifier.local?.name === name);
+  return false;
+}
+
+function patternContainsName(node: AnyNode, name: string): boolean {
+  if (!node) return false;
+  if (node.type === "Identifier") return node.name === name;
+  if (node.type === "RestElement" || node.type === "AssignmentPattern")
+    return patternContainsName(node.argument ?? node.left, name);
+  if (node.type === "ArrayPattern")
+    return node.elements?.some((element: AnyNode) => patternContainsName(element, name));
+  if (node.type === "ObjectPattern")
+    return node.properties?.some((property: AnyNode) => patternContainsName(property.value, name));
   return false;
 }
 

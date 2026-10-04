@@ -28,6 +28,7 @@ test.each([
   'if (allowOther) return "allowed"; else if (event.method !== "POST") throw new Error("unsupported")',
   'while (reject) { if (event.method !== "POST") throw new Error("unsupported"); break } return "ok"',
   'try { if (event.method !== "POST") throw new Error("unsupported") } catch {} return "ok"',
+  'function getMethod() { return "GET" } if (getMethod(event) !== "POST") throw createError({ statusCode: 405 })',
 ])("does not turn method-dependent behavior into a rejecting assertion: %s", async (body) => {
   expect((await diagnose(body)).diagnostics).toEqual([]);
 });
