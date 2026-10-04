@@ -1057,45 +1057,48 @@ test.each([
     name: "test/collision",
     rulePacks: [testPack(first, reportProgramRule), testPack(second, secondRule)],
   });
+  const setupExtensions = [
+    defineDoctorExtension({
+      name: "test/first",
+      rulePacks: [testPack(first, reportProgramRule)],
+    }),
+    defineDoctorExtension({
+      name: "test/second",
+      setup(api) {
+        api.registerRulePack(testPack(second, secondRule));
+      },
+    }),
+  ];
   await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
-    for (const [name, rule] of [
-      [first, reportProgramRule],
-      [second, secondRule],
-    ] as const) {
-      const selected = await runDoctor({
+    for (const extensions of [[extension], setupExtensions]) {
+      for (const [name, rule] of [
+        [first, reportProgramRule],
+        [second, secondRule],
+      ] as const) {
+        const selected = await runDoctor({
+          root,
+          framework: "vue",
+          extends: [`${name}/recommended`],
+          extensions,
+        });
+        expect(selected.diagnostics.map((item) => item.ruleId)).toEqual([rule.meta.id]);
+      }
+      const selection = runDoctor({
         root,
         framework: "vue",
-        extends: [`${name}/recommended`],
-        extensions: [extension],
+        extends: ["vue/recommended"],
+        extensions,
       });
-      expect(selected.diagnostics.map((item) => item.ruleId)).toEqual([rule.meta.id]);
-    }
-    const selection = runDoctor({
-      root,
-      framework: "vue",
-      extends: ["vue/recommended"],
-      extensions: [
-        defineDoctorExtension({
-          name: "test/first",
-          rulePacks: [testPack(first, reportProgramRule)],
-        }),
-        defineDoctorExtension({
-          name: "test/second",
-          setup(api) {
-            api.registerRulePack(testPack(second, secondRule));
-          },
-        }),
-      ],
-    });
-    if (first === "vue" || second === "vue") {
-      const selected = await selection;
-      const expected = first === "vue" ? reportProgramRule : secondRule;
-      expect(selected.diagnostics.map((item) => item.ruleId)).toEqual([expected.meta.id]);
-    } else {
-      await expect(selection).rejects.toMatchObject({
-        name: "DOC0024",
-        message: expect.stringContaining('"vue"'),
-      });
+      if (first === "vue" || second === "vue") {
+        const selected = await selection;
+        const expected = first === "vue" ? reportProgramRule : secondRule;
+        expect(selected.diagnostics.map((item) => item.ruleId)).toEqual([expected.meta.id]);
+      } else {
+        await expect(selection).rejects.toMatchObject({
+          name: "DOC0024",
+          message: expect.stringContaining('"vue"'),
+        });
+      }
     }
   });
 });
