@@ -199,6 +199,7 @@ export function createSarifReport(result: DoctorRunResult): string {
       $schema: "https://json.schemastore.org/sarif-2.1.0.json",
       runs: [
         {
+          columnKind: "utf16CodeUnits",
           tool: {
             driver: {
               name: "Vite Doctor",
