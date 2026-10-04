@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { resolve } from "pathe";
 import { parseForESLint } from "@typescript-eslint/parser";
+import ts from "typescript";
 import type { RuleContext, SourceRange } from "../../../core/index.js";
 import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
 
@@ -146,22 +147,70 @@ function unwrapTypeExpression(node: AnyNode): AnyNode {
 }
 
 export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false): boolean {
+  const cacheKey = `vite:global-type-declarations:${ctx.project.root}`;
+  let declarations = ctx.cache.get<{ globals: Set<string>; env: Set<string> }>(cacheKey);
+  if (declarations) return (env ? declarations.env : declarations.globals).has(name);
+  declarations = { globals: new Set(), env: new Set() };
+  const interfaces = new Map<string, ts.InterfaceDeclaration[]>();
+  const collect = (statements: ts.NodeArray<ts.Statement>) => {
+    for (const statement of statements) {
+      if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name)) declarations.globals.add(declaration.name.text);
+        }
+      }
+      if (ts.isInterfaceDeclaration(statement))
+        interfaces.set(statement.name.text, [
+          ...(interfaces.get(statement.name.text) ?? []),
+          statement,
+        ]);
+    }
+  };
   for (const file of findDeclarationFiles(ctx.project.root)) {
-    const text = readFileSync(file, "utf8");
-    if (env) {
-      const interfaceIndex = text.search(/\binterface\s+ImportMetaEnv\b/);
-      if (
-        interfaceIndex !== -1 &&
-        new RegExp(`\\b${escapeRegExp(name)}\\b`).test(text.slice(interfaceIndex))
-      )
-        return true;
-    } else if (
-      new RegExp(`\\bdeclare\\s+(?:const|let|var)\\s+${escapeRegExp(name)}\\b`).test(text)
-    ) {
-      return true;
+    const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest);
+    if (!ts.isExternalModule(source)) collect(source.statements);
+    else {
+      for (const statement of source.statements) {
+        if (
+          ts.isModuleDeclaration(statement) &&
+          statement.flags & ts.NodeFlags.GlobalAugmentation &&
+          statement.body &&
+          ts.isModuleBlock(statement.body)
+        )
+          collect(statement.body.statements);
+      }
     }
   }
-  return false;
+  const visitInterface = (name: string, seen = new Set<string>()) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    for (const declaration of interfaces.get(name) ?? []) {
+      for (const member of declaration.members) {
+        if (
+          !ts.isPropertySignature(member) &&
+          !ts.isMethodSignature(member) &&
+          !ts.isGetAccessorDeclaration(member) &&
+          !ts.isSetAccessorDeclaration(member)
+        )
+          continue;
+        let key = member.name;
+        if (ts.isComputedPropertyName(key)) {
+          if (!ts.isStringLiteral(key.expression)) continue;
+          key = key.expression;
+        }
+        if (ts.isIdentifier(key) || ts.isStringLiteral(key)) declarations.env.add(key.text);
+      }
+      for (const heritage of declaration.heritageClauses ?? []) {
+        if (heritage.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+        for (const type of heritage.types) {
+          if (ts.isIdentifier(type.expression)) visitInterface(type.expression.text, seen);
+        }
+      }
+    }
+  };
+  visitInterface("ImportMetaEnv");
+  ctx.cache.set(cacheKey, declarations);
+  return (env ? declarations.env : declarations.globals).has(name);
 }
 
 export function isLiteralPrimitive(rawValue: string): boolean {
@@ -231,8 +280,4 @@ function objectBodyAfterKey(text: string, key: string): { start: number; body: s
 function findDeclarationFiles(root: string): string[] {
   const candidates = ["vite-env.d.ts", "env.d.ts", "src/vite-env.d.ts", "src/env.d.ts"];
   return candidates.map((file) => resolve(root, file)).filter((file) => existsSync(file));
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

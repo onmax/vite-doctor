@@ -1120,11 +1120,10 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "nuxt/state/no-nonserializable-usestate": {
-    description:
-      "Flags nonserializable usestate in Nuxt state code before it leaks into runtime behavior.",
-    why: "Nuxt transfers useState() values through the SSR payload, so functions, class instances, DOM objects, and other non-serializable values cannot hydrate reliably.",
+    description: "Report unsupported live values stored in Nuxt payload state.",
+    why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",
     recommendedReplacement:
-      "Remove nonserializable usestate, or move it to the Nuxt runtime/API that owns that behavior.",
+      "Use values supported by Nuxt's payload serializer, or keep live resources outside payload state.",
     examples: [
       {
         title: "Keep useState serializable",
@@ -1849,11 +1848,10 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "vue/watch/no-async-watcheffect-after-await-read": {
-    description:
-      "Flags async watcheffect after await read in Vue watch code before it leaks into runtime behavior.",
-    why: "Effects that outlive their component create leaks and stale updates. Register cleanup where Vue or VueUse can dispose it automatically.",
+    description: "Flags reactive dependency reads after an await in an async watchEffect callback.",
+    why: "Vue tracks watchEffect dependencies during synchronous execution. Reads after await do not establish dependencies that rerun the effect; ordinary object and method accesses do not establish reactive dependencies.",
     recommendedReplacement:
-      "Remove async watcheffect after await read, or move it to the Vue runtime/API that owns that behavior.",
+      "Read reactive values before awaiting, or use watch() with an explicit source.",
     examples: [
       {
         title: "Read watchEffect dependencies before await",
