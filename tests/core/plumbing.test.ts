@@ -794,11 +794,11 @@ test.each([false, true])(
       const extensions = [
         defineDoctorExtension({
           name: "test/first",
-          rulePacks: [ambiguousPack("vendor-a/vite", reportProgramRule)],
+          rulePacks: [ambiguousPack("ä-vendor/vite", reportProgramRule)],
         }),
         defineDoctorExtension({
           name: "test/second",
-          rulePacks: [ambiguousPack("vendor-b/vite", secondRule)],
+          rulePacks: [ambiguousPack("z-vendor/vite", secondRule)],
         }),
       ];
       if (reverse) extensions.reverse();
@@ -810,8 +810,41 @@ test.each([false, true])(
         extensions,
       }).catch((error) => error);
       expect(thrown).toMatchObject({ name: "DOC0024" });
-      expect(String(thrown.message)).toContain("vendor-a/vite");
-      expect(String(thrown.message)).toContain("vendor-b/vite");
+      expect(thrown.message).toBe(
+        'Config Extends entry "vite/recommended" matches multiple Rule Packs through the name "vite": z-vendor/vite, ä-vendor/vite.',
+      );
+    });
+  },
+);
+
+test.each([false, true])(
+  "duplicate full Rule Pack names fail regardless of registration order (%s)",
+  async (reverse) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const extensions = [
+        defineDoctorExtension({
+          name: "test/first",
+          rulePacks: [ambiguousPack("vendor/vite", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second",
+          rulePacks: [ambiguousPack("vendor/vite", secondRule)],
+        }),
+      ];
+      if (reverse) extensions.reverse();
+
+      await expect(
+        runDoctor({
+          root,
+          framework: "vue",
+          extends: ["vendor/vite/recommended"],
+          extensions,
+        }),
+      ).rejects.toMatchObject({
+        name: "DOC0024",
+        message:
+          'Config Extends entry "vendor/vite/recommended" matches multiple Rule Packs through the name "vendor/vite": vendor/vite, vendor/vite.',
+      });
     });
   },
 );

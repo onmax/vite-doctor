@@ -396,13 +396,13 @@ function resolveExtends(
     const aliasMatches = exactMatches.length
       ? exactMatches
       : packs.filter((item) => rulePackKey(item) === packKey);
-    if (!exactMatches.length && aliasMatches.length > 1) {
+    if (aliasMatches.length > 1) {
       throw doctorInternalDiagnostics.DOC0024({
         entry,
         pack: packKey,
         matches: aliasMatches
           .map((item) => item.name)
-          .sort((left, right) => left.localeCompare(right))
+          .sort()
           .join(", "),
       });
     }
