@@ -8,6 +8,7 @@ import {
   noUseNuxtAppInNitro,
   preferAssertMethod,
   preferGetRequestIp,
+  preferRouteMethodSuffix,
   preferValidatedBody,
   preferValidatedQuery,
   preferValidatedRouterParams,
@@ -52,7 +53,7 @@ describe.each(["routes/index.ts", "routes/api/users.get.ts", "middleware/auth.ts
   },
 );
 
-test.each(["api/index.ts", "routes/index.ts", "server/api/index.ts", "app/server/api/index.ts"])(
+test.each(["api/index.ts", "routes/index.ts", "server/api/index.ts"])(
   "preserves Nitro 2 event-aware runtime config advice in %s",
   async (file) => {
     const result = await runRuleFixture({
@@ -107,3 +108,42 @@ test.each([
   });
   expect(result.diagnostics).toHaveLength(count);
 });
+
+describe.each(["app/server/api/users.ts", "app/server/middleware/auth.ts"])(
+  "Nuxt-only server layout %s",
+  (file) => {
+    test.each(serverRules)("does not run $0.meta.id in standalone Nitro", async (rule, source) => {
+      const result = await runRuleFixture({
+        rule,
+        framework: "nitro",
+        files: { [file]: `export default defineEventHandler(async (event) => { ${source} })` },
+      });
+      expect(result.diagnostics).toEqual([]);
+    });
+
+    test.each(["nitro", "nuxt"] as const)("scopes route advice to %s", async (framework) => {
+      const result = await runRuleFixture({
+        rule: preferRouteMethodSuffix,
+        framework,
+        files: {
+          [file]:
+            "export default defineEventHandler((event) => { if (event.method !== 'POST') throw new Error() })",
+        },
+      });
+      expect(result.diagnostics).toHaveLength(
+        framework === "nuxt" && file.includes("/api/") ? 1 : 0,
+      );
+    });
+
+    test("preserves Nuxt server diagnostics", async () => {
+      const result = await runRuleFixture({
+        rule: noBrowserApiInServer,
+        framework: "nuxt",
+        files: { [file]: "export default defineEventHandler(() => document.title)" },
+      });
+      expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([
+        noBrowserApiInServer.meta.id,
+      ]);
+    });
+  },
+);

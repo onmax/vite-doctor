@@ -64,16 +64,22 @@ export function isObjectPropertyKey(node: AnyNode) {
   );
 }
 
-export function isNitroRouteFile(relativePath: string) {
-  const path = relativePath.replace(/\\/g, "/");
-  return /^(?:(?:app\/)?server\/)?(?:api|routes)\/.+\.[cm]?[jt]s$/.test(path);
+export function isNitroRouteFile(ctx: RuleContext) {
+  const path = ctx.file.relativePath.replace(/\\/g, "/");
+  if (ctx.project.framework === "nuxt")
+    return /^(?:app\/)?server\/(?:api|routes)\/.+\.[cm]?[jt]s$/.test(path);
+  return (
+    ctx.project.framework === "nitro" && /^(?:server\/)?(?:api|routes)\/.+\.[cm]?[jt]s$/.test(path)
+  );
 }
 
 export function isNitroServerFile(ctx: RuleContext) {
   const path = ctx.file.relativePath.replace(/\\/g, "/");
   return (
-    ctx.helpers.isNuxtServerFile(path) ||
+    (ctx.project.framework === "nuxt" && ctx.helpers.isNuxtServerFile(path)) ||
     (ctx.project.framework === "nitro" &&
-      (isNitroRouteFile(path) || /^middleware\/.+\.[cm]?[jt]s$/.test(path)))
+      (path.startsWith("server/") ||
+        isNitroRouteFile(ctx) ||
+        /^middleware\/.+\.[cm]?[jt]s$/.test(path)))
   );
 }

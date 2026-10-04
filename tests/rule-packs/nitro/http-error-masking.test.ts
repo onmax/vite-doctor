@@ -1363,24 +1363,22 @@ test.each([
   expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
 });
 
-test.each([
-  "api/account.ts",
-  "routes/account.ts",
-  "server/api/account.ts",
-  "app/server/api/account.ts",
-])("analyzes Nitro handler %s", async (file) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
-    rule: noHttpErrorMasking,
-    files: {
-      [file]: `export default defineEventHandler(() => {
+test.each(["api/account.ts", "routes/account.ts", "server/api/account.ts", "middleware/auth.ts"])(
+  "analyzes Nitro handler %s",
+  async (file) => {
+    const result = await runRuleFixture({
+      framework: "nitro",
+      rule: noHttpErrorMasking,
+      files: {
+        [file]: `export default defineEventHandler(() => {
       try { throw createError({ statusCode: 401 }) }
       catch { throw createError({ statusCode: 500 }) }
     })`,
-    },
-  });
-  expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
-});
+      },
+    });
+    expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
+  },
+);
 
 test.each([
   [
@@ -3020,4 +3018,18 @@ test.each([
     },
   });
   expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+});
+
+test.each(["nitro", "nuxt"] as const)("scopes Nuxt route layout to %s", async (framework) => {
+  const result = await runRuleFixture({
+    framework,
+    rule: noHttpErrorMasking,
+    files: {
+      "app/server/api/account.ts": `export default defineEventHandler(() => {
+        try { throw createError({ statusCode: 401 }) }
+        catch { throw createError({ statusCode: 500 }) }
+      })`,
+    },
+  });
+  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(framework === "nuxt");
 });

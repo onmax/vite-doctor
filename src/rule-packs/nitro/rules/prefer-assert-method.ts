@@ -17,7 +17,7 @@ export const preferAssertMethod = createRule({
   },
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
-    if (isNitroRouteFile(ctx.file.relativePath)) return;
+    if (isNitroRouteFile(ctx)) return;
     return {
       ScriptNode(node: AnyNode) {
         const method = isSingleMethodCheck(node, ctx.file.text);

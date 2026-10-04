@@ -37,7 +37,7 @@ export const preferRouteMethodSuffix = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    if (!isNitroRouteFile(ctx.file.relativePath)) return;
+    if (!isNitroRouteFile(ctx)) return;
 
     return {
       ScriptNode(node: AnyNode) {

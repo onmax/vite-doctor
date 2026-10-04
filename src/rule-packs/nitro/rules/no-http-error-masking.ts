@@ -1,6 +1,5 @@
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
-import { createRule, report, walkScriptLocal, type AnyNode } from "./shared.js";
-import { isNitroRouteFile } from "./request-helpers.js";
+import { createRule, isNitroServerFile, report, walkScriptLocal, type AnyNode } from "./shared.js";
 
 const ruleId = "nitro/h3/no-http-error-masking";
 const analysisLimit = Symbol("HTTP error analysis limit");
@@ -29,11 +28,7 @@ export const noHttpErrorMasking = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    if (
-      !ctx.helpers.isNuxtServerFile(ctx.file.relativePath) &&
-      !isNitroRouteFile(ctx.file.relativePath)
-    )
-      return;
+    if (!isNitroServerFile(ctx)) return;
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "TryStatement" || !node.handler) return;
