@@ -2,10 +2,13 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "vite";
-import { expect, test } from "vite-plus/test";
+import * as parser from "@typescript-eslint/parser";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { runRuleFixture } from "../../src/core/testkit.ts";
 import { doctor } from "../../src/plugin.ts";
 import { noBrowserGlobalInSsrEntry } from "../../src/rules.ts";
+
+afterEach(() => vi.restoreAllMocks());
 
 async function diagnose(source: string) {
   return runRuleFixture({
@@ -60,6 +63,35 @@ test.each([
   "const SSR = 'DEV'; if (!import.meta.env[SSR]) document.title = 'maybe server'",
 ])("reports a browser reference that can execute on the server: %s", async (source) => {
   expect((await diagnose(source)).diagnostics.map(({ code }) => code)).toEqual(["VITE0018"]);
+});
+
+test.each(["ts", "tsx"])(
+  "keeps SSR diagnostics when lexical parsing fails: %s",
+  async (extension) => {
+    vi.spyOn(parser, "parseForESLint").mockImplementation(() => {
+      throw new SyntaxError("Unsupported syntax");
+    });
+    const text = "await using resource = acquire(); document.title";
+    const result = await runRuleFixture({
+      rule: noBrowserGlobalInSsrEntry,
+      framework: "vite",
+      files: { [`src/entry-server.${extension}`]: text },
+    });
+
+    expect(result.diagnostics.map(({ code }) => code)).toEqual(["VITE0018"]);
+    expect(result.diagnostics[0]?.range?.start).toBe(text.indexOf("document.title"));
+  },
+);
+
+test.each([
+  "await using resource = acquire(); if (!import.meta.env.SSR) document.title",
+  "await using resource = acquire(); typeof document",
+  "await using resource = acquire(); type Browser = typeof window",
+])("preserves safe SSR exclusions when lexical parsing fails: %s", async (source) => {
+  vi.spyOn(parser, "parseForESLint").mockImplementation(() => {
+    throw new SyntaxError("Unsupported syntax");
+  });
+  expect((await diagnose(source)).diagnostics).toEqual([]);
 });
 
 test("allows the documented SSR flag in an actual Vite server bundle", async () => {

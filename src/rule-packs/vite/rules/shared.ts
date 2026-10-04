@@ -7,7 +7,10 @@ import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
 
 export type AnyNode = any;
 
-export function globalReferenceStarts(ctx: RuleContext, names: ReadonlySet<string>): Set<number> {
+export function globalReferenceStarts(
+  ctx: RuleContext,
+  names: ReadonlySet<string>,
+): Set<number> | null {
   const parsedVueScript = ctx.file.sfc
     ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
     : undefined;
@@ -28,7 +31,8 @@ export function globalReferenceStarts(ctx: RuleContext, names: ReadonlySet<strin
         .map((reference) => reference.identifier.range[0]),
     );
   } catch {
-    return new Set();
+    // Parser disagreement leaves lexical resolution unknown, so callers remain conservative.
+    return null;
   }
 }
 

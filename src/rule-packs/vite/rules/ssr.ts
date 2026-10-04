@@ -13,14 +13,16 @@ export const noBrowserGlobalInSsrEntry = createRule({
   },
   create(ctx) {
     if (!isLikelySsrFile(ctx.file.relativePath)) return;
-    let globalReferences: Set<number> | undefined;
+    let globalReferences: Set<number> | null | undefined;
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Identifier" || !globalNames.has(node.name)) return;
         const name = node.name === "globalThis" ? staticMemberName(node.__doctorParent) : node.name;
         if (!name || !browserGlobals.has(name)) return;
+        if (globalReferences === undefined)
+          globalReferences = globalReferenceStarts(ctx, globalNames);
         if (
-          !(globalReferences ??= globalReferenceStarts(ctx, globalNames)).has(node.start) ||
+          globalReferences?.has(node.start) === false ||
           ctx.helpers.isTypeOnlyContext(node) ||
           ctx.helpers.isTypeofOperand(node) ||
           (node.name === "globalThis" && ctx.helpers.isTypeofOperand(node.__doctorParent)) ||

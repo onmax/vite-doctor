@@ -93,7 +93,7 @@ export const noNodeApiInWorker = createRule({
     if (isServerSidePath(ctx.file.relativePath)) return;
     const workerEntries = await browserWorkerEntries(ctx);
     if (!isExplicitWorkerEntry(ctx.file.relativePath) && !workerEntries.has(ctx.file.path)) return;
-    let processReferences: Set<number> | undefined;
+    let processReferences: Set<number> | null | undefined;
     return {
       ImportDeclaration(node: AnyNode) {
         if (node.importKind === "type") return;
@@ -115,10 +115,9 @@ export const noNodeApiInWorker = createRule({
       },
       ScriptNode(node: AnyNode) {
         if (node.type !== "Identifier" || node.name !== "process") return;
-        if (
-          ctx.helpers.isTypeOnlyContext(node) ||
-          !(processReferences ??= globalReferenceStarts(ctx, new Set(["process"]))).has(node.start)
-        )
+        if (processReferences === undefined)
+          processReferences = globalReferenceStarts(ctx, new Set(["process"]));
+        if (ctx.helpers.isTypeOnlyContext(node) || processReferences?.has(node.start) === false)
           return;
         ctx.report(
           diagnostics.VITE0020({
