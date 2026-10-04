@@ -1,9 +1,40 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { resolve } from "pathe";
+import { parseForESLint } from "@typescript-eslint/parser";
 import type { RuleContext, SourceRange } from "../../../core/index.js";
+import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
 
 export type AnyNode = any;
+
+export function globalReferenceStarts(
+  ctx: RuleContext,
+  names: ReadonlySet<string>,
+): Set<number> | null {
+  const parsedVueScript = ctx.file.sfc
+    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
+    : undefined;
+  try {
+    const { scopeManager } = parseForESLint(parsedVueScript?.text ?? ctx.file.text, {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: {
+        jsx:
+          parsedVueScript?.lang === "jsx" ||
+          parsedVueScript?.lang === "tsx" ||
+          /\.[jt]sx$/.test(ctx.file.relativePath),
+      },
+    });
+    return new Set(
+      scopeManager.globalScope?.through
+        .filter((reference) => names.has(reference.identifier.name))
+        .map((reference) => reference.identifier.range[0]),
+    );
+  } catch {
+    // Parser disagreement leaves lexical resolution unknown, so callers remain conservative.
+    return null;
+  }
+}
 
 export const SECRET_NAME_RE = /(SECRET|TOKEN|PASSWORD|PRIVATE|API_?KEY|ACCESS_?KEY)/i;
 export const VITE_CONFIG_RE = /(?:^|\/)(?:vite|vitest)\.config\.[cm]?[jt]s$/;
@@ -71,6 +102,7 @@ export function isLikelySsrFile(path: string): boolean {
 }
 
 export function staticString(node: AnyNode): string | null {
+  node = unwrapTypeExpression(node);
   if (!node) return null;
   if (typeof node.value === "string") return node.value;
   if (node.type === "TemplateLiteral" && node.expressions?.length === 0)
@@ -87,13 +119,30 @@ export function propertyName(node: AnyNode): string | null {
 }
 
 export function memberPath(node: AnyNode): string | null {
+  node = unwrapTypeExpression(node);
   if (!node) return null;
   if (node.type === "Identifier") return node.name;
   if (node.type === "MetaProperty") return `${node.meta?.name}.${node.property?.name}`;
   if (node.type !== "MemberExpression") return null;
   const object = memberPath(node.object);
-  const property = propertyName(node.property);
+  const key = unwrapTypeExpression(node.property);
+  const property = node.computed && key?.type !== "Literal" ? staticString(key) : propertyName(key);
   return object && property ? `${object}.${property}` : null;
+}
+
+function unwrapTypeExpression(node: AnyNode): AnyNode {
+  while (
+    node &&
+    [
+      "TSAsExpression",
+      "TSTypeAssertion",
+      "TSSatisfiesExpression",
+      "TSNonNullExpression",
+      "ParenthesizedExpression",
+    ].includes(node.type)
+  )
+    node = node.expression;
+  return node;
 }
 
 export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false): boolean {

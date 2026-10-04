@@ -1,4 +1,5 @@
-import { createRule } from "../../../core/index.js";
+import { dirname, relative, resolve } from "pathe";
+import { createRule, type RuleContext } from "../../../core/index.js";
 import { staticString, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
@@ -15,7 +16,7 @@ export const noPublicSrcImport = createRule({
     return {
       ImportDeclaration(node: AnyNode) {
         const source = String(node.source?.value ?? "");
-        if (!isPublicImport(source)) return;
+        if (!isPublicImport(ctx, source)) return;
         ctx.report(
           diagnostics.VITE0002({
             why: `Public media and font assets should be referenced by URL, not imported: ${source}`,
@@ -45,12 +46,20 @@ export const noSrcAbsolutePublicUrl = createRule({
   create(ctx) {
     return {
       TemplateNode(node: AnyNode) {
-        const value = node.type === "VAttribute" ? node.value?.value : null;
+        if (node.type !== "VAttribute") return;
+        const element = node.parent?.parent;
+        const tag = element?.rawName;
+        const attribute = node.directive ? node.key.argument?.name : node.key.name;
+        if (!Object.hasOwn(assetAttributes, tag) || !assetAttributes[tag]!.includes(attribute))
+          return;
+        if (node.directive && node.key.name.name !== "bind") return;
+        if (!node.directive && transformedVueAssets[tag]?.includes(attribute)) return;
+        const value = node.directive ? staticString(node.value?.expression) : node.value?.value;
         if (typeof value !== "string" || !value.startsWith("/src/")) return;
         ctx.report(
           diagnostics.VITE0003({
-            why: `Source asset "${value}" is referenced as a public URL.`,
-            fix: "Import source assets or use a relative URL so Vite can transform them.",
+            why: `Source asset "${value}" is referenced by a URL attribute Vue does not transform by default.`,
+            fix: "Import the source asset and bind its generated URL, or move it to public and reference it from /.",
           }),
           {
             ruleId: "vite/assets/no-src-absolute-public-url",
@@ -64,6 +73,26 @@ export const noSrcAbsolutePublicUrl = createRule({
     };
   },
 });
+
+const transformedVueAssets: Record<string, string[]> = {
+  video: ["src", "poster"],
+  source: ["src", "srcset"],
+  img: ["src", "srcset"],
+  image: ["href", "xlink:href"],
+  use: ["href", "xlink:href"],
+};
+
+const assetAttributes: Record<string, string[]> = {
+  ...transformedVueAssets,
+  audio: ["src"],
+  track: ["src"],
+  iframe: ["src"],
+  embed: ["src"],
+  object: ["data"],
+  input: ["src"],
+  a: ["href"],
+  link: ["href"],
+};
 
 export const noDynamicNewUrl = createRule({
   meta: {
@@ -103,11 +132,32 @@ export const noDynamicNewUrl = createRule({
   },
 });
 
-function isPublicImport(source: string): boolean {
-  if (isStaticDataImport(source)) return false;
-  return (
-    source.startsWith("/public/") || source.startsWith("public/") || source.includes("/public/")
+function isPublicImport(ctx: RuleContext, source: string): boolean {
+  const viteInventory = ctx.project.inventory?.vite;
+  const publicDir =
+    viteInventory && typeof viteInventory === "object" && "publicDir" in viteInventory
+      ? viteInventory.publicDir
+      : undefined;
+  if (publicDir === false || publicDir === "") return false;
+  const path = source.split(/[?#]/)[0]!;
+  if (isStaticDataImport(path)) return false;
+  let target: string | undefined;
+  if (path.startsWith("./") || path.startsWith("../"))
+    target = resolve(dirname(ctx.file.path), path);
+  else if (path.startsWith("/") && !path.startsWith("//"))
+    target = resolve(ctx.project.root, `.${path}`);
+  else if (ctx.project.nuxt) {
+    if (path.startsWith("~~/") || path.startsWith("@@/"))
+      target = resolve(ctx.project.root, path.slice(3));
+    else if (path.startsWith("~/") || path.startsWith("@/"))
+      target = resolve(ctx.project.nuxt.appDir, path.slice(2));
+  }
+  if (!target) return false;
+  const publicPath = relative(
+    resolve(ctx.project.root, typeof publicDir === "string" ? publicDir : "public"),
+    target,
   );
+  return publicPath !== ".." && !publicPath.startsWith("../") && !publicPath.startsWith("/");
 }
 
 function isStaticDataImport(source: string): boolean {
