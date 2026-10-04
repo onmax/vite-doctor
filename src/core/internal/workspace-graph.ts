@@ -677,7 +677,13 @@ function packageEntryCandidates(
   json: Record<string, unknown>,
 ): string[] {
   const candidates = new Set<string>();
-  for (const value of [json.main, json.module, json.types, json.typings]) {
+  const binEntries =
+    typeof json.bin === "string"
+      ? [json.bin]
+      : json.bin && typeof json.bin === "object" && !Array.isArray(json.bin)
+        ? Object.values(json.bin)
+        : [];
+  for (const value of [json.main, json.module, json.types, json.typings, ...binEntries]) {
     if (typeof value !== "string") continue;
     for (const file of sourceCandidatesForPackageEntry(packageRoot, value)) candidates.add(file);
   }
