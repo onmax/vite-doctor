@@ -310,10 +310,8 @@ async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
   ].map((pack) => defineRulePack(pack));
   const names = new Set<string>();
   for (const pack of packs) {
-    for (const key of new Set([pack.name, pack.name.split("/").at(-1) ?? pack.name])) {
-      if (names.has(key)) throw doctorInternalDiagnostics.DOC0023({ pack: key });
-      names.add(key);
-    }
+    if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
+    names.add(pack.name);
   }
   return {
     packs,
@@ -399,7 +397,21 @@ function resolveExtends(
     if (slash === -1) throw doctorInternalDiagnostics.DOC0016({ entry });
     const packKey = entry.slice(0, slash);
     const presetName = entry.slice(slash + 1);
-    const pack = packs.find((item) => rulePackKey(item) === packKey || item.name === packKey);
+    const exactMatches = packs.filter((item) => item.name === packKey);
+    const aliasMatches = exactMatches.length
+      ? exactMatches
+      : packs.filter((item) => rulePackKey(item) === packKey);
+    if (aliasMatches.length > 1) {
+      throw doctorInternalDiagnostics.DOC0024({
+        entry,
+        pack: packKey,
+        matches: aliasMatches
+          .map((item) => item.name)
+          .sort()
+          .join(", "),
+      });
+    }
+    const pack = aliasMatches[0];
     if (!pack) throw doctorInternalDiagnostics.DOC0017({ entry, pack: packKey });
     const preset = pack.presets[presetName];
     if (!preset)

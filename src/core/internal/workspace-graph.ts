@@ -766,7 +766,7 @@ function isIgnoredDependencyForUnusedReport(dep: string): boolean {
 }
 
 function isTypeSurfaceFile(relativePath: string): boolean {
-  return relativePath.endsWith(".d.ts") || /(^|\/)(types|shared\/types)\//.test(relativePath);
+  return /\.d\.[cm]?ts$/.test(relativePath) || /(^|\/)(types|shared\/types)\//.test(relativePath);
 }
 
 function findExportFile(graph: WorkspaceGraph, target: ExportFact): string | undefined {

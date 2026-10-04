@@ -162,8 +162,8 @@ Remove `coverage`, `runtimeEvidence`, `emitGraph`, `confidenceMin`, and `scoreOn
 Library authors can import `createRule`, `defineRulePack`, `defineDoctorExtension`, and
 `defineDoctorDiagnostics` from `vite-doctor/extension`. The same entrypoint exports their
 authoring types. Rule Pack names identify the owner of each Config Extends preset and must be
-unique within a Doctor Run, including their final slash-delimited segments used as short keys in
-Config Extends; registering colliding names or short keys fails with the internal `DOC0023`
+unique within a Doctor Run. Shared final slash-delimited segments require full names in
+Config Extends; registering duplicate full names fails with the internal `DOC0023`
 authoring diagnostic.
 
 ## Development
