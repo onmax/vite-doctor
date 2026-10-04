@@ -59,14 +59,16 @@ export const noLegacyProcessClientServer = createRule({
 function findGlobalProcessReferences(ctx: RuleContext): Set<number> {
   try {
     const descriptor = ctx.file.sfc?.descriptor as SFCDescriptor | undefined;
-    const script = descriptor?.scriptSetup ?? descriptor?.script;
+    const usesJsx = descriptor
+      ? [descriptor.script, descriptor.scriptSetup].some((block) =>
+          ["jsx", "tsx"].includes(block?.lang ?? ""),
+        )
+      : /\.[jt]sx$/.test(ctx.file.relativePath);
     const options = {
       range: true,
       sourceType: "module" as const,
       ecmaFeatures: {
-        jsx: ctx.file.sfc
-          ? ["jsx", "tsx"].includes(script?.lang ?? "")
-          : /\.[jt]sx$/.test(ctx.file.relativePath),
+        jsx: usesJsx,
       },
     };
     const { scopeManager } = ctx.file.sfc
