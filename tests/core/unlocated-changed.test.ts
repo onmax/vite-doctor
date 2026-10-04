@@ -135,3 +135,55 @@ test.each([false, true])(
     });
   },
 );
+
+test("a range-less related file cannot bypass a non-overlapping primary range", async () => {
+  await withProject(async (root) => {
+    const rule = createRule({
+      meta: {
+        id: "test/mixed-locations",
+        title: "Review mixed locations",
+        category: "configuration",
+        severity: "warn",
+        execution: "manifest",
+      },
+      create(ctx) {
+        return {
+          onProjectStart() {
+            ctx.report(
+              allDiagnostics.DOC9999({
+                why: "Configuration needs review.",
+                fix: "Review project configuration.",
+              }),
+              {
+                ruleId: "test/mixed-locations",
+                severity: "warn",
+                category: "configuration",
+                file: join(ctx.project.root, "app/other.ts"),
+                range: { start: 0, end: 1, line: 2, column: 1 },
+                related: [
+                  {
+                    file: join(ctx.project.root, "nuxt.config.ts"),
+                    message: "Related configuration file.",
+                  },
+                ],
+              },
+            );
+          },
+        };
+      },
+    });
+    writeFileSync(
+      join(root, "nuxt.config.ts"),
+      "export default defineNuxtConfig({ devtools: { enabled: true } })\n",
+    );
+    const result = await runDoctor({
+      root,
+      framework: "nuxt",
+      runtimeTarget,
+      cache: false,
+      changed: true,
+      extensions: [extension(rule)],
+    });
+    expect(result.diagnostics.map((item) => item.code)).toEqual([]);
+  });
+});
