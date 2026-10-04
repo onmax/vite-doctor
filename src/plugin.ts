@@ -95,9 +95,7 @@ function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
           const defineKeys = [
             ...new Set([
               ...Object.keys(config.define ?? {}),
-              ...Object.values(config.environments ?? {}).flatMap((environment) =>
-                Object.keys(environment.define ?? {}),
-              ),
+              ...Object.keys(config.environments?.client?.define ?? {}),
             ]),
           ];
           return {

@@ -87,6 +87,19 @@ test("retains environment-specific define exposure", async () => {
   });
 });
 
+test("does not treat server-only environment defines as client exposure", async () => {
+  await withProject("PRIVATE_API_SECRET", async (root) => {
+    await expect(
+      hostBuild(root, {
+        envPrefix: "PUBLIC_",
+        environments: {
+          server: { define: { "import.meta.env.PRIVATE_API_SECRET": '"fixture-value"' } },
+        },
+      }),
+    ).resolves.toBeDefined();
+  });
+});
+
 test("lets Vite reject an empty public prefix before the Doctor Run", async () => {
   await withProject("PRIVATE_API_SECRET", async (root) => {
     await expect(hostBuild(root, { envPrefix: "" })).rejects.toThrow(/envPrefix/);
