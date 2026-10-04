@@ -75,6 +75,46 @@ test("ignores repeated auto-import entries from the same source", async () => {
   expect(result.diagnostics).toEqual([]);
 });
 
+test("ignores type-only duplicates", async () => {
+  const result = await runCollisionFixture([
+    { name: "SharedType", type: true, from: "/project/app/composables/a.ts", kind: "app" },
+    { name: "SharedType", type: true, from: "/project/app/composables/b.ts", kind: "app" },
+  ]);
+
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("ignores disabled entries and lower-priority overrides", async () => {
+  const result = await runCollisionFixture([
+    {
+      name: "useShared",
+      from: "/project/layers/base/composables/shared.ts",
+      kind: "layer",
+      priority: -1,
+    },
+    {
+      name: "useShared",
+      from: "/project/app/composables/shared.ts",
+      kind: "app",
+      priority: 0,
+    },
+    {
+      name: "useDisabled",
+      from: "/project/app/composables/disabled.ts",
+      kind: "app",
+      disabled: true,
+    },
+    {
+      name: "useDisabled",
+      from: "/project/app/composables/other.ts",
+      kind: "app",
+      disabled: true,
+    },
+  ]);
+
+  expect(result.diagnostics).toEqual([]);
+});
+
 test("Nuxt imports extend keeps duplicate entries in the generated manifest", async () => {
   const root = mkdtempSync(join(tmpdir(), "vite-doctor-nuxt-imports-"));
   const hooks = new Map<string, Array<(payload: any) => unknown>>();

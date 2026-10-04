@@ -15,13 +15,21 @@ export const noAutoImportCollision = createRule({
   create(ctx) {
     return {
       NuxtManifest(manifest) {
-        const names = new Map<string, string[]>();
+        const names = new Map<string, NonNullable<typeof manifest.autoImportEntries>>();
         for (const entry of manifest.autoImportEntries ?? manifest.autoImports.values()) {
+          if (entry.type || (entry as { disabled?: boolean }).disabled) continue;
           const key = entry.as ?? entry.name;
-          names.set(key, [...(names.get(key) ?? []), entry.from]);
+          names.set(key, [...(names.get(key) ?? []), entry]);
         }
-        for (const [name, sources] of names) {
-          const unique = [...new Set(sources)];
+        for (const [name, entries] of names) {
+          const highestPriority = Math.max(...entries.map((entry) => entry.priority ?? 1));
+          const unique = [
+            ...new Set(
+              entries
+                .filter((entry) => (entry.priority ?? 1) === highestPriority)
+                .map((entry) => entry.from),
+            ),
+          ];
           if (unique.length > 1) {
             ctx.report(
               diagnostics.NUXT0034({

@@ -169,6 +169,7 @@ export interface AutoImportEntry {
   kind: "nuxt" | "vue" | "module" | "app" | "layer";
   sourceLayer?: string;
   type?: boolean;
+  priority?: number;
 }
 
 export interface NuxtProjectInfo {

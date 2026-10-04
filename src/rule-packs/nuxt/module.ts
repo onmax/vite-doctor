@@ -364,8 +364,11 @@ function normalizeAutoImports(imports: unknown[]) {
       as: entry?.as,
       from: entry?.from,
       type: entry?.type === true || undefined,
+      priority: typeof entry?.priority === "number" ? entry.priority : undefined,
+      disabled: entry?.disabled === true,
     }))
-    .filter((entry) => entry.name && entry.from);
+    .filter((entry) => entry.name && entry.from && !entry.disabled)
+    .map(({ disabled: _disabled, ...entry }) => entry);
 }
 
 function mergeAutoImportEntries(
