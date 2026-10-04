@@ -27,6 +27,7 @@ const unsafe = [
   "() => { if (flag) return () => 1; return 0 }",
   "() => { { return () => 1 } }",
   "() => { try { return () => 1 } catch { return 0 } }",
+  "() => { try { throw new Error('stop') } catch { return () => 1 } }",
   "() => ({ get callback() { return () => 1 } })",
 ];
 
@@ -54,6 +55,7 @@ const safe = [
   "() => { if (false) return () => 1; return 1 }",
   "() => { try { return () => 1 } finally { return 1 } }",
   "() => { try { return 1 } catch {} return () => 1 }",
+  "() => { try { return 1 } catch { return () => 1 } }",
   "() => ({ get value() { return 1 } })",
   "() => ({ set value(value) {} })",
 ];

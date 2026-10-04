@@ -77,11 +77,14 @@ function returnedValue(node: AnyNode): { unsupported: boolean; terminates: boole
     if (finalizer.terminates) return finalizer;
     const block = returnedValue(node.block);
     const handler = returnedValue(node.handler?.body);
+    const blockMayThrow = mayThrowBeforeTermination(node.block);
+    const handlerReachable = Boolean(node.handler) && (!block.terminates || blockMayThrow);
     return {
-      unsupported: finalizer.unsupported || block.unsupported || handler.unsupported,
-      terminates:
-        block.terminates &&
-        (!node.handler || handler.terminates || !mayThrowBeforeTermination(node.block)),
+      unsupported:
+        finalizer.unsupported ||
+        block.unsupported ||
+        (handlerReachable ? handler.unsupported : false),
+      terminates: block.terminates && (!node.handler || handler.terminates || !blockMayThrow),
     };
   }
   if (node.type === "IfStatement") {
@@ -102,7 +105,7 @@ function mayThrowBeforeTermination(node: AnyNode): boolean {
   if (node.type === "BlockStatement")
     for (const statement of node.body) {
       if (statement.type === "ReturnStatement") return mayThrowExpression(statement.argument);
-      if (statement.type === "ThrowStatement") return false;
+      if (statement.type === "ThrowStatement") return true;
       if (statement.type === "BlockStatement" || statement.type === "IfStatement") {
         if (mayThrowBeforeTermination(statement)) return true;
         continue;
