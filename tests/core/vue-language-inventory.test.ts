@@ -51,6 +51,10 @@ test.each([
     languages: [],
   },
   {
+    source: '<template><div>{{ <script lang="ts"></script></template>',
+    languages: [],
+  },
+  {
     source: '<template><div>{{</template><script>const text = "<script lang=\\"ts\\">"</script>',
     languages: ["javascript"],
   },

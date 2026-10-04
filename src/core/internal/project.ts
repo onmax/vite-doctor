@@ -180,6 +180,23 @@ function recoverVueScriptLanguages(source: string): ProjectLanguage[] {
       quote = "";
       continue;
     }
+    if (source[index] === "<" && /^<template(?:\s|>)/i.test(source.slice(index))) {
+      let cursor = index + 1;
+      let attributeQuote = "";
+      for (; cursor < source.length; cursor++) {
+        const character = source[cursor];
+        if (attributeQuote) {
+          if (character === attributeQuote) attributeQuote = "";
+        } else if (character === '"' || character === "'") {
+          attributeQuote = character;
+        } else if (character === ">") {
+          break;
+        }
+      }
+      const close = source.indexOf("</template", cursor + 1);
+      index = close === -1 ? source.length : close + 9;
+      continue;
+    }
     if (quote) {
       if (source[index] === quote) quote = "";
       continue;
