@@ -17,7 +17,7 @@ The queue contains 100 candidates: 35 observed mismatches and 65 investigations.
 | [68](https://github.com/onmax/vite-doctor/pull/68) | Confine persistent cache paths to the project root.                              |
 | [69](https://github.com/onmax/vite-doctor/pull/69) | Distinguish computed env variables from static property names.                   |
 | [70](https://github.com/onmax/vite-doctor/pull/70) | Remove an unsafe automatic Nuxt `useFetch` import rename.                        |
-| [71](https://github.com/onmax/vite-doctor/pull/71) | **Open:** tolerate virtual entrypoint imports in the CLI.                        |
+| [71](https://github.com/onmax/vite-doctor/pull/71) | Tolerate virtual entrypoint imports in the CLI.                                  |
 
 Each PR records its own tests, independent review, and limitations. PR status remains in GitHub. Historical changes preceding this campaign are not counted here.
 
