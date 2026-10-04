@@ -143,10 +143,21 @@ function applyFixes(
       continue;
     }
     const ms = new MagicString(text);
-    const edits = planNonOverlappingFixes(candidates).sort((a, b) => b.range.start - a.range.start);
+    const planned = planNonOverlappingFixes(candidates);
+    const edits = [
+      ...planned
+        .filter((edit) => edit.range.start !== edit.range.end)
+        .sort((a, b) => b.range.start - a.range.start),
+      ...planned
+        .filter((edit) => edit.range.start === edit.range.end)
+        .sort((a, b) => b.range.start - a.range.start),
+    ];
     applied.skipped += candidates.length - edits.length;
     if (!edits.length) continue;
-    for (const edit of edits) ms.overwrite(edit.range.start, edit.range.end, edit.text);
+    for (const edit of edits) {
+      if (edit.range.start === edit.range.end) ms.appendLeft(edit.range.start, edit.text);
+      else ms.overwrite(edit.range.start, edit.range.end, edit.text);
+    }
     mkdirSync(dirname(file), { recursive: true });
     const temporary = `${file}.vite-doctor-${process.pid}-${randomUUID()}.tmp`;
     try {
