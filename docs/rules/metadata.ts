@@ -1884,10 +1884,10 @@ export const ruleDocumentationMetadata = {
   },
   "vue/watch/require-post-flush-for-dom-read": {
     description:
-      "Checks that Vue watch code includes the post flush for DOM read needed for predictable behavior.",
-    why: "Effects that outlive their component create leaks and stale updates. Register cleanup where Vue or VueUse can dispose it automatically.",
+      "Report watcher callbacks that read DOM state before Vue has flushed the component update.",
+    why: "Default watchers run before their owner's DOM update. Layout measurements can therefore reflect the previous render.",
     recommendedReplacement:
-      "Add post flush for DOM read where Vue expects it, close to the code that depends on it.",
+      "Use { flush: 'post' }, watchPostEffect(), or await nextTick() before reading DOM state.",
     examples: [
       {
         title: "Use post-flush DOM reads",
