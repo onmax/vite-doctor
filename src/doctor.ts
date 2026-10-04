@@ -9,7 +9,7 @@ import {
   type DoctorRunOptions,
   type DoctorRunResult,
 } from "./core/index.js";
-import { resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
+import { collectRulePacks, resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "pathe";
 import { nitroRulePack } from "./rule-packs/nitro/index.js";
@@ -22,7 +22,12 @@ import { packageRulePack } from "./rule-packs/package/index.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
-  return (await viteDoctorExtensions(options)).flatMap((extension) => extension.rulePacks ?? []);
+  const registry = await collectRulePacks([
+    ...(options.config?.extensions ?? []),
+    ...(await viteDoctorExtensions(options)),
+    ...(options.extensions ?? []),
+  ]);
+  return registry.packs;
 }
 
 export async function viteDoctorExtensions(
