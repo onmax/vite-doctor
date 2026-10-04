@@ -1234,6 +1234,11 @@ async function withFixture(files: Record<string, string>, run: (root: string) =>
       join(root, "package.json"),
       JSON.stringify({ type: "module", dependencies: { vue: "^3.5.0" } }),
     );
+    mkdirSync(join(root, "node_modules/vue"), { recursive: true });
+    writeFileSync(
+      join(root, "node_modules/vue/package.json"),
+      JSON.stringify({ name: "vue", version: "3.5.18" }),
+    );
     for (const [file, text] of Object.entries(files)) {
       const absolute = join(root, file);
       mkdirSync(dirname(absolute), { recursive: true });
