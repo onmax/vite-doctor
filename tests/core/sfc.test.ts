@@ -5,7 +5,11 @@ import { createVueScriptForParsing, parseVueScripts } from "../../src/core/inter
 function parseAdjacentScripts(source: string) {
   const { descriptor } = parse(source, { filename: "app.vue" });
   const script = createVueScriptForParsing(descriptor, source);
-  const ast = parseVueScripts("app.vue", descriptor, source) as { body: any[] } | null;
+  const ast = parseVueScripts("app.vue", descriptor, source) as {
+    body: any[];
+    comments: any[];
+    end: number;
+  } | null;
   return { source, script, ast };
 }
 
@@ -16,6 +20,32 @@ test("separates adjacent script blocks without changing source offsets", () => {
   expect(fixture.ast?.body).toHaveLength(3);
   expect(fixture.script.text[fixture.source.indexOf("const { count }")]).toBe("c");
   expect(fixture.ast?.body[1]?.start).toBe(fixture.source.indexOf("const { count }"));
+});
+
+test.each([false, true])("bounds and orders comments with setup first: %s", (setupFirst) => {
+  const first = setupFirst ? "script setup" : "script";
+  const second = setupFirst ? "script" : "script setup";
+  const fixture = parseAdjacentScripts(
+    `<${first}>const first = 1 // trailing</script><${second}>/* second */ const second = 2 // final</script>`,
+  );
+  expect(fixture.ast?.end).toBe(fixture.source.length);
+  expect(fixture.ast?.comments.map(({ start, end, value }) => ({ start, end, value }))).toEqual([
+    {
+      start: fixture.source.indexOf("// trailing"),
+      end: fixture.source.indexOf("</script>"),
+      value: " trailing",
+    },
+    {
+      start: fixture.source.indexOf("/* second */"),
+      end: fixture.source.indexOf("/* second */") + "/* second */".length,
+      value: " second ",
+    },
+    {
+      start: fixture.source.indexOf("// final"),
+      end: fixture.source.lastIndexOf("</script>"),
+      value: " final",
+    },
+  ]);
 });
 
 test("terminates a trailing line comment before an adjacent setup block", () => {

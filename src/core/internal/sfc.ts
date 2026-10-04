@@ -82,7 +82,7 @@ export function parseVueScripts(
   for (const block of blocks) {
     const script = createVueScriptForParsing({ script: block }, source);
     if (!script.text.trim()) continue;
-    const ast = parseScript(file, script.text, lang);
+    const ast = parseScript(file, script.text.slice(0, block.loc.end.offset), lang);
     if (!ast) return null;
     if (!program) program = ast;
     else {
@@ -90,6 +90,7 @@ export function parseVueScripts(
       (program.comments as unknown[]).push(...(ast.comments as unknown[]));
     }
   }
+  if (program) program.end = source.length;
   return program;
 }
 

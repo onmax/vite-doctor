@@ -17,7 +17,7 @@ import { createCacheKey, markSession, type ScanSession } from "./scan-session.js
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 
-const FILE_FACTS_VERSION = 3;
+const FILE_FACTS_VERSION = 4;
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
