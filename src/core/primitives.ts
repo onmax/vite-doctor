@@ -169,6 +169,7 @@ export interface AutoImportEntry {
   kind: "nuxt" | "vue" | "module" | "app" | "layer";
   sourceLayer?: string;
   type?: boolean;
+  priority?: number;
 }
 
 export interface NuxtProjectInfo {
@@ -178,6 +179,8 @@ export interface NuxtProjectInfo {
   autoImportEnabled: boolean;
   autoImportsAuthoritative: boolean;
   autoImports: Map<string, AutoImportEntry>;
+  /** All resolved auto-import entries, including names shadowed in the lookup map. */
+  autoImportEntries?: AutoImportEntry[];
   components: Map<
     string,
     { name: string; file: string; mode?: "client" | "server" | "all"; sourceLayer?: string }
@@ -425,7 +428,14 @@ export interface GraphEdge {
   from: number;
   to?: number;
   specifier?: string;
-  kind: "import" | "type-import" | "dynamic-import" | "export" | "re-export" | "virtual-root";
+  kind:
+    | "import"
+    | "type-import"
+    | "dynamic-import"
+    | "export"
+    | "re-export"
+    | "type-re-export"
+    | "virtual-root";
 }
 
 export interface VirtualRootNode {
@@ -658,6 +668,11 @@ export function defineRulePack(pack: RulePack): RulePack {
 }
 
 export function defineDoctorExtension(extension: DoctorExtension): DoctorExtension {
-  for (const pack of extension.rulePacks ?? []) defineRulePack(pack);
+  const names = new Set<string>();
+  for (const pack of extension.rulePacks ?? []) {
+    defineRulePack(pack);
+    if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
+    names.add(pack.name);
+  }
   return extension;
 }

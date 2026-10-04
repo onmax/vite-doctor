@@ -8,6 +8,94 @@ export interface RuleDocumentationMetadata {
 }
 
 export const ruleDocumentationMetadata = {
+  "shadcn/no-restyle": {
+    description: "Keep component-owned visual styles inside the component contract.",
+    why: "Appearance classes at a component call site can override the variants and sizes owned by the design system. The Rule checks recognized components against the configured class policy.",
+    recommendedReplacement:
+      "Use the component's variants or sizes. Allow layout classes explicitly when the project's component policy permits them.",
+    examples: [
+      {
+        title: "Use a component variant for appearance",
+        language: "tsx",
+        invalid:
+          'import { Button } from "@/components/ui/button"\n\n<Button className="bg-pink-500">Delete account</Button>',
+        valid:
+          'import { Button } from "@/components/ui/button"\n\n<Button variant="destructive">Delete account</Button>',
+      },
+    ],
+  },
+  "shadcn/no-raw-colors": {
+    description: "Prefer theme colors over raw color values.",
+    why: "Raw palette colors and literal SVG colors bypass the project's theme. Checking undeclared color tokens and suggesting theme replacements requires a readable theme; without one, those checks are unavailable.",
+    recommendedReplacement:
+      "Use a color token declared by the theme. For SVG, use currentColor with a theme color class or reference a theme variable.",
+    examples: [
+      {
+        title: "Inherit the SVG color without theme lookup",
+        language: "tsx",
+        invalid: '<svg><path fill="#ec4899" d="M0 0h10v10H0z" /></svg>',
+        valid: '<svg><path fill="currentColor" d="M0 0h10v10H0z" /></svg>',
+      },
+    ],
+  },
+  "shadcn/no-arbitrary-values": {
+    description: "Use the design system's existing values instead of arbitrary utilities.",
+    why: "Arbitrary utility values bypass theme tokens and scale values, making appearance harder to change consistently. Exceptions follow the configured class policy.",
+    recommendedReplacement:
+      "Choose an existing theme token or scale utility that matches the intended design. Review suggested replacements before applying them.",
+    examples: [
+      {
+        title: "Use the spacing scale",
+        language: "tsx",
+        invalid: '<div className="p-[16px]">Account settings</div>',
+        valid: '<div className="p-4">Account settings</div>',
+      },
+    ],
+  },
+  "shadcn/no-inline-styles": {
+    description: "Keep styling in the design system rather than component call sites.",
+    why: "Ordinary inline properties bypass class-based styling. The Rule checks JSX elements, unreadable style objects, hardcoded colors in custom properties, and style elements.",
+    recommendedReplacement:
+      "Use classes for styling. Pass dynamic values through CSS custom properties when needed, and use theme variables for colors.",
+    examples: [
+      {
+        title: "Replace an inline color with a theme class",
+        language: "tsx",
+        invalid: '<div style={{ color: "var(--color-primary)" }}>Account settings</div>',
+        valid: '<div className="text-primary">Account settings</div>',
+      },
+    ],
+  },
+  "shadcn/require-static-classes": {
+    description: "Use class values that the design-system analyzer can resolve.",
+    why: "Unreadable class values on recognized components prevent other design-system Rules from checking those classes. Complete static strings and conditional choices between them remain analyzable.",
+    recommendedReplacement:
+      "Choose between complete class strings instead of assembling class names from dynamic fragments. Keep component-owned variant calls inside the component implementation.",
+    examples: [
+      {
+        title: "Choose between complete class names",
+        language: "tsx",
+        invalid:
+          'import { Button } from "@/components/ui/button"\n\nexport function SaveButton({ width }: { width: string }) {\n  return <Button className={`w-${width}`}>Save</Button>\n}',
+        valid:
+          'import { Button } from "@/components/ui/button"\n\nexport function SaveButton({ wide }: { wide: boolean }) {\n  return <Button className={wide ? "w-full" : "w-auto"}>Save</Button>\n}',
+      },
+    ],
+  },
+  "shadcn/no-unknown-classes": {
+    description: "Avoid classes that are not declared by the project's Tailwind theme.",
+    why: "Misspelled or unsupported class names generate no CSS. Without a resolvable Tailwind theme, the Rule uses a reduced fallback that includes bundled utility names plus discovered @utility names and CSS class selectors, as in the example below. That fallback cannot validate theme tokens or provide spelling suggestions.",
+    recommendedReplacement:
+      "Correct the class name or declare the intended utility in the theme. Allow external stylesheet classes by exact name only when the application loads their CSS.",
+    examples: [
+      {
+        title: "Correct a utility name using the fallback grammar",
+        language: "tsx",
+        invalid: '<div className="flex-cols" />',
+        valid: '<div className="flex-col" />',
+      },
+    ],
+  },
   "docus/appconfig/no-unknown-key": {
     description: "Flags unknown key in Docus appconfig code before it leaks into runtime behavior.",
     why: "Runtime configuration has different server and client visibility. Using the framework API keeps environment data typed and scoped.",
@@ -1120,11 +1208,10 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "nuxt/state/no-nonserializable-usestate": {
-    description:
-      "Flags nonserializable usestate in Nuxt state code before it leaks into runtime behavior.",
-    why: "Nuxt transfers useState() values through the SSR payload, so functions, class instances, DOM objects, and other non-serializable values cannot hydrate reliably.",
+    description: "Report unsupported live values stored in Nuxt payload state.",
+    why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",
     recommendedReplacement:
-      "Remove nonserializable usestate, or move it to the Nuxt runtime/API that owns that behavior.",
+      "Use values supported by Nuxt's payload serializer, or keep live resources outside payload state.",
     examples: [
       {
         title: "Keep useState serializable",
@@ -1849,11 +1936,10 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "vue/watch/no-async-watcheffect-after-await-read": {
-    description:
-      "Flags async watcheffect after await read in Vue watch code before it leaks into runtime behavior.",
-    why: "Effects that outlive their component create leaks and stale updates. Register cleanup where Vue or VueUse can dispose it automatically.",
+    description: "Flags reactive dependency reads after an await in an async watchEffect callback.",
+    why: "Vue tracks watchEffect dependencies during synchronous execution. Reads after await do not establish dependencies that rerun the effect; ordinary object and method accesses do not establish reactive dependencies.",
     recommendedReplacement:
-      "Remove async watcheffect after await read, or move it to the Vue runtime/API that owns that behavior.",
+      "Read reactive values before awaiting, or use watch() with an explicit source.",
     examples: [
       {
         title: "Read watchEffect dependencies before await",
@@ -1884,10 +1970,10 @@ export const ruleDocumentationMetadata = {
   },
   "vue/watch/require-post-flush-for-dom-read": {
     description:
-      "Checks that Vue watch code includes the post flush for DOM read needed for predictable behavior.",
-    why: "Effects that outlive their component create leaks and stale updates. Register cleanup where Vue or VueUse can dispose it automatically.",
+      "Report watcher callbacks that read DOM state before Vue has flushed the component update.",
+    why: "Default watchers run before their owner's DOM update. Layout measurements can therefore reflect the previous render.",
     recommendedReplacement:
-      "Add post flush for DOM read where Vue expects it, close to the code that depends on it.",
+      "Use { flush: 'post' }, watchPostEffect(), or await nextTick() before reading DOM state.",
     examples: [
       {
         title: "Use post-flush DOM reads",

@@ -105,3 +105,15 @@ test("uses script comments at original Vue file offsets", async () => {
   });
   expect(result.diagnostics.map((item) => item.code)).toEqual(["TS0008"]);
 });
+
+test.each([false, true])("isolates safety comments with setup first: %s", async (setupFirst) => {
+  const first = setupFirst ? 'script setup lang="ts"' : 'script lang="ts"';
+  const second = setupFirst ? 'script lang="ts"' : 'script setup lang="ts"';
+  const result = await runProjectFixture({
+    rules: [requireSafetyCommentForTypeAssertion],
+    files: {
+      "App.vue": `<${first}>const first = 1 // SAFETY: validated</script><${second}>/* unrelated */ const bad = input as User; /* SAFETY: validated */ const good = input as User</script>`,
+    },
+  });
+  expect(result.diagnostics.map((item) => item.code)).toEqual(["TS0008"]);
+});

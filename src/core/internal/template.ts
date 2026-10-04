@@ -1,8 +1,11 @@
+import type { ScriptParseLang } from "./script.js";
+
 const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
 
 export async function parseTemplate(
   file: string,
   source: string,
+  scriptLang?: ScriptParseLang,
 ): Promise<Record<string, unknown> | null> {
   try {
     const [{ parseForESLint }, tsParser] = await Promise.all([
@@ -14,6 +17,7 @@ export async function parseTemplate(
       filePath: file,
       sourceType: "module",
       ecmaVersion: "latest",
+      ecmaFeatures: { jsx: scriptLang === "jsx" || scriptLang === "tsx" },
       parser: { ts: parser as any, tsx: parser as any, "<template>": "espree" },
     });
     return (result.ast.templateBody as unknown as Record<string, unknown>) ?? null;

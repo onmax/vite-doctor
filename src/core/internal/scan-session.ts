@@ -1,4 +1,13 @@
-import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
@@ -72,16 +81,27 @@ class PersistentRuleCache extends MemoryRuleCache {
   override set<T = unknown>(key: string, value: T): void {
     super.set(key, value);
     if (!key.startsWith("fileFacts:")) return;
+    let temporary: string | undefined;
     try {
       mkdirSync(this.dir, { recursive: true });
-      writeFileSync(this.cachePath(key), JSON.stringify(value));
+      const target = this.cachePath(key);
+      temporary = resolve(this.dir, `.doctor-${randomUUID()}.tmp`);
+      assertCachePath(this.root, temporary);
+      writeFileSync(temporary, JSON.stringify(value), { flag: "wx", mode: 0o600 });
+      renameSync(temporary, target);
     } catch {
       // Cache writes are best-effort and must not change diagnostics.
+    } finally {
+      if (temporary) {
+        try {
+          rmSync(temporary, { force: true });
+        } catch {}
+      }
     }
   }
 
   private cachePath(key: string): string {
-    const path = resolve(this.dir, `${safeCacheKey(key)}.json`);
+    const path = resolve(this.dir, `${sha256(key)}.json`);
     assertCachePath(this.root, path);
     return path;
   }
@@ -282,7 +302,7 @@ export function resolveProjectDoctorConfig(
   return mergeDoctorConfig(mergeDoctorConfig(defaults, project.nuxt?.doctorConfig), config);
 }
 
-async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
+export async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
   packs: RulePack[];
   rules: DoctorRule[];
   inventoryContributors: ProjectInventoryContributor[];
@@ -308,6 +328,11 @@ async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
     ...extensions.flatMap((extension) => extension.rulePacks ?? []),
     ...registeredPacks,
   ].map((pack) => defineRulePack(pack));
+  const names = new Set<string>();
+  for (const pack of packs) {
+    if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
+    names.add(pack.name);
+  }
   return {
     packs,
     rules: packs.flatMap((pack) => pack.rules),
@@ -392,7 +417,21 @@ function resolveExtends(
     if (slash === -1) throw doctorInternalDiagnostics.DOC0016({ entry });
     const packKey = entry.slice(0, slash);
     const presetName = entry.slice(slash + 1);
-    const pack = packs.find((item) => rulePackKey(item) === packKey || item.name === packKey);
+    const exactMatches = packs.filter((item) => item.name === packKey);
+    const aliasMatches = exactMatches.length
+      ? exactMatches
+      : packs.filter((item) => rulePackKey(item) === packKey);
+    if (aliasMatches.length > 1) {
+      throw doctorInternalDiagnostics.DOC0024({
+        entry,
+        pack: packKey,
+        matches: aliasMatches
+          .map((item) => item.name)
+          .sort()
+          .join(", "),
+      });
+    }
+    const pack = aliasMatches[0];
     if (!pack) throw doctorInternalDiagnostics.DOC0017({ entry, pack: packKey });
     const preset = pack.presets[presetName];
     if (!preset)
@@ -460,8 +499,4 @@ export function createCacheKey(session: ScanSession, phase: string, input: strin
       tsconfig: session.project.tsconfigPath,
     }),
   )}`;
-}
-
-function safeCacheKey(key: string): string {
-  return key.replace(/[^a-zA-Z0-9._-]/g, "_");
 }

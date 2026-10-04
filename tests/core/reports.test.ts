@@ -31,6 +31,7 @@ function sarifFor(diagnostics: unknown[]) {
       {
         version: "0.0.0",
         root,
+        project: { ...docsProject, root },
         diagnostics,
       } as any,
       "sarif",
