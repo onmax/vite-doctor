@@ -79,7 +79,9 @@ function returnedValue(node: AnyNode): { unsupported: boolean; terminates: boole
     const handler = returnedValue(node.handler?.body);
     return {
       unsupported: finalizer.unsupported || block.unsupported || handler.unsupported,
-      terminates: block.terminates && (!node.handler || handler.terminates),
+      terminates:
+        block.terminates &&
+        (!node.handler || handler.terminates || !mayThrowBeforeTermination(node.block)),
     };
   }
   if (node.type === "IfStatement") {
@@ -93,6 +95,36 @@ function returnedValue(node: AnyNode): { unsupported: boolean; terminates: boole
     };
   }
   return empty;
+}
+
+function mayThrowBeforeTermination(node: AnyNode): boolean {
+  if (!node) return true;
+  if (node.type === "BlockStatement")
+    for (const statement of node.body) {
+      if (statement.type === "ReturnStatement") return mayThrowExpression(statement.argument);
+      if (statement.type === "ThrowStatement") return false;
+      if (statement.type === "BlockStatement" || statement.type === "IfStatement") {
+        if (mayThrowBeforeTermination(statement)) return true;
+        continue;
+      }
+      return true;
+    }
+  return true;
+}
+
+function mayThrowExpression(value: AnyNode): boolean {
+  const node = unwrap(value);
+  if (!node) return false;
+  if (
+    ["Literal", "Identifier", "ArrowFunctionExpression", "FunctionExpression"].includes(node.type)
+  )
+    return false;
+  if (node.type === "ObjectExpression")
+    return node.properties.some((property: AnyNode) =>
+      property.type === "SpreadElement" ? mayThrowExpression(property.argument) : false,
+    );
+  if (node.type === "ArrayExpression") return node.elements.some(mayThrowExpression);
+  return true;
 }
 
 function hasUnsupportedPayloadValue(value: AnyNode): boolean {
@@ -132,12 +164,7 @@ function payloadProperties(node: AnyNode): Map<unknown, PayloadProperty> {
           properties.set(key, { ...value, kind: "init" });
       continue;
     }
-    const key =
-      !property.computed && property.key.type === "Identifier"
-        ? property.key.name
-        : property.key.type === "Literal"
-          ? String(property.key.value)
-          : property;
+    const key = propertyKey(property);
     if (property.kind === "set" && properties.get(key)?.kind === "get") continue;
     properties.set(key, {
       kind: property.kind,
@@ -150,6 +177,13 @@ function payloadProperties(node: AnyNode): Map<unknown, PayloadProperty> {
     });
   }
   return properties;
+}
+
+function propertyKey(property: AnyNode): unknown {
+  if (!property.computed && property.key.type === "Identifier") return property.key.name;
+  if (["Literal", "StringLiteral", "NumericLiteral", "BooleanLiteral"].includes(property.key.type))
+    return String(property.key.value);
+  return property;
 }
 
 function hasUnsupportedMapValue(value: AnyNode): boolean {

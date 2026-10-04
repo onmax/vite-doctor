@@ -34,6 +34,7 @@ const safe = [
   "() => ({ ...(() => 1) })",
   "() => ({ ...new Map([['callback', () => 1]]) })",
   "() => ({ callback: () => 1, callback: 1 })",
+  "() => ({ ['callback']: () => 1, callback: 1 })",
   "() => ({ callback: () => 1, ...{ callback: 1 } })",
   "() => ({ get callback() { return () => 1 }, callback: 1 })",
   "() => ({ ...{ get callback() { return () => 1 } }, set callback(value) {} })",
@@ -52,6 +53,7 @@ const safe = [
   "() => false ? () => 1 : 1",
   "() => { if (false) return () => 1; return 1 }",
   "() => { try { return () => 1 } finally { return 1 } }",
+  "() => { try { return 1 } catch {} return () => 1 }",
   "() => ({ get value() { return 1 } })",
   "() => ({ set value(value) {} })",
 ];
