@@ -36,6 +36,7 @@ const unsafe = [
   "() => { try { return { get [compute()]() { return 1 } } } catch { return () => 1 } }",
   "() => { try { return { set [compute()](value) {} } } catch { return () => 1 } }",
   "() => { try { return { value: compute(), value: 1 } } catch { return () => 1 } }",
+  "() => { try { return { ...{ get value() { throw new Error('stop') } } } } catch { return () => 1 } }",
   "() => { try { if (flag) throw new Error('stop'); return 2 } catch { return () => 1 } }",
   "() => ({ get callback() { return () => 1 } })",
 ];

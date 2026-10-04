@@ -119,7 +119,7 @@ function mayThrowBeforeTermination(node: AnyNode): boolean {
   return true;
 }
 
-function mayThrowExpression(value: AnyNode): boolean {
+function mayThrowExpression(value: AnyNode, invokeGetters = false): boolean {
   const node = unwrap(value);
   if (!node) return false;
   if (
@@ -128,7 +128,9 @@ function mayThrowExpression(value: AnyNode): boolean {
     return false;
   if (node.type === "ObjectExpression")
     return node.properties.some((property: AnyNode) => {
-      if (property.type === "SpreadElement") return mayThrowExpression(property.argument);
+      if (property.type === "SpreadElement") return mayThrowExpression(property.argument, true);
+      if (invokeGetters && property.kind === "get")
+        return mayThrowBeforeTermination(property.value.body);
       return (
         (property.computed && mayThrowExpression(property.key)) ||
         (property.kind === "init" && mayThrowExpression(property.value))
