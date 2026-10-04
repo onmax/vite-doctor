@@ -598,8 +598,8 @@ test("changed scope reports diagnostics whose source ranges overlap changed line
     );
     const agent = JSON.parse(createAgentReport(result));
     expect(agent.commands).toEqual({
-      explain: "vite-doctor explain <code> --framework vue --format agent",
-      verify: `vite-doctor . --framework vue --since ${result.scope.base} --rules <rule> --format agent`,
+      explain: "vite-doctor explain '<code>' --framework vue --format agent",
+      verify: `vite-doctor . --framework vue --since ${result.scope.base} --rules '<rule>' --format agent`,
       rerun: `vite-doctor . --framework vue --since ${result.scope.base} --format agent`,
     });
     expect(agent.next).not.toHaveProperty("cwd");
@@ -1019,8 +1019,8 @@ test("agent reporter is compact and includes a complete remediation path", async
       ],
     });
     expect(agent.commands).toEqual({
-      explain: "vite-doctor explain <code> --framework vue --format agent",
-      verify: "vite-doctor . --framework vue --rules <rule> --format agent",
+      explain: "vite-doctor explain '<code>' --framework vue --format agent",
+      verify: "vite-doctor . --framework vue --rules '<rule>' --format agent",
       rerun: "vite-doctor . --framework vue --format agent",
     });
     expect(agent.next).not.toHaveProperty("cwd");
@@ -1233,6 +1233,11 @@ async function withFixture(files: Record<string, string>, run: (root: string) =>
     writeFileSync(
       join(root, "package.json"),
       JSON.stringify({ type: "module", dependencies: { vue: "^3.5.0" } }),
+    );
+    mkdirSync(join(root, "node_modules/vue"), { recursive: true });
+    writeFileSync(
+      join(root, "node_modules/vue/package.json"),
+      JSON.stringify({ name: "vue", version: "3.5.18" }),
     );
     for (const [file, text] of Object.entries(files)) {
       const absolute = join(root, file);

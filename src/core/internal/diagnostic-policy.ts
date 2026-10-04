@@ -127,6 +127,7 @@ function findSuppression(
     return true;
   });
   if (configured) return configured.reason;
+  if (!diagnostic.range) return null;
   let lines = sourceLines.get(diagnostic.file);
   if (!lines) {
     try {
@@ -141,9 +142,9 @@ function findSuppression(
     directives = collectInlineSuppressions(diagnostic.file, lines);
     sourceSuppressions.set(diagnostic.file, directives);
   }
-  const line = diagnostic.range?.line;
-  const start = line ? Math.max(0, line - 3) : 0;
-  const end = line ? Math.min(lines.length, line + 1) : lines.length;
+  const line = diagnostic.range.line;
+  const start = Math.max(0, line - 3);
+  const end = Math.min(lines.length, line + 1);
   for (let index = start; index < end; index++) {
     const inline = directives.get(index);
     if (!inline || (inline.nextLine && line !== index + 2)) continue;
