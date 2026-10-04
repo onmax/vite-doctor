@@ -32,8 +32,8 @@ export async function detectProject(
   }>(join(root, "package.json"));
   const deps = {
     ...packageJson?.dependencies,
-    ...packageJson?.devDependencies,
     ...packageJson?.optionalDependencies,
+    ...packageJson?.devDependencies,
   };
   const nuxtVersion = deps.nuxt ?? deps["@nuxt/kit"];
   const viteVersion = deps.vite;

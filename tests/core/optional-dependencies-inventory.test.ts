@@ -133,3 +133,11 @@ test("existing dependency and devDependency precedence is preserved", async () =
     vite: "^8.0.0",
   });
 });
+
+test("devDependency declarations take precedence over duplicate optional declarations", async () => {
+  const root = fixture({
+    optionalDependencies: { vue: "^3.4.0" },
+    devDependencies: { vue: "^3.5.0" },
+  });
+  expect((await detectProject(root)).inventory?.packages).toEqual({ vue: "^3.5.0" });
+});
