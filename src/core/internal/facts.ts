@@ -18,7 +18,7 @@ import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 import { isCachedFileFacts } from "./cached-file-facts.js";
 
-const FILE_FACTS_VERSION = 4;
+const FILE_FACTS_VERSION = 5;
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();

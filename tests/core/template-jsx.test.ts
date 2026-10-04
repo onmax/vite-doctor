@@ -1,8 +1,13 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { compileScript, parse } from "@vue/compiler-sfc";
 import { runVueSfcRuleFixture } from "../../src/core/testkit.ts";
 import { parseSfcFile } from "../../src/core/internal/sfc.ts";
 import { restrictVHtml } from "../../src/rule-packs/vue/rules/vue/restrict-v-html.ts";
+import { parseSourceFiles } from "../../src/core/internal/facts.ts";
+import { createCacheKey, createScanSession } from "../../src/core/internal/scan-session.ts";
 
 const scripts = [
   '<script setup lang="jsx">const render = () => <span />;</script>',
@@ -10,6 +15,34 @@ const scripts = [
   '<script setup lang="tsx">const render = (text: string) => <span>{text}</span>;</script>',
   '<script lang="tsx">export default { render: (text: string) => <span>{text}</span> };</script>',
 ];
+
+test("rebuilds template references from persisted pre-JSX File Facts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-template-jsx-cache-"));
+  try {
+    writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
+    writeFileSync(
+      join(root, "App.vue"),
+      `${scripts[0]}\n<template><div ref="element" /></template>`,
+    );
+    const options = { root, framework: "vue" as const, cache: true };
+    const initial = await createScanSession(options);
+    await parseSourceFiles(initial);
+    const facts = initial.facts[0]!;
+    expect(facts.templateRefs).toEqual([
+      expect.objectContaining({ name: "ref", value: "element" }),
+    ]);
+    rmSync(join(root, ".vite-doctor/cache"), { recursive: true, force: true });
+    const oldKey = createCacheKey(initial, "fileFacts", `4:${facts.path}:${facts.fileHash}`);
+    initial.cache.set(oldKey, { ...facts, templateRefs: [] });
+
+    const upgraded = await createScanSession(options);
+    await parseSourceFiles(upgraded);
+
+    expect(upgraded.facts[0]!.templateRefs).toEqual(facts.templateRefs);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test.each(scripts)("keeps template diagnostics for %s", async (script) => {
   for (const newline of ["\n", "\r\n"]) {
