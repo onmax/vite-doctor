@@ -84,3 +84,25 @@ test("preserves conservative Vue template evidence", async () => {
       .diagnostics,
   ).toEqual([]);
 });
+
+test.each([
+  ["export const current = <__BUILD__ />", "__BUILD__", false],
+  ["export const current = <__BUILD__></__BUILD__>", "__BUILD__", false],
+  ["export const current = <__BUILD__.Component />", "__BUILD__", false],
+  ["export const current = <SETTINGS.MODE />", "SETTINGS.MODE", false],
+  ["export const current = <div value={__BUILD__} />", "__BUILD__", true],
+  ["export const current = <div>{__BUILD__}</div>", "__BUILD__", true],
+  ["export const current = <div {...__BUILD__} />", "__BUILD__", true],
+  ["export const current = <div>{SETTINGS.MODE}</div>", "SETTINGS.MODE", true],
+  ["export const current = <__BUILD__ value={__BUILD__} />", "__BUILD__", true],
+])("matches Vite define replacement in JSX: %s", async (source, key, replaced) => {
+  for (const extension of ["jsx", "tsx"]) {
+    const result = await transformWithOxc(source, `entry.${extension}`, {
+      define: { [key]: '"doctor-replacement"' },
+    });
+    expect(result.code.includes("doctor-replacement")).toBe(replaced);
+    expect(
+      (await diagnose(source, key, `src/main.${extension}`)).diagnostics.map(({ code }) => code),
+    ).toEqual(replaced ? [] : ["VITE0007"]);
+  }
+});

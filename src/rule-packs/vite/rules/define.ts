@@ -93,7 +93,13 @@ function defineReferences(file: string, text: string): Set<string> | undefined {
             parent?.importKind !== "type"
           );
         });
-        if (runtimeBinding || !reference.isRead() || !reference.isValueReference) continue;
+        if (
+          runtimeBinding ||
+          !reference.isRead() ||
+          !reference.isValueReference ||
+          reference.identifier.type === "JSXIdentifier"
+        )
+          continue;
         let ancestor = parents.get(reference.identifier);
         while (ancestor && ancestor.type !== "TSTypeQuery") ancestor = parents.get(ancestor);
         if (ancestor) continue;
