@@ -418,12 +418,18 @@ function createResourceEvidence(ctx: RuleContext) {
   }
 
   function discardedCallbackReturn(functionNode: AnyNode): boolean {
-    const call = parents.get(functionNode);
-    if (call?.type !== "CallExpression" || !call.arguments.includes(functionNode)) return false;
-    const api = vueApi(call.callee);
-    if (api && WATCHERS.has(api)) return true;
-    const callee = unwrap(call.callee);
-    return callee?.type === "MemberExpression" && memberName(callee) === "forEach";
+    return nodes.some((node) => {
+      if (node.type !== "CallExpression") return false;
+      const api = vueApi(node.callee);
+      const callbackArgument = api === "watch" ? node.arguments[1] : node.arguments[0];
+      if (api && WATCHERS.has(api) && callback(callbackArgument) === functionNode) return true;
+      const callee = unwrap(node.callee);
+      return (
+        callee?.type === "MemberExpression" &&
+        memberName(callee) === "forEach" &&
+        callback(node.arguments[0]) === functionNode
+      );
+    });
   }
 
   function cleans(resource: Resource): boolean {

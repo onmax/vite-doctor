@@ -20,6 +20,18 @@ test.each([
   [`watchEffect(() => { const timer = setInterval(() => {}, 1000); return timer })`, 1],
   [`items.forEach(() => { const timer = setInterval(() => {}, 1000); return timer })`, 1],
   [
+    `const effect = () => { const timer = setInterval(() => {}, 1000); return timer }; watchEffect(effect)`,
+    1,
+  ],
+  [
+    `function changed() { const timer = setInterval(() => {}, 1000); return timer }; watch(source, changed)`,
+    1,
+  ],
+  [
+    `function visit() { const timer = setInterval(() => {}, 1000); return timer }; items.forEach(visit)`,
+    1,
+  ],
+  [
     `watchEffect(() => { const timer = setInterval(() => {}, 1000); onWatcherCleanup(() => clearInterval(other)) })`,
     1,
   ],
