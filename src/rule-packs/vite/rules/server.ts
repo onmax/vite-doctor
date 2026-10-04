@@ -120,6 +120,17 @@ function serverFsFacts(ctx: RuleContext): ServerFsFact[] {
         ].includes(node.type)
       )
         return resolveNode(node.expression ?? node.argument, seen);
+      if (node.type === "CallExpression" && isViteHelper(node.callee, "mergeConfig")) {
+        const left = resolveNode(node.arguments[0], new Set(seen));
+        const right = resolveNode(node.arguments[1], new Set(seen));
+        if (
+          ![left, right].every((value) =>
+            ["ObjectExpression", "DoctorConfigMerge"].includes(value?.type),
+          )
+        )
+          return undefined;
+        return { type: "DoctorConfigMerge", left, right };
+      }
       if (node.type !== "Identifier") return node;
       const variable = references.get(node);
       const definition = variable?.defs.find(
@@ -137,7 +148,30 @@ function serverFsFacts(ctx: RuleContext): ServerFsFact[] {
     const absent = Symbol("absent");
     const propertyValue = (input: AnyNode, key: string, seen = new Set<AnyNode>()): AnyNode => {
       const object = resolveNode(input);
-      if (object?.type !== "ObjectExpression" || seen.has(object)) return undefined;
+      if (!object || seen.has(object)) return undefined;
+      if (object.type === "DoctorConfigMerge") {
+        const left = propertyValue(object.left, key, new Set(seen).add(object));
+        const right = propertyValue(object.right, key, new Set(seen).add(object));
+        if (right === absent || (right?.type === "Literal" && right.value == null)) return left;
+        if (left === absent || (left?.type === "Literal" && left.value == null)) return right;
+        if (!left || !right) return undefined;
+        if (left.type === "ArrayExpression" || right.type === "ArrayExpression")
+          return {
+            type: "ArrayExpression",
+            elements: [
+              ...(left.type === "ArrayExpression" ? left.elements : [left]),
+              ...(right.type === "ArrayExpression" ? right.elements : [right]),
+            ],
+          };
+        if (
+          [left, right].every((value) =>
+            ["ObjectExpression", "DoctorConfigMerge"].includes(value.type),
+          )
+        )
+          return { type: "DoctorConfigMerge", left, right };
+        return right;
+      }
+      if (object.type !== "ObjectExpression") return undefined;
       seen.add(object);
       for (const property of [...object.properties].reverse()) {
         if (property.type === "SpreadElement") {
@@ -151,10 +185,10 @@ function serverFsFacts(ctx: RuleContext): ServerFsFact[] {
       }
       return absent;
     };
-    const isDefineConfig = (node: AnyNode): boolean => {
+    const isViteHelper = (node: AnyNode, helper: string): boolean => {
       const namespace =
         node?.type === "MemberExpression" &&
-        (node.computed ? staticString(node.property) : node.property.name) === "defineConfig";
+        (node.computed ? staticString(node.property) : node.property.name) === helper;
       const target = namespace ? node.object : node;
       if (target?.type !== "Identifier") return false;
       return Boolean(
@@ -172,7 +206,7 @@ function serverFsFacts(ctx: RuleContext): ServerFsFact[] {
                 definition.node.importKind !== "type" &&
                 (definition.node.imported.type === "Identifier"
                   ? definition.node.imported.name
-                  : definition.node.imported.value) === "defineConfig";
+                  : definition.node.imported.value) === helper;
         }),
       );
     };
@@ -202,8 +236,8 @@ function serverFsFacts(ctx: RuleContext): ServerFsFact[] {
       if (!node || seen.has(node)) return;
       seen.add(node);
       const visit = (child: AnyNode) => collectRoots(child, new Set(seen));
-      if (node.type === "ObjectExpression") roots.add(node);
-      else if (node.type === "CallExpression" && isDefineConfig(node.callee))
+      if (["ObjectExpression", "DoctorConfigMerge"].includes(node.type)) roots.add(node);
+      else if (node.type === "CallExpression" && isViteHelper(node.callee, "defineConfig"))
         visit(node.arguments[0]);
       else if (
         ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type)
@@ -243,10 +277,20 @@ function serverFsFacts(ctx: RuleContext): ServerFsFact[] {
     }
     const range = (node: AnyNode) =>
       ctx.helpers.rangeFromOffsets(ctx.file.path, ctx.file.text, node.range[0], node.range[1]);
+    const allowEntries = (input: AnyNode, seen = new Set<AnyNode>()): ServerFsFact["allow"] => {
+      const array = resolveNode(input);
+      if (array?.type !== "ArrayExpression" || seen.has(array)) return [];
+      seen.add(array);
+      return array.elements.flatMap((element: AnyNode) => {
+        if (element?.type === "SpreadElement") return allowEntries(element.argument, new Set(seen));
+        const value = staticString(resolveNode(element));
+        return value === null ? [] : [{ value, range: range(element) }];
+      });
+    };
     const seenFs = new Set<AnyNode>();
     for (const root of roots) {
       const fs = propertyValue(propertyValue(root, "server"), "fs");
-      if (fs?.type !== "ObjectExpression" || seenFs.has(fs)) continue;
+      if (!["ObjectExpression", "DoctorConfigMerge"].includes(fs?.type) || seenFs.has(fs)) continue;
       seenFs.add(fs);
       const strict = propertyValue(fs, "strict");
       const allow = propertyValue(fs, "allow");
@@ -255,13 +299,7 @@ function serverFsFacts(ctx: RuleContext): ServerFsFact[] {
           strict?.type === "Literal" && typeof strict.value === "boolean"
             ? { value: strict.value, range: range(strict) }
             : undefined,
-        allow:
-          allow?.type === "ArrayExpression"
-            ? allow.elements.flatMap((element: AnyNode) => {
-                const value = staticString(resolveNode(element));
-                return value === null ? [] : [{ value, range: range(element) }];
-              })
-            : [],
+        allow: allowEntries(allow),
       });
     }
   } catch {

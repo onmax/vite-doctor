@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { resolveConfig } from "vite";
+import { mergeConfig, resolveConfig } from "vite";
 import { runProjectFixture } from "../../src/core/testkit.ts";
 import { noBroadFsAllow, noDisabledFsStrict } from "../../src/rules.ts";
 
@@ -74,5 +74,56 @@ test("reports each broad allow entry at its own source range", async () => {
     "'/home/alice'",
     "'../'",
     "'/Users/bob'",
+  ]);
+});
+
+test.each([
+  "import { defineConfig, mergeConfig } from 'vite'; export default defineConfig(mergeConfig({}, { server: { fs: { strict: false, allow: ['/'] } } }))",
+  "import { mergeConfig as merge } from 'vite'; const base = { server: { fs: { strict: false } } }; export default merge(base, { server: { fs: { allow: ['/'] } } })",
+  "import * as Vite from 'vite'; export default Vite.mergeConfig({ server: { fs: { strict: false, allow: ['/'] } } }, { server: { fs: {} } })",
+  "import { mergeConfig } from 'vite'; export default mergeConfig(mergeConfig({}, { server: { fs: { strict: false } } }), { server: { fs: { allow: ['/'] } } })",
+  "const allow = ['/']; export default { server: { fs: { strict: false, allow: [...allow] } } }",
+  "const broad = ['/']; const allow = [...broad]; export default { server: { fs: { strict: false, allow: ['./src', ...allow] } } }",
+])("reports statically composed filesystem options: %s", async (source) => {
+  expect((await diagnose(source)).diagnostics.map(({ code }) => code).sort()).toEqual([
+    "VITE0016",
+    "VITE0017",
+  ]);
+});
+
+test.each([
+  "import { mergeConfig } from 'other'; export default mergeConfig({}, { server: { fs: { strict: false, allow: ['/'] } } })",
+  "import { mergeConfig } from 'vite'; export default (mergeConfig) => mergeConfig({}, { server: { fs: { strict: false, allow: ['/'] } } })",
+  "import { mergeConfig } from 'vite'; export default mergeConfig(unknown, { server: { fs: { strict: false, allow: ['/'] } } })",
+  "import { mergeConfig } from 'vite'; export default mergeConfig({ server: { fs: { strict: false, allow: ['/'] } } }, loadConfig())",
+  "import { mergeConfig } from 'vite'; export default mergeConfig({ server: { fs: { strict: false, allow: ['/'] } } }, { server: { fs: { ...unknown } } })",
+  "import { mergeConfig } from 'vite'; export default mergeConfig({ server: { fs: { strict: false } } }, { server: { fs: { strict: true } } })",
+  "export default { server: { fs: { allow: [...unknown] } } }",
+  "const allow = [...allow]; export default { server: { fs: { allow: [...allow] } } }",
+])("keeps unknown compositions and effective safe overrides conservative: %s", async (source) => {
+  expect((await diagnose(source)).diagnostics).toEqual([]);
+});
+
+test("matches Vite deep merge overrides and allow-list concatenation", async () => {
+  const base = { server: { fs: { strict: false, allow: ["/"] } } };
+  const override = { server: { fs: { strict: true, allow: ["./src"] } } };
+  const merged = mergeConfig(base, override);
+  expect(merged.server.fs).toEqual({ strict: true, allow: ["/", "./src"] });
+  const source = `import { mergeConfig } from 'vite'; export default mergeConfig({ server: { fs: { strict: false, allow: ['/'] } } }, { server: { fs: { strict: true, allow: ['./src'] } } })`;
+  const result = await diagnose(source);
+  expect(result.diagnostics.map(({ code }) => code)).toEqual(["VITE0016"]);
+  expect(source.slice(result.diagnostics[0]!.range!.start, result.diagnostics[0]!.range!.end)).toBe(
+    "'/'",
+  );
+});
+
+test("reports spread entries at their original ranges while ignoring unknown contents", async () => {
+  const source = `const broad = ['/', '/home/alice']; const allow = [...broad]; export default { server: { fs: { allow: [...unknown, ...allow, '../', ...unknown] } } }`;
+  const result = await diagnose(source);
+  expect(result.diagnostics.map(({ code }) => code)).toEqual(["VITE0016", "VITE0016", "VITE0016"]);
+  expect(result.diagnostics.map(({ range }) => source.slice(range!.start, range!.end))).toEqual([
+    "'/'",
+    "'/home/alice'",
+    "'../'",
   ]);
 });
