@@ -25,8 +25,8 @@ export const noNonSerializableUseState = createRule({
             "nuxt/state/no-nonserializable-usestate",
             "error",
             "hydration",
-            "useState() is serialized between server and client. Do not store functions, sockets, classes, Map/Set, or other non-serializable values.",
-            "Store only JSON-serializable values in useState(), or keep live objects outside payload state.",
+            "useState() is serialized between server and client. Keep functions, live sockets, and other unsupported values out of payload state.",
+            "Store values supported by Nuxt's payload serializer, or keep live objects outside payload state.",
           );
         }
       },
@@ -54,7 +54,5 @@ function initializerReturnsNonSerializableValue(body: AnyNode, source: string): 
 
 function expressionTextHasNonSerializableValue(node: AnyNode, source: string): boolean {
   const text = source.slice(node.start, node.end);
-  return /new\s+(?:WebSocket|Map|Set|Date|RegExp)\b|function\s*\(|=>\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(
-    text,
-  );
+  return /new\s+WebSocket\b|function\s*\(|=>\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(text);
 }

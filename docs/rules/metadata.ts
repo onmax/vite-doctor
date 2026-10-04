@@ -1120,11 +1120,10 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "nuxt/state/no-nonserializable-usestate": {
-    description:
-      "Flags nonserializable usestate in Nuxt state code before it leaks into runtime behavior.",
-    why: "Nuxt transfers useState() values through the SSR payload, so functions, class instances, DOM objects, and other non-serializable values cannot hydrate reliably.",
+    description: "Report unsupported live values stored in Nuxt payload state.",
+    why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",
     recommendedReplacement:
-      "Remove nonserializable usestate, or move it to the Nuxt runtime/API that owns that behavior.",
+      "Use values supported by Nuxt's payload serializer, or keep live resources outside payload state.",
     examples: [
       {
         title: "Keep useState serializable",
