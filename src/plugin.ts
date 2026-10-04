@@ -85,6 +85,7 @@ function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
             base: config.base,
             publicDir: config.publicDir,
             envDir: config.envDir,
+            aliases: config.resolve?.alias ?? [],
             plugins: config.plugins?.map((plugin) => plugin.name).filter(Boolean) ?? [],
           };
         },

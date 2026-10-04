@@ -97,7 +97,7 @@ const assetAttributes: Record<string, string[]> = {
 export const noDynamicNewUrl = createRule({
   meta: {
     id: "vite/assets/no-dynamic-new-url",
-    title: "Keep new URL asset paths static",
+    title: "Keep new URL asset paths analyzable",
     category: "assets",
     severity: "warn",
     docsUrl: "https://vite.dev/guide/assets.html#new-url-url-import-meta-url",
@@ -112,12 +112,17 @@ export const noDynamicNewUrl = createRule({
         const [first, second] = node.arguments ?? [];
         if (!second || !ctx.file.text.slice(second.start, second.end).endsWith("import.meta.url"))
           return;
-        if (staticString(first)) return;
+        if (
+          staticString(first) !== null ||
+          isAssetUrlTemplate(first) ||
+          isConfiguredAliasTemplate(first, ctx.project.inventory?.vite)
+        )
+          return;
         if (!isAssetUrlContext(node)) return;
         ctx.report(
           diagnostics.VITE0001({
             why: "Vite cannot reliably include assets from a dynamic new URL() path.",
-            fix: "Use a static string path or import.meta.glob for dynamic asset sets.",
+            fix: "Use a static path, a relative template such as ./images/${name}.png, or import.meta.glob for dynamic asset sets.",
           }),
           {
             ruleId: "vite/assets/no-dynamic-new-url",
@@ -131,6 +136,35 @@ export const noDynamicNewUrl = createRule({
     };
   },
 });
+
+function isAssetUrlTemplate(node: AnyNode): boolean {
+  return (
+    node?.type === "TemplateLiteral" && /^(?:\.{1,2}\/|\/)/.test(node.quasis?.[0]?.value?.raw ?? "")
+  );
+}
+
+function isConfiguredAliasTemplate(node: AnyNode, viteInventory: unknown): boolean {
+  if (node?.type !== "TemplateLiteral") return false;
+  const prefix = node.quasis?.[0]?.value?.raw ?? "";
+  if (!prefix || /^(?:\.{1,2}\/|\/)/.test(prefix)) return false;
+  const aliases = (viteInventory as { aliases?: unknown })?.aliases;
+  if (Array.isArray(aliases)) {
+    return aliases.some((alias) => {
+      const find = typeof alias === "string" ? alias : (alias as { find?: unknown })?.find;
+      if (typeof find === "string") return prefix === find || prefix.startsWith(`${find}/`);
+      if (find instanceof RegExp) {
+        // Stateful aliases depend on resolver call order and must not be probed here.
+        if (find.global || find.sticky) return false;
+        return find.test(prefix);
+      }
+      return false;
+    });
+  }
+  if (aliases && typeof aliases === "object") {
+    return Object.keys(aliases).some((find) => prefix === find || prefix.startsWith(`${find}/`));
+  }
+  return false;
+}
 
 function isPublicImport(ctx: RuleContext, source: string): boolean {
   const viteInventory = ctx.project.inventory?.vite;
