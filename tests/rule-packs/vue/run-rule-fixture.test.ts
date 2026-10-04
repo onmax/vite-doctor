@@ -1113,6 +1113,70 @@ test.each([
     1,
   ],
   [
+    `import { useModel } from 'vue'; const [model] = useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const [model, modifiers] = Vue.useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import { useModel as makeModel } from 'vue'; const [model = ref(0)] = makeModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    1,
+  ],
+  [
+    `import { useModel } from 'vue'; const [model, modifiers] = useModel(props, 'modelValue'); onUpdated(() => modifiers.value++)`,
+    0,
+  ],
+  [
+    `import { useModel } from 'vue'; const [...rest] = useModel(props, 'modelValue'); onUpdated(() => rest.value++)`,
+    0,
+  ],
+  [
+    `import { useModel } from 'other'; const [model] = useModel(props, 'modelValue'); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `function useModel() { return [{ value: 0 }] }; const [model] = useModel(); onUpdated(() => model.value++)`,
+    0,
+  ],
+  [
+    `import { useModel } from 'vue'; const [model] = useModel(props, 'modelValue'); onUpdated((model) => model.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs, reactive } from 'vue'; const [first] = toRefs(reactive([1])); onUpdated(() => first.value++)`,
+    1,
+  ],
+  [
+    `import * as Vue from 'vue'; const [, second] = Vue.toRefs(Vue.reactive([1, 2])); onUpdated(() => second.value++)`,
+    1,
+  ],
+  [
+    `import { toRefs as makeRefs } from 'vue'; const [first = ref(0)] = makeRefs(state); onUpdated(() => first.value++)`,
+    1,
+  ],
+  [
+    `import { toRefs } from 'vue'; const [first, ...rest] = toRefs(state); onUpdated(() => rest.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs } from 'other'; const [first] = toRefs(state); onUpdated(() => first.value++)`,
+    0,
+  ],
+  [
+    `function toRefs() { return [{ value: 0 }] }; const [first] = toRefs(); onUpdated(() => first.value++)`,
+    0,
+  ],
+  [
+    `import { toRefs } from 'vue'; const [first] = toRefs(state); onUpdated((first) => first.value++)`,
+    0,
+  ],
+  [`const [model = ref(0)] = defineModel<number>(); onUpdated(() => model.value++)`, 1],
+  [`const [, modifiers = {}] = defineModel<number>(); onUpdated(() => modifiers.value++)`, 0],
+  [`const [...rest] = defineModel<number>(); onUpdated(() => rest.value++)`, 0],
+  [`const [first] = ref([1]); onUpdated(() => first.value++)`, 0],
+  [
     `import { toRefs, reactive } from 'vue'; const { count } = toRefs(reactive({ count: 0 })); onUpdated(() => count.value++)`,
     1,
   ],
