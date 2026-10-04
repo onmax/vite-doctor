@@ -46,6 +46,16 @@ async function parseSourceFile(
   const cachedFacts = session.cache.get<FileFacts>(cacheKey);
   const isVueSfc = absolute.endsWith(".vue");
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
+  if (sfc?.errors.length) {
+    session.project.evidenceGaps = [
+      ...(session.project.evidenceGaps ?? []),
+      {
+        source: "vue-sfc-parser",
+        message: `Cannot fully parse ${file.displayPath}: ${sfc.errors.join("; ")}. Check the component syntax and parser support, then rerun Doctor.`,
+        files: [absolute],
+      },
+    ];
+  }
   const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor as any, text) : undefined;
   const scriptText = isVueSfc ? (script?.text ?? "") : text;
   const parsedScript = scriptText.trim()
@@ -104,7 +114,7 @@ async function parseOptionalSfc(
   absolute: string,
   text: string,
   hash: string,
-): Promise<SourceFileHandle["sfc"]> {
+): Promise<Awaited<ReturnType<typeof parseSfcFile>> | undefined> {
   try {
     return await parseSfcFile(absolute, text, hash);
   } catch (error) {
