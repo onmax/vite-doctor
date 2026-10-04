@@ -1,3 +1,4 @@
+import { isBuiltin } from "node:module";
 import { dirname, resolve } from "pathe";
 import { parseForESLint } from "@typescript-eslint/parser";
 import { createRule, type RuleContext } from "../../../core/index.js";
@@ -91,6 +92,7 @@ export const noNodeApiInWorker = createRule({
     let processReferences: Set<number> | undefined;
     return {
       ImportDeclaration(node: AnyNode) {
+        if (node.importKind === "type") return;
         const source = String(node.source?.value ?? "");
         if (!isNodeModule(source)) return;
         ctx.report(
@@ -179,10 +181,7 @@ function isStaticStringOrNewUrl(node: AnyNode): boolean {
 }
 
 function isNodeModule(source: string): boolean {
-  return (
-    source.startsWith("node:") ||
-    ["fs", "path", "crypto", "child_process", "worker_threads", "stream"].includes(source)
-  );
+  return source.startsWith("node:") || isBuiltin(source);
 }
 
 function isExplicitWorkerEntry(path: string): boolean {
