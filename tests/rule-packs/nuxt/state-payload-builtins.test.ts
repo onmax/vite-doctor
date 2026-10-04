@@ -28,6 +28,8 @@ test.each([
   '() => ({ socket: new WebSocket("wss://example.com") })',
   '() => new Map([["socket", new WebSocket("wss://example.com")]])',
   "() => function () {}",
+  "() => ({ handler: function named() {} })",
+  "() => ({ handler: async function named() {} })",
 ])("retains existing unsupported-value diagnostics: %s", async (initializer) => {
   const result = await runRuleFixture({
     rule: noNonSerializableUseState,

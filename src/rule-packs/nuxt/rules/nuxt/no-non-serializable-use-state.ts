@@ -54,5 +54,7 @@ function initializerReturnsNonSerializableValue(body: AnyNode, source: string): 
 
 function expressionTextHasNonSerializableValue(node: AnyNode, source: string): boolean {
   const text = source.slice(node.start, node.end);
-  return /new\s+WebSocket\b|function\s*\(|=>\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(text);
+  return /new\s+WebSocket\b|\b(?:async\s+)?function(?:\s*\*)?(?:\s+[A-Za-z_$][\w$]*)?\s*\(|=>\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(
+    text,
+  );
 }
