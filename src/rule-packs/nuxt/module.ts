@@ -36,6 +36,7 @@ type NuxtDoctorEvidence = {
   componentDirs?: unknown[];
   importDirs?: unknown[];
   autoImportContext?: NuxtAutoImportContext;
+  autoImportEntries?: unknown[];
 };
 
 async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
@@ -52,6 +53,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     componentDirs: [] as unknown[],
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
+    autoImportEntries: undefined as unknown[] | undefined,
   };
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
@@ -138,6 +140,12 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
 
   nuxt.hook?.("imports:context", (context: NuxtAutoImportContext) => {
     evidence.autoImportContext = context;
+  });
+
+  nuxt.hook?.("imports:extend", (imports: unknown[]) => {
+    evidence.autoImportEntries = imports.map((entry) =>
+      entry && typeof entry === "object" ? { ...entry } : entry,
+    );
   });
 
   nuxt.hook?.("pages:resolved", (pages: any[]) => {
@@ -228,6 +236,10 @@ export async function writeManifest(
   const resolvedAutoImports = evidence?.autoImportContext?.getImports
     ? await evidence.autoImportContext.getImports()
     : toArray(nuxt.options.imports?.imports);
+  const autoImports = mergeAutoImportEntries(
+    normalizeAutoImports(resolvedAutoImports),
+    normalizeAutoImports(evidence?.autoImportEntries ?? []),
+  );
   const layerDirectories = nuxt.options._layers ? getLayerDirectories(nuxt) : [];
   const manifest = {
     nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
@@ -241,7 +253,7 @@ export async function writeManifest(
     buildDir,
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
-    autoImports: normalizeAutoImports(resolvedAutoImports),
+    autoImports,
     components: toArray(nuxt.options.components ?? nuxt._components),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({
@@ -356,6 +368,19 @@ function normalizeAutoImports(imports: unknown[]) {
       type: entry?.type === true || undefined,
     }))
     .filter((entry) => entry.name && entry.from);
+}
+
+function mergeAutoImportEntries(
+  resolved: ReturnType<typeof normalizeAutoImports>,
+  raw: ReturnType<typeof normalizeAutoImports>,
+) {
+  if (!raw.length) return resolved;
+  const rawEntries = new Set(raw.map(autoImportIdentity));
+  return [...resolved.filter((entry) => !rawEntries.has(autoImportIdentity(entry))), ...raw];
+}
+
+function autoImportIdentity(entry: { name?: string; as?: string; from?: string; type?: boolean }) {
+  return JSON.stringify([entry.name, entry.as, entry.from, entry.type === true]);
 }
 
 function serializeImportTransform(transform: any) {

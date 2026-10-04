@@ -75,7 +75,7 @@ test("ignores repeated auto-import entries from the same source", async () => {
   expect(result.diagnostics).toEqual([]);
 });
 
-test("Nuxt imports context keeps duplicate entries in the generated manifest", async () => {
+test("Nuxt imports extend keeps duplicate entries in the generated manifest", async () => {
   const root = mkdtempSync(join(tmpdir(), "vite-doctor-nuxt-imports-"));
   const hooks = new Map<string, Array<(payload: any) => unknown>>();
   const nuxt = {
@@ -97,11 +97,13 @@ test("Nuxt imports context keeps duplicate entries in the generated manifest", a
     await nuxtDoctorModule({}, nuxt as any);
     for (const hook of hooks.get("imports:context") ?? [])
       await hook({
-        getImports: () => [
-          { name: "useShared", from: join(root, "app/composables/a.ts") },
-          { name: "useShared", from: join(root, "app/composables/b.ts") },
-        ],
+        getImports: () => [{ name: "useShared", from: join(root, "app/composables/b.ts") }],
       });
+    for (const hook of hooks.get("imports:extend") ?? [])
+      await hook([
+        { name: "useShared", from: join(root, "app/composables/a.ts") },
+        { name: "useShared", from: join(root, "app/composables/b.ts") },
+      ]);
     for (const hook of hooks.get("prepare:types") ?? []) await hook(undefined);
 
     const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
