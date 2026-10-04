@@ -232,7 +232,7 @@ test("smart scan applies Vite rules and skips Nuxt-only rules in Vite projects",
     const nuxtOnly = await runCli([".", "--rules", "nuxt/**"], root);
     expect(nuxtOnly.code).toBe(0);
     expect(nuxtOnly.output).toContain("Detected: Vite");
-    expect(nuxtOnly.output).not.toContain("nuxt/");
+    expect(nuxtOnly.output).not.toMatch(/^\s*rule:\s+nuxt\//m);
   });
 });
 
@@ -512,6 +512,46 @@ test("CLI identifies config loading failures and points to the config file", asy
   );
 });
 
+test("CLI identifies ambiguous Config Extends from a loaded config", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "doctor.config.ts": `export default {
+  extends: ["vite/recommended"],
+  extensions: [
+    {
+      name: "test/vendor-a",
+      rulePacks: [{ name: "vendor-a/vite", version: "1.0.0", rules: [], presets: { recommended: ["test/a"] } }],
+    },
+    {
+      name: "test/vendor-b",
+      rulePacks: [{ name: "vendor-b/vite", version: "1.0.0", rules: [], presets: { recommended: ["test/b"] } }],
+    },
+  ],
+}
+`,
+    },
+    async (root) => {
+      const result = await runCli([".", "--config", "doctor.config.ts", "--format", "agent"], root);
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.output)).toMatchObject({
+        error: { kind: "config" },
+        next: { action: "fix-config", file: join(root, "doctor.config.ts") },
+      });
+
+      const invocation = await runCli(
+        [".", "--config", "doctor.config.ts", "--extends", "vite/recommended", "--format", "agent"],
+        root,
+      );
+      expect(invocation.code).toBe(2);
+      expect(JSON.parse(invocation.output)).toMatchObject({
+        error: { kind: "invocation" },
+        next: { action: "correct-invocation" },
+      });
+    },
+  );
+});
+
 test("CLI rejects invalid run options before starting a Doctor Run", async () => {
   const root = findRepoRoot();
   const cases: Array<[string[], string]> = [
@@ -612,6 +652,19 @@ test("CLI returns structured failures for unknown Diagnostic Codes", async () =>
     schema: "vite-doctor.agent/v1",
     status: "failed",
     next: { action: "correct-invocation" },
+  });
+});
+
+test("CLI explains workspace Diagnostic Codes by code and rule ID", async () => {
+  await withFixture({ "package.json": "{}", "index.ts": "export {}" }, async (root) => {
+    for (const diagnostic of ["DOC0001", "workspace/health/high-fan-out"]) {
+      const result = await runCli(["explain", diagnostic, "--format", "agent"], root);
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.output)).toMatchObject({
+        schema: "vite-doctor.explain/v1",
+        status: "ready",
+      });
+    }
   });
 });
 

@@ -34,7 +34,7 @@ export const preferNuxtLink = createRule({
             category: "routing",
             file: ctx.file.path,
             range: ctx.range(node),
-            fix: staticNuxtLinkFix(ctx.file.text, node),
+            fix: staticNuxtLinkFix(ctx.file.text, node, href),
           },
         );
       },
@@ -60,15 +60,22 @@ function isInternalNavigationHref(value: string) {
   );
 }
 
-function staticNuxtLinkFix(text: string, node: AnyNode) {
+function staticNuxtLinkFix(text: string, node: AnyNode, href: AnyNode) {
   const start = node.start ?? node.range?.[0];
   const end = node.end ?? node.range?.[1];
-  if (typeof start !== "number" || typeof end !== "number") return null;
+  const hrefStart = href?.key?.start ?? href?.key?.range?.[0];
+  const hrefEnd = href?.key?.end ?? href?.key?.range?.[1];
+  if (
+    typeof start !== "number" ||
+    typeof end !== "number" ||
+    typeof hrefStart !== "number" ||
+    typeof hrefEnd !== "number"
+  )
+    return null;
 
   const snippet = text.slice(start, end);
-  const replacement = snippet
+  const replacement = `${text.slice(start, hrefStart)}to${text.slice(hrefEnd, end)}`
     .replace(/^<a\b/, "<NuxtLink")
-    .replace(/(\s)href(\s*=)/, "$1to$2")
     .replace(/<\/a\s*>$/, "</NuxtLink>");
 
   if (replacement === snippet) return null;

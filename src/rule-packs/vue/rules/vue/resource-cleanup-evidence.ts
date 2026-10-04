@@ -301,11 +301,13 @@ function createResourceEvidence(ctx: RuleContext) {
     );
   }
 
-  function callback(expression: AnyNode): AnyNode {
+  function callback(expression: AnyNode, seen = new Set<AnyNode>()): AnyNode {
     const node = unwrap(expression);
     if (isFunction(node)) return node;
     if (node?.type !== "Identifier") return undefined;
     const variable = bindings.get(node);
+    if (!variable || seen.has(variable)) return undefined;
+    seen.add(variable);
     for (const definition of variable?.defs ?? []) {
       const init = definition.type === "Variable" ? definition.node.init : undefined;
       if (
@@ -318,8 +320,7 @@ function createResourceEvidence(ctx: RuleContext) {
       )
         return undefined;
       if (definition.type === "FunctionName") return definition.node;
-      if (definition.type === "Variable" && isFunction(unwrap(definition.node.init)))
-        return unwrap(definition.node.init);
+      if (definition.type === "Variable") return callback(init, seen);
     }
   }
 
@@ -431,12 +432,18 @@ function createResourceEvidence(ctx: RuleContext) {
   }
 
   function discardedCallbackReturn(functionNode: AnyNode): boolean {
-    const call = parents.get(functionNode);
-    if (call?.type !== "CallExpression" || !call.arguments.includes(functionNode)) return false;
-    const api = vueApi(call.callee);
-    if (api && WATCHERS.has(api)) return true;
-    const callee = unwrap(call.callee);
-    return callee?.type === "MemberExpression" && memberName(callee) === "forEach";
+    return nodes.some((node) => {
+      if (node.type !== "CallExpression") return false;
+      const api = vueApi(node.callee);
+      const callbackArgument = api === "watch" ? node.arguments[1] : node.arguments[0];
+      if (api && WATCHERS.has(api) && callback(callbackArgument) === functionNode) return true;
+      const callee = unwrap(node.callee);
+      return (
+        callee?.type === "MemberExpression" &&
+        memberName(callee) === "forEach" &&
+        callback(node.arguments[0]) === functionNode
+      );
+    });
   }
 
   function cleans(resource: Resource): boolean {
