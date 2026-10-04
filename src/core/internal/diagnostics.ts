@@ -67,7 +67,8 @@ export function applyReportEligibility(session: ScanSession): void {
     const locations = [diagnostic, ...(diagnostic.related ?? [])];
     return locations.some((location) => {
       const fileEligibility = eligibility.get(location.file);
-      if (!fileEligibility || !location.range) return false;
+      if (!fileEligibility) return false;
+      if (!location.range) return diagnostic.range === undefined;
       const endLine = diagnosticEndLine(location.range, sources.get(location.file));
       return fileEligibility.ranges.some(
         (range) => location.range!.line <= range.endLine && endLine >= range.startLine,

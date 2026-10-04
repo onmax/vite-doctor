@@ -32,7 +32,7 @@ pnpm dlx vite-doctor . --rules nuxt/fetch/no-raw-fetch-in-setup
 pnpm dlx vite-doctor . --framework nitro
 ```
 
-`--changed` analyzes complete changed files for framework context, then reports only Diagnostics owned by staged, unstaged, or untracked lines:
+`--changed` analyzes complete changed files for framework context, then reports Diagnostics owned by staged, unstaged, or untracked lines. Diagnostics without a source range are included when their file is selected as changed:
 
 ```bash
 pnpm dlx vite-doctor . --changed
