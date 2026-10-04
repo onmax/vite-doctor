@@ -3,6 +3,9 @@ import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
 
+const NUXT_IMAGE_TAGS = new Set(["NuxtImg", "nuxt-img", "NuxtPicture", "nuxt-picture"]);
+const NUXT_IMG_TAGS = new Set(["NuxtImg", "nuxt-img"]);
+
 export const preferNuxtImg = createRule({
   meta: {
     id: "nuxt-image/prefer-nuxtimg",
@@ -48,7 +51,10 @@ export const requireImageAlt = createRule({
   create(ctx) {
     return {
       TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || !["NuxtImg", "NuxtPicture", "img"].includes(node.rawName))
+        if (
+          node.type !== "VElement" ||
+          (node.rawName !== "img" && !NUXT_IMAGE_TAGS.has(node.rawName))
+        )
           return;
         if (
           ctx.helpers.hasVueAttribute(node, "alt") ||
@@ -86,12 +92,12 @@ export const preferResponsiveDimensions = createRule({
   create(ctx) {
     return {
       TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || !["NuxtImg", "NuxtPicture"].includes(node.rawName)) return;
-        const hasSizing =
-          ctx.helpers.hasVueAttribute(node, "width") ||
-          ctx.helpers.hasVueAttribute(node, "height") ||
-          ctx.helpers.hasVueAttribute(node, "sizes") ||
-          ctx.helpers.hasVueDirective(node, "bind", "sizes");
+        if (node.type !== "VElement" || !NUXT_IMAGE_TAGS.has(node.rawName)) return;
+        const hasSizing = ["width", "height", "sizes"].some(
+          (name) =>
+            ctx.helpers.hasVueAttribute(node, name) ||
+            ctx.helpers.hasVueDirective(node, "bind", name),
+        );
         if (hasSizing) return;
         ctx.helpers.report(
           ctx,
@@ -124,7 +130,7 @@ export const preferNuxtPictureForFormats = createRule({
   create(ctx) {
     return {
       TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || node.rawName !== "NuxtImg") return;
+        if (node.type !== "VElement" || !NUXT_IMG_TAGS.has(node.rawName)) return;
         const format = ctx.helpers.getStaticVueAttributeValue(node, "format");
         if (!format || !/(webp|avif)/i.test(format)) return;
         ctx.helpers.report(
