@@ -16,6 +16,7 @@ import type {
   Diagnostic,
   DoctorRunResult,
   DoctorSeverity,
+  FixEdit,
   ProjectInfo,
   SourceFileHandle,
   WorkspaceGraph,
@@ -424,8 +425,6 @@ function isPathInside(root: string, path: string): boolean {
   return relativePath !== ".." && !relativePath.startsWith("../") && !isAbsolute(relativePath);
 }
 
-type FixEdit = NonNullable<Diagnostic["fix"]>["edits"][number];
-
 function uniqueFixEdits(items: Diagnostic[]): unknown[] {
   const edits = new Map<string, FixEdit>();
   const malformed: unknown[] = [];
@@ -474,10 +473,7 @@ function hasFixEditShape(edit: unknown): edit is FixEdit {
 
 function isValidEdit(edit: unknown, sourceLength: number): edit is FixEdit {
   if (!hasFixEditShape(edit)) return false;
-  const { range } = edit;
-  return (
-    range.end <= sourceLength
-  );
+  return edit.range.end <= sourceLength;
 }
 
 function readFileSyncIfExists(file: string): string | null {
