@@ -658,6 +658,11 @@ export function defineRulePack(pack: RulePack): RulePack {
 }
 
 export function defineDoctorExtension(extension: DoctorExtension): DoctorExtension {
-  for (const pack of extension.rulePacks ?? []) defineRulePack(pack);
+  const names = new Set<string>();
+  for (const pack of extension.rulePacks ?? []) {
+    defineRulePack(pack);
+    if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
+    names.add(pack.name);
+  }
   return extension;
 }
