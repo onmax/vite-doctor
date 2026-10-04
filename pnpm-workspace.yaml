@@ -82,6 +82,7 @@ overrides:
   "brace-expansion@>=5.0.0 <5.0.12": 5.0.12
   cac: "catalog:prod"
   h3: 1.15.11
+  "nanoid@>=3.0.0 <3.3.18": "3.3.18"
   vite: "catalog:build"
   vue: "catalog:frontend"
 peerDependencyRules:
