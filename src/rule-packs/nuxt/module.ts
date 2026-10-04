@@ -389,8 +389,14 @@ function autoImportKey(entry: { name?: string; as?: string }) {
   return entry.as ?? entry.name;
 }
 
-function autoImportIdentity(entry: { name?: string; as?: string; from?: string; type?: boolean }) {
-  return JSON.stringify([entry.name, entry.as, entry.from, entry.type === true]);
+function autoImportIdentity(entry: {
+  name?: string;
+  as?: string;
+  from?: string;
+  type?: boolean;
+  priority?: number;
+}) {
+  return JSON.stringify([entry.name, entry.as, entry.from, entry.type === true, entry.priority]);
 }
 
 function serializeImportTransform(transform: any) {
