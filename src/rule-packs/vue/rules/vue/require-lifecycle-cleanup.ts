@@ -1,6 +1,6 @@
+import type { SFCDescriptor } from "@vue/compiler-sfc";
 import { parseForESLint } from "@typescript-eslint/parser";
 import type { RuleContext } from "../../../../core/index.js";
-import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
 import { AnyNode, createRule, report, walkScriptLocal } from "./shared.js";
 
 const RESOURCE_CALLS = new Set(["setInterval", "addEventListener"]);
@@ -71,27 +71,48 @@ function createsBrowserResource(ctx: RuleContext, program: AnyNode): boolean {
     }
   });
   if (!candidates.length) return false;
-  const parsedVueScript = ctx.file.sfc
-    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
-    : undefined;
-  const source = parsedVueScript?.text ?? ctx.file.text;
-  let globalReferences: Set<number>;
-  try {
-    const { scopeManager } = parseForESLint(source, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: {
-        jsx:
-          parsedVueScript?.lang === "jsx" ||
-          parsedVueScript?.lang === "tsx" ||
-          /\.[jt]sx$/.test(ctx.file.relativePath),
-      },
-    });
-    globalReferences = new Set(
-      scopeManager.globalScope?.through.map((reference) => reference.identifier.range[0]),
-    );
-  } catch {
-    return false;
+  const descriptor = ctx.file.sfc?.descriptor as SFCDescriptor | undefined;
+  const blocks = descriptor
+    ? [descriptor.script, descriptor.scriptSetup]
+        .filter((block) => block !== null)
+        .map((block) => ({
+          text: block.content,
+          offset: block.loc.start.offset,
+          jsx: block.lang === "jsx" || block.lang === "tsx",
+          setup: block === descriptor.scriptSetup,
+        }))
+    : [
+        {
+          text: ctx.file.text,
+          offset: 0,
+          jsx: /\.[jt]sx$/.test(ctx.file.relativePath),
+          setup: false,
+        },
+      ];
+  const globalReferences = new Set<number>();
+  const moduleBindings = new Set<string>();
+  for (const block of blocks) {
+    try {
+      const { scopeManager } = parseForESLint(block.text, {
+        range: true,
+        sourceType: "module",
+        ecmaFeatures: { jsx: block.jsx },
+      });
+      for (const reference of scopeManager.globalScope?.through ?? []) {
+        if (block.setup && moduleBindings.has(reference.identifier.name)) continue;
+        globalReferences.add(block.offset + reference.identifier.range[0]);
+      }
+      if (!block.setup) {
+        for (const scope of scopeManager.scopes) {
+          if (scope.type !== "module") continue;
+          for (const variable of scope.variables) {
+            if (variable.isValueVariable) moduleBindings.add(variable.name);
+          }
+        }
+      }
+    } catch {
+      continue;
+    }
   }
   return candidates.some((position) => globalReferences.has(position));
 }
