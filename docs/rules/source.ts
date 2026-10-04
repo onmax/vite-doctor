@@ -392,12 +392,12 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
     const pack = readPackName(ast) ?? defaultPack;
     const source = relative(root, file);
     const metaRules = findMetaObjects(ast, visitorKeys)
-      .map((meta) => {
+      .map(({ meta, id }) => {
         const rule = {
           pack,
           source,
           framework,
-          id: readString(meta, "id"),
+          id,
           title: readString(meta, "title"),
           description: readString(meta, "description"),
           why: readString(meta, "why"),
@@ -690,15 +690,46 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   return [...links.values()];
 }
 
-function findMetaObjects(ast: any, visitorKeys: typeof import("oxc-parser").visitorKeys) {
-  const metas: any[] = [];
-  walk(ast, visitorKeys, (node) => {
+export function findMetaObjects(ast: any, visitorKeys: typeof import("oxc-parser").visitorKeys) {
+  const constants = new Map<string, string>();
+  for (const statement of ast.body ?? []) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") continue;
+    for (const entry of declaration.declarations) {
+      if (entry.id?.type === "Identifier" && typeof entry.init?.value === "string")
+        constants.set(entry.id.name, entry.init.value);
+    }
+  }
+  const metas: Array<{ meta: any; id: string }> = [];
+  walk(ast, visitorKeys, (node, ancestors) => {
     if (node.type !== "Property" || propertyName(node) !== "meta") return;
     if (node.value?.type !== "ObjectExpression") return;
-    if (!readString(node.value, "id")) return;
-    metas.push(node.value);
+    let id = readString(node.value, "id");
+    const value = findProperty(node.value, "id")?.value;
+    if (!id && value?.type === "Identifier" && !ancestors.some(isLocalScope))
+      id = constants.get(value.name) ?? "";
+    if (id) metas.push({ meta: node.value, id });
   });
   return metas;
+}
+
+function isLocalScope(node: any) {
+  return [
+    "BlockStatement",
+    "CatchClause",
+    "ForInStatement",
+    "ForOfStatement",
+    "ForStatement",
+    "FunctionDeclaration",
+    "FunctionExpression",
+    "ArrowFunctionExpression",
+    "ClassDeclaration",
+    "ClassExpression",
+    "StaticBlock",
+    "SwitchCase",
+    "SwitchStatement",
+  ].includes(node.type);
 }
 
 function findValidatedInputRuleOptions(
@@ -811,17 +842,19 @@ function propertyName(property: any) {
 function walk(
   node: any,
   visitorKeys: typeof import("oxc-parser").visitorKeys,
-  visit: (node: any) => void,
+  visit: (node: any, ancestors: any[]) => void,
+  ancestors: any[] = [],
 ) {
   if (!node || typeof node !== "object") return;
-  visit(node);
+  visit(node, ancestors);
   const keys = visitorKeys[node.type as keyof typeof visitorKeys] ?? [];
+  const nextAncestors = [...ancestors, node];
   for (const key of keys) {
     const value = node[key];
     if (Array.isArray(value)) {
-      for (const child of value) walk(child, visitorKeys, visit);
+      for (const child of value) walk(child, visitorKeys, visit, nextAncestors);
     } else {
-      walk(value, visitorKeys, visit);
+      walk(value, visitorKeys, visit, nextAncestors);
     }
   }
 }

@@ -8,13 +8,23 @@ import type {
   DoctorRunResult,
   RulePack,
 } from "./primitives.js";
-import { allDiagnosticCodesByRuleId } from "./diagnostic-code-map.js";
+import {
+  allDiagnosticCodeListsByRuleId,
+  allDiagnosticCodesByRuleId,
+} from "./diagnostic-code-map.js";
 import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
 import {
   workspaceDiagnosticMetadataByCode,
   workspaceDiagnosticMetadataByRuleId,
 } from "./diagnostic-metadata.js";
+import type { DoctorRunOptions } from "./config.js";
+
+export interface DoctorReportContext {
+  runOptions?: Readonly<DoctorRunOptions>;
+  /** Executable configuration explicitly selected by the CLI caller. */
+  configFile?: string;
+}
 
 export function createTextReport(result: DoctorRunResult): string {
   const lines: string[] = [];
@@ -142,7 +152,10 @@ export function createJsonReport(result: DoctorRunResult): string {
   )}\n`;
 }
 
-export function createAgentReport(result: DoctorRunResult): string {
+export function createAgentReport(
+  result: DoctorRunResult,
+  context: DoctorReportContext = {},
+): string {
   const status = reportStatus(result);
   const commandArgs = {
     explain: [
@@ -151,11 +164,12 @@ export function createAgentReport(result: DoctorRunResult): string {
       "<code>",
       "--framework",
       result.framework,
+      ...(context.configFile ? ["--config", context.configFile] : []),
       "--format",
       "agent",
     ],
-    verify: agentRunArguments(result, true),
-    rerun: agentRunArguments(result),
+    verify: agentRunArguments(result, context, true),
+    rerun: agentRunArguments(result, context),
   };
   return `${JSON.stringify({
     schema: "vite-doctor.agent/v1",
@@ -194,6 +208,8 @@ export function createAgentReport(result: DoctorRunResult): string {
 }
 
 export function createSarifReport(result: DoctorRunResult): string {
+  const status = reportStatus(result);
+  const gaps = result.project.evidenceGaps;
   const ruleId = (diagnostic: Diagnostic) => `${diagnostic.ruleId}:${diagnostic.code}`;
   const rules = new Map<string, Diagnostic>();
   for (const diagnostic of result.diagnostics) rules.set(ruleId(diagnostic), diagnostic);
@@ -203,6 +219,29 @@ export function createSarifReport(result: DoctorRunResult): string {
       $schema: "https://json.schemastore.org/sarif-2.1.0.json",
       runs: [
         {
+          properties: { status },
+          invocations: [
+            {
+              executionSuccessful: status !== "incomplete",
+              toolExecutionNotifications:
+                status === "incomplete"
+                  ? gaps?.length
+                    ? gaps.map((gap) => ({
+                        level: "error",
+                        message: { text: gap.message },
+                        properties: { source: gap.source, files: gap.files },
+                      }))
+                    : [
+                        {
+                          level: "error",
+                          message: {
+                            text: "Install project dependencies and run Doctor from the target package before relying on version-specific results.",
+                          },
+                        },
+                      ]
+                  : undefined,
+            },
+          ],
           columnKind: "utf16CodeUnits",
           tool: {
             driver: {
@@ -268,10 +307,14 @@ export function createSarifReport(result: DoctorRunResult): string {
   )}\n`;
 }
 
-export function createReport(result: DoctorRunResult, format: DoctorReportFormat = "text"): string {
+export function createReport(
+  result: DoctorRunResult,
+  format: DoctorReportFormat = "text",
+  context: DoctorReportContext = {},
+): string {
   if (format === "json") return createJsonReport(result);
   if (format === "sarif") return createSarifReport(result);
-  if (format === "agent") return createAgentReport(result);
+  if (format === "agent") return createAgentReport(result, context);
   return `${createTextReport(result)}\n`;
 }
 
@@ -357,10 +400,16 @@ export function explainRule(
     );
   }
   const diagnosticCodes = match.rule.meta.diagnosticCodes ?? codeListForRule(match.rule.meta.id);
+  const documentedCodes =
+    (allDiagnosticCodeListsByRuleId as Record<string, readonly string[]>)[match.rule.meta.id] ?? [];
+  const diagnostics = diagnosticCodes.map((code) => ({
+    code,
+    docs: documentedCodes.includes(code) ? diagnosticReferenceUrl(code) : undefined,
+  }));
   const payload = {
     pack: match.pack,
     diagnosticCodes,
-    diagnostics: diagnosticCodes.map((code) => ({ code, docs: diagnosticReferenceUrl(code) })),
+    diagnostics,
     ...match.rule.meta,
   };
   if (format === "json") return `${JSON.stringify(payload, null, 2)}\n`;
@@ -376,7 +425,8 @@ export function explainRule(
       meta.why ? `Why: ${meta.why}` : undefined,
       meta.recommendedReplacement ? `Prefer: ${meta.recommendedReplacement}` : undefined,
       `Diagnostics: ${diagnosticCodes.join(", ")}`,
-      ...diagnosticCodes.map((code) => `Docs: ${diagnosticReferenceUrl(code)}`),
+      ...diagnostics.flatMap((diagnostic) => (diagnostic.docs ? [`Docs: ${diagnostic.docs}`] : [])),
+      meta.docsUrl ? `Reference: ${meta.docsUrl}` : undefined,
     ]
       .filter(Boolean)
       .join("\n") + "\n"
@@ -479,7 +529,11 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
   };
 }
 
-function agentRunArguments(result: DoctorRunResult, focused = false): string[] {
+function agentRunArguments(
+  result: DoctorRunResult,
+  context: DoctorReportContext,
+  focused = false,
+): string[] {
   const args = ["vite-doctor", ".", "--framework", result.framework];
   if (result.scope.mode === "changed") {
     if (result.scope.base) args.push("--since", result.scope.base);
@@ -487,7 +541,21 @@ function agentRunArguments(result: DoctorRunResult, focused = false): string[] {
   }
   if (Array.isArray(result.extends) && result.extends.length)
     args.push("--extends", result.extends.join(","));
+  const options = context.runOptions;
+  if (context.configFile) args.push("--config", context.configFile);
   if (focused) args.push("--rules", "<rule>");
+  else if (options?.rules) args.push("--rules", options.rules);
+  for (const [flag, value] of [
+    ["--severity", options?.severity],
+    ["--analyses", options?.analyses],
+    ["--baseline", options?.baseline],
+    ["--max-warnings", options?.maxWarnings],
+  ] as const) {
+    if (value !== undefined) args.push(flag, String(value));
+  }
+  if (options?.newOnly) args.push("--new-only");
+  if (options?.profile) args.push("--profile");
+  if (options?.cache !== undefined) args.push(options.cache ? "--cache" : "--no-cache");
   args.push("--format", "agent");
   return args;
 }
