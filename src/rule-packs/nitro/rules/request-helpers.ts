@@ -1,3 +1,4 @@
+import { parseForESLint } from "@typescript-eslint/parser";
 import {
   type AnyNode,
   createRule,
@@ -50,13 +51,16 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
     },
     create(ctx) {
       if (!isNitroServerFile(ctx)) return;
+      let bindings: Map<number, Set<number>> | undefined;
       return {
         ScriptNode(node: AnyNode) {
+          if (!rawInputVariable(node, opts.rawUtilities)) return;
           const match = rawInputValidatedNearby(
             ctx,
             node,
             opts.rawUtilities,
             opts.validatedUtility,
+            (bindings ??= variableReferences(ctx.file.text, ctx.file.relativePath)),
           );
           if (!match) return;
           report(ctx, match.node, opts.id, "warn", "request", opts.message, opts.suggestion);
@@ -71,13 +75,16 @@ export function rawInputValidatedNearby(
   node: AnyNode,
   rawUtilities: string[],
   validatedUtility: string,
+  bindings: Map<number, Set<number>>,
 ): RawInputMatch | null {
   const variable = rawInputVariable(node, rawUtilities);
   if (!variable) return null;
   const scope = nearestFunctionOrProgram(node);
+  const references = bindings.get(node.id.start);
   if (
     !scope ||
-    !hasValidationOfVariable(scope.body ?? scope, variable, ctx.file.text, node.start ?? 0)
+    !references ||
+    !hasValidationOfVariable(scope, references, ctx.file.text, node.start ?? 0)
   )
     return null;
   return {
@@ -192,32 +199,69 @@ function rawUtilityNameFromVariableDeclarator(node: AnyNode) {
   return calleeName(unwrapAwait(node.init)) ?? "";
 }
 
-function hasValidationOfVariable(scope: AnyNode, variable: string, source: string, after: number) {
+function variableReferences(source: string, path: string): Map<number, Set<number>> {
+  const result = new Map<number, Set<number>>();
+  try {
+    const { scopeManager } = parseForESLint(source, {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: { jsx: /\.[jt]sx$/.test(path) },
+    });
+    for (const scope of scopeManager.scopes) {
+      for (const variable of scope.variables) {
+        const references = new Set(
+          variable.references
+            .filter(
+              (reference) =>
+                reference.isRead() && reference.from.variableScope === variable.scope.variableScope,
+            )
+            .map((reference) => reference.identifier.range[0]),
+        );
+        for (const definition of variable.defs) {
+          if (definition.type === "Variable" && definition.node.id.type === "Identifier")
+            result.set(definition.node.id.range[0], references);
+        }
+      }
+    }
+  } catch {
+    return result;
+  }
+  return result;
+}
+
+function hasValidationOfVariable(
+  scope: AnyNode,
+  references: Set<number>,
+  source: string,
+  after: number,
+) {
   let found = false;
-  walkScriptLocal(scope, (node) => {
+  walkScriptLocal(scope.body ?? scope, (node) => {
     if (found || node.type !== "CallExpression") return;
     if (typeof node.start === "number" && node.start <= after) return;
     if (
-      isDirectValidatorCall(node, variable) ||
-      isSchemaMethodValidatorCall(node, variable, source)
+      isDirectValidatorCall(node, references) ||
+      isSchemaMethodValidatorCall(node, references, source)
     )
       found = true;
   });
   return found;
 }
 
-function isDirectValidatorCall(node: AnyNode, variable: string) {
+function isDirectValidatorCall(node: AnyNode, references: Set<number>) {
   const name = calleeName(node);
   return (
     Boolean(name && /^(validate|validator|parse|safeParse|assert|check)\w*$/i.test(name)) &&
-    node.arguments?.some((arg: AnyNode) => arg.type === "Identifier" && arg.name === variable)
+    node.arguments?.some((arg: AnyNode) => arg.type === "Identifier" && references.has(arg.start))
   );
 }
 
-function isSchemaMethodValidatorCall(node: AnyNode, variable: string, source: string) {
+function isSchemaMethodValidatorCall(node: AnyNode, references: Set<number>, source: string) {
   const name = calleeName(node);
   if (name !== "parse" && name !== "safeParse" && name !== "validate") return false;
-  if (!node.arguments?.some((arg: AnyNode) => arg.type === "Identifier" && arg.name === variable))
+  if (
+    !node.arguments?.some((arg: AnyNode) => arg.type === "Identifier" && references.has(arg.start))
+  )
     return false;
   const callee = sourceForNode(node.callee, source);
   return /\b(?:schema|validator|body|query|params|input|payload|zod|valibot|v|s)\w*\.(?:parse|safeParse|validate)$/.test(
