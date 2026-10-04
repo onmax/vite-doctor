@@ -1220,9 +1220,8 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "vite/assets/no-public-src-import": {
-    description:
-      "Flags public media and font imports in Vite code before they bypass the intended public URL contract.",
-    why: "Files in public are copied as-is and served from the root URL. Import image, font, and media assets from source when they need bundling, or reference public assets by URL when they should stay static. Static JSON data imports are allowed because SSR pages may need build-time data instead of a runtime fetch.",
+    description: "Flags media and font imports from the project's root public directory.",
+    why: "Files in public are copied as-is and served from the root URL. Import image, font, and media assets from source when they need bundling, or reference public assets by URL when they should stay static. Dependency subpaths and source folders named public are not the project public directory. This rule resolves relative paths and standard Nuxt aliases against Project Inventory and uses the resolved publicDir supplied by the Vite Plugin Surface, including disabled directories. Without that inventory it assumes the default root public directory; custom Vite aliases and executable config settings are not inferred. Static JSON data imports are allowed because SSR pages may need build-time data instead of a runtime fetch.",
     recommendedReplacement:
       "Reference public media and font assets by root-relative URL, or move bundled assets into source.",
     examples: [
@@ -1885,10 +1884,10 @@ export const ruleDocumentationMetadata = {
   },
   "vue/watch/require-post-flush-for-dom-read": {
     description:
-      "Checks that Vue watch code includes the post flush for DOM read needed for predictable behavior.",
-    why: "Effects that outlive their component create leaks and stale updates. Register cleanup where Vue or VueUse can dispose it automatically.",
+      "Report watcher callbacks that read DOM state before Vue has flushed the component update.",
+    why: "Default watchers run before their owner's DOM update. Layout measurements can therefore reflect the previous render.",
     recommendedReplacement:
-      "Add post flush for DOM read where Vue expects it, close to the code that depends on it.",
+      "Use { flush: 'post' }, watchPostEffect(), or await nextTick() before reading DOM state.",
     examples: [
       {
         title: "Use post-flush DOM reads",

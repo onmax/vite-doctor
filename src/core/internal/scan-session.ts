@@ -308,6 +308,11 @@ async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
     ...extensions.flatMap((extension) => extension.rulePacks ?? []),
     ...registeredPacks,
   ].map((pack) => defineRulePack(pack));
+  const names = new Set<string>();
+  for (const pack of packs) {
+    if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
+    names.add(pack.name);
+  }
   return {
     packs,
     rules: packs.flatMap((pack) => pack.rules),
