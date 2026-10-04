@@ -538,6 +538,16 @@ test("CLI identifies ambiguous Config Extends from a loaded config", async () =>
         error: { kind: "config" },
         next: { action: "fix-config", file: join(root, "doctor.config.ts") },
       });
+
+      const invocation = await runCli(
+        [".", "--config", "doctor.config.ts", "--extends", "vite/recommended", "--format", "agent"],
+        root,
+      );
+      expect(invocation.code).toBe(2);
+      expect(JSON.parse(invocation.output)).toMatchObject({
+        error: { kind: "invocation" },
+        next: { action: "correct-invocation" },
+      });
     },
   );
 });
