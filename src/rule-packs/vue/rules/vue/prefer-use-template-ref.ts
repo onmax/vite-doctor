@@ -12,18 +12,16 @@ export const preferUseTemplateRef = createRule({
   },
   create(ctx) {
     const refs = new Set<string>();
+    const collectRefs = (node: AnyNode) => {
+      if (!node) return;
+      if (node.type === "VElement") {
+        const ref = ctx.helpers.getStaticVueAttributeValue(node, "ref");
+        if (ref) refs.add(ref);
+      }
+      for (const child of node.children ?? []) collectRefs(child);
+    };
+    collectRefs(ctx.file.templateAst);
     return {
-      SFC(sfc) {
-        for (const match of sfc.source.matchAll(/\bref=["']([^"']+)["']/g)) {
-          refs.add(match[1]);
-        }
-      },
-      TemplateNode(node: AnyNode) {
-        if (node.type === "VElement") {
-          const ref = ctx.helpers.getStaticVueAttributeValue(node, "ref");
-          if (ref) refs.add(ref);
-        }
-      },
       ScriptNode(node: AnyNode) {
         if (
           node.type === "VariableDeclarator" &&
