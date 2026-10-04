@@ -58,7 +58,9 @@ function usesRouteObject(source: string): boolean {
       if (node.type === "ConditionalExpression")
         return returnsParameter(node.consequent) || returnsParameter(node.alternate);
       if (node.type === "LogicalExpression")
-        return returnsParameter(node.left) || returnsParameter(node.right);
+        return (
+          (node.operator !== "&&" && returnsParameter(node.left)) || returnsParameter(node.right)
+        );
       if (node.type === "SequenceExpression") return returnsParameter(node.expressions.at(-1));
       if (["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression"].includes(node.type))
         return returnsParameter(node.expression);
