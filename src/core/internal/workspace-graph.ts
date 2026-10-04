@@ -277,7 +277,8 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         !item.source.startsWith(".") &&
         !item.source.startsWith("~/") &&
         !item.source.startsWith("@/") &&
-        !item.source.startsWith("~~/")
+        !item.source.startsWith("~~/") &&
+        !isNodeBuiltin(item.source)
       )
         importedPackages.add(packageNameFromSpecifier(item.source));
       if (
@@ -367,7 +368,6 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
   for (const dep of importedPackages) {
     if (
       !packageDeps.all.has(dep) &&
-      !isNodeBuiltin(dep) &&
       !dep.startsWith("#") &&
       !isIgnoredDependencyForUnusedReport(dep)
     ) {

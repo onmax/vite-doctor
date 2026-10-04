@@ -49,3 +49,10 @@ test("similarly named packages still require dependency declarations", async () 
     'Package "@example/assert" is imported but is not listed in package.json dependencies.',
   ]);
 });
+
+test("invalid builtin subpaths still require dependency declarations", async () => {
+  expect(await unlistedImports(["assert/strict", "assert/custom", "http", "http/custom"])).toEqual([
+    'Package "assert" is imported but is not listed in package.json dependencies.',
+    'Package "http" is imported but is not listed in package.json dependencies.',
+  ]);
+});
