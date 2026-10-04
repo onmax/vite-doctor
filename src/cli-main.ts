@@ -42,6 +42,7 @@ class CliConfigError extends Error {
   constructor(
     readonly file: string,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -145,6 +146,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
     await writeCliError(error instanceof Error ? error.message : String(error), format, {
       kind: error instanceof CliConfigError ? "config" : "invocation",
       file: error instanceof CliConfigError ? error.file : undefined,
+      code: errorCode(error),
     });
     return 2;
   }
@@ -281,7 +283,9 @@ async function requestedPresentation(args: string[]): Promise<DoctorReportFormat
 async function writeCliError(
   message: string,
   format: DoctorReportFormat,
-  failure: { kind: "invocation" | "config"; file?: string } = { kind: "invocation" },
+  failure: { kind: "invocation" | "config"; file?: string; code?: string } = {
+    kind: "invocation",
+  },
 ): Promise<void> {
   if (format === "json" || format === "agent") {
     const indentation = format === "agent" ? undefined : 2;
@@ -290,7 +294,7 @@ async function writeCliError(
         {
           schema: format === "agent" ? "vite-doctor.agent/v1" : "vite-doctor.report/v3",
           status: "failed",
-          error: { kind: failure.kind, message, file: failure.file },
+          error: { kind: failure.kind, message, file: failure.file, code: failure.code },
           next:
             failure.kind === "config"
               ? { action: "fix-config", file: failure.file }
@@ -312,7 +316,13 @@ async function writeCliError(
             invocations: [
               {
                 executionSuccessful: false,
-                toolExecutionNotifications: [{ level: "error", message: { text: message } }],
+                toolExecutionNotifications: [
+                  {
+                    level: "error",
+                    message: { text: message },
+                    properties: failure.code ? { diagnosticCode: failure.code } : undefined,
+                  },
+                ],
               },
             ],
             results: [],
@@ -322,7 +332,7 @@ async function writeCliError(
     );
     return;
   }
-  consola.error(message);
+  consola.error(failure.code ? `[${failure.code}] ${message}` : message);
 }
 
 function isDirectory(path: string): boolean {
@@ -363,7 +373,17 @@ function validateCliRunOptions(options: DoctorRunOptions): void {
 
 function createCliConfigError(file: string, error: unknown): CliConfigError {
   const reason = error instanceof Error ? error.message : String(error);
-  return new CliConfigError(file, `Could not load Doctor config at ${file}: ${reason}`);
+  return new CliConfigError(
+    file,
+    `Could not load Doctor config at ${file}: ${reason}`,
+    errorCode(error),
+  );
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
 }
 
 function cliConfigFile(root: string, explicitConfig?: string): string | undefined {
