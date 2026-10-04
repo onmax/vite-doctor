@@ -90,9 +90,27 @@ function watchersWithEarlyDomReads(ctx: RuleContext): Set<number> {
               );
       });
     };
-    type FlushState = { ready: boolean; found: boolean; continues: boolean };
+    type FlushState = {
+      ready: boolean;
+      found: boolean;
+      continues: boolean;
+      breaks: boolean;
+      breakReady: boolean;
+      abruptReady: boolean;
+      loopContinues: boolean;
+      continueReady: boolean;
+    };
     const scan = (node: AnyNode, ready = false, parent?: AnyNode): FlushState => {
-      const state = { ready, found: false, continues: true };
+      const state = {
+        ready,
+        found: false,
+        continues: true,
+        breaks: false,
+        breakReady: true,
+        abruptReady: true,
+        loopContinues: false,
+        continueReady: true,
+      };
       if (
         !node?.type ||
         ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
@@ -126,6 +144,11 @@ function watchersWithEarlyDomReads(ctx: RuleContext): Set<number> {
             (!alternate.continues || alternate.ready),
           found: condition.found || consequent.found || alternate.found,
           continues: consequent.continues || alternate.continues,
+          breaks: consequent.breaks || alternate.breaks,
+          breakReady: consequent.breakReady && alternate.breakReady,
+          abruptReady: consequent.abruptReady && alternate.abruptReady,
+          loopContinues: consequent.loopContinues || alternate.loopContinues,
+          continueReady: consequent.continueReady && alternate.continueReady,
         };
       }
       if (node.type === "LogicalExpression") {
@@ -154,30 +177,100 @@ function watchersWithEarlyDomReads(ctx: RuleContext): Set<number> {
           ready: condition.ready,
           found: initializer.found || condition.found || body.found || update.found,
           continues: true,
+          breaks: false,
+          breakReady: true,
+          abruptReady: body.abruptReady && condition.abruptReady && update.abruptReady,
+          loopContinues: false,
+          continueReady: true,
         };
       }
       if (node.type === "DoWhileStatement") {
         const body = scan(node.body, ready, node);
-        const condition = body.continues ? scan(node.test, body.ready, node) : body;
-        return { ready, found: body.found || condition.found, continues: true };
+        const reachesCondition = body.continues || body.loopContinues;
+        const condition = reachesCondition
+          ? scan(node.test, (!body.continues || body.ready) && body.continueReady, node)
+          : body;
+        return {
+          ready: (!reachesCondition || condition.ready) && body.breakReady,
+          found: body.found || condition.found,
+          continues: reachesCondition || body.breaks,
+          breaks: false,
+          breakReady: true,
+          abruptReady: body.abruptReady && condition.abruptReady,
+          loopContinues: false,
+          continueReady: true,
+        };
       }
       if (node.type === "SwitchStatement") {
         const discriminant = scan(node.discriminant, ready, node);
-        return {
-          ...discriminant,
-          found:
-            discriminant.found ||
-            node.cases.some((branch: AnyNode) => scan(branch, discriminant.ready, node).found),
-        };
+        const result = { ...discriminant, ready: true, continues: false };
+        const cases = node.cases as AnyNode[];
+        for (let start = 0; start < cases.length; start++) {
+          let pathReady = discriminant.ready;
+          for (let index = start; index < cases.length; index++) {
+            const branch = cases[index];
+            const test = scan(branch.test, discriminant.ready, branch);
+            const path = scan(
+              { type: "BlockStatement", body: branch.consequent },
+              pathReady,
+              branch,
+            );
+            result.found ||= test.found || path.found;
+            result.abruptReady &&= path.abruptReady;
+            result.loopContinues ||= path.loopContinues;
+            result.continueReady &&= path.continueReady;
+            if (path.breaks) {
+              result.continues = true;
+              result.ready &&= path.breakReady;
+            }
+            if (!path.continues) break;
+            pathReady = path.ready;
+            if (index === cases.length - 1) {
+              result.continues = true;
+              result.ready &&= pathReady;
+            }
+          }
+        }
+        if (!cases.some((branch) => !branch.test)) {
+          result.continues = true;
+          result.ready &&= discriminant.ready;
+        }
+        return result;
       }
       if (node.type === "TryStatement") {
         const block = scan(node.block, ready, node);
         const handler = node.handler ? scan(node.handler, ready, node) : block;
-        const finalizer = scan(node.finalizer, block.ready && handler.ready, node);
+        const normalReady =
+          (!block.continues || block.ready) && (!handler.continues || handler.ready);
+        const finalizer = scan(
+          node.finalizer,
+          normalReady &&
+            block.abruptReady &&
+            handler.abruptReady &&
+            block.breakReady &&
+            handler.breakReady &&
+            block.continueReady &&
+            handler.continueReady,
+          node,
+        );
+        const normalFinalizer = scan(node.finalizer, normalReady, node);
         return {
-          ready: finalizer.ready,
+          ready: normalFinalizer.ready,
           found: block.found || handler.found || finalizer.found,
           continues: finalizer.continues && (block.continues || handler.continues),
+          breaks: finalizer.breaks || (finalizer.continues && (block.breaks || handler.breaks)),
+          breakReady:
+            finalizer.breakReady &&
+            scan(node.finalizer, block.breakReady && handler.breakReady, node).ready,
+          abruptReady:
+            finalizer.abruptReady &&
+            scan(node.finalizer, block.abruptReady && handler.abruptReady, node).ready,
+          loopContinues:
+            finalizer.loopContinues ||
+            (finalizer.continues && (block.loopContinues || handler.loopContinues)),
+          continueReady:
+            finalizer.continueReady &&
+            scan(node.finalizer, block.continueReady && handler.continueReady, node).ready,
         };
       }
       for (const key of visitorKeys[node.type] ?? []) {
@@ -188,6 +281,11 @@ function watchersWithEarlyDomReads(ctx: RuleContext): Set<number> {
           state.ready = next.ready;
           state.found ||= next.found;
           state.continues = next.continues;
+          state.breaks ||= next.breaks;
+          state.breakReady &&= next.breakReady;
+          state.abruptReady &&= next.abruptReady;
+          state.loopContinues ||= next.loopContinues;
+          state.continueReady &&= next.continueReady;
         }
       }
       if (!state.ready && isDomRead(node, parent)) state.found = true;
@@ -197,10 +295,28 @@ function watchersWithEarlyDomReads(ctx: RuleContext): Set<number> {
         )
       )
         state.continues = false;
+      if (node.type === "BreakStatement") {
+        state.breaks = true;
+        state.breakReady = state.ready;
+      }
+      if (node.type === "ContinueStatement") {
+        state.loopContinues = true;
+        state.continueReady = state.ready;
+      }
+      if (["ReturnStatement", "ThrowStatement"].includes(node.type))
+        state.abruptReady = state.ready;
       if (
         ["ForStatement", "ForOfStatement", "ForInStatement", "WhileStatement"].includes(node.type)
       )
-        return { ...state, ready, continues: true };
+        return {
+          ...state,
+          ready,
+          continues: true,
+          breaks: false,
+          breakReady: true,
+          loopContinues: false,
+          continueReady: true,
+        };
       return state;
     };
     const result = new Set<number>();
