@@ -138,6 +138,70 @@ test("visitor keys fall back to node-shaped children", () => {
   ).toEqual(["child", "children"]);
 });
 
+test("numeric diagnostic ranges preserve an offset of zero", async () => {
+  const rule = createRule({
+    meta: {
+      id: "test/numeric-zero-range",
+      title: "Numeric zero range",
+      category: "architecture",
+      severity: "warn",
+      requires: { script: true },
+    },
+    create(ctx) {
+      return {
+        ScriptNode(node: any) {
+          if (node.type !== "Program") return;
+          for (const [label, start, end] of [
+            ["zero", 0, 1],
+            ["nonzero", 1, 2],
+            ["missing", undefined, 1],
+          ] as const) {
+            ctx.report(
+              allDiagnostics.DOC9999({
+                why: `The rule reports a ${label} range.`,
+                fix: "Inspect the reported range.",
+              }),
+              {
+                ruleId: "test/numeric-zero-range",
+                severity: "warn",
+                category: "architecture",
+                file: ctx.file.path,
+                range: ctx.range(start, end),
+              },
+            );
+          }
+        },
+      };
+    },
+  });
+
+  await withFixture({ "src/app.ts": "const app = true\n" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      extensions: [pluginWith(rule)],
+    });
+
+    expect(result.diagnostics).toHaveLength(3);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          why: "The rule reports a zero range.",
+          range: expect.objectContaining({ start: 0, end: 1, line: 1, column: 1 }),
+        }),
+        expect.objectContaining({
+          why: "The rule reports a nonzero range.",
+          range: expect.objectContaining({ start: 1, end: 2, line: 1, column: 2 }),
+        }),
+        expect.objectContaining({
+          why: "The rule reports a missing range.",
+          range: undefined,
+        }),
+      ]),
+    );
+  });
+});
+
 test("file rules are not created during the manifest phase", async () => {
   let creates = 0;
   const fileRule = createRule({
