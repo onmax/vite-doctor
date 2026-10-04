@@ -53,6 +53,28 @@ test("keeps diagnostics from successfully parsed files and clears the gap after 
   );
 });
 
+test("retains an earlier Vue script diagnostic when a later block is malformed", async () => {
+  await withProject(
+    {
+      "App.vue":
+        `<script>export const secret = import.meta.env.VITE_SECRET_TOKEN;</script><script setup>const broken = ;</script>`,
+    },
+    async (root) => {
+      const result = await runViteDoctor({
+        root,
+        framework: "vite",
+        rules: rule,
+        cache: false,
+      });
+      expect(reportStatus(result)).toBe("incomplete");
+      expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VITE0009"]);
+      expect(result.project.evidenceGaps).toEqual([
+        expect.objectContaining({ source: "script-parser", files: [join(root, "App.vue")] }),
+      ]);
+    },
+  );
+});
+
 test.each(["", "// Work in progress\n", "export const value: string = 'ok';"])(
   "keeps valid empty, comment-only, or typed scripts complete: %s",
   async (source) => {

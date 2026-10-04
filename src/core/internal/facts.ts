@@ -9,15 +9,16 @@ import type {
   SourceFileHandle,
   TemplateFact,
 } from "../primitives.js";
-import { createVueScriptForParsing, parseSfcFile } from "./sfc.js";
+import { parseSfcFile, parseVueScriptsResult } from "./sfc.js";
 import { parseScriptResult } from "./script.js";
 import { parseTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
 import { createCacheKey, markSession, type ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
+import { isCachedFileFacts } from "./cached-file-facts.js";
 
-const FILE_FACTS_VERSION = 2;
+const FILE_FACTS_VERSION = 4;
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
@@ -43,18 +44,26 @@ async function parseSourceFile(
     "fileFacts",
     `${FILE_FACTS_VERSION}:${absolute}:${hash}`,
   );
-  const cachedFacts = session.cache.get<FileFacts>(cacheKey);
+  const cachedFacts = session.cache.get<unknown>(cacheKey);
   const isVueSfc = absolute.endsWith(".vue");
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
-  const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor as any, text) : undefined;
-  const scriptText = isVueSfc ? (script?.text ?? "") : text;
-  const parsedScript = scriptText.trim()
-    ? parseScriptResult(absolute, scriptText, script?.lang)
-    : undefined;
+  const parsedScript = isVueSfc
+    ? parseVueScriptsResult(absolute, sfc?.descriptor, text)
+    : text.trim()
+      ? (() => {
+          const parsed = parseScriptResult(absolute, text);
+          return {
+            ...parsed,
+            incomplete: Boolean(
+              parsed.errors.length && (!parsed.ast || !(parsed.ast.body as unknown[])?.length),
+            ),
+          };
+        })()
+      : undefined;
   const scriptAst = parsedScript?.ast ?? null;
   if (
     parsedScript?.errors.length &&
-    (!scriptAst || (scriptAst.body as unknown[])?.length === 0) &&
+    parsedScript.incomplete &&
     (isVueSfc || ["js", "jsx", "ts", "tsx"].includes(detectLang(absolute)))
   ) {
     session.project.evidenceGaps = [
@@ -68,7 +77,12 @@ async function parseSourceFile(
   }
   const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text) : null;
   const facts =
-    cachedFacts && cachedFacts.fileHash === hash
+    isCachedFileFacts(cachedFacts) &&
+    cachedFacts.fileHash === hash &&
+    cachedFacts.path === absolute &&
+    cachedFacts.relativePath === file.displayPath &&
+    cachedFacts.sourceKind === file.sourceKind &&
+    cachedFacts.moduleName === file.moduleName
       ? { ...cachedFacts, fileId }
       : createFileFacts(session, file, fileId, text, hash, scriptAst, templateAst, sfc);
   session.cache.set(cacheKey, facts);
