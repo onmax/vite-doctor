@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
@@ -16,6 +16,15 @@ function fixture(text?: string, filename = "app.ts") {
 }
 
 function finding(file: string, line?: number) {
+  let start = 0;
+  if (line !== undefined) {
+    try {
+      start = readFileSync(file, "utf8")
+        .split("\n")
+        .slice(0, line - 1)
+        .reduce((offset, text) => offset + text.length + 1, 0);
+    } catch {}
+  }
   return normalizeDiagnosticFromRuleCode({
     code: "DOC9999",
     ruleId: "test/example",
@@ -24,7 +33,7 @@ function finding(file: string, line?: number) {
     why: "Fixture diagnostic.",
     suggestion: "Fix the fixture.",
     file,
-    range: line === undefined ? undefined : { start: 0, end: 1, line, column: 1 },
+    range: line === undefined ? undefined : { start, end: start + 1, line, column: 1 },
   });
 }
 
@@ -242,16 +251,43 @@ test("HTML comments in Vue SFCs support suppressions", () => {
   expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "html reason" }]);
 });
 
-test("TSX Vue SFCs preserve script and template suppressions", () => {
+test.each(["tsx", "jsx", "TSX", "JSX"])(
+  "%s Vue SFCs preserve script and template suppressions",
+  (lang) => {
+    const { root, file } = fixture(
+      [
+        "<template>",
+        "  <!-- doctor-disable test/example -- template reason -->",
+        "  <div />",
+        "</template>",
+        `<script setup lang="${lang}">`,
+        "// doctor-disable test/example -- script reason",
+        "const component = () => <div />;",
+        "</script>",
+      ].join("\n"),
+      "app.vue",
+    );
+    const result = applyDiagnosticPolicy({
+      root,
+      config: {},
+      options: {},
+      diagnostics: [finding(file, 3), finding(file, 6)],
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.suppressedDiagnostics).toMatchObject([
+      { suppressionReason: "template reason" },
+      { suppressionReason: "script reason" },
+    ]);
+  },
+);
+
+test("commented script tags do not change Vue script language", () => {
   const { root, file } = fixture(
     [
-      "<template>",
-      "  <!-- doctor-disable test/example -- template reason -->",
-      "  <div />",
-      "</template>",
-      '<script setup lang="tsx">',
-      "// doctor-disable test/example -- script reason",
-      "const component = () => <div />;",
+      '<!-- <script lang="tsx"> -->',
+      '<script setup lang="ts">',
+      "// doctor-disable-next-line test/example -- type assertion",
+      "const value = <string>input;",
       "</script>",
     ].join("\n"),
     "app.vue",
@@ -260,13 +296,10 @@ test("TSX Vue SFCs preserve script and template suppressions", () => {
     root,
     config: {},
     options: {},
-    diagnostics: [finding(file, 3), finding(file, 6)],
+    diagnostics: [finding(file, 4)],
   });
   expect(result.diagnostics).toEqual([]);
-  expect(result.suppressedDiagnostics).toMatchObject([
-    { suppressionReason: "template reason" },
-    { suppressionReason: "script reason" },
-  ]);
+  expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "type assertion" }]);
 });
 
 test("multiline Vue HTML next-line suppressions target the following source line", () => {
