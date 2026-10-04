@@ -20,7 +20,11 @@ export const requireUAppRoot = createRule({
   },
   create(ctx) {
     const usesAppService = /\b(useToast|useOverlay)\s*\(/.test(ctx.file.text);
-    if (!usesAppService || projectHasUAppRoot(ctx.project.root) || hasUAppTemplate(ctx.file.text))
+    if (
+      !usesAppService ||
+      projectHasUAppRoot(ctx.project.root) ||
+      (ctx.file.isVueSfc && hasUAppTemplate(ctx.file.text))
+    )
       return;
     let reported = false;
     return {

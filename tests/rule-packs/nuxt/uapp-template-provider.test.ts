@@ -62,6 +62,20 @@ test.each([
 });
 
 test.each(["useToast", "useOverlay"])(
+  "reports %s calls beside a non-Vue template example",
+  async (name) => {
+    const result = await runRuleFixture({
+      rule: requireUAppRoot,
+      framework: "nuxt",
+      files: {
+        "composables/service.ts": `const example = "<template><UApp /></template>"; ${name}()`,
+      },
+    });
+    expect(result.diagnostics.map((d) => d.ruleId)).toEqual([requireUAppRoot.meta.id]);
+  },
+);
+
+test.each(["useToast", "useOverlay"])(
   "reports actual %s service calls once per file",
   async (name) => {
     const result = await runRuleFixture({
