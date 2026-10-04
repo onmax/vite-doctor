@@ -137,7 +137,7 @@ function createRuleContext(
     cache: session.cache,
     helpers: session.helpers,
     range(nodeOrStart, end) {
-      if (!nodeOrStart) return undefined;
+      if (nodeOrStart === undefined || nodeOrStart === null) return undefined;
       if (typeof nodeOrStart === "number")
         return session.helpers.rangeFromOffsets(file.path, file.text, nodeOrStart, end);
       const node = nodeOrStart as { start?: number; end?: number; range?: [number, number] };
