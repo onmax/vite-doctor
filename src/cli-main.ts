@@ -88,6 +88,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
     });
   cli
     .command("rules", "List available Doctor rules.")
+    .option("--config <path>", "Explicitly load an executable Doctor config.")
     .option("--format <format>", "Output: text, json, or agent.")
     .option("--framework <framework>", "Framework override.")
     .action(async (options) => {
@@ -95,10 +96,12 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       const runOptions: DoctorRunOptions = { root: cwd, format };
       applyDoctorOptions(runOptions, options);
       validateCliRunOptions(runOptions);
+      runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
       process.stdout.write(createRulesReport(await viteDoctorRulePacks(runOptions), format));
     });
   cli
     .command("explain <diagnostic>", "Explain a Doctor Diagnostic Code or Rule.")
+    .option("--config <path>", "Explicitly load an executable Doctor config.")
     .option("--format <format>", "Output: text, json, or agent.")
     .option("--framework <framework>", "Framework override.")
     .action(async (diagnostic: string, options) => {
@@ -106,6 +109,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       const runOptions: DoctorRunOptions = { root: cwd, format };
       applyDoctorOptions(runOptions, options);
       validateCliRunOptions(runOptions);
+      runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
       const report = explainRule(await viteDoctorRulePacks(runOptions), diagnostic, format);
       if (!report) {
         await writeCliError(`Unknown Diagnostic Code or Rule: ${diagnostic}`, format);
@@ -204,7 +208,7 @@ function addDoctorRunCommand(
       const configFile = cliConfigFile(root, explicitConfig);
       runOptions.config = await loadCliConfig(root, explicitConfig);
       try {
-        setExitCode(await runDoctorCommand(runOptions, format));
+        setExitCode(await runDoctorCommand(runOptions, format, explicitConfig));
       } catch (error) {
         if (configFile && isLoadedConfigValidationError(error, runOptions)) {
           throw createCliConfigError(configFile, error);
@@ -217,9 +221,10 @@ function addDoctorRunCommand(
 async function runDoctorCommand(
   options: DoctorRunOptions,
   format: DoctorReportFormat,
+  configFile?: string,
 ): Promise<number> {
   const result = await runViteDoctor(options);
-  process.stdout.write(createReport(result, format));
+  process.stdout.write(createReport(result, format, { runOptions: options, configFile }));
   if (reportStatus(result) === "incomplete") return 3;
   return shouldFailDoctorRun(result, options.maxWarnings) ? 1 : 0;
 }

@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { isBuiltin } from "node:module";
 import { dirname, relative, resolve } from "pathe";
 import type {
   Diagnostic,
@@ -8,7 +9,8 @@ import type {
   VirtualRootNode,
   WorkspaceGraph,
 } from "../primitives.js";
-import type { ScanSession } from "./scan-session.js";
+import { resolvedConfigFor, type ScanSession } from "./scan-session.js";
+import { nativeMatch } from "./utils.js";
 import { pushDiagnostic } from "./diagnostics.js";
 
 export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
@@ -285,7 +287,8 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         !item.source.startsWith(".") &&
         !item.source.startsWith("~/") &&
         !item.source.startsWith("@/") &&
-        !item.source.startsWith("~~/")
+        !item.source.startsWith("~~/") &&
+        !isNodeBuiltin(item.source)
       )
         importedPackages.add(packageNameFromSpecifier(item.source));
       if (
@@ -294,7 +297,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         !isLikelyForeignFrameworkFile(session, fact.relativePath, packageDeps) &&
         resolveImportTarget(session, fact, item.source, byRelativePath) === undefined
       ) {
-        pushDiagnostic(session, {
+        reportWorkspaceDiagnostic(session, {
           ruleId: "workspace/dead-code/unresolved-import",
           severity: "error",
           category: "dead-code",
@@ -317,7 +320,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
       !isLikelyForeignFrameworkFile(session, fact.relativePath, packageDeps) &&
       !isTypeSurfaceFile(fact.relativePath)
     ) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/dead-code/unused-file",
         severity: "info",
         category: "dead-code",
@@ -337,7 +340,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         !isLikelyForeignFrameworkFile(session, fact.relativePath, packageDeps) &&
         !isTypeSurfaceFile(fact.relativePath)
       ) {
-        pushDiagnostic(session, {
+        reportWorkspaceDiagnostic(session, {
           ruleId:
             exp.kind === "type"
               ? "workspace/dead-code/unused-type-export"
@@ -358,7 +361,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
 
   for (const dep of packageDeps.runtime) {
     if (!importedPackages.has(dep) && !isIgnoredDependencyForUnusedReport(dep)) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/dead-code/unused-dependency",
         severity: "info",
         category: "dead-code",
@@ -375,11 +378,10 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
   for (const dep of importedPackages) {
     if (
       !packageDeps.all.has(dep) &&
-      !isNodeBuiltin(dep) &&
       !dep.startsWith("#") &&
       !isIgnoredDependencyForUnusedReport(dep)
     ) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/dead-code/unlisted-dependency",
         severity: "warn",
         category: "dead-code",
@@ -397,7 +399,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
 function runCycleAndDuplicateExportRules(session: ScanSession, graph: WorkspaceGraph) {
   for (const scc of graph.sccs.filter((item) => item.length > 1)) {
     const files = scc.map((id) => graph.files.get(id)?.path).filter(Boolean) as string[];
-    pushDiagnostic(session, {
+    reportWorkspaceDiagnostic(session, {
       ruleId: "workspace/dead-code/circular-dependency",
       severity: "warn",
       category: "architecture",
@@ -415,7 +417,7 @@ function runCycleAndDuplicateExportRules(session: ScanSession, graph: WorkspaceG
       ...new Set(exports.map((item) => findExportFile(graph, item)).filter(Boolean)),
     ] as string[];
     if (name === "default" || name === "*" || files.length < 2) continue;
-    pushDiagnostic(session, {
+    reportWorkspaceDiagnostic(session, {
       ruleId: "workspace/dead-code/duplicate-export",
       severity: "warn",
       category: "architecture",
@@ -443,7 +445,7 @@ export function runDuplicationRules(session: ScanSession) {
   for (const [hash, facts] of byHash) {
     const files = [...new Set(facts.map((fact) => fact.path))];
     if (files.length < 2) continue;
-    pushDiagnostic(session, {
+    reportWorkspaceDiagnostic(session, {
       ruleId: "workspace/duplication/exact-clone",
       severity: "info",
       category: "duplication",
@@ -462,7 +464,7 @@ export function runHealthRules(session: ScanSession) {
   if (!selectedAnalyses(session).has("health")) return;
   for (const fact of session.facts) {
     if (fact.complexity.cyclomatic >= 15) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/health/high-cyclomatic-complexity",
         severity: "warn",
         category: "health",
@@ -475,7 +477,7 @@ export function runHealthRules(session: ScanSession) {
       });
     }
     if (fact.imports.length >= 20) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/health/high-fan-out",
         severity: "info",
         category: "health",
@@ -656,7 +658,7 @@ function isLocalSpecifier(specifier: string): boolean {
 }
 
 function isNodeBuiltin(name: string): boolean {
-  return /^(node:|fs$|path$|url$|crypto$|os$|util$|stream$|events$|buffer$|process$)/.test(name);
+  return name.startsWith("node:") || isBuiltin(name);
 }
 
 function isLikelyTestOrConfig(relativePath: string): boolean {
@@ -772,4 +774,18 @@ function isTypeSurfaceFile(relativePath: string): boolean {
 function findExportFile(graph: WorkspaceGraph, target: ExportFact): string | undefined {
   for (const fact of graph.files.values()) if (fact.exports.includes(target)) return fact.path;
   return undefined;
+}
+
+function reportWorkspaceDiagnostic(
+  session: ScanSession,
+  diagnostic: Parameters<typeof pushDiagnostic>[1],
+): void {
+  const wanted = session.options.rules
+    ?.split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (wanted?.length && !wanted.some((pattern) => nativeMatch(diagnostic.ruleId, pattern))) return;
+  const config = resolvedConfigFor(session, diagnostic.ruleId);
+  if (config.enabled === false) return;
+  pushDiagnostic(session, { ...diagnostic, severity: config.severity ?? diagnostic.severity });
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
@@ -7,15 +7,24 @@ import { normalizeDiagnosticFromRuleCode } from "../../src/core/internal/diagnos
 
 const roots: string[] = [];
 
-function fixture(text?: string) {
+function fixture(text?: string, filename = "app.ts") {
   const root = mkdtempSync(join(tmpdir(), "doctor-policy-"));
   roots.push(root);
-  const file = join(root, "app.ts");
+  const file = join(root, filename);
   if (text !== undefined) writeFileSync(file, text);
   return { root, file };
 }
 
 function finding(file: string, line?: number) {
+  let start = 0;
+  if (line !== undefined) {
+    try {
+      start = readFileSync(file, "utf8")
+        .split("\n")
+        .slice(0, line - 1)
+        .reduce((offset, text) => offset + text.length + 1, 0);
+    } catch {}
+  }
   return normalizeDiagnosticFromRuleCode({
     code: "DOC9999",
     ruleId: "test/example",
@@ -24,7 +33,7 @@ function finding(file: string, line?: number) {
     why: "Fixture diagnostic.",
     suggestion: "Fix the fixture.",
     file,
-    range: line === undefined ? undefined : { start: 0, end: 1, line, column: 1 },
+    range: line === undefined ? undefined : { start, end: start + 1, line, column: 1 },
   });
 }
 
@@ -142,6 +151,240 @@ test("plain inline suppressions still apply to nearby diagnostics", () => {
   expect(result.suppressedDiagnostics).toMatchObject([
     { suppressionReason: "intentional fixture" },
   ]);
+});
+
+test("line comment suppressions may omit whitespace after the delimiter", () => {
+  const { root, file } = fixture(
+    "const ignored = 2; //doctor-disable test/example -- intentional fixture",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 1)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([
+    { suppressionReason: "intentional fixture" },
+  ]);
+});
+
+test("suppression text inside string literals does not hide diagnostics", () => {
+  const { root, file } = fixture(
+    'const text = "doctor-disable test/example -- this is data";\nconst value = 1;',
+  );
+  const diagnostic = finding(file, 1);
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [diagnostic],
+  });
+  expect(result.diagnostics).toEqual([diagnostic]);
+  expect(result.suppressedDiagnostics).toEqual([]);
+});
+
+test.each([
+  "const text = `\n// doctor-disable test/example -- template data\n`;\nconst value = 1;",
+  "const pattern = /\\/\\/ doctor-disable test\\/example -- regex/;\nconst value = 1;",
+])("suppression text inside multiline literals does not hide diagnostics", (text) => {
+  const { root, file } = fixture(text);
+  const diagnostic = finding(file, 1);
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [diagnostic],
+  });
+  expect(result.diagnostics).toEqual([diagnostic]);
+  expect(result.suppressedDiagnostics).toEqual([]);
+});
+
+test("multiline block comments map directives to their source line", () => {
+  const block = fixture(
+    "/*\n * doctor-disable test/example -- block reason\n */\nconst value = 1;",
+  );
+  const result = applyDiagnosticPolicy({
+    root: block.root,
+    config: {},
+    options: {},
+    diagnostics: [finding(block.file, 4)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "block reason" }]);
+});
+
+test("one-line block comment suppressions exclude the closing delimiter", () => {
+  const { root, file } = fixture(
+    "const value = 1; /* doctor-disable test/example -- block reason */",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 1)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "block reason" }]);
+});
+
+test("HTML comments in Vue SFCs support suppressions", () => {
+  const { root, file } = fixture(
+    [
+      "<template>",
+      "  <!-- doctor-disable test/example -- html reason -->",
+      "  <div />",
+      "</template>",
+      '<script setup lang="ts">',
+      "const value = 1;",
+      "</script>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 3)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "html reason" }]);
+});
+
+test.each(["tsx", "jsx", "TSX", "JSX"])(
+  "%s Vue SFCs preserve script and template suppressions",
+  (lang) => {
+    const { root, file } = fixture(
+      [
+        "<template>",
+        "  <!-- doctor-disable test/example -- template reason -->",
+        "  <div />",
+        "</template>",
+        `<script setup lang="${lang}">`,
+        "// doctor-disable test/example -- script reason",
+        "const component = () => <div />;",
+        "</script>",
+      ].join("\n"),
+      "app.vue",
+    );
+    const result = applyDiagnosticPolicy({
+      root,
+      config: {},
+      options: {},
+      diagnostics: [finding(file, 3), finding(file, 6)],
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.suppressedDiagnostics).toMatchObject([
+      { suppressionReason: "template reason" },
+      { suppressionReason: "script reason" },
+    ]);
+  },
+);
+
+test("commented script tags do not change Vue script language", () => {
+  const { root, file } = fixture(
+    [
+      '<!-- <script lang="tsx"> -->',
+      '<script setup lang="ts">',
+      "// doctor-disable-next-line test/example -- type assertion",
+      "const value = <string>input;",
+      "</script>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 4)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "type assertion" }]);
+});
+
+test("multiline Vue HTML next-line suppressions target the following source line", () => {
+  const { root, file } = fixture(
+    [
+      "<template>",
+      "  <!--",
+      "    doctor-disable-next-line test/example -- html next line",
+      "  --><div />",
+      "</template>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 4)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "html next line" }]);
+});
+
+test("comment-like HTML text in a Vue script string does not suppress diagnostics", () => {
+  const { root, file } = fixture(
+    [
+      '<script setup lang="ts">',
+      'const text = "<!-- doctor-disable test/example -- data -->";',
+      "const value = 1;",
+      "</script>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const diagnostic = finding(file, 3);
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [diagnostic],
+  });
+  expect(result.diagnostics).toEqual([diagnostic]);
+  expect(result.suppressedDiagnostics).toEqual([]);
+});
+
+test("suppression text in a Vue template literal does not suppress diagnostics", () => {
+  const { root, file } = fixture(
+    [
+      '<script setup lang="ts">',
+      "const text = `",
+      "// doctor-disable test/example -- template data",
+      "`;",
+      "const value = 1;",
+      "</script>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const diagnostic = finding(file, 5);
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [diagnostic],
+  });
+  expect(result.diagnostics).toEqual([diagnostic]);
+  expect(result.suppressedDiagnostics).toEqual([]);
+});
+
+test("Vue script next-line suppression applies to the following source line", () => {
+  const { root, file } = fixture(
+    [
+      '<script setup lang="ts">',
+      "// doctor-disable-next-line test/example -- next line",
+      "const value = 1;",
+      "</script>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 3)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "next line" }]);
 });
 
 test("a suppression without a reason does not consume the next source line as its reason", () => {

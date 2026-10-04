@@ -193,5 +193,6 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
+export const allDiagnosticCodeListsByRuleId = allDoctorDiagnosticRegistry.codesByRuleIdAll;
 doctorDiagnosticsHost.register(allDoctorDiagnosticRegistry);
 export const allDiagnostics = allDoctorDiagnosticRegistry.diagnostics;
