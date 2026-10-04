@@ -97,20 +97,26 @@ test("Nuxt imports extend keeps duplicate entries in the generated manifest", as
     await nuxtDoctorModule({}, nuxt as any);
     for (const hook of hooks.get("imports:context") ?? [])
       await hook({
-        getImports: () => [{ name: "useShared", from: join(root, "app/composables/b.ts") }],
+        getImports: () => [
+          { name: "useRoute", from: "#app/composables/router" },
+          { name: "useShared", from: join(root, "app/composables/a.ts") },
+        ],
       });
-    for (const hook of hooks.get("imports:extend") ?? [])
-      await hook([
-        { name: "useShared", from: join(root, "app/composables/a.ts") },
-        { name: "useShared", from: join(root, "app/composables/b.ts") },
-      ]);
+    const rawImports = [
+      { name: "useShared", from: join(root, "app/composables/a.ts") },
+      { name: "useShared", from: join(root, "app/composables/b.ts") },
+    ];
+    for (const hook of hooks.get("imports:extend") ?? []) await hook(rawImports);
+    rawImports.push({ name: "useShared", from: join(root, "app/composables/c.ts") });
     for (const hook of hooks.get("prepare:types") ?? []) await hook(undefined);
 
     const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
-    expect(manifest.autoImports).toHaveLength(2);
+    expect(manifest.autoImports).toHaveLength(4);
     expect(manifest.autoImports.map((entry: { from: string }) => entry.from)).toEqual([
-      join(root, "app/composables/a.ts"),
       join(root, "app/composables/b.ts"),
+      join(root, "app/composables/c.ts"),
+      "#app/composables/router",
+      join(root, "app/composables/a.ts"),
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -142,10 +142,8 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     evidence.autoImportContext = context;
   });
 
-  nuxt.hook?.("imports:extend", (imports: unknown[]) => {
-    evidence.autoImportEntries = imports.map((entry) =>
-      entry && typeof entry === "object" ? { ...entry } : entry,
-    );
+  nuxt.hook?.("imports:extend", (imports: unknown) => {
+    evidence.autoImportEntries = Array.isArray(imports) ? imports : [];
   });
 
   nuxt.hook?.("pages:resolved", (pages: any[]) => {
@@ -375,8 +373,17 @@ function mergeAutoImportEntries(
   raw: ReturnType<typeof normalizeAutoImports>,
 ) {
   if (!raw.length) return resolved;
-  const rawEntries = new Set(raw.map(autoImportIdentity));
-  return [...resolved.filter((entry) => !rawEntries.has(autoImportIdentity(entry))), ...raw];
+  const resolvedEntries = new Map(resolved.map((entry) => [autoImportKey(entry), entry] as const));
+  const merged = raw.filter(
+    (entry) =>
+      autoImportIdentity(entry) !==
+      autoImportIdentity(resolvedEntries.get(autoImportKey(entry)) ?? {}),
+  );
+  return [...merged, ...resolved];
+}
+
+function autoImportKey(entry: { name?: string; as?: string }) {
+  return entry.as ?? entry.name;
 }
 
 function autoImportIdentity(entry: { name?: string; as?: string; from?: string; type?: boolean }) {
