@@ -17,7 +17,7 @@ import { createCacheKey, markSession, type ScanSession } from "./scan-session.js
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 
-const FILE_FACTS_VERSION = 2;
+const FILE_FACTS_VERSION = 3;
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
@@ -49,7 +49,7 @@ async function parseSourceFile(
   const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor as any, text) : undefined;
   const scriptText = isVueSfc ? (script?.text ?? "") : text;
   const scriptAst = scriptText.trim() ? parseScript(absolute, scriptText, script?.lang) : null;
-  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text) : null;
+  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text, script?.lang) : null;
   const facts =
     cachedFacts && cachedFacts.fileHash === hash
       ? { ...cachedFacts, fileId }
