@@ -7,6 +7,8 @@ test.each([
   'import * as h3 from "h3"; export default event => h3.sendError(event, new Error())',
   'import * as runtime from "nitro/h3"; export default event => runtime.send(event, "ok")',
   'import * as h3 from "h3"; export const respond = h3["send"]',
+  'import * as h3 from "h3"; export const respond = h3[`send`]',
+  'import * as h3 from "nitro/h3"; export const respond = h3?.[`sendError`]',
   'import * as h3 from "h3"; export const respond = h3?.sendError',
   'import * as h3 from "h3"; export default event => h3["sendError"](event, new Error())',
   'import * as h3 from "h3"; function helper(h3) { return h3.send() }; export const send = h3.send',
@@ -31,6 +33,7 @@ test.each([
   'import * as h3 from "h3"; function handler({ h3 }) { return h3.send() }',
   'import * as h3 from "h3"; export default event => h3.sendRedirect(event, "/")',
   'import * as h3 from "h3"; export default event => h3[method](event)',
+  'import * as h3 from "h3"; export const respond = h3[`send${method}`]',
   'import * as h3 from "h3"; export const text = "h3.send(event)"',
 ])("ignores unrelated bindings and supported APIs: %s", async (source) => {
   const result = await runRuleFixture({

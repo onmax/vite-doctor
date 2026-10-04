@@ -73,7 +73,11 @@ function removedNamespaceReads(ctx: RuleContext): Map<number, string> {
     const visit = (node: AnyNode) => {
       if (!node?.type) return;
       if (node.type === "MemberExpression" && node.object.type === "Identifier") {
-        const property = node.computed ? node.property.value : node.property.name;
+        const property = node.computed
+          ? node.property.type === "TemplateLiteral" && node.property.expressions.length === 0
+            ? node.property.quasis[0]?.value.cooked
+            : node.property.value
+          : node.property.name;
         if (property === "send" || property === "sendError") {
           const variable = references.get(node.object)?.resolved;
           if (
