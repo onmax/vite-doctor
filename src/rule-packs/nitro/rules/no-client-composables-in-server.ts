@@ -1,6 +1,16 @@
 import { parseForESLint } from "@typescript-eslint/parser";
 import { AnyNode, createRule, report } from "./shared.js";
 
+const clientComposables = new Set([
+  "useRoute",
+  "useRouter",
+  "useState",
+  "useFetch",
+  "useAsyncData",
+  "useHead",
+  "useSeoMeta",
+]);
+
 export const noClientComposablesInServer = createRule({
   meta: {
     id: "nitro/server/no-client-composables",
@@ -20,7 +30,11 @@ export const noClientComposablesInServer = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "CallExpression") return;
-        const name = calls.get(node.start);
+        const name = calls
+          ? calls.get(node.start)
+          : node.callee?.type === "Identifier" && clientComposables.has(node.callee.name)
+            ? node.callee.name
+            : undefined;
         if (!name) return;
         report(
           ctx,
@@ -36,16 +50,8 @@ export const noClientComposablesInServer = createRule({
   },
 });
 
-function appComposableCalls(source: string, path: string): Map<number, string> {
-  const names = new Set([
-    "useRoute",
-    "useRouter",
-    "useState",
-    "useFetch",
-    "useAsyncData",
-    "useHead",
-    "useSeoMeta",
-  ]);
+function appComposableCalls(source: string, path: string): Map<number, string> | undefined {
+  const names = clientComposables;
   const result = new Map<number, string>();
   try {
     const { ast, scopeManager, visitorKeys } = parseForESLint(source, {
@@ -103,7 +109,8 @@ function appComposableCalls(source: string, path: string): Map<number, string> {
     };
     visit(ast);
   } catch {
-    return result;
+    // Oxc accepts syntax this parser may not support; retain ambient-name diagnostics.
+    return undefined;
   }
   return result;
 }

@@ -26,6 +26,10 @@ test.each([
 });
 
 test.each([
+  [
+    'const wasm = import.source("./codec.wasm"); export default defineEventHandler(() => useState())',
+    "useState",
+  ],
   ["export default defineEventHandler(() => useState())", "useState"],
   ["export default defineEventHandler(() => useFetch())", "useFetch"],
   [
