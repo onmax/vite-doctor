@@ -687,6 +687,22 @@ function packageEntryCandidates(
     if (typeof value !== "string") continue;
     for (const file of sourceCandidatesForPackageEntry(packageRoot, value)) candidates.add(file);
   }
+  const directories = json.directories as Record<string, unknown> | undefined;
+  if (!json.bin && typeof directories?.bin === "string" && directories.bin) {
+    const binRoot = resolve(packageRoot, directories.bin);
+    try {
+      for (const entry of readdirSync(binRoot, { recursive: true, withFileTypes: true })) {
+        const file = resolve(entry.parentPath, entry.name);
+        const path = relative(packageRoot, file);
+        if (!entry.isFile() || /(^|\/)\./.test(relative(binRoot, file))) continue;
+        for (const candidate of sourceCandidatesForPackageEntry(packageRoot, path)) {
+          candidates.add(candidate);
+        }
+      }
+    } catch {
+      // Missing or unreadable executable directories contribute no entrypoints.
+    }
+  }
   collectPackageExportEntries(packageRoot, json.exports, candidates);
   for (const standard of ["src/index.ts", "src/module.ts", "src/preview.ts"]) {
     const absolute = resolve(packageRoot, standard);
