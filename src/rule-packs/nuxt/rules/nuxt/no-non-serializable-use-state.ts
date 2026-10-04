@@ -127,9 +127,13 @@ function mayThrowExpression(value: AnyNode): boolean {
   )
     return false;
   if (node.type === "ObjectExpression")
-    return node.properties.some((property: AnyNode) =>
-      property.type === "SpreadElement" ? mayThrowExpression(property.argument) : false,
-    );
+    return node.properties.some((property: AnyNode) => {
+      if (property.type === "SpreadElement") return mayThrowExpression(property.argument);
+      return (
+        (property.computed && mayThrowExpression(property.key)) ||
+        (property.kind === "init" && mayThrowExpression(property.value))
+      );
+    });
   if (node.type === "ArrayExpression") return node.elements.some(mayThrowExpression);
   return true;
 }
