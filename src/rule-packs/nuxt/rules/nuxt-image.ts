@@ -3,8 +3,23 @@ import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
 
-const isNuxtImageTag = (name: string) => /^nuxt-?(?:img|picture)$/i.test(name);
-const isNuxtImgTag = (name: string) => /^nuxt-?img$/i.test(name);
+const nuxtImageTags = new Set([
+  "NuxtImg",
+  "nuxt-img",
+  "nuxtImg",
+  "Nuxt-Img",
+  "nuxt-Img",
+  "Nuxt-img",
+  "NuxtPicture",
+  "nuxt-picture",
+  "nuxtPicture",
+  "Nuxt-Picture",
+  "nuxt-Picture",
+  "Nuxt-picture",
+]);
+const nuxtImgTags = new Set(["NuxtImg", "nuxt-img", "nuxtImg", "Nuxt-Img", "nuxt-Img", "Nuxt-img"]);
+const isNuxtImageTag = (name: string) => nuxtImageTags.has(name);
+const isNuxtImgTag = (name: string) => nuxtImgTags.has(name);
 
 export const preferNuxtImg = createRule({
   meta: {

@@ -12,11 +12,13 @@ for (const tag of [
   "nuxtImg",
   "Nuxt-Img",
   "nuxt-Img",
+  "Nuxt-img",
   "NuxtPicture",
   "nuxt-picture",
   "nuxtPicture",
   "Nuxt-Picture",
   "nuxt-Picture",
+  "Nuxt-picture",
   "img",
 ]) {
   test.each([
@@ -39,11 +41,13 @@ for (const tag of [
   "nuxtImg",
   "Nuxt-Img",
   "nuxt-Img",
+  "Nuxt-img",
   "NuxtPicture",
   "nuxt-picture",
   "nuxtPicture",
   "Nuxt-Picture",
   "nuxt-Picture",
+  "Nuxt-picture",
 ]) {
   test.each([
     ':width="width"',
@@ -70,7 +74,7 @@ for (const tag of [
   });
 }
 
-test.each(["NuxtImg", "nuxt-img", "nuxtImg", "Nuxt-Img", "nuxt-Img"])(
+test.each(["NuxtImg", "nuxt-img", "nuxtImg", "Nuxt-Img", "nuxt-Img", "Nuxt-img"])(
   "format advice recognizes %s",
   async (tag) => {
     const result = await runRuleFixture({
@@ -82,11 +86,14 @@ test.each(["NuxtImg", "nuxt-img", "nuxtImg", "Nuxt-Img", "nuxt-Img"])(
   },
 );
 
-test.each(["Nuxt_Img", "nuxt--img"])("ignores unsupported component spelling %s", async (tag) => {
-  const result = await runRuleFixture({
-    rule: requireImageAlt,
-    framework: "nuxt",
-    files: { "app/app.vue": `<template><${tag} src="/image.png" /></template>` },
-  });
-  expect(result.diagnostics).toEqual([]);
-});
+test.each(["Nuxt_Img", "nuxt--img", "NUXT-IMG", "NuXt-ImG"])(
+  "ignores unsupported component spelling %s",
+  async (tag) => {
+    const result = await runRuleFixture({
+      rule: requireImageAlt,
+      framework: "nuxt",
+      files: { "app/app.vue": `<template><${tag} src="/image.png" /></template>` },
+    });
+    expect(result.diagnostics).toEqual([]);
+  },
+);
