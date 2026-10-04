@@ -12,6 +12,14 @@ test.each([
   ["src/main.ts", "const secret = import.meta.env.VITE_SECRET_TOKEN; const broken = ;"],
   ["src/main.js", "const secret = import.meta.env.VITE_SECRET_TOKEN; function ("],
   ["src/main.ts", "export type Draft ="],
+  ["src/main.ts", 'const retained = 1; "unterminated'],
+  ["src/main.js", 'const retained = 1; "unterminated'],
+  ["src/main.js", 'const retained = "😀"; "unterminated'],
+  [
+    "app.vue",
+    '<script setup lang="ts">const retained = 1; "unterminated</script><template><p>App</p></template>',
+  ],
+  ["app.vue", '<script>const retained = 1; "unterminated</script>'],
   ["app.vue", '<script setup lang="ts">const value = ;</script><template><p>App</p></template>'],
 ])("marks failed script parsing in %s incomplete on cold and warm runs", async (file, source) => {
   await withProject({ [file]: source }, async (root) => {
@@ -56,8 +64,7 @@ test("keeps diagnostics from successfully parsed files and clears the gap after 
 test("retains an earlier Vue script diagnostic when a later block is malformed", async () => {
   await withProject(
     {
-      "App.vue":
-        `<script>export const secret = import.meta.env.VITE_SECRET_TOKEN;</script><script setup>const broken = ;</script>`,
+      "App.vue": `<script>export const secret = import.meta.env.VITE_SECRET_TOKEN;</script><script setup>const broken = ;</script>`,
     },
     async (root) => {
       const result = await runViteDoctor({
@@ -71,6 +78,31 @@ test("retains an earlier Vue script diagnostic when a later block is malformed",
       expect(result.project.evidenceGaps).toEqual([
         expect.objectContaining({ source: "script-parser", files: [join(root, "App.vue")] }),
       ]);
+    },
+  );
+});
+
+test("retains recovered diagnostics and clears partial-recovery evidence after repair", async () => {
+  await withProject(
+    { "src/main.ts": 'export const secret = import.meta.env.VITE_SECRET_TOKEN; "unterminated' },
+    async (root) => {
+      const options = { root, framework: "vite" as const, rules: rule, cache: true };
+      const broken = await runViteDoctor(options);
+      expect(reportStatus(broken)).toBe("incomplete");
+      expect(broken.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VITE0009"]);
+      expect(broken.project.evidenceGaps).toEqual([
+        expect.objectContaining({ source: "script-parser", files: [join(root, "src/main.ts")] }),
+      ]);
+      await writeFile(
+        join(root, "src/main.ts"),
+        "export const secret = import.meta.env.VITE_SECRET_TOKEN;",
+      );
+      const repaired = await runViteDoctor(options);
+      expect(reportStatus(repaired)).toBe("findings");
+      expect(repaired.project.evidenceGaps ?? []).toEqual([]);
+      expect(repaired.diagnostics.map((diagnostic) => diagnostic.fingerprint)).toEqual(
+        broken.diagnostics.map((diagnostic) => diagnostic.fingerprint),
+      );
     },
   );
 });
@@ -106,7 +138,10 @@ test("does not require Markdown content to parse as JavaScript", async () => {
 test.each(["js", "cjs"])("keeps recovered CommonJS .%s syntax complete", async (extension) => {
   const file = `src/main.${extension}`;
   await withProject(
-    { [file]: "if (process.env.SKIP) return; module.exports = {};" },
+    {
+      [file]:
+        "#!/usr/bin/env node\n// CommonJS entry\nif (process.env.SKIP) return; /* retained */ module.exports = {};",
+    },
     async (root) => {
       execFileSync(process.execPath, ["--check", join(root, file)], { stdio: "pipe" });
       const result = await runViteDoctor({ root, framework: "vite", rules: rule, cache: false });
