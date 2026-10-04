@@ -3,6 +3,10 @@ import { runVueSfcRuleFixture } from "../../../src/core/testkit.ts";
 import { noAsyncWatchEffectAfterAwaitRead } from "../../../src/rule-packs/vue/rules/vue/no-async-watch-effect-after-await-read.ts";
 
 test.each([
+  "const count = ref(0); watchEffect(async () => { outer: for (let i=0;i<1;console.log(count.value),i++) { for (;;) { if (enabled) { await load(); continue }; break }; return } })",
+  "const count = ref(0); watchEffect(async () => { outer: for (let i=0;i<1;console.log(count.value),i++) { inner: for (;;) { if (enabled) { await load(); continue inner }; break }; return } })",
+  "const count = ref(0); watchEffect(async () => { outer: for (;;) { for (let i=0;i<1;console.log(count.value),i++) { await load(); continue outer } } })",
+  "const count = ref(0); watchEffect(async () => { outer: for (;;) { do { await load(); continue outer } while (console.log(count.value)) } })",
   "const count = ref(0); watchEffect(async () => { for (let i=0;i<1;await load(),i++) { console.log(count.value) } })",
   "const count = ref(0); watchEffect(async () => { for (let i=0;i<1;console.log(count.value),i++) { await load(); break } })",
   "const count = ref(0); watchEffect(async () => { for (let i=0;i<1;console.log(count.value),i++) { await load(); return } })",
@@ -40,6 +44,15 @@ test.each([
 });
 
 test.each([
+  "const count = ref(0); watchEffect(async () => { outer: for (let i=0;i<1;console.log(count.value),i++) { for (const key in object) { if (enabled) { await load(); continue outer }; break }; return } })",
+  "const count = ref(0); watchEffect(async () => { outer: alias: for (let i=0;i<1;console.log(count.value),i++) { for (;;) { if (enabled) { await load(); continue outer }; break }; return } })",
+  "const count = ref(0); watchEffect(async () => { do { await load(); continue } while (console.log(count.value)) })",
+  "const count = ref(0); watchEffect(async () => { outer: for (let i=0;i<1;console.log(count.value),i++) { for (;;) { if (enabled) { await load(); continue outer }; break }; return } })",
+  "const count = ref(0); watchEffect(async () => { outer: for (let i=0;i<1;console.log(count.value),i++) { while (enabled) { if (ready) { await load(); continue outer }; break }; return } })",
+  "const count = ref(0); watchEffect(async () => { outer: for (let i=0;i<1;console.log(count.value),i++) { do { if (enabled) { await load(); continue outer }; break } while (false); return } })",
+  "const count = ref(0); watchEffect(async () => { outer: for (let i=0;i<1;console.log(count.value),i++) { for (const item of items) { if (enabled) { await load(); continue outer }; break }; return } })",
+  "const count = ref(0); watchEffect(async () => { outer: for (let i=0;i<1;console.log(count.value),i++) { for (;;) { switch (mode) { case 1: await load(); continue outer; default: break }; return } } })",
+  "const count = ref(0); watchEffect(async () => { outer: for (let i=0;i<1;await load(),console.log(count.value),i++) { for (;;) { continue outer } } })",
   "const count = ref(0); watchEffect(async () => { switch (mode) { case 1: await load(); case 2: console.log(count.value) } })",
   "const count = ref(0); watchEffect(async () => { switch (mode) { case 1: await load(); break }; console.log(count.value) })",
   "const count = ref(0); watchEffect(async () => { await load(); switch (mode) { case 1: console.log(count.value); break } })",

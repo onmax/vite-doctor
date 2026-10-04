@@ -131,15 +131,38 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
       found: boolean;
       continues: boolean;
       breakAfter?: boolean;
-      continueAfter?: boolean;
+      continueAfter?: Map<string | null, boolean>;
     };
-    const scan = (node: AnyNode, after = false, parent?: AnyNode): ReadState => {
+    const mergeContinuations = (...states: ReadState["continueAfter"][]) => {
+      const transfers = new Map<string | null, boolean>();
+      for (const state of states)
+        for (const [label, after] of state ?? [])
+          transfers.set(label, (transfers.get(label) ?? false) || after);
+      return transfers;
+    };
+    const loopContinuations = (body: ReadState, labels: string[]) => {
+      const remaining = mergeContinuations(body.continueAfter);
+      let after: boolean | undefined;
+      for (const label of [null, ...labels]) {
+        if (remaining.has(label)) after = (after ?? false) || remaining.get(label)!;
+        remaining.delete(label);
+      }
+      return { after, remaining };
+    };
+    const scan = (
+      node: AnyNode,
+      after = false,
+      parent?: AnyNode,
+      labels: string[] = [],
+    ): ReadState => {
       const state: ReadState = { after, found: false, continues: true };
       if (
         !node?.type ||
         ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
       )
         return state;
+      if (node.type === "LabeledStatement")
+        return scan(node.body, after, node, [...labels, node.label.name]);
       if (node.type === "AwaitExpression") {
         const argument = scan(node.argument, after, node);
         return { ...argument, after: true };
@@ -148,34 +171,55 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
         const initializer = scan(node.init, after, node);
         const condition = scan(node.test, initializer.after, node);
         const body = scan(node.body, condition.after, node);
-        const updateAfter = (body.continues && body.after) || (body.continueAfter ?? false);
+        const continuation = loopContinuations(body, labels);
+        const updateAfter = (body.continues && body.after) || (continuation.after ?? false);
         const update =
-          body.continues || body.continueAfter !== undefined
+          body.continues || continuation.after !== undefined
             ? scan(node.update, updateAfter, node)
             : body;
         return {
           after: condition.after || body.after || update.after,
           found: initializer.found || condition.found || body.found || update.found,
           continues: true,
+          continueAfter: continuation.remaining,
         };
       }
       if (node.type === "DoWhileStatement") {
         const body = scan(node.body, after, node);
-        const condition = body.continues ? scan(node.test, body.after, node) : body;
-        return { after: condition.after, found: body.found || condition.found, continues: true };
+        const continuation = loopContinuations(body, labels);
+        const condition =
+          body.continues || continuation.after !== undefined
+            ? scan(node.test, (body.continues && body.after) || (continuation.after ?? false), node)
+            : body;
+        return {
+          after: condition.after,
+          found: body.found || condition.found,
+          continues: true,
+          continueAfter: continuation.remaining,
+        };
+      }
+      if (node.type === "ForOfStatement" || node.type === "ForInStatement") {
+        const iterable = scan(node.right, after, node);
+        const binding = scan(node.left, iterable.after, node);
+        const body = scan(node.body, binding.after, node);
+        return {
+          after: iterable.after || binding.after || body.after,
+          found: iterable.found || binding.found || body.found,
+          continues: true,
+          continueAfter: loopContinuations(body, labels).remaining,
+        };
       }
       if (node.type === "SwitchStatement") {
         const discriminant = scan(node.discriminant, after, node);
         let fallthrough = false;
         let afterSwitch = discriminant.after;
         let found = discriminant.found;
-        let continueAfter: boolean | undefined;
+        let continueAfter = new Map<string | null, boolean>();
         for (const branch of node.cases) {
           const selected = scan(branch, discriminant.after || fallthrough, node);
           found ||= selected.found;
           afterSwitch ||= selected.breakAfter ?? false;
-          if (selected.continueAfter !== undefined)
-            continueAfter = (continueAfter ?? false) || selected.continueAfter;
+          continueAfter = mergeContinuations(continueAfter, selected.continueAfter);
           fallthrough = selected.continues && selected.after;
         }
         return { after: afterSwitch || fallthrough, found, continues: true, continueAfter };
@@ -213,10 +257,7 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
           found: condition.found || consequent.found || alternate.found,
           continues: consequent.continues || alternate.continues,
           breakAfter: consequent.breakAfter || alternate.breakAfter,
-          continueAfter:
-            consequent.continueAfter === undefined && alternate.continueAfter === undefined
-              ? undefined
-              : Boolean(consequent.continueAfter || alternate.continueAfter),
+          continueAfter: mergeContinuations(consequent.continueAfter, alternate.continueAfter),
         };
       }
       for (const key of visitorKeys[node.type] ?? []) {
@@ -228,8 +269,7 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
           state.found ||= next.found;
           state.continues = next.continues;
           state.breakAfter ||= next.breakAfter;
-          if (next.continueAfter !== undefined)
-            state.continueAfter = (state.continueAfter ?? false) || next.continueAfter;
+          state.continueAfter = mergeContinuations(state.continueAfter, next.continueAfter);
         }
       }
       if (state.after && reactiveRead(node, parent)) state.found = true;
@@ -240,7 +280,8 @@ function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
       )
         state.continues = false;
       if (node.type === "BreakStatement") state.breakAfter = state.after;
-      if (node.type === "ContinueStatement") state.continueAfter = state.after;
+      if (node.type === "ContinueStatement")
+        state.continueAfter = new Map([[node.label?.name ?? null, state.after]]);
       return state;
     };
     const result = new Set<number>();
