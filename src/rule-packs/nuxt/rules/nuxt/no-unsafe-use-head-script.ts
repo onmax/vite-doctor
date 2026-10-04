@@ -124,7 +124,12 @@ function returnedHead(node: AnyNode): { hasScript: boolean; terminates: boolean 
     node.type === "DoWhileStatement" ||
     node.type === "LabeledStatement"
   ) {
-    if (node.type === "LabeledStatement") return returnedHead(node.body);
+    if (node.type === "LabeledStatement") {
+      const result = returnedHead(node.body);
+      return result.terminates && containsBreakToLabel(node.body, node.label?.name)
+        ? { hasScript: result.hasScript, terminates: false }
+        : result;
+    }
     if (node.type !== "DoWhileStatement" && node.test && staticTruthiness(node.test) === false)
       return empty;
     return { hasScript: returnedHead(node.body).hasScript, terminates: false };
@@ -138,6 +143,21 @@ function returnedHead(node: AnyNode): { hasScript: boolean; terminates: boolean 
     return { hasScript, terminates: false };
   }
   return empty;
+}
+
+function containsBreakToLabel(node: AnyNode, label: string | undefined): boolean {
+  if (!node || typeof node !== "object" || !label) return false;
+  if (node.type === "BreakStatement") return node.label?.name === label;
+  if (["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type))
+    return false;
+  return Object.entries(node).some(([key, value]) => {
+    if (["type", "loc", "range", "start", "end", "parent", "raw"].includes(key)) return false;
+    if (Array.isArray(value))
+      return value.some((child) => containsBreakToLabel(child as AnyNode, label));
+    return (
+      typeof value === "object" && value !== null && containsBreakToLabel(value as AnyNode, label)
+    );
+  });
 }
 
 function staticTruthiness(node: AnyNode): boolean | null {

@@ -20,6 +20,7 @@ test.each([
   '() => { do { return { script: [{ innerHTML: "code" }] } } while (enabled) }',
   '() => { switch (mode) { case "ready": return { script: [{ innerHTML: "code" }] }; default: return { title: "Ready" } } }',
   '() => { label: { return { script: [{ innerHTML: "code" }] } } }',
+  '() => { label: { break label } return { script: [{ innerHTML: "code" }] } }',
   '() => { try { work(); return { title: "Ready" } } catch { return { script: [{ innerHTML: "code" }] } } }',
   '() => enabled && { script: [{ innerHTML: "code" }] }',
   '() => { for (const item of items) { return { title: "Ready" } } return { script: [{ innerHTML: "code" }] } }',
