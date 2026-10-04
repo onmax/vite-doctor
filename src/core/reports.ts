@@ -224,7 +224,7 @@ export function createSarifReport(result: DoctorRunResult): string {
             locations: [
               {
                 physicalLocation: {
-                  artifactLocation: { uri: relative(result.root, diagnostic.file) },
+                  artifactLocation: { uri: sarifArtifactUri(result.root, diagnostic.file) },
                   region: diagnostic.range
                     ? {
                         startLine: diagnostic.range.line,
@@ -236,7 +236,7 @@ export function createSarifReport(result: DoctorRunResult): string {
             ],
             relatedLocations: diagnostic.related?.map((item) => ({
               physicalLocation: {
-                artifactLocation: { uri: relative(result.root, item.file) },
+                artifactLocation: { uri: sarifArtifactUri(result.root, item.file) },
                 region: item.range
                   ? { startLine: item.range.line, startColumn: item.range.column }
                   : undefined,
@@ -257,6 +257,10 @@ export function createReport(result: DoctorRunResult, format: DoctorReportFormat
   if (format === "sarif") return createSarifReport(result);
   if (format === "agent") return createAgentReport(result);
   return `${createTextReport(result)}\n`;
+}
+
+function sarifArtifactUri(root: string, file: string): string {
+  return relative(root, file).split("/").map(encodeURIComponent).join("/");
 }
 
 export function createRulesReport(
