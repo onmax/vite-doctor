@@ -3,8 +3,10 @@ import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
 
-const NUXT_IMAGE_TAGS = new Set(["NuxtImg", "nuxt-img", "NuxtPicture", "nuxt-picture"]);
-const NUXT_IMG_TAGS = new Set(["NuxtImg", "nuxt-img"]);
+const normalizeComponentName = (name: string) => name.replace(/[-_]/g, "").toLowerCase();
+const isNuxtImageTag = (name: string) =>
+  ["nuxtimg", "nuxtpicture"].includes(normalizeComponentName(name));
+const isNuxtImgTag = (name: string) => normalizeComponentName(name) === "nuxtimg";
 
 export const preferNuxtImg = createRule({
   meta: {
@@ -51,10 +53,7 @@ export const requireImageAlt = createRule({
   create(ctx) {
     return {
       TemplateNode(node: AnyNode) {
-        if (
-          node.type !== "VElement" ||
-          (node.rawName !== "img" && !NUXT_IMAGE_TAGS.has(node.rawName))
-        )
+        if (node.type !== "VElement" || (node.rawName !== "img" && !isNuxtImageTag(node.rawName)))
           return;
         if (
           ctx.helpers.hasVueAttribute(node, "alt") ||
@@ -92,7 +91,7 @@ export const preferResponsiveDimensions = createRule({
   create(ctx) {
     return {
       TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || !NUXT_IMAGE_TAGS.has(node.rawName)) return;
+        if (node.type !== "VElement" || !isNuxtImageTag(node.rawName)) return;
         const hasSizing = ["width", "height", "sizes"].some(
           (name) =>
             ctx.helpers.hasVueAttribute(node, name) ||
@@ -130,7 +129,7 @@ export const preferNuxtPictureForFormats = createRule({
   create(ctx) {
     return {
       TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || !NUXT_IMG_TAGS.has(node.rawName)) return;
+        if (node.type !== "VElement" || !isNuxtImgTag(node.rawName)) return;
         const format = ctx.helpers.getStaticVueAttributeValue(node, "format");
         if (!format || !/(webp|avif)/i.test(format)) return;
         ctx.helpers.report(

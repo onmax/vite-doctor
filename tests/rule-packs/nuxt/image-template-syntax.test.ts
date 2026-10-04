@@ -6,7 +6,19 @@ import {
   preferNuxtPictureForFormats,
 } from "../../../src/rule-packs/nuxt/rules/nuxt-image.ts";
 
-for (const tag of ["NuxtImg", "nuxt-img", "NuxtPicture", "nuxt-picture", "img"]) {
+for (const tag of [
+  "NuxtImg",
+  "nuxt-img",
+  "nuxtImg",
+  "Nuxt-Img",
+  "nuxt-Img",
+  "NuxtPicture",
+  "nuxt-picture",
+  "nuxtPicture",
+  "Nuxt-Picture",
+  "nuxt-Picture",
+  "img",
+]) {
   test.each([
     ["", 1],
     ['alt=""', 0],
@@ -21,7 +33,18 @@ for (const tag of ["NuxtImg", "nuxt-img", "NuxtPicture", "nuxt-picture", "img"])
   });
 }
 
-for (const tag of ["NuxtImg", "nuxt-img", "NuxtPicture", "nuxt-picture"]) {
+for (const tag of [
+  "NuxtImg",
+  "nuxt-img",
+  "nuxtImg",
+  "Nuxt-Img",
+  "nuxt-Img",
+  "NuxtPicture",
+  "nuxt-picture",
+  "nuxtPicture",
+  "Nuxt-Picture",
+  "nuxt-Picture",
+]) {
   test.each([
     ':width="width"',
     ':height="height"',
@@ -47,11 +70,14 @@ for (const tag of ["NuxtImg", "nuxt-img", "NuxtPicture", "nuxt-picture"]) {
   });
 }
 
-test.each(["NuxtImg", "nuxt-img"])("format advice recognizes %s", async (tag) => {
-  const result = await runRuleFixture({
-    rule: preferNuxtPictureForFormats,
-    framework: "nuxt",
-    files: { "app/app.vue": `<template><${tag} src="/image.png" format="avif" /></template>` },
-  });
-  expect(result.diagnostics.map((d) => d.ruleId)).toEqual([preferNuxtPictureForFormats.meta.id]);
-});
+test.each(["NuxtImg", "nuxt-img", "nuxtImg", "Nuxt-Img", "nuxt-Img"])(
+  "format advice recognizes %s",
+  async (tag) => {
+    const result = await runRuleFixture({
+      rule: preferNuxtPictureForFormats,
+      framework: "nuxt",
+      files: { "app/app.vue": `<template><${tag} src="/image.png" format="avif" /></template>` },
+    });
+    expect(result.diagnostics.map((d) => d.ruleId)).toEqual([preferNuxtPictureForFormats.meta.id]);
+  },
+);
