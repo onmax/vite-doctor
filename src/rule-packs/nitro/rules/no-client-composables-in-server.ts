@@ -54,11 +54,7 @@ function appComposableCalls(source: string, path: string): Map<number, string> |
   const names = clientComposables;
   const result = new Map<number, string>();
   try {
-    const { ast, scopeManager, visitorKeys } = parseForESLint(source, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: /\.[jt]sx$/.test(path) },
-    });
+    const { ast, scopeManager, visitorKeys } = parseBindingSource(source, path);
     const references = new Map(
       scopeManager.scopes.flatMap((scope) =>
         scope.references.map((reference) => [reference.identifier, reference] as const),
@@ -109,8 +105,20 @@ function appComposableCalls(source: string, path: string): Map<number, string> |
     };
     visit(ast);
   } catch {
-    // Oxc accepts syntax this parser may not support; retain ambient-name diagnostics.
     return undefined;
   }
   return result;
+}
+
+function parseBindingSource(source: string, path: string) {
+  const options = {
+    range: true,
+    sourceType: "module",
+    ecmaFeatures: { jsx: /\.[jt]sx$/.test(path) },
+  } as const;
+  try {
+    return parseForESLint(source, options);
+  } catch {
+    return parseForESLint(source.replace(/import\.source/g, "import_source"), options);
+  }
 }

@@ -16,6 +16,8 @@ test.each([
   'import * as utils from "./utils"; export default defineEventHandler(() => utils.useRoute())',
   'import { useState } from "#app"; function handler(useState) { return useState() }',
   'import * as app from "#app"; function handler(app) { return app.useState() }',
+  'const wasm = import.source("./codec.wasm"); function useState() {}; export default defineEventHandler(() => useState())',
+  'const wasm = import.source("./codec.wasm"); import { useState } from "./state"; export default defineEventHandler(() => useState())',
 ])("does not mistake local and unrelated APIs for app composables: %s", async (source) => {
   const result = await runRuleFixture({
     rule: noClientComposablesInServer,
