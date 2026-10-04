@@ -48,7 +48,7 @@ pnpm dlx vite-doctor . --format json
 pnpm dlx vite-doctor . --format sarif
 ```
 
-Agent reports use relative locations and include remediation, Diagnostic Reference URLs, and command templates for explanation, focused verification, and the full rerun.
+Agent reports use relative locations and include remediation, Diagnostic Reference URLs, and command templates for explanation, focused verification, and the full rerun. Automation can execute the `commandArgs` arrays without a shell; `commands` provides quoted POSIX templates.
 
 For Nuxt projects, install Vite Doctor and run it through Nuxt:
 
