@@ -787,6 +787,89 @@ test("rule diagnostics must include actionable fix text", async () => {
   });
 });
 
+test.each([false, true])(
+  "ambiguous short Rule Pack aliases fail regardless of registration order (%s)",
+  async (reverse) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const extensions = [
+        defineDoctorExtension({
+          name: "test/first",
+          rulePacks: [ambiguousPack("vendor-a/vite", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second",
+          rulePacks: [ambiguousPack("vendor-b/vite", secondRule)],
+        }),
+      ];
+      if (reverse) extensions.reverse();
+
+      const thrown = await runDoctor({
+        root,
+        framework: "vue",
+        extends: ["vite/recommended"],
+        extensions,
+      }).catch((error) => error);
+      expect(thrown).toMatchObject({ name: "DOC0024" });
+      expect(String(thrown.message)).toContain("vendor-a/vite");
+      expect(String(thrown.message)).toContain("vendor-b/vite");
+    });
+  },
+);
+
+test("fully qualified Rule Pack selectors bypass short alias collisions", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      extends: ["vendor-b/vite/recommended"],
+      extensions: [
+        defineDoctorExtension({
+          name: "test/first",
+          rulePacks: [ambiguousPack("vendor-a/vite", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second",
+          rulePacks: [ambiguousPack("vendor-b/vite", secondRule)],
+        }),
+      ],
+    });
+
+    const ruleIds = result.diagnostics.map((item) => item.ruleId);
+    expect(ruleIds).toContain("test/second-rule");
+    expect(ruleIds).not.toContain("test/report-program");
+  });
+});
+
+test.each([false, true])(
+  "exact Rule Pack names take precedence over short aliases (%s)",
+  async (reverse) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const extensions = [
+        defineDoctorExtension({
+          name: "test/exact",
+          rulePacks: [ambiguousPack("vite", secondRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/alias",
+          rulePacks: [ambiguousPack("vendor-a/vite", reportProgramRule)],
+        }),
+      ];
+      if (reverse) extensions.reverse();
+
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        extends: ["vite/recommended"],
+        extensions,
+      });
+
+      const ruleIds = result.diagnostics.map((item) => item.ruleId);
+      expect(ruleIds).toContain("test/second-rule");
+      expect(ruleIds).not.toContain("test/report-program");
+    });
+  },
+);
+
 test("extends selection runs configured pack rules and config overrides extends", async () => {
   await withFixture(
     {
@@ -1276,6 +1359,15 @@ function pluginWith(...rules: any[]) {
         presets: { recommended: rules.map((rule) => rule.meta.id) },
       }),
     ],
+  });
+}
+
+function ambiguousPack(name: string, ...rules: any[]) {
+  return defineRulePack({
+    name,
+    version: "0.0.0",
+    rules,
+    presets: { recommended: rules.map((rule) => rule.meta.id) },
   });
 }
 

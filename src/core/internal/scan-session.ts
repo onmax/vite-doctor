@@ -392,7 +392,21 @@ function resolveExtends(
     if (slash === -1) throw doctorInternalDiagnostics.DOC0016({ entry });
     const packKey = entry.slice(0, slash);
     const presetName = entry.slice(slash + 1);
-    const pack = packs.find((item) => rulePackKey(item) === packKey || item.name === packKey);
+    const exactMatches = packs.filter((item) => item.name === packKey);
+    const aliasMatches = exactMatches.length
+      ? exactMatches
+      : packs.filter((item) => rulePackKey(item) === packKey);
+    if (!exactMatches.length && aliasMatches.length > 1) {
+      throw doctorInternalDiagnostics.DOC0024({
+        entry,
+        pack: packKey,
+        matches: aliasMatches
+          .map((item) => item.name)
+          .sort((left, right) => left.localeCompare(right))
+          .join(", "),
+      });
+    }
+    const pack = aliasMatches[0];
     if (!pack) throw doctorInternalDiagnostics.DOC0017({ entry, pack: packKey });
     const preset = pack.presets[presetName];
     if (!preset)
