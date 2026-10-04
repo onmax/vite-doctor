@@ -1,5 +1,6 @@
 import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
 import { walkScriptLocal } from "../../../core/rule-authoring.js";
+import { routeMethodSuffix } from "../../nitro/rules/request-helpers.js";
 import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
@@ -61,16 +62,28 @@ export const preferCachedEventHandler = createRule({
   },
   create(ctx) {
     if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    const method = routeMethodSuffix(ctx.file.relativePath);
+    if (method && method !== "GET" && method !== "HEAD") return;
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
         let hasCachedHandler = false;
+        let consumesBody = false;
         walkScriptLocal(node, (child) => {
           if (isCachedEventHandler(child)) hasCachedHandler = true;
+          if (
+            [
+              "readBody",
+              "readValidatedBody",
+              "readRawBody",
+              "readMultipartFormData",
+              "readFormData",
+            ].includes(ctx.helpers.getCalleeName(child) ?? "")
+          )
+            consumesBody = true;
         });
-        if (hasCachedHandler) return;
-        if (!/(await\s+\$fetch|queryCollection|hubDatabase|hubKV|readBody)/.test(ctx.file.text))
-          return;
+        if (hasCachedHandler || consumesBody) return;
+        if (!/(await\s+\$fetch|queryCollection|hubDatabase|hubKV)/.test(ctx.file.text)) return;
         if (/(getUserSession|getCookie|getHeader|authorization|tenant|user)/i.test(ctx.file.text))
           return;
         ctx.helpers.report(
