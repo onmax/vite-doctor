@@ -61,7 +61,7 @@ async function parseSourceFile(
       ...(session.project.evidenceGaps ?? []),
       {
         source: "script-parser",
-        message: `Cannot parse ${file.displayPath}: ${parsedScript.errors.join("; ")}. Correct the source syntax and rerun Doctor.`,
+        message: `Cannot parse ${file.displayPath}: ${parsedScript.errors.join("; ")}. Check the source syntax and parser support, then rerun Doctor.`,
         files: [absolute],
       },
     ];
