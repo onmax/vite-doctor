@@ -124,7 +124,8 @@ function isConfiguredAliasTemplate(node: AnyNode, viteInventory: unknown): boole
       const find = typeof alias === "string" ? alias : (alias as { find?: unknown })?.find;
       if (typeof find === "string") return prefix === find || prefix.startsWith(`${find}/`);
       if (find instanceof RegExp) {
-        find.lastIndex = 0;
+        // Stateful aliases depend on resolver call order and must not be probed here.
+        if (find.global || find.sticky) return false;
         return find.test(prefix);
       }
       return false;

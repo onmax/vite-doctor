@@ -6,8 +6,54 @@ import { describe, expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../src/core/testkit.ts";
 import { doctor } from "../../src/plugin.ts";
 import { noDynamicNewUrl } from "../../src/rules.ts";
+import { defineDoctorExtension, defineRulePack, runDoctor } from "../../src/core/index.ts";
 
 describe("Vite asset URL templates", () => {
+  test.each([/^@assets/g, /^@assets/y])(
+    "reports stateful regex aliases without changing resolver state: %s",
+    async (find) => {
+      const root = await mkdtemp(join(tmpdir(), "doctor-stateful-alias-"));
+      try {
+        await mkdir(join(root, "src"));
+        await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
+        await writeFile(
+          join(root, "src/main.ts"),
+          "const image = new URL(`@assets/${name}.svg`, import.meta.url); const icon = new URL(`@assets/${name}.svg`, import.meta.url)",
+        );
+        find.lastIndex = 3;
+        const result = await runDoctor({
+          root,
+          framework: "vite",
+          rules: "vite/assets/no-dynamic-new-url",
+          cache: false,
+          extensions: [
+            defineDoctorExtension({
+              name: "stateful-alias-fixture",
+              rulePacks: [
+                defineRulePack({
+                  name: "fixture",
+                  version: "0.0.0",
+                  rules: [noDynamicNewUrl],
+                  presets: { recommended: [noDynamicNewUrl.meta.id] },
+                }),
+              ],
+              setup(api) {
+                api.registerProjectInventoryContributor({
+                  name: "vite",
+                  contribute: () => ({ aliases: [{ find, replacement: join(root, "src") }] }),
+                });
+              },
+            }),
+          ],
+        });
+        expect(result.diagnostics.map(({ code }) => code)).toEqual(["VITE0001", "VITE0001"]);
+        expect(find.lastIndex).toBe(3);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   test.each([
     '""',
     '"./images/logo.png"',
