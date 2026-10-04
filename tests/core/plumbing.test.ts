@@ -561,7 +561,7 @@ test("since scans no files when the requested Git diff is empty", async () => {
   });
 });
 
-test("changed scope reports diagnostics whose source ranges overlap changed lines", async () => {
+test("changed scope reports overlapping ranges and findings without source ranges", async () => {
   await withFixture({ "src/app.ts": "const first = true\nconst second = true\n" }, async (root) => {
     git(root, "init");
     git(root, "add", ".");
@@ -585,7 +585,7 @@ test("changed scope reports diagnostics whose source ranges overlap changed line
     });
 
     expect(result.scope).toMatchObject({ mode: "changed", files: 1 });
-    expect(result.diagnostics).toHaveLength(2);
+    expect(result.diagnostics).toHaveLength(3);
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -594,6 +594,7 @@ test("changed scope reports diagnostics whose source ranges overlap changed line
           range: expect.objectContaining({ line: 2 }),
         }),
         expect.objectContaining({ ruleId: "test/report-program" }),
+        expect.objectContaining({ ruleId: "test/second-rule" }),
       ]),
     );
     const agent = JSON.parse(createAgentReport(result));
