@@ -210,3 +210,53 @@ const flags = [process.client, process.server]
   });
   expect(result.diagnostics).toHaveLength(0);
 });
+
+test.each([
+  {
+    name: "setup binding leaves normal-script global unresolved",
+    script: "export const flag = process.client",
+    setup: "const process = { server: 'local' }; const flag = process.server",
+    expected: ["process.client"],
+  },
+  {
+    name: "normal-script binding is visible to setup",
+    script:
+      "const process = { client: 'local', server: 'local' }; export const flag = process.client",
+    setup: "const flag = process.server",
+    expected: [],
+  },
+  {
+    name: "globals in both blocks preserve offsets",
+    script: "export const flag = process.client",
+    setup: "const flag = process.server",
+    expected: ["process.client", "process.server"],
+  },
+])("mixed Vue scripts: $name", async ({ script, setup, expected }) => {
+  const source = `<template><p>😀 flags</p></template>\r\n<script lang="ts">${script}</script>\r\n<script setup lang="ts">${setup}</script>`;
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [noLegacyProcessClientServer],
+    run: {
+      runtimeTarget: {
+        nuxt: "4.5.1",
+        nitro: "2.13.4",
+        h3: "1.15.11",
+        vue: "3.5.0",
+        nuxtCompatibility: 5,
+      },
+    },
+    files: { "app/pages/index.vue": source },
+  });
+  const edits = result.diagnostics.map((diagnostic) => diagnostic.fix!.edits[0]!);
+  expect(edits.map((edit) => source.slice(edit.range.start, edit.range.end))).toEqual(expected);
+  let fixed = source;
+  for (const edit of edits.toReversed())
+    fixed = fixed.slice(0, edit.range.start) + edit.text + fixed.slice(edit.range.end);
+  let expectedSource = source;
+  for (const expression of expected)
+    expectedSource = expectedSource.replace(
+      expression,
+      expression.replace("process.", "import.meta."),
+    );
+  expect(fixed).toBe(expectedSource);
+});

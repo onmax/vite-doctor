@@ -1,6 +1,6 @@
-import { parseForESLint } from "@typescript-eslint/parser";
+import * as typescriptParser from "@typescript-eslint/parser";
+import { parseForESLint as parseVueForESLint } from "vue-eslint-parser";
 import type { RuleContext } from "../../../../core/index.js";
-import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
@@ -56,19 +56,23 @@ export const noLegacyProcessClientServer = createRule({
 });
 
 function findGlobalProcessReferences(ctx: RuleContext): Set<number> {
-  const script = ctx.file.sfc
-    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
-    : { text: ctx.file.text, lang: /\.[jt]sx$/.test(ctx.file.relativePath) ? "tsx" : "ts" };
   try {
-    const { scopeManager } = parseForESLint(script.text, {
+    const options = {
       range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: ["jsx", "tsx"].includes(script.lang) },
-    });
+      sourceType: "module" as const,
+      ecmaFeatures: { jsx: true },
+    };
+    const { scopeManager } = ctx.file.sfc
+      ? parseVueForESLint(ctx.file.text, {
+          ...options,
+          parser: typescriptParser,
+          ecmaVersion: "latest",
+        })
+      : typescriptParser.parseForESLint(ctx.file.text, options);
     return new Set(
-      scopeManager.globalScope?.through
+      scopeManager?.globalScope?.through
         .filter((reference) => reference.identifier.name === "process")
-        .map((reference) => reference.identifier.range[0]),
+        .flatMap((reference) => reference.identifier.range?.slice(0, 1) ?? []),
     );
   } catch {
     return new Set();
