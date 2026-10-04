@@ -653,7 +653,7 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   return [...links.values()];
 }
 
-function findMetaObjects(ast: any, visitorKeys: typeof import("oxc-parser").visitorKeys) {
+export function findMetaObjects(ast: any, visitorKeys: typeof import("oxc-parser").visitorKeys) {
   const constants = new Map<string, string>();
   for (const statement of ast.body ?? []) {
     const declaration =
@@ -680,12 +680,18 @@ function findMetaObjects(ast: any, visitorKeys: typeof import("oxc-parser").visi
 function isLocalScope(node: any) {
   return [
     "BlockStatement",
+    "CatchClause",
+    "ForInStatement",
+    "ForOfStatement",
+    "ForStatement",
     "FunctionDeclaration",
     "FunctionExpression",
     "ArrowFunctionExpression",
     "ClassDeclaration",
     "ClassExpression",
     "StaticBlock",
+    "SwitchCase",
+    "SwitchStatement",
   ].includes(node.type);
 }
 
