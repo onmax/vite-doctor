@@ -1221,7 +1221,7 @@ export const ruleDocumentationMetadata = {
   },
   "vite/assets/no-public-src-import": {
     description: "Flags media and font imports from the project's root public directory.",
-    why: "Files in public are copied as-is and served from the root URL. Import image, font, and media assets from source when they need bundling, or reference public assets by URL when they should stay static. Dependency subpaths and source folders named public are not the root public directory. This rule resolves relative paths and standard Nuxt aliases against Project Inventory; custom Vite aliases and publicDir settings are not inferred. Static JSON data imports are allowed because SSR pages may need build-time data instead of a runtime fetch.",
+    why: "Files in public are copied as-is and served from the root URL. Import image, font, and media assets from source when they need bundling, or reference public assets by URL when they should stay static. Dependency subpaths and source folders named public are not the project public directory. This rule resolves relative paths and standard Nuxt aliases against Project Inventory and uses the resolved publicDir supplied by the Vite Plugin Surface, including disabled directories. Without that inventory it assumes the default root public directory; custom Vite aliases and executable config settings are not inferred. Static JSON data imports are allowed because SSR pages may need build-time data instead of a runtime fetch.",
     recommendedReplacement:
       "Reference public media and font assets by root-relative URL, or move bundled assets into source.",
     examples: [

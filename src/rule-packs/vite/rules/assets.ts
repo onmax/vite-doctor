@@ -105,6 +105,12 @@ export const noDynamicNewUrl = createRule({
 });
 
 function isPublicImport(ctx: RuleContext, source: string): boolean {
+  const viteInventory = ctx.project.inventory?.vite;
+  const publicDir =
+    viteInventory && typeof viteInventory === "object" && "publicDir" in viteInventory
+      ? viteInventory.publicDir
+      : undefined;
+  if (publicDir === false || publicDir === "") return false;
   const path = source.split(/[?#]/)[0]!;
   if (isStaticDataImport(path)) return false;
   let target: string | undefined;
@@ -119,7 +125,10 @@ function isPublicImport(ctx: RuleContext, source: string): boolean {
       target = resolve(ctx.project.nuxt.appDir, path.slice(2));
   }
   if (!target) return false;
-  const publicPath = relative(resolve(ctx.project.root, "public"), target);
+  const publicPath = relative(
+    resolve(ctx.project.root, typeof publicDir === "string" ? publicDir : "public"),
+    target,
+  );
   return publicPath !== ".." && !publicPath.startsWith("../") && !publicPath.startsWith("/");
 }
 

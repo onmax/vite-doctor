@@ -123,3 +123,41 @@ test("bundles a dependency named public through the Vite Plugin Surface", async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test.each([
+  { publicDir: "static", source: "../static/logo.svg", reports: true },
+  { publicDir: "src/static", source: "/src/static/logo.svg", reports: true },
+  { publicDir: "static", source: "../public/logo.svg", reports: false },
+  { publicDir: false as const, source: "../public/logo.svg", reports: false },
+])("uses resolved publicDir inventory: %j", async ({ publicDir, source, reports }) => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-public-dir-"));
+  try {
+    for (const directory of ["src/static", "static", "public"])
+      await mkdir(join(root, directory), { recursive: true });
+    await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
+    for (const directory of ["src/static", "static", "public"])
+      await writeFile(
+        join(root, directory, "logo.svg"),
+        '<svg xmlns="http://www.w3.org/2000/svg"><circle r="10" /></svg>',
+      );
+    await writeFile(join(root, "index.html"), '<script type="module" src="/src/main.ts"></script>');
+    await writeFile(
+      join(root, "src/main.ts"),
+      `import logo from ${JSON.stringify(source)}; document.body.innerHTML = logo`,
+    );
+    const result = build({
+      root,
+      publicDir,
+      configFile: false,
+      logLevel: "silent",
+      plugins: [
+        doctor({ rules: noPublicSrcImport.meta.id, mode: "error", maxWarnings: 0, cache: false }),
+      ],
+      build: { write: false },
+    });
+    if (reports) await expect(result).rejects.toThrow("VITE0002");
+    else await expect(result).resolves.toBeDefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
