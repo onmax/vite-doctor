@@ -1,5 +1,5 @@
 import { resolve } from "pathe";
-import { createReport, defineDoctorExtension } from "./core/index.js";
+import { createReport, defineDoctorExtension, reportStatus } from "./core/index.js";
 import type { DoctorConfig, DoctorExtension, DoctorRunOptions } from "./core/index.js";
 import type { Plugin, ResolvedConfig } from "vite";
 import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
@@ -28,6 +28,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     name: "vite-doctor",
     configResolved(resolved) {
       config = resolved;
+      ran = false;
     },
     async buildStart() {
       if (options.enabled === false || ran) return;
@@ -49,7 +50,8 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       });
 
       const report = createReport(result, options.format).trimEnd();
-      const shouldFail = shouldFailDoctorRun(result, options.maxWarnings);
+      const incomplete = reportStatus(result) === "incomplete";
+      const shouldFail = incomplete || shouldFailDoctorRun(result, options.maxWarnings);
 
       if (shouldFail && (options.mode ?? "error") === "error") {
         this.error(report || "Vite Doctor checks failed.");
@@ -84,6 +86,7 @@ function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
             base: config.base,
             publicDir: config.publicDir,
             envDir: config.envDir,
+            aliases: config.resolve?.alias ?? [],
             plugins: config.plugins?.map((plugin) => plugin.name).filter(Boolean) ?? [],
           };
         },
@@ -91,10 +94,34 @@ function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
       api.registerRuntimeEvidenceContributor({
         name: "vite",
         contribute() {
+          const prefixes = config.envPrefix ?? "VITE_";
+          const environments = Object.values(config.environments ?? {});
+          const hasResolvedConsumers = environments.every(
+            ({ consumer }) => consumer === "client" || consumer === "server",
+          );
+          const defineKeys = [
+            ...new Set([
+              ...Object.keys(config.define ?? {}),
+              ...environments
+                .filter(({ consumer }) => consumer === "client")
+                .flatMap((environment) => Object.keys(environment.define ?? {})),
+            ]),
+          ];
           return {
             buildSsr: Boolean(config.build?.ssr),
             ssrExternal: config.ssr?.external ?? [],
             ssrNoExternal: config.ssr?.noExternal ?? [],
+            envExposure: hasResolvedConsumers
+              ? {
+                  root: config.root,
+                  prefixes: typeof prefixes === "string" ? [prefixes] : [...prefixes],
+                  defineKeys: defineKeys
+                    .filter((key) => key.startsWith("import.meta.env."))
+                    .map((key) => key.slice("import.meta.env.".length)),
+                  hasObjectDefine:
+                    defineKeys.includes("import.meta.env") || defineKeys.includes("import.meta"),
+                }
+              : undefined,
           };
         },
       });

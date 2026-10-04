@@ -28,8 +28,13 @@ export async function detectProject(
     scripts?: Record<string, string>;
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
   }>(join(root, "package.json"));
-  const deps = { ...packageJson?.dependencies, ...packageJson?.devDependencies };
+  const deps = {
+    ...packageJson?.dependencies,
+    ...packageJson?.optionalDependencies,
+    ...packageJson?.devDependencies,
+  };
   const nuxtVersion = deps.nuxt ?? deps["@nuxt/kit"];
   const viteVersion = deps.vite;
   const nitroVersion = deps.nitro ?? deps["nitropack"];

@@ -42,6 +42,7 @@ class CliConfigError extends Error {
   constructor(
     readonly file: string,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -145,6 +146,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
     await writeCliError(error instanceof Error ? error.message : String(error), format, {
       kind: error instanceof CliConfigError ? "config" : "invocation",
       file: error instanceof CliConfigError ? error.file : undefined,
+      code: errorCode(error),
     });
     return 2;
   }
@@ -184,6 +186,7 @@ function addDoctorRunCommand(
     .option("--extends <extends>", "Comma-separated rule-pack presets.")
     .option("--since <ref>", "Report diagnostics on lines changed since a Git ref.")
     .option("--baseline <file>", "Diagnostic baseline file.")
+    .option("--update-baseline", "Write current Diagnostic fingerprints to the baseline file.")
     .option("--format <format>", "Output: text, json, sarif, or agent.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
     .action(async (path = ".", options) => {
@@ -201,7 +204,7 @@ function addDoctorRunCommand(
       const configFile = cliConfigFile(root, explicitConfig);
       runOptions.config = await loadCliConfig(root, explicitConfig);
       try {
-        setExitCode(await runDoctorCommand(runOptions, format));
+        setExitCode(await runDoctorCommand(runOptions, format, explicitConfig));
       } catch (error) {
         if (configFile && isLoadedConfigValidationError(error, runOptions)) {
           throw createCliConfigError(configFile, error);
@@ -214,9 +217,10 @@ function addDoctorRunCommand(
 async function runDoctorCommand(
   options: DoctorRunOptions,
   format: DoctorReportFormat,
+  configFile?: string,
 ): Promise<number> {
   const result = await runViteDoctor(options);
-  process.stdout.write(createReport(result, format));
+  process.stdout.write(createReport(result, format, { runOptions: options, configFile }));
   if (reportStatus(result) === "incomplete") return 3;
   return shouldFailDoctorRun(result, options.maxWarnings) ? 1 : 0;
 }
@@ -281,7 +285,9 @@ async function requestedPresentation(args: string[]): Promise<DoctorReportFormat
 async function writeCliError(
   message: string,
   format: DoctorReportFormat,
-  failure: { kind: "invocation" | "config"; file?: string } = { kind: "invocation" },
+  failure: { kind: "invocation" | "config"; file?: string; code?: string } = {
+    kind: "invocation",
+  },
 ): Promise<void> {
   if (format === "json" || format === "agent") {
     const indentation = format === "agent" ? undefined : 2;
@@ -290,7 +296,7 @@ async function writeCliError(
         {
           schema: format === "agent" ? "vite-doctor.agent/v1" : "vite-doctor.report/v3",
           status: "failed",
-          error: { kind: failure.kind, message, file: failure.file },
+          error: { kind: failure.kind, message, file: failure.file, code: failure.code },
           next:
             failure.kind === "config"
               ? { action: "fix-config", file: failure.file }
@@ -312,7 +318,13 @@ async function writeCliError(
             invocations: [
               {
                 executionSuccessful: false,
-                toolExecutionNotifications: [{ level: "error", message: { text: message } }],
+                toolExecutionNotifications: [
+                  {
+                    level: "error",
+                    message: { text: message },
+                    properties: failure.code ? { diagnosticCode: failure.code } : undefined,
+                  },
+                ],
               },
             ],
             results: [],
@@ -322,7 +334,7 @@ async function writeCliError(
     );
     return;
   }
-  consola.error(message);
+  consola.error(failure.code ? `[${failure.code}] ${message}` : message);
 }
 
 function isDirectory(path: string): boolean {
@@ -330,6 +342,8 @@ function isDirectory(path: string): boolean {
 }
 
 function validateCliRunOptions(options: DoctorRunOptions): void {
+  if (options.updateBaseline && !options.baseline)
+    throw new Error("--update-baseline requires --baseline <file>.");
   if (options.framework && !frameworks.has(options.framework)) {
     throw new Error(
       `Unknown framework ${JSON.stringify(options.framework)}. Expected ${[...frameworks].join(", ")}.`,
@@ -363,7 +377,17 @@ function validateCliRunOptions(options: DoctorRunOptions): void {
 
 function createCliConfigError(file: string, error: unknown): CliConfigError {
   const reason = error instanceof Error ? error.message : String(error);
-  return new CliConfigError(file, `Could not load Doctor config at ${file}: ${reason}`);
+  return new CliConfigError(
+    file,
+    `Could not load Doctor config at ${file}: ${reason}`,
+    errorCode(error),
+  );
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
 }
 
 function cliConfigFile(root: string, explicitConfig?: string): string | undefined {
@@ -377,6 +401,9 @@ function isLoadedConfigValidationError(error: unknown, options: DoctorRunOptions
   if (error.name === "DOC0019" || error.name === "DOC0020") return true;
   return (
     options.extends === undefined &&
-    (error.name === "DOC0016" || error.name === "DOC0017" || error.name === "DOC0018")
+    (error.name === "DOC0016" ||
+      error.name === "DOC0017" ||
+      error.name === "DOC0018" ||
+      error.name === "DOC0024")
   );
 }

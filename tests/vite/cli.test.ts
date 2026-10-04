@@ -232,7 +232,7 @@ test("smart scan applies Vite rules and skips Nuxt-only rules in Vite projects",
     const nuxtOnly = await runCli([".", "--rules", "nuxt/**"], root);
     expect(nuxtOnly.code).toBe(0);
     expect(nuxtOnly.output).toContain("Detected: Vite");
-    expect(nuxtOnly.output).not.toContain("nuxt/");
+    expect(nuxtOnly.output).not.toMatch(/^\s*rule:\s+nuxt\//m);
   });
 });
 
@@ -505,6 +505,46 @@ test("CLI identifies config loading failures and points to the config file", asy
       const invalidFlag = await runCli([".", "--extends", "broken", "--format", "agent"], root);
       expect(invalidFlag.code).toBe(2);
       expect(JSON.parse(invalidFlag.output)).toMatchObject({
+        error: { kind: "invocation" },
+        next: { action: "correct-invocation" },
+      });
+    },
+  );
+});
+
+test("CLI identifies ambiguous Config Extends from a loaded config", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "doctor.config.ts": `export default {
+  extends: ["vite/recommended"],
+  extensions: [
+    {
+      name: "test/vendor-a",
+      rulePacks: [{ name: "vendor-a/vite", version: "1.0.0", rules: [], presets: { recommended: ["test/a"] } }],
+    },
+    {
+      name: "test/vendor-b",
+      rulePacks: [{ name: "vendor-b/vite", version: "1.0.0", rules: [], presets: { recommended: ["test/b"] } }],
+    },
+  ],
+}
+`,
+    },
+    async (root) => {
+      const result = await runCli([".", "--config", "doctor.config.ts", "--format", "agent"], root);
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.output)).toMatchObject({
+        error: { kind: "config" },
+        next: { action: "fix-config", file: join(root, "doctor.config.ts") },
+      });
+
+      const invocation = await runCli(
+        [".", "--config", "doctor.config.ts", "--extends", "vite/recommended", "--format", "agent"],
+        root,
+      );
+      expect(invocation.code).toBe(2);
+      expect(JSON.parse(invocation.output)).toMatchObject({
         error: { kind: "invocation" },
         next: { action: "correct-invocation" },
       });
@@ -1131,6 +1171,61 @@ test("migrate rejects Nitro targets outside Nuxt and Nitro projects", async () =
       });
     },
   );
+});
+
+test("CLI can record and refresh a baseline while retaining new-only findings", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^8.0.0" } }),
+      "src/known.ts": "export const secret = import.meta.env.VITE_SECRET_TOKEN",
+    },
+    async (root) => {
+      const baseline = "reports/known findings.json";
+      const args = [".", "--baseline", baseline, "--format", "json", "--no-cache"];
+      const record = await runCli([...args, "--update-baseline"], root);
+      expect(record.code).toBe(1);
+      const first = JSON.parse(record.output);
+      expect(first.diagnostics.map((item: { code: string }) => item.code)).toEqual(["VITE0009"]);
+      const readBaseline = () => JSON.parse(readFileSync(join(root, baseline), "utf8"));
+      expect(readBaseline()).toMatchObject({
+        version: 1,
+        diagnostics: [{ fingerprint: first.diagnostics[0].fingerprint, file: "src/known.ts" }],
+      });
+
+      const known = await runCli([...args, "--new-only"], root);
+      expect(known.code).toBe(0);
+      expect(JSON.parse(known.output).diagnostics).toEqual([]);
+
+      writeFileSync(
+        join(root, "src/new.ts"),
+        "export const token = import.meta.env.VITE_API_SECRET",
+      );
+      const added = await runCli([...args, "--new-only", "--update-baseline"], root);
+      expect(added.code).toBe(1);
+      expect(JSON.parse(added.output).diagnostics).toHaveLength(1);
+      expect(JSON.parse(added.output).suppressedDiagnostics).toHaveLength(1);
+      expect(readBaseline().diagnostics).toHaveLength(2);
+
+      writeFileSync(join(root, "src/known.ts"), "export const publicValue = 1");
+      const refreshed = await runCli([...args, "--update-baseline"], root);
+      expect(refreshed.code).toBe(1);
+      expect(readBaseline().diagnostics.map((item: { file: string }) => item.file)).toEqual([
+        "src/new.ts",
+      ]);
+      expect((await runCli([...args, "--new-only"], root)).code).toBe(0);
+    },
+  );
+});
+
+test("CLI baseline updates require an explicit output path", async () => {
+  await withFixture({ "package.json": "{}" }, async (root) => {
+    const result = await runCli([".", "--update-baseline", "--format", "agent"], root);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.output)).toMatchObject({
+      status: "failed",
+      error: { kind: "invocation", message: "--update-baseline requires --baseline <file>." },
+    });
+  });
 });
 
 async function withFixture(

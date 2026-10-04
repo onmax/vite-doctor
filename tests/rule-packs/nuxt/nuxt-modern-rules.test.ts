@@ -1870,14 +1870,14 @@ test("client-only useState non-serializable values are ignored while SSR state r
     rule: noNonSerializableUseState,
     framework: "nuxt",
     files: {
-      "app/plugins/visited.client.ts": `export default defineNuxtPlugin(() => useState('visited', () => new Set()))`,
+      "app/plugins/visited.client.ts": `export default defineNuxtPlugin(() => useState('visited', () => new WebSocket('wss://example.com')))`,
     },
   });
   const universal = await runRuleFixture({
     rule: noNonSerializableUseState,
     framework: "nuxt",
     files: {
-      "app/composables/useVisited.ts": `export function useVisited() { return useState('visited', () => new Set()) }`,
+      "app/composables/useVisited.ts": `export function useVisited() { return useState('visited', () => new WebSocket('wss://example.com')) }`,
     },
   });
 
@@ -1905,13 +1905,13 @@ test("useState allows factory-local Date values converted to strings", async () 
   expect(result.diagnostics).toHaveLength(0);
 });
 
-test("useState still reports returned Date instances", async () => {
+test("useState still reports returned live sockets", async () => {
   const result = await runRuleFixture({
     rule: noNonSerializableUseState,
     framework: "nuxt",
     files: {
-      "app/composables/useDateRange.ts": `export function useDateRange() {
-  return useState('date-range', () => ({ end: new Date() }))
+      "app/composables/useSocketState.ts": `export function useSocketState() {
+  return useState('socket-state', () => ({ socket: new WebSocket('wss://example.com') }))
 }`,
     },
   });
