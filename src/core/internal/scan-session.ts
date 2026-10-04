@@ -1,4 +1,13 @@
-import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
@@ -72,11 +81,22 @@ class PersistentRuleCache extends MemoryRuleCache {
   override set<T = unknown>(key: string, value: T): void {
     super.set(key, value);
     if (!key.startsWith("fileFacts:")) return;
+    let temporary: string | undefined;
     try {
       mkdirSync(this.dir, { recursive: true });
-      writeFileSync(this.cachePath(key), JSON.stringify(value));
+      const target = this.cachePath(key);
+      temporary = resolve(this.dir, `.doctor-${randomUUID()}.tmp`);
+      assertCachePath(this.root, temporary);
+      writeFileSync(temporary, JSON.stringify(value), { flag: "wx", mode: 0o600 });
+      renameSync(temporary, target);
     } catch {
       // Cache writes are best-effort and must not change diagnostics.
+    } finally {
+      if (temporary) {
+        try {
+          rmSync(temporary, { force: true });
+        } catch {}
+      }
     }
   }
 
