@@ -83,7 +83,7 @@ export const rules: DoctorRule[] = [noPersonalizedCachedHandler, preferCachedEve
 export const nuxtHubRulePack = defineRulePack({
   name: "vite-doctor/nuxthub",
   version: "0.0.0",
-  activation: { nuxt: ">=4", packages: ["nuxthub"], modules: ["nuxthub"] },
+  activation: { nuxt: ">=4", packages: ["@nuxthub/core"], modules: ["@nuxthub/core"] },
   rules,
   presets: { recommended: rules.map((rule) => rule.meta.id) },
 });
