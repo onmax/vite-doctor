@@ -108,7 +108,7 @@ async function detectProjectLanguages(
     if (/\.(?:ts|tsx|mts|cts)$/.test(entry)) hasTypeScript = true;
     if (/\.(?:js|jsx|mjs|cjs)$/.test(entry)) hasJavaScript = true;
     if (entry.endsWith(".vue")) {
-      const languages = detectVueScriptLanguages(root, entry);
+      const languages = await detectVueScriptLanguages(root, entry);
       hasTypeScript ||= languages.includes("typescript");
       hasJavaScript ||= languages.includes("javascript");
     }
@@ -120,14 +120,16 @@ async function detectProjectLanguages(
   ];
 }
 
-function detectVueScriptLanguages(root: string, file: string): ProjectLanguage[] {
+async function detectVueScriptLanguages(root: string, file: string): Promise<ProjectLanguage[]> {
   try {
     let hasTypeScript = false;
     let hasJavaScript = false;
     const source = readFileSync(join(root, file), "utf8");
-    for (const match of source.matchAll(/<script\b([^>]*)>/gi)) {
-      const langMatch = match[1]?.match(/\blang\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/i);
-      const lang = (langMatch?.[1] ?? langMatch?.[2] ?? langMatch?.[3] ?? "js").toLowerCase();
+    const { parse } = await import("@vue/compiler-sfc");
+    const { descriptor } = parse(source, { filename: file, sourceMap: false });
+    for (const block of [descriptor.script, descriptor.scriptSetup]) {
+      if (!block) continue;
+      const lang = (block.lang ?? "js").toLowerCase();
       if (lang === "ts" || lang === "tsx") hasTypeScript = true;
       if (lang === "js" || lang === "jsx") hasJavaScript = true;
     }
