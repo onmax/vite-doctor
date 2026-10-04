@@ -69,3 +69,9 @@ Additional checks exposed boundaries outside the repository's current required c
 - An ordinary local Cloudflare smoke cannot initialize either the old or new worker output: Miniflare rejects a bare `secure-exec` import in the inherited executor chunk. No HTTP request is dispatched. This is a separate packaging boundary, so neither successful prerendering nor this migration establishes deployed worker compatibility.
 
 No deployment, release, hosted build retry, or Issue/PR comment was performed. Follow-up work should establish a complete documentation typecheck and repair the existing worker-packaging and homepage-image gaps before treating those surfaces as verified.
+
+## Follow-up Nuxt Kit lock alignment
+
+The frontend Kit catalog was raised to `^4.5.2` in `7d413b4`. A subsequent lockfile inspection still found compatible `@nuxt/content` and `@nuxt/fonts` edges resolving Kit 4.5.1. Those three edges now reuse the existing Kit 4.5.2 snapshots with the same peer contexts, and unused 4.5.1 package/snapshot entries were removed. Both upstream packages declare `^4.5.0`, so this stays within their supported ranges without an override. Nuxt 3 Kit 3.21.10 remains for the test tooling, and Vite Plus stays 0.3.1.
+
+This lock-only follow-up was checked in the prepared PR checkout using `pnpm install --frozen-lockfile --offline`, documentation `vp check`, documentation `vp test run --maxWorkers=2` (30 tests across three files), and `git diff --check`. `pnpm --filter docs why @nuxt/kit` confirms the Content and Fonts paths now resolve 4.5.2. The earlier full build and expanded comparison evidence above predates this patch resolution follow-up.
