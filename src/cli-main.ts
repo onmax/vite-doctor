@@ -184,6 +184,7 @@ function addDoctorRunCommand(
     .option("--extends <extends>", "Comma-separated rule-pack presets.")
     .option("--since <ref>", "Report diagnostics on lines changed since a Git ref.")
     .option("--baseline <file>", "Diagnostic baseline file.")
+    .option("--update-baseline", "Write current Diagnostic fingerprints to the baseline file.")
     .option("--format <format>", "Output: text, json, sarif, or agent.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
     .action(async (path = ".", options) => {
@@ -330,6 +331,8 @@ function isDirectory(path: string): boolean {
 }
 
 function validateCliRunOptions(options: DoctorRunOptions): void {
+  if (options.updateBaseline && !options.baseline)
+    throw new Error("--update-baseline requires --baseline <file>.");
   if (options.framework && !frameworks.has(options.framework)) {
     throw new Error(
       `Unknown framework ${JSON.stringify(options.framework)}. Expected ${[...frameworks].join(", ")}.`,
