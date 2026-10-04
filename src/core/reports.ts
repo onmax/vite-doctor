@@ -190,6 +190,8 @@ export function createAgentReport(result: DoctorRunResult): string {
 }
 
 export function createSarifReport(result: DoctorRunResult): string {
+  const status = reportStatus(result);
+  const gaps = result.project.evidenceGaps;
   const ruleId = (diagnostic: Diagnostic) => `${diagnostic.ruleId}:${diagnostic.code}`;
   const rules = new Map<string, Diagnostic>();
   for (const diagnostic of result.diagnostics) rules.set(ruleId(diagnostic), diagnostic);
@@ -199,6 +201,29 @@ export function createSarifReport(result: DoctorRunResult): string {
       $schema: "https://json.schemastore.org/sarif-2.1.0.json",
       runs: [
         {
+          properties: { status },
+          invocations: [
+            {
+              executionSuccessful: status !== "incomplete",
+              toolExecutionNotifications:
+                status === "incomplete"
+                  ? gaps?.length
+                    ? gaps.map((gap) => ({
+                        level: "error",
+                        message: { text: gap.message },
+                        properties: { source: gap.source, files: gap.files },
+                      }))
+                    : [
+                        {
+                          level: "error",
+                          message: {
+                            text: "Install project dependencies and run Doctor from the target package before relying on version-specific results.",
+                          },
+                        },
+                      ]
+                  : undefined,
+            },
+          ],
           tool: {
             driver: {
               name: "Vite Doctor",
