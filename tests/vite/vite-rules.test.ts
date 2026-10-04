@@ -103,7 +103,7 @@ const other = new Worker(new URL('./other-worker.ts', foo.bar))
 import.meta.hot.accept()
 window.addEventListener('resize', () => {})
 console.log('/src/assets/logo.svg', logo, asset, worker, other, VITE_API_URL)`,
-        "src/App.vue": `<template><img src="/src/assets/logo.svg"></template>`,
+        "src/App.vue": `<template><iframe src="/src/assets/frame.html"></iframe></template>`,
         "src/entry-server.ts": `export function render() {
   return document.documentElement.outerHTML
 }`,
@@ -190,7 +190,7 @@ console.log(data, nuxtData, rawData)`,
 
   test("still reports public media imports", async () => {
     const result = await runProjectFixture({
-      framework: "vite",
+      framework: "nuxt",
       rules: [noPublicSrcImport],
       files: {
         "src/main.ts": `import logo from '~~/public/logo.svg'

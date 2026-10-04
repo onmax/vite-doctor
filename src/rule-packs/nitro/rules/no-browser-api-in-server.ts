@@ -28,6 +28,7 @@ export const noBrowserApiInServer = createRule({
         if (node.type !== "Identifier" || !BROWSER_GLOBALS.has(node.name)) return;
         if (
           ctx.helpers.isTypeOnlyContext(node) ||
+          ctx.helpers.isTypeofOperand(node) ||
           isObjectPropertyKey(node) ||
           ctx.helpers.hasLocalBindingBefore(node, ctx.file.text)
         )

@@ -136,6 +136,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
 
   try {
     cli.parse(["node", "vite-doctor", ...args], { run: false });
+    validateSingleValueOptions(cli);
     const result = await cli.runMatchedCommand();
     if (typeof result === "number") exitCode = result;
     return exitCode;
@@ -146,6 +147,15 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
       file: error instanceof CliConfigError ? error.file : undefined,
     });
     return 2;
+  }
+}
+
+function validateSingleValueOptions(cli: ReturnType<typeof cac>): void {
+  for (const option of [...cli.globalCommand.options, ...(cli.matchedCommand?.options ?? [])]) {
+    if (option.isBoolean || option.config.type) continue;
+    if (!option.names.some((name) => Array.isArray(cli.options[name]))) continue;
+    const flag = option.name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+    throw new Error(`Option --${flag} may only be provided once.`);
   }
 }
 
@@ -174,6 +184,7 @@ function addDoctorRunCommand(
     .option("--extends <extends>", "Comma-separated rule-pack presets.")
     .option("--since <ref>", "Report diagnostics on lines changed since a Git ref.")
     .option("--baseline <file>", "Diagnostic baseline file.")
+    .option("--update-baseline", "Write current Diagnostic fingerprints to the baseline file.")
     .option("--format <format>", "Output: text, json, sarif, or agent.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
     .action(async (path = ".", options) => {
@@ -320,6 +331,8 @@ function isDirectory(path: string): boolean {
 }
 
 function validateCliRunOptions(options: DoctorRunOptions): void {
+  if (options.updateBaseline && !options.baseline)
+    throw new Error("--update-baseline requires --baseline <file>.");
   if (options.framework && !frameworks.has(options.framework)) {
     throw new Error(
       `Unknown framework ${JSON.stringify(options.framework)}. Expected ${[...frameworks].join(", ")}.`,
