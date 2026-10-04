@@ -19,7 +19,9 @@ if (!diagnostic.value) {
 const meta = computed(() => FRAMEWORK_META[diagnostic.value?.framework as Framework]);
 const ruleTitle = computed(() => diagnostic.value?.title.replace(/^[A-Z]+\d+:\s*/, "") ?? "");
 const headline = computed(() =>
-  [meta.value?.label, categoryLabel(diagnostic.value?.category ?? "")].filter(Boolean).join(" · "),
+  [meta.value?.label ?? "Doctor", categoryLabel(diagnostic.value?.category ?? "")]
+    .filter(Boolean)
+    .join(" · "),
 );
 const tocPage = computed(() => diagnostic.value as any);
 
@@ -62,12 +64,22 @@ useHead(() => ({
           Rule page
         </UButton>
         <UButton
+          v-if="diagnostic.framework"
           :to="`/${diagnostic.framework}/rules`"
           color="neutral"
           variant="outline"
           icon="i-lucide-list-checks"
         >
           {{ meta?.label }} rules
+        </UButton>
+        <UButton
+          v-else
+          to="/cli#workspace-analyses"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-terminal"
+        >
+          Workspace analyses
         </UButton>
       </template>
     </UPageHeader>

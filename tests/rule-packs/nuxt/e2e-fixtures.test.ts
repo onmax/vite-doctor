@@ -14,6 +14,7 @@ test("Vue all-issues fixture reports the Vue rule pack", async () => {
   const result = await runDoctor({
     root: vueFixture,
     framework: "vue",
+    runtimeTarget: { vue: "3.5.35" },
     extensions: [defineDoctorExtension({ name: "e2e-vue", rulePacks: [vueRulePack] })],
   });
 

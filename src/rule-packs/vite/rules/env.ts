@@ -6,6 +6,7 @@ import {
   propertyName,
   readViteConfigFacts,
   SECRET_NAME_RE,
+  staticString,
   type AnyNode,
 } from "./shared.js";
 
@@ -185,7 +186,7 @@ const builtInEnvKeys = new Set(["MODE", "BASE_URL", "PROD", "DEV", "SSR"]);
 function importMetaEnvKey(node: AnyNode): string | null {
   if (node?.type !== "MemberExpression") return null;
   if (memberPath(node.object) !== "import.meta.env") return null;
-  return propertyName(node.property);
+  return node.computed ? staticString(node.property) : propertyName(node.property);
 }
 
 function isBroadPrefix(value: string): boolean {
