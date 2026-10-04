@@ -54,14 +54,26 @@ export function createVueScriptForParsing(
   descriptor: any,
   source: string,
 ): { text: string; lang: ScriptParseLang } {
-  const blocks = [descriptor?.script, descriptor?.scriptSetup].filter(Boolean);
-  const text = source.split("").map((char) => (char === "\n" || char === "\r" ? char : " "));
+  const blocks = [descriptor?.script, descriptor?.scriptSetup]
+    .filter(Boolean)
+    .sort((left, right) => (left.loc?.start?.offset ?? 0) - (right.loc?.start?.offset ?? 0));
+  const text: string[] = source
+    .split("")
+    .map((char) => (char === "\n" || char === "\r" ? char : " "));
   for (const block of blocks) {
     const start = block.loc?.start?.offset;
     if (typeof start !== "number" || !block.content) continue;
     for (let index = 0; index < block.content.length; index++) {
       text[start + index] = block.content[index]!;
     }
+  }
+  // Keep parser offsets stable while isolating blocks from comment and ASI coupling.
+  for (let index = 0; index < blocks.length - 1; index++) {
+    const end = blocks[index]?.loc?.end?.offset;
+    const nextStart = blocks[index + 1]?.loc?.start?.offset;
+    if (typeof end !== "number" || typeof nextStart !== "number" || end >= nextStart) continue;
+    text[end] = "\n";
+    if (end + 1 < nextStart) text[end + 1] = ";";
   }
   return { text: text.join(""), lang: vueScriptLang(blocks) };
 }
