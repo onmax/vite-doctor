@@ -288,11 +288,13 @@ function createResourceEvidence(ctx: RuleContext) {
     );
   }
 
-  function callback(expression: AnyNode): AnyNode {
+  function callback(expression: AnyNode, seen = new Set<AnyNode>()): AnyNode {
     const node = unwrap(expression);
     if (isFunction(node)) return node;
     if (node?.type !== "Identifier") return undefined;
     const variable = bindings.get(node);
+    if (!variable || seen.has(variable)) return undefined;
+    seen.add(variable);
     for (const definition of variable?.defs ?? []) {
       const init = definition.type === "Variable" ? definition.node.init : undefined;
       if (
@@ -305,8 +307,7 @@ function createResourceEvidence(ctx: RuleContext) {
       )
         return undefined;
       if (definition.type === "FunctionName") return definition.node;
-      if (definition.type === "Variable" && isFunction(unwrap(definition.node.init)))
-        return unwrap(definition.node.init);
+      if (definition.type === "Variable") return callback(init, seen);
     }
   }
 

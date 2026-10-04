@@ -32,6 +32,26 @@ test.each([
     1,
   ],
   [
+    `const effect = () => { const timer = setInterval(() => {}, 1000); return timer }; const alias = effect; watchEffect(alias)`,
+    1,
+  ],
+  [
+    `function changed() { const timer = setInterval(() => {}, 1000); return timer }; const alias = changed; watch(source, alias)`,
+    1,
+  ],
+  [
+    `function visit() { const timer = setInterval(() => {}, 1000); return timer }; const alias = visit; const nextAlias = alias; items.forEach(nextAlias)`,
+    1,
+  ],
+  [
+    `function acquire() { const timer = setInterval(() => {}, 1000); return timer }; const alias = acquire; const timer = alias(); onUnmounted(() => clearInterval(timer))`,
+    0,
+  ],
+  [
+    `const first = second; const second = first; watchEffect(first); const timer = setInterval(() => {}, 1000)`,
+    1,
+  ],
+  [
     `watchEffect(() => { const timer = setInterval(() => {}, 1000); onWatcherCleanup(() => clearInterval(other)) })`,
     1,
   ],
