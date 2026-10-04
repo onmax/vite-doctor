@@ -47,7 +47,7 @@ async function parseSourceFile(
   const cachedFacts = session.cache.get<unknown>(cacheKey);
   const isVueSfc = absolute.endsWith(".vue");
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
-const parsedScript = isVueSfc
+  const parsedScript = isVueSfc
     ? parseVueScriptsResult(absolute, sfc?.descriptor, text)
     : text.trim()
       ? parseScriptResult(absolute, text)
