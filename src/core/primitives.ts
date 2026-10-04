@@ -425,7 +425,14 @@ export interface GraphEdge {
   from: number;
   to?: number;
   specifier?: string;
-  kind: "import" | "type-import" | "dynamic-import" | "export" | "re-export" | "virtual-root";
+  kind:
+    | "import"
+    | "type-import"
+    | "dynamic-import"
+    | "export"
+    | "re-export"
+    | "type-re-export"
+    | "virtual-root";
 }
 
 export interface VirtualRootNode {
@@ -661,10 +668,8 @@ export function defineDoctorExtension(extension: DoctorExtension): DoctorExtensi
   const names = new Set<string>();
   for (const pack of extension.rulePacks ?? []) {
     defineRulePack(pack);
-    for (const key of new Set([pack.name, pack.name.split("/").at(-1) ?? pack.name])) {
-      if (names.has(key)) throw doctorInternalDiagnostics.DOC0023({ pack: key });
-      names.add(key);
-    }
+    if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
+    names.add(pack.name);
   }
   return extension;
 }

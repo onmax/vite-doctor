@@ -11,6 +11,13 @@ import type {
 import { allDiagnosticCodesByRuleId } from "./diagnostic-code-map.js";
 import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
+import type { DoctorRunOptions } from "./config.js";
+
+export interface DoctorReportContext {
+  runOptions?: Readonly<DoctorRunOptions>;
+  /** Executable configuration explicitly selected by the CLI caller. */
+  configFile?: string;
+}
 
 export function createTextReport(result: DoctorRunResult): string {
   const lines: string[] = [];
@@ -138,7 +145,10 @@ export function createJsonReport(result: DoctorRunResult): string {
   )}\n`;
 }
 
-export function createAgentReport(result: DoctorRunResult): string {
+export function createAgentReport(
+  result: DoctorRunResult,
+  context: DoctorReportContext = {},
+): string {
   const status = reportStatus(result);
   const commandArgs = {
     explain: [
@@ -150,8 +160,8 @@ export function createAgentReport(result: DoctorRunResult): string {
       "--format",
       "agent",
     ],
-    verify: agentRunArguments(result, true),
-    rerun: agentRunArguments(result),
+    verify: agentRunArguments(result, context, true),
+    rerun: agentRunArguments(result, context),
   };
   return `${JSON.stringify({
     schema: "vite-doctor.agent/v1",
@@ -199,6 +209,7 @@ export function createSarifReport(result: DoctorRunResult): string {
       $schema: "https://json.schemastore.org/sarif-2.1.0.json",
       runs: [
         {
+          columnKind: "utf16CodeUnits",
           tool: {
             driver: {
               name: "Vite Doctor",
@@ -235,7 +246,7 @@ export function createSarifReport(result: DoctorRunResult): string {
             locations: [
               {
                 physicalLocation: {
-                  artifactLocation: { uri: relative(result.root, diagnostic.file) },
+                  artifactLocation: { uri: sarifArtifactUri(result.root, diagnostic.file) },
                   region: diagnostic.range
                     ? {
                         startLine: diagnostic.range.line,
@@ -247,7 +258,7 @@ export function createSarifReport(result: DoctorRunResult): string {
             ],
             relatedLocations: diagnostic.related?.map((item) => ({
               physicalLocation: {
-                artifactLocation: { uri: relative(result.root, item.file) },
+                artifactLocation: { uri: sarifArtifactUri(result.root, item.file) },
                 region: item.range
                   ? { startLine: item.range.line, startColumn: item.range.column }
                   : undefined,
@@ -263,11 +274,19 @@ export function createSarifReport(result: DoctorRunResult): string {
   )}\n`;
 }
 
-export function createReport(result: DoctorRunResult, format: DoctorReportFormat = "text"): string {
+export function createReport(
+  result: DoctorRunResult,
+  format: DoctorReportFormat = "text",
+  context: DoctorReportContext = {},
+): string {
   if (format === "json") return createJsonReport(result);
   if (format === "sarif") return createSarifReport(result);
-  if (format === "agent") return createAgentReport(result);
+  if (format === "agent") return createAgentReport(result, context);
   return `${createTextReport(result)}\n`;
+}
+
+function sarifArtifactUri(root: string, file: string): string {
+  return relative(root, file).split("/").map(encodeURIComponent).join("/");
 }
 
 export function createRulesReport(
@@ -431,7 +450,11 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
   };
 }
 
-function agentRunArguments(result: DoctorRunResult, focused = false): string[] {
+function agentRunArguments(
+  result: DoctorRunResult,
+  context: DoctorReportContext,
+  focused = false,
+): string[] {
   const args = ["vite-doctor", ".", "--framework", result.framework];
   if (result.scope.mode === "changed") {
     if (result.scope.base) args.push("--since", result.scope.base);
@@ -439,7 +462,21 @@ function agentRunArguments(result: DoctorRunResult, focused = false): string[] {
   }
   if (Array.isArray(result.extends) && result.extends.length)
     args.push("--extends", result.extends.join(","));
+  const options = context.runOptions;
+  if (context.configFile) args.push("--config", context.configFile);
   if (focused) args.push("--rules", "<rule>");
+  else if (options?.rules) args.push("--rules", options.rules);
+  for (const [flag, value] of [
+    ["--severity", options?.severity],
+    ["--analyses", options?.analyses],
+    ["--baseline", options?.baseline],
+    ["--max-warnings", options?.maxWarnings],
+  ] as const) {
+    if (value !== undefined) args.push(flag, String(value));
+  }
+  if (options?.newOnly) args.push("--new-only");
+  if (options?.profile) args.push("--profile");
+  if (options?.cache !== undefined) args.push(options.cache ? "--cache" : "--no-cache");
   args.push("--format", "agent");
   return args;
 }

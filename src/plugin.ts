@@ -1,5 +1,5 @@
 import { resolve } from "pathe";
-import { createReport, defineDoctorExtension } from "./core/index.js";
+import { createReport, defineDoctorExtension, reportStatus } from "./core/index.js";
 import type { DoctorConfig, DoctorExtension, DoctorRunOptions } from "./core/index.js";
 import type { Plugin, ResolvedConfig } from "vite";
 import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
@@ -50,7 +50,8 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       });
 
       const report = createReport(result, options.format).trimEnd();
-      const shouldFail = shouldFailDoctorRun(result, options.maxWarnings);
+      const incomplete = reportStatus(result) === "incomplete";
+      const shouldFail = incomplete || shouldFailDoctorRun(result, options.maxWarnings);
 
       if (shouldFail && (options.mode ?? "error") === "error") {
         this.error(report || "Vite Doctor checks failed.");
@@ -85,6 +86,7 @@ function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
             base: config.base,
             publicDir: config.publicDir,
             envDir: config.envDir,
+            aliases: config.resolve?.alias ?? [],
             plugins: config.plugins?.map((plugin) => plugin.name).filter(Boolean) ?? [],
           };
         },

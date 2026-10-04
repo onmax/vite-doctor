@@ -3,8 +3,8 @@
 </template>
 
 <script setup lang="ts">
-const value = useState("set-state", function () {
-  return new Set();
+const value = useState("callback-state", function () {
+  return function () {};
 });
 console.log(value);
 </script>
