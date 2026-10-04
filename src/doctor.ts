@@ -98,7 +98,11 @@ function detectRequestedFramework(options: DoctorRunOptions): DoctorFramework {
   }
   const root = options.root ?? process.cwd();
   const packageJson = readPackageJson(root);
-  const deps = { ...packageJson?.dependencies, ...packageJson?.devDependencies };
+  const deps = {
+    ...packageJson?.dependencies,
+    ...packageJson?.devDependencies,
+    ...packageJson?.optionalDependencies,
+  };
   if (deps.nuxt || deps["@nuxt/kit"] || hasConfig(root, "nuxt.config")) return "nuxt";
   if (deps.nitro || deps.nitropack || hasConfig(root, "nitro.config")) return "nitro";
   if (deps.vue || hasVueFiles(root)) return "vue";
@@ -112,6 +116,7 @@ function withDistributionVersion<T extends { version: string }>(item: T): T {
 function readPackageJson(root: string): {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
 } | null {
   try {
     return JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
