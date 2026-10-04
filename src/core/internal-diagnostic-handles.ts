@@ -60,5 +60,11 @@ export const doctorInternalDiagnostics = defineDiagnostics({
         `Doctor could not resolve the governing runtime graph: ${params.details}`,
       fix: "Install project dependencies and run Doctor from the target project package. For computed Nuxt config, make future.compatibilityVersion statically provable or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.",
     },
+    DOC0026: {
+      why: (params: { kind: string; name: string }) =>
+        `${params.kind} contributor "${params.name}" was registered more than once.`,
+      fix: (params: { kind: string; name: string }) =>
+        `Give each ${params.kind.toLowerCase()} contributor a unique name instead of registering "${params.name}" twice.`,
+    },
   },
 });

@@ -33,6 +33,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0020", ruleId: "doctor/config/invalid-rule-config", docs: false },
   { code: "DOC0021", ruleId: "doctor/internal/missing-diagnostic-fix", docs: false },
   { code: "DOC0022", ruleId: "doctor/inventory/unresolved-runtime" },
+  { code: "DOC0026", ruleId: "doctor/extension/duplicate-contributor-name", docs: false },
   { code: "VUE0001", ruleId: "vue/i18n/no-untranslated-text" },
   { code: "VUE0002", ruleId: "vue/i18n/no-unused-translations" },
   { code: "VUE0003", ruleId: "vue/lifecycle/no-mutation-in-onupdated" },

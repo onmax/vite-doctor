@@ -308,12 +308,27 @@ async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
     ...extensions.flatMap((extension) => extension.rulePacks ?? []),
     ...registeredPacks,
   ].map((pack) => defineRulePack(pack));
+  assertUniqueContributors(inventoryContributors, "Project Inventory");
+  assertUniqueContributors(runtimeEvidenceContributors, "Runtime Evidence");
   return {
     packs,
     rules: packs.flatMap((pack) => pack.rules),
     inventoryContributors,
     runtimeEvidenceContributors,
   };
+}
+
+function assertUniqueContributors(
+  contributors: Array<{ name: string }>,
+  kind: "Project Inventory" | "Runtime Evidence",
+): void {
+  const names = new Set<string>();
+  for (const contributor of contributors) {
+    if (names.has(contributor.name)) {
+      throw doctorInternalDiagnostics.DOC0026({ kind, name: contributor.name });
+    }
+    names.add(contributor.name);
+  }
 }
 
 async function applyProjectContributions(
