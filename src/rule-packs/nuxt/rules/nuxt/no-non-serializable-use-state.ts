@@ -101,17 +101,21 @@ function returnedValue(node: AnyNode): { unsupported: boolean; terminates: boole
 }
 
 function mayThrowBeforeTermination(node: AnyNode): boolean {
-  if (!node) return true;
-  if (node.type === "BlockStatement")
+  if (!node) return false;
+  if (node.type === "ReturnStatement") return mayThrowExpression(node.argument);
+  if (node.type === "IfStatement") {
+    if (mayThrowExpression(node.test)) return true;
+    if (node.test.type === "Literal" && typeof node.test.value === "boolean")
+      return mayThrowBeforeTermination(node.test.value ? node.consequent : node.alternate);
+    return mayThrowBeforeTermination(node.consequent) || mayThrowBeforeTermination(node.alternate);
+  }
+  if (node.type === "BlockStatement") {
     for (const statement of node.body) {
-      if (statement.type === "ReturnStatement") return mayThrowExpression(statement.argument);
-      if (statement.type === "ThrowStatement") return true;
-      if (statement.type === "BlockStatement" || statement.type === "IfStatement") {
-        if (mayThrowBeforeTermination(statement)) return true;
-        continue;
-      }
-      return true;
+      if (mayThrowBeforeTermination(statement)) return true;
+      if (returnedValue(statement).terminates) return false;
     }
+    return false;
+  }
   return true;
 }
 

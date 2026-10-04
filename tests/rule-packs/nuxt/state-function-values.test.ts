@@ -28,6 +28,9 @@ const unsafe = [
   "() => { { return () => 1 } }",
   "() => { try { return () => 1 } catch { return 0 } }",
   "() => { try { throw new Error('stop') } catch { return () => 1 } }",
+  "() => { try { if (check()) return 1; return 2 } catch { return () => 1 } }",
+  "() => { try { if (flag) return compute(); return 2 } catch { return () => 1 } }",
+  "() => { try { if (flag) throw new Error('stop'); return 2 } catch { return () => 1 } }",
   "() => ({ get callback() { return () => 1 } })",
 ];
 
@@ -56,6 +59,11 @@ const safe = [
   "() => { try { return () => 1 } finally { return 1 } }",
   "() => { try { return 1 } catch {} return () => 1 }",
   "() => { try { return 1 } catch { return () => 1 } }",
+  "() => { try { if (flag) return 1; return 2 } catch { return () => 1 } }",
+  "() => { try { if (flag) { return 1 } else { return 2 } throw new Error('unreachable') } catch { return () => 1 } }",
+  "() => { try { if (false) throw new Error('unreachable'); return 2 } catch { return () => 1 } }",
+  "() => { try { { return 1 } throw new Error('unreachable') } catch { return () => 1 } }",
+  "() => { try { if (flag) return 1; return 2 } catch {} return () => 1 }",
   "() => ({ get value() { return 1 } })",
   "() => ({ set value(value) {} })",
 ];
