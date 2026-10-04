@@ -119,6 +119,6 @@ function parseBindingSource(source: string, path: string) {
   try {
     return parseForESLint(source, options);
   } catch {
-    return parseForESLint(source.replace(/import\.source/g, "import_source"), options);
+    return parseForESLint(source.replaceAll("import.source", "import_source"), options);
   }
 }

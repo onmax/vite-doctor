@@ -18,6 +18,8 @@ test.each([
   'import * as app from "#app"; function handler(app) { return app.useState() }',
   'const wasm = import.source("./codec.wasm"); function useState() {}; export default defineEventHandler(() => useState())',
   'const wasm = import.source("./codec.wasm"); import { useState } from "./state"; export default defineEventHandler(() => useState())',
+  'const first = import.source("./one.wasm"); const second = import.source("./two.wasm"); function useState() { return "healthy" }; export default defineEventHandler(() => useState())',
+  'const first = import.source("./one.wasm"); const second = import.source("./two.wasm"); import { useState } from "./state"; export default defineEventHandler(() => useState())',
 ])("does not mistake local and unrelated APIs for app composables: %s", async (source) => {
   const result = await runRuleFixture({
     rule: noClientComposablesInServer,
