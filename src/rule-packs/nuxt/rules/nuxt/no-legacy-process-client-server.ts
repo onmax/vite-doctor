@@ -104,7 +104,7 @@ function parseVueBlock(block: SFCBlock) {
 
 function collectGlobalProcessReferences(
   parsed: ReturnType<typeof typescriptParser.parseForESLint> | undefined,
-  block?: SFCBlock,
+  block?: SFCBlock | null,
 ) {
   if (!parsed) return [];
   const offset = block?.loc.start.offset ?? 0;
