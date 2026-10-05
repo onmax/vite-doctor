@@ -120,6 +120,26 @@ test("Doctor JSON reports remain usable as baselines and can be updated", () => 
   expect(applyDiagnosticPolicy(input).diagnostics).toEqual([]);
 });
 
+test("Doctor JSON reports retain suppressed findings as baselines", () => {
+  const { root, baseline, diagnostic, input } = fixture();
+  const project = {
+    root,
+    framework: "vite" as const,
+    ssr: false,
+    isMonorepo: false,
+    vueVersion: ">=3.5",
+  };
+  const report = createJsonReport(createResult(project, root, [], [diagnostic], {}));
+  writeFileSync(baseline, report);
+
+  const result = applyDiagnosticPolicy(input);
+
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([
+    { fingerprint: diagnostic.fingerprint, suppressionReason: "baseline" },
+  ]);
+});
+
 test("a missing baseline can still be initialized and used on the next run", () => {
   const { baseline, diagnostic, input } = fixture();
   expect(applyDiagnosticPolicy(input).diagnostics).toEqual([diagnostic]);
