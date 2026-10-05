@@ -62,6 +62,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0023", ruleId: "vue/template/prefer-same-name-prop-shorthand" },
   { code: "VUE0024", ruleId: "vue/template/prefer-true-attribute-shorthand" },
   { code: "VUE0025", ruleId: "vue/lifecycle/prefer-use-event-listener" },
+  { code: "VUE0026", ruleId: "vue/composables/require-use-prefix" },
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },
   { code: "VITE0003", ruleId: "vite/assets/no-src-absolute-public-url" },

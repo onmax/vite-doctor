@@ -143,6 +143,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/worker/no-node-api-in-worker": "Node APIs",
   "vite/worker/require-worker-url-pattern": "Worker URL pattern",
 
+  "vue/composables/require-use-prefix": "Composable names",
   "vue/i18n/no-untranslated-text": "Untranslated text",
   "vue/i18n/no-unused-translations": "Unused translations",
   "vue/lifecycle/no-mutation-in-onupdated": "onUpdated writes",
