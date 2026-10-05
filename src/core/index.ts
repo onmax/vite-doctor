@@ -86,6 +86,11 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
   );
   result.fixes = fixes;
   result.extends = options.extends ?? session.config.extends;
+  if (options.profile) {
+    result.ruleTimings = [...session.ruleTimings]
+      .map(([rule, timing]) => ({ rule, ms: Math.round(timing.ms), files: timing.files }))
+      .sort((left, right) => right.ms - left.ms || left.rule.localeCompare(right.rule));
+  }
   markSession(session, "score", started);
   return result;
 }

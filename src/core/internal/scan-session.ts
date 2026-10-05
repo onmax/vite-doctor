@@ -133,6 +133,12 @@ export interface ScanSession {
   ruleConfigs: Map<string, ResolvedRuleConfig>;
   timings: Record<string, number>;
   phases: Record<string, number>;
+  ruleTimings: Map<string, RuleTiming>;
+}
+
+export interface RuleTiming {
+  ms: number;
+  files: number;
 }
 
 export interface ResolvedRuleConfig {
@@ -186,6 +192,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     enabledRules,
     ruleConfigs,
     phases,
+    ruleTimings: new Map(),
   };
 }
 
@@ -195,6 +202,18 @@ export function markSession(
   start: number,
 ): void {
   if (session.options.profile) session.timings[name] = Math.round(performance.now() - start);
+}
+
+export function recordRuleTiming(
+  session: ScanSession,
+  ruleId: string,
+  started: number,
+  files: number,
+): void {
+  const timing = session.ruleTimings.get(ruleId) ?? { ms: 0, files: 0 };
+  timing.ms += performance.now() - started;
+  timing.files += files;
+  session.ruleTimings.set(ruleId, timing);
 }
 
 export async function runPhase(

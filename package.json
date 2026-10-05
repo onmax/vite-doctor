@@ -61,6 +61,7 @@
     "deploy:preview": "pnpm run docs:build && pnpm --dir docs exec wrangler versions upload --preview-alias preview --no-bundle",
     "test": "vp test --passWithNoTests",
     "test:pack": "node scripts/test-packed-cli.mjs",
+    "perf": "node scripts/perf-lab/lab.mjs",
     "check": "vp check",
     "predoctor": "pnpm build",
     "doctor": "node dist/cli.mjs . --no-cache --max-warnings 0 --format text",

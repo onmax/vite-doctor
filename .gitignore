@@ -38,3 +38,4 @@ docs/.wc-fixtures
 
 # AI agent worktrees
 .claude/worktrees/
+.perf-lab

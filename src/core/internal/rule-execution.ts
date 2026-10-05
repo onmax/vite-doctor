@@ -14,7 +14,12 @@ import {
   evidenceKindForPhase,
   normalizeDiagnostic,
 } from "./diagnostics.js";
-import { markSession, resolvedConfigFor, type ScanSession } from "./scan-session.js";
+import {
+  markSession,
+  recordRuleTiming,
+  resolvedConfigFor,
+  type ScanSession,
+} from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 
 interface MutableRuleContext extends RuleContext {
@@ -24,13 +29,15 @@ interface MutableRuleContext extends RuleContext {
 export async function runFileRules(session: ScanSession): Promise<void> {
   if (session.options.analyses && !session.options.rules) return;
   const started = performance.now();
+  const profile = Boolean(session.options.profile);
   for (const rule of session.enabledRules) {
     if ((rule.meta.execution ?? "file") !== "file") continue;
     for (const file of session.handles) {
       if (!canRunRuleOnFile(rule, file)) continue;
+      const ruleStarted = profile ? performance.now() : 0;
       const visitor = await rule.create(createRuleContext(session, file, rule));
-      if (!visitor) continue;
-      await runVisitor(visitor, file);
+      if (visitor) await runVisitor(visitor, file);
+      if (profile) recordRuleTiming(session, rule.meta.id, ruleStarted, 1);
     }
   }
   markSession(session, "fileRules", started);
@@ -42,6 +49,7 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
   const fallbackFile = session.handles[0] ?? createEmptySourceFileHandle(session);
   for (const rule of session.enabledRules) {
     if (rule.meta.execution !== "manifest" && rule.meta.execution !== "workspace") continue;
+    const ruleStarted = performance.now();
     const visitor = await rule.create(
       createRuleContext(session, fallbackFile, rule, rule.meta.execution),
     );
@@ -50,6 +58,7 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
     if (session.project.nuxt) visitor?.NuxtManifest?.(session.project.nuxt);
     await visitor?.onProjectEnd?.(session.project);
     await visitor?.onWorkspaceEnd?.();
+    if (session.options.profile) recordRuleTiming(session, rule.meta.id, ruleStarted, 0);
   }
   markSession(session, "manifestRules", started);
 }

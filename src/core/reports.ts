@@ -92,6 +92,12 @@ export function createTextReport(result: DoctorRunResult): string {
     lines.push("Timings");
     for (const [name, ms] of Object.entries(result.timings)) lines.push(`  ${name}: ${ms}ms`);
   }
+  if (result.ruleTimings?.length) {
+    lines.push("");
+    lines.push("Slowest rules");
+    for (const timing of result.ruleTimings.slice(0, 10))
+      lines.push(`  ${timing.rule}: ${timing.ms}ms`);
+  }
   if (result.graph) {
     lines.push("");
     lines.push("Graph");
@@ -141,6 +147,7 @@ export function createJsonReport(result: DoctorRunResult): string {
       categoryScores: result.categoryScores,
       timings: result.timings,
       phases: result.phases,
+      ruleTimings: result.ruleTimings,
       graph: result.graph,
       extends: result.extends,
       evidenceGaps: result.project.evidenceGaps,
