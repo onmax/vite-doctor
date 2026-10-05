@@ -130,3 +130,62 @@ test("keeps a handler parameter shadowing the H3 import exempt", async () => {
   });
   expect(result.diagnostics).toEqual([]);
 });
+
+test.each([
+  "if (condition) { var getMethod = custom }",
+  "for (var getMethod of methods) {}",
+  "try {} catch { var { getMethod } = helpers }",
+])("resolves later function-scoped getMethod declarations: %s", async (declaration) => {
+  const result = await diagnose(
+    `if (getMethod(event) !== "POST") throw createError({ statusCode: 405 }); ${declaration}`,
+  );
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  'export function getMethod() { return "GET" }',
+  "export const getMethod = custom;",
+  "export class getMethod {}",
+])("resolves exported local getMethod declarations: %s", async (declaration) => {
+  const result = await runRuleFixture({
+    rule: preferAssertMethod,
+    framework: "nitro",
+    files: {
+      "server/middleware/handler.ts": `export default defineEventHandler(event => {
+        if (getMethod(event) !== "POST") throw createError({ statusCode: 405 })
+      }); ${declaration}`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  "if (condition) { let getMethod = custom }",
+  "function unrelated() { var getMethod = custom }",
+])("retains H3 advice when a local binding belongs to another scope: %s", async (declaration) => {
+  const result = await runRuleFixture({
+    rule: preferAssertMethod,
+    framework: "nitro",
+    files: {
+      "server/middleware/handler.ts": `import { getMethod } from "h3";
+        export default defineEventHandler(event => {
+          if (getMethod(event) !== "POST") throw createError({ statusCode: 405 }); ${declaration}
+        })`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([
+    preferAssertMethod.meta.id,
+  ]);
+});
+
+test("resolves an exported function binding used by an earlier module guard", async () => {
+  const result = await runRuleFixture({
+    rule: preferAssertMethod,
+    framework: "nitro",
+    files: {
+      "server/middleware/handler.ts": `if (getMethod(event) !== "POST") throw createError({ statusCode: 405 });
+        export function getMethod() { return "GET" }`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});

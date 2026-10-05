@@ -1,3 +1,4 @@
+import { parseForESLint } from "@typescript-eslint/parser";
 import { type AnyNode, createRule, isNitroServerFile, report, walkScriptLocal } from "./shared.js";
 import { isNitroRouteFile, singleMethodCheck } from "./request-helpers.js";
 
@@ -18,13 +19,14 @@ export const preferAssertMethod = createRule({
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
     if (isNitroRouteFile(ctx)) return;
+    const methodReferences = getMethodReferences(ctx.file.text, ctx.file.relativePath);
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "IfStatement" || !isUnconditionalGuard(node)) return;
         const check = singleMethodCheck(node.test, ctx.file.text, node);
         if (
           !check?.isNegative ||
-          (usesGetMethod(node.test) && shadowsGetMethod(node)) ||
+          usesLocalGetMethod(node.test, methodReferences) ||
           !rejectsRequest(node.consequent)
         )
           return;
@@ -74,63 +76,53 @@ function isUnconditionalGuard(node: AnyNode): boolean {
   return false;
 }
 
-function usesGetMethod(node: AnyNode): boolean {
+function usesLocalGetMethod(node: AnyNode, references: Set<number> | undefined): boolean {
   let found = false;
   walkScriptLocal(node, (child) => {
-    if (child.type === "CallExpression" && child.callee?.type === "Identifier")
-      found ||= child.callee.name === "getMethod";
+    if (
+      child.type === "CallExpression" &&
+      child.callee?.type === "Identifier" &&
+      child.callee.name === "getMethod"
+    )
+      found ||= !references?.has(child.callee.start);
   });
   return found;
 }
 
-function shadowsGetMethod(node: AnyNode): boolean {
-  let scope = node.__doctorParent;
-  while (scope) {
-    if (scope.params?.some((param: AnyNode) => patternContainsName(param, "getMethod")))
-      return true;
-    if (scope.type === "CatchClause" && patternContainsName(scope.param, "getMethod")) return true;
-    if (
-      ["BlockStatement", "Program"].includes(scope.type) &&
-      scope.body.some((statement: AnyNode) => declarationContainsName(statement, "getMethod"))
-    )
-      return true;
-    scope = scope.__doctorParent;
+function getMethodReferences(source: string, path: string): Set<number> | undefined {
+  try {
+    const { scopeManager } = parseForESLint(source, {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: { jsx: /\.[jt]sx$/.test(path) },
+    });
+    const result = new Set<number>();
+    for (const scope of scopeManager.scopes) {
+      for (const reference of scope.references) {
+        if (reference.identifier.name !== "getMethod") continue;
+        const variable = reference.resolved;
+        if (
+          !variable ||
+          variable.defs.every(
+            (definition) =>
+              definition.type === "ImportBinding" &&
+              definition.parent.type === "ImportDeclaration" &&
+              definition.parent.source.value === "h3" &&
+              definition.parent.importKind !== "type" &&
+              definition.node.type === "ImportSpecifier" &&
+              definition.node.importKind !== "type" &&
+              (definition.node.imported.type === "Identifier"
+                ? definition.node.imported.name
+                : definition.node.imported.value) === "getMethod",
+          )
+        )
+          result.add(reference.identifier.range[0]);
+      }
+    }
+    return result;
+  } catch {
+    return undefined;
   }
-  return false;
-}
-
-function declarationContainsName(node: AnyNode, name: string): boolean {
-  if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration")
-    return node.id?.name === name;
-  if (node.type === "VariableDeclaration")
-    return node.declarations?.some((declaration: AnyNode) =>
-      patternContainsName(declaration.id, name),
-    );
-  if (node.type === "ImportDeclaration")
-    return node.specifiers?.some(
-      (specifier: AnyNode) =>
-        specifier.local?.name === name &&
-        !(
-          node.source?.value === "h3" &&
-          node.importKind !== "type" &&
-          specifier.type === "ImportSpecifier" &&
-          specifier.importKind !== "type" &&
-          (specifier.imported?.name ?? specifier.imported?.value) === name
-        ),
-    );
-  return false;
-}
-
-function patternContainsName(node: AnyNode, name: string): boolean {
-  if (!node) return false;
-  if (node.type === "Identifier") return node.name === name;
-  if (node.type === "RestElement" || node.type === "AssignmentPattern")
-    return patternContainsName(node.argument ?? node.left, name);
-  if (node.type === "ArrayPattern")
-    return node.elements?.some((element: AnyNode) => patternContainsName(element, name));
-  if (node.type === "ObjectPattern")
-    return node.properties?.some((property: AnyNode) => patternContainsName(property.value, name));
-  return false;
 }
 
 function rejectsRequest(node: AnyNode): boolean {
