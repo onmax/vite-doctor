@@ -189,6 +189,53 @@ export * from './charts'`,
   );
 
   test.each([
+    [{ "./components/internal/*": null }, 1],
+    [{ "./components/internal/utils": null }, 1],
+    [{ "./components/internal/*": "./dist/other/*.js" }, 1],
+    [
+      {
+        "./components/internal/*": null,
+        "./components/internal/utils": "./dist/components/internal/utils/index.js",
+      },
+      0,
+    ],
+    [
+      {
+        "./components/internal/*": {
+          default: null,
+          import: "./dist/components/internal/*/index.js",
+        },
+      },
+      1,
+    ],
+    [
+      {
+        "./components/internal/*": {
+          default: "./dist/components/internal/*/index.js",
+          import: null,
+        },
+      },
+      0,
+    ],
+  ])("respects more-specific export mappings: %j", async (overrides, count) => {
+    const result = await run({
+      "packages/ui/package.json": JSON.stringify({
+        exports: {
+          "./components/*": "./dist/components/*/index.js",
+          ...overrides,
+        },
+      }),
+      "packages/ui/src/components/internal/utils/index.ts": utils["src/utils/index.ts"],
+      "packages/ui/src/components/internal/utils/date.ts": utils["src/utils/date.ts"],
+      "packages/ui/src/components/internal/utils/currency.ts": utils["src/utils/currency.ts"],
+      "packages/ui/src/components/internal/utils/charts.ts": utils["src/utils/charts.ts"],
+      "src/main.ts":
+        "import { formatDate } from '../packages/ui/src/components/internal/utils'\nconsole.log(formatDate)",
+    });
+    expect(result.diagnostics).toHaveLength(count);
+  });
+
+  test.each([
     ["./components/*", "./dist/*/*.js", 0],
     ["./components/*", "./dist/*/different/*.js", 1],
     ["./components/utils", "./dist/*/*.js", 1],

@@ -391,11 +391,23 @@ function isPackageEntry(ctx: RuleContext, file: string): boolean {
       } catch {
         return false;
       }
-      return packageEntryTargets(manifest).some(({ target, pattern }) =>
-        entrySourceCandidates(dir, target).some((candidate) =>
-          matchesEntry(candidate, file, pattern),
-        ),
-      );
+      const entries = packageEntryTargets(manifest);
+      return entries.some((entry) => {
+        if (!entry.target) return false;
+        for (const candidate of entrySourceCandidates(dir, entry.target)) {
+          const match = matchesEntry(candidate, file, entry.pattern);
+          if (!match.matched) continue;
+          if (entry.key) {
+            const concreteKey = entry.key.replaceAll("*", match.subpath);
+            const selected = entries
+              .filter((item) => item.key && matchesSubpath(item.key, concreteKey))
+              .sort((a, b) => compareExportKeys(a.key!, b.key!))[0];
+            if (selected?.key !== entry.key) continue;
+          }
+          return true;
+        }
+        return false;
+      });
     }
     if (dir === root) break;
     dir = dirname(dir);
@@ -405,27 +417,71 @@ function isPackageEntry(ctx: RuleContext, file: string): boolean {
 
 function packageEntryTargets(
   manifest: Record<string, unknown>,
-): Array<{ target: string; pattern: boolean }> {
-  const targets: Array<{ target: string; pattern: boolean }> = [];
-  const collect = (value: unknown, pattern = false) => {
-    if (typeof value === "string") targets.push({ target: value, pattern });
-    else if (Array.isArray(value)) value.forEach((item) => collect(item, pattern));
-    else if (value && typeof value === "object") {
-      for (const [key, target] of Object.entries(value))
-        collect(target, key.startsWith(".") ? key.split("*").length === 2 : pattern);
+): Array<{ key: string | null; target: string | null; pattern: boolean }> {
+  const targets: Array<{ key: string | null; target: string | null; pattern: boolean }> = [];
+  const collect = (value: unknown, key: string | null, pattern: boolean) => {
+    if (typeof value === "string" || value === null)
+      targets.push({ key, target: typeof value === "string" ? value : null, pattern });
+    else if (Array.isArray(value)) {
+      for (const item of value) {
+        const before = targets.length;
+        collect(item, key, pattern);
+        if (targets.slice(before).some((entry) => entry.target !== null)) break;
+      }
+    } else if (value && typeof value === "object") {
+      for (const [condition, target] of Object.entries(value)) {
+        collect(target, key, pattern);
+        if (condition === "default") break;
+      }
     }
   };
-  collect(manifest.exports);
-  collect(manifest.main);
-  collect(manifest.module);
+  const exports = manifest.exports;
+  if (exports != null) {
+    if (
+      typeof exports === "object" &&
+      !Array.isArray(exports) &&
+      Object.keys(exports).some((key) => key.startsWith("."))
+    ) {
+      for (const [key, target] of Object.entries(exports)) {
+        const before = targets.length;
+        collect(target, key, key.split("*").length === 2);
+        if (targets.length === before)
+          targets.push({ key, target: null, pattern: key.split("*").length === 2 });
+      }
+    } else collect(exports, ".", false);
+  } else {
+    collect(manifest.main, null, false);
+    collect(manifest.module, null, false);
+  }
   return targets;
 }
 
-function matchesEntry(candidate: string, file: string, pattern: boolean): boolean {
-  if (!pattern || !candidate.includes("*")) return candidate === file;
+function matchesEntry(
+  candidate: string,
+  file: string,
+  pattern: boolean,
+): { matched: boolean; subpath: string } {
+  if (!pattern || !candidate.includes("*")) return { matched: candidate === file, subpath: "" };
   const parts = candidate.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const expression = parts.shift()! + "(?<subpath>.+)" + parts.join("\\k<subpath>");
-  return new RegExp(`^${expression}$`).test(file);
+  const match = new RegExp(`^${expression}$`).exec(file);
+  return { matched: Boolean(match), subpath: match?.groups?.subpath ?? "" };
+}
+
+function compareExportKeys(a: string, b: string): number {
+  const aStar = a.indexOf("*");
+  const bStar = b.indexOf("*");
+  if (aStar === -1) return bStar === -1 ? 0 : -1;
+  if (bStar === -1) return 1;
+  return bStar - aStar || b.length - a.length;
+}
+
+function matchesSubpath(pattern: string, subpath: string): boolean {
+  const expression = pattern
+    .split("*")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${expression}$`).test(subpath);
 }
 
 function entrySourceCandidates(dir: string, target: string): string[] {
