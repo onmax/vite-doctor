@@ -866,6 +866,55 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/module/explicit-runtime-imports": {
+    description:
+      "Finds runtime files of a published Nuxt module package that call Nuxt, Vue, Nitro, or h3 auto-imports without importing them.",
+    why: "Nuxt and Nitro skip auto-import transforms for files inside node_modules, where a published module's runtime directory lives. The module playground links the source, so auto-imports work during development and the missing import only fails as a ReferenceError in projects that install the module. Doctor checks files under the runtime directory next to the module entry, such as src/runtime/, and skips local modules and packages that are also Nuxt layers because Nuxt still transforms those.",
+    recommendedReplacement:
+      "Import runtime helpers explicitly from #imports, or from their source package such as vue or h3.",
+    examples: [
+      {
+        title: "Import runtime helpers in a module plugin",
+        language: "ts",
+        invalid:
+          "// src/runtime/plugin.ts\nexport default defineNuxtPlugin(() => {\n  const config = useRuntimeConfig()\n})",
+        valid:
+          "// src/runtime/plugin.ts\nimport { defineNuxtPlugin, useRuntimeConfig } from '#imports'\n\nexport default defineNuxtPlugin(() => {\n  const config = useRuntimeConfig()\n})",
+      },
+    ],
+  },
+  "nuxt/module/require-meta": {
+    description:
+      "Finds the default-exported defineNuxtModule() of a Nuxt module package that does not declare meta.name, meta.configKey, or meta.compatibility.",
+    why: "@nuxt/kit identifies a module by meta.name: it installs the module only once and hasNuxtModule() looks it up by name. meta.configKey is the nuxt.config key that holds the module options and falls back to meta.name, so a scoped package name makes options awkward to set. meta.compatibility lets @nuxt/kit check the installed Nuxt version before setup and disable the module with a clear message. Doctor only asks for configKey when the module accepts options and meta.name is not already a usable key.",
+    recommendedReplacement:
+      "Declare meta.name with the package name, a camelCase meta.configKey, and meta.compatibility with the supported Nuxt range.",
+    examples: [
+      {
+        title: "Declare module meta",
+        language: "ts",
+        invalid: "export default defineNuxtModule({\n  setup(options, nuxt) { /* ... */ },\n})",
+        valid:
+          "export default defineNuxtModule<ModuleOptions>({\n  meta: { name: '@acme/nuxt-analytics', configKey: 'analytics', compatibility: { nuxt: '>=4.0.0' } },\n  defaults: { enabled: true },\n  setup(options, nuxt) { /* ... */ },\n})",
+      },
+    ],
+  },
+  "nuxt/module/resolve-runtime-paths": {
+    description:
+      "Finds relative string paths passed to @nuxt/kit helpers such as addPlugin, addComponent, addComponentsDir, addImportsDir, addServerHandler, addServerPlugin, and addLayout in Nuxt module code.",
+    why: "@nuxt/kit does not resolve relative paths against the module file. Nuxt resolves them later against the consuming project's rootDir or the process working directory, so a module that works in its playground breaks once it is installed from node_modules. createResolver(import.meta.url) resolves paths from the module file instead. For local modules in modules/, Doctor only reports paths that exist next to the module and not in the project.",
+    recommendedReplacement:
+      "Create a resolver with createResolver(import.meta.url) and pass resolver.resolve('./runtime/...') to kit helpers.",
+    examples: [
+      {
+        title: "Resolve runtime paths from the module file",
+        language: "ts",
+        invalid: "addPlugin('./runtime/plugin')",
+        valid:
+          "const resolver = createResolver(import.meta.url)\naddPlugin(resolver.resolve('./runtime/plugin'))",
+      },
+    ],
+  },
   "nuxt/no-global-refresh-without-justification": {
     description:
       "Flags global refresh without justification in Nuxt project code before it leaks into runtime behavior.",
