@@ -22,7 +22,10 @@ const { data: files } = useLazyAsyncData(
   { server: false },
 );
 
-const { navigation: rulesNavigation } = useRulesNavigation({ includeDiagnostics: true });
+const { navigation: rulesNavigation } = useRulesNavigation({
+  includeDiagnostics: true,
+  ruleTitles: "page",
+});
 const navigation = computed(() =>
   groupSearchNavigation(appendRulesNavigation(props.navigation || [], rulesNavigation.value)),
 );

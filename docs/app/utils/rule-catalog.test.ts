@@ -9,6 +9,10 @@ import {
   diagnosticsCollectionSource,
   rulesCollectionSource,
 } from "../../rules/source.js";
+import {
+  RULE_NAVIGATION_TITLE_MAX_LENGTH,
+  ruleNavigationTitles,
+} from "../../rules/navigation-titles.js";
 import { useRuleExplorer } from "../composables/useRuleExplorer.js";
 import { normalizeCatalogRules, type RawRuleEntry } from "./rule-catalog.js";
 import {
@@ -204,11 +208,12 @@ test("rule source emits complete documentation for every rule", async () => {
   }
 });
 
-test("rules navigation groups generated rules by category under rule titles", () => {
+test("rules navigation groups generated rules by category under sidebar titles", () => {
   const diagnostics = getDiagnosticDocuments();
   const rules = getRuleDocuments().map((rule) => ({
     path: rule.path,
     title: rule.title,
+    navigation: { title: rule.navigationTitle },
     ruleId: rule.id,
     category: rule.category,
     framework: rule.framework,
@@ -224,14 +229,56 @@ test("rules navigation groups generated rules by category under rule titles", ()
   expect(hydration?.path).toBe("/nuxt/rules");
   expect(hydration?.defaultOpen).toBe(true);
   expect(nuxt?.children?.find((child) => child.title === "Data fetching")?.defaultOpen).toBe(false);
-  expect(hydration?.children?.find((child) => child.path === rulePath)?.title).toBe(
-    getRuleDocuments().find(
-      (rule) =>
-        rule.id === "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
-    )?.title,
+  const hydrationRule = getRuleDocuments().find(
+    (rule) => rule.id === "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
   );
+  expect(hydration?.children?.find((child) => child.path === rulePath)).toMatchObject({
+    title: hydrationRule?.navigationTitle,
+    pageTitle: hydrationRule?.title,
+  });
   expect(navigation.find((item) => item.path === "/vue")?.defaultOpen).toBe(false);
   expect(nuxt?.children?.some((child) => child.title === "Diagnostic codes")).toBe(false);
+});
+
+test("every rule has a short sidebar title that is unique within its group", () => {
+  const rules = getRuleDocuments();
+  const groups = new Map<string, string[]>();
+  for (const rule of rules) {
+    expect(rule.navigationTitle.length, rule.id).toBeLessThanOrEqual(
+      RULE_NAVIGATION_TITLE_MAX_LENGTH,
+    );
+    const key = `${rule.framework}/${rule.category}`;
+    groups.set(key, [...(groups.get(key) ?? []), rule.navigationTitle.toLowerCase()]);
+  }
+  for (const [group, titles] of groups) expect(new Set(titles).size, group).toBe(titles.length);
+  expect(Object.keys(ruleNavigationTitles).toSorted()).toEqual(
+    rules.map((rule) => rule.id).toSorted(),
+  );
+});
+
+test("rule pages expose their sidebar title as Nuxt Content navigation metadata", async () => {
+  const rule = getRuleDocuments().find((item) => item.id === "nuxt/seo/prefer-seo-composables")!;
+  const markdown = await rulesCollectionSource.getItem(rule.key);
+
+  expect(markdown).toContain(`navigation:\n  title: "SEO composables"\n`);
+});
+
+test("search navigation keeps full rule titles", () => {
+  const rule = {
+    path: "/nuxt/rules/seo/prefer-seo-composables",
+    title: "Use Nuxt SEO composables for metadata",
+    navigation: { title: "SEO composables" },
+    ruleId: "nuxt/seo/prefer-seo-composables",
+    category: "seo",
+    framework: "nuxt" as const,
+  };
+  const leafTitle = (ruleTitles?: "navigation" | "page") =>
+    createRulesNavigation([rule], [], { ruleTitles })
+      .find((item) => item.path === "/nuxt")
+      ?.children?.find((child) => child.title === "SEO")?.children?.[0]?.title;
+
+  expect(leafTitle()).toBe("SEO composables");
+  expect(leafTitle("page")).toBe("Use Nuxt SEO composables for metadata");
 });
 
 test("search navigation exposes diagnostic codes as reachable leaves", () => {
