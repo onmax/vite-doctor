@@ -1,3 +1,4 @@
+import { parseForESLint } from "@typescript-eslint/parser";
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
 
 type AnyNode = any;
@@ -17,12 +18,12 @@ const TRANSPARENT_WRAPPERS = new Set([
   "TSTypeAssertion",
 ]);
 
-export function findStoreDefinitions(program: AnyNode): StoreDefinition[] {
+export function findStoreDefinitions(program: AnyNode, source: string): StoreDefinition[] {
   if (program?.type !== "Program") return [];
-  const callees = piniaDefineStoreCallees(program);
+  const callees = piniaDefineStoreCallees(program, source);
   const definitions: StoreDefinition[] = [];
   walk(program, [], (node, ancestors) => {
-    if (node.type !== "CallExpression" || !isDefineStoreCallee(node.callee, callees)) return;
+    if (node.type !== "CallExpression" || !callees.has(unwrap(node.callee)?.start)) return;
     const id = readStoreId(node);
     if (!id) return;
     definitions.push({ ...id, binding: readBinding(node, ancestors) });
@@ -47,73 +48,77 @@ function normalizeName(name: string) {
   return name.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
 }
 
-interface DefineStoreCallees {
-  identifiers: Set<string>;
-  namespaces: Set<string>;
-}
-
-function piniaDefineStoreCallees(program: AnyNode): DefineStoreCallees {
-  const identifiers = new Set<string>();
-  const namespaces = new Set<string>();
-  let shadowed = false;
+function piniaDefineStoreCallees(program: AnyNode, source: string): Set<number> {
+  const callees = new Set<number>();
+  const identifiers = new Set<number>();
+  const namespaces = new Set<number>();
+  // Preserve offsets while excluding SFC markup outside the parsed script statements.
+  const script: string[] = source
+    .split("")
+    .map((char) => (char === "\n" || char === "\r" ? char : " "));
   for (const statement of program.body ?? []) {
-    if (statement.type === "ImportDeclaration") {
-      if (statement.importKind === "type") continue;
-      const fromPinia = statement.source?.value === "pinia";
-      for (const specifier of statement.specifiers ?? []) {
-        if (specifier.importKind === "type") continue;
-        const local = specifier.local?.name;
-        if (!fromPinia) {
-          if (local === "defineStore") shadowed = true;
+    for (let offset = statement.start; offset < statement.end; offset++)
+      script[offset] = source[offset]!;
+  }
+  let jsx = false;
+  walk(program, [], (node) => {
+    if (node.type === "JSXElement" || node.type === "JSXFragment") jsx = true;
+  });
+  try {
+    const { scopeManager } = parseForESLint(script.join(""), {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: { jsx },
+    });
+    for (const scope of scopeManager.scopes) {
+      for (const reference of scope.references) {
+        if (!reference.isValueReference) continue;
+        const identifier = reference.identifier;
+        const variable = reference.resolved;
+        if (!variable) {
+          if (identifier.name === "defineStore") identifiers.add(identifier.range[0]);
           continue;
         }
-        if (specifier.type === "ImportNamespaceSpecifier") namespaces.add(local);
-        else if (specifier.type === "ImportSpecifier" && importedName(specifier) === "defineStore")
-          identifiers.add(local);
+        for (const definition of variable.defs) {
+          if (
+            definition.type !== "ImportBinding" ||
+            definition.parent.type !== "ImportDeclaration" ||
+            definition.parent.source.value !== "pinia" ||
+            definition.parent.importKind === "type"
+          )
+            continue;
+          const binding = definition.node;
+          if (
+            binding.type === "ImportSpecifier" &&
+            binding.importKind !== "type" &&
+            (binding.imported.type === "Identifier"
+              ? binding.imported.name
+              : binding.imported.value) === "defineStore"
+          ) {
+            identifiers.add(identifier.range[0]);
+          } else if (binding.type === "ImportNamespaceSpecifier") {
+            namespaces.add(identifier.range[0]);
+          }
+        }
       }
-      continue;
     }
-    if (
-      declaresDefineStore(
-        statement.type === "ExportNamedDeclaration" ? statement.declaration : statement,
-      )
-    )
-      shadowed = true;
+  } catch {
+    // Without binding evidence, recovered or unsupported syntax cannot establish a Pinia call.
   }
-  // Nuxt (@pinia/nuxt) and unplugin-auto-import expose defineStore without an import.
-  if (!shadowed) identifiers.add("defineStore");
-  return { identifiers, namespaces };
-}
-
-function importedName(specifier: AnyNode): string | undefined {
-  const imported = specifier.imported;
-  return imported?.type === "Identifier" ? imported.name : imported?.value;
-}
-
-function declaresDefineStore(statement: AnyNode): boolean {
-  if (!statement) return false;
-  if (
-    (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") &&
-    statement.id?.name === "defineStore"
-  )
-    return true;
-  if (statement.type !== "VariableDeclaration") return false;
-  return statement.declarations.some(
-    (declaration: AnyNode) =>
-      declaration.id?.type === "Identifier" && declaration.id.name === "defineStore",
-  );
-}
-
-function isDefineStoreCallee(callee: AnyNode, callees: DefineStoreCallees): boolean {
-  const node = unwrap(callee);
-  if (node?.type === "Identifier") return callees.identifiers.has(node.name);
-  return (
-    node?.type === "MemberExpression" &&
-    !node.computed &&
-    node.object?.type === "Identifier" &&
-    callees.namespaces.has(node.object.name) &&
-    node.property?.name === "defineStore"
-  );
+  walk(program, [], (node) => {
+    if (node.type !== "CallExpression") return;
+    const callee = unwrap(node.callee);
+    if (callee?.type === "Identifier" && identifiers.has(callee.start)) callees.add(callee.start);
+    if (
+      callee?.type === "MemberExpression" &&
+      !callee.computed &&
+      callee.object?.type === "Identifier" &&
+      namespaces.has(callee.object.start) &&
+      callee.property?.name === "defineStore"
+    )
+      callees.add(callee.start);
+  });
+  return callees;
 }
 
 function readStoreId(call: AnyNode): Omit<StoreDefinition, "binding"> | undefined {

@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "pathe";
+import { readFileSync } from "node:fs";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseSfcFile, parseVueScripts } from "../../../core/internal/sfc.js";
@@ -11,15 +10,14 @@ interface LocatedStoreDefinition extends StoreDefinition {
   file: string;
   displayPath: string;
   range: SourceRange;
-  packageRoot: string;
 }
 
 export const uniqueStoreId = createRule({
   meta: {
     id: "pinia/stores/unique-store-id",
     title: "Give every Pinia store a unique id",
-    description: "Reject two defineStore() calls that register the same literal store id.",
-    why: "Pinia keys every store instance by its id. The first useStore() call for an id creates the store and caches it in the Pinia instance; every later useStore() call with the same id returns that cached instance without running its own setup or options. The second definition is silently ignored, so callers receive the first store's state, getters, and actions.",
+    description: "Report possible collisions between literal store ids across the project.",
+    why: "Pinia keys every store instance by its id. The first useStore() call for an id creates the store and caches it in the Pinia instance; every later useStore() call on that Pinia instance with the same id returns that cached instance without running its own setup or options. If both definitions use that instance, the second definition is silently ignored, so callers receive the first store's state, getters, and actions.",
     recommendedReplacement:
       "Give each defineStore() call its own id. If both definitions describe the same store, delete one and import the remaining composable everywhere.",
     examples: [
@@ -48,7 +46,7 @@ export const uniqueStoreId = createRule({
       async onWorkspaceEnd() {
         const groups = new Map<string, LocatedStoreDefinition[]>();
         for (const definition of await collectProjectStoreDefinitions(ctx)) {
-          const key = `${definition.packageRoot}\0${definition.id}`;
+          const key = definition.id;
           groups.set(key, [...(groups.get(key) ?? []), definition]);
         }
         for (const group of groups.values()) {
@@ -60,7 +58,7 @@ export const uniqueStoreId = createRule({
             );
             ctx.report(
               diagnostics.PINIA0001({
-                why: `Store id "${definition.id}" is also defined at ${locations.join(", ")}. Pinia caches stores by id, so whichever useStore() runs first wins and the other definition never runs.`,
+                why: `Store id "${definition.id}" is also defined at ${locations.join(", ")}. If these definitions share a Pinia instance, whichever useStore() runs first wins and the other definition never runs. This project-wide comparison does not establish which Pinia instance each definition uses.`,
                 fix: `Give this store a unique id, or delete the duplicate definition and import a single composable for store "${definition.id}".`,
                 sources: [
                   `${definition.displayPath}:${definition.range.line}:${definition.range.column}`,
@@ -73,7 +71,7 @@ export const uniqueStoreId = createRule({
                 category: "stores",
                 file: definition.file,
                 range: definition.range,
-                confidence: "proven",
+                confidence: "heuristic-medium",
                 related: others.map((other) => ({
                   file: other.file,
                   range: other.range,
@@ -105,7 +103,6 @@ export const uniqueStoreId = createRule({
 async function collectProjectStoreDefinitions(ctx: RuleContext): Promise<LocatedStoreDefinition[]> {
   const root = ctx.project.root;
   const files = await selectScanFiles(root, {}, {}, ctx.project);
-  const packageRoots = new Map<string, string>();
   const definitions: LocatedStoreDefinition[] = [];
   for (const entry of files) {
     if (entry.sourceKind === "module" || /\.mdc?$/.test(entry.path)) continue;
@@ -114,37 +111,14 @@ async function collectProjectStoreDefinitions(ctx: RuleContext): Promise<Located
     const program = entry.path.endsWith(".vue")
       ? parseVueScripts(entry.path, (await parseSfcFile(entry.path, text)).descriptor, text)
       : parseScript(entry.path, text);
-    for (const definition of findStoreDefinitions(program)) {
+    for (const definition of findStoreDefinitions(program, text)) {
       definitions.push({
         ...definition,
         file: entry.path,
         displayPath: entry.displayPath,
         range: ctx.helpers.rangeFromOffsets(entry.path, text, definition.idStart, definition.idEnd),
-        packageRoot: nearestPackageRoot(root, entry.path, packageRoots),
       });
     }
   }
   return definitions;
-}
-
-function nearestPackageRoot(root: string, file: string, cache: Map<string, string>): string {
-  const projectRoot = resolve(root);
-  const visited: string[] = [];
-  let directory = dirname(file);
-  let found = projectRoot;
-  while (directory.startsWith(projectRoot) && directory !== projectRoot) {
-    const cached = cache.get(directory);
-    if (cached) {
-      found = cached;
-      break;
-    }
-    visited.push(directory);
-    if (existsSync(join(directory, "package.json"))) {
-      found = directory;
-      break;
-    }
-    directory = dirname(directory);
-  }
-  for (const entry of visited) cache.set(entry, found);
-  return found;
 }

@@ -27,6 +27,61 @@ function names(files: Record<string, string>) {
   return runProjectFixture({ dependencies: pinia, rules: [storeNameMatchesId], files });
 }
 
+describe("Pinia lexical bindings", () => {
+  test.each([
+    ["direct", "import { defineStore } from 'pinia'", "defineStore"],
+    ["alias", "import { defineStore as store } from 'pinia'", "store"],
+    ["namespace", "import * as Pinia from 'pinia'", "Pinia"],
+    ["auto-import", "", "defineStore"],
+  ])("ignores shadowed %s bindings in both rules", async (_kind, declaration, local) => {
+    const call = local === "Pinia" ? "Pinia.defineStore" : local;
+    const files = {
+      "src/stores/cart.ts": "export const useCartStore = defineStore('cart', {})",
+      "src/stores/shadows.ts": [
+        declaration,
+        `function parameter(${local}: any) { const wrong = ${call}('cart', {}) }`,
+        `function variable() { const wrong = ${call}('cart', {}); var ${local}: any }`,
+        `{ const ${local}: any = {}; const wrong = ${call}('cart', {}) }`,
+        `function declared() { const wrong = ${call}('cart', {}); function ${local}() {} }`,
+        `try {} catch (${local}) { const wrong = ${call}('cart', {}) }`,
+        `function destructured({ ${local} }: any) { const wrong = ${call}('cart', {}) }`,
+      ].join("\n"),
+    };
+    expect((await duplicates(files)).diagnostics).toEqual([]);
+    expect((await names(files)).diagnostics).toEqual([]);
+    files["src/stores/shadows.ts"] +=
+      `\nfunction unshadowed() { const wrong = ${call}('cart', {}) }`;
+    expect((await duplicates(files)).diagnostics).toHaveLength(2);
+    expect((await names(files)).diagnostics).toHaveLength(1);
+  });
+
+  test("preserves TypeScript assertions and JSX while resolving bindings", async () => {
+    const result = await names({
+      "src/assertion.ts":
+        "import { defineStore } from 'pinia'; const wrong = <unknown>defineStore('cart', {})",
+      "src/component.tsx":
+        "import { defineStore } from 'pinia'; const view = <div />; const wrong = defineStore('cart', {})",
+    });
+    expect(result.diagnostics).toHaveLength(2);
+  });
+
+  test("resolves shadowing in Vue scripts and preserves file locations", async () => {
+    const files = {
+      "src/stores/cart.ts": "export const useCartStore = defineStore('cart', {})",
+      "src/Store.vue": `<template><div /></template>
+<script setup lang="ts">
+import { defineStore } from 'pinia'
+const useCartStore = defineStore('cart', {})
+function shadow(defineStore: any) { const wrong = defineStore('cart', {}) }
+</script>`,
+    };
+    const result = await duplicates(files);
+    expect(result.diagnostics).toHaveLength(2);
+    expect(result.diagnostics.find((item) => item.file.endsWith(".vue"))?.range?.line).toBe(4);
+    expect((await names(files)).diagnostics).toEqual([]);
+  });
+});
+
 describe("pinia/stores/unique-store-id", () => {
   test("reports every definition of a duplicated id and points at the other file", async () => {
     const result = await duplicates({
@@ -42,6 +97,7 @@ describe("pinia/stores/unique-store-id", () => {
       code: "PINIA0001",
       ruleId: "pinia/stores/unique-store-id",
       severity: "error",
+      confidence: "heuristic-medium",
       range: { line: 2, column: 41 },
     });
     expect(cart!.file.endsWith("src/stores/cart.ts")).toBe(true);
@@ -114,7 +170,7 @@ describe("pinia/stores/unique-store-id", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
-  test("compares stores only within the same workspace package", async () => {
+  test("compares possible collisions across workspace packages", async () => {
     const result = await duplicates({
       "apps/web/package.json": "{}",
       "apps/web/stores/user.ts":
@@ -127,7 +183,7 @@ describe("pinia/stores/unique-store-id", () => {
     });
     expect(
       result.diagnostics.map((diagnostic) => diagnostic.file.split("/apps/")[1]).sort(),
-    ).toEqual(["admin/stores/session.ts", "admin/stores/user.ts"]);
+    ).toEqual(["admin/stores/session.ts", "admin/stores/user.ts", "web/stores/user.ts"]);
   });
 });
 

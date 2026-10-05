@@ -32,7 +32,7 @@ export const storeNameMatchesId = createRule({
     return {
       ScriptNode(node: any) {
         if (node.type !== "Program") return;
-        for (const definition of findStoreDefinitions(node)) {
+        for (const definition of findStoreDefinitions(node, ctx.file.text)) {
           const binding = definition.binding;
           if (!binding || isConventionalStoreName(binding.name, definition.id)) continue;
           const expected = expectedStoreName(definition.id);
