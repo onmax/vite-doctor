@@ -29,6 +29,7 @@ test.each([
   'while (reject) { if (event.method !== "POST") throw new Error("unsupported"); break } return "ok"',
   'try { if (event.method !== "POST") throw new Error("unsupported") } catch {} return "ok"',
   'function getMethod() { return "GET" } if (getMethod(event) !== "POST") throw createError({ statusCode: 405 })',
+  '{ const getMethod = () => "GET"; if (getMethod(event) !== "POST") throw createError({ statusCode: 405 }) }',
 ])("does not turn method-dependent behavior into a rejecting assertion: %s", async (body) => {
   expect((await diagnose(body)).diagnostics).toEqual([]);
 });
@@ -80,3 +81,52 @@ test.each(["server/utils/handler.ts", "app/server/middleware/handler.ts"])(
     expect(result.diagnostics).toEqual([]);
   },
 );
+
+test.each([
+  ['import { getMethod } from "h3";', true],
+  ['import { getMethod as getMethod } from "h3";', true],
+  ['import { getMethod } from "./method";', false],
+  ['import { other as getMethod } from "h3";', false],
+  ['import getMethod from "h3";', false],
+  ['import * as getMethod from "h3";', false],
+  ['function getMethod() { return "GET" }', false],
+])("resolves the imported or outer getMethod binding: %s", async (prefix, expected) => {
+  const result = await runRuleFixture({
+    rule: preferAssertMethod,
+    framework: "nitro",
+    files: {
+      "server/middleware/handler.ts": `${prefix} export default defineEventHandler(event => {
+        if (getMethod(event) !== "POST") throw createError({ statusCode: 405 })
+      })`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual(
+    expected ? [preferAssertMethod.meta.id] : [],
+  );
+});
+
+test("retains H3 import advice for a top-level rejecting guard", async () => {
+  const result = await runRuleFixture({
+    rule: preferAssertMethod,
+    framework: "nitro",
+    files: {
+      "server/middleware/handler.ts":
+        'import { getMethod } from "h3"; if (getMethod(event) !== "POST") throw createError({ statusCode: 405 })',
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([
+    preferAssertMethod.meta.id,
+  ]);
+});
+
+test("keeps a handler parameter shadowing the H3 import exempt", async () => {
+  const result = await runRuleFixture({
+    rule: preferAssertMethod,
+    framework: "nitro",
+    files: {
+      "server/middleware/handler.ts":
+        'import { getMethod } from "h3"; export default defineEventHandler((event, getMethod) => { if (getMethod(event) !== "POST") throw createError({ statusCode: 405 }) })',
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});

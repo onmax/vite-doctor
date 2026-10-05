@@ -113,7 +113,7 @@ async function detectProjectLanguages(
     if (/\.(?:ts|tsx|mts|cts)$/.test(entry)) hasTypeScript = true;
     if (/\.(?:js|jsx|mjs|cjs)$/.test(entry)) hasJavaScript = true;
     if (entry.endsWith(".vue")) {
-      const languages = detectVueScriptLanguages(root, entry);
+      const languages = await detectVueScriptLanguages(root, entry);
       hasTypeScript ||= languages.includes("typescript");
       hasJavaScript ||= languages.includes("javascript");
     }
@@ -125,16 +125,24 @@ async function detectProjectLanguages(
   ];
 }
 
-function detectVueScriptLanguages(root: string, file: string): ProjectLanguage[] {
+async function detectVueScriptLanguages(root: string, file: string): Promise<ProjectLanguage[]> {
   try {
     let hasTypeScript = false;
     let hasJavaScript = false;
     const source = readFileSync(join(root, file), "utf8");
-    for (const match of source.matchAll(/<script\b([^>]*)>/gi)) {
-      const langMatch = match[1]?.match(/\blang\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/i);
-      const lang = (langMatch?.[1] ?? langMatch?.[2] ?? langMatch?.[3] ?? "js").toLowerCase();
+    const { parse } = await import("@vue/compiler-sfc");
+    const { descriptor, errors } = parse(source, { filename: file, sourceMap: false });
+    for (const block of [descriptor.script, descriptor.scriptSetup]) {
+      if (!block) continue;
+      const lang = (block.lang ?? "js").toLowerCase();
       if (lang === "ts" || lang === "tsx") hasTypeScript = true;
       if (lang === "js" || lang === "jsx") hasJavaScript = true;
+    }
+    if (errors.length && !hasTypeScript && !hasJavaScript) {
+      for (const lang of recoverVueScriptLanguages(source)) {
+        if (lang === "typescript") hasTypeScript = true;
+        if (lang === "javascript") hasJavaScript = true;
+      }
     }
     return [
       ...(hasTypeScript ? (["typescript"] as const) : []),
@@ -143,6 +151,106 @@ function detectVueScriptLanguages(root: string, file: string): ProjectLanguage[]
   } catch {
     return [];
   }
+}
+
+function recoverVueScriptLanguages(source: string): ProjectLanguage[] {
+  const languages = new Set<ProjectLanguage>();
+  let quote = "";
+  for (let index = 0; index < source.length; index++) {
+    if (source.startsWith("<!--", index)) {
+      const end = source.indexOf("-->", index + 4);
+      index = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    if (source[index] === "<" && /^<script(?:\s|>)/i.test(source.slice(index))) {
+      let cursor = index + 1;
+      let attributeQuote = "";
+      for (; cursor < source.length; cursor++) {
+        const character = source[cursor];
+        if (attributeQuote) {
+          if (character === attributeQuote) attributeQuote = "";
+        } else if (character === '"' || character === "'") {
+          attributeQuote = character;
+        } else if (character === ">") {
+          break;
+        }
+      }
+      const attributes = source.slice(index + 7, cursor);
+      const langMatch = attributes.match(/\blang\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/i);
+      const lang = (langMatch?.[1] ?? langMatch?.[2] ?? langMatch?.[3] ?? "js").toLowerCase();
+      if (lang === "ts" || lang === "tsx") languages.add("typescript");
+      if (lang === "js" || lang === "jsx") languages.add("javascript");
+      const close = source.indexOf("</script", cursor + 1);
+      index = close === -1 ? cursor : close + 8;
+      quote = "";
+      continue;
+    }
+    if (source[index] === "<" && /^<template(?:\s|>)/i.test(source.slice(index))) {
+      index = skipVueTemplate(source, index) - 1;
+      continue;
+    }
+    if (quote) {
+      if (source[index] === quote) quote = "";
+      continue;
+    }
+    if (source[index] === '"' || source[index] === "'") {
+      quote = source[index];
+      continue;
+    }
+    const customBlock = source.slice(index).match(/^<([A-Za-z][\w-]*)(?:\s[^>]*)?>/);
+    if (
+      customBlock &&
+      !/^(?:template|script|div|p|span|section|main|header|footer|component)$/i.test(customBlock[1])
+    ) {
+      const contentStart = index + customBlock[0].length;
+      const close = new RegExp(`</${customBlock[1]}\\s*>`, "i").exec(source.slice(contentStart));
+      index = close ? contentStart + close.index + close[0].length - 1 : source.length;
+      continue;
+    }
+  }
+  return [...languages];
+}
+
+function skipVueTemplate(source: string, start: number): number {
+  let depth = 0;
+  for (let index = start; index < source.length; index++) {
+    if (source.startsWith("<!--", index)) {
+      const end = source.indexOf("-->", index + 4);
+      if (end === -1) return source.length;
+      index = end + 2;
+      continue;
+    }
+    if (source[index] !== "<") continue;
+    const tag = source.slice(index).match(/^<(\/?)([A-Za-z][\w-]*)(?=[\s/>])/);
+    if (!tag) continue;
+    let cursor = index + tag[0].length;
+    let quote = "";
+    for (; cursor < source.length; cursor++) {
+      const character = source[cursor];
+      if (quote) {
+        if (character === quote) quote = "";
+      } else if (character === '"' || character === "'") {
+        quote = character;
+      } else if (character === ">") {
+        break;
+      }
+    }
+    if (cursor === source.length) return source.length;
+    const name = tag[2].toLowerCase();
+    const closing = tag[1] === "/";
+    const selfClosing = source[cursor - 1] === "/";
+    if (name === "template") {
+      if (closing) depth--;
+      else if (!selfClosing) depth++;
+      if (depth === 0) return cursor + 1;
+    } else if (!closing && !selfClosing && (name === "script" || name === "style")) {
+      const close = new RegExp(`</${name}\\s*>`, "i").exec(source.slice(cursor + 1));
+      if (!close) return source.length;
+      cursor += close.index + close[0].length;
+    }
+    index = cursor;
+  }
+  return source.length;
 }
 
 function hasVueSsrEvidence(
@@ -188,6 +296,7 @@ async function normalizeNuxtProject(
   manifest: NuxtDoctorManifest | null,
   manifestPath?: string,
 ): Promise<NuxtProjectInfo> {
+  const autoImportEntries = (manifest?.autoImports ?? coreAutoImports()) as AutoImportEntry[];
   return {
     version: cleanVersion(manifest?.nuxtVersion ?? version),
     appDir: resolve(root, manifest?.appDir ?? (existsSync(join(root, "app")) ? "app" : ".")),
@@ -197,12 +306,8 @@ async function normalizeNuxtProject(
     autoImportEnabled: manifest ? manifest.autoImportEnabled === true : true,
     autoImportsAuthoritative:
       manifest?.autoImportEnabled !== undefined && isNuxtManifestCurrent(root, manifest),
-    autoImports: new Map(
-      (manifest?.autoImports ?? coreAutoImports()).map((entry: any) => [
-        entry.as ?? entry.name,
-        entry,
-      ]),
-    ),
+    autoImports: new Map(autoImportEntries.map((entry) => [entry.as ?? entry.name, entry])),
+    autoImportEntries,
     components: new Map(
       (manifest?.components ?? []).map((component: any) => [component.name, component]),
     ),

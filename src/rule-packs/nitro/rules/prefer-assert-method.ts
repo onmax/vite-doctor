@@ -55,6 +55,7 @@ function isUnconditionalGuard(node: AnyNode): boolean {
             "ExpressionStatement",
             "VariableDeclaration",
             "FunctionDeclaration",
+            "ImportDeclaration",
             "EmptyStatement",
           ].includes(statement.type)
         )
@@ -83,22 +84,19 @@ function usesGetMethod(node: AnyNode): boolean {
 }
 
 function shadowsGetMethod(node: AnyNode): boolean {
-  let scope = node;
-  while (scope.__doctorParent) {
-    scope = scope.__doctorParent;
+  let scope = node.__doctorParent;
+  while (scope) {
+    if (scope.params?.some((param: AnyNode) => patternContainsName(param, "getMethod")))
+      return true;
+    if (scope.type === "CatchClause" && patternContainsName(scope.param, "getMethod")) return true;
     if (
-      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "Program"].includes(
-        scope.type,
-      )
+      ["BlockStatement", "Program"].includes(scope.type) &&
+      scope.body.some((statement: AnyNode) => declarationContainsName(statement, "getMethod"))
     )
-      break;
+      return true;
+    scope = scope.__doctorParent;
   }
-  const params = scope.params ?? [];
-  if (params.some((param: AnyNode) => patternContainsName(param, "getMethod"))) return true;
-  const body = scope.type === "Program" ? scope : scope.body;
-  return (body?.body ?? []).some((statement: AnyNode) =>
-    declarationContainsName(statement, "getMethod"),
-  );
+  return false;
 }
 
 function declarationContainsName(node: AnyNode, name: string): boolean {
@@ -109,7 +107,17 @@ function declarationContainsName(node: AnyNode, name: string): boolean {
       patternContainsName(declaration.id, name),
     );
   if (node.type === "ImportDeclaration")
-    return node.specifiers?.some((specifier: AnyNode) => specifier.local?.name === name);
+    return node.specifiers?.some(
+      (specifier: AnyNode) =>
+        specifier.local?.name === name &&
+        !(
+          node.source?.value === "h3" &&
+          node.importKind !== "type" &&
+          specifier.type === "ImportSpecifier" &&
+          specifier.importKind !== "type" &&
+          (specifier.imported?.name ?? specifier.imported?.value) === name
+        ),
+    );
   return false;
 }
 
