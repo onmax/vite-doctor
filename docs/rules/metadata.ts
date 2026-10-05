@@ -233,6 +233,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/routes/require-default-handler": {
+    description:
+      "Requires every file in a Nitro api/ or routes/ directory to default-export a handler and keep helpers out of the route tree.",
+    why: "Nitro registers every file under server/api and server/routes as a route. A helper module placed there becomes a public URL with no working handler, and other routes that import it pull in a route module.",
+    recommendedReplacement:
+      "Default-export a handler from each route file. Move shared helpers to server/utils/, where Nitro 2 and Nuxt auto-import them, and keep only type exports next to the handler.",
+    examples: [
+      {
+        title: "Move route helpers to server/utils",
+        language: "ts",
+        invalid:
+          "// server/api/_db.ts\nexport function getDb() {\n  return drizzle(useRuntimeConfig().databaseUrl)\n}",
+        valid:
+          "// server/utils/db.ts\nexport function getDb() {\n  return drizzle(useRuntimeConfig().databaseUrl)\n}\n\n// server/api/users.get.ts\nexport default defineEventHandler(() => getDb().select().from(users))",
+      },
+    ],
+  },
   "nitro/h3/no-removed-send": {
     description: "Flags send() and sendError(), which H3 v2 removes.",
     why: "H3 v2 handlers return Web API response values and throw HTTPError instances instead of using imperative send helpers.",

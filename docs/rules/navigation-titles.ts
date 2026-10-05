@@ -19,6 +19,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nitro/request/prefer-validated-body": "Validated body",
   "nitro/request/prefer-validated-query": "Validated query",
   "nitro/request/prefer-validated-router-params": "Validated params",
+  "nitro/routes/require-default-handler": "Route handlers",
   "nitro/runtime/no-event-runtime-config-in-server": "Drop event (Nitro 3)",
   "nitro/runtime/require-event-runtime-config-in-server": "Pass the event",
   "nitro/server/no-browser-api": "Browser APIs",
