@@ -147,6 +147,37 @@ test("reports when a Nitro catch masks an intentional HTTP error", async () => {
   expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
 });
 
+test("keeps binding stability per scope across many try statements in one file", async () => {
+  const source = `export function sequential(flag) {
+    let status = 404
+    const reset = () => { status = 200 }
+    if (flag) { try { throw createError({ statusCode: status }) } catch /* stable */ { throw new Error() } }
+    try { reset(); throw createError({ statusCode: status }) } catch /* reset */ { throw new Error() }
+  }
+  export function shadowed() {
+    try {
+      const status = 409
+      try { throw createError({ statusCode: status }) } catch /* inner */ { throw new Error() }
+    } catch /* outer */ { throw new Error() }
+  }
+  export function reassigned() {
+    let status = 404
+    try { status = 500; throw createError({ statusCode: status }) } catch /* local */ { throw new Error() }
+  }
+  export function literal() {
+    try { throw createError({ statusCode: 403 }) } catch /* literal */ { throw new Error() }
+  }`;
+  const result = await runRuleFixture({
+    framework: "nitro",
+    rule: noHttpErrorMasking,
+    files: { "server/api/account.ts": source },
+  });
+  const reported = result.diagnostics
+    .filter((item) => item.code === "NITRO0018")
+    .map((item) => /\/\* (\w+) \*\//.exec(source.slice(item.range!.start))?.[1]);
+  expect(reported).toEqual(["stable", "inner", "literal"]);
+});
+
 test("resolves a module-scoped status constant in a handler", async () => {
   const result = await runRuleFixture({
     framework: "nitro",
