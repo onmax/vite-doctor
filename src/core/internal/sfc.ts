@@ -9,9 +9,9 @@ export async function parseSfcFile(
   file: string,
   source: string,
   hash = sha256(source),
-): Promise<SfcHandle> {
+): Promise<SfcHandle & { errors: string[] }> {
   const { parse } = await optionalImport<typeof import("@vue/compiler-sfc")>("@vue/compiler-sfc");
-  const { descriptor } = parse(source, { filename: file, sourceMap: false });
+  const { descriptor, errors } = parse(source, { filename: file, sourceMap: false });
   const blockHashes: SfcBlockHashes = {
     template: descriptor.template ? sha256(descriptor.template.content) : undefined,
     script: descriptor.script ? sha256(descriptor.script.content) : undefined,
@@ -24,6 +24,7 @@ export async function parseSfcFile(
     source,
     hash,
     descriptor,
+    errors: errors.map((error) => (typeof error === "string" ? error : error.message)),
     blockHashes,
     getTemplateAst() {
       return (descriptor.template?.ast as unknown as Record<string, unknown>) ?? null;
