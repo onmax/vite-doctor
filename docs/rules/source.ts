@@ -530,6 +530,67 @@ function ruleSourcesFromIndex(indexFile: string) {
   return [...sources];
 }
 
+function strictOnlyRuleIdsFromIndex(indexFile: string) {
+  const { parseSync, visitorKeys } = loadParser();
+  const parse = (file: string) =>
+    parseSync(file, readFileSync(file, "utf8"), { sourceType: "module", lang: "ts" }).program;
+  const ast = parse(indexFile);
+  const names = new Set<string>();
+  for (const statement of ast.body) {
+    if (statement.type !== "VariableDeclaration") continue;
+    for (const declarator of statement.declarations) {
+      if (declarator.id.type !== "Identifier" || declarator.id.name !== "strictOnlyRules") continue;
+      if (declarator.init?.type !== "ArrayExpression") continue;
+      for (const element of declarator.init.elements)
+        if (element?.type === "Identifier") names.add(element.name);
+    }
+  }
+
+  const ids = new Set<string>();
+  for (const statement of ast.body) {
+    if (statement.type !== "ImportDeclaration" || !statement.source.value.startsWith("./"))
+      continue;
+    const imported = new Set(
+      statement.specifiers
+        .filter((specifier) => names.has(specifier.local.name))
+        .map((specifier) =>
+          specifier.type === "ImportSpecifier" && specifier.imported.type === "Identifier"
+            ? specifier.imported.name
+            : specifier.local.name,
+        ),
+    );
+    if (!imported.size) continue;
+    const ruleAst = parse(join(dirname(indexFile), `${statement.source.value.slice(0, -3)}.ts`));
+    const constants = ruleAst.body.filter(isStringConstantDeclaration);
+    for (const ruleStatement of ruleAst.body) {
+      const declaration =
+        ruleStatement.type === "ExportNamedDeclaration" ? ruleStatement.declaration : ruleStatement;
+      if (declaration?.type !== "VariableDeclaration") continue;
+      const declares = declaration.declarations.some(
+        (declarator) => declarator.id.type === "Identifier" && imported.has(declarator.id.name),
+      );
+      if (!declares) continue;
+      for (const { id } of findMetaObjects(
+        { ...ruleAst, body: [...constants, ruleStatement] },
+        visitorKeys,
+      ))
+        ids.add(id);
+    }
+  }
+  return ids;
+}
+
+function isStringConstantDeclaration(statement: any) {
+  return (
+    statement.type === "VariableDeclaration" &&
+    statement.kind === "const" &&
+    statement.declarations.every(
+      (declarator: any) =>
+        declarator.init?.type === "Literal" && typeof declarator.init.value === "string",
+    )
+  );
+}
+
 function withRulePath(
   rules: Array<Omit<RuleDocument, "path" | "key" | "navigationTitle" | "diagnosticCodes">>,
   basePath: string,
@@ -910,7 +971,13 @@ function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {
   return pathParts.map(slugSegment).join("/");
 }
 
+export const strictOnlyRulePresets: ReadonlyMap<string, string> = new Map([
+  ["vite/imports/no-barrel-files", "vite/strict"],
+]);
+
 function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
+  const strictPreset = strictOnlyRulePresets.get(rule.id);
+  if (strictPreset) return `pnpm vite-doctor . --extends auto,${strictPreset} --rules ${rule.id}`;
   if (rule.id === "nuxt/review/api-authorization-coverage")
     return `pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules ${rule.id}`;
   if (rule.framework === "package")
@@ -926,44 +993,10 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
 }
 
 function getStrictOnlyRuleIds() {
-  if (!cachedStrictOnlyRuleIds) {
-    const sources = new Set(
-      strictOnlyRuleIndexes.flatMap((file) => strictOnlyRuleSources(join(root, file))),
-    );
-    cachedStrictOnlyRuleIds = new Set(
-      getRuleDocuments()
-        .filter((rule) => sources.has(rule.source))
-        .map((rule) => rule.id),
-    );
-  }
+  cachedStrictOnlyRuleIds ??= new Set(
+    strictOnlyRuleIndexes.flatMap((file) => [...strictOnlyRuleIdsFromIndex(join(root, file))]),
+  );
   return cachedStrictOnlyRuleIds;
-}
-
-// Rules a pack lists in `strictOnlyRules` are in its Strict Preset but not its Recommended Preset.
-function strictOnlyRuleSources(indexFile: string) {
-  const { parseSync } = loadParser();
-  const ast = parseSync(indexFile, readFileSync(indexFile, "utf8"), {
-    sourceType: "module",
-    lang: "ts",
-  }).program;
-  const importedSources = new Map<string, string>();
-  const names: string[] = [];
-  for (const statement of ast.body) {
-    if (statement.type === "ImportDeclaration") {
-      const source = statement.source.value;
-      if (!source.startsWith("./") || !source.endsWith(".js")) continue;
-      const file = relative(root, join(dirname(indexFile), `${source.slice(0, -3)}.ts`));
-      for (const specifier of statement.specifiers) importedSources.set(specifier.local.name, file);
-    }
-    if (statement.type !== "VariableDeclaration") continue;
-    for (const declarator of statement.declarations) {
-      if (declarator.id.type !== "Identifier" || declarator.id.name !== "strictOnlyRules") continue;
-      if (declarator.init?.type !== "ArrayExpression") continue;
-      for (const element of declarator.init.elements)
-        if (element?.type === "Identifier") names.push(element.name);
-    }
-  }
-  return names.flatMap((name) => importedSources.get(name) ?? []);
 }
 
 function slugSegment(value: string) {
