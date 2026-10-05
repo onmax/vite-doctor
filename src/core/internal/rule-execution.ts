@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "pathe";
-import type { Diagnostic, DoctorRule, RuleContext, SourceFileHandle } from "../primitives.js";
-import { runVisitor } from "./rule-runner.js";
+import type {
+  Diagnostic,
+  DoctorRule,
+  RuleContext,
+  RuleVisitor,
+  SourceFileHandle,
+} from "../primitives.js";
+import { runVisitors } from "./rule-runner.js";
 import {
   buildWorkspaceGraph,
   runDuplicationRules,
@@ -18,6 +24,7 @@ import {
   markSession,
   recordRuleTiming,
   resolvedConfigFor,
+  type RuleTiming,
   type ScanSession,
 } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
@@ -29,18 +36,72 @@ interface MutableRuleContext extends RuleContext {
 export async function runFileRules(session: ScanSession): Promise<void> {
   if (session.options.analyses && !session.options.rules) return;
   const started = performance.now();
-  const profile = Boolean(session.options.profile);
-  for (const rule of session.enabledRules) {
-    if ((rule.meta.execution ?? "file") !== "file") continue;
-    for (const file of session.handles) {
+  const rules = session.enabledRules.filter((rule) => (rule.meta.execution ?? "file") === "file");
+  // Buffering per rule keeps report order rule-major, as it was when rules ran one at a time.
+  const reported = rules.map((): Diagnostic[] => []);
+  const timings = session.options.profile ? rules.map(() => ({ ms: 0, files: 0 })) : undefined;
+  for (const file of session.handles) {
+    const visitors: RuleVisitor[] = [];
+    for (const [index, rule] of rules.entries()) {
       if (!canRunRuleOnFile(rule, file)) continue;
-      const ruleStarted = profile ? performance.now() : 0;
-      const visitor = await rule.create(createRuleContext(session, file, rule));
-      if (visitor) await runVisitor(visitor, file);
-      if (profile) recordRuleTiming(session, rule.meta.id, ruleStarted, 1);
+      const context = createRuleContext(session, file, rule, "file", reported[index]);
+      if (!timings) {
+        const visitor = await rule.create(context);
+        if (visitor) visitors.push(visitor);
+        continue;
+      }
+      const timing = timings[index]!;
+      const createStarted = performance.now();
+      const visitor = await rule.create(context);
+      timing.ms += performance.now() - createStarted;
+      timing.files += 1;
+      if (visitor) visitors.push(timeVisitor(visitor, timing));
+    }
+    if (visitors.length > 0) await runVisitors(visitors, file);
+  }
+  for (const diagnostics of reported) {
+    for (const diagnostic of diagnostics) session.diagnostics.push(diagnostic);
+  }
+  if (timings) {
+    for (const [index, rule] of rules.entries()) {
+      const timing = timings[index]!;
+      if (timing.files === 0) continue;
+      const total = session.ruleTimings.get(rule.meta.id) ?? { ms: 0, files: 0 };
+      total.ms += timing.ms;
+      total.files += timing.files;
+      session.ruleTimings.set(rule.meta.id, total);
     }
   }
   markSession(session, "fileRules", started);
+}
+
+function timeVisitor(visitor: RuleVisitor, timing: RuleTiming): RuleVisitor {
+  const timed: RuleVisitor = {};
+  if (visitor.SFC)
+    timed.SFC = async (sfc) => {
+      const started = performance.now();
+      try {
+        await visitor.SFC!(sfc);
+      } finally {
+        timing.ms += performance.now() - started;
+      }
+    };
+  if (visitor.ScriptNode)
+    timed.ScriptNode = (node) => timeCall(timing, () => visitor.ScriptNode!(node));
+  if (visitor.ImportDeclaration)
+    timed.ImportDeclaration = (node) => timeCall(timing, () => visitor.ImportDeclaration!(node));
+  if (visitor.TemplateNode)
+    timed.TemplateNode = (node) => timeCall(timing, () => visitor.TemplateNode!(node));
+  return timed;
+}
+
+function timeCall(timing: RuleTiming, call: () => void): void {
+  const started = performance.now();
+  try {
+    call();
+  } finally {
+    timing.ms += performance.now() - started;
+  }
 }
 
 export async function runManifestRules(session: ScanSession): Promise<void> {
@@ -85,6 +146,7 @@ function createRuleContext(
   initialFile: SourceFileHandle,
   rule: DoctorRule,
   phase: Diagnostic["analysisPhase"] = "file",
+  sink?: Diagnostic[],
 ): MutableRuleContext {
   let file = initialFile;
   const currentRuleConfig = resolvedConfigFor(session, rule.meta.id);
@@ -131,7 +193,7 @@ function createRuleContext(
         analysisPhase: input.analysisPhase ?? phase,
         fingerprint: input.fingerprint ?? createDiagnosticFingerprint(session.root, input, file),
       };
-      session.diagnostics.push(next);
+      (sink ?? session.diagnostics).push(next);
     },
     getFileText(target) {
       return readFileSync(resolve(session.root, target), "utf8");
