@@ -170,8 +170,10 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     };
   });
 
-  nuxt.hook?.("imports:dirs", (dirs: unknown[]) => {
-    evidence.importDirs = dirs;
+  nuxt.hooks?.afterEach((event: { name: string; args: unknown[] }) => {
+    if (event.name !== "imports:dirs") return;
+    // Snapshot after all modules customize the roots, before later hooks can mutate them.
+    evidence.importDirs = Array.isArray(event.args[0]) ? [...event.args[0]] : [];
   });
 
   nuxt.hook?.("components:dirs", (dirs: unknown[]) => {

@@ -51,8 +51,14 @@ test.each([
       }
       const manualModule = defineNuxtModule({
         setup(_options, host) {
+          let retainedDirs: unknown[] | undefined;
           host.hook("imports:dirs", (dirs) => {
+            retainedDirs = dirs;
             if (removeRoot) dirs.splice(dirs.indexOf(join(root, "app/composables")), 1);
+          });
+          host.hook("ready", () => {
+            if (removeRoot) retainedDirs?.push(join(root, "app/composables"));
+            else retainedDirs?.splice(0);
           });
           host.hook("imports:context", (context) => {
             host.hook("ready", async () => {
