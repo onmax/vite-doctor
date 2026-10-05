@@ -183,3 +183,121 @@ test("treats Nuxt app-context reads as callable outside setup but Vue Router's u
   );
   expect(vue.diagnostics).toHaveLength(1);
 });
+
+test.each([
+  ["opposite early return", `if (hasInjectionContext()) return; return inject(Key)`],
+  ["unrelated branch", `if (getCurrentInstance()) debug(); onMounted(fn)`],
+  ["negative branch", `if (!hasInjectionContext()) return inject(Key)`],
+  ["negative ternary", `return hasInjectionContext() ? undefined : inject(Key)`],
+  ["negative short circuit", `hasInjectionContext() || inject(Key)`],
+  ["disjunctive guard", `if (hasInjectionContext() || enabled) inject(Key)`],
+  ["guard argument", `if (Boolean(hasInjectionContext())) debug(); inject(Key)`],
+  [
+    "guard lookalike",
+    `const getCurrentInstance = () => true; if (getCurrentInstance()) onMounted(fn)`,
+  ],
+  [
+    "shadowed guard value",
+    `const instance = getCurrentInstance(); { const instance = true; if (instance) onMounted(fn) }`,
+  ],
+  [
+    "reassigned guard value",
+    `let instance = getCurrentInstance(); instance = {}; if (instance) onMounted(fn)`,
+  ],
+  [
+    "unguarded instance access",
+    `const instance = getCurrentInstance(); if (instance) debug(); return instance!.proxy`,
+  ],
+  [
+    "partially exiting branch",
+    `if (!hasInjectionContext()) { if (enabled) return } return inject(Key)`,
+  ],
+])("reports setup calls on %s paths", async (_label, body) => {
+  const result = await runVue(`export function helper() { ${body} }`);
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0026"]);
+});
+
+test.each([
+  `if (getCurrentInstance() !== null) onMounted(fn)`,
+  `const instance = getCurrentInstance(); if (instance === null) return; return instance.proxy`,
+  `if (hasInjectionContext() === true) inject(Key)`,
+  `while (hasInjectionContext()) { inject(Key); break }`,
+  `for (; getCurrentInstance();) { onMounted(fn); break }`,
+  `if (hasInjectionContext()) return inject(Key)`,
+  `if (!hasInjectionContext()) return; return inject(Key)`,
+  `if (!hasInjectionContext()) throw new Error(); return inject(Key)`,
+  `if (hasInjectionContext()) debug(); else return; return inject(Key)`,
+  `return hasInjectionContext() ? inject(Key) : undefined`,
+  `hasInjectionContext() && inject(Key)`,
+  `!hasInjectionContext() || inject(Key)`,
+  `if (hasInjectionContext() && enabled) inject(Key)`,
+  `if (!hasInjectionContext() || !enabled) return; inject(Key)`,
+  `const instance = getCurrentInstance(); if (!instance) return; return instance.proxy`,
+  `const instance = getCurrentInstance(); return instance && instance.proxy`,
+  `if (getCurrentScope()) onMounted(fn)`,
+  `if (tryUseNuxtApp()) useRoute()`,
+])("accepts setup calls protected on every path: %s", async (body) => {
+  const result = await runVue(`export function helper() { ${body} }`);
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  [
+    `import { onMounted as afterMount } from 'vue'; export function helper() { afterMount(fn) }`,
+    "onMounted",
+  ],
+  [`import * as Vue from 'vue'; export function helper() { Vue.onMounted(fn) }`, "onMounted"],
+  [`import * as Vue from 'vue'; export function helper() { Vue['inject'](Key) }`, "inject"],
+  [
+    `import { getCurrentInstance as instance } from 'vue'; export function helper() { return instance()!.proxy }`,
+    "getCurrentInstance",
+  ],
+  [
+    `import * as Vue from 'vue'; export function helper() { return Vue.getCurrentInstance()!.proxy }`,
+    "getCurrentInstance",
+  ],
+  [
+    `import { useRoute as route } from 'vue-router'; export function helper() { return route() }`,
+    "useRoute",
+  ],
+  [
+    `import { useCart as cart } from './cart'; export function helper() { return cart() }`,
+    "useCart",
+  ],
+])("resolves canonical setup APIs: %s", async (source, api) => {
+  const result = await runVue(source);
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.why).toContain(`${api}()`);
+});
+
+test.each([
+  `import { onMounted } from 'vue'; export function helper(onMounted: () => void) { onMounted() }`,
+  `import { onMounted } from 'vue'; export function helper() { const onMounted = () => {}; onMounted() }`,
+  `export function helper(inject: () => void) { inject() }`,
+  `import * as Vue from 'vue'; export function helper(Vue: any) { Vue.onMounted() }`,
+  `import { useRuntimeConfig as config } from '#app'; export function helper() { return config() }`,
+  `import { other as useRuntimeConfig } from 'h3'; export function helper() { return useRuntimeConfig() }`,
+  `import { hasInjectionContext as ready, inject as value } from 'vue'; export function helper() { if (ready()) return value(Key) }`,
+  `import * as Vue from 'vue'; export function helper() { if (!Vue.getCurrentInstance()) return; Vue.onMounted(fn) }`,
+  `import * as Other from './other'; export function helper() { Other.onMounted(fn) }`,
+])("respects lexical bindings and canonical exemptions: %s", async (source) => {
+  const result = await runVue(source);
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("applies Nuxt accessor exemptions to their import identity", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "nuxt",
+    files: {
+      "app/composables/nav.ts": `import { useRouter as router } from '#app';
+        import { useRouter as vueRouter } from 'vue-router';
+        import * as Nuxt from '#app';
+        export function navigation() { return router() }
+        export function state() { return Nuxt.useState('state') }
+        export function componentRouter() { return vueRouter() }`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.why).toContain("componentRouter()");
+});

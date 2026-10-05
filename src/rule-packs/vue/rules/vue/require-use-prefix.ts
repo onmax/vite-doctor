@@ -1,4 +1,5 @@
 import { relative, resolve } from "pathe";
+import { parseForESLint } from "@typescript-eslint/parser";
 import type { RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -88,11 +89,12 @@ export const requireUsePrefix = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
-        const imports = importSources(node);
+        const bindings = resolveBindings(ctx);
+        if (!bindings) return;
         const isNuxt = Boolean(ctx.project.nuxt);
         for (const exported of exportedFunctions(node)) {
           if (isExemptName(exported.name)) continue;
-          const signal = setupContextSignal(exported.fn, imports, isNuxt);
+          const signal = setupContextSignal(exported.fn, bindings, isNuxt);
           if (!signal) continue;
           const suggestion = `use${exported.name.replace(/^_+/, "").replace(/^./, (c) => c.toUpperCase())}`;
           ctx.report(
@@ -183,107 +185,224 @@ function localNameNode(fn: AnyNode): AnyNode {
   return parent?.type === "VariableDeclarator" ? parent.id : null;
 }
 
-function importSources(program: AnyNode): Map<string, string> {
-  const sources = new Map<string, string>();
-  for (const statement of program.body ?? []) {
-    if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
-    for (const specifier of statement.specifiers ?? [])
-      if (specifier.local?.name) sources.set(specifier.local.name, statement.source.value);
-  }
-  return sources;
+type Variable = ReturnType<
+  typeof parseForESLint
+>["scopeManager"]["scopes"][number]["variables"][number];
+type Bindings = Map<number, Variable | null>;
+
+function offset(node: AnyNode): number {
+  return node.range?.[0] ?? node.start;
 }
 
-function setupContextSignal(
-  fn: AnyNode,
-  imports: Map<string, string>,
-  isNuxt: boolean,
-): SetupSignal | null {
-  const calls: string[] = [];
-  const tests: AnyNode[] = [];
-  const guardBindings = new Set<string>();
-  const memberObjects: AnyNode[] = [];
-  walkOwnBody(fn.body, (node) => {
-    const name = node.type === "CallExpression" ? calleeName(node) : null;
-    if (name) calls.push(name);
-    if (node.type === "IfStatement" || node.type === "ConditionalExpression") tests.push(node.test);
-    if (node.type === "LogicalExpression") tests.push(node.left);
-    if (node.type === "UnaryExpression" && node.operator === "!") tests.push(node.argument);
-    if (node.type === "MemberExpression" && !node.optional) memberObjects.push(node.object);
-    if (
-      node.type === "VariableDeclarator" &&
-      node.id?.type === "Identifier" &&
-      isGuardCall(unwrapExpression(node.init))
-    )
-      guardBindings.add(node.id.name);
-  });
-
-  if (tests.some((test) => isGuardTest(test, guardBindings))) return null;
-
-  // getCurrentInstance() returns null outside setup; it only binds the caller to setup
-  // when the instance is dereferenced without a guard.
-  const dereferencesInstance = memberObjects.some((object) => {
-    const target = unwrapExpression(object);
-    if (target?.type === "Identifier") return guardBindings.has(target.name);
-    return target?.type === "CallExpression" && calleeName(target) === "getCurrentInstance";
-  });
-
-  for (const name of calls) {
-    const source = imports.get(name);
-    if (name === "getCurrentInstance") {
-      if (dereferencesInstance && isVueSource(source)) return { name };
-      continue;
-    }
-    if (LIFECYCLE_HOOKS.has(name) || INJECTION_APIS.has(name)) {
-      if (isVueSource(source)) return { name };
-      continue;
-    }
-    if (!/^use[A-Z0-9]/.test(name)) continue;
-    if (APP_CONTEXT_ACCESSORS.has(name) || /^use\w*Store$/.test(name)) continue;
-    if (isNuxt && NUXT_APP_CONTEXT_ACCESSORS.has(name)) continue;
-    if (source && NON_COMPOSABLE_SOURCES.test(source)) continue;
-    return { name };
+function resolveBindings(ctx: RuleContext): Bindings | null {
+  try {
+    const { scopeManager } = parseForESLint(ctx.file.text, {
+      range: true,
+      sourceType: "module",
+      ecmaFeatures: { jsx: /\.[jt]sx$/.test(ctx.file.path) },
+    });
+    const bindings: Bindings = new Map();
+    for (const scope of scopeManager.scopes)
+      for (const reference of scope.references)
+        bindings.set(offset(reference.identifier), reference.resolved);
+    return bindings;
+  } catch {
+    return null;
   }
+}
+
+interface ApiIdentity {
+  name: string;
+  source?: string;
+}
+
+function callIdentity(call: AnyNode, bindings: Bindings): ApiIdentity | null {
+  const callee = unwrapExpression(call.callee);
+  const member = callee?.type === "MemberExpression";
+  const identifier = member ? unwrapExpression(callee.object) : callee;
+  if (identifier?.type !== "Identifier") return null;
+  const variable = bindings.get(offset(identifier));
+  if (!variable) return member ? null : { name: identifier.name };
+  for (const definition of variable.defs) {
+    if (definition.type !== "ImportBinding" || definition.parent.type !== "ImportDeclaration")
+      continue;
+    const specifier = definition.node;
+    if (specifier.type === "ImportNamespaceSpecifier") {
+      if (!member) return null;
+      const name = callee.computed ? callee.property.value : callee.property.name;
+      return typeof name === "string" ? { name, source: definition.parent.source.value } : null;
+    }
+    if (member) return null;
+    const name =
+      specifier.type === "ImportSpecifier"
+        ? specifier.imported.type === "Identifier"
+          ? specifier.imported.name
+          : specifier.imported.value
+        : identifier.name;
+    return { name, source: definition.parent.source.value };
+  }
+  // Locally declared composables still carry the use convention; parameters and
+  // local lookalikes of Vue's built-in APIs do not identify a framework API.
+  if (
+    !member &&
+    /^use[A-Z0-9]/.test(identifier.name) &&
+    variable.defs.some(
+      (definition) =>
+        definition.type === "FunctionName" ||
+        (definition.type === "Variable" && isFunctionNode(unwrapExpression(definition.node.init))),
+    )
+  )
+    return { name: identifier.name };
   return null;
+}
+
+function guardName(node: AnyNode, bindings: Bindings): string | null {
+  const target = unwrapExpression(node);
+  if (target?.type === "Identifier") {
+    const variable = bindings.get(offset(target));
+    if (
+      !variable ||
+      variable.references.some((reference) => reference.isWrite() && !reference.init)
+    )
+      return null;
+    const definition = variable.defs[0];
+    if (definition?.type !== "Variable" || definition.parent.kind !== "const") return null;
+    const init = unwrapExpression(definition.node.init);
+    if (init?.type !== "CallExpression") return null;
+    return guardName(init, bindings);
+  }
+  if (target?.type !== "CallExpression") return null;
+  const api = callIdentity(target, bindings);
+  return api && CONTEXT_GUARDS.has(api.name) && isVueSource(api.source) ? api.name : null;
+}
+
+function guaranteesContext(test: AnyNode, truth: boolean, bindings: Bindings): boolean {
+  const node = unwrapExpression(test);
+  if (!node) return false;
+  if (node.type === "UnaryExpression" && node.operator === "!")
+    return guaranteesContext(node.argument, !truth, bindings);
+  if (node.type === "LogicalExpression" && ["&&", "||"].includes(node.operator)) {
+    const left = guaranteesContext(node.left, truth, bindings);
+    const right = guaranteesContext(node.right, truth, bindings);
+    return (node.operator === "&&") === truth ? left || right : left && right;
+  }
+  if (node.type === "BinaryExpression" && ["==", "!=", "===", "!=="].includes(node.operator)) {
+    const literal = node.left.type === "Literal" ? node.left : node.right;
+    const value = literal === node.left ? node.right : node.left;
+    const name = guardName(value, bindings);
+    if (!name || literal.type !== "Literal") return false;
+    const equal = node.operator === "==" || node.operator === "===";
+    if (
+      literal.value === null &&
+      name !== "hasInjectionContext" &&
+      (node.operator.length === 2 || name === "getCurrentInstance")
+    )
+      return truth !== equal;
+    if (typeof literal.value === "boolean" && name === "hasInjectionContext")
+      return truth === (equal === literal.value);
+  }
+  return truth && guardName(node, bindings) !== null;
+}
+
+function setupContextSignal(fn: AnyNode, bindings: Bindings, isNuxt: boolean): SetupSignal | null {
+  let signal: SetupSignal | null = null;
+  // null means the path exits; only facts shared by all surviving paths carry on.
+  function scan(node: AnyNode, guarded: boolean): boolean | null {
+    if (!node || typeof node !== "object") return guarded;
+    if (Array.isArray(node)) {
+      let state: boolean | null = guarded;
+      for (const child of node) {
+        if (state === null) break;
+        state = scan(child, state);
+      }
+      return state;
+    }
+    if (isTypeOnlyNode(node) || isFunctionNode(node) || node.type === "ClassBody") return guarded;
+    if (node.type === "BlockStatement") return scan(node.body, guarded);
+    if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
+      scan(node.test, guarded);
+      const positive = scan(
+        node.consequent,
+        guarded || guaranteesContext(node.test, true, bindings),
+      );
+      const negative = scan(
+        node.alternate,
+        guarded || guaranteesContext(node.test, false, bindings),
+      );
+      return positive === null ? negative : negative === null ? positive : positive && negative;
+    }
+    if (node.type === "WhileStatement" || node.type === "ForStatement") {
+      scan(node.init, guarded);
+      scan(node.test, guarded);
+      const inLoop = guarded || guaranteesContext(node.test, true, bindings);
+      scan(node.body, inLoop);
+      scan(node.update, inLoop);
+      return guarded;
+    }
+    if (node.type === "LogicalExpression") {
+      scan(node.left, guarded);
+      scan(
+        node.right,
+        guarded ||
+          (node.operator !== "??" &&
+            guaranteesContext(node.left, node.operator === "&&", bindings)),
+      );
+      return guarded;
+    }
+    if (!guarded && !signal) {
+      if (
+        node.type === "MemberExpression" &&
+        !node.optional &&
+        guardName(node.object, bindings) === "getCurrentInstance"
+      )
+        signal = { name: "getCurrentInstance" };
+      if (node.type === "CallExpression") {
+        const api = callIdentity(node, bindings);
+        if (api) {
+          const { name, source } = api;
+          if ((LIFECYCLE_HOOKS.has(name) || INJECTION_APIS.has(name)) && isVueSource(source))
+            signal = { name };
+          if (
+            /^use[A-Z0-9]/.test(name) &&
+            !APP_CONTEXT_ACCESSORS.has(name) &&
+            !/^use\w*Store$/.test(name) &&
+            !(
+              isNuxt &&
+              NUXT_APP_CONTEXT_ACCESSORS.has(name) &&
+              isVueSource(source) &&
+              source !== "vue-router"
+            ) &&
+            !(source && NON_COMPOSABLE_SOURCES.test(source))
+          )
+            signal = { name };
+        }
+      }
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (
+        [
+          "__doctorParent",
+          "typeAnnotation",
+          "returnType",
+          "typeArguments",
+          "typeParameters",
+        ].includes(key)
+      )
+        continue;
+      if (value && typeof value === "object") scan(value, guarded);
+    }
+    return ["ReturnStatement", "ThrowStatement", "BreakStatement", "ContinueStatement"].includes(
+      node.type,
+    )
+      ? null
+      : guarded;
+  }
+  scan(fn.body, false);
+  return signal;
 }
 
 function isVueSource(source: string | undefined) {
   return source === undefined || VUE_API_SOURCES.test(source);
-}
-
-function calleeName(call: AnyNode): string | null {
-  const callee = unwrapExpression(call.callee);
-  return callee?.type === "Identifier" ? callee.name : null;
-}
-
-function isGuardCall(node: AnyNode) {
-  return node?.type === "CallExpression" && CONTEXT_GUARDS.has(calleeName(node) ?? "");
-}
-
-function isGuardTest(test: AnyNode, guardBindings: Set<string>) {
-  let guarded = false;
-  walkOwnBody(test, (node) => {
-    if (isGuardCall(node)) guarded = true;
-    if (node.type === "Identifier" && guardBindings.has(node.name)) guarded = true;
-  });
-  return guarded;
-}
-
-function walkOwnBody(node: AnyNode, visit: (node: AnyNode) => void) {
-  if (!node || typeof node !== "object") return;
-  if (Array.isArray(node)) {
-    for (const child of node) walkOwnBody(child, visit);
-    return;
-  }
-  if (typeof node.type === "string") {
-    if (isTypeOnlyNode(node)) return;
-    visit(node);
-    if (isFunctionNode(node) || node.type === "ClassBody") return;
-  }
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "__doctorParent" || key === "typeAnnotation" || key === "returnType") continue;
-    if (key === "typeArguments" || key === "typeParameters") continue;
-    if (value && typeof value === "object") walkOwnBody(value, visit);
-  }
 }
 
 function isTypeOnlyNode(node: AnyNode) {
