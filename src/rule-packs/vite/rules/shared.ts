@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { resolve } from "pathe";
-import { parseForESLint } from "@typescript-eslint/parser";
-import ts from "typescript";
+import { parseSync } from "oxc-parser";
 import type { RuleContext, SourceRange } from "../../../core/index.js";
 import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
+import { parseTypeScript } from "./estree.js";
 
 export type AnyNode = any;
 
@@ -16,15 +16,12 @@ export function globalReferenceStarts(
     ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
     : undefined;
   try {
-    const { scopeManager } = parseForESLint(parsedVueScript?.text ?? ctx.file.text, {
-      range: true,
+    const { scopeManager } = parseTypeScript(parsedVueScript?.text ?? ctx.file.text, {
       sourceType: "module",
-      ecmaFeatures: {
-        jsx:
-          parsedVueScript?.lang === "jsx" ||
-          parsedVueScript?.lang === "tsx" ||
-          /\.[jt]sx$/.test(ctx.file.relativePath),
-      },
+      jsx:
+        parsedVueScript?.lang === "jsx" ||
+        parsedVueScript?.lang === "tsx" ||
+        /\.[jt]sx$/.test(ctx.file.relativePath),
     });
     return new Set(
       scopeManager.globalScope?.through
@@ -151,33 +148,34 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
   let declarations = ctx.cache.get<{ globals: Set<string>; env: Set<string> }>(cacheKey);
   if (declarations) return (env ? declarations.env : declarations.globals).has(name);
   declarations = { globals: new Set(), env: new Set() };
-  const interfaces = new Map<string, ts.InterfaceDeclaration[]>();
-  const collect = (statements: ts.NodeArray<ts.Statement>) => {
+  const interfaces = new Map<string, AnyNode[]>();
+  const collect = (statements: AnyNode[]) => {
     for (const statement of statements) {
-      if (ts.isVariableStatement(statement)) {
-        for (const declaration of statement.declarationList.declarations) {
-          if (ts.isIdentifier(declaration.name)) declarations.globals.add(declaration.name.text);
+      const declaration =
+        statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+      if (declaration?.type === "VariableDeclaration") {
+        for (const item of declaration.declarations) {
+          if (item.id.type === "Identifier") declarations.globals.add(item.id.name);
         }
       }
-      if (ts.isInterfaceDeclaration(statement))
-        interfaces.set(statement.name.text, [
-          ...(interfaces.get(statement.name.text) ?? []),
-          statement,
+      if (declaration?.type === "TSInterfaceDeclaration")
+        interfaces.set(declaration.id.name, [
+          ...(interfaces.get(declaration.id.name) ?? []),
+          declaration,
         ]);
     }
   };
   for (const file of findDeclarationFiles(ctx.project.root)) {
-    const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest);
-    if (!ts.isExternalModule(source)) collect(source.statements);
+    const { program } = parseSync(file, readFileSync(file, "utf8"), {
+      lang: "dts",
+      sourceType: "module",
+      astType: "ts",
+    });
+    if (!isExternalModule(program.body)) collect(program.body);
     else {
-      for (const statement of source.statements) {
-        if (
-          ts.isModuleDeclaration(statement) &&
-          statement.flags & ts.NodeFlags.GlobalAugmentation &&
-          statement.body &&
-          ts.isModuleBlock(statement.body)
-        )
-          collect(statement.body.statements);
+      for (const statement of program.body as AnyNode[]) {
+        if (statement.type === "TSModuleDeclaration" && statement.kind === "global")
+          collect(statement.body?.body ?? []);
       }
     }
   }
@@ -185,26 +183,16 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
     if (seen.has(name)) return;
     seen.add(name);
     for (const declaration of interfaces.get(name) ?? []) {
-      for (const member of declaration.members) {
-        if (
-          !ts.isPropertySignature(member) &&
-          !ts.isMethodSignature(member) &&
-          !ts.isGetAccessorDeclaration(member) &&
-          !ts.isSetAccessorDeclaration(member)
-        )
-          continue;
-        let key = member.name;
-        if (ts.isComputedPropertyName(key)) {
-          if (!ts.isStringLiteral(key.expression)) continue;
-          key = key.expression;
-        }
-        if (ts.isIdentifier(key) || ts.isStringLiteral(key)) declarations.env.add(key.text);
+      for (const member of declaration.body.body) {
+        if (member.type !== "TSPropertySignature" && member.type !== "TSMethodSignature") continue;
+        const key = member.key;
+        if (key.type === "Identifier" && !member.computed) declarations.env.add(key.name);
+        if (key.type === "Literal" && typeof key.value === "string")
+          declarations.env.add(key.value);
       }
-      for (const heritage of declaration.heritageClauses ?? []) {
-        if (heritage.token !== ts.SyntaxKind.ExtendsKeyword) continue;
-        for (const type of heritage.types) {
-          if (ts.isIdentifier(type.expression)) visitInterface(type.expression.text, seen);
-        }
+      for (const heritage of declaration.extends ?? []) {
+        if (heritage.expression.type === "Identifier")
+          visitInterface(heritage.expression.name, seen);
       }
     }
   };
@@ -275,6 +263,20 @@ function objectBodyAfterKey(text: string, key: string): { start: number; body: s
     }
   }
   return null;
+}
+
+// Matches TypeScript's external module detection: top-level import or export syntax only.
+function isExternalModule(statements: AnyNode[]): boolean {
+  return statements.some(
+    (statement) =>
+      statement.type === "ImportDeclaration" ||
+      statement.type === "ExportNamedDeclaration" ||
+      statement.type === "ExportDefaultDeclaration" ||
+      statement.type === "ExportAllDeclaration" ||
+      statement.type === "TSExportAssignment" ||
+      (statement.type === "TSImportEqualsDeclaration" &&
+        statement.moduleReference.type === "TSExternalModuleReference"),
+  );
 }
 
 function findDeclarationFiles(root: string): string[] {

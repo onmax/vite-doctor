@@ -149,6 +149,74 @@ test("reads declaration references, import equals and re-exports", () => {
   ]);
 });
 
+test("reads declaration shapes, malformed emit and CommonJS positions", () => {
+  const result = inventory(
+    { name: "shapes", main: "index.cjs", types: "index.d.ts" },
+    {
+      "index.d.ts": [
+        '/// <reference types="node" />',
+        "/// <reference path='./globals.d.ts' />",
+        'import type { Options } from "options-types";',
+        'import { type A, type B } from "type-only-specifiers";',
+        'export * from "re-exported";',
+        'export type { C } from "type-re-export";',
+        'export { default as D } from "default-re-export";',
+        'declare module "augmented" {',
+        '  import { E } from "inside-module";',
+        "}",
+        "export declare function overload(value: string): void;",
+        'export declare function overload(value: number): typeof import("overload-type");',
+        "export default interface Shape {",
+        '  /** @type {import("jsdoc-type")} */',
+        "  value: Options;",
+        "}",
+      ].join("\n"),
+      "globals.d.ts": 'declare global { const value: import("global-type").Value }\nexport {};',
+      "legacy.d.ts": [
+        'import Legacy from "./missing-legacy";',
+        "export = function legacy(input: string): Legacy;",
+        'import Next = require("after-malformed-emit");',
+      ].join("\n"),
+      "index.cjs": [
+        "#!/usr/bin/env node",
+        "﻿",
+        "'use strict';",
+        'const first = require("first-peer");',
+        'module.exports = require("exported-peer");',
+        'exports.lazy = () => require("lazy-peer");',
+        'if (process.env.X) { require("conditional-peer") }',
+        'require("./legacy.d.ts");',
+      ].join("\n"),
+    },
+  )!;
+  expect(
+    result.references.map((ref) => [
+      ref.packageName,
+      ref.kind,
+      ref.required,
+      ref.typeReference,
+      `${ref.file.slice(ref.file.lastIndexOf("/") + 1)}:${ref.range.line}:${ref.range.column}`,
+    ]),
+  ).toEqual([
+    ["first-peer", "runtime", true, false, "index.cjs:4:23"],
+    ["exported-peer", "runtime", true, false, "index.cjs:5:26"],
+    ["lazy-peer", "runtime", false, false, "index.cjs:6:30"],
+    ["conditional-peer", "runtime", false, false, "index.cjs:7:30"],
+    ["options-types", "types", false, false, "index.d.ts:3:30"],
+    ["type-only-specifiers", "types", false, false, "index.d.ts:4:32"],
+    ["re-exported", "types", false, false, "index.d.ts:5:15"],
+    ["type-re-export", "types", false, false, "index.d.ts:6:24"],
+    ["default-re-export", "types", false, false, "index.d.ts:7:30"],
+    ["inside-module", "types", false, false, "index.d.ts:9:21"],
+    ["overload-type", "types", false, false, "index.d.ts:12:64"],
+    ["jsdoc-type", "types", false, true, "index.d.ts:14:22"],
+    ["node", "types", false, true, "index.d.ts:1:23"],
+    ["after-malformed-emit", "types", false, false, "legacy.d.ts:3:23"],
+    ["global-type", "types", false, false, "globals.d.ts:1:38"],
+  ]);
+  expect(result.missing).toEqual(["missing-legacy"]);
+});
+
 test("marks unmatched output patterns as missing evidence", () => {
   expect(inventory({ exports: { "./*": "./dist/*.js" } }, {})?.missing).toEqual(["dist/*.js"]);
 });

@@ -1,4 +1,4 @@
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseTypeScript, type ParsedTypeScript } from "./estree.js";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
 import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { diagnostics } from "../../../diagnostics.js";
@@ -28,6 +28,7 @@ export const noUnusedDefine = createRule({
     return {
       async onWorkspaceEnd() {
         const configs = await readViteConfigFacts(ctx);
+        if (!configs.some((config) => config.define.length)) return;
         const sources = (await readProjectSources(ctx)).map((source) => ({
           ...source,
           references: defineReferences(source.file, source.text),
@@ -63,10 +64,9 @@ export const noUnusedDefine = createRule({
 function defineReferences(file: string, text: string): Set<string> | undefined {
   if (file.endsWith(".vue")) return undefined;
   try {
-    const { ast, scopeManager, visitorKeys } = parseForESLint(text, {
-      range: true,
+    const { ast, scopeManager, visitorKeys } = parseTypeScript(text, {
       sourceType: "module",
-      ecmaFeatures: { jsx: /\.[jt]sx$/.test(file) },
+      jsx: /\.[jt]sx$/.test(file),
     });
     const parents = new Map<AnyNode, AnyNode>();
     const visit = (node: AnyNode) => {
@@ -292,9 +292,9 @@ function readAliasInitializers(source: string) {
     number,
     { range: [number, number]; getter: boolean; prefix: string }
   >();
-  let parsed: ReturnType<typeof parseForESLint>;
+  let parsed: ParsedTypeScript;
   try {
-    parsed = parseForESLint(source, { range: true, sourceType: "module" });
+    parsed = parseTypeScript(source, { sourceType: "module" });
   } catch {
     return {
       initializers,
@@ -894,8 +894,7 @@ function readAliasInitializers(source: string) {
     return [start, source.length];
   }
   for (const [start, end] of syntheticObjects) {
-    const expression = parseForESLint(`(${source.slice(start, end)})`, { range: true }).ast
-      .body[0] as AnyNode;
+    const expression = parseTypeScript(`(${source.slice(start, end)})`).ast.body[0] as AnyNode;
     const move = (node: AnyNode) => {
       if (!node || typeof node !== "object") return;
       node.range = [node.range[0] + start - 1, node.range[1] + start - 1];
@@ -984,7 +983,7 @@ function readAliasInitializers(source: string) {
             for (const [position, entry] of map)
               if (position >= originalStart && position < originalEnd)
                 (map as Map<number, unknown>).set(position + shift, entry);
-          const expression = parseForESLint(`(${source.slice(arrayStart)})`, { range: true }).ast
+          const expression = parseTypeScript(`(${source.slice(arrayStart)})`).ast
             .body[0] as AnyNode;
           const rest = expression.expression;
           function moveRanges(node: AnyNode) {
@@ -1208,7 +1207,7 @@ function resolvesSecretAlias(
     visited.add(identity);
     const offset = range[0] - 1;
     try {
-      const ast = parseForESLint(`(${source.slice(...range)})`, { range: true }).ast;
+      const ast = parseTypeScript(`(${source.slice(...range)})`).ast;
       let node = (ast.body[0] as AnyNode).expression;
       while (node?.type.startsWith("TS") && node.expression) node = node.expression;
       if (node?.type === "Identifier" || node?.type === "ThisExpression") {
@@ -1334,9 +1333,9 @@ function resolvesSecretAlias(
   }
   while (pending.length) {
     const current = pending.pop()!;
-    let parsed: ReturnType<typeof parseForESLint>;
+    let parsed: ParsedTypeScript;
     try {
-      parsed = parseForESLint(`(${current.value})`, { range: true });
+      parsed = parseTypeScript(`(${current.value})`);
     } catch {
       if (SECRET_NAME_RE.test(current.value)) return true;
       continue;
@@ -1483,7 +1482,7 @@ function resolvesSecretAlias(
                   visited.add(range[0]);
                   offset = range[0] - 1;
                   try {
-                    const parsed = parseForESLint(`(${source.slice(...range)})`, { range: true });
+                    const parsed = parseTypeScript(`(${source.slice(...range)})`);
                     const statement = parsed.ast.body[0];
                     value =
                       statement?.type === "ExpressionStatement" ? statement.expression : undefined;
@@ -1740,7 +1739,7 @@ function resolvesSecretAlias(
             if (ranges?.length !== 1) break;
             offset = ranges[0]![0] - 1;
             try {
-              const ast = parseForESLint(`(${source.slice(...ranges[0]!)})`, { range: true }).ast;
+              const ast = parseTypeScript(`(${source.slice(...ranges[0]!)})`).ast;
               replacer = (ast.body[0] as AnyNode).expression;
             } catch {
               break;
