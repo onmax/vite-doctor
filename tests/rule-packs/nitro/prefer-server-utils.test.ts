@@ -98,15 +98,12 @@ describe("NITRO0021 helpers in ad-hoc server directories", () => {
 });
 
 describe("NITRO0022 explicit imports of server/utils exports", () => {
-  test("reports explicit imports of auto-imported names", async () => {
+  test("preserves explicit imports without resolved Nitro provider evidence", async () => {
     const diagnostics = await run({
       ...helpers,
       "server/api/users.ts": `import { getDb } from '../utils/db'\n${handler}`,
     });
-    expect(diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.severity])).toEqual([
-      ["NITRO0022", "info"],
-    ]);
-    expect(diagnostics[0]?.message).toContain("getDb");
+    expect(diagnostics).toEqual([]);
   });
 
   test.each([
@@ -114,10 +111,8 @@ describe("NITRO0022 explicit imports of server/utils exports", () => {
     ["re-exported name", "import { useDrizzle } from '../utils/db'"],
     ["alias", "import { getDb } from '~~/server/utils/db'"],
     ["partial import", "import { getDb, type Db } from '../utils/db'"],
-  ])("reports a %s", async (_name, source) => {
-    expect(await codes({ ...helpers, "server/api/users.ts": `${source}\n${handler}` })).toEqual([
-      "NITRO0022",
-    ]);
+  ])("preserves a %s without resolved Nitro evidence", async (_name, source) => {
+    expect(await codes({ ...helpers, "server/api/users.ts": `${source}\n${handler}` })).toEqual([]);
   });
 
   test.each(["db", "nested/other"])(
@@ -133,15 +128,13 @@ describe("NITRO0022 explicit imports of server/utils exports", () => {
     },
   );
 
-  test("only suggests removing unambiguous names in a mixed import", async () => {
+  test("preserves every name in a mixed import without resolved Nitro evidence", async () => {
     const diagnostics = await run({
       ...helpers,
       "server/utils/other.ts": "export { getDb } from './db'",
       "server/api/users.ts": `import { getDb, useDrizzle } from '../utils/db'\n${handler}`,
     });
-    expect(diagnostics.map((item) => item.code)).toEqual(["NITRO0022"]);
-    expect(diagnostics[0]?.suggestion).toContain("Remove useDrizzle from this import");
-    expect(diagnostics[0]?.suggestion).not.toContain("getDb");
+    expect(diagnostics).toEqual([]);
   });
 
   test.each(["db", "all"])(
@@ -186,6 +179,36 @@ describe("NITRO0022 explicit imports of server/utils exports", () => {
     ).toEqual([]);
   });
 
+  test.each([
+    "dirs: ['extra']",
+    "presets: [{ from: 'custom-db', imports: ['getDb'] }]",
+    "exclude: ['**/utils/db.ts']",
+  ])("preserves standalone Nitro imports with %s", async (option) => {
+    expect(
+      await codes(
+        {
+          "utils/db.ts": "export const getDb = () => 'local'",
+          "extra/db.ts": "export const getDb = () => 'custom'",
+          "nitro.config.ts": `export default defineNitroConfig({ imports: { ${option} } })`,
+          "routes/users.ts": `import { getDb } from '../utils/db'\n${handler}`,
+        },
+        "nitro",
+      ),
+    ).toEqual([]);
+  });
+
+  test("preserves default-excluded utility imports", async () => {
+    expect(
+      await codes(
+        {
+          "utils/db.test.ts": "export const getDb = () => 'test'",
+          "routes/users.ts": `import { getDb } from '../utils/db.test'\n${handler}`,
+        },
+        "nitro",
+      ),
+    ).toEqual([]);
+  });
+
   test("detects duplicate providers in another Nuxt layer", async () => {
     expect(
       await codes({
@@ -211,6 +234,19 @@ describe("NITRO0022 explicit imports of server/utils exports", () => {
           ],
         }),
         "server/api/users.ts": `import { getDb } from '../utils/db'\n${handler}`,
+      }),
+    ).toEqual([]);
+  });
+
+  test("does not classify server directories from a stale Nuxt manifest", async () => {
+    expect(
+      await codes({
+        "old-server/lib/auth.ts": helpers["server/lib/auth.ts"],
+        "old-server/api/users.ts": `import { requireAdmin } from '../lib/auth'\n${handler}`,
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          autoImportEnabled: true,
+          layers: [{ root: ".", serverDir: "old-server", priority: 0 }],
+        }),
       }),
     ).toEqual([]);
   });
@@ -276,7 +312,7 @@ describe("server auto-import activation", () => {
         },
         "nitro",
       ),
-    ).toEqual(["NITRO0021", "NITRO0022"]);
+    ).toEqual(["NITRO0021"]);
   });
 
   test("stays silent when Nitro 2 disables imports", async () => {

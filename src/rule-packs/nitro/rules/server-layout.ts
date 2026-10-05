@@ -101,9 +101,10 @@ function resolveServerDirs(project: ProjectInfo): string[] {
 function nuxtServerDirs(project: ProjectInfo): string[] {
   const root = project.root;
   const nuxt = project.nuxt;
-  const layerDirs = nuxt?.manifestPath
-    ? nuxt.layers.flatMap((layer) => (layer.serverDir ? [resolve(root, layer.serverDir)] : []))
-    : [];
+  const layerDirs =
+    nuxt?.manifest?.isCurrent && nuxt.manifestPath
+      ? nuxt.layers.flatMap((layer) => (layer.serverDir ? [resolve(root, layer.serverDir)] : []))
+      : [];
   if (layerDirs.length) return [...new Set(layerDirs)];
   const options = readStaticConfigOptions(project, "nuxt");
   const serverDir = staticOptionValue(options, (path) => path.join(".") === "serverDir");

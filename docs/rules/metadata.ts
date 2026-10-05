@@ -235,10 +235,10 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/structure/prefer-server-utils": {
     description:
-      "Suggests server/utils for helpers that Nitro server routes, middleware, and plugins import from ad-hoc directories or import explicitly from server/utils.",
-    why: "Nitro 2 and Nuxt auto-import exports from server/utils in server code and generate their types. Helpers kept in directories such as server/lib or server/helpers need a relative import in every caller, and explicit imports of server/utils exports duplicate the auto-import.",
+      "Suggests server/utils for helpers that Nitro server routes, middleware, and plugins import from ad-hoc directories.",
+    why: "Nitro 2 and Nuxt auto-import exports from server/utils in server code and generate their types. Helpers kept in directories such as server/lib or server/helpers need a relative import in every caller.",
     recommendedReplacement:
-      "Move shared server helpers to server/utils/ and call them without an import. Remove explicit imports of names that server/utils already exports. The rule only runs when server auto-imports are enabled. Import-removal suggestions require a unique known utility provider across server directories and Nuxt layers; ambiguous or incomplete export evidence is skipped.",
+      "Move shared server helpers to server/utils/ when server auto-imports are enabled. NITRO0022 is currently suppressed: Doctor does not yet capture Nitro’s resolved provider and exclusion evidence, so it cannot establish that an explicit utility import selects the same implementation as an auto-import.",
     examples: [
       {
         title: "Let Nitro auto-import server helpers",
