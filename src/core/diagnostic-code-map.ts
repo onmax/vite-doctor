@@ -194,6 +194,9 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0074", ruleId: "nuxt/review/api-authorization-coverage" },
   { code: "NUXT0077", ruleId: "nuxt/structure/no-composable-in-utils" },
   { code: "NUXT0078", ruleId: "nuxt/structure/no-stateless-composable" },
+  { code: "NUXT0081", ruleId: "nuxt/module/require-meta" },
+  { code: "NUXT0082", ruleId: "nuxt/module/resolve-runtime-paths" },
+  { code: "NUXT0083", ruleId: "nuxt/module/explicit-runtime-imports" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
