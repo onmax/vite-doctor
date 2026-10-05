@@ -202,6 +202,56 @@ export const icons = () => [{ name: 'icons' }] satisfies Option[]`,
     expect(satisfies.diagnostics).toHaveLength(2);
   });
 
+  test.each([
+    "module.exports = icons",
+    "exports.default = icons",
+    "exports.icons = icons",
+    "module.exports.icons = icons",
+    "module.exports = () => ({ name: 'icons', transform(code) { return code } })",
+  ])("recognizes CommonJS factories: %s", async (assignment) => {
+    const result = await run(manifest({ exports: undefined, main: "./dist/index.cjs" }), {
+      "src/index.ts": "",
+      "dist/index.cjs": `${untypedFactory.replace("export ", "")}\n${assignment}`,
+    });
+    expect(result.diagnostics).toHaveLength(2);
+  });
+
+  test("ignores CommonJS exports of utilities and unrelated assignments", async () => {
+    const result = await run(manifest({ exports: undefined, main: "./dist/index.cjs" }), {
+      "src/index.ts": "",
+      "dist/index.cjs": `${untypedFactory.replace("export ", "")}
+const registry = {}; registry.icons = icons;
+module.exports = () => ({ name: 'config', options: {} });`,
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test.each([
+    "const metadata = { name: 'metadata', transform: { handler() {} } }; return { name: 'config', options: {} }",
+    "function nested() { return { name: 'nested', transform() {} } }; return {}",
+    "return { metadata: { name: 'metadata', transform() {} } }",
+    "const metadata: Plugin = { name: 'metadata' }; return {}",
+    "return { name: 'config', transform: { handler: true } }",
+  ])("ignores unrelated plugin evidence: %s", async (body) => {
+    const result = await run(manifest(), {
+      "src/index.ts": `import type { Plugin } from 'vite'; export default function config() { ${body} }`,
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test.each([
+    "return [{ name: 'icons', transform() {} }]",
+    "const plugin = { name: 'icons', transform() {} }; return plugin",
+    "return ({ name: 'icons' } as Plugin)",
+    "if (enabled) return { name: 'icons', transform() {} }; return false",
+    "return enabled ? { name: 'icons', transform() {} } : false",
+  ])("recognizes returned plugin values: %s", async (body) => {
+    const result = await run(manifest(), {
+      "src/index.ts": `import type { Plugin } from 'vite'; export default function icons(enabled = true) { ${body} }`,
+    });
+    expect(result.diagnostics).toHaveLength(2);
+  });
+
   test("ignores apps, private packages, CLIs, and packages without a vite peer", async () => {
     const app = await run(JSON.stringify({ private: true, devDependencies: { vite: "^8.0.0" } }));
     const privatePackage = await run(manifest({ private: true }));

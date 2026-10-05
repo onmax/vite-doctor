@@ -302,6 +302,15 @@ function exportsPluginFactory(
   const wants = (name: string | null) => wanted === null || wanted === name;
 
   for (const statement of program.body) {
+    const assignment = statement.type === "ExpressionStatement" ? statement.expression : null;
+    if (assignment?.type === "AssignmentExpression" && assignment.operator === "=") {
+      const exported = commonJsExportName(assignment.left);
+      if (exported && wants(exported)) {
+        const value = unwrap(assignment.right);
+        if (isFunction(value) && isPluginFactory(value, pluginTypes)) return true;
+        if (value?.type === "Identifier" && isFactoryBinding(value.name)) return true;
+      }
+    }
     if (statement.type === "ExportDefaultDeclaration" && wants("default")) {
       const declaration = unwrap(statement.declaration);
       if (isFunction(declaration) && isPluginFactory(declaration, pluginTypes)) return true;
@@ -347,11 +356,84 @@ function exportsPluginFactory(
   return false;
 }
 
+function commonJsExportName(node: AnyNode): string | null {
+  if (node?.type !== "MemberExpression") return null;
+  const property =
+    node.computed && node.property?.type === "Identifier" ? null : exportName(node.property);
+  if (node.object?.type === "Identifier" && node.object.name === "module" && property === "exports")
+    return "default";
+  if (node.object?.type === "Identifier" && node.object.name === "exports") return property;
+  const object = node.object;
+  if (
+    object?.type === "MemberExpression" &&
+    object.object?.type === "Identifier" &&
+    object.object.name === "module" &&
+    (!object.computed || object.property?.type === "Literal") &&
+    exportName(object.property) === "exports"
+  )
+    return property;
+  return null;
+}
+
 function isPluginFactory(fn: AnyNode, pluginTypes: ReadonlySet<string>): boolean {
-  return containsNode(
-    [fn.returnType, fn.body],
-    (node) => isPluginTypeReference(node, pluginTypes) || isPluginObject(node),
-  );
+  if (containsNode(fn.returnType, (node) => isPluginTypeReference(node, pluginTypes))) return true;
+
+  const isPluginValue = (
+    node: AnyNode,
+    bindings: Map<string, AnyNode>,
+    seen = new Set<string>(),
+  ): boolean => {
+    if (!node) return false;
+    const value = unwrap(node);
+    if (value !== node) {
+      if (containsNode(node.typeAnnotation, (type) => isPluginTypeReference(type, pluginTypes)))
+        return true;
+      return isPluginValue(node.expression, bindings, seen);
+    }
+    if (isPluginObject(value)) return true;
+    if (value.type === "Identifier" && !seen.has(value.name)) {
+      const next = new Set(seen).add(value.name);
+      return isPluginValue(bindings.get(value.name), bindings, next);
+    }
+    if (value.type === "ArrayExpression")
+      return value.elements.some((item: AnyNode) => isPluginValue(item, bindings, seen));
+    if (value.type === "SpreadElement" || value.type === "AwaitExpression")
+      return isPluginValue(value.argument, bindings, seen);
+    if (value.type === "ConditionalExpression")
+      return (
+        isPluginValue(value.consequent, bindings, seen) ||
+        isPluginValue(value.alternate, bindings, seen)
+      );
+    if (value.type === "LogicalExpression")
+      return (
+        isPluginValue(value.right, bindings, seen) ||
+        (value.operator !== "&&" && isPluginValue(value.left, bindings, seen))
+      );
+    return false;
+  };
+  const returnsPlugin = (node: AnyNode, bindings: Map<string, AnyNode>): boolean => {
+    if (!node || typeof node !== "object" || isFunction(node)) return false;
+    if (Array.isArray(node)) return node.some((item) => returnsPlugin(item, bindings));
+    if (node.type === "BlockStatement") {
+      const local = new Map(bindings);
+      for (const statement of node.body) {
+        if (statement.type === "VariableDeclaration") {
+          for (const declaration of statement.declarations) {
+            if (declaration.id?.type === "Identifier")
+              local.set(declaration.id.name, declaration.init);
+          }
+        }
+      }
+      return returnsPlugin(node.body, local);
+    }
+    if (node.type === "ReturnStatement") return isPluginValue(node.argument, bindings);
+    return Object.entries(node).some(
+      ([key, value]) => key !== "parent" && returnsPlugin(value, bindings),
+    );
+  };
+  return fn.body?.type === "BlockStatement"
+    ? returnsPlugin(fn.body, new Map())
+    : isPluginValue(fn.body, new Map());
 }
 
 function isPluginTypeReference(node: AnyNode, pluginTypes: ReadonlySet<string>): boolean {
@@ -376,7 +458,10 @@ function isPluginObject(node: AnyNode): boolean {
       return (
         isFunction(value) ||
         (value?.type === "ObjectExpression" &&
-          value.properties.some((entry: AnyNode) => exportName(entry.key) === "handler"))
+          value.properties.some(
+            (entry: AnyNode) =>
+              exportName(entry.key) === "handler" && isFunction(unwrap(entry.value)),
+          ))
       );
     })
   );
