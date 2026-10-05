@@ -105,6 +105,9 @@ export const ruleNavigationTitles: Record<string, string> = {
   "package/no-phantom-dependencies": "Phantom deps",
   "package/no-required-optional-peer": "Optional peers",
 
+  "pinia/stores/store-name-matches-id": "Store names",
+  "pinia/stores/unique-store-id": "Unique store ids",
+
   "shadcn/no-arbitrary-values": "Arbitrary values",
   "shadcn/no-inline-styles": "Inline styles",
   "shadcn/no-raw-colors": "Color tokens",

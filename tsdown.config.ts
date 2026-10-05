@@ -24,6 +24,7 @@ export default defineConfig({
     "src/rule-packs/typescript/index.ts",
     "src/rule-packs/typescript/rules/index.ts",
     "src/rule-packs/shadcn/index.ts",
+    "src/rule-packs/pinia/index.ts",
   ],
   exports: {
     bin: {
