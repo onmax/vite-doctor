@@ -4,6 +4,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "PKG0001", ruleId: "package/no-phantom-dependencies" },
   { code: "PKG0002", ruleId: "package/no-phantom-dependencies" },
   { code: "PKG0003", ruleId: "package/no-required-optional-peer" },
+  { code: "PINIA0001", ruleId: "pinia/stores/unique-store-id" },
+  { code: "PINIA0002", ruleId: "pinia/stores/store-name-matches-id" },
   { code: "SHAD0001", ruleId: "shadcn/no-restyle" },
   { code: "SHAD0002", ruleId: "shadcn/no-raw-colors" },
   { code: "SHAD0003", ruleId: "shadcn/no-arbitrary-values" },

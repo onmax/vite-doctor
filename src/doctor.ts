@@ -19,6 +19,7 @@ import { viteRulePack } from "./rules.js";
 import { typescriptRulePack } from "./rule-packs/typescript/index.js";
 import shadcnRulePack from "./rule-packs/shadcn/index.js";
 import { packageRulePack } from "./rule-packs/package/index.js";
+import { piniaRulePack } from "./rule-packs/pinia/index.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
@@ -42,6 +43,7 @@ export async function viteDoctorExtensions(
       rulePacks: [typescriptRulePack],
     }),
     defineDoctorExtension({ name: "vite-doctor/builtin-shadcn", rulePacks: [shadcnRulePack] }),
+    defineDoctorExtension({ name: "vite-doctor/builtin-pinia", rulePacks: [piniaRulePack] }),
   ];
   if (framework === "vue") {
     extensions.push(
