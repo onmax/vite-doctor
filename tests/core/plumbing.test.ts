@@ -1,3 +1,4 @@
+import { packageRulePack } from "../../src/rule-packs/package/index.ts";
 import { createNuxtAuthorizationReviewExtension } from "../../src/rule-packs/nuxt/review/authorization.ts";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -136,6 +137,70 @@ test("visitor keys fall back to node-shaped children", () => {
       end: 1,
     }),
   ).toEqual(["child", "children"]);
+});
+
+test("numeric diagnostic ranges preserve an offset of zero", async () => {
+  const rule = createRule({
+    meta: {
+      id: "test/numeric-zero-range",
+      title: "Numeric zero range",
+      category: "architecture",
+      severity: "warn",
+      requires: { script: true },
+    },
+    create(ctx) {
+      return {
+        ScriptNode(node: any) {
+          if (node.type !== "Program") return;
+          for (const [label, start, end] of [
+            ["zero", 0, 1],
+            ["nonzero", 1, 2],
+            ["missing", undefined, 1],
+          ] as const) {
+            ctx.report(
+              allDiagnostics.DOC9999({
+                why: `The rule reports a ${label} range.`,
+                fix: "Inspect the reported range.",
+              }),
+              {
+                ruleId: "test/numeric-zero-range",
+                severity: "warn",
+                category: "architecture",
+                file: ctx.file.path,
+                range: ctx.range(start, end),
+              },
+            );
+          }
+        },
+      };
+    },
+  });
+
+  await withFixture({ "src/app.ts": "const app = true\n" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      extensions: [pluginWith(rule)],
+    });
+
+    expect(result.diagnostics).toHaveLength(3);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          why: "The rule reports a zero range.",
+          range: expect.objectContaining({ start: 0, end: 1, line: 1, column: 1 }),
+        }),
+        expect.objectContaining({
+          why: "The rule reports a nonzero range.",
+          range: expect.objectContaining({ start: 1, end: 2, line: 1, column: 2 }),
+        }),
+        expect.objectContaining({
+          why: "The rule reports a missing range.",
+          range: undefined,
+        }),
+      ]),
+    );
+  });
 });
 
 test("file rules are not created during the manifest phase", async () => {
@@ -561,7 +626,7 @@ test("since scans no files when the requested Git diff is empty", async () => {
   });
 });
 
-test("changed scope reports diagnostics whose source ranges overlap changed lines", async () => {
+test("changed scope reports overlapping ranges and findings without source ranges", async () => {
   await withFixture({ "src/app.ts": "const first = true\nconst second = true\n" }, async (root) => {
     git(root, "init");
     git(root, "add", ".");
@@ -585,7 +650,7 @@ test("changed scope reports diagnostics whose source ranges overlap changed line
     });
 
     expect(result.scope).toMatchObject({ mode: "changed", files: 1 });
-    expect(result.diagnostics).toHaveLength(2);
+    expect(result.diagnostics).toHaveLength(3);
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -594,6 +659,7 @@ test("changed scope reports diagnostics whose source ranges overlap changed line
           range: expect.objectContaining({ line: 2 }),
         }),
         expect.objectContaining({ ruleId: "test/report-program" }),
+        expect.objectContaining({ ruleId: "test/second-rule" }),
       ]),
     );
     const agent = JSON.parse(createAgentReport(result));
@@ -796,6 +862,121 @@ test("rule diagnostics must include actionable fix text", async () => {
   });
 });
 
+test.each([false, true])(
+  "ambiguous short Rule Pack aliases fail regardless of registration order (%s)",
+  async (reverse) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const extensions = [
+        defineDoctorExtension({
+          name: "test/first",
+          rulePacks: [testPack("ä-vendor/vite", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second",
+          rulePacks: [testPack("z-vendor/vite", secondRule)],
+        }),
+      ];
+      if (reverse) extensions.reverse();
+
+      const thrown = await runDoctor({
+        root,
+        framework: "vue",
+        extends: ["vite/recommended"],
+        extensions,
+      }).catch((error) => error);
+      expect(thrown).toMatchObject({ name: "DOC0024" });
+      expect(thrown.message).toBe(
+        'Config Extends entry "vite/recommended" matches multiple Rule Packs through the name "vite": z-vendor/vite, ä-vendor/vite.',
+      );
+    });
+  },
+);
+
+test.each([false, true])(
+  "duplicate full Rule Pack names fail regardless of registration order (%s)",
+  async (reverse) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const extensions = [
+        defineDoctorExtension({
+          name: "test/first",
+          rulePacks: [testPack("vendor/vite", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second",
+          rulePacks: [testPack("vendor/vite", secondRule)],
+        }),
+      ];
+      if (reverse) extensions.reverse();
+
+      await expect(
+        runDoctor({
+          root,
+          framework: "vue",
+          extends: ["vendor/vite/recommended"],
+          extensions,
+        }),
+      ).rejects.toMatchObject({
+        name: "DOC0023",
+        message: 'Rule Pack name "vendor/vite" was registered more than once.',
+      });
+    });
+  },
+);
+
+test("fully qualified Rule Pack selectors bypass short alias collisions", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      extends: ["vendor-b/vite/recommended"],
+      extensions: [
+        defineDoctorExtension({
+          name: "test/first",
+          rulePacks: [testPack("vendor-a/vite", reportProgramRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/second",
+          rulePacks: [testPack("vendor-b/vite", secondRule)],
+        }),
+      ],
+    });
+
+    const ruleIds = result.diagnostics.map((item) => item.ruleId);
+    expect(ruleIds).toContain("test/second-rule");
+    expect(ruleIds).not.toContain("test/report-program");
+  });
+});
+
+test.each([false, true])(
+  "exact Rule Pack names take precedence over short aliases (%s)",
+  async (reverse) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const extensions = [
+        defineDoctorExtension({
+          name: "test/exact",
+          rulePacks: [testPack("vite", secondRule)],
+        }),
+        defineDoctorExtension({
+          name: "test/alias",
+          rulePacks: [testPack("vendor-a/vite", reportProgramRule)],
+        }),
+      ];
+      if (reverse) extensions.reverse();
+
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        extends: ["vite/recommended"],
+        extensions,
+      });
+
+      const ruleIds = result.diagnostics.map((item) => item.ruleId);
+      expect(ruleIds).toContain("test/second-rule");
+      expect(ruleIds).not.toContain("test/report-program");
+    });
+  },
+);
+
 test("extends selection runs configured pack rules and config overrides extends", async () => {
   await withFixture(
     {
@@ -946,34 +1127,54 @@ test.each([
   ["vue", "foo/vue"],
   ["bar/vue", "foo/vue"],
   ["foo/vue", "vue"],
-])("Doctor rejects colliding Rule Pack lookup keys %s and %s", async (first, second) => {
-  expect(() =>
+])("Doctor resolves shared aliases for distinct full names %s and %s", async (first, second) => {
+  const extension = defineDoctorExtension({
+    name: "test/collision",
+    rulePacks: [testPack(first, reportProgramRule), testPack(second, secondRule)],
+  });
+  const setupExtensions = [
     defineDoctorExtension({
-      name: "test/collision",
-      rulePacks: [testPack(first, reportProgramRule), testPack(second, secondRule)],
+      name: "test/first",
+      rulePacks: [testPack(first, reportProgramRule)],
     }),
-  ).toThrowError(expect.objectContaining({ name: "DOC0023" }));
-
+    defineDoctorExtension({
+      name: "test/second",
+      setup(api) {
+        api.registerRulePack(testPack(second, secondRule));
+      },
+    }),
+  ];
   await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
-    await expect(
-      runDoctor({
+    for (const extensions of [[extension], setupExtensions]) {
+      for (const [name, rule] of [
+        [first, reportProgramRule],
+        [second, secondRule],
+      ] as const) {
+        const selected = await runDoctor({
+          root,
+          framework: "vue",
+          extends: [`${name}/recommended`],
+          extensions,
+        });
+        expect(selected.diagnostics.map((item) => item.ruleId)).toEqual([rule.meta.id]);
+      }
+      const selection = runDoctor({
         root,
         framework: "vue",
         extends: ["vue/recommended"],
-        extensions: [
-          defineDoctorExtension({
-            name: "test/first",
-            rulePacks: [testPack(first, reportProgramRule)],
-          }),
-          defineDoctorExtension({
-            name: "test/second",
-            setup(api) {
-              api.registerRulePack(testPack(second, secondRule));
-            },
-          }),
-        ],
-      }),
-    ).rejects.toMatchObject({ name: "DOC0023", message: expect.stringContaining('"vue"') });
+        extensions,
+      });
+      if (first === "vue" || second === "vue") {
+        const selected = await selection;
+        const expected = first === "vue" ? reportProgramRule : secondRule;
+        expect(selected.diagnostics.map((item) => item.ruleId)).toEqual([expected.meta.id]);
+      } else {
+        await expect(selection).rejects.toMatchObject({
+          name: "DOC0024",
+          message: expect.stringContaining('"vue"'),
+        });
+      }
+    }
   });
 });
 
@@ -1267,6 +1468,14 @@ test("rules and explain reports expose rule metadata as json", () => {
 
   expect(rules.rules[0].id).toBe("test/report-program");
   expect(explain.id).toBe("test/report-program");
+
+  const packageExplain = JSON.parse(
+    explainRule([packageRulePack], "package/no-phantom-dependencies", "json"),
+  );
+  expect(packageExplain.diagnostics).toEqual([
+    { code: "PKG0001", docs: "https://vite-doctor.onmax.me/diagnostics/PKG0001" },
+    { code: "PKG0002", docs: "https://vite-doctor.onmax.me/diagnostics/PKG0002" },
+  ]);
 });
 
 test("executable config preserves Doctor preset selection without loading config layers", async () => {

@@ -33,7 +33,11 @@ export async function parseSfcFile(
       return parseVueScripts(file, descriptor, source);
     },
     async getTemplateTokens() {
-      return parseTemplate(file, source);
+      return parseTemplate(
+        file,
+        source,
+        vueScriptLang([descriptor.script, descriptor.scriptSetup].filter(Boolean)),
+      );
     },
     offsetToPosition(offset) {
       return rangeFromOffset(source, offset);

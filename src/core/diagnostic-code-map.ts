@@ -34,6 +34,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0021", ruleId: "doctor/internal/missing-diagnostic-fix", docs: false },
   { code: "DOC0022", ruleId: "doctor/inventory/unresolved-runtime" },
   { code: "DOC0023", ruleId: "doctor/rule-pack/duplicate-name", docs: false },
+  { code: "DOC0024", ruleId: "doctor/config/ambiguous-rule-pack-alias", docs: false },
+  { code: "DOC0025", ruleId: "doctor/baseline/invalid-input", docs: false },
   { code: "VUE0001", ruleId: "vue/i18n/no-untranslated-text" },
   { code: "VUE0002", ruleId: "vue/i18n/no-unused-translations" },
   { code: "VUE0003", ruleId: "vue/lifecycle/no-mutation-in-onupdated" },
@@ -191,5 +193,6 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
+export const allDiagnosticCodeListsByRuleId = allDoctorDiagnosticRegistry.codesByRuleIdAll;
 doctorDiagnosticsHost.register(allDoctorDiagnosticRegistry);
 export const allDiagnostics = allDoctorDiagnosticRegistry.diagnostics;

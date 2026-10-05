@@ -1,4 +1,18 @@
-import type { DiagnosticDocument } from "./source.js";
+import type { DoctorSeverity } from "./primitives.js";
+
+export type WorkspaceDiagnosticAnalysis = "graph" | "dead-code" | "dupes" | "health";
+
+export interface WorkspaceDiagnosticMetadata {
+  code: string;
+  title: string;
+  description: string;
+  why: string;
+  fix: string;
+  ruleId: string;
+  severity: Exclude<DoctorSeverity, "blocker">;
+  category: string;
+  analysis: WorkspaceDiagnosticAnalysis;
+}
 
 export const workspaceDiagnosticMetadata = [
   {
@@ -123,7 +137,12 @@ export const workspaceDiagnosticMetadata = [
     category: "health",
     analysis: "health",
   },
-] satisfies Pick<
-  DiagnosticDocument,
-  "code" | "title" | "description" | "why" | "fix" | "ruleId" | "severity" | "category" | "analysis"
->[];
+] as const satisfies readonly WorkspaceDiagnosticMetadata[];
+
+export const workspaceDiagnosticMetadataByCode = new Map<string, WorkspaceDiagnosticMetadata>(
+  workspaceDiagnosticMetadata.map((metadata) => [metadata.code, metadata]),
+);
+
+export const workspaceDiagnosticMetadataByRuleId = new Map<string, WorkspaceDiagnosticMetadata>(
+  workspaceDiagnosticMetadata.map((metadata) => [metadata.ruleId, metadata]),
+);

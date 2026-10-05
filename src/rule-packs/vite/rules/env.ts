@@ -52,10 +52,18 @@ export const noClientSecretPattern = createRule({
     requires: { script: true },
   },
   create(ctx) {
+    const exposure = envExposureEvidence(ctx.project.runtimeEvidence?.vite, ctx.project.root);
     return {
       ScriptNode(node: AnyNode) {
         const name = importMetaEnvKey(node);
         if (!name || !SECRET_NAME_RE.test(name)) return;
+        if (
+          exposure &&
+          !exposure.hasObjectDefine &&
+          !exposure.defineKeys.includes(name) &&
+          !exposure.prefixes.some((prefix) => name.startsWith(prefix))
+        )
+          return;
         ctx.report(
           diagnostics.VITE0009({
             why: `import.meta.env.${name} looks like a secret and may be exposed to the browser.`,
@@ -73,6 +81,35 @@ export const noClientSecretPattern = createRule({
     };
   },
 });
+
+interface EnvExposureEvidence {
+  root: string;
+  prefixes: string[];
+  defineKeys: string[];
+  hasObjectDefine: boolean;
+}
+
+function envExposureEvidence(runtime: unknown, root: string): EnvExposureEvidence | undefined {
+  if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) return;
+  const evidence = (runtime as Record<string, unknown>).envExposure;
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return;
+  const {
+    root: owner,
+    prefixes,
+    defineKeys,
+    hasObjectDefine,
+  } = evidence as Record<string, unknown>;
+  if (
+    owner !== root ||
+    !Array.isArray(prefixes) ||
+    ![...prefixes].every((prefix) => typeof prefix === "string") ||
+    !Array.isArray(defineKeys) ||
+    ![...defineKeys].every((key) => typeof key === "string") ||
+    typeof hasObjectDefine !== "boolean"
+  )
+    return;
+  return { root, prefixes, defineKeys, hasObjectDefine };
+}
 
 export const preferDirectImportMetaEnvAccess = createRule({
   meta: {

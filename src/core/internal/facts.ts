@@ -9,7 +9,7 @@ import type {
   SourceFileHandle,
   TemplateFact,
 } from "../primitives.js";
-import { parseSfcFile, parseVueScriptsResult } from "./sfc.js";
+import { createVueScriptForParsing, parseSfcFile, parseVueScriptsResult } from "./sfc.js";
 import { parseScriptResult } from "./script.js";
 import { parseTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
@@ -18,7 +18,7 @@ import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 import { isCachedFileFacts } from "./cached-file-facts.js";
 
-const FILE_FACTS_VERSION = 4;
+const FILE_FACTS_VERSION = 5;
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
@@ -77,7 +77,8 @@ async function parseSourceFile(
       },
     ];
   }
-  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text) : null;
+  const scriptLang = isVueSfc ? createVueScriptForParsing(sfc?.descriptor, text).lang : undefined;
+  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text, scriptLang) : null;
   const facts =
     isCachedFileFacts(cachedFacts) &&
     cachedFacts.fileHash === hash &&

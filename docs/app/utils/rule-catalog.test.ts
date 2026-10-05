@@ -32,6 +32,8 @@ const internalDiagnosticCodes = [
   "DOC0020",
   "DOC0021",
   "DOC0023",
+  "DOC0024",
+  "DOC0025",
 ] as const;
 
 const sampleRules: RawRuleEntry[] = [

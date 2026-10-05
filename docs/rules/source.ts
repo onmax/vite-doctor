@@ -3,7 +3,7 @@ import { dirname, join, relative, resolve } from "pathe";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { ruleDocumentationMetadata } from "./metadata.js";
-import { workspaceDiagnosticMetadata } from "./workspace-diagnostics.js";
+import { workspaceDiagnosticMetadata } from "../../src/core/diagnostic-metadata.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
 export type RuleFix = "safe" | "suggestion" | "no";
@@ -392,12 +392,12 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
     const pack = readPackName(ast) ?? defaultPack;
     const source = relative(root, file);
     const metaRules = findMetaObjects(ast, visitorKeys)
-      .map((meta) => {
+      .map(({ meta, id }) => {
         const rule = {
           pack,
           source,
           framework,
-          id: readString(meta, "id"),
+          id,
           title: readString(meta, "title"),
           description: readString(meta, "description"),
           why: readString(meta, "why"),
@@ -412,23 +412,43 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         return applyDocumentationMetadata(rule);
       })
       .filter((rule) => rule.id);
-    const helperRules = findValidatedInputRuleOptions(ast, visitorKeys).map((opts) => ({
-      pack,
-      source,
-      framework,
-      id: readString(opts, "id"),
-      title: readString(opts, "title"),
-      description: readString(opts, "description"),
-      why: "Raw request input and validation can drift apart when they are separate operations. Nitro and h3 provide validated helpers that keep parsing and validation coupled at the request boundary.",
-      recommendedReplacement: validatedInputReplacement(opts),
-      examples: validatedInputExamples(opts),
-      category: "request",
-      severity: "warn" as const,
-      fixable: "suggestion" as const,
-      docsUrl: readString(opts, "docsUrl"),
-      sourceUrl: githubSourceUrl(source),
-    }));
-    return [...metaRules, ...helperRules].filter((rule) => rule.id);
+    const helperRules = findRuleFactoryOptions(ast, visitorKeys, "createValidatedInputRule").map(
+      (opts) => ({
+        pack,
+        source,
+        framework,
+        id: readString(opts, "id"),
+        title: readString(opts, "title"),
+        description: readString(opts, "description"),
+        why: "Raw request input and validation can drift apart when they are separate operations. Nitro and h3 provide validated helpers that keep parsing and validation coupled at the request boundary.",
+        recommendedReplacement: validatedInputReplacement(opts),
+        examples: validatedInputExamples(opts),
+        category: "request",
+        severity: "warn" as const,
+        fixable: "suggestion" as const,
+        docsUrl: readString(opts, "docsUrl"),
+        sourceUrl: githubSourceUrl(source),
+      }),
+    );
+    const shadcnRules = findRuleFactoryOptions(ast, visitorKeys, "createShadcnRule").map((opts) =>
+      applyDocumentationMetadata({
+        pack,
+        source,
+        framework,
+        id: readString(opts, "id"),
+        title: readString(opts, "title"),
+        description: readString(opts, "description"),
+        why: "",
+        recommendedReplacement: "",
+        examples: [],
+        category: "ui",
+        severity: (readString(opts, "severity") || "warn") as RuleSeverity,
+        fixable: "suggestion" as const,
+        docsUrl: readString(opts, "docsUrl"),
+        sourceUrl: githubSourceUrl(source),
+      }),
+    );
+    return [...metaRules, ...helperRules, ...shadcnRules].filter((rule) => rule.id);
   });
 }
 
@@ -690,26 +710,57 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   return [...links.values()];
 }
 
-function findMetaObjects(ast: any, visitorKeys: typeof import("oxc-parser").visitorKeys) {
-  const metas: any[] = [];
-  walk(ast, visitorKeys, (node) => {
+export function findMetaObjects(ast: any, visitorKeys: typeof import("oxc-parser").visitorKeys) {
+  const constants = new Map<string, string>();
+  for (const statement of ast.body ?? []) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") continue;
+    for (const entry of declaration.declarations) {
+      if (entry.id?.type === "Identifier" && typeof entry.init?.value === "string")
+        constants.set(entry.id.name, entry.init.value);
+    }
+  }
+  const metas: Array<{ meta: any; id: string }> = [];
+  walk(ast, visitorKeys, (node, ancestors) => {
     if (node.type !== "Property" || propertyName(node) !== "meta") return;
     if (node.value?.type !== "ObjectExpression") return;
-    if (!readString(node.value, "id")) return;
-    metas.push(node.value);
+    let id = readString(node.value, "id");
+    const value = findProperty(node.value, "id")?.value;
+    if (!id && value?.type === "Identifier" && !ancestors.some(isLocalScope))
+      id = constants.get(value.name) ?? "";
+    if (id) metas.push({ meta: node.value, id });
   });
   return metas;
 }
 
-function findValidatedInputRuleOptions(
+function isLocalScope(node: any) {
+  return [
+    "BlockStatement",
+    "CatchClause",
+    "ForInStatement",
+    "ForOfStatement",
+    "ForStatement",
+    "FunctionDeclaration",
+    "FunctionExpression",
+    "ArrowFunctionExpression",
+    "ClassDeclaration",
+    "ClassExpression",
+    "StaticBlock",
+    "SwitchCase",
+    "SwitchStatement",
+  ].includes(node.type);
+}
+
+function findRuleFactoryOptions(
   ast: any,
   visitorKeys: typeof import("oxc-parser").visitorKeys,
+  factory: string,
 ) {
   const options: any[] = [];
   walk(ast, visitorKeys, (node) => {
     if (node.type !== "CallExpression") return;
-    if (node.callee?.type !== "Identifier" || node.callee.name !== "createValidatedInputRule")
-      return;
+    if (node.callee?.type !== "Identifier" || node.callee.name !== factory) return;
     const [opts] = node.arguments ?? [];
     if (opts?.type === "ObjectExpression") options.push(opts);
   });
@@ -811,17 +862,19 @@ function propertyName(property: any) {
 function walk(
   node: any,
   visitorKeys: typeof import("oxc-parser").visitorKeys,
-  visit: (node: any) => void,
+  visit: (node: any, ancestors: any[]) => void,
+  ancestors: any[] = [],
 ) {
   if (!node || typeof node !== "object") return;
-  visit(node);
+  visit(node, ancestors);
   const keys = visitorKeys[node.type as keyof typeof visitorKeys] ?? [];
+  const nextAncestors = [...ancestors, node];
   for (const key of keys) {
     const value = node[key];
     if (Array.isArray(value)) {
-      for (const child of value) walk(child, visitorKeys, visit);
+      for (const child of value) walk(child, visitorKeys, visit, nextAncestors);
     } else {
-      walk(value, visitorKeys, visit);
+      walk(value, visitorKeys, visit, nextAncestors);
     }
   }
 }
@@ -840,6 +893,8 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules ${rule.id}`;
   if (rule.framework === "package")
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
+  if (rule.framework === "shadcn")
+    return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
   if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
   if (rule.framework === "typescript") return `pnpm vite-doctor . --rules ${rule.id}`;
   return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;
