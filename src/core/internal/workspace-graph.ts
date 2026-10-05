@@ -1,4 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
+import { isBuiltin } from "node:module";
 import { dirname, relative, resolve } from "pathe";
 import type {
   Diagnostic,
@@ -8,7 +10,8 @@ import type {
   VirtualRootNode,
   WorkspaceGraph,
 } from "../primitives.js";
-import type { ScanSession } from "./scan-session.js";
+import { resolvedConfigFor, type ScanSession } from "./scan-session.js";
+import { nativeMatch } from "./utils.js";
 import { pushDiagnostic } from "./diagnostics.js";
 
 export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
@@ -118,7 +121,10 @@ function createVirtualRoots(
   };
 
   addRoot("package", "package.json", "package metadata");
-  for (const file of readPackageDeps(session.root).entryFiles) {
+  for (const file of readPackageDeps(
+    session.root,
+    session.files.map((entry) => entry.path),
+  ).entryFiles) {
     roots.push({
       id: `package-entry:${file}`,
       kind: "package",
@@ -274,7 +280,10 @@ export function runStructuralGraphRules(session: ScanSession, graph: WorkspaceGr
 
 function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
   const live = reachableFiles(graph);
-  const packageDeps = readPackageDeps(session.root);
+  const packageDeps = readPackageDeps(
+    session.root,
+    session.files.map((entry) => entry.path),
+  );
   const importedPackages = new Set<string>();
   const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
 
@@ -285,7 +294,8 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         !item.source.startsWith(".") &&
         !item.source.startsWith("~/") &&
         !item.source.startsWith("@/") &&
-        !item.source.startsWith("~~/")
+        !item.source.startsWith("~~/") &&
+        !isNodeBuiltin(item.source)
       )
         importedPackages.add(packageNameFromSpecifier(item.source));
       if (
@@ -294,7 +304,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         !isLikelyForeignFrameworkFile(session, fact.relativePath, packageDeps) &&
         resolveImportTarget(session, fact, item.source, byRelativePath) === undefined
       ) {
-        pushDiagnostic(session, {
+        reportWorkspaceDiagnostic(session, {
           ruleId: "workspace/dead-code/unresolved-import",
           severity: "error",
           category: "dead-code",
@@ -317,7 +327,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
       !isLikelyForeignFrameworkFile(session, fact.relativePath, packageDeps) &&
       !isTypeSurfaceFile(fact.relativePath)
     ) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/dead-code/unused-file",
         severity: "info",
         category: "dead-code",
@@ -337,7 +347,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         !isLikelyForeignFrameworkFile(session, fact.relativePath, packageDeps) &&
         !isTypeSurfaceFile(fact.relativePath)
       ) {
-        pushDiagnostic(session, {
+        reportWorkspaceDiagnostic(session, {
           ruleId:
             exp.kind === "type"
               ? "workspace/dead-code/unused-type-export"
@@ -358,7 +368,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
 
   for (const dep of packageDeps.runtime) {
     if (!importedPackages.has(dep) && !isIgnoredDependencyForUnusedReport(dep)) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/dead-code/unused-dependency",
         severity: "info",
         category: "dead-code",
@@ -375,11 +385,10 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
   for (const dep of importedPackages) {
     if (
       !packageDeps.all.has(dep) &&
-      !isNodeBuiltin(dep) &&
       !dep.startsWith("#") &&
       !isIgnoredDependencyForUnusedReport(dep)
     ) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/dead-code/unlisted-dependency",
         severity: "warn",
         category: "dead-code",
@@ -397,7 +406,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
 function runCycleAndDuplicateExportRules(session: ScanSession, graph: WorkspaceGraph) {
   for (const scc of graph.sccs.filter((item) => item.length > 1)) {
     const files = scc.map((id) => graph.files.get(id)?.path).filter(Boolean) as string[];
-    pushDiagnostic(session, {
+    reportWorkspaceDiagnostic(session, {
       ruleId: "workspace/dead-code/circular-dependency",
       severity: "warn",
       category: "architecture",
@@ -415,7 +424,7 @@ function runCycleAndDuplicateExportRules(session: ScanSession, graph: WorkspaceG
       ...new Set(exports.map((item) => findExportFile(graph, item)).filter(Boolean)),
     ] as string[];
     if (name === "default" || name === "*" || files.length < 2) continue;
-    pushDiagnostic(session, {
+    reportWorkspaceDiagnostic(session, {
       ruleId: "workspace/dead-code/duplicate-export",
       severity: "warn",
       category: "architecture",
@@ -443,7 +452,7 @@ export function runDuplicationRules(session: ScanSession) {
   for (const [hash, facts] of byHash) {
     const files = [...new Set(facts.map((fact) => fact.path))];
     if (files.length < 2) continue;
-    pushDiagnostic(session, {
+    reportWorkspaceDiagnostic(session, {
       ruleId: "workspace/duplication/exact-clone",
       severity: "info",
       category: "duplication",
@@ -462,7 +471,7 @@ export function runHealthRules(session: ScanSession) {
   if (!selectedAnalyses(session).has("health")) return;
   for (const fact of session.facts) {
     if (fact.complexity.cyclomatic >= 15) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/health/high-cyclomatic-complexity",
         severity: "warn",
         category: "health",
@@ -475,7 +484,7 @@ export function runHealthRules(session: ScanSession) {
       });
     }
     if (fact.imports.length >= 20) {
-      pushDiagnostic(session, {
+      reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/health/high-fan-out",
         severity: "info",
         category: "health",
@@ -572,7 +581,7 @@ interface PackageDependencyFacts {
   entryFiles: Set<string>;
 }
 
-function readPackageDeps(root: string): PackageDependencyFacts {
+function readPackageDeps(root: string, inventoryPaths: readonly string[]): PackageDependencyFacts {
   const all = new Set<string>();
   const runtime = new Set<string>();
   const foreignRoots = new Set<string>();
@@ -605,7 +614,8 @@ function readPackageDeps(root: string): PackageDependencyFacts {
       ) {
         foreignRoots.add(relative(root, packageRoot));
       }
-      for (const entry of packageEntryCandidates(root, packageRoot, json)) entryFiles.add(entry);
+      for (const entry of packageEntryCandidates(root, packageRoot, json, inventoryPaths))
+        entryFiles.add(entry);
     } catch {
       continue;
     }
@@ -656,7 +666,7 @@ function isLocalSpecifier(specifier: string): boolean {
 }
 
 function isNodeBuiltin(name: string): boolean {
-  return /^(node:|fs$|path$|url$|crypto$|os$|util$|stream$|events$|buffer$|process$)/.test(name);
+  return name.startsWith("node:") || isBuiltin(name);
 }
 
 function isLikelyTestOrConfig(relativePath: string): boolean {
@@ -684,18 +694,52 @@ function packageEntryCandidates(
   root: string,
   packageRoot: string,
   json: Record<string, unknown>,
+  inventoryPaths: readonly string[],
 ): string[] {
   const candidates = new Set<string>();
-  for (const value of [json.main, json.module, json.types, json.typings]) {
+  const inventoriedFiles = new Set(inventoryPaths.map((file) => resolve(file)));
+  const binEntries =
+    typeof json.bin === "string"
+      ? [json.bin]
+      : json.bin && typeof json.bin === "object" && !Array.isArray(json.bin)
+        ? Object.values(json.bin)
+        : [];
+  for (const value of [json.main, json.module, json.types, json.typings, ...binEntries]) {
     if (typeof value !== "string") continue;
     for (const file of sourceCandidatesForPackageEntry(packageRoot, value)) candidates.add(file);
+  }
+  const directories = json.directories as Record<string, unknown> | undefined;
+  if (!json.bin && typeof directories?.bin === "string" && directories.bin) {
+    const binRoot = resolve(packageRoot, directories.bin);
+    if (isPathInside(packageRoot, binRoot)) {
+      for (const file of inventoryPaths) {
+        if (!isPathInside(binRoot, file)) continue;
+        const path = relative(packageRoot, file);
+        for (const candidate of sourceCandidatesForPackageEntry(packageRoot, path)) {
+          if (inventoriedFiles.has(candidate)) candidates.add(candidate);
+        }
+      }
+    }
   }
   collectPackageExportEntries(packageRoot, json.exports, candidates);
   for (const standard of ["src/index.ts", "src/module.ts", "src/preview.ts"]) {
     const absolute = resolve(packageRoot, standard);
     if (existsSync(absolute)) candidates.add(absolute);
   }
-  return [...candidates].filter((file) => file.startsWith(root));
+  return [...candidates].filter((file) => isPathInside(root, file));
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const path = relative(resolve(parent), resolve(child));
+  return (
+    path === "" ||
+    (!isAbsolute(path) &&
+      path !== ".." &&
+      !path.startsWith("../") &&
+      !path.startsWith("..\\") &&
+      !path.startsWith("/") &&
+      !path.startsWith("\\"))
+  );
 }
 
 function collectPackageExportEntries(
@@ -766,10 +810,24 @@ function isIgnoredDependencyForUnusedReport(dep: string): boolean {
 }
 
 function isTypeSurfaceFile(relativePath: string): boolean {
-  return relativePath.endsWith(".d.ts") || /(^|\/)(types|shared\/types)\//.test(relativePath);
+  return /\.d\.[cm]?ts$/.test(relativePath) || /(^|\/)(types|shared\/types)\//.test(relativePath);
 }
 
 function findExportFile(graph: WorkspaceGraph, target: ExportFact): string | undefined {
   for (const fact of graph.files.values()) if (fact.exports.includes(target)) return fact.path;
   return undefined;
+}
+
+function reportWorkspaceDiagnostic(
+  session: ScanSession,
+  diagnostic: Parameters<typeof pushDiagnostic>[1],
+): void {
+  const wanted = session.options.rules
+    ?.split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (wanted?.length && !wanted.some((pattern) => nativeMatch(diagnostic.ruleId, pattern))) return;
+  const config = resolvedConfigFor(session, diagnostic.ruleId);
+  if (config.enabled === false) return;
+  pushDiagnostic(session, { ...diagnostic, severity: config.severity ?? diagnostic.severity });
 }

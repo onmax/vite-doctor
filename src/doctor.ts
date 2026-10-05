@@ -9,7 +9,7 @@ import {
   type DoctorRunOptions,
   type DoctorRunResult,
 } from "./core/index.js";
-import { resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
+import { collectRulePacks, resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "pathe";
 import { nitroRulePack } from "./rule-packs/nitro/index.js";
@@ -22,7 +22,12 @@ import { packageRulePack } from "./rule-packs/package/index.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
-  return (await viteDoctorExtensions(options)).flatMap((extension) => extension.rulePacks ?? []);
+  const registry = await collectRulePacks([
+    ...(options.config?.extensions ?? []),
+    ...(await viteDoctorExtensions(options)),
+    ...(options.extensions ?? []),
+  ]);
+  return registry.packs;
 }
 
 export async function viteDoctorExtensions(
@@ -98,7 +103,11 @@ function detectRequestedFramework(options: DoctorRunOptions): DoctorFramework {
   }
   const root = options.root ?? process.cwd();
   const packageJson = readPackageJson(root);
-  const deps = { ...packageJson?.dependencies, ...packageJson?.devDependencies };
+  const deps = {
+    ...packageJson?.dependencies,
+    ...packageJson?.optionalDependencies,
+    ...packageJson?.devDependencies,
+  };
   if (deps.nuxt || deps["@nuxt/kit"] || hasConfig(root, "nuxt.config")) return "nuxt";
   if (deps.nitro || deps.nitropack || hasConfig(root, "nitro.config")) return "nitro";
   if (deps.vue || hasVueFiles(root)) return "vue";
@@ -112,6 +121,7 @@ function withDistributionVersion<T extends { version: string }>(item: T): T {
 function readPackageJson(root: string): {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
 } | null {
   try {
     return JSON.parse(readFileSync(join(root, "package.json"), "utf8"));

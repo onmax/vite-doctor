@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { runViteDoctor } from "../../src/doctor.js";
+import { explainRule } from "../../src/core/reports.js";
 import { diagnosticsCollectionSource, getDiagnosticDocuments } from "./source.js";
 
 const repeated = Array.from({ length: 12 }, (_, index) => `console.log(${index});`).join("\n");
@@ -99,6 +100,24 @@ test.each(cases)(
       expect(emitted!.docs).toBe(`https://vite-doctor.onmax.me${document!.path}`);
       expect(await diagnosticsCollectionSource.getKeys()).toContain(document!.key);
 
+      const explanation = JSON.parse(explainRule([], item.code, "json"));
+      expect(explanation).toMatchObject({
+        id: emitted!.ruleId,
+        severity: emitted!.severity,
+        category: emitted!.category,
+        analysis: item.analysis,
+        diagnosticCodes: [item.code],
+        diagnostics: [{ code: item.code, docs: emitted!.docs }],
+      });
+      expect(explanation.pack).toBeUndefined();
+      const ruleExplanation = JSON.parse(explainRule([], emitted!.ruleId, "agent"));
+      expect(ruleExplanation).toMatchObject({
+        schema: "vite-doctor.explain/v1",
+        status: "ready",
+        id: emitted!.ruleId,
+        diagnosticCodes: [item.code],
+      });
+
       const markdown = await diagnosticsCollectionSource.getItem(document!.key);
       expect(markdown).toContain(`code: "${item.code}"`);
       expect(markdown).toContain("## Why it happens");
@@ -112,3 +131,10 @@ test.each(cases)(
     }
   },
 );
+
+test("workspace explain does not expose internal or unknown codes", () => {
+  expect(explainRule([], "DOC0012", "json")).toBe("");
+  expect(explainRule([], "DOES_NOT_EXIST", "agent")).toBe("");
+  expect(explainRule([], "constructor", "json")).toBe("");
+  expect(explainRule([], "__proto__", "agent")).toBe("");
+});
