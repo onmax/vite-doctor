@@ -1256,6 +1256,40 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/structure/no-composable-in-utils": {
+    description:
+      "Finds functions in Nuxt utils/ that need a component setup context and belong in composables/.",
+    why: "Nuxt auto-imports both composables/ and utils/, so the directory is how readers know whether a function must run during setup. A utils/ function that calls lifecycle hooks, inject(), provide(), or other composables breaks when it is called from an event handler, timer, or plugin the way plain utilities are.",
+    recommendedReplacement:
+      "Move the function to composables/ and name it with the use prefix. Functions that only read Nuxt app context, such as useNuxtApp(), useRuntimeConfig(), useRouter(), or useState(), can stay in utils/, like Nuxt's own navigateTo().",
+    examples: [
+      {
+        title: "Move setup-bound tracking into a composable",
+        language: "ts",
+        invalid:
+          "// app/utils/track.ts\nexport function trackPageView() {\n  const route = useRoute()\n  onMounted(() => analytics.page(route.fullPath))\n}",
+        valid:
+          "// app/composables/usePageTracking.ts\nexport function usePageTracking() {\n  const route = useRoute()\n  onMounted(() => analytics.page(route.fullPath))\n}",
+      },
+    ],
+  },
+  "nuxt/structure/no-stateless-composable": {
+    description:
+      "Finds use-prefixed functions in Nuxt composables/ that use no Vue or Nuxt API and are plain helpers.",
+    why: "The use prefix and the composables/ directory tell readers a function must be called from setup. A use* function that never touches Vue reactivity, lifecycle, injection, Nuxt APIs, or other composables can run anywhere, so presenting it as a composable hides that it is safe in event handlers and plain modules.",
+    recommendedReplacement:
+      "Move the function to utils/ and drop the use prefix. The rule only reports functions it can prove are plain; calls to unknown auto-imports or reads of project module state keep a function out of scope.",
+    examples: [
+      {
+        title: "Move a plain helper to utils",
+        language: "ts",
+        invalid:
+          "// app/composables/useSlugify.ts\nexport function useSlugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
+        valid:
+          "// app/utils/slugify.ts\nexport function slugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
+      },
+    ],
+  },
   "nuxt/state/no-nonserializable-usestate": {
     description: "Report unsupported live values stored in Nuxt payload state.",
     why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",
@@ -1315,6 +1349,22 @@ export const ruleDocumentationMetadata = {
           "export default defineEventHandler(async () => {\n  return await queryCollection('docs').all()\n})",
         valid:
           "export default cachedEventHandler(async () => {\n  return await queryCollection('docs').all()\n})",
+      },
+    ],
+  },
+  "vite/imports/no-barrel-files": {
+    description:
+      "Reports imports that load a local barrel file when the imported bindings come from only some of the modules it re-exports.",
+    why: "A barrel file only re-exports other modules. When code imports one binding from it, Vite cannot tell which re-exported module provides that binding or whether any of them has initialization side effects, so in dev it fetches and transforms every module the barrel re-exports. The page loads more files than it needs. Doctor reports the import site only when every imported binding traces to a defining module and some re-exported modules are unused. It ignores type-only imports, namespace imports, module IDs with query or hash suffixes, modules with side-effect or unre-exported value imports, barrels with fewer than three re-exported modules, package entry points declared by package.json exports (including subpath patterns), main, or module, and files under node_modules or generated directories.",
+    recommendedReplacement:
+      "Import each binding from the module that defines it. The diagnostic lists the direct imports to use. Keep the barrel if it is a public package entry point or other code still needs it.",
+    examples: [
+      {
+        title: "Import from the defining module",
+        language: "ts",
+        invalid:
+          "// src/utils/index.ts\nexport * from './date'\nexport * from './currency'\nexport * from './charts'\n\n// src/pages/Home.vue\nimport { formatDate } from '@/utils'",
+        valid: "// src/pages/Home.vue\nimport { formatDate } from '@/utils/date'",
       },
     ],
   },
