@@ -62,6 +62,9 @@ export const NUXT_AUTO_IMPORTS = new Set([
   "defineNuxtRouteMiddleware",
   "useState",
 ]);
+const NUXT_AUTO_IMPORT_TEXT_RE = new RegExp(
+  `${[...NUXT_AUTO_IMPORTS].join("|")}|\\\\(?:u|x|[0-7])`,
+);
 export const BROWSER_SIDE_EFFECTS = new Set([
   "localStorage.setItem",
   "sessionStorage.setItem",
@@ -124,12 +127,14 @@ function getLocalAliasMap(ctx: RuleContext): Map<string, string> {
   const cached = ctx.cache.get<Map<string, string>>(key);
   if (cached) return cached;
   const aliases = new Map<string, string>();
+  ctx.cache.set(key, aliases);
+  // An alias initializer must spell an auto-import name, unless escapes hide it.
+  if (!NUXT_AUTO_IMPORT_TEXT_RE.test(ctx.file.text)) return aliases;
   walkScriptLocal(ctx.file.scriptAst, (node) => {
     if (node.type !== "VariableDeclarator" || node.id?.type !== "Identifier") return;
     const initName = ctx.helpers.getCalleeName({ callee: node.init });
     if (initName && NUXT_AUTO_IMPORTS.has(initName)) aliases.set(node.id.name, initName);
   });
-  ctx.cache.set(key, aliases);
   return aliases;
 }
 

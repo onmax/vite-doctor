@@ -4,6 +4,7 @@ import {
   MUTATING_METHODS,
   asyncDataRuleOptions,
   collectReplayableSideEffects,
+  fileMayCallAsyncData,
   getAsyncDataCall,
   getObjectPropertyValue,
   isWriteLikePath,
@@ -22,6 +23,7 @@ export const noMutationToastInUseFetchCallback = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
+    if (!fileMayCallAsyncData(ctx)) return;
     const options = asyncDataRuleOptions(ctx);
     return {
       ScriptNode(node: AnyNode) {

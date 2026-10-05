@@ -859,6 +859,44 @@ refreshNuxtData('settings')
   expect(result.diagnostics).toHaveLength(1);
 });
 
+test("async data rules skip files that cannot call async data", () => {
+  const rules = [
+    asyncDataExplicitKeyForRefreshable,
+    asyncDataNoMutationMethods,
+    asyncDataHandlerPure,
+    noManualActionUseFetch,
+    postFetchRequiresReadonlyMarker,
+    noMutationToastInUseFetchCallback,
+  ];
+  const ctx = (text: string) => ({ file: { text }, options: {} }) as any;
+  for (const rule of rules) {
+    expect(rule.create(ctx(`const data = await $fetch('/api/settings')`))).toBeUndefined();
+    expect(rule.create(ctx(`const { refresh } = useFetch('/api/settings')`))).toBeDefined();
+    expect(rule.create(ctx(`const { refresh } = \\u0075seFetch('/api/settings')`))).toBeDefined();
+  }
+});
+
+test("refreshable async data key rule follows aliased and escaped async data calls", async () => {
+  const result = await runRuleFixture({
+    rule: asyncDataExplicitKeyForRefreshable,
+    framework: "nuxt",
+    files: {
+      "app/pages/aliased.vue": `<script setup lang="ts">
+const load = useFetch
+const { refresh } = load('/api/settings')
+</script>`,
+      "app/pages/escaped.vue": `<script setup lang="ts">
+const { refresh } = \\u0075seFetch('/api/settings')
+</script>`,
+    },
+  });
+
+  expect(new Set(result.diagnostics.map((item) => item.file.split("/").pop()))).toEqual(
+    new Set(["aliased.vue", "escaped.vue"]),
+  );
+  expect(result.diagnostics).toHaveLength(2);
+});
+
 test("async data handler purity reports replayable side effects conservatively", async () => {
   const result = await runRuleFixture({
     rule: asyncDataHandlerPure,

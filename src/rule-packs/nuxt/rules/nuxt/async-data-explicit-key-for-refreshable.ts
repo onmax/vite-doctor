@@ -1,6 +1,7 @@
 import type { RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule, report, walkScriptLocal } from "./shared.js";
 import {
+  fileMayCallAsyncData,
   getAsyncDataCall,
   getDestructuredAsyncDataCommands,
   hasKeyedRefreshNuxtDataCall,
@@ -18,17 +19,19 @@ export const asyncDataExplicitKeyForRefreshable = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    const fileUsesKeyedRefreshNuxtData = hasKeyedRefreshNuxtDataCall(ctx);
-    const asyncDataCallCount = countAsyncDataCalls(ctx);
+    if (!fileMayCallAsyncData(ctx)) return;
+    let onlyRefreshableEntryForKeyedRefresh: boolean | undefined;
     return {
       ScriptNode(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);
         if (!call || call.hasExplicitKey) return;
         const hasLocalRefresh = getDestructuredAsyncDataCommands(node).has("refresh");
         const hasWatch = hasObjectProperty(call.options, "watch");
-        const onlyRefreshableEntryForKeyedRefresh =
-          fileUsesKeyedRefreshNuxtData && asyncDataCallCount === 1;
-        if (!hasLocalRefresh && !hasWatch && !onlyRefreshableEntryForKeyedRefresh) return;
+        if (!hasLocalRefresh && !hasWatch) {
+          onlyRefreshableEntryForKeyedRefresh ??=
+            hasKeyedRefreshNuxtDataCall(ctx) && countAsyncDataCalls(ctx) === 1;
+          if (!onlyRefreshableEntryForKeyedRefresh) return;
+        }
         report(
           ctx,
           node,

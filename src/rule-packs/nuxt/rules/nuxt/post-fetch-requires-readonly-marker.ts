@@ -2,6 +2,7 @@ import { AnyNode, createRule, report } from "./shared.js";
 import {
   FETCH_ASYNC_DATA_COMPOSABLES,
   asyncDataRuleOptions,
+  fileMayCallAsyncData,
   getAsyncDataCall,
   isReadonlyPath,
   isWriteLikePath,
@@ -18,6 +19,7 @@ export const postFetchRequiresReadonlyMarker = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
+    if (!fileMayCallAsyncData(ctx)) return;
     const options = asyncDataRuleOptions(ctx);
     return {
       ScriptNode(node: AnyNode) {

@@ -2,6 +2,7 @@ import { AnyNode, createRule, report } from "./shared.js";
 import {
   asyncDataRuleOptions,
   collectReplayableSideEffects,
+  fileMayCallAsyncData,
   getAsyncDataCall,
   isQueryLikePath,
   isReadonlyPath,
@@ -20,6 +21,7 @@ export const asyncDataHandlerPure = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
+    if (!fileMayCallAsyncData(ctx)) return;
     return {
       ScriptNode(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);

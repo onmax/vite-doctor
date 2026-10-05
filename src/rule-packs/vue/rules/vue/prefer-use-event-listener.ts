@@ -16,6 +16,8 @@ const NUXT_CONFIG_FILES = [
   "nuxt.config.mjs",
   "nuxt.config.mts",
 ];
+// Reports start from a callee spelled addEventListener; escapes could spell it without the text.
+const ADD_EVENT_LISTENER_TEXT_RE = /addEventListener|\\(?:u|x|[0-7])/;
 
 export const preferUseEventListener = createRule({
   meta: {
@@ -28,6 +30,7 @@ export const preferUseEventListener = createRule({
     requires: { script: true, vue: true },
   },
   create(ctx) {
+    if (!ADD_EVENT_LISTENER_TEXT_RE.test(ctx.file.text)) return;
     if (!projectHasVueUse(ctx)) return;
     if (ctx.project.framework === "nuxt" && !isNuxtVueRuntimePath(ctx)) return;
 
@@ -52,6 +55,16 @@ export const preferUseEventListener = createRule({
 });
 
 function projectHasVueUse(ctx: RuleContext) {
+  const key = `${RULE_ID}:has-vueuse:${ctx.project.root}`;
+  let hasVueUse = ctx.cache.get<boolean>(key);
+  if (hasVueUse === undefined) {
+    hasVueUse = readProjectHasVueUse(ctx);
+    ctx.cache.set(key, hasVueUse);
+  }
+  return hasVueUse;
+}
+
+function readProjectHasVueUse(ctx: RuleContext) {
   const pkg = ctx.getJson<any>("package.json");
   const deps = {
     ...pkg?.dependencies,
@@ -299,6 +312,16 @@ function nuxtRuntimeRoots(ctx: RuleContext) {
 }
 
 function configuredNuxtSrcDirs(ctx: RuleContext) {
+  const key = `${RULE_ID}:nuxt-src-dirs:${ctx.project.root}`;
+  let dirs = ctx.cache.get<Set<string>>(key);
+  if (!dirs) {
+    dirs = readConfiguredNuxtSrcDirs(ctx);
+    ctx.cache.set(key, dirs);
+  }
+  return dirs;
+}
+
+function readConfiguredNuxtSrcDirs(ctx: RuleContext) {
   const dirs = new Set<string>();
   for (const file of NUXT_CONFIG_FILES) {
     const srcDir = readNuxtSrcDir(ctx, file);
