@@ -1,7 +1,7 @@
 import type { RuleContext } from "../../../../core/primitives.js";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "pathe";
-import { parseSync } from "oxc-parser";
+import { parseScriptSync } from "../../../../core/internal/script.js";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 import {
@@ -168,7 +168,7 @@ export function rootMiddlewareConfiguration(
   const config = ["ts", "js", "mjs", "cjs", "mts", "cts"]
     .map((extension) => join(root, `nuxt.config.${extension}`))
     .find(existsSync);
-  const parsed = config ? parseSync(config, readFileSync(config, "utf8")) : undefined;
+  const parsed = config ? parseScriptSync(config, readFileSync(config, "utf8")) : undefined;
   if (parsed?.errors.length) return null;
   const exported: AnyNode = parsed?.program.body.find(
     (statement: AnyNode) => statement.type === "ExportDefaultDeclaration",
@@ -346,7 +346,7 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
   )
     return false;
   try {
-    const parsed = parseSync(file, readProjectFile(file));
+    const parsed = parseScriptSync(file, readProjectFile(file));
     if (parsed.errors.length) return false;
     const declaration: AnyNode = parsed.program.body.find(
       (node) => node.type === "ExportDefaultDeclaration",
@@ -690,7 +690,7 @@ function isProviderBinding(
         ];
     const target = candidates.find((candidate) => existsSync(candidate));
     if (!target) continue;
-    const parsed = parseSync(target, readProjectFile(target));
+    const parsed = parseScriptSync(target, readProjectFile(target));
     if (parsed.errors.length) continue;
     const targetName =
       node.type === "ExportAllDeclaration"
@@ -711,7 +711,7 @@ function isProviderBinding(
 
 function hasUnconditionalAuthGuard(file: string): boolean {
   try {
-    const parsed = parseSync(file, readProjectFile(file));
+    const parsed = parseScriptSync(file, readProjectFile(file));
     if (parsed.errors.length) return false;
     const declaration: AnyNode = parsed.program.body.find(
       (node) => node.type === "ExportDefaultDeclaration",

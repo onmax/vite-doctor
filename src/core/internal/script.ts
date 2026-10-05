@@ -1,6 +1,28 @@
-import { parseSync } from "oxc-parser";
+import { parseSync, rawTransferSupported, type ParseResult, type ParserOptions } from "oxc-parser";
 
 export type ScriptParseLang = "js" | "jsx" | "ts" | "tsx";
+
+let rawTransfer = rawTransferSupported();
+
+export function parseScriptSync(
+  file: string,
+  source: string,
+  options: ParserOptions = {},
+): ParseResult {
+  if (rawTransfer) {
+    try {
+      return parseSync(file, source, {
+        ...options,
+        experimentalRawTransfer: true,
+      } as ParserOptions);
+    } catch {
+      // Raw transfer reserves 6 GiB of virtual memory per buffer; hosts that refuse that reservation
+      // keep working on the slower JSON transfer path.
+      rawTransfer = false;
+    }
+  }
+  return parseSync(file, source, options);
+}
 
 export function parseScript(
   file: string,
@@ -16,10 +38,7 @@ export function parseScriptResult(
   lang = langFromFile(file),
 ): { ast: Record<string, unknown> | null; errors: string[]; incomplete: boolean } {
   try {
-    const result = parseSync(file, source, {
-      sourceType: "module",
-      lang,
-    } as any);
+    const result = parseScriptSync(file, source, { sourceType: "module", lang });
     const errors = result.errors
       .filter((error) => error.severity === "Error")
       .map((error) => error.message);
