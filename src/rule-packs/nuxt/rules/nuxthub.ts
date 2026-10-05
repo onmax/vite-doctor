@@ -40,8 +40,8 @@ function hasMeaningfulCacheControl(node: AnyNode) {
       if (name === undefined) controls.clear();
       else {
         const value = property.kind === "init" ? unwrap(property.value) : undefined;
-        if (isUndefinedOption(value)) continue;
-        controls.set(name, value);
+        if (isUndefinedOption(value)) controls.delete(name);
+        else controls.set(name, value);
       }
     }
   };
