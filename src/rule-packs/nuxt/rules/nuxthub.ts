@@ -42,6 +42,7 @@ function hasMeaningfulCacheControl(node: AnyNode) {
     }
   };
   collect(options);
+  const allowCookies = controls.get("allowCookies");
   return [...controls].some(([name, value]) => {
     if (name === "shouldBypassCache") {
       if (!["ArrowFunctionExpression", "FunctionExpression"].includes(value?.type)) return false;
@@ -65,7 +66,13 @@ function hasMeaningfulCacheControl(node: AnyNode) {
     }
     if (name === "allowAuthorization") return value?.type === "Literal" && value.value === true;
     if (name !== "varies") return false;
-    if (value?.type === "ArrayExpression") return value.elements.some(hasVaryHeader);
+    if (value?.type === "ArrayExpression")
+      return value.elements.some((entry: AnyNode) => {
+        entry = unwrap(entry);
+        if (allowCookies !== undefined && entry?.type === "Literal" && entry.value === "cookie")
+          return false;
+        return hasVaryHeader(entry);
+      });
     return isDynamicOption(value);
   });
 }

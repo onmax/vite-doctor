@@ -51,6 +51,7 @@ test.each([
   '{ varies: ["cookie"], ...unknownOptions }',
   '{ varies: ["cookie"], [optionName]: [] }',
   "{ allowCookies: [] }",
+  '{ varies: ["cookie"], allowCookies: [] }',
   '{ allowCookies: [""] }',
   '{ allowCookies: ["session", 1] }',
   "{ allowAuthorization: false }",
@@ -76,6 +77,7 @@ test.each([
   '{ ...unknownOptions, varies: ["cookie"] }',
   '{ varies: ["cookie"], ...{ maxAge: 60 } }',
   '{ allowCookies: ["session"] }',
+  '{ varies: ["cookie"], allowCookies: ["session"] }',
   "{ allowCookies: cookieNames }",
   "{ allowAuthorization: true }",
 ])("preserves explicit cache vary strategies: %s", async (options) => {
