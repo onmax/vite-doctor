@@ -418,6 +418,82 @@ export default defineNuxtPlugin(() => {
   expect(result.diagnostics).toEqual([]);
 });
 
+test.each([
+  "function helper() { const useRuntimeConfig = () => ({}); useRuntimeConfig() }",
+  "function helper(useRuntimeConfig: () => unknown) { useRuntimeConfig() }",
+  "{ const useRuntimeConfig = () => ({}); useRuntimeConfig() }",
+  "const helper = function useRuntimeConfig() { useRuntimeConfig() }",
+  "try {} catch (useRuntimeConfig) { useRuntimeConfig() }",
+  "for (const useRuntimeConfig of []) { useRuntimeConfig() }",
+])("explicit-runtime-imports distinguishes sibling scopes: %s", async (binding) => {
+  const source = `import { defineNuxtPlugin } from '#imports'
+${binding}
+export default defineNuxtPlugin(() => useRuntimeConfig())
+`;
+  const result = await run(
+    moduleExplicitRuntimeImports,
+    modulePackage({
+      "src/runtime/plugin.ts": source,
+    }),
+  );
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.range?.start).toBe(source.lastIndexOf("useRuntimeConfig()"));
+  const fixed = applyEdits(source, result.diagnostics);
+  expect(fixed).toContain("import { useRuntimeConfig } from '#imports'");
+  const rerun = await run(
+    moduleExplicitRuntimeImports,
+    modulePackage({
+      "src/runtime/plugin.ts": fixed,
+    }),
+  );
+  expect(rerun.diagnostics).toEqual([]);
+});
+
+test("explicit-runtime-imports preserves SFC offsets across sibling scopes", async () => {
+  const source = `<script setup lang="ts">
+function helper() { const useRuntimeConfig = () => ({}); useRuntimeConfig() }
+const config = useRuntimeConfig()
+</script>
+<template><p>{{ config }}</p></template>
+`;
+  const result = await run(
+    moduleExplicitRuntimeImports,
+    modulePackage({
+      "src/runtime/components/Config.vue": source,
+    }),
+  );
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.range?.start).toBe(source.lastIndexOf("useRuntimeConfig()"));
+  const fixed = applyEdits(source, result.diagnostics);
+  expect(fixed).toContain(`<script setup lang="ts">
+import { useRuntimeConfig } from '#imports'
+`);
+  const rerun = await run(
+    moduleExplicitRuntimeImports,
+    modulePackage({
+      "src/runtime/components/Config.vue": fixed,
+    }),
+  );
+  expect(rerun.diagnostics).toEqual([]);
+});
+
+test("explicit-runtime-imports respects enclosing and hoisted bindings", async () => {
+  const result = await run(
+    moduleExplicitRuntimeImports,
+    modulePackage({
+      "src/runtime/plugin.ts": `import { defineNuxtPlugin } from '#imports'
+export default defineNuxtPlugin(() => {
+  useRuntimeConfig()
+  if (true) { var useRuntimeConfig = () => ({}) }
+  function nested() { useRuntimeConfig() }
+  return nested
+})
+`,
+    }),
+  );
+  expect(result.diagnostics).toEqual([]);
+});
+
 test("explicit-runtime-imports ignores module definition code, local modules, layers, and apps", async () => {
   const runtimeSource = "export default defineNuxtPlugin(() => useRuntimeConfig())\n";
   const moduleSetup = await run(

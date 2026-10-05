@@ -16,7 +16,7 @@ interface ModulePackageJson {
   main?: unknown;
   module?: unknown;
   exports?: unknown;
-  devDependencies?: Record<string, string>;
+  devDependencies?: Record<string, unknown>;
 }
 
 export interface NuxtModuleDefinitionNode {
@@ -117,7 +117,7 @@ function findTopLevelInitializer(body: AnyNode[], name: string): AnyNode {
 }
 
 function detectPackageModule(root: string): NuxtModuleDefinition | undefined {
-  const packageJson = readJson<ModulePackageJson>(join(root, "package.json"));
+  const packageJson = readModulePackageJson(join(root, "package.json"));
   if (!packageJson) return undefined;
   const distEntries = packageEntryTargets(packageJson)
     .map((target) => target.replace(/^\.\//, ""))
@@ -208,10 +208,21 @@ function isFile(file: string): boolean {
   return Boolean(statSync(file, { throwIfNoEntry: false })?.isFile());
 }
 
-function readJson<T>(file: string): T | null {
+function readModulePackageJson(file: string): ModulePackageJson | null {
   try {
-    return JSON.parse(readFileSync(file, "utf8")) as T;
+    const value: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (!isRecord(value)) return null;
+    return {
+      main: value.main,
+      module: value.module,
+      exports: value.exports,
+      devDependencies: isRecord(value.devDependencies) ? value.devDependencies : undefined,
+    };
   } catch {
     return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -1,3 +1,5 @@
+import { parseForESLint } from "@typescript-eslint/parser";
+import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
 import type { FixEdit } from "../../../../core/index.js";
 import { AnyNode, createRule, walkScriptLocal } from "./shared.js";
 import { packageModuleRuntime } from "./module-authoring.js";
@@ -21,12 +23,16 @@ export const moduleExplicitRuntimeImports = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
-        const bindings = collectBindingNames(node);
+        const source = ctx.file.sfc
+          ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text).text
+          : ctx.file.text;
+        const unbound = unboundReferences(source, ctx.file.path);
+        if (!unbound) return;
         const firstCalls = new Map<string, AnyNode>();
         walkScriptLocal(node, (current) => {
           if (current.type !== "CallExpression" || current.callee?.type !== "Identifier") return;
           const name = current.callee.name;
-          if (!MODULE_RUNTIME_AUTO_IMPORTS.has(name) || bindings.has(name)) return;
+          if (!MODULE_RUNTIME_AUTO_IMPORTS.has(name) || !unbound.has(current.callee.start)) return;
           const previous = firstCalls.get(name);
           if (!previous || current.start < previous.start) firstCalls.set(name, current);
         });
@@ -70,59 +76,19 @@ function importInsertion(program: AnyNode, text: string, names: string[]): FixEd
   return { range: { start: first.start, end: first.start }, text: `${statement}\n` };
 }
 
-function collectBindingNames(program: AnyNode): Set<string> {
-  const names = new Set<string>();
-  const addPattern = (pattern: AnyNode) => {
-    if (!pattern) return;
-    switch (pattern.type) {
-      case "Identifier":
-        names.add(pattern.name);
-        break;
-      case "ObjectPattern":
-        for (const property of pattern.properties ?? [])
-          addPattern(property.type === "RestElement" ? property.argument : property.value);
-        break;
-      case "ArrayPattern":
-        for (const element of pattern.elements ?? []) addPattern(element);
-        break;
-      case "RestElement":
-        addPattern(pattern.argument);
-        break;
-      case "AssignmentPattern":
-        addPattern(pattern.left);
-        break;
-      case "TSParameterProperty":
-        addPattern(pattern.parameter);
-        break;
-    }
-  };
-  walkScriptLocal(program, (node) => {
-    switch (node.type) {
-      case "ImportSpecifier":
-      case "ImportDefaultSpecifier":
-      case "ImportNamespaceSpecifier":
-        names.add(node.local?.name);
-        break;
-      case "VariableDeclarator":
-        addPattern(node.id);
-        break;
-      case "FunctionDeclaration":
-      case "TSDeclareFunction":
-      case "FunctionExpression":
-      case "ArrowFunctionExpression":
-        if (node.id) addPattern(node.id);
-        for (const parameter of node.params ?? []) addPattern(parameter);
-        break;
-      case "ClassDeclaration":
-      case "ClassExpression":
-      case "TSEnumDeclaration":
-      case "TSImportEqualsDeclaration":
-        if (node.id) addPattern(node.id);
-        break;
-      case "CatchClause":
-        addPattern(node.param);
-        break;
-    }
-  });
-  return names;
+function unboundReferences(source: string, file: string): Set<number> | undefined {
+  try {
+    const { scopeManager } = parseForESLint(source, {
+      sourceType: "module",
+      range: true,
+      filePath: file.endsWith(".vue") ? `${file}.ts` : file,
+    });
+    return new Set(
+      scopeManager.globalScope?.through
+        .filter((reference) => reference.isValueReference)
+        .map((reference) => reference.identifier.range[0]),
+    );
+  } catch {
+    return undefined;
+  }
 }
