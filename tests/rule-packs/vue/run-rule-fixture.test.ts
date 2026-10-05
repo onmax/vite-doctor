@@ -1,4 +1,5 @@
 import { expect, test } from "vite-plus/test";
+import { relative } from "pathe";
 import { vueRulePack } from "../../../src/rule-packs/vue/index.ts";
 import {
   definePropsWatchGetter,
@@ -913,6 +914,81 @@ test("i18n unused translations reads Nuxt langDir locale files", async () => {
 
   expect(result.diagnostics.map((item) => item.message)).toEqual([
     'Translation key "home.subtitle" is not used by any static Vue i18n call.',
+  ]);
+});
+
+test("i18n unused translations scans every source extension and locale file", async () => {
+  const result = await runRuleFixture({
+    rule: noUnusedTranslations,
+    framework: "vue",
+    dependencies: { "vue-i18n": "^11.0.0" },
+    files: {
+      "src/App.vue": `<template>{{ $t('nav.home') }}</template>`,
+      "src/store.ts": `export const title = t("nav.about")`,
+      "src/View.tsx": `export const View = () => <p>{t('form.save')}</p>`,
+      "src/router.js": "i18n.global.t(`form.cancel`)",
+      "src/Button.jsx": `export const Button = () => te('form.reset')`,
+      "public/legacy.js": `t('nav.blog')`,
+      "node_modules/pkg/index.js": `t('nav.contact')`,
+      "locales/en.json": `{
+  "nav": {
+    "home": "Home",
+    "about": "About",
+    "blog": "Blog",
+    "contact": "Contact"
+  },
+  "form": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "reset": "Reset",
+    "submit": "Submit"
+  }
+}`,
+      "i18n/locales/en.ts": `export default defineI18nLocale({
+  footer: { 'legal': 'Legal', home: 'Home' },
+})`,
+      "locales/fr.json": JSON.stringify({ nav: { unusedFr: "Seulement" } }),
+    },
+  });
+
+  expect(
+    result.diagnostics.map((item) => [
+      item.message,
+      relative(result.root, item.file ?? ""),
+      item.range?.line,
+      item.range?.column,
+    ]),
+  ).toEqual([
+    [
+      'Translation key "footer.legal" is not used by any static Vue i18n call.',
+      "i18n/locales/en.ts",
+      2,
+      13,
+    ],
+    [
+      'Translation key "footer.home" is not used by any static Vue i18n call.',
+      "i18n/locales/en.ts",
+      2,
+      38,
+    ],
+    [
+      'Translation key "nav.blog" is not used by any static Vue i18n call.',
+      "locales/en.json",
+      5,
+      5,
+    ],
+    [
+      'Translation key "nav.contact" is not used by any static Vue i18n call.',
+      "locales/en.json",
+      6,
+      5,
+    ],
+    [
+      'Translation key "form.submit" is not used by any static Vue i18n call.',
+      "locales/en.json",
+      12,
+      5,
+    ],
   ]);
 });
 
