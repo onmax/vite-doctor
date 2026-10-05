@@ -21,6 +21,7 @@ test.each([
       "app/composables/useCart.ts": "export enum useShoppingCart { Item }",
       "app/composables/ignored.ts": "export default function () {}",
       "app/composables/useIgnored.ts": "export function useOther() {}",
+      "app/composables/direct-only.ts": "export default function () {}",
       "app/composables/nested/wrong.ts": "export default function () {}",
       "composables/wrong.ts": "export default function () {}",
       "base/source/composables/custom.ts": "export default function () {}",
@@ -47,12 +48,25 @@ test.each([
       }
       const manualModule = defineNuxtModule({
         setup(_options, host) {
-          host.hook("imports:extend", (imports) => {
+          host.hook("ready", async () => {
+            await host.callHook("imports:extend", [
+              { name: "default", from: join(root, "app/composables/direct-only.ts") },
+            ]);
+          });
+          let extending = false;
+          host.hook("imports:extend", async (imports) => {
+            if (extending) return;
             imports.push(
               { name: "default", as: "ignored", from: join(root, "app/composables/ignored.ts") },
               { name: "useOther", from: join(root, "app/composables/useIgnored.ts") },
               { name: "useShoppingCart", from: join(root, "app/composables/useCart.ts") },
             );
+            extending = true;
+            try {
+              await host.callHook("imports:extend", imports);
+            } finally {
+              extending = false;
+            }
           });
         },
       });
@@ -65,7 +79,7 @@ test.each([
           srcDir: "app",
           extends: ["./base", "./disabled"],
           imports: { scan },
-          ignore: ["**/ignored.ts", "**/useIgnored.ts"],
+          ignore: ["**/ignored.ts", "**/useIgnored.ts", "**/direct-only.ts"],
           telemetry: false,
         },
       });

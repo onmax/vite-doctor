@@ -24,6 +24,9 @@ type EvidenceBuildManifest = {
 
 type NuxtAutoImportContext = {
   getImports?: () => Promise<unknown[]> | unknown[];
+  modifyDynamicImports?: (
+    modifier: (imports: unknown[]) => unknown[] | Promise<unknown[]>,
+  ) => unknown;
 };
 
 type NuxtDoctorEvidence = {
@@ -140,16 +143,27 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     nitro.hooks.hook("compiled", captureHandlers);
   });
 
+  const pendingScanImports = new WeakSet<unknown[]>();
   nuxt.hook?.("imports:context", (context: NuxtAutoImportContext) => {
     evidence.autoImportContext = context;
+    const modifyDynamicImports = context.modifyDynamicImports;
+    if (!modifyDynamicImports) return;
+    context.modifyDynamicImports = (modifier) =>
+      modifyDynamicImports.call(context, async (imports) => {
+        pendingScanImports.add(imports);
+        try {
+          return await modifier(imports);
+        } finally {
+          pendingScanImports.delete(imports);
+        }
+      });
   });
 
-  // Nuxt supplies scanner output before imports:extend callbacks add or mutate manual imports.
+  // Regeneration passes its dynamic-import array to imports:extend after scanning.
+  // Consume it once, before callbacks mutate it or invoke the hook themselves.
   nuxt.hooks?.beforeEach(({ name, args }: { name: string; args: unknown[] }) => {
-    if (name === "imports:extend")
-      evidence.scannedAutoImportEntries = normalizeAutoImports(
-        Array.isArray(args[0]) ? args[0] : [],
-      );
+    if (name === "imports:extend" && Array.isArray(args[0]) && pendingScanImports.delete(args[0]))
+      evidence.scannedAutoImportEntries = normalizeAutoImports(args[0]);
   });
 
   nuxt.hook?.("imports:extend", (imports: unknown) => {
