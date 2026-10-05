@@ -1,4 +1,4 @@
-import { defineConfig } from "vite-plus";
+import { configDefaults, defineConfig } from "vite-plus";
 
 export default defineConfig({
   pack: {
@@ -21,5 +21,9 @@ export default defineConfig({
   },
   run: {
     cache: true,
+  },
+  test: {
+    // Agent worktrees under .claude/ are full repo checkouts; collecting them duplicates and breaks the suite.
+    exclude: [...configDefaults.exclude, "**/.claude/**"],
   },
 });
