@@ -10,6 +10,7 @@ import type {
   ProjectLanguage,
 } from "../primitives.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
+import { detectNuxtModuleDefinitions } from "./nuxt-module-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
 import {
   applyRuntimeTarget,
@@ -85,6 +86,9 @@ export async function detectProject(
     tsconfigPath,
     languages: await detectProjectLanguages(root, Boolean(tsconfigPath)),
     nuxt,
+    nuxtModuleDefinitions: nuxt
+      ? await detectNuxtModuleDefinitions(root, nuxt.appRoots)
+      : undefined,
     runtimeGraph: targeted.graph,
     nuxtCompatibility: targeted.compatibility,
     inventory: { packages: deps },

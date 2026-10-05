@@ -9,18 +9,21 @@ import { runRuleFixture } from "../../../src/core/testkit.ts";
 import { exportNameMatchesFile } from "../../../src/rule-packs/nuxt/rules/nuxt/export-name-matches-file.ts";
 
 test.each([
-  { scan: true, manualFirst: false },
-  { scan: true, manualFirst: true },
-  { scan: false, manualFirst: false },
-  { scan: false, manualFirst: true },
+  { scan: true, manualFirst: false, removeRoot: false },
+  { scan: true, manualFirst: true, removeRoot: false },
+  { scan: false, manualFirst: false, removeRoot: false },
+  { scan: false, manualFirst: true, removeRoot: false },
+  { scan: true, manualFirst: false, removeRoot: true },
+  { scan: true, manualFirst: true, removeRoot: true },
 ])(
-  "captures Nuxt's effective composable scan ($scan, manual module first: $manualFirst)",
-  async ({ scan, manualFirst }) => {
+  "captures Nuxt's effective composable scan ($scan, manual module first: $manualFirst, root removed: $removeRoot)",
+  async ({ scan, manualFirst, removeRoot }) => {
     const root = mkdtempSync(join(tmpdir(), "doctor-composable-scan-"));
     const files = {
       "app/composables/useCart.ts": "export enum useShoppingCart { Item }",
       "app/composables/ignored.ts": "export default function () {}",
       "app/composables/useIgnored.ts": "export function useOther() {}",
+      "app/composables/modifier-only.ts": "export default function () {}",
       "app/composables/direct-only.ts": "export default function () {}",
       "app/composables/nested/wrong.ts": "export default function () {}",
       "composables/wrong.ts": "export default function () {}",
@@ -48,6 +51,22 @@ test.each([
       }
       const manualModule = defineNuxtModule({
         setup(_options, host) {
+          host.hook("imports:dirs", (dirs) => {
+            if (removeRoot) dirs.splice(dirs.indexOf(join(root, "app/composables")), 1);
+          });
+          host.hook("imports:context", (context) => {
+            host.hook("ready", async () => {
+              await context.modifyDynamicImports(async (imports) => {
+                imports.push({
+                  name: "default",
+                  as: "modifierOnly",
+                  from: join(root, "app/composables/modifier-only.ts"),
+                });
+                await host.callHook("imports:extend", imports);
+                return imports;
+              });
+            });
+          });
           host.hook("ready", async () => {
             await host.callHook("imports:extend", [
               { name: "default", from: join(root, "app/composables/direct-only.ts") },
@@ -79,7 +98,7 @@ test.each([
           srcDir: "app",
           extends: ["./base", "./disabled"],
           imports: { scan },
-          ignore: ["**/ignored.ts", "**/useIgnored.ts", "**/direct-only.ts"],
+          ignore: ["**/ignored.ts", "**/useIgnored.ts", "**/direct-only.ts", "**/modifier-only.ts"],
           telemetry: false,
         },
       });
@@ -93,7 +112,12 @@ test.each([
         ]),
       );
       expect(manifest.scannedComposableFiles).toEqual(
-        scan ? ["app/composables/useCart.ts", "base/source/composables/custom.ts"] : [],
+        scan
+          ? [
+              ...(removeRoot ? [] : ["app/composables/useCart.ts"]),
+              "base/source/composables/custom.ts",
+            ]
+          : [],
       );
       const result = await runRuleFixture({
         rule: exportNameMatchesFile,
@@ -111,7 +135,7 @@ test.each([
         },
       });
       expect(result.diagnostics.map((diagnostic) => diagnostic.code).sort()).toEqual(
-        scan ? ["NUXT0079", "NUXT0080"] : [],
+        scan ? [...(removeRoot ? [] : ["NUXT0079"]), "NUXT0080"] : [],
       );
     } finally {
       await nuxt?.close();

@@ -84,6 +84,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0020", ruleId: "vite/worker/no-node-api-in-worker" },
   { code: "VITE0021", ruleId: "vite/worker/require-worker-url-pattern" },
   { code: "VITE0022", ruleId: "vite/imports/require-static-glob-pattern" },
+  { code: "VITE0023", ruleId: "vite/imports/no-barrel-files" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
   { code: "TS0003", ruleId: "typescript/evidence/no-unknown-type-aliases" },
@@ -191,8 +192,13 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0072", ruleId: "vueuse/prefer-usewindow-size" },
   { code: "NUXT0073", ruleId: "nuxt/config/no-ignored-compatibility-config" },
   { code: "NUXT0074", ruleId: "nuxt/review/api-authorization-coverage" },
+  { code: "NUXT0077", ruleId: "nuxt/structure/no-composable-in-utils" },
+  { code: "NUXT0078", ruleId: "nuxt/structure/no-stateless-composable" },
   { code: "NUXT0079", ruleId: "nuxt/composables/export-name-matches-file" },
   { code: "NUXT0080", ruleId: "nuxt/composables/export-name-matches-file" },
+  { code: "NUXT0081", ruleId: "nuxt/module/require-meta" },
+  { code: "NUXT0082", ruleId: "nuxt/module/resolve-runtime-paths" },
+  { code: "NUXT0083", ruleId: "nuxt/module/explicit-runtime-imports" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;

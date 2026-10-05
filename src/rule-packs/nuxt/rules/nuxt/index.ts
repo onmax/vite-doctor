@@ -46,6 +46,10 @@ export { preferSeoComposables } from "./prefer-seo-composables.js";
 export { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 export { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
 export { exportNameMatchesFile } from "./export-name-matches-file.js";
+export { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
+export { moduleRequireMeta } from "./module-require-meta.js";
+export { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
+export { moduleExplicitRuntimeImports } from "./module-explicit-runtime-imports.js";
 
 import { noExplicitAutoImport } from "./no-explicit-auto-import.js";
 import { noConflictingUseFetchImport } from "./no-conflicting-use-fetch-import.js";
@@ -95,6 +99,10 @@ import { preferSeoComposables } from "./prefer-seo-composables.js";
 import { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 import { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
 import { exportNameMatchesFile } from "./export-name-matches-file.js";
+import { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
+import { moduleRequireMeta } from "./module-require-meta.js";
+import { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
+import { moduleExplicitRuntimeImports } from "./module-explicit-runtime-imports.js";
 import { defineRulePack } from "../../../../core/index.js";
 
 const rules = [
@@ -145,9 +153,13 @@ const rules = [
   preferSeoComposables,
   noUnsafeUseHeadScript,
   preferUseHeadSafeForUntrustedValues,
+  noComposableInUtils,
+  moduleRequireMeta,
+  moduleResolveRuntimePaths,
+  moduleExplicitRuntimeImports,
 ];
 
-const strictOnlyRules = [exportNameMatchesFile];
+const strictOnlyRules = [noStatelessComposable, exportNameMatchesFile];
 
 const nuxtRulePack = defineRulePack({
   name: "vite-doctor/nuxt",
