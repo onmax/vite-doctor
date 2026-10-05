@@ -43,7 +43,11 @@ const DEFAULT_CONFIG: DoctorConfig = {
   cache: { dir: ".vite-doctor/cache" },
 };
 
-class MemoryRuleCache implements RuleCache {
+export interface ScanCache extends RuleCache {
+  persist(options: { prune: boolean }): void;
+}
+
+class MemoryRuleCache implements ScanCache {
   private values = new Map<string, unknown>();
   get<T = unknown>(key: string): T | undefined {
     return this.values.get(key) as T | undefined;
@@ -51,44 +55,70 @@ class MemoryRuleCache implements RuleCache {
   set<T = unknown>(key: string, value: T): void {
     this.values.set(key, value);
   }
+  persist(_options: { prune: boolean }): void {}
+}
+
+const CACHE_STORE_FILE = "store.json";
+const CACHE_STORE_VERSION = 1;
+const PERSISTED_PREFIX = "fileFacts:";
+
+interface CacheStore {
+  version: number;
+  entries: Record<string, unknown>;
 }
 
 class PersistentRuleCache extends MemoryRuleCache {
   private root: string;
   private dir: string;
+  private stored: Map<string, unknown>;
+  private touched = new Set<string>();
+  private written = new Set<string>();
 
   constructor(root: string, config: DoctorConfig) {
     super();
     this.root = resolve(root);
     this.dir = resolve(root, config.cache?.dir ?? ".vite-doctor/cache");
     assertCachePath(this.root, this.dir);
+    this.stored = this.load();
   }
 
   override get<T = unknown>(key: string): T | undefined {
     const memory = super.get<T>(key);
     if (memory !== undefined) return memory;
-    if (!key.startsWith("fileFacts:")) return undefined;
-    try {
-      const path = this.cachePath(key);
-      const value = JSON.parse(readFileSync(path, "utf8"));
-      super.set(key, value);
-      return value as T;
-    } catch {
-      return undefined;
-    }
+    if (!key.startsWith(PERSISTED_PREFIX) || !this.stored.has(key)) return undefined;
+    this.touched.add(key);
+    return this.stored.get(key) as T;
   }
 
   override set<T = unknown>(key: string, value: T): void {
     super.set(key, value);
-    if (!key.startsWith("fileFacts:")) return;
+    if (!key.startsWith(PERSISTED_PREFIX)) return;
+    this.touched.add(key);
+    this.written.add(key);
+  }
+
+  /**
+   * Partial runs (`--changed`, `--since`) see only part of the inventory, so they keep untouched
+   * entries; full runs drop them to bound the store to the current project.
+   */
+  override persist({ prune }: { prune: boolean }): void {
+    const removed = prune ? [...this.stored.keys()].filter((key) => !this.touched.has(key)) : [];
+    if (!this.written.size && !removed.length) return;
+    const entries: Record<string, unknown> = {};
+    for (const [key, value] of this.stored) {
+      if (!prune || this.touched.has(key)) entries[key] = value;
+    }
+    for (const key of this.written) entries[key] = super.get(key);
+    const store: CacheStore = { version: CACHE_STORE_VERSION, entries };
     let temporary: string | undefined;
     try {
       mkdirSync(this.dir, { recursive: true });
-      const target = this.cachePath(key);
+      const target = this.storePath();
       temporary = resolve(this.dir, `.doctor-${randomUUID()}.tmp`);
       assertCachePath(this.root, temporary);
-      writeFileSync(temporary, JSON.stringify(value), { flag: "wx", mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify(store), { flag: "wx", mode: 0o600 });
       renameSync(temporary, target);
+      temporary = undefined;
     } catch {
       // Cache writes are best-effort and must not change diagnostics.
     } finally {
@@ -100,8 +130,27 @@ class PersistentRuleCache extends MemoryRuleCache {
     }
   }
 
-  private cachePath(key: string): string {
-    const path = resolve(this.dir, `${sha256(key)}.json`);
+  private load(): Map<string, unknown> {
+    try {
+      const store = JSON.parse(readFileSync(this.storePath(), "utf8")) as Partial<CacheStore>;
+      if (
+        store?.version !== CACHE_STORE_VERSION ||
+        typeof store.entries !== "object" ||
+        store.entries === null ||
+        Array.isArray(store.entries)
+      ) {
+        return new Map();
+      }
+      return new Map(
+        Object.entries(store.entries).filter(([key]) => key.startsWith(PERSISTED_PREFIX)),
+      );
+    } catch {
+      return new Map();
+    }
+  }
+
+  private storePath(): string {
+    const path = resolve(this.dir, CACHE_STORE_FILE);
     assertCachePath(this.root, path);
     return path;
   }
@@ -127,7 +176,7 @@ export interface ScanSession {
   graph?: WorkspaceGraph;
   diagnostics: Diagnostic[];
   suppressedDiagnostics: Diagnostic[];
-  cache: RuleCache;
+  cache: ScanCache;
   helpers: DoctorHelpers;
   enabledRules: DoctorRule[];
   ruleConfigs: Map<string, ResolvedRuleConfig>;
@@ -224,6 +273,10 @@ export async function runPhase(
   const started = performance.now();
   await run();
   session.phases[name] = Math.round(performance.now() - started);
+}
+
+export function persistScanCache(session: ScanSession): void {
+  session.cache.persist({ prune: !session.gitChanges });
 }
 
 export function cleanCache(root = process.cwd(), config?: DoctorConfig): void {

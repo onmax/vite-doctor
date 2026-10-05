@@ -32,8 +32,10 @@ test("rebuilds template references from persisted pre-JSX File Facts", async () 
       expect.objectContaining({ name: "ref", value: "element" }),
     ]);
     rmSync(join(root, ".vite-doctor/cache"), { recursive: true, force: true });
-    const oldKey = createCacheKey(initial, "fileFacts", `4:${facts.path}:${facts.fileHash}`);
-    initial.cache.set(oldKey, { ...facts, templateRefs: [] });
+    const legacy = await createScanSession(options);
+    const oldKey = createCacheKey(legacy, "fileFacts", `4:${facts.path}:${facts.fileHash}`);
+    legacy.cache.set(oldKey, { ...facts, templateRefs: [] });
+    legacy.cache.persist({ prune: false });
 
     const upgraded = await createScanSession(options);
     await parseSourceFiles(upgraded);

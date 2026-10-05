@@ -18,7 +18,7 @@ import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 import { isCachedFileFacts } from "./cached-file-facts.js";
 
-const FILE_FACTS_VERSION = 5;
+const FILE_FACTS_VERSION = 6;
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
@@ -79,16 +79,17 @@ async function parseSourceFile(
   }
   const scriptLang = isVueSfc ? createVueScriptForParsing(sfc?.descriptor, text).lang : undefined;
   const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text, scriptLang) : null;
-  const facts =
+  const reusable =
     isCachedFileFacts(cachedFacts) &&
     cachedFacts.fileHash === hash &&
     cachedFacts.path === absolute &&
     cachedFacts.relativePath === file.displayPath &&
     cachedFacts.sourceKind === file.sourceKind &&
-    cachedFacts.moduleName === file.moduleName
-      ? { ...cachedFacts, fileId }
-      : createFileFacts(session, file, fileId, text, hash, scriptAst, templateAst, sfc);
-  session.cache.set(cacheKey, facts);
+    cachedFacts.moduleName === file.moduleName;
+  const facts = reusable
+    ? { ...cachedFacts, fileId }
+    : createFileFacts(session, file, fileId, text, hash, scriptAst, templateAst, sfc);
+  if (!reusable) session.cache.set(cacheKey, facts);
   return {
     path: absolute,
     relativePath: file.displayPath,
@@ -358,7 +359,7 @@ function computeComplexity(text: string, ast: Record<string, unknown> | null) {
   return { cyclomatic, cognitive, lines: text.split(/\r?\n/).length };
 }
 
-function createTokenFacts(text: string) {
+function createTokenFacts(text: string): FileFacts["tokens"] {
   const normalizedTokens = (
     text.match(/[A-Za-z_$][\w$]*|\d+|=>|===|!==|==|!=|[{}()[\].,;:+\-*/%<>]/g) ?? []
   ).map((token) => (/^[A-Za-z_$]/.test(token) ? token : token.replace(/\d+/g, "0")));
@@ -367,5 +368,5 @@ function createTokenFacts(text: string) {
   for (let index = 0; index + window <= normalizedTokens.length; index += 10) {
     hashes.push(sha256(normalizedTokens.slice(index, index + window).join(" ")).slice(0, 16));
   }
-  return { hashes, normalizedTokens };
+  return { hashes };
 }

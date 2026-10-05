@@ -9,7 +9,13 @@ import {
   runHealthPhase,
   runManifestRules,
 } from "./internal/rule-execution.js";
-import { cleanCache, createScanSession, markSession, runPhase } from "./internal/scan-session.js";
+import {
+  cleanCache,
+  createScanSession,
+  markSession,
+  persistScanCache,
+  runPhase,
+} from "./internal/scan-session.js";
 import {
   applyPolicyFilters,
   applyRequestedFixes,
@@ -64,6 +70,7 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
   await runPhase(session, "fixPlanning", () => {
     fixes = applyRequestedFixes(session);
   });
+  await runPhase(session, "cache", () => persistScanCache(session));
 
   const started = performance.now();
   const result = createResult(
