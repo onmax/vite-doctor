@@ -117,6 +117,94 @@ useSelect()
     );
   });
 
+  test.each(["import './initialize'", "import { initialize } from './initialize'"])(
+    "ignores a barrel with extra runtime initialization: %s",
+    async (extra) => {
+      const result = await run({
+        ...utils,
+        "src/utils/index.ts": `${extra}\n${utils["src/utils/index.ts"]}`,
+        "src/utils/initialize.ts": "export const initialize = console.log('initialize')",
+        "src/main.ts": "import { formatDate } from './utils'\nconsole.log(formatDate)",
+      });
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
+
+  test("does not trace through initialization in a nested re-export module", async () => {
+    const result = await run({
+      ...utils,
+      "src/utils/date.ts": "import './initialize'\nexport { formatDate } from './format'",
+      "src/utils/format.ts": utils["src/utils/date.ts"],
+      "src/utils/initialize.ts": "console.log('initialize')",
+      "src/main.ts": "import { formatDate } from './utils'\nconsole.log(formatDate)",
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("allows type imports and re-exported default bindings", async () => {
+    const result = await run({
+      ...utils,
+      "src/utils/index.ts": `import type { DateOptions } from './date'
+import { type DateOptions as Options } from './date'
+import { formatDate } from './date'
+export default formatDate
+export * from './currency'
+export * from './charts'`,
+      "src/main.ts": "import format from './utils'\nconsole.log(format)",
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.diagnostic.fix).toContain(
+      "import { formatDate as format } from './utils/date'",
+    );
+  });
+
+  test.each(["./utils?custom", "./utils/index.js?custom", "./utils#custom"])(
+    "ignores module-ID postfixes: %s",
+    async (specifier) => {
+      const result = await run({
+        ...utils,
+        "src/main.ts": `import { formatDate } from '${specifier}'\nconsole.log(formatDate)`,
+      });
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
+
+  test.each(["./src/components/*/index.ts", "./dist/components/*/index.js"])(
+    "ignores workspace package entries exposed by %s",
+    async (target) => {
+      const result = await run({
+        "packages/ui/package.json": JSON.stringify({
+          name: "@acme/ui",
+          exports: { "./components/*": { import: target } },
+        }),
+        "packages/ui/src/components/utils/index.ts": utils["src/utils/index.ts"],
+        "packages/ui/src/components/utils/date.ts": utils["src/utils/date.ts"],
+        "packages/ui/src/components/utils/currency.ts": utils["src/utils/currency.ts"],
+        "packages/ui/src/components/utils/charts.ts": utils["src/utils/charts.ts"],
+        "src/main.ts":
+          "import { formatDate } from '../packages/ui/src/components/utils'\nconsole.log(formatDate)",
+      });
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
+
+  test.each([
+    ["./components/*", "./dist/*/*.js", 0],
+    ["./components/*", "./dist/*/different/*.js", 1],
+    ["./components/utils", "./dist/*/*.js", 1],
+  ])("matches repeated export target stars consistently: %s -> %s", async (key, target, count) => {
+    const result = await run({
+      "packages/ui/package.json": JSON.stringify({ exports: { [key]: target } }),
+      "packages/ui/src/utils/utils.ts": utils["src/utils/index.ts"],
+      "packages/ui/src/utils/date.ts": utils["src/utils/date.ts"],
+      "packages/ui/src/utils/currency.ts": utils["src/utils/currency.ts"],
+      "packages/ui/src/utils/charts.ts": utils["src/utils/charts.ts"],
+      "src/main.ts":
+        "import { formatDate } from '../packages/ui/src/utils/utils'\nconsole.log(formatDate)",
+    });
+    expect(result.diagnostics).toHaveLength(count);
+  });
+
   test("ignores barrels below the re-export threshold", async () => {
     const result = await run({
       "src/utils/index.ts": "export * from './date'\nexport * from './currency'",

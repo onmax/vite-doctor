@@ -21,6 +21,7 @@ type Binding =
   | { kind: "unknown" };
 
 interface ModuleInfo {
+  reexportOnly: boolean;
   exports: Map<string, Binding>;
   stars: Array<string | null>;
   barrelModules: Set<string> | null;
@@ -121,6 +122,7 @@ function analyzeModule(ctx: RuleContext, file: string): ModuleInfo | null {
   const stars: Array<string | null> = [];
   const imported = new Map<string, { from: string | null; name: string; type: boolean }>();
   const reexported = new Set<string>();
+  const reexportedBindings = new Set<string>();
   let reexportOnly = !isGenerated(relative(ctx.project.root, file), text);
   const target = (source: AnyNode) =>
     typeof source?.value === "string" ? resolveSpecifier(ctx, file, source.value) : null;
@@ -134,6 +136,7 @@ function analyzeModule(ctx: RuleContext, file: string): ModuleInfo | null {
     switch (statement.type) {
       case "ImportDeclaration": {
         const from = target(statement.source);
+        if (statement.importKind !== "type" && !statement.specifiers?.length) reexportOnly = false;
         for (const item of statement.specifiers ?? []) {
           const name =
             item.type === "ImportDefaultSpecifier"
@@ -182,6 +185,7 @@ function analyzeModule(ctx: RuleContext, file: string): ModuleInfo | null {
           }
           const binding = imported.get(local);
           if (binding) {
+            if (!type && !binding.type) reexportedBindings.add(local);
             exports.set(exported, reexport(binding.from, binding.name, type || binding.type));
           } else {
             exports.set(exported, { kind: "local", type });
@@ -195,8 +199,10 @@ function analyzeModule(ctx: RuleContext, file: string): ModuleInfo | null {
           statement.declaration?.type === "Identifier"
             ? imported.get(statement.declaration.name)
             : undefined;
-        if (binding) exports.set("default", reexport(binding.from, binding.name, binding.type));
-        else {
+        if (binding) {
+          if (!binding.type) reexportedBindings.add(statement.declaration.name);
+          exports.set("default", reexport(binding.from, binding.name, binding.type));
+        } else {
           exports.set("default", { kind: "local", type: false });
           reexportOnly = false;
         }
@@ -212,7 +218,12 @@ function analyzeModule(ctx: RuleContext, file: string): ModuleInfo | null {
     }
   }
 
+  for (const [name, binding] of imported) {
+    if (!binding.type && !reexportedBindings.has(name)) reexportOnly = false;
+  }
+
   return {
+    reexportOnly,
     exports,
     stars,
     barrelModules: reexportOnly && reexported.size >= MIN_BARREL_MODULES ? reexported : null,
@@ -234,7 +245,7 @@ function traceExport(
     return extname(file) === ".vue" && name === "default" ? { file, name, type: false } : null;
   const binding = info.exports.get(name);
   if (binding?.kind === "local") return { file, name, type: binding.type };
-  if (binding?.kind === "unknown") return null;
+  if (!info.reexportOnly || binding?.kind === "unknown") return null;
   if (binding?.kind === "reexport") {
     if (binding.name === "*") return { file: binding.from, name: "*", type: binding.type };
     const origin = traceExport(ctx, binding.from, binding.name, depth + 1, seen);
@@ -298,7 +309,8 @@ function directSpecifier(
 }
 
 function resolveSpecifier(ctx: RuleContext, from: string, specifier: string): string | null {
-  const clean = specifier.split("?")[0]!;
+  if (/[?#]/.test(specifier)) return null;
+  const clean = specifier;
   const bases = /^\.\.?(?:\/|$)/.test(clean)
     ? [resolve(dirname(from), clean)]
     : aliasBases(ctx, clean);
@@ -379,8 +391,10 @@ function isPackageEntry(ctx: RuleContext, file: string): boolean {
       } catch {
         return false;
       }
-      return packageEntryTargets(manifest).some((target) =>
-        entrySourceCandidates(dir, target).includes(file),
+      return packageEntryTargets(manifest).some(({ target, pattern }) =>
+        entrySourceCandidates(dir, target).some((candidate) =>
+          matchesEntry(candidate, file, pattern),
+        ),
       );
     }
     if (dir === root) break;
@@ -389,17 +403,29 @@ function isPackageEntry(ctx: RuleContext, file: string): boolean {
   return false;
 }
 
-function packageEntryTargets(manifest: Record<string, unknown>): string[] {
-  const targets: string[] = [];
-  const collect = (value: unknown) => {
-    if (typeof value === "string") targets.push(value);
-    else if (Array.isArray(value)) value.forEach(collect);
-    else if (value && typeof value === "object") Object.values(value).forEach(collect);
+function packageEntryTargets(
+  manifest: Record<string, unknown>,
+): Array<{ target: string; pattern: boolean }> {
+  const targets: Array<{ target: string; pattern: boolean }> = [];
+  const collect = (value: unknown, pattern = false) => {
+    if (typeof value === "string") targets.push({ target: value, pattern });
+    else if (Array.isArray(value)) value.forEach((item) => collect(item, pattern));
+    else if (value && typeof value === "object") {
+      for (const [key, target] of Object.entries(value))
+        collect(target, key.startsWith(".") ? key.split("*").length === 2 : pattern);
+    }
   };
   collect(manifest.exports);
   collect(manifest.main);
   collect(manifest.module);
   return targets;
+}
+
+function matchesEntry(candidate: string, file: string, pattern: boolean): boolean {
+  if (!pattern || !candidate.includes("*")) return candidate === file;
+  const parts = candidate.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const expression = parts.shift()! + "(?<subpath>.+)" + parts.join("\\k<subpath>");
+  return new RegExp(`^${expression}$`).test(file);
 }
 
 function entrySourceCandidates(dir: string, target: string): string[] {
