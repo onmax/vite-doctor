@@ -154,7 +154,14 @@ export function createEslintVueRule(options: {
                   ecmaVersion: "latest",
                   sourceType: "module",
                   parserOptions: {
-                    parser: tsParserRuntime,
+                    // Bridged Rules read <script> only; TypeScript for every template expression was most of their cost.
+                    parser: {
+                      js: tsParserRuntime,
+                      jsx: tsParserRuntime,
+                      ts: tsParserRuntime,
+                      tsx: tsParserRuntime,
+                      "<template>": "espree",
+                    },
                     ecmaVersion: "latest",
                     sourceType: "module",
                   },
