@@ -15,7 +15,7 @@
     "url": "git+https://github.com/onmax/vite-doctor.git"
   },
   "bin": {
-    "nuxt-doctor": "./dist/cli.mjs",
+    "nuxt-doctor": "./dist/nuxt-cli.mjs",
     "vite-doctor": "./dist/cli.mjs"
   },
   "files": [
@@ -46,6 +46,7 @@
     "./rule-packs/vue": "./dist/rule-packs/vue/index.mjs",
     "./rule-packs/vue/rules": "./dist/rule-packs/vue/rules.mjs",
     "./rules": "./dist/rules.mjs",
+    "./testkit": "./dist/testkit.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {

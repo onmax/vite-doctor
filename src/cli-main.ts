@@ -48,7 +48,16 @@ class CliConfigError extends Error {
   }
 }
 
-export async function main(args = process.argv.slice(2), cwd = process.cwd()): Promise<number> {
+export interface CliSurfaceOptions {
+  /** Trust Doctor Extension entries registered by the host, as the Nuxt Doctor Command does. */
+  hostExtensions?: boolean;
+}
+
+export async function main(
+  args = process.argv.slice(2),
+  cwd = process.cwd(),
+  surface: CliSurfaceOptions = {},
+): Promise<number> {
   if (args.includes("--version") || args.includes("-v")) {
     process.stdout.write(`${viteDoctorVersion}\n`);
     return 0;
@@ -69,7 +78,7 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
 
   let exitCode = 0;
   const cli = cac("vite-doctor");
-  addDoctorRunCommand(cli, cwd, (code) => (exitCode = code));
+  addDoctorRunCommand(cli, cwd, surface, (code) => (exitCode = code));
   cli
     .command("migrate [path]", "Evaluate source against a future runtime graph.")
     .option("--to <target>", "Explicit target such as nuxt@5 or nitro@3.")
@@ -89,12 +98,14 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
   cli
     .command("rules", "List available Doctor rules.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
+    .option("--host-extensions", hostExtensionsHelp)
     .option("--format <format>", "Output: text, json, or agent.")
     .option("--framework <framework>", "Framework override.")
     .action(async (options) => {
       const format = await presentationFormat(options.format, metadataFormats);
       const runOptions: DoctorRunOptions = { root: cwd, format };
       applyDoctorOptions(runOptions, options);
+      applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
       runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
       process.stdout.write(createRulesReport(await viteDoctorRulePacks(runOptions), format));
@@ -102,12 +113,14 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
   cli
     .command("explain <diagnostic>", "Explain a Doctor Diagnostic Code or Rule.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
+    .option("--host-extensions", hostExtensionsHelp)
     .option("--format <format>", "Output: text, json, or agent.")
     .option("--framework <framework>", "Framework override.")
     .action(async (diagnostic: string, options) => {
       const format = await presentationFormat(options.format, metadataFormats);
       const runOptions: DoctorRunOptions = { root: cwd, format };
       applyDoctorOptions(runOptions, options);
+      applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
       runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
       const report = explainRule(await viteDoctorRulePacks(runOptions), diagnostic, format);
@@ -156,6 +169,17 @@ export async function main(args = process.argv.slice(2), cwd = process.cwd()): P
   }
 }
 
+const hostExtensionsHelp =
+  "Load Doctor Extension entries registered by host integrations, such as Nuxt modules.";
+
+function applyHostExtensions(
+  options: DoctorRunOptions,
+  surface: CliSurfaceOptions,
+  flags: Record<string, unknown>,
+): void {
+  if (surface.hostExtensions || flags.hostExtensions) options.hostExtensions = true;
+}
+
 function validateSingleValueOptions(cli: ReturnType<typeof cac>): void {
   for (const option of [...cli.globalCommand.options, ...(cli.matchedCommand?.options ?? [])]) {
     if (option.isBoolean || option.config.type) continue;
@@ -168,6 +192,7 @@ function validateSingleValueOptions(cli: ReturnType<typeof cac>): void {
 function addDoctorRunCommand(
   cli: ReturnType<typeof cac>,
   cwd: string,
+  surface: CliSurfaceOptions,
   setExitCode: (code: number) => void,
 ) {
   cli
@@ -193,6 +218,7 @@ function addDoctorRunCommand(
     .option("--update-baseline", "Write current Diagnostic fingerprints to the baseline file.")
     .option("--format <format>", "Output: text, json, sarif, or agent.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
+    .option("--host-extensions", hostExtensionsHelp)
     .action(async (path = ".", options) => {
       const format = await presentationFormat(options.format, reportFormats);
       const root = resolve(cwd, path);
@@ -203,6 +229,7 @@ function addDoctorRunCommand(
       }
       const runOptions: DoctorRunOptions = { root, format };
       applyDoctorOptions(runOptions, options);
+      applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
       const explicitConfig = stringFlag(options.config);
       const configFile = cliConfigFile(root, explicitConfig);
