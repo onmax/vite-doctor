@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve } from "pathe";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { ruleDocumentationMetadata } from "./metadata.js";
+import { ruleNavigationTitles } from "./navigation-titles.js";
 import { workspaceDiagnosticMetadata } from "../../src/core/diagnostic-metadata.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
@@ -19,6 +20,7 @@ export interface RuleExample {
 export interface RuleDocument {
   id: string;
   title: string;
+  navigationTitle: string;
   description: string;
   pack: string;
   source: string;
@@ -360,28 +362,41 @@ function collectRuleDocuments() {
     .map((file) => join(shadcnRulesDir, file));
   const codesByRuleId = readDiagnosticCodeMaps();
 
-  return withDiagnosticCodes(codesByRuleId, [
-    ...withRulePath(
-      collectRules(packageSources, "vite-doctor/package", "package"),
-      "/package/rules",
-    ),
-    ...withRulePath(collectRules(vueSources, "vite-doctor/vue", "vue"), "/vue/rules"),
-    ...withRulePath(collectRules(viteSources, "vite-doctor/vite", "vite"), "/vite/rules"),
-    ...withRulePath(
-      collectRules(typescriptSources, "vite-doctor/typescript", "typescript"),
-      "/typescript/rules",
-    ),
-    ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
-    ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
-    ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
-  ]);
+  return withNavigationTitles(
+    withDiagnosticCodes(codesByRuleId, [
+      ...withRulePath(
+        collectRules(packageSources, "vite-doctor/package", "package"),
+        "/package/rules",
+      ),
+      ...withRulePath(collectRules(vueSources, "vite-doctor/vue", "vue"), "/vue/rules"),
+      ...withRulePath(collectRules(viteSources, "vite-doctor/vite", "vite"), "/vite/rules"),
+      ...withRulePath(
+        collectRules(typescriptSources, "vite-doctor/typescript", "typescript"),
+        "/typescript/rules",
+      ),
+      ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
+      ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
+      ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
+    ]),
+  );
 }
 
 function withDiagnosticCodes(
   codesByRuleId: Map<string, string[]>,
-  rules: Array<Omit<RuleDocument, "diagnosticCodes">>,
-): RuleDocument[] {
+  rules: Array<Omit<RuleDocument, "navigationTitle" | "diagnosticCodes">>,
+): Array<Omit<RuleDocument, "navigationTitle">> {
   return rules.map((rule) => ({ ...rule, diagnosticCodes: codesByRuleId.get(rule.id) ?? [] }));
+}
+
+function withNavigationTitles(rules: Array<Omit<RuleDocument, "navigationTitle">>): RuleDocument[] {
+  return rules.map((rule) => {
+    const navigationTitle = ruleNavigationTitles[rule.id];
+    if (!navigationTitle)
+      throw new Error(
+        `Rule ${rule.id} is missing a sidebar title in docs/rules/navigation-titles.ts`,
+      );
+    return { ...rule, navigationTitle };
+  });
 }
 
 function collectRules(files: string[], defaultPack: string, framework: RuleFramework) {
@@ -458,7 +473,7 @@ function loadParser() {
 }
 
 function applyDocumentationMetadata<
-  T extends Omit<RuleDocument, "path" | "key" | "diagnosticCodes">,
+  T extends Omit<RuleDocument, "path" | "key" | "navigationTitle" | "diagnosticCodes">,
 >(rule: T): T {
   const metadata = ruleDocumentationMetadata[rule.id as keyof typeof ruleDocumentationMetadata];
   const documented = {
@@ -473,7 +488,7 @@ function applyDocumentationMetadata<
 }
 
 function assertCompleteRuleDocumentation(
-  rule: Omit<RuleDocument, "path" | "key" | "diagnosticCodes">,
+  rule: Omit<RuleDocument, "path" | "key" | "navigationTitle" | "diagnosticCodes">,
 ) {
   const missing: string[] = [];
   if (!rule.description) missing.push("description");
@@ -511,9 +526,9 @@ function ruleSourcesFromIndex(indexFile: string) {
 }
 
 function withRulePath(
-  rules: Array<Omit<RuleDocument, "path" | "key" | "diagnosticCodes">>,
+  rules: Array<Omit<RuleDocument, "path" | "key" | "navigationTitle" | "diagnosticCodes">>,
   basePath: string,
-): Array<Omit<RuleDocument, "diagnosticCodes">> {
+): Array<Omit<RuleDocument, "navigationTitle" | "diagnosticCodes">> {
   return rules.map((rule) => {
     const path = `${basePath}/${rulePath(rule)}`;
     return {
@@ -531,6 +546,8 @@ function renderRulePage(rule: RuleDocument) {
     "---",
     `title: ${yamlString(title)}`,
     `description: ${yamlString(description)}`,
+    "navigation:",
+    `  title: ${yamlString(rule.navigationTitle)}`,
     `why: ${yamlString(rule.why)}`,
     `recommendedReplacement: ${yamlString(rule.recommendedReplacement)}`,
     `ruleId: ${yamlString(rule.id)}`,

@@ -4,6 +4,7 @@ import { categoryLabel, FRAMEWORK_META, frameworkOfPack, type Framework } from "
 export type RuleNavigationEntry = {
   path: string;
   title: string;
+  navigation?: boolean | { title?: string };
   ruleId: string;
   category: string;
   framework?: Framework;
@@ -20,6 +21,8 @@ export type DiagnosticNavigationEntry = {
 export interface RulesNavigationOptions {
   activePath?: string;
   includeDiagnostics?: boolean;
+  /** Search results read without the sidebar's group context, so they keep full page titles. */
+  ruleTitles?: "navigation" | "page";
 }
 
 const frameworkNavigationOrder = [
@@ -37,6 +40,7 @@ export function createRulesNavigation(
   options: RulesNavigationOptions = {},
 ): ContentNavigationItem[] {
   const activePath = options.activePath ?? "";
+  const ruleTitles = options.ruleTitles ?? "navigation";
   const frameworkOfRule = new Map(rules.map((rule) => [rule.ruleId, ruleFramework(rule)]));
 
   return frameworkNavigationOrder.map((framework) => {
@@ -49,7 +53,11 @@ export function createRulesNavigation(
         title: categoryLabel(category),
         path: rulesPath,
         defaultOpen: isWithin(activePath, categoryPath),
-        children: items.map((rule) => ({ title: rule.title, path: rule.path })),
+        children: items.map((rule) => ({
+          title: ruleTitles === "navigation" ? ruleNavigationTitle(rule) : rule.title,
+          path: rule.path,
+          pageTitle: rule.title,
+        })),
       };
     });
     const children: ContentNavigationItem[] = [
@@ -160,6 +168,10 @@ function isWithin(routePath: string, basePath: string) {
 
 function compareRules(left: RuleNavigationEntry, right: RuleNavigationEntry) {
   return left.title.localeCompare(right.title) || left.ruleId.localeCompare(right.ruleId);
+}
+
+function ruleNavigationTitle(rule: RuleNavigationEntry) {
+  return (typeof rule.navigation === "object" && rule.navigation.title) || rule.title;
 }
 
 function ruleFramework(rule: RuleNavigationEntry): Framework {

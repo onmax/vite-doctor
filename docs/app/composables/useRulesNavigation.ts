@@ -5,6 +5,7 @@ import {
   rulesNavigationGroupKey,
   type DiagnosticNavigationEntry,
   type RuleNavigationEntry,
+  type RulesNavigationOptions,
 } from "../utils/rules-navigation.js";
 
 declare const useAsyncData: (...args: any[]) => any;
@@ -13,14 +14,16 @@ declare const queryCollection: (collection: "rules" | "diagnostics") => any;
 
 type NavigationEntries = [RuleNavigationEntry[], DiagnosticNavigationEntry[]];
 
-export function useRulesNavigation(options: { includeDiagnostics?: boolean } = {}) {
+export function useRulesNavigation(
+  options: Pick<RulesNavigationOptions, "includeDiagnostics" | "ruleTitles"> = {},
+) {
   const route = useRoute();
   const asyncData = useAsyncData(
     "rules-navigation-entries",
     (): Promise<NavigationEntries> =>
       Promise.all([
         queryCollection("rules")
-          .select("path", "title", "ruleId", "framework", "category", "pack")
+          .select("path", "title", "navigation", "ruleId", "framework", "category", "pack")
           .all(),
         queryCollection("diagnostics").select("code", "ruleId", "path", "framework").all(),
       ]),
@@ -31,6 +34,7 @@ export function useRulesNavigation(options: { includeDiagnostics?: boolean } = {
     createRulesNavigation(...entries.value, {
       activePath: activePath.value,
       includeDiagnostics: options.includeDiagnostics,
+      ruleTitles: options.ruleTitles,
     }),
   );
   const groupKey = computed(() => rulesNavigationGroupKey(activePath.value));
