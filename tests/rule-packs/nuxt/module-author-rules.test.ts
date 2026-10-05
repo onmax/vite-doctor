@@ -397,6 +397,28 @@ const path = computed(() => route.path)
   );
 });
 
+test.each(["jsx", "tsx"])(
+  "explicit-runtime-imports diagnoses and fixes Vue %s runtime scripts",
+  async (lang) => {
+    const source = `<script setup lang="${lang}">
+const render = () => <div />
+const config = useRuntimeConfig()
+</script>
+<template><p>{{ config }}</p></template>
+`;
+    const file = "src/runtime/components/Config.vue";
+    const result = await run(moduleExplicitRuntimeImports, modulePackage({ [file]: source }));
+    expect(result.diagnostics.map((item) => item.code)).toEqual(["NUXT0083"]);
+    expect(result.diagnostics[0]?.range?.start).toBe(source.indexOf("useRuntimeConfig()"));
+    const fixed = applyEdits(source, result.diagnostics);
+    expect(fixed).toBe(
+      source.replace("const render", "import { useRuntimeConfig } from '#imports'\nconst render"),
+    );
+    const rerun = await run(moduleExplicitRuntimeImports, modulePackage({ [file]: fixed }));
+    expect(rerun.diagnostics).toEqual([]);
+  },
+);
+
 test("explicit-runtime-imports accepts explicit imports and local bindings", async () => {
   const result = await run(
     moduleExplicitRuntimeImports,

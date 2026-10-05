@@ -23,10 +23,10 @@ export const moduleExplicitRuntimeImports = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
-        const source = ctx.file.sfc
-          ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text).text
-          : ctx.file.text;
-        const unbound = unboundReferences(source, ctx.file.path);
+        const script = ctx.file.sfc
+          ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
+          : { text: ctx.file.text, lang: /\.[jt]sx$/.test(ctx.file.relativePath) ? "tsx" : "ts" };
+        const unbound = unboundReferences(script.text, ctx.file.path, script.lang);
         if (!unbound) return;
         const firstCalls = new Map<string, AnyNode>();
         walkScriptLocal(node, (current) => {
@@ -76,12 +76,13 @@ function importInsertion(program: AnyNode, text: string, names: string[]): FixEd
   return { range: { start: first.start, end: first.start }, text: `${statement}\n` };
 }
 
-function unboundReferences(source: string, file: string): Set<number> | undefined {
+function unboundReferences(source: string, file: string, lang: string): Set<number> | undefined {
   try {
     const { scopeManager } = parseForESLint(source, {
       sourceType: "module",
       range: true,
-      filePath: file.endsWith(".vue") ? `${file}.ts` : file,
+      ecmaFeatures: { jsx: lang === "jsx" || lang === "tsx" },
+      filePath: file.endsWith(".vue") ? `${file}.${lang}` : file,
     });
     return new Set(
       scopeManager.globalScope?.through
