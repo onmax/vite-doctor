@@ -37,6 +37,7 @@ type NuxtDoctorEvidence = {
   importDirs?: unknown[];
   autoImportContext?: NuxtAutoImportContext;
   autoImportEntries?: unknown[];
+  scannedAutoImportEntries?: unknown[];
 };
 
 async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
@@ -54,6 +55,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
     autoImportEntries: undefined as unknown[] | undefined,
+    scannedAutoImportEntries: undefined as unknown[] | undefined,
   };
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
@@ -140,6 +142,14 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
 
   nuxt.hook?.("imports:context", (context: NuxtAutoImportContext) => {
     evidence.autoImportContext = context;
+  });
+
+  // Nuxt supplies scanner output before imports:extend callbacks add or mutate manual imports.
+  nuxt.hooks?.beforeEach(({ name, args }: { name: string; args: unknown[] }) => {
+    if (name === "imports:extend")
+      evidence.scannedAutoImportEntries = normalizeAutoImports(
+        Array.isArray(args[0]) ? args[0] : [],
+      );
   });
 
   nuxt.hook?.("imports:extend", (imports: unknown) => {
@@ -259,11 +269,11 @@ export async function writeManifest(
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
     scannedComposableFiles:
-      evidence?.autoImportEntries === undefined
+      evidence?.scannedAutoImportEntries === undefined
         ? undefined
         : [
             ...new Set(
-              normalizeAutoImports(evidence.autoImportEntries)
+              normalizeAutoImports(evidence.scannedAutoImportEntries)
                 .filter((entry) => !entry.type && composableScanRoots.has(dirname(entry.from)))
                 .map((entry) => relative(rootDir, entry.from)),
             ),
