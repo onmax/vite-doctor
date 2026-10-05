@@ -69,6 +69,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   links: "Links",
   middleware: "Middleware",
   migration: "Migration",
+  modules: "Modules",
   plugin: "Plugins",
   plugins: "Plugins",
   project: "Project",

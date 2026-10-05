@@ -246,6 +246,17 @@ export interface NuxtModuleSource {
   appDirs?: string[];
 }
 
+export interface NuxtModuleDefinition {
+  /** `package` is a publishable module package; `local` is auto-registered from an app `modules/` directory. */
+  kind: "package" | "local";
+  entry: string;
+  /** Directory that owns module definition code, or the entry itself for single-file local modules. */
+  root: string;
+  runtimeDir?: string;
+  /** The package root is also a Nuxt layer, so Nuxt transforms its files even inside node_modules. */
+  layer?: boolean;
+}
+
 export interface NuxtDoctorManifest {
   autoRegisteredLayers?: string[];
   generatedAt?: string;
@@ -308,6 +319,7 @@ export interface ProjectInfo {
   tsconfigPath?: string;
   languages?: ProjectLanguage[];
   nuxt?: NuxtProjectInfo;
+  nuxtModuleDefinitions?: NuxtModuleDefinition[];
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
   evidenceGaps?: Array<{ source: string; message: string; files: string[] }>;
