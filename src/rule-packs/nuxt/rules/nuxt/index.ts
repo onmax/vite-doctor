@@ -45,6 +45,7 @@ export { keyedComposableRegistrationRequired } from "./keyed-composable-registra
 export { preferSeoComposables } from "./prefer-seo-composables.js";
 export { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 export { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
+export { exportNameMatchesFile } from "./export-name-matches-file.js";
 
 import { noExplicitAutoImport } from "./no-explicit-auto-import.js";
 import { noConflictingUseFetchImport } from "./no-conflicting-use-fetch-import.js";
@@ -93,6 +94,7 @@ import { keyedComposableRegistrationRequired } from "./keyed-composable-registra
 import { preferSeoComposables } from "./prefer-seo-composables.js";
 import { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 import { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
+import { exportNameMatchesFile } from "./export-name-matches-file.js";
 import { defineRulePack } from "../../../../core/index.js";
 
 const rules = [
@@ -145,13 +147,15 @@ const rules = [
   preferUseHeadSafeForUntrustedValues,
 ];
 
+const strictOnlyRules = [exportNameMatchesFile];
+
 const nuxtRulePack = defineRulePack({
   name: "vite-doctor/nuxt",
   version: "0.0.0",
-  rules,
+  rules: [...rules, ...strictOnlyRules],
   presets: {
     recommended: rules.map((rule) => rule.meta.id),
-    strict: rules.map((rule) => rule.meta.id),
+    strict: [...rules, ...strictOnlyRules].map((rule) => rule.meta.id),
   },
 });
 

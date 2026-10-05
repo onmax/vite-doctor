@@ -191,6 +191,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0072", ruleId: "vueuse/prefer-usewindow-size" },
   { code: "NUXT0073", ruleId: "nuxt/config/no-ignored-compatibility-config" },
   { code: "NUXT0074", ruleId: "nuxt/review/api-authorization-coverage" },
+  { code: "NUXT0079", ruleId: "nuxt/composables/export-name-matches-file" },
+  { code: "NUXT0080", ruleId: "nuxt/composables/export-name-matches-file" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;

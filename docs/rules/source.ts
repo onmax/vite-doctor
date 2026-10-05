@@ -88,6 +88,7 @@ const require = createRequire(import.meta.url);
 let cachedRules: RuleDocument[] | null = null;
 let cachedDiagnostics: DiagnosticDocument[] | null = null;
 let parser: typeof import("oxc-parser") | null = null;
+let cachedNuxtStrictOnlyRuleIds: Set<string> | null = null;
 
 export function getRuleDocuments() {
   if (!cachedRules) cachedRules = collectRuleDocuments();
@@ -525,6 +526,74 @@ function ruleSourcesFromIndex(indexFile: string) {
   return [...sources];
 }
 
+function nuxtStrictOnlyRuleIds() {
+  cachedNuxtStrictOnlyRuleIds ??= strictOnlyRuleIdsFromIndex(
+    join(root, "src/rule-packs/nuxt/rules/nuxt/index.ts"),
+  );
+  return cachedNuxtStrictOnlyRuleIds;
+}
+
+function strictOnlyRuleIdsFromIndex(indexFile: string) {
+  const { parseSync, visitorKeys } = loadParser();
+  const parse = (file: string) =>
+    parseSync(file, readFileSync(file, "utf8"), { sourceType: "module", lang: "ts" }).program;
+  const ast = parse(indexFile);
+  const names = new Set<string>();
+  for (const statement of ast.body) {
+    if (statement.type !== "VariableDeclaration") continue;
+    for (const declarator of statement.declarations) {
+      if (declarator.id.type !== "Identifier" || declarator.id.name !== "strictOnlyRules") continue;
+      if (declarator.init?.type !== "ArrayExpression") continue;
+      for (const element of declarator.init.elements)
+        if (element?.type === "Identifier") names.add(element.name);
+    }
+  }
+
+  const ids = new Set<string>();
+  for (const statement of ast.body) {
+    if (statement.type !== "ImportDeclaration" || !statement.source.value.startsWith("./"))
+      continue;
+    const imported = new Set(
+      statement.specifiers
+        .filter((specifier) => names.has(specifier.local.name))
+        .map((specifier) =>
+          specifier.type === "ImportSpecifier" && specifier.imported.type === "Identifier"
+            ? specifier.imported.name
+            : specifier.local.name,
+        ),
+    );
+    if (!imported.size) continue;
+    const ruleAst = parse(join(dirname(indexFile), `${statement.source.value.slice(0, -3)}.ts`));
+    const constants = ruleAst.body.filter(isStringConstantDeclaration);
+    for (const ruleStatement of ruleAst.body) {
+      const declaration =
+        ruleStatement.type === "ExportNamedDeclaration" ? ruleStatement.declaration : ruleStatement;
+      if (declaration?.type !== "VariableDeclaration") continue;
+      const declares = declaration.declarations.some(
+        (declarator) => declarator.id.type === "Identifier" && imported.has(declarator.id.name),
+      );
+      if (!declares) continue;
+      for (const { id } of findMetaObjects(
+        { ...ruleAst, body: [...constants, ruleStatement] },
+        visitorKeys,
+      ))
+        ids.add(id);
+    }
+  }
+  return ids;
+}
+
+function isStringConstantDeclaration(statement: any) {
+  return (
+    statement.type === "VariableDeclaration" &&
+    statement.kind === "const" &&
+    statement.declarations.every(
+      (declarator: any) =>
+        declarator.init?.type === "Literal" && typeof declarator.init.value === "string",
+    )
+  );
+}
+
 function withRulePath(
   rules: Array<Omit<RuleDocument, "path" | "key" | "navigationTitle" | "diagnosticCodes">>,
   basePath: string,
@@ -912,6 +981,8 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "shadcn")
     return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
+  if (rule.framework === "nuxt" && nuxtStrictOnlyRuleIds().has(rule.id))
+    return `pnpm nuxt doctor --extends auto,nuxt/strict --rules ${rule.id}`;
   if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
   if (rule.framework === "typescript") return `pnpm vite-doctor . --rules ${rule.id}`;
   return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;
