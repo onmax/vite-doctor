@@ -1,5 +1,4 @@
 import { closeSync, openSync, readSync, statSync } from "node:fs";
-import { glob } from "node:fs/promises";
 import { matchesGlob } from "node:path";
 import { relative, resolve } from "pathe";
 import type { DoctorConfig } from "../config.js";
@@ -12,6 +11,7 @@ import {
   type GitChangeInventory,
   type UnavailableGitChangeInventory,
 } from "./git-change-ranges.js";
+import { ProjectFileWalk, selectProjectFiles, takeProjectFileWalk } from "./project-files.js";
 
 const DEFAULT_INCLUDE = [
   "**/*.{vue,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
@@ -107,29 +107,23 @@ async function selectAllFiles(
   const files = new Map<string, ScanFileEntry>();
   const exclude = [...DEFAULT_EXCLUDE, ...(config.exclude ?? [])];
   const include = config.include ?? defaultIncludeForProject(project);
-  for (const pattern of include) {
-    for await (const entry of glob(pattern, { cwd: root, exclude })) {
-      if (typeof entry !== "string") continue;
-      const absolute = resolve(root, entry);
-      if (isScannableFile(absolute)) files.set(absolute, createAppFileEntry(root, entry));
-    }
+  const walk = takeProjectFileWalk(project, root) ?? new ProjectFileWalk(root);
+  for (const file of await selectProjectFiles(walk, include, exclude)) {
+    if (isAuthoredSource(file)) files.set(file, createAppFileEntry(root, file));
   }
 
   for (const source of project.nuxt?.moduleSources ?? []) {
     const include = source.include?.length ? source.include : DEFAULT_INCLUDE;
     const moduleExclude = [...DEFAULT_EXCLUDE, ...(source.exclude ?? [])];
-    for (const pattern of include) {
-      for await (const entry of glob(pattern, { cwd: source.root, exclude: moduleExclude })) {
-        if (typeof entry !== "string") continue;
-        const absolute = resolve(source.root, entry);
-        if (!isScannableFile(absolute)) continue;
-        files.set(absolute, {
-          path: absolute,
-          displayPath: `${source.module}:${relative(source.root, absolute)}`,
-          sourceKind: "module",
-          moduleName: source.module,
-        });
-      }
+    const moduleWalk = new ProjectFileWalk(source.root);
+    for (const file of await selectProjectFiles(moduleWalk, include, moduleExclude)) {
+      if (!isAuthoredSource(file)) continue;
+      files.set(file, {
+        path: file,
+        displayPath: `${source.module}:${relative(source.root, file)}`,
+        sourceKind: "module",
+        moduleName: source.module,
+      });
     }
   }
 
@@ -163,11 +157,19 @@ function selectChangedFiles(
 }
 
 function isScannableFile(file: string): boolean {
-  return Boolean(statSync(file, { throwIfNoEntry: false })?.isFile()) && !hasGeneratedHeader(file);
+  return Boolean(statSync(file, { throwIfNoEntry: false })?.isFile()) && isAuthoredSource(file);
 }
 
-function hasGeneratedHeader(file: string): boolean {
-  const descriptor = openSync(file, "r");
+// The project walk can run well before this read, so a file deleted in between is skipped like
+// any other missing file instead of failing the Doctor Run.
+function isAuthoredSource(file: string): boolean {
+  let descriptor: number;
+  try {
+    descriptor = openSync(file, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
   try {
     const buffer = Buffer.alloc(GENERATED_HEADER_BYTES);
     const bytesRead = readSync(descriptor, buffer, 0, buffer.length, 0);
@@ -179,11 +181,11 @@ function hasGeneratedHeader(file: string): boolean {
       const comment = header.match(
         /^(?:\/\/[^\r\n]*|\/\*[\s\S]*?(?:\*\/|$)|<!--[\s\S]*?(?:-->|$))/,
       )?.[0];
-      if (!comment) return false;
-      if (GENERATED_HEADER_PATTERN.test(comment)) return true;
+      if (!comment) return true;
+      if (GENERATED_HEADER_PATTERN.test(comment)) return false;
       header = header.slice(comment.length).trimStart();
     }
-    return false;
+    return true;
   } finally {
     closeSync(descriptor);
   }

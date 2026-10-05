@@ -63,18 +63,28 @@ export function resolveRuntimeGraph(root: string, framework: DoctorFramework): R
   return { packages, edges };
 }
 
+/** nuxt.config sources keyed by layer root, scoped to one Doctor Run. */
+export type NuxtConfigCache = Map<string, NuxtConfigSource | null>;
+
+interface NuxtConfigSource {
+  file: string;
+  text: string;
+}
+
 export function resolveNuxtCompatibility(
   root: string,
   graph: RuntimeGraph,
   manifest: NuxtDoctorManifest | null,
+  configs: NuxtConfigCache = new Map(),
+  manifestCurrent?: boolean,
 ): NuxtCompatibilityInfo | undefined {
   if (!graph.packages.nuxt) return undefined;
-  const config = readNuxtConfig(root);
+  const config = readNuxtConfig(root, configs);
   const manifestGeneratedAt = manifest?.generatedAt ? Date.parse(manifest.generatedAt) : Number.NaN;
   if (
     Number.isFinite(manifestGeneratedAt) &&
     isSupportedNuxtCompatibility(manifest?.compatibilityVersion) &&
-    isNuxtManifestCurrent(root, manifest)
+    (manifestCurrent ?? isNuxtManifestCurrent(root, manifest, configs))
   ) {
     return {
       state: "resolved",
@@ -146,7 +156,11 @@ export function nuxtServerInventory(directory: string): string[] {
     .sort();
 }
 
-export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest | null) {
+export function isNuxtManifestCurrent(
+  root: string,
+  manifest: NuxtDoctorManifest | null,
+  configs: NuxtConfigCache = new Map(),
+) {
   if (!manifest?.generatedAt || !Number.isFinite(Date.parse(manifest.generatedAt))) return false;
   const recordedLayers =
     manifest.autoRegisteredLayers ??
@@ -204,7 +218,7 @@ export function isNuxtManifestCurrent(root: string, manifest: NuxtDoctorManifest
     [...serverDirectories].some((directory) => !directoriesUnchanged(directory))
   )
     return false;
-  return isNuxtConfigurationCurrent(root, manifest);
+  return isNuxtConfigurationCurrent(root, manifest, configs);
 }
 
 export function isNuxtManifestConfigurationCurrent(root: string, manifestPath?: string): boolean {
@@ -220,20 +234,24 @@ export function isNuxtManifestConfigurationCurrent(root: string, manifestPath?: 
         .sort();
     return (
       JSON.stringify(layers) === JSON.stringify(autoRegisteredNuxtLayers(root)) &&
-      isNuxtConfigurationCurrent(root, manifest)
+      isNuxtConfigurationCurrent(root, manifest, new Map())
     );
   } catch {
     return false;
   }
 }
 
-function isNuxtConfigurationCurrent(root: string, manifest: NuxtDoctorManifest): boolean {
-  const configs = [
+function isNuxtConfigurationCurrent(
+  root: string,
+  manifest: NuxtDoctorManifest,
+  configs: NuxtConfigCache,
+): boolean {
+  const entries = [
     { root, nuxtConfigMtimeMs: manifest.nuxtConfigMtimeMs },
     ...(manifest.layers ?? []),
   ];
-  return configs.every((entry) => {
-    const config = readNuxtConfig(resolve(root, entry.root));
+  return entries.every((entry) => {
+    const config = readNuxtConfig(resolve(root, entry.root), configs);
     const modifiedAt = config ? configModifiedTime(config.file) : undefined;
     if (entry.nuxtConfigMtimeMs === null) return !config;
     if (Number.isFinite(entry.nuxtConfigMtimeMs)) return entry.nuxtConfigMtimeMs === modifiedAt;
@@ -444,7 +462,17 @@ function targetOwner(runtime: RuntimePackageName): RuntimePackageInstance["owner
   return "project";
 }
 
-function readNuxtConfig(root: string): { file: string; text: string } | null {
+function readNuxtConfig(root: string, configs: NuxtConfigCache): NuxtConfigSource | null {
+  const key = resolve(root);
+  let config = configs.get(key);
+  if (config === undefined) {
+    config = findNuxtConfig(root);
+    configs.set(key, config);
+  }
+  return config;
+}
+
+function findNuxtConfig(root: string): NuxtConfigSource | null {
   for (const extension of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
     const file = join(root, `nuxt.config.${extension}`);
     if (!existsSync(file)) continue;

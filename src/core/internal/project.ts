@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { glob } from "node:fs/promises";
-import { join, resolve } from "pathe";
+import { join, relative, resolve } from "pathe";
 import type {
   AutoImportEntry,
   DoctorFramework,
@@ -11,11 +11,13 @@ import type {
 } from "../primitives.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
+import { ProjectFileWalk, rememberProjectFileWalk, type ProjectEntry } from "./project-files.js";
 import {
   applyRuntimeTarget,
   isNuxtManifestCurrent,
   resolveNuxtCompatibility,
   resolveRuntimeGraph,
+  type NuxtConfigCache,
 } from "./runtime-graph.js";
 
 export async function detectProject(
@@ -55,16 +57,22 @@ export async function detectProject(
   const ssr = framework === "nuxt" || framework === "nitro" || hasVueSsrEvidence(packageJson, deps);
   const isMonorepo =
     existsSync(join(root, "pnpm-workspace.yaml")) || existsSync(join(root, "turbo.json"));
-  const nuxt =
-    framework === "nuxt" ? await detectNuxt(root, nuxtVersion ?? ">=4", deps) : undefined;
+  const nuxtFacts = framework === "nuxt" ? readNuxtRunFacts(root) : undefined;
+  const nuxt = nuxtFacts
+    ? await detectNuxt(root, nuxtVersion ?? ">=4", deps, nuxtFacts)
+    : undefined;
   const detectedGraph = resolveRuntimeGraph(root, framework);
-  const manifest =
-    framework === "nuxt"
-      ? readJson<NuxtDoctorManifest>(join(root, ".nuxt/doctor.manifest.json"))
-      : null;
   const targeted = applyRuntimeTarget(
     detectedGraph,
-    framework === "nuxt" ? resolveNuxtCompatibility(root, detectedGraph, manifest) : undefined,
+    nuxtFacts
+      ? resolveNuxtCompatibility(
+          root,
+          detectedGraph,
+          nuxtFacts.manifest,
+          nuxtFacts.configs,
+          nuxtFacts.manifestCurrent,
+        )
+      : undefined,
     runtimeTarget,
   );
   const resolvedNuxtVersion = targeted.graph.packages.nuxt?.version;
@@ -72,7 +80,8 @@ export async function detectProject(
   const tsconfigPath = existsSync(join(root, "tsconfig.json"))
     ? join(root, "tsconfig.json")
     : undefined;
-  return {
+  const walk = new ProjectFileWalk(root);
+  const project: ProjectInfo = {
     root: resolve(root),
     framework,
     ssr,
@@ -83,45 +92,54 @@ export async function detectProject(
     isMonorepo,
     packageName: packageJson?.name,
     tsconfigPath,
-    languages: await detectProjectLanguages(root, Boolean(tsconfigPath)),
+    languages: await detectProjectLanguages(walk, Boolean(tsconfigPath)),
     nuxt,
     runtimeGraph: targeted.graph,
     nuxtCompatibility: targeted.compatibility,
     inventory: { packages: deps },
   };
+  rememberProjectFileWalk(project, walk);
+  return project;
 }
 
+const LANGUAGE_SOURCE = /\.(?:vue|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+
+// Matches `fs.glob("**/*.{vue,ts,...}")` with node_modules, dist, coverage, generated, and dot
+// directories excluded, which is exactly what the shared walk skips.
 async function detectProjectLanguages(
-  root: string,
+  walk: ProjectFileWalk,
   hasTsconfig: boolean,
 ): Promise<ProjectLanguage[]> {
   let hasTypeScript = hasTsconfig;
   let hasJavaScript = false;
-  for await (const entry of glob("**/*.{vue,ts,tsx,mts,cts,js,jsx,mjs,cjs}", {
-    cwd: root,
-    exclude: [
-      "**/node_modules/**",
-      "**/dist/**",
-      "**/.nuxt/**",
-      "**/.next/**",
-      "**/.output/**",
-      "**/coverage/**",
-      "**/generated/**",
-    ],
-  })) {
-    if (typeof entry !== "string") continue;
-    if (/\.(?:ts|tsx|mts|cts)$/.test(entry)) hasTypeScript = true;
-    if (/\.(?:js|jsx|mjs|cjs)$/.test(entry)) hasJavaScript = true;
-    if (entry.endsWith(".vue")) {
-      const languages = await detectVueScriptLanguages(root, entry);
-      hasTypeScript ||= languages.includes("typescript");
-      hasJavaScript ||= languages.includes("javascript");
+  for (const entry of walk.entries()) {
+    for (const path of languageSources(walk, entry)) {
+      if (/\.(?:ts|tsx|mts|cts)$/.test(path)) hasTypeScript = true;
+      if (/\.(?:js|jsx|mjs|cjs)$/.test(path)) hasJavaScript = true;
+      if (path.endsWith(".vue")) {
+        const languages = await detectVueScriptLanguages(walk.root, path);
+        hasTypeScript ||= languages.includes("typescript");
+        hasJavaScript ||= languages.includes("javascript");
+      }
     }
     if (hasTypeScript && hasJavaScript) break;
   }
   return [
     ...(hasTypeScript ? (["typescript"] as const) : []),
     ...(hasJavaScript ? (["javascript"] as const) : []),
+  ];
+}
+
+// `fs.glob` steps one level into a symlinked directory whose name matches the last segment.
+function languageSources(walk: ProjectFileWalk, entry: ProjectEntry): string[] {
+  if (!LANGUAGE_SOURCE.test(entry.name)) return [];
+  if (entry.kind !== "symlinked-directory") return [entry.path];
+  return [
+    entry.path,
+    ...walk
+      .children(entry.path)
+      .filter((name) => LANGUAGE_SOURCE.test(name))
+      .map((name) => `${entry.path}/${name}`),
   ];
 }
 
@@ -271,31 +289,34 @@ function hasVueSsrEvidence(
   );
 }
 
+interface NuxtRunFacts {
+  manifest: NuxtDoctorManifest | null;
+  manifestPath?: string;
+  manifestCurrent: boolean;
+  configs: NuxtConfigCache;
+}
+
+// Created per Doctor Run, so the manifest freshness check (a recursive server directory scan) and
+// nuxt.config reads run once without outliving the run.
+function readNuxtRunFacts(root: string): NuxtRunFacts {
+  const manifestPath = join(root, ".nuxt/doctor.manifest.json");
+  const manifest = readJson<NuxtDoctorManifest>(manifestPath);
+  const configs: NuxtConfigCache = new Map();
+  return {
+    manifest,
+    manifestPath: manifest || existsSync(manifestPath) ? manifestPath : undefined,
+    manifestCurrent: isNuxtManifestCurrent(root, manifest, configs),
+    configs,
+  };
+}
+
 async function detectNuxt(
   root: string,
   version: string,
   deps: Record<string, string | undefined>,
+  { manifest, manifestPath, manifestCurrent }: NuxtRunFacts,
 ): Promise<NuxtProjectInfo> {
-  const manifestPath = join(root, ".nuxt/doctor.manifest.json");
-  if (existsSync(manifestPath)) {
-    return normalizeNuxtProject(
-      root,
-      version,
-      deps,
-      readJson<NuxtDoctorManifest>(manifestPath),
-      manifestPath,
-    );
-  }
-  return normalizeNuxtProject(root, version, deps, null);
-}
-
-async function normalizeNuxtProject(
-  root: string,
-  version: string,
-  deps: Record<string, string | undefined>,
-  manifest: NuxtDoctorManifest | null,
-  manifestPath?: string,
-): Promise<NuxtProjectInfo> {
+  const config = readNuxtConfigText(root);
   const autoImportEntries = (manifest?.autoImports ?? coreAutoImports()) as AutoImportEntry[];
   return {
     version: cleanVersion(manifest?.nuxtVersion ?? version),
@@ -304,8 +325,7 @@ async function normalizeNuxtProject(
       ? manifest.layers.map((layer) => resolve(root, layer.root)).sort()
       : await detectNuxtAppRoots(root),
     autoImportEnabled: manifest ? manifest.autoImportEnabled === true : true,
-    autoImportsAuthoritative:
-      manifest?.autoImportEnabled !== undefined && isNuxtManifestCurrent(root, manifest),
+    autoImportsAuthoritative: manifest?.autoImportEnabled !== undefined && manifestCurrent,
     autoImports: new Map(autoImportEntries.map((entry) => [entry.as ?? entry.name, entry])),
     autoImportEntries,
     components: new Map(
@@ -313,14 +333,20 @@ async function normalizeNuxtProject(
     ),
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
-    routeRules: manifest?.routeRules ?? readRouteRules(root),
+    routeRules: manifest?.routeRules ?? readRouteRules(config.primary),
     runtimeConfig: manifest?.runtimeConfig,
     serverDirs: await serverDirs(root),
     doctorConfig: manifest?.doctorConfig,
     manifestPath,
-    modules: mergeDetectedModules(manifest?.modules ?? [], deps, root),
+    modules: mergeDetectedModules(manifest?.modules ?? [], deps, config.anyFormat),
     moduleSources: normalizeNuxtModuleSources(manifest?.moduleSources ?? []),
-    manifest: createNuxtProjectInventory(root, manifest, manifestPath, readNuxtImportsDirs(root)),
+    manifest: createNuxtProjectInventory(
+      root,
+      manifest,
+      manifestPath,
+      readNuxtImportsDirs(config.primary),
+      manifestCurrent,
+    ),
   };
 }
 
@@ -342,51 +368,59 @@ function readJson<T>(file: string): T | null {
   }
 }
 
-function readRouteRules(root: string): Record<string, unknown> {
-  const config =
+function readNuxtConfigText(root: string): { primary: string | null; anyFormat: string | null } {
+  const primary =
     readFileSyncIfExists(join(root, "nuxt.config.ts")) ??
     readFileSyncIfExists(join(root, "nuxt.config.js"));
+  return {
+    primary,
+    anyFormat:
+      primary ??
+      readFileSyncIfExists(join(root, "nuxt.config.mjs")) ??
+      readFileSyncIfExists(join(root, "nuxt.config.mts")),
+  };
+}
+
+function readRouteRules(config: string | null): Record<string, unknown> {
   if (!config?.includes("routeRules")) return {};
   return { __staticDetection: true };
 }
 
-function readNuxtImportsDirs(root: string): string[] {
-  const config =
-    readFileSyncIfExists(join(root, "nuxt.config.ts")) ??
-    readFileSyncIfExists(join(root, "nuxt.config.js"));
+function readNuxtImportsDirs(config: string | null): string[] {
   const importsBlock = config?.match(/\bimports\s*:\s*\{[\s\S]*?\n\s*\}/)?.[0];
   const dirsBlock = importsBlock?.match(/\bdirs\s*:\s*\[([\s\S]*?)\]/)?.[1];
   if (!dirsBlock) return [];
   return [...dirsBlock.matchAll(/["'`]([^"'`]+)["'`]/g)].map((match) => match[1]!).filter(Boolean);
 }
 
-async function serverDirs(root: string) {
-  return {
-    api: await globFiles(root, [
-      "server/api/**/*.{ts,js,mjs,mts,cts,cjs}",
-      "app/server/api/**/*.{ts,js,mjs,mts,cts,cjs}",
-    ]),
-    routes: await globFiles(root, [
-      "server/routes/**/*.{ts,js,mjs,mts,cts,cjs}",
-      "app/server/routes/**/*.{ts,js,mjs,mts,cts,cjs}",
-    ]),
-    middleware: await globFiles(root, [
-      "server/middleware/**/*.{ts,js,mjs,mts,cts,cjs}",
-      "app/server/middleware/**/*.{ts,js,mjs,mts,cts,cjs}",
-    ]),
-    plugins: await globFiles(root, [
-      "server/plugins/**/*.{ts,js,mjs,mts,cts,cjs}",
-      "app/server/plugins/**/*.{ts,js,mjs,mts,cts,cjs}",
-    ]),
+const SERVER_DIRECTORIES = ["api", "routes", "middleware", "plugins"] as const;
+
+async function serverDirs(root: string): Promise<NuxtProjectInfo["serverDirs"]> {
+  const directories: NuxtProjectInfo["serverDirs"] = {
+    api: [],
+    routes: [],
+    middleware: [],
+    plugins: [],
   };
+  const files = await globFiles(
+    root,
+    SERVER_DIRECTORIES.flatMap((directory) => [
+      `server/${directory}/**/*.{ts,js,mjs,mts,cts,cjs}`,
+      `app/server/${directory}/**/*.{ts,js,mjs,mts,cts,cjs}`,
+    ]),
+  );
+  for (const file of files) {
+    const path = relative(root, file).replace(/^app\//, "");
+    const directory = SERVER_DIRECTORIES.find((name) => path.startsWith(`server/${name}/`));
+    if (directory) directories[directory].push(file);
+  }
+  return directories;
 }
 
 async function globFiles(root: string, patterns: string[]): Promise<string[]> {
   const files = new Set<string>();
-  for (const pattern of patterns) {
-    for await (const entry of glob(pattern, { cwd: root })) {
-      if (typeof entry === "string") files.add(resolve(root, entry));
-    }
+  for await (const entry of glob(patterns, { cwd: root })) {
+    if (typeof entry === "string") files.add(resolve(root, entry));
   }
   return [...files].sort();
 }
@@ -421,7 +455,7 @@ function cleanVersion(version: string): string {
 function mergeDetectedModules(
   modules: Array<{ name: string; version?: string; doctorPlugin?: string }>,
   deps: Record<string, string | undefined>,
-  root: string,
+  config: string | null,
 ) {
   const detected = new Map(modules.map((module) => [module.name, module]));
   for (const [name, version] of Object.entries(deps)) {
@@ -438,15 +472,10 @@ function mergeDetectedModules(
       detected.set(name, detected.get(name) ?? { name, version: cleanVersion(version) });
     }
   }
-  if (extendsDocus(root)) detected.set("docus", detected.get("docus") ?? { name: "docus" });
+  if (extendsDocus(config)) detected.set("docus", detected.get("docus") ?? { name: "docus" });
   return [...detected.values()];
 }
 
-function extendsDocus(root: string): boolean {
-  const config =
-    readFileSyncIfExists(join(root, "nuxt.config.ts")) ??
-    readFileSyncIfExists(join(root, "nuxt.config.js")) ??
-    readFileSyncIfExists(join(root, "nuxt.config.mjs")) ??
-    readFileSyncIfExists(join(root, "nuxt.config.mts"));
+function extendsDocus(config: string | null): boolean {
   return Boolean(config && /extends\s*:\s*(?:\[[^\]]*["']docus["']|["']docus["'])/.test(config));
 }
