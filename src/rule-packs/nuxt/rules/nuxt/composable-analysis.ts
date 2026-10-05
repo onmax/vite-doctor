@@ -215,58 +215,124 @@ export function importSources(program: AnyNode): Map<string, string> {
  * Returns the API that binds the function to component setup, considering only calls in
  * the function's own body; nested callbacks run later and are not part of the contract.
  */
-export function setupContextSignal(fn: AnyNode, imports: Map<string, string>): string | null {
-  const calls: string[] = [];
-  const tests: AnyNode[] = [];
-  const guardBindings = new Set<string>();
-  const memberObjects: AnyNode[] = [];
+export function setupContextSignal(
+  fn: AnyNode,
+  imports: Map<string, string>,
+  program: AnyNode,
+): string | null {
+  const lexical = lexicalBindings(program);
+  const frameworkCall = (call: AnyNode) => {
+    const name = calleeName(call);
+    if (!name) return false;
+    const binding = lexical.resolve(call, name);
+    if (binding && !binding.type.startsWith("Import")) return false;
+    const source = imports.get(name);
+    return source === undefined || VUE_API_SOURCES.test(source);
+  };
+  const guardName = (expression: AnyNode): string | null => {
+    const value = unwrapExpression(expression);
+    if (value?.type === "CallExpression" && frameworkCall(value)) {
+      const name = calleeName(value);
+      return name && CONTEXT_GUARDS.has(name) ? name : null;
+    }
+    if (value?.type === "Identifier") {
+      const binding = lexical.resolve(value, value.name);
+      if (
+        binding?.type === "VariableDeclarator" &&
+        lexical.parents.get(binding)?.kind === "const"
+      ) {
+        const init = unwrapExpression(binding.init);
+        if (init?.type === "CallExpression" && frameworkCall(init)) {
+          const name = calleeName(init);
+          return name && CONTEXT_GUARDS.has(name) ? name : null;
+        }
+      }
+    }
+    return null;
+  };
+  const provesContext = (expression: AnyNode, truthy: boolean): boolean => {
+    const value = unwrapExpression(expression);
+    if (!value) return false;
+    if (value.type === "UnaryExpression" && value.operator === "!")
+      return provesContext(value.argument, !truthy);
+    if (value.type === "LogicalExpression" && ["&&", "||"].includes(value.operator)) {
+      const left = provesContext(value.left, truthy);
+      const right = provesContext(value.right, truthy);
+      return (value.operator === "&&") === truthy ? left || right : left && right;
+    }
+    return truthy && guardName(value) !== null;
+  };
+  const protectedCall = (node: AnyNode) => {
+    for (
+      let child = node, parent = lexical.parents.get(child);
+      parent && child !== fn;
+      child = parent, parent = lexical.parents.get(child)
+    ) {
+      if (
+        (parent.type === "IfStatement" || parent.type === "ConditionalExpression") &&
+        ((child === parent.consequent && provesContext(parent.test, true)) ||
+          (child === parent.alternate && provesContext(parent.test, false)))
+      )
+        return true;
+      if (
+        parent.type === "LogicalExpression" &&
+        child === parent.right &&
+        ((parent.operator === "&&" && provesContext(parent.left, true)) ||
+          (parent.operator === "||" && provesContext(parent.left, false)))
+      )
+        return true;
+      if (parent.type === "BlockStatement") {
+        for (const previous of parent.body.slice(0, parent.body.indexOf(child))) {
+          if (previous.type !== "IfStatement") continue;
+          if (alwaysExits(previous.consequent) && provesContext(previous.test, false)) return true;
+          if (alwaysExits(previous.alternate) && provesContext(previous.test, true)) return true;
+        }
+      }
+    }
+    return false;
+  };
+  let signal: string | null = null;
   walk(
     fn.body,
     { nested: false },
     (node) => {
-      const name = node.type === "CallExpression" ? calleeName(node) : null;
-      if (name) calls.push(name);
-      if (node.type === "IfStatement" || node.type === "ConditionalExpression")
-        tests.push(node.test);
-      if (node.type === "LogicalExpression") tests.push(node.left);
-      if (node.type === "UnaryExpression" && node.operator === "!") tests.push(node.argument);
-      if (node.type === "MemberExpression" && !node.optional) memberObjects.push(node.object);
+      if (signal || protectedCall(node)) return;
       if (
-        node.type === "VariableDeclarator" &&
-        node.id?.type === "Identifier" &&
-        isGuardCall(unwrapExpression(node.init))
-      )
-        guardBindings.add(node.id.name);
+        node.type === "MemberExpression" &&
+        !node.optional &&
+        guardName(node.object) === "getCurrentInstance"
+      ) {
+        signal = "getCurrentInstance";
+        return;
+      }
+      if (node.type !== "CallExpression") return;
+      const name = calleeName(node);
+      if (!name) return;
+      const binding = lexical.resolve(node, name);
+      if (binding && !binding.type.startsWith("Import")) return;
+      if (LIFECYCLE_HOOKS.has(name) || name === "inject" || name === "provide") {
+        if (frameworkCall(node)) signal = name;
+        return;
+      }
+      if (!/^use[A-Z0-9]/.test(name)) return;
+      if (APP_CONTEXT_ACCESSORS.has(name) || /^use\w*Store$/.test(name)) return;
+      const source = imports.get(name);
+      if (source && NON_COMPOSABLE_SOURCES.test(source)) return;
+      signal = name;
     },
     fn,
     "body",
   );
+  return signal;
+}
 
-  if (tests.some((test) => isGuardTest(test, guardBindings))) return null;
-
-  const dereferencesInstance = memberObjects.some((object) => {
-    const target = unwrapExpression(object);
-    if (target?.type === "Identifier") return guardBindings.has(target.name);
-    return target?.type === "CallExpression" && calleeName(target) === "getCurrentInstance";
-  });
-
-  for (const name of calls) {
-    const source = imports.get(name);
-    const fromVue = source === undefined || VUE_API_SOURCES.test(source);
-    if (name === "getCurrentInstance") {
-      if (dereferencesInstance && fromVue) return name;
-      continue;
-    }
-    if (LIFECYCLE_HOOKS.has(name) || name === "inject" || name === "provide") {
-      if (fromVue) return name;
-      continue;
-    }
-    if (!/^use[A-Z0-9]/.test(name)) continue;
-    if (APP_CONTEXT_ACCESSORS.has(name) || /^use\w*Store$/.test(name)) continue;
-    if (source && NON_COMPOSABLE_SOURCES.test(source)) continue;
-    return name;
-  }
-  return null;
+function alwaysExits(node: AnyNode): boolean {
+  if (!node) return false;
+  if (node.type === "ReturnStatement" || node.type === "ThrowStatement") return true;
+  if (node.type === "BlockStatement") return node.body.some(alwaysExits);
+  if (node.type === "IfStatement")
+    return alwaysExits(node.consequent) && alwaysExits(node.alternate);
+  return false;
 }
 
 interface ModuleScope {
@@ -315,13 +381,13 @@ export function mayUseFrameworkApi(node: AnyNode, scope: ModuleScope): boolean {
 }
 
 function scanFrameworkApi(node: AnyNode, scope: ModuleScope): boolean {
-  const locals = declaredNames(node);
+  const locals = lexicalBindings(node);
   let found = false;
   walk(node, { nested: true }, (current, parent, key) => {
     if (found) return;
     if (current.type !== "Identifier" || !isReference(parent, key)) return;
     const name = current.name;
-    if (locals.has(name)) return;
+    if (locals.resolve(current, name)) return;
     const called = parent?.type === "CallExpression" && key === "callee";
     if (scope.bindings.has(name)) {
       const binding = scope.bindings.get(name);
@@ -342,20 +408,60 @@ function scanFrameworkApi(node: AnyNode, scope: ModuleScope): boolean {
   return found;
 }
 
-function declaredNames(root: AnyNode): Set<string> {
-  const names = new Set<string>();
-  walk(root, { nested: true }, (node) => {
+interface LexicalScope {
+  parent?: LexicalScope;
+  bindings: Map<string, AnyNode>;
+  functionScope: boolean;
+}
+
+function lexicalBindings(root: AnyNode) {
+  const scopes = new Map<AnyNode, LexicalScope>();
+  const parents = new Map<AnyNode, AnyNode>();
+  const outer: LexicalScope = { bindings: new Map(), functionScope: true };
+  walk(root, { nested: true }, (node, parent) => {
+    if (parent) parents.set(node, parent);
+    const enclosing = scopes.get(parent) ?? outer;
+    const functionScope = isFunctionNode(node) || node.type === "Program";
+    const createsScope =
+      functionScope ||
+      [
+        "BlockStatement",
+        "CatchClause",
+        "ForStatement",
+        "ForInStatement",
+        "ForOfStatement",
+        "SwitchStatement",
+        "ClassBody",
+      ].includes(node.type);
+    const scope = createsScope
+      ? { parent: enclosing, bindings: new Map<string, AnyNode>(), functionScope }
+      : enclosing;
+    scopes.set(node, scope);
+    const bind = (pattern: AnyNode, target: LexicalScope, declaration: AnyNode) => {
+      for (const name of patternNames(pattern)) target.bindings.set(name, declaration);
+    };
     if (isFunctionNode(node)) {
-      if (node !== root && node.id?.name) names.add(node.id.name);
-      for (const param of node.params ?? [])
-        for (const name of patternNames(param)) names.add(name);
+      if (node.id) bind(node.id, node.type === "FunctionDeclaration" ? enclosing : scope, node);
+      for (const param of node.params ?? []) bind(param, scope, param);
     }
-    if (node.type === "VariableDeclarator")
-      for (const name of patternNames(node.id)) names.add(name);
-    if (node.type === "CatchClause") for (const name of patternNames(node.param)) names.add(name);
-    if (node.type === "ClassDeclaration" && node.id) names.add(node.id.name);
+    if (node.type === "VariableDeclarator") {
+      let target = scope;
+      if (parent?.kind === "var")
+        while (!target.functionScope && target.parent) target = target.parent;
+      bind(node.id, target, node);
+    }
+    if (node.type === "CatchClause") bind(node.param, scope, node);
+    if (node.type === "ClassDeclaration") bind(node.id, enclosing, node);
+    if (node.type.startsWith("Import") && node.local) bind(node.local, scope, node);
   });
-  return names;
+  return {
+    parents,
+    resolve(node: AnyNode, name: string): AnyNode {
+      for (let scope = scopes.get(node); scope; scope = scope.parent)
+        if (scope.bindings.has(name)) return scope.bindings.get(name);
+      return undefined;
+    },
+  };
 }
 
 function patternNames(pattern: AnyNode): string[] {
@@ -391,19 +497,6 @@ function isReference(parent: AnyNode, key: string | undefined) {
 export function calleeName(call: AnyNode): string | null {
   const callee = unwrapExpression(call.callee);
   return callee?.type === "Identifier" ? callee.name : null;
-}
-
-function isGuardCall(node: AnyNode) {
-  return node?.type === "CallExpression" && CONTEXT_GUARDS.has(calleeName(node) ?? "");
-}
-
-function isGuardTest(test: AnyNode, guardBindings: Set<string>) {
-  let guarded = false;
-  walk(test, { nested: false }, (node) => {
-    if (isGuardCall(node)) guarded = true;
-    if (node.type === "Identifier" && guardBindings.has(node.name)) guarded = true;
-  });
-  return guarded;
 }
 
 function walk(

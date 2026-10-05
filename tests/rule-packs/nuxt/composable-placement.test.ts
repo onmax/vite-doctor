@@ -215,3 +215,62 @@ test("NUXT0078 only inspects composables directories", async () => {
   });
   expect(result.diagnostics).toHaveLength(0);
 });
+
+test.each([
+  `export function invokeHook(onMounted: () => void) { onMounted() }`,
+  `export function invokeHook({ provide }: { provide: () => void }) { provide() }`,
+  `export function invokeHook() { if (true) { var onMounted = () => {} } onMounted() }`,
+  `export function invokeHook(getCurrentInstance: () => object) { return getCurrentInstance().value }`,
+  `export function invokeHook() { const inject = () => 1; return inject() }`,
+  `const useValue = () => 1; export function invokeHook() { return useValue() }`,
+  `import { onMounted } from 'vue'; export function invokeHook(onMounted: () => void) { onMounted() }`,
+])("NUXT0077 respects lexical bindings: %s", async (source) => {
+  const result = await runNuxt(noComposableInUtils, { "app/utils/helpers.ts": source });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  `export function track() { const instance = getCurrentInstance(); if (instance) console.debug('setup'); return instance.proxy }`,
+  `export function track() { const instance = getCurrentInstance(); { const instance = true; if (instance) onMounted(() => {}) } }`,
+  `export function track(fn: () => void) { if (getCurrentInstance()) console.debug('setup'); onMounted(fn) }`,
+  `export function track(fn: () => void) { if (!getCurrentInstance()) onMounted(fn) }`,
+  `export function track(fn: () => void) { getCurrentInstance() || onMounted(fn) }`,
+  `export function track(fn: () => void) { getCurrentInstance() ? fn() : onMounted(fn) }`,
+  `export function track(fn: () => void) { if (getCurrentInstance() || fn()) onMounted(fn) }`,
+  `export function track(getCurrentInstance: () => boolean) { if (getCurrentInstance()) onMounted(() => {}) }`,
+  `export function track() { { const onMounted = () => {}; onMounted() } onMounted(() => {}) }`,
+])("NUXT0077 reports unprotected setup calls: %s", async (source) => {
+  const result = await runNuxt(noComposableInUtils, { "app/utils/helpers.ts": source });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["NUXT0077"]);
+});
+
+test.each([
+  `export function track() { const instance = getCurrentInstance(); if (instance) return instance.proxy }`,
+  `export function track(fn: () => void) { if (hasInjectionContext()) { provide('key', fn) } }`,
+  `export function track(fn: () => void) { getCurrentInstance() && onMounted(fn) }`,
+  `export function track(fn: () => void) { !getCurrentInstance() || onMounted(fn) }`,
+  `export function track(fn: () => void) { if (!getCurrentInstance()) return; onMounted(fn) }`,
+  `export function track(fn: () => void) { const instance = getCurrentInstance(); if (instance) onMounted(fn) }`,
+  `export function track(fn: () => void) { getCurrentInstance() ? onMounted(fn) : fn() }`,
+])("NUXT0077 accepts protected setup calls: %s", async (source) => {
+  const result = await runNuxt(noComposableInUtils, { "app/utils/helpers.ts": source });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  `export function useCounter() { { const ref = 'plain' } return ref(0) }`,
+  `export function useCounter() { const plain = (ref: string) => ref; return ref(0) }`,
+  `export function useCounter() { for (const ref of []) {} return ref(0) }`,
+  `export function useCounter() { try {} catch (ref) {} return ref(0) }`,
+])("NUXT0078 preserves framework references outside shadows: %s", async (source) => {
+  const result = await runNuxt(noStatelessComposable, { "app/composables/useCounter.ts": source });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  `export function useCounter(ref: () => number) { return ref() }`,
+  `import { ref } from 'vue'; export function useCounter() { const ref = () => 1; return ref() }`,
+])("NUXT0078 recognizes genuinely shadowed helpers: %s", async (source) => {
+  const result = await runNuxt(noStatelessComposable, { "app/composables/useCounter.ts": source });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["NUXT0078"]);
+});

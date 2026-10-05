@@ -31,7 +31,7 @@ export const noComposableInUtils = createRule({
         if (node.type !== "Program") return;
         const imports = importSources(node);
         for (const exported of exportedFunctions(node)) {
-          const signal = setupContextSignal(exported.fn, imports);
+          const signal = setupContextSignal(exported.fn, imports, node);
           if (!signal) continue;
           const name = exported.isDefault ? fileExportName(ctx.file.path) : exported.name;
           const target = /^use[A-Z0-9]/.test(name) ? name : `use${upperFirst(name)}`;
