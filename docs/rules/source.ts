@@ -5,10 +5,19 @@ import { fileURLToPath } from "node:url";
 import { ruleDocumentationMetadata } from "./metadata.js";
 import { ruleNavigationTitles } from "./navigation-titles.js";
 import { workspaceDiagnosticMetadata } from "../../src/core/diagnostic-metadata.js";
+import { piniaRecommendedRuleIds } from "../../src/rule-packs/pinia/presets.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
 export type RuleFix = "safe" | "suggestion" | "no";
-export type RuleFramework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn" | "package";
+export type RuleFramework =
+  | "vue"
+  | "vite"
+  | "nuxt"
+  | "nitro"
+  | "typescript"
+  | "shadcn"
+  | "package"
+  | "pinia";
 
 export interface RuleExample {
   title: string;
@@ -91,6 +100,8 @@ let cachedStrictOnlyRuleIds: Set<string> | null = null;
 const strictOnlyRuleIndexes = [
   "src/rule-packs/nitro/rules/index.ts",
   "src/rule-packs/nuxt/rules/nuxt/index.ts",
+  "src/rule-packs/typescript/rules/index.ts",
+  "src/rule-packs/vite/rules/index.ts",
 ];
 let parser: typeof import("oxc-parser") | null = null;
 
@@ -109,6 +120,7 @@ export function getRuleReports() {
     typescript: rules.filter((rule) => rule.framework === "typescript"),
     package: rules.filter((rule) => rule.framework === "package"),
     shadcn: rules.filter((rule) => rule.framework === "shadcn"),
+    pinia: rules.filter((rule) => rule.framework === "pinia"),
     all: rules,
   };
 
@@ -121,7 +133,7 @@ export function getRuleReports() {
       },
     ]),
   ) as unknown as Record<
-    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "package" | "all",
+    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "package" | "pinia" | "all",
     RulesReport
   >;
 }
@@ -234,6 +246,7 @@ function readDiagnosticCodeMaps() {
     "src/rule-packs/nuxt/diagnostics.ts",
     "src/rule-packs/typescript/diagnostics.ts",
     "src/rule-packs/shadcn/diagnostics.ts",
+    "src/rule-packs/pinia/diagnostics.ts",
   ];
   const map = new Map<string, string[]>();
   for (const file of files) {
@@ -361,6 +374,11 @@ function collectRuleDocuments() {
       .sort()
       .map((file) => join(nuxtRulesDir, file)),
   ];
+  const piniaRulesDir = join(root, "src/rule-packs/pinia/rules");
+  const piniaSources = readdirSync(piniaRulesDir)
+    .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
+    .sort()
+    .map((file) => join(piniaRulesDir, file));
   const shadcnSources = readdirSync(shadcnRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "shared.ts")
     .sort()
@@ -382,6 +400,7 @@ function collectRuleDocuments() {
       ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
       ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
       ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
+      ...withRulePath(collectRules(piniaSources, "vite-doctor/pinia", "pinia"), "/pinia/rules"),
     ]),
   );
 }
@@ -535,16 +554,50 @@ function strictOnlyRuleIdsFromIndex(indexFile: string) {
   const parse = (file: string) =>
     parseSync(file, readFileSync(file, "utf8"), { sourceType: "module", lang: "ts" }).program;
   const ast = parse(indexFile);
-  const names = new Set<string>();
+  const arrays = new Map<string, any[]>();
   for (const statement of ast.body) {
     if (statement.type !== "VariableDeclaration") continue;
     for (const declarator of statement.declarations) {
-      if (declarator.id.type !== "Identifier" || declarator.id.name !== "strictOnlyRules") continue;
-      if (declarator.init?.type !== "ArrayExpression") continue;
-      for (const element of declarator.init.elements)
-        if (element?.type === "Identifier") names.add(element.name);
+      if (declarator.id.type !== "Identifier") continue;
+      const init = declarator.init;
+      if (init?.type === "ArrayExpression") arrays.set(declarator.id.name, init.elements);
+      else if (
+        init?.type === "CallExpression" &&
+        init.callee?.type === "MemberExpression" &&
+        init.callee.property?.type === "Identifier" &&
+        init.callee.property.name === "map" &&
+        init.callee.object?.type === "ArrayExpression"
+      )
+        arrays.set(declarator.id.name, init.callee.object.elements);
     }
   }
+
+  const strictName = arrays.has("strictOnlyRules")
+    ? "strictOnlyRules"
+    : arrays.has("strictRules")
+      ? "strictRules"
+      : arrays.has("rules")
+        ? "rules"
+        : null;
+  if (!strictName) return new Set<string>();
+  const recommendedName = arrays.has("recommendedRules")
+    ? "recommendedRules"
+    : arrays.has("recommended")
+      ? "recommended"
+      : null;
+  const collectNames = (name: string, seen = new Set<string>()): Set<string> => {
+    if (seen.has(name)) return new Set();
+    seen.add(name);
+    const result = new Set<string>();
+    for (const element of arrays.get(name) ?? []) {
+      if (element?.type === "Identifier") result.add(element.name);
+      else if (element?.type === "SpreadElement" && element.argument?.type === "Identifier")
+        for (const nested of collectNames(element.argument.name, seen)) result.add(nested);
+    }
+    return result;
+  };
+  const names = collectNames(strictName);
+  if (recommendedName) for (const name of collectNames(recommendedName)) names.delete(name);
 
   const ids = new Set<string>();
   for (const statement of ast.body) {
@@ -984,6 +1037,10 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "shadcn")
     return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
+  if (rule.framework === "pinia")
+    return piniaRecommendedRuleIds.includes(rule.id)
+      ? `pnpm vite-doctor . --rules ${rule.id}`
+      : `pnpm vite-doctor . --extends auto,pinia/strict --rules ${rule.id}`;
   const strict = getStrictOnlyRuleIds().has(rule.id)
     ? ` --extends auto,${rule.framework}/strict`
     : "";
