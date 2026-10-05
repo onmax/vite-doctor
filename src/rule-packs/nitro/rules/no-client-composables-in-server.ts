@@ -1,5 +1,5 @@
 import { parseForESLint } from "@typescript-eslint/parser";
-import { AnyNode, createRule, report } from "./shared.js";
+import { AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 
 const clientComposables = new Set([
   "useRoute",
@@ -25,7 +25,7 @@ export const noClientComposablesInServer = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    if (!isNitroServerFile(ctx)) return;
     const calls = appComposableCalls(ctx.file.text, ctx.file.relativePath);
     return {
       ScriptNode(node: AnyNode) {

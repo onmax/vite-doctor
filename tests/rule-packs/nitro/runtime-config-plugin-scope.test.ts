@@ -50,17 +50,24 @@ test.each([
   ]);
 });
 
-test("keeps startup and request-hook reads separate in the same plugin", async () => {
-  const source =
-    "export default defineNitroPlugin(app => { configure(useRuntimeConfig()); app.hooks.hook('request', event => configure(useRuntimeConfig())) })";
-  const result = await runRuleFixture({
-    rule: requireEventRuntimeConfigInServer,
-    framework: "nitro",
-    files: { "app/server/plugins/config.ts": source },
-  });
-  expect(result.diagnostics).toHaveLength(1);
-  expect(result.diagnostics[0]!.range!.start).toBe(source.lastIndexOf("useRuntimeConfig()"));
-});
+test.each([
+  ["nitro", "server/plugins/config.ts"],
+  ["nitro", "plugins/config.ts"],
+  ["nuxt", "app/server/plugins/config.ts"],
+] as const)(
+  "keeps startup and request-hook reads separate in a %s plugin: %s",
+  async (framework, file) => {
+    const source =
+      "export default defineNitroPlugin(app => { configure(useRuntimeConfig()); app.hooks.hook('request', event => configure(useRuntimeConfig())) })";
+    const result = await runRuleFixture({
+      rule: requireEventRuntimeConfigInServer,
+      framework,
+      files: { [file]: source },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.range!.start).toBe(source.lastIndexOf("useRuntimeConfig()"));
+  },
+);
 
 test("retains the Nitro 2 runtime gate", async () => {
   const result = await runRuleFixture({
@@ -70,6 +77,45 @@ test("retains the Nitro 2 runtime gate", async () => {
     files: {
       "server/api/config.ts": "export default defineEventHandler(() => useRuntimeConfig())",
     },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each(["plugins/config.ts", "server/plugins/config.ts"])(
+  "recognizes plain Nitro plugin startup exports: %s",
+  async (file) => {
+    const result = await runRuleFixture({
+      rule: requireEventRuntimeConfigInServer,
+      framework: "nitro",
+      files: { [file]: "export default function startup(app) { initialize(useRuntimeConfig()) }" },
+    });
+    expect(result.diagnostics).toEqual([]);
+  },
+);
+
+test.each(["utils/config.ts", "server/utils/config.ts"])(
+  "keeps request-aware config advice in Nitro utilities: %s",
+  async (file) => {
+    const result = await runRuleFixture({
+      rule: requireEventRuntimeConfigInServer,
+      framework: "nitro",
+      files: { [file]: "export function readConfig(event) { return useRuntimeConfig() }" },
+    });
+    expect(result.diagnostics.map((d) => d.ruleId)).toEqual([
+      requireEventRuntimeConfigInServer.meta.id,
+    ]);
+  },
+);
+
+test.each([
+  "app/server/plugins/config.ts",
+  "server/scripts/config.ts",
+  "server/components/config.ts",
+])("does not classify unrelated standalone Nitro paths: %s", async (file) => {
+  const result = await runRuleFixture({
+    rule: requireEventRuntimeConfigInServer,
+    framework: "nitro",
+    files: { [file]: "export function readConfig(event) { return useRuntimeConfig() }" },
   });
   expect(result.diagnostics).toEqual([]);
 });

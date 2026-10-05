@@ -1,6 +1,6 @@
 import { parseForESLint } from "@typescript-eslint/parser";
 import type { RuleContext } from "../../../core/index.js";
-import { AnyNode, createRule, report } from "./shared.js";
+import { AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 
 export const requireEventRuntimeConfigInServer = createRule({
   meta: {
@@ -17,7 +17,11 @@ export const requireEventRuntimeConfigInServer = createRule({
     applicability: { runtimes: { nitro: ">=2 <3" } },
   },
   create(ctx) {
-    if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    const path = ctx.file.relativePath.replace(/\\/g, "/");
+    const nitroUtility =
+      ctx.project.framework === "nitro" &&
+      /^(?:server\/)?(?:plugins|utils)\/.+\.[cm]?[jt]s$/.test(path);
+    if (!isNitroServerFile(ctx) && !nitroUtility) return;
     let startupCalls: Set<number> | undefined;
     return {
       ScriptNode(node: AnyNode) {
@@ -67,7 +71,11 @@ function pluginStartupCalls(ctx: RuleContext): Set<number> {
             : definition.node.imported.value) === "defineNitroPlugin",
       );
     };
-    const pluginFile = /^(?:app\/)?server\/plugins\//.test(ctx.file.relativePath);
+    const path = ctx.file.relativePath.replace(/\\/g, "/");
+    const pluginFile =
+      ctx.project.framework === "nitro"
+        ? /^(?:server\/)?plugins\//.test(path)
+        : /^(?:app\/)?server\/plugins\//.test(path);
     const result = new Set<number>();
     const visit = (node: AnyNode, parent?: AnyNode, startup = false) => {
       if (!node?.type) return;

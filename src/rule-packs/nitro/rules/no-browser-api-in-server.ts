@@ -1,4 +1,11 @@
-import { AnyNode, BROWSER_GLOBALS, createRule, isObjectPropertyKey, report } from "./shared.js";
+import {
+  AnyNode,
+  BROWSER_GLOBALS,
+  createRule,
+  isNitroServerFile,
+  isObjectPropertyKey,
+  report,
+} from "./shared.js";
 
 export const noBrowserApiInServer = createRule({
   meta: {
@@ -15,7 +22,7 @@ export const noBrowserApiInServer = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    if (!isNitroServerFile(ctx)) return;
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Identifier" || !BROWSER_GLOBALS.has(node.name)) return;

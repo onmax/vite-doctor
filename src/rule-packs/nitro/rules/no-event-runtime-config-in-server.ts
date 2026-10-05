@@ -1,4 +1,4 @@
-import { type AnyNode, createRule, report } from "./shared.js";
+import { type AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 
 export const noEventRuntimeConfigInServer = createRule({
   meta: {
@@ -18,7 +18,7 @@ export const noEventRuntimeConfigInServer = createRule({
     },
   },
   create(ctx) {
-    if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
+    if (!isNitroServerFile(ctx)) return;
     return {
       ScriptNode(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useRuntimeConfig") || !node.arguments?.length) return;
