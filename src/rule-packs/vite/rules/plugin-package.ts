@@ -254,7 +254,7 @@ function exportsPluginFactory(
   if (depth > MAX_REEXPORT_DEPTH || seen.has(key)) return false;
   seen.add(key);
   let program: AnyNode;
-  const pluginTypeReferences = new Set<AnyNode>();
+  const pluginTypeReferences = new Map<AnyNode, boolean>();
   try {
     const parsed = parseForESLint(readFileSync(file, "utf8"), {
       filePath: file,
@@ -264,17 +264,22 @@ function exportsPluginFactory(
     for (const scope of parsed.scopeManager.scopes) {
       for (const reference of scope.references) {
         if (!reference.isTypeReference) continue;
-        const imported = reference.resolved?.defs.some((definition) => {
+        const imported = reference.resolved?.defs.find((definition) => {
           if (definition.type !== "ImportBinding") return false;
           const specifier = definition.node;
           return (
             definition.parent.type === "ImportDeclaration" &&
             definition.parent.source.value === "vite" &&
-            specifier.type === "ImportSpecifier" &&
-            ["Plugin", "PluginOption"].includes(exportName(specifier.imported) ?? "")
+            ((specifier.type === "ImportSpecifier" &&
+              ["Plugin", "PluginOption"].includes(exportName(specifier.imported) ?? "")) ||
+              specifier.type === "ImportNamespaceSpecifier")
           );
         });
-        if (imported) pluginTypeReferences.add(reference.identifier);
+        if (imported)
+          pluginTypeReferences.set(
+            reference.identifier,
+            imported.node.type === "ImportNamespaceSpecifier",
+          );
       }
     }
   } catch {
@@ -394,7 +399,10 @@ function commonJsExportName(node: AnyNode): string | null {
   return null;
 }
 
-function isPluginFactory(fn: AnyNode, pluginTypeReferences: ReadonlySet<AnyNode>): boolean {
+function isPluginFactory(
+  fn: AnyNode,
+  pluginTypeReferences: ReadonlyMap<AnyNode, boolean>,
+): boolean {
   if (containsNode(fn.returnType, (node) => isPluginTypeReference(node, pluginTypeReferences)))
     return true;
 
@@ -468,11 +476,28 @@ function isPluginFactory(fn: AnyNode, pluginTypeReferences: ReadonlySet<AnyNode>
     : isPluginValue(fn.body, new Map());
 }
 
-function isPluginTypeReference(node: AnyNode, pluginTypeReferences: ReadonlySet<AnyNode>): boolean {
+function isPluginTypeReference(
+  node: AnyNode,
+  pluginTypeReferences: ReadonlyMap<AnyNode, boolean>,
+): boolean {
+  if (node.type === "TSImportType") {
+    const source = node.source;
+    const qualifier = node.qualifier;
+    return (
+      source?.type === "Literal" &&
+      source.value === "vite" &&
+      qualifier?.type === "Identifier" &&
+      ["Plugin", "PluginOption"].includes(qualifier.name)
+    );
+  }
+  if (node.type !== "TSTypeReference") return false;
+  const typeName = node.typeName;
+  if (typeName?.type === "Identifier") return pluginTypeReferences.get(typeName) === false;
   return (
-    node.type === "TSTypeReference" &&
-    node.typeName?.type === "Identifier" &&
-    pluginTypeReferences.has(node.typeName)
+    typeName?.type === "TSQualifiedName" &&
+    typeName.left?.type === "Identifier" &&
+    pluginTypeReferences.get(typeName.left) === true &&
+    ["Plugin", "PluginOption"].includes(typeName.right?.name ?? "")
   );
 }
 

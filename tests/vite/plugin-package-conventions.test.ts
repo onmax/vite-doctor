@@ -277,6 +277,34 @@ module.exports = () => ({ name: 'config', options: {} });`,
     expect(result.diagnostics).toHaveLength(2);
   });
 
+  test.each([
+    'import type * as Vite from "vite"; export function icons(): Vite.Plugin { return { name: "icons" } }',
+    'import * as V from "vite"; export const icons = (): V.PluginOption[] => []',
+    'import type * as Vite from "vite"; export function icons() { const p: Vite.Plugin = { name: "icons" }; return p }',
+    'import type * as Vite from "vite"; export const icons = () => ({ name: "icons" } satisfies Vite.Plugin)',
+    'export function icons(): import("vite").Plugin { return { name: "icons" } }',
+    'export const icons = (): import("vite").PluginOption[] => []',
+    'export function icons() { const p: import("vite").Plugin = { name: "icons" }; return p }',
+    'export const icons = () => ({ name: "icons" } satisfies import("vite").Plugin)',
+  ])("recognizes qualified plugin types: %s", async (source) => {
+    expect((await run(manifest(), { "src/index.ts": source })).diagnostics).toHaveLength(2);
+  });
+
+  test.each([
+    'import type * as Vite from "other"; export function config(): Vite.Plugin { return {} }',
+    'import type * as Vite from "vite"; export function config<Vite>(): Vite.Plugin { return {} }',
+    'import type * as Vite from "vite"; export function config() { namespace Vite { export type Plugin = {} }; const p: Vite.Plugin = {}; return p }',
+    'import type * as Vite from "vite"; export function config(): Vite.UserConfig { return {} }',
+    'import type * as Vite from "vite"; export function config(): Vite { return {} }',
+    'import type { Plugin } from "vite"; export function config(): Plugin.Plugin { return {} }',
+    'export function config(): import("other").Plugin { return {} }',
+    'export function config(): import("vite").UserConfig { return {} }',
+    'export function config(): import("vite").Other.Plugin { return {} }',
+    'export function config() { const p: import("vite").Plugin = { name: "unused" }; return {} }',
+  ])("ignores unrelated qualified types: %s", async (source) => {
+    expect((await run(manifest(), { "src/index.ts": source })).diagnostics).toEqual([]);
+  });
+
   test("ignores apps, private packages, CLIs, and packages without a vite peer", async () => {
     const app = await run(JSON.stringify({ private: true, devDependencies: { vite: "^8.0.0" } }));
     const privatePackage = await run(manifest({ private: true }));
