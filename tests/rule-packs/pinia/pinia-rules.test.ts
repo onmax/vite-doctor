@@ -28,6 +28,23 @@ function names(files: Record<string, string>) {
 }
 
 describe("Pinia lexical bindings", () => {
+  test.each(["\u2028", "\u2029"])(
+    "preserves Unicode line separator %j in both rules",
+    async (separator) => {
+      const files = {
+        "src/imported.ts": [
+          "import { defineStore } from 'pinia'",
+          "export const wrong = defineStore('cart', {})",
+        ].join(separator),
+        "src/auto.ts": ["const unrelated = 1", "export const wrong = defineStore('cart', {})"].join(
+          separator,
+        ),
+      };
+      expect((await duplicates(files)).diagnostics).toHaveLength(2);
+      expect((await names(files)).diagnostics).toHaveLength(2);
+    },
+  );
+
   test.each([
     ["direct", "import { defineStore } from 'pinia'", "defineStore"],
     ["alias", "import { defineStore as store } from 'pinia'", "store"],

@@ -55,7 +55,7 @@ function piniaDefineStoreCallees(program: AnyNode, source: string): Set<number> 
   // Preserve offsets while excluding SFC markup outside the parsed script statements.
   const script: string[] = source
     .split("")
-    .map((char) => (char === "\n" || char === "\r" ? char : " "));
+    .map((char) => (/^[\n\r\u2028\u2029]$/.test(char) ? char : " "));
   for (const statement of program.body ?? []) {
     for (let offset = statement.start; offset < statement.end; offset++)
       script[offset] = source[offset]!;
