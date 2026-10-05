@@ -87,6 +87,11 @@ const require = createRequire(import.meta.url);
 
 let cachedRules: RuleDocument[] | null = null;
 let cachedDiagnostics: DiagnosticDocument[] | null = null;
+let cachedStrictOnlyRuleIds: Set<string> | null = null;
+const strictOnlyRuleIndexes = [
+  "src/rule-packs/nitro/rules/index.ts",
+  "src/rule-packs/nuxt/rules/nuxt/index.ts",
+];
 let parser: typeof import("oxc-parser") | null = null;
 
 export function getRuleDocuments() {
@@ -912,9 +917,53 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "shadcn")
     return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
-  if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
-  if (rule.framework === "typescript") return `pnpm vite-doctor . --rules ${rule.id}`;
-  return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;
+  const strict = getStrictOnlyRuleIds().has(rule.id)
+    ? ` --extends auto,${rule.framework}/strict`
+    : "";
+  if (rule.framework === "nuxt") return `pnpm nuxt doctor${strict} --rules ${rule.id}`;
+  if (rule.framework === "typescript") return `pnpm vite-doctor .${strict} --rules ${rule.id}`;
+  return `pnpm vite-doctor . --framework ${rule.framework}${strict} --rules ${rule.id}`;
+}
+
+function getStrictOnlyRuleIds() {
+  if (!cachedStrictOnlyRuleIds) {
+    const sources = new Set(
+      strictOnlyRuleIndexes.flatMap((file) => strictOnlyRuleSources(join(root, file))),
+    );
+    cachedStrictOnlyRuleIds = new Set(
+      getRuleDocuments()
+        .filter((rule) => sources.has(rule.source))
+        .map((rule) => rule.id),
+    );
+  }
+  return cachedStrictOnlyRuleIds;
+}
+
+// Rules a pack lists in `strictOnlyRules` are in its Strict Preset but not its Recommended Preset.
+function strictOnlyRuleSources(indexFile: string) {
+  const { parseSync } = loadParser();
+  const ast = parseSync(indexFile, readFileSync(indexFile, "utf8"), {
+    sourceType: "module",
+    lang: "ts",
+  }).program;
+  const importedSources = new Map<string, string>();
+  const names: string[] = [];
+  for (const statement of ast.body) {
+    if (statement.type === "ImportDeclaration") {
+      const source = statement.source.value;
+      if (!source.startsWith("./") || !source.endsWith(".js")) continue;
+      const file = relative(root, join(dirname(indexFile), `${source.slice(0, -3)}.ts`));
+      for (const specifier of statement.specifiers) importedSources.set(specifier.local.name, file);
+    }
+    if (statement.type !== "VariableDeclaration") continue;
+    for (const declarator of statement.declarations) {
+      if (declarator.id.type !== "Identifier" || declarator.id.name !== "strictOnlyRules") continue;
+      if (declarator.init?.type !== "ArrayExpression") continue;
+      for (const element of declarator.init.elements)
+        if (element?.type === "Identifier") names.push(element.name);
+    }
+  }
+  return names.flatMap((name) => importedSources.get(name) ?? []);
 }
 
 function slugSegment(value: string) {
