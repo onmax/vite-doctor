@@ -6,6 +6,12 @@ import {
   walkScriptLocal,
   type AnyNode,
 } from "../../../../core/rule-authoring.js";
+import {
+  findFunctionVar,
+  findStatementBinding,
+  memoizeAnalysis,
+  scriptNodesOfType,
+} from "./script-index.js";
 
 export type NuxtExecutionEvidence =
   | "setup-time"
@@ -24,6 +30,8 @@ const CLIENT_CALLBACK_RE =
 const CLIENT_LIFECYCLE_RE = /^(onMounted|onBeforeMount|onBeforeUnmount|onUnmounted)$/;
 const LIFECYCLE_RE =
   /^(onMounted|onBeforeMount|onBeforeUnmount|onUnmounted|watch|watchEffect|watchPostEffect|nextTick)$/;
+// Shared so memoized alias checks can hit for "after every write" references.
+const UNBOUNDED_REFERENCE = Object.freeze({ start: Infinity });
 const COMMAND_LIKE_RE =
   /^(on[A-Z]|handle|handler|callback|execute|run|open|close|toggle|submit|select|copy|download|navigate|scroll)/;
 
@@ -157,7 +165,7 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
   const binding = resolveLocalBinding(assignment, target.name, parents);
   if (
     !binding ||
-    hasPriorAliasWrite({ start: Infinity }, binding, owner, parents, assignment) ||
+    hasPriorAliasWrite(UNBOUNDED_REFERENCE, binding, owner, parents, assignment) ||
     resolveLocalBinding(ctx.file.scriptAst, target.name, parents) !== binding ||
     !getRenderedReferences(ctx).some(
       (reference) =>
@@ -170,7 +178,7 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
     if (seen.has(fn) || fn.generator) return false;
     const suspensions: AnyNode[] = [];
     if (fn.async)
-      walkScriptLocal(fn.body, (node) => {
+      scriptNodesOfType(fn.body, "AwaitExpression").forEach((node) => {
         if (
           node.type === "AwaitExpression" &&
           node.start < effect.end &&
@@ -181,7 +189,7 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
       });
     seen.add(fn);
     let found = false;
-    walkScriptLocal(ctx.file.scriptAst, (call) => {
+    scriptNodesOfType(ctx.file.scriptAst, "CallExpression").forEach((call) => {
       if (call.type !== "CallExpression") return;
       const invokes = resolveLocalValue(call.callee, parents) === fn;
       const callback = call.arguments.some(
@@ -209,7 +217,7 @@ function renderedSetupWrite(ctx: RuleContext, source: AnyNode, owner: AnyNode): 
       if (caller) {
         if (executes(caller, new Set(seen), call)) found = true;
       } else if (
-        !hasPriorAliasWrite({ start: Infinity }, binding, ctx.file.scriptAst, parents, {
+        !hasPriorAliasWrite(UNBOUNDED_REFERENCE, binding, ctx.file.scriptAst, parents, {
           ...assignment,
           start: call.start,
         })
@@ -233,7 +241,7 @@ function functionFlowsToTemplate(
   const directCallback = resultCallbackCall(fn, parents);
   const callbackCalls: AnyNode[] = directCallback ? [directCallback] : [];
   if (!directCallback && !fn.async && !fn.generator)
-    walkScriptLocal(ctx.file.scriptAst, (call) => {
+    scriptNodesOfType(ctx.file.scriptAst, "CallExpression").forEach((call) => {
       if (
         call.type === "CallExpression" &&
         call.callee?.type === "CallExpression" &&
@@ -362,7 +370,7 @@ function functionFlowsToTemplate(
         let root = callee;
         while (parents.get(root)) root = parents.get(root);
         let replaced = false;
-        walkScriptLocal(root, (write) => {
+        scriptNodesOfType(root, "AssignmentExpression").forEach((write) => {
           if (write.type !== "AssignmentExpression" || write.start >= original.start) return;
           const member = unwrapExpression(write.left);
           const prototype = unwrapExpression(member?.object);
@@ -402,7 +410,7 @@ function functionFlowsToTemplate(
       }
       if (!local || visited.has(local) || local.type !== "VariableDeclarator") return false;
       visited.add(local);
-      const reference = parents.has(callee) ? callee : { start: Infinity };
+      const reference = parents.has(callee) ? callee : UNBOUNDED_REFERENCE;
       const owner = containingFunction(local, parents) ?? ctx.file.scriptAst;
       if (hasPriorAliasWrite(reference, local, owner, parents)) return false;
       if (!memberPath.length || path.length) captured = local;
@@ -422,7 +430,7 @@ function functionFlowsToTemplate(
     if (call.type === "NewExpression") {
       let returnsObject = false;
       let replacesInstance = false;
-      walkScriptLocal(fn.body, (statement) => {
+      scriptNodesOfType(fn.body, "ReturnStatement").forEach((statement) => {
         if (statement.type !== "ReturnStatement" || containingFunction(statement, parents) !== fn)
           return;
         const value = resolveLocalValue(statement.argument, parents);
@@ -478,7 +486,7 @@ function functionFlowsToTemplate(
       ? [...memberPath, invocationMethod(call.callee)]
       : memberPath;
     let replaced = false;
-    walkScriptLocal(ctx.file.scriptAst, (write) => {
+    scriptNodesOfType(ctx.file.scriptAst, "AssignmentExpression").forEach((write) => {
       if (
         write.type !== "AssignmentExpression" ||
         write.operator !== "=" ||
@@ -544,19 +552,8 @@ function functionFlowsToTemplate(
     })
   )
     return true;
-  const visit = (node: AnyNode, owner: AnyNode, variable: AnyNode): boolean => {
-    if (!node || typeof node !== "object") return false;
-    if (Array.isArray(node)) return node.some((child) => visit(child, owner, variable));
-    if (
-      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
-    ) {
-      const call = resultCallbackCall(node, parents);
-      if (!call || (owner && !contributesToReturn(call, owner, parents))) variable = null;
-      owner = node;
-    }
-    if (node.type === "VariableDeclarator") return visit(node.init, owner, node);
-    if (node.type === "AssignmentExpression" && node.operator === "=")
-      return visit(node.right, owner, node);
+  // Returns true when the site renders, false to skip its subtree, undefined to keep scanning.
+  const visitSite = ({ node, variable }: RenderFlowSite): boolean | undefined => {
     const callback =
       node.type === "CallExpression" &&
       node.arguments.some(
@@ -634,13 +631,55 @@ function functionFlowsToTemplate(
           return true;
       }
     }
-    for (const [key, value] of Object.entries(node)) {
-      if (key === "__doctorParent" || key === "parent") continue;
-      if (value && typeof value === "object" && visit(value, owner, variable)) return true;
-    }
-    return false;
+    return undefined;
   };
-  return visit(ctx.file.scriptAst, null, null);
+  const sites = renderFlowSites(ctx.file.scriptAst, parents);
+  for (let index = 0; index < sites.length; index++) {
+    const outcome = visitSite(sites[index]);
+    if (outcome) return true;
+    if (outcome === false) index = sites[index].end - 1;
+  }
+  return false;
+}
+
+type RenderFlowSite = { node: AnyNode; variable: AnyNode; end: number };
+
+const renderFlowSiteLists = new WeakMap<object, Map<unknown, unknown>>();
+
+// The result-variable context of each call site does not depend on the function being traced, so
+// it is collected once per script in the order the per-function scan used to visit it.
+function renderFlowSites(root: AnyNode, parents: WeakMap<AnyNode, AnyNode>): RenderFlowSite[] {
+  return memoizeAnalysis(renderFlowSiteLists, parents, [root], () => {
+    const sites: RenderFlowSite[] = [];
+    const collect = (node: AnyNode, owner: AnyNode, variable: AnyNode): void => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        for (const child of node) collect(child, owner, variable);
+        return;
+      }
+      if (
+        ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
+      ) {
+        const call = resultCallbackCall(node, parents);
+        if (!call || (owner && !contributesToReturn(call, owner, parents))) variable = null;
+        owner = node;
+      }
+      if (node.type === "VariableDeclarator") return collect(node.init, owner, node);
+      if (node.type === "AssignmentExpression" && node.operator === "=")
+        return collect(node.right, owner, node);
+      const site = ["CallExpression", "NewExpression", "MemberExpression"].includes(node.type)
+        ? { node, variable, end: 0 }
+        : null;
+      if (site) sites.push(site);
+      for (const [key, value] of Object.entries(node)) {
+        if (key === "__doctorParent" || key === "parent") continue;
+        if (value && typeof value === "object") collect(value, owner, variable);
+      }
+      if (site) site.end = sites.length;
+    };
+    collect(root, null, null);
+    return sites;
+  });
 }
 
 function resultAliases(
@@ -655,7 +694,7 @@ function resultAliases(
   if (array?.type === "ArrayExpression" && array.elements.includes(node)) {
     let scope = array;
     while (parents.get(scope)) scope = parents.get(scope);
-    walkScriptLocal(scope, (aggregate) => {
+    scriptNodesOfType(scope, "CallExpression").forEach((aggregate) => {
       if (
         aggregate.type === "CallExpression" &&
         aggregate.start > array.end &&
@@ -701,7 +740,7 @@ function resultAliases(
     scope = binding;
     while (parents.get(scope)) scope = parents.get(scope);
   }
-  walkScriptLocal(scope.body, (reference) => {
+  scriptNodesOfType(scope.body, "Identifier").forEach((reference) => {
     if (
       reference.type === "Identifier" &&
       reference.start > stored.start &&
@@ -1131,7 +1170,7 @@ function resultCallbackCall(
       if (count < minimum) return null;
       let methodReplaced = false;
       for (const binding of bindings)
-        walkScriptLocal(scope.body, (write) => {
+        scriptNodesOfType(scope.body, "AssignmentExpression").forEach((write) => {
           const target =
             write.type === "AssignmentExpression" ? unwrapExpression(write.left) : null;
           if (
@@ -1203,7 +1242,7 @@ function parameterContributesToReturn(
     fn.params[index] ?? fn.params.find((param: AnyNode) => param.type === "RestElement");
   if (!parameter) return false;
   let contributes = false;
-  walkScriptLocal(fn.body, (reference) => {
+  scriptNodesOfType(fn.body, "Identifier").forEach((reference) => {
     if (
       reference.type === "Identifier" &&
       patternBinds(parameter, reference.name) &&
@@ -1255,7 +1294,7 @@ function generatorSlotIncludes(
   const path = patternPath(pattern, reference.name);
   if (!path?.length) return true;
   const yields: AnyNode[] = [];
-  walkScriptLocal(fn.body, (node) => {
+  scriptNodesOfType(fn.body, "YieldExpression").forEach((node) => {
     if (
       node.type === "YieldExpression" &&
       containingFunction(node, parents) === fn &&
@@ -1373,7 +1412,7 @@ function reachesFirstYield(
   parents: WeakMap<AnyNode, AnyNode>,
 ): boolean {
   const yields: AnyNode[] = [];
-  walkScriptLocal(fn.body, (node) => {
+  scriptNodesOfType(fn.body, "YieldExpression").forEach((node) => {
     if (
       node.type === "YieldExpression" &&
       containingFunction(node, parents) === fn &&
@@ -1655,7 +1694,7 @@ function projectionIncludes(
           chain?.type === "CallExpression" ? resolveLocalValue(chain.arguments[0], parents) : null;
         if (callback?.params?.[0]) {
           let included = false;
-          walkScriptLocal(callback.body, (value) => {
+          scriptNodesOfType(callback.body, "Identifier").forEach((value) => {
             if (
               value.type === "Identifier" &&
               patternBinds(callback.params[0], value.name) &&
@@ -1830,12 +1869,27 @@ function containingFunction(node: AnyNode, parents: WeakMap<AnyNode, AnyNode>): 
   return null;
 }
 
+const localValues = new WeakMap<object, Map<unknown, unknown>>();
+
 function resolveLocalValue(
   node: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   seen = new Set<AnyNode>(),
   path: string[] = [],
   referenceScope = node,
+): AnyNode {
+  if (seen.size || path.length) return computeLocalValue(node, parents, seen, path, referenceScope);
+  return memoizeAnalysis(localValues, parents, [node, referenceScope], () =>
+    computeLocalValue(node, parents, seen, path, referenceScope),
+  );
+}
+
+function computeLocalValue(
+  node: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+  seen: Set<AnyNode>,
+  path: string[],
+  referenceScope: AnyNode,
 ): AnyNode {
   node = unwrapExpression(node);
   if (!node || seen.has(node)) return null;
@@ -1850,12 +1904,12 @@ function resolveLocalValue(
     if (binding.type !== "VariableDeclarator") return binding;
     let scope = binding;
     while (parents.get(scope)) scope = parents.get(scope);
-    if (hasPriorAliasWrite(parents.has(node) ? node : { start: Infinity }, binding, scope, parents))
+    if (hasPriorAliasWrite(parents.has(node) ? node : UNBOUNDED_REFERENCE, binding, scope, parents))
       return null;
     const bindingPath = patternPath(binding.id, node.name) ?? [];
     const projectedPath = [...bindingPath, ...path];
     let memberWritten = false;
-    walkScriptLocal(scope, (write) => {
+    scriptNodesOfType(scope, "AssignmentExpression").forEach((write) => {
       if (write.type !== "AssignmentExpression" || write.start >= (node.start ?? Infinity)) return;
       let target = unwrapExpression(write.left);
       if (target?.type !== "MemberExpression") return;
@@ -1916,11 +1970,26 @@ function localObjectProperty(value: AnyNode, key: string): AnyNode {
   return null;
 }
 
+const returnContributions = new WeakMap<object, Map<unknown, unknown>>();
+
 function contributesToReturn(
   node: AnyNode,
   owner: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   seen = new Set<AnyNode>(),
+  sink?: AnyNode,
+): boolean {
+  if (seen.size) return computeContributesToReturn(node, owner, parents, seen, sink);
+  return memoizeAnalysis(returnContributions, parents, [node, owner, sink], () =>
+    computeContributesToReturn(node, owner, parents, seen, sink),
+  );
+}
+
+function computeContributesToReturn(
+  node: AnyNode,
+  owner: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+  seen: Set<AnyNode>,
   sink?: AnyNode,
 ): boolean {
   if (seen.has(node)) return false;
@@ -1959,7 +2028,7 @@ function contributesToReturn(
       while (identifier?.type === "MemberExpression")
         identifier = unwrapExpression(identifier.object);
       let returned = false;
-      walkScriptLocal(owner.body, (reference) => {
+      scriptNodesOfType(owner.body, "Identifier").forEach((reference) => {
         if (
           reference.type !== "Identifier" ||
           reference.start <= parent.start ||
@@ -1997,7 +2066,7 @@ function contributesToReturn(
     ) {
       let selectsReturn = false;
       const branch = parent.type === "SwitchCase" ? parents.get(parent) : parent;
-      walkScriptLocal(branch, (statement) => {
+      scriptNodesOfType(branch, "ReturnStatement").forEach((statement) => {
         if (
           statement.type === "ReturnStatement" &&
           containingFunction(statement, parents) === owner
@@ -2101,6 +2170,8 @@ function returnsSameLiteral(owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>):
   return same && !!first;
 }
 
+const priorAliasWrites = new WeakMap<object, Map<unknown, unknown>>();
+
 function hasPriorAliasWrite(
   reference: AnyNode,
   binding: AnyNode,
@@ -2108,6 +2179,22 @@ function hasPriorAliasWrite(
   parents: WeakMap<AnyNode, AnyNode>,
   source = binding,
   requireDominance = true,
+): boolean {
+  return memoizeAnalysis(
+    priorAliasWrites,
+    parents,
+    [reference, binding, owner, source, requireDominance],
+    () => computePriorAliasWrite(reference, binding, owner, parents, source, requireDominance),
+  );
+}
+
+function computePriorAliasWrite(
+  reference: AnyNode,
+  binding: AnyNode,
+  owner: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+  source: AnyNode,
+  requireDominance: boolean,
 ): boolean {
   const name = reference.name ?? binding.id?.name ?? binding.left?.name;
   const storedPath: string[] = [];
@@ -2121,7 +2208,27 @@ function hasPriorAliasWrite(
     }
   }
   let reassigned = false;
-  walkScriptLocal(owner.body, (write) => {
+  scriptNodesOfType(
+    owner.body,
+    "AssignmentExpression",
+    "UpdateExpression",
+    "ForInStatement",
+    "ForOfStatement",
+  ).forEach((write) => {
+    const target =
+      write.type === "AssignmentExpression"
+        ? write.left
+        : write.type === "UpdateExpression"
+          ? write.argument
+          : ["ForInStatement", "ForOfStatement"].includes(write.type)
+            ? write.left
+            : null;
+    const rebinds =
+      patternBinds(target, name) && resolveLocalBinding(write, name, parents) === binding;
+    const memberWrite =
+      storedPath.length > 0 && write.type === "AssignmentExpression" && write.operator === "=";
+    // Writes to other bindings cannot reassign this one, so skip their invocation scans.
+    if (!rebinds && !(memberWrite && target?.type === "MemberExpression")) return;
     const nested = containingFunction(write, parents);
     let effectiveWrite = write;
     if (nested !== (owner.type === "Program" ? null : owner)) {
@@ -2139,12 +2246,10 @@ function hasPriorAliasWrite(
       )
         return;
       let invocation: AnyNode;
-      walkScriptLocal(owner.body, (candidate) => {
-        if (candidate.type !== "CallExpression") return;
+      ownedCalls(owner, parents).forEach((candidate) => {
         const method = invocationMethod(candidate.callee);
         const callee = method ? candidate.callee.object : candidate.callee;
         if (
-          containingFunction(candidate, parents) === (owner.type === "Program" ? null : owner) &&
           candidate.start > source.start &&
           candidate.start < reference.start &&
           nested.start < candidate.start &&
@@ -2158,16 +2263,8 @@ function hasPriorAliasWrite(
       effectiveWrite = invocation;
     }
     if (effectiveWrite.start >= reference.start || effectiveWrite.start <= source.start) return;
-    const target =
-      write.type === "AssignmentExpression"
-        ? write.left
-        : write.type === "UpdateExpression"
-          ? write.argument
-          : ["ForInStatement", "ForOfStatement"].includes(write.type)
-            ? write.left
-            : null;
     let replacesMember = false;
-    if (storedPath.length && write.type === "AssignmentExpression" && write.operator === "=") {
+    if (memberWrite) {
       const writtenPath: string[] = [];
       let root = target;
       while (root?.type === "MemberExpression") {
@@ -2202,13 +2299,22 @@ function hasPriorAliasWrite(
         writtenPath.every((key, index) => storedPath[index] === key);
     }
     if (
-      ((patternBinds(target, name) && resolveLocalBinding(write, name, parents) === binding) ||
-        replacesMember) &&
+      (rebinds || replacesMember) &&
       (!requireDominance || writeDominatesReference(effectiveWrite, reference, owner, parents))
     )
       reassigned = true;
   });
   return reassigned;
+}
+
+const ownedCallLists = new WeakMap<object, Map<unknown, unknown>>();
+
+function ownedCalls(owner: AnyNode, parents: WeakMap<AnyNode, AnyNode>): AnyNode[] {
+  return memoizeAnalysis(ownedCallLists, parents, [owner], () =>
+    scriptNodesOfType(owner.body, "CallExpression").filter(
+      (call) => containingFunction(call, parents) === (owner.type === "Program" ? null : owner),
+    ),
+  );
 }
 
 function writeDominatesReference(
@@ -2312,21 +2418,6 @@ function patternBinds(node: AnyNode, name: string): boolean {
   return false;
 }
 
-function findFunctionVar(node: AnyNode, name: string): AnyNode {
-  if (!node || typeof node !== "object") return null;
-  if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type))
-    return null;
-  if (node.type === "VariableDeclaration" && node.kind === "var") {
-    return node.declarations.find((item: AnyNode) => patternBinds(item.id, name)) ?? null;
-  }
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "__doctorParent" || key === "parent") continue;
-    const found = findFunctionVar(value, name);
-    if (found) return found;
-  }
-  return null;
-}
-
 function resolveLocalBinding(
   node: AnyNode,
   name: string,
@@ -2343,34 +2434,8 @@ function resolveLocalBinding(
       if (scope.id?.name === name) return scope;
     }
     if (scope.type === "CatchClause" && patternBinds(scope.param, name)) return scope.param;
-    const statements =
-      scope.type === "Program" || scope.type === "BlockStatement"
-        ? scope.body
-        : scope.type === "ForStatement"
-          ? [scope.init].filter(Boolean)
-          : ["ForOfStatement", "ForInStatement"].includes(scope.type)
-            ? [scope.left]
-            : scope.type === "SwitchStatement"
-              ? scope.cases.flatMap((item: AnyNode) => item.consequent)
-              : [];
-    for (const statement of statements) {
-      const declaration = statement.declaration ?? statement;
-      if (
-        ["FunctionDeclaration", "ClassDeclaration"].includes(declaration.type) &&
-        declaration.id?.name === name
-      )
-        return declaration;
-      if (declaration.type === "VariableDeclaration") {
-        const binding = declaration.declarations.find((item: AnyNode) =>
-          patternBinds(item.id, name),
-        );
-        if (binding) return binding;
-      }
-      if (declaration.type === "ImportDeclaration") {
-        const binding = declaration.specifiers.find((item: AnyNode) => item.local?.name === name);
-        if (binding) return binding;
-      }
-    }
+    const binding = findStatementBinding(scope, name);
+    if (binding) return binding;
   }
   return null;
 }
