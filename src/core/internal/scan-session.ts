@@ -317,10 +317,16 @@ export async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
         registeredPacks.push(pack);
       },
       registerProjectInventoryContributor(contributor) {
-        inventoryContributors.push(contributor);
+        inventoryContributors.push({
+          name: contributor.name,
+          contribute: contributor.contribute.bind(contributor),
+        });
       },
       registerRuntimeEvidenceContributor(contributor) {
-        runtimeEvidenceContributors.push(contributor);
+        runtimeEvidenceContributors.push({
+          name: contributor.name,
+          contribute: contributor.contribute.bind(contributor),
+        });
       },
     });
   }
@@ -333,12 +339,27 @@ export async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
     if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
     names.add(pack.name);
   }
+  assertUniqueContributors(inventoryContributors, "Project Inventory");
+  assertUniqueContributors(runtimeEvidenceContributors, "Runtime Evidence");
   return {
     packs,
     rules: packs.flatMap((pack) => pack.rules),
     inventoryContributors,
     runtimeEvidenceContributors,
   };
+}
+
+function assertUniqueContributors(
+  contributors: Array<{ name: string }>,
+  kind: "Project Inventory" | "Runtime Evidence",
+): void {
+  const names = new Set<string>();
+  for (const contributor of contributors) {
+    if (names.has(contributor.name)) {
+      throw doctorInternalDiagnostics.DOC0026({ kind, name: contributor.name });
+    }
+    names.add(contributor.name);
+  }
 }
 
 async function applyProjectContributions(

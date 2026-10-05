@@ -36,6 +36,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0023", ruleId: "doctor/rule-pack/duplicate-name", docs: false },
   { code: "DOC0024", ruleId: "doctor/config/ambiguous-rule-pack-alias", docs: false },
   { code: "DOC0025", ruleId: "doctor/baseline/invalid-input", docs: false },
+  { code: "DOC0026", ruleId: "doctor/extension/duplicate-contributor-name", docs: false },
   { code: "VUE0001", ruleId: "vue/i18n/no-untranslated-text" },
   { code: "VUE0002", ruleId: "vue/i18n/no-unused-translations" },
   { code: "VUE0003", ruleId: "vue/lifecycle/no-mutation-in-onupdated" },

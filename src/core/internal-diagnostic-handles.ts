@@ -75,5 +75,11 @@ export const doctorInternalDiagnostics = defineDiagnostics({
         `Invalid Doctor baseline "${params.file}": ${params.reason}`,
       fix: "Restore a readable baseline containing fingerprint strings or a version 1 diagnostics array before retrying the Doctor Run.",
     },
+    DOC0026: {
+      why: (params: { kind: string; name: string }) =>
+        `${params.kind} contributor "${params.name}" was registered more than once.`,
+      fix: (params: { kind: string; name: string }) =>
+        `Give each ${params.kind.toLowerCase()} contributor a unique name instead of registering "${params.name}" twice.`,
+    },
   },
 });
