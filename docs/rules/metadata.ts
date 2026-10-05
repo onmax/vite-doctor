@@ -1236,6 +1236,38 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/structure/no-server-utils-in-app": {
+    description: "Report runtime imports from the Nuxt server directory in app or shared code.",
+    why: "Nuxt's import protection doesn't block server/utils. Importing from it in app code ships server code (database clients, private config reads, Node APIs) into the client bundle. Code used by both sides belongs in shared/utils/, which Nuxt auto-imports in both the app and the server.",
+    recommendedReplacement:
+      "Move code used by both the app and the server to shared/utils/. Keep server-only logic in server/ and call it through an API route.",
+    examples: [
+      {
+        title: "Share utilities through shared/utils",
+        language: "ts",
+        invalid:
+          "// app/components/PriceTag.vue <script setup>\nimport { formatPrice } from '~~/server/utils/pricing'",
+        valid:
+          "// shared/utils/format-price.ts\nexport function formatPrice(cents: number, currency: string) {\n  return new Intl.NumberFormat('en', { style: 'currency', currency }).format(cents / 100)\n}\n\n// app/components/PriceTag.vue: auto-imported\nconst label = computed(() => formatPrice(props.cents, props.currency))",
+      },
+    ],
+  },
+  "nuxt/structure/no-server-types-in-app": {
+    description: "Report type-only imports from the Nuxt server directory in app or shared code.",
+    why: "Type-only imports are erased from the client bundle, but they couple app code to server internals. A refactor that adds a runtime import next to the type pulls server code into the client. Types used by both sides belong in shared/types/, which Nuxt auto-imports in both the app and the server.",
+    recommendedReplacement:
+      "Move types used by both the app and the server to shared/types/ and import them from there on both sides.",
+    examples: [
+      {
+        title: "Share types through shared/types",
+        language: "ts",
+        invalid:
+          "// app/pages/orders.vue <script setup>\nimport type { Order } from '~~/server/utils/orders'",
+        valid:
+          "// shared/types/order.ts\nexport interface Order {\n  id: string\n  totalCents: number\n}\n\n// app/pages/orders.vue: auto-imported\nconst { data } = await useFetch<Order[]>('/api/orders')",
+      },
+    ],
+  },
   "nuxthub/no-personalized-cached-handler": {
     description:
       "Flags personalized cached handler in Nuxthub project code before it leaks into runtime behavior.",

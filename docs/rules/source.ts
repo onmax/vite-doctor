@@ -912,6 +912,8 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "shadcn")
     return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
+  if (rule.id === "nuxt/structure/no-server-types-in-app")
+    return `pnpm nuxt doctor --extends auto,nuxt/strict --rules ${rule.id}`;
   if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
   if (rule.framework === "typescript") return `pnpm vite-doctor . --rules ${rule.id}`;
   return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;
