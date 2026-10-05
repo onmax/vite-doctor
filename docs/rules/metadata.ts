@@ -1303,6 +1303,22 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/imports/no-barrel-files": {
+    description:
+      "Reports imports that load a local barrel file when the imported bindings come from only some of the modules it re-exports.",
+    why: "A barrel file only re-exports other modules. When code imports one binding from it, Vite cannot tell which re-exported module provides that binding or whether any of them has initialization side effects, so in dev it fetches and transforms every module the barrel re-exports. The page loads more files than it needs. Doctor reports the import site only when every imported binding traces to a defining module and some re-exported modules are unused. It ignores type-only imports, namespace imports, module IDs with query or hash suffixes, modules with side-effect or unre-exported value imports, barrels with fewer than three re-exported modules, package entry points declared by package.json exports (including subpath patterns), main, or module, and files under node_modules or generated directories.",
+    recommendedReplacement:
+      "Import each binding from the module that defines it. The diagnostic lists the direct imports to use. Keep the barrel if it is a public package entry point or other code still needs it.",
+    examples: [
+      {
+        title: "Import from the defining module",
+        language: "ts",
+        invalid:
+          "// src/utils/index.ts\nexport * from './date'\nexport * from './currency'\nexport * from './charts'\n\n// src/pages/Home.vue\nimport { formatDate } from '@/utils'",
+        valid: "// src/pages/Home.vue\nimport { formatDate } from '@/utils/date'",
+      },
+    ],
+  },
   "vite/imports/require-static-glob-pattern": {
     description:
       "Reports import.meta.glob patterns that Vite cannot transform into module imports.",
