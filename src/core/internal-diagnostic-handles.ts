@@ -70,5 +70,10 @@ export const doctorInternalDiagnostics = defineDiagnostics({
         `Config Extends entry "${params.entry}" matches multiple Rule Packs through the name "${params.pack}": ${params.matches}.`,
       fix: "Use a fully qualified Rule Pack name in Config Extends to select one preset owner. If full names collide, give each registered Rule Pack a unique name.",
     },
+    DOC0025: {
+      why: (params: { file: string; reason: string }) =>
+        `Invalid Doctor baseline "${params.file}": ${params.reason}`,
+      fix: "Restore a readable baseline containing fingerprint strings or a version 1 diagnostics array before retrying the Doctor Run.",
+    },
   },
 });

@@ -171,7 +171,19 @@ function hasGeneratedHeader(file: string): boolean {
   try {
     const buffer = Buffer.alloc(GENERATED_HEADER_BYTES);
     const bytesRead = readSync(descriptor, buffer, 0, buffer.length, 0);
-    return GENERATED_HEADER_PATTERN.test(buffer.toString("utf8", 0, bytesRead));
+    let header = buffer
+      .toString("utf8", 0, bytesRead)
+      .replace(/^\uFEFF?#![^\r\n]*/, "")
+      .trimStart();
+    while (header) {
+      const comment = header.match(
+        /^(?:\/\/[^\r\n]*|\/\*[\s\S]*?(?:\*\/|$)|<!--[\s\S]*?(?:-->|$))/,
+      )?.[0];
+      if (!comment) return false;
+      if (GENERATED_HEADER_PATTERN.test(comment)) return true;
+      header = header.slice(comment.length).trimStart();
+    }
+    return false;
   } finally {
     closeSync(descriptor);
   }

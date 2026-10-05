@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, relative, resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import type { Diagnostic } from "../primitives.js";
+import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import { parseScript } from "./script.js";
 
 const require = createRequire(import.meta.url);
@@ -73,17 +74,42 @@ function dedupeDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
 
 function readBaseline(root: string, baseline?: string): Set<string> {
   if (!baseline) return new Set();
+  const file = resolve(root, baseline);
+  const invalid = (reason: string) => doctorInternalDiagnostics.DOC0025({ file, reason });
+  let source: string;
   try {
-    const json = JSON.parse(readFileSync(resolve(root, baseline), "utf8"));
-    const entries = Array.isArray(json?.diagnostics)
-      ? json.diagnostics
-      : Array.isArray(json)
-        ? json
-        : [];
-    return new Set(entries.map((entry: any) => entry.fingerprint ?? entry).filter(Boolean));
-  } catch {
-    return new Set();
+    source = readFileSync(file, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return new Set();
+    throw invalid(`Cannot read the file${code ? ` (${code})` : ""}.`);
   }
+  let json: unknown;
+  try {
+    json = JSON.parse(source);
+  } catch {
+    throw invalid("The file is not valid JSON.");
+  }
+  let entries: unknown[];
+  if (Array.isArray(json)) entries = json;
+  else if (json && typeof json === "object" && "diagnostics" in json) {
+    if ("reportVersion" in json) {
+      if (json.reportVersion !== 3) throw invalid("Expected Doctor JSON report version 3.");
+    } else if ("version" in json && json.version !== 1)
+      throw invalid("Expected baseline version 1.");
+    if (!Array.isArray(json.diagnostics)) throw invalid('Expected a "diagnostics" array.');
+    entries = json.diagnostics;
+  } else throw invalid('Expected an array or an object containing a "diagnostics" array.');
+
+  const fingerprints = new Set<string>();
+  for (const [index, entry] of entries.entries()) {
+    const fingerprint =
+      entry && typeof entry === "object" && "fingerprint" in entry ? entry.fingerprint : entry;
+    if (typeof fingerprint !== "string" || !fingerprint.length)
+      throw invalid(`Entry ${index + 1} must contain a non-empty string fingerprint.`);
+    fingerprints.add(fingerprint);
+  }
+  return fingerprints;
 }
 
 function writeBaseline(root: string, baseline: string, diagnostics: Diagnostic[]): void {
