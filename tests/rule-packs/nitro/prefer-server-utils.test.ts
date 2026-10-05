@@ -9,7 +9,6 @@ const helpers = {
   "server/utils/db.ts":
     "export const getDb = () => ({})\nexport { useDrizzle } from 'drizzle-kit'\n",
   "server/utils/db/client.ts": "export function createClient() {}\n",
-  "server/utils/all.ts": "export * from './db'\n",
 };
 
 async function run(
@@ -121,9 +120,103 @@ describe("NITRO0022 explicit imports of server/utils exports", () => {
     ]);
   });
 
+  test.each(["db", "nested/other"])(
+    "preserves imports from duplicate provider %s",
+    async (source) => {
+      expect(
+        await codes({
+          ...helpers,
+          "server/utils/nested/other.ts": "export const getDb = () => 'other'",
+          "server/api/users.ts": `import { getDb } from '../utils/${source}'\n${handler}`,
+        }),
+      ).toEqual([]);
+    },
+  );
+
+  test("only suggests removing unambiguous names in a mixed import", async () => {
+    const diagnostics = await run({
+      ...helpers,
+      "server/utils/other.ts": "export { getDb } from './db'",
+      "server/api/users.ts": `import { getDb, useDrizzle } from '../utils/db'\n${handler}`,
+    });
+    expect(diagnostics.map((item) => item.code)).toEqual(["NITRO0022"]);
+    expect(diagnostics[0]?.suggestion).toContain("Remove useDrizzle from this import");
+    expect(diagnostics[0]?.suggestion).not.toContain("getDb");
+  });
+
+  test.each(["db", "all"])(
+    "stays silent for %s when wildcard exports obscure providers",
+    async (source) => {
+      expect(
+        await codes({
+          ...helpers,
+          "server/utils/all.ts": "export * from './db'",
+          "server/api/users.ts": `import { getDb } from '../utils/${source}'\n${handler}`,
+        }),
+      ).toEqual([]);
+    },
+  );
+
+  test.each([
+    "export default function getDb() {}",
+    "const value = {}; export { value as default }",
+    "export const { getDb } = source",
+    "export const =",
+    "export enum getDb { Main }",
+  ])("preserves explicit imports with competing utility exports: %s", async (source) => {
+    expect(
+      await codes({
+        ...helpers,
+        "server/utils/other.ts": source,
+        "server/api/users.ts": `import { getDb } from '../utils/db'\n${handler}`,
+      }),
+    ).toEqual([]);
+  });
+
+  test("preserves duplicate imports in standalone Nitro 2", async () => {
+    expect(
+      await codes(
+        {
+          "utils/db.ts": "export const getDb = () => 'first'",
+          "utils/other.ts": "export const getDb = () => 'second'",
+          "routes/users.ts": `import { getDb } from '../utils/db'\n${handler}`,
+        },
+        "nitro",
+      ),
+    ).toEqual([]);
+  });
+
+  test("detects duplicate providers in another Nuxt layer", async () => {
+    expect(
+      await codes({
+        ...helpers,
+        "layers/base/server/utils/db.ts": "export const getDb = () => 'layer'",
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          nuxtVersion: "4.0.0",
+          vueVersion: "3.5",
+          rootDir: ".",
+          srcDir: "app",
+          appDir: "app",
+          buildDir: ".nuxt",
+          autoImportEnabled: true,
+          autoImports: [],
+          components: [],
+          aliases: {},
+          routeRules: {},
+          serverHandlers: [],
+          modules: [],
+          layers: [
+            { root: ".", serverDir: "server", priority: 0 },
+            { root: "layers/base", serverDir: "layers/base/server", priority: 1 },
+          ],
+        }),
+        "server/api/users.ts": `import { getDb } from '../utils/db'\n${handler}`,
+      }),
+    ).toEqual([]);
+  });
+
   test.each([
     ["renamed import", "import { getDb as db } from '../utils/db'"],
-    ["name behind export *", "import { getDb } from '../utils/all'"],
     ["missing export", "import { nothing } from '../utils/db'"],
   ])("ignores a %s", async (_name, source) => {
     expect(await codes({ ...helpers, "server/api/users.ts": `${source}\n${handler}` })).toEqual([]);
