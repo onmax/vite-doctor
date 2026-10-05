@@ -1,4 +1,4 @@
-import { basename, relative, resolve } from "pathe";
+import { basename } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -91,20 +91,10 @@ function scannedComposableFileName(ctx: RuleContext): string | null {
   if (!nuxt || ctx.file.isVueSfc) return null;
   if (!/\.(?:[cm]?[jt]s|[jt]sx)$/.test(ctx.file.path) || /\.d\.[cm]?ts$/.test(ctx.file.path))
     return null;
-  const roots = new Set<string>([nuxt.appDir]);
-  for (const layer of nuxt.layers ?? []) if (layer.srcDir) roots.add(layer.srcDir);
-  for (const root of nuxt.appRoots ?? []) {
-    roots.add(root);
-    roots.add(resolve(root, "app"));
-  }
-  for (const root of roots) {
-    const path = relative(resolve(ctx.project.root, root), ctx.file.path);
-    const match = /^composables\/([^/]+)$/.exec(path);
-    if (!match) continue;
-    const name = match[1]!.replace(/\.[^.]+$/, "");
-    return name === "index" ? null : name;
-  }
-  return null;
+  if (!nuxt.manifest?.isCurrent || !nuxt.manifest.scannedComposableFiles?.includes(ctx.file.path))
+    return null;
+  const name = basename(ctx.file.path).replace(/\.[^.]+$/, "");
+  return name === "index" ? null : name;
 }
 
 // Mirrors unimport's scanExports(): the default export takes the file name, camelCased
@@ -141,7 +131,11 @@ function namedValueExports(program: AnyNode): NamedExport[] | null {
     }
     if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
     const declaration = statement.declaration;
-    if (declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") {
+    if (
+      declaration?.type === "FunctionDeclaration" ||
+      declaration?.type === "ClassDeclaration" ||
+      declaration?.type === "TSEnumDeclaration"
+    ) {
       if (declaration.id) exports.push({ name: declaration.id.name, node: declaration.id });
     } else if (declaration?.type === "VariableDeclaration") {
       for (const declarator of declaration.declarations ?? [])

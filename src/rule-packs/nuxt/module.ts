@@ -5,7 +5,7 @@ import {
 } from "../../core/internal/runtime-graph.js";
 import { defineNuxtModule, getLayerDirectories } from "nuxt/kit";
 import type { NuxtModule } from "nuxt/schema";
-import { join, relative, resolve } from "pathe";
+import { dirname, join, relative, resolve } from "pathe";
 import type {
   DoctorConfig,
   DoctorExtension,
@@ -239,6 +239,13 @@ export async function writeManifest(
     normalizeAutoImports(evidence?.autoImportEntries ?? []),
   );
   const layerDirectories = nuxt.options._layers ? getLayerDirectories(nuxt) : [];
+  const composableScanRoots = new Set<string>(
+    nuxt.options.imports?.scan === false
+      ? []
+      : toArray(nuxt.options._layers ?? [{ config: { srcDir } }])
+          .filter((layer: any) => layer.config?.srcDir && layer.config?.imports?.scan !== false)
+          .map((layer: any) => resolve(rootDir, layer.config.srcDir, "composables")),
+  );
   const manifest = {
     nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
     autoRegisteredLayers: autoRegisteredNuxtLayers(rootDir),
@@ -251,6 +258,16 @@ export async function writeManifest(
     buildDir,
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
+    scannedComposableFiles:
+      evidence?.autoImportEntries === undefined
+        ? undefined
+        : [
+            ...new Set(
+              normalizeAutoImports(evidence.autoImportEntries)
+                .filter((entry) => !entry.type && composableScanRoots.has(dirname(entry.from)))
+                .map((entry) => relative(rootDir, entry.from)),
+            ),
+          ].sort(),
     autoImports,
     components: toArray(nuxt.options.components ?? nuxt._components),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(

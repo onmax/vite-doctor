@@ -8,7 +8,25 @@ import { getRuleDocuments, rulesCollectionSource } from "../../../docs/rules/sou
 const ruleId = "nuxt/composables/export-name-matches-file";
 
 function runNuxt(files: Record<string, string>, dependencies?: Record<string, string>) {
-  return runRuleFixture({ rule: exportNameMatchesFile, framework: "nuxt", files, dependencies });
+  return runRuleFixture({
+    rule: exportNameMatchesFile,
+    framework: "nuxt",
+    files: {
+      ...files,
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date(Date.now() + 10000).toISOString(),
+        nuxtVersion: dependencies?.nuxt ?? "4.5.2",
+        appDir: "app",
+        autoImports: [],
+        components: [],
+        layers: [],
+        scannedComposableFiles: Object.keys(files).filter((file) =>
+          /^(?:app\/)?composables\/[^/]+$/.test(file),
+        ),
+      }),
+    },
+    dependencies,
+  });
 }
 
 async function codes(files: Record<string, string>) {
@@ -109,17 +127,54 @@ test.each([
 });
 
 test("NUXT0080 resolves Nuxt 3 root composables and ignores utils", async () => {
-  const result = await runRuleFixture({
-    rule: exportNameMatchesFile,
-    framework: "nuxt",
-    dependencies: { nuxt: "^3.15.0" },
-    files: {
+  const result = await runNuxt(
+    {
       "nuxt.config.ts": "export default defineNuxtConfig({})",
       "composables/fetch-user.ts": `export default function () {}`,
       "utils/fetch-user.ts": `export default function () {}`,
     },
-  });
+    { nuxt: "^3.15.0" },
+  );
   expect(result.diagnostics.map((diagnostic) => diagnostic.file)).toEqual([
     expect.stringMatching(/\/composables\/fetch-user\.ts$/),
   ]);
 });
+
+test.each(["enum", "const enum"])("NUXT0079 handles exported %s values", async (kind) => {
+  expect(
+    await codes({ "app/composables/useCart.ts": `export ${kind} useShoppingCart { Item }` }),
+  ).toEqual(["NUXT0079"]);
+  expect(await codes({ "app/composables/useCart.ts": `export ${kind} useCart { Item }` })).toEqual(
+    [],
+  );
+});
+
+test.each([
+  { label: "missing", scannedComposableFiles: undefined, current: true },
+  { label: "empty", scannedComposableFiles: [], current: true },
+  { label: "populated", scannedComposableFiles: ["app/composables/useCart.ts"], current: true },
+  { label: "stale", scannedComposableFiles: ["app/composables/useCart.ts"], current: false },
+])(
+  "only reports files in current scan evidence: $label",
+  async ({ scannedComposableFiles, current }) => {
+    const result = await runRuleFixture({
+      rule: exportNameMatchesFile,
+      framework: "nuxt",
+      files: {
+        "app/composables/useCart.ts": "export function useShoppingCart() {}",
+        "composables/fetch-user.ts": "export default function () {}",
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: current ? new Date(Date.now() + 10000).toISOString() : undefined,
+          nuxtVersion: "4.5.2",
+          appDir: "app",
+          autoImports: [],
+          layers: [],
+          scannedComposableFiles,
+        }),
+      },
+    });
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+      current && scannedComposableFiles?.length ? ["NUXT0079"] : [],
+    );
+  },
+);
