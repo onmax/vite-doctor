@@ -6,8 +6,9 @@ import {
 } from "../../core/internal/runtime-graph.js";
 import { defineNuxtModule, getLayerDirectories, resolvePath } from "nuxt/kit";
 import type { Nuxt, NuxtModule } from "nuxt/schema";
-import { join, normalize, relative, resolve } from "pathe";
+import { isAbsolute, join, normalize, relative, resolve } from "pathe";
 import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
+import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
 export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 
 export type NuxtDoctorModuleOptions = DoctorConfig;
@@ -443,13 +444,24 @@ async function collectExtensionEntries(nuxt: any): Promise<string[]> {
   const resolved: string[] = [];
   for (const entry of entries) {
     const value = entry instanceof URL ? entry.href : String(entry);
-    const path = await resolvePath(value.startsWith("file:") ? fileURLToPath(value) : value, {
-      cwd: rootDir,
-      alias: nuxt.options.alias ?? {},
-      extensions: [".mjs", ".js", ".mts", ".ts"],
-      fallbackToOriginal: true,
-    });
-    const normalized = normalize(path);
+    let normalized: string;
+    try {
+      const path = await resolvePath(value.startsWith("file:") ? fileURLToPath(value) : value, {
+        cwd: rootDir,
+        alias: nuxt.options.alias ?? {},
+        extensions: [".mjs", ".js", ".mts", ".ts"],
+        fallbackToOriginal: true,
+      });
+      if (!isAbsolute(path) || !statSync(path, { throwIfNoEntry: false })?.isFile()) {
+        throw new Error("host entries must resolve to an existing absolute module file.");
+      }
+      normalized = normalize(path);
+    } catch (error) {
+      throw doctorInternalDiagnostics.DOC0029({
+        entry: value,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
     if (!resolved.includes(normalized)) resolved.push(normalized);
   }
   return resolved;

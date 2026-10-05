@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, normalize } from "pathe";
@@ -109,6 +109,24 @@ test("the Nuxt 4 Bridge records registered Doctor Extension entries once as abso
     join(libraryDir, "dist/doctor.mjs"),
   ]);
 });
+
+test.each(["relative", "package", "absolute", "file URL"])(
+  "the Nuxt 4 Bridge rejects an unresolved %s entry before writing the manifest",
+  async (kind) => {
+    const root = nuxtProject();
+    const missing = join(root, "missing-doctor.mjs");
+    const entry = {
+      relative: "./missing-doctor",
+      package: "missing-doctor-package/extension",
+      absolute: missing,
+      "file URL": pathToFileURL(missing).href,
+    }[kind]!;
+    await expect(
+      writeManifest(fakeNuxt(root, (entries) => entries.push(extensionEntry, entry))),
+    ).rejects.toMatchObject({ name: "DOC0029", message: expect.stringContaining(entry) });
+    expect(existsSync(join(root, ".nuxt/doctor.manifest.json"))).toBe(false);
+  },
+);
 
 test("Nuxt module Doctor Extensions join the shared Doctor Run only when host extensions are trusted", async () => {
   const root = nuxtProject();
