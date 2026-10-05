@@ -1,4 +1,5 @@
 import { AnyNode, createRule, report } from "./shared.js";
+import { uncleanedWatcherResources } from "./resource-cleanup-evidence.js";
 
 export const requireWatcherCleanup = createRule({
   meta: {
@@ -13,29 +14,18 @@ export const requireWatcherCleanup = createRule({
   create(ctx) {
     return {
       ScriptNode(node: AnyNode) {
-        if (!ctx.helpers.isCall(node, "watch") && !ctx.helpers.isCall(node, "watchEffect")) return;
-        const snippet = ctx.file.text.slice(node.start, node.end);
-        if (
-          !/(addEventListener|setInterval|setTimeout|new\s+(ResizeObserver|IntersectionObserver|WebSocket))/.test(
-            snippet,
-          )
-        )
-          return;
-        if (
-          /(onCleanup|onWatcherCleanup|onScopeDispose|removeEventListener|clearInterval|clearTimeout|disconnect|close)\s*\(/.test(
-            snippet,
-          )
-        )
-          return;
-        report(
-          ctx,
-          node,
-          "vue/watch/require-side-effect-cleanup",
-          "warn",
-          "watchers",
-          "This watcher creates a side effect without registering cleanup.",
-          "Use onWatcherCleanup(), the watcher onCleanup argument, or onScopeDispose().",
-        );
+        if (node.type !== "Program") return;
+        for (const resource of uncleanedWatcherResources(ctx)) {
+          report(
+            ctx,
+            resource,
+            "vue/watch/require-side-effect-cleanup",
+            "warn",
+            "watchers",
+            "This watcher creates a side effect without registering cleanup.",
+            "Register cleanup for this resource with onWatcherCleanup() or the watcher onCleanup argument.",
+          );
+        }
       },
     };
   },

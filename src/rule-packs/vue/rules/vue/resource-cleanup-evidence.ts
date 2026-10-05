@@ -6,7 +6,7 @@ import { type AnyNode } from "./shared.js";
 type Variable = ReturnType<
   typeof parseForESLint
 >["scopeManager"]["scopes"][number]["variables"][number];
-type ResourceKind = "interval" | "observer" | "socket" | "listener";
+type ResourceKind = "interval" | "timeout" | "observer" | "socket" | "listener";
 
 interface Resource {
   node: AnyNode;
@@ -29,10 +29,19 @@ export function uncleanedLifecycleResources(
   return evidence.resources
     .filter(
       (resource) =>
+        resource.kind !== "timeout" &&
         !evidence.transfers(resource) &&
         !evidence.cleans(resource) &&
         !evidence.cleansWatcher(resource),
     )
+    .map((resource) => ({ start: resource.node.start, end: resource.node.end }));
+}
+
+export function uncleanedWatcherResources(ctx: RuleContext): Array<{ start: number; end: number }> {
+  if (!mayAcquireResource(ctx.file.scriptAst)) return [];
+  const evidence = createResourceEvidence(ctx);
+  return evidence.watcherResources
+    .filter((resource) => !evidence.cleansWatcher(resource))
     .map((resource) => ({ start: resource.node.start, end: resource.node.end }));
 }
 
@@ -45,7 +54,10 @@ function mayAcquireResource(node: AnyNode): boolean {
       : callee?.type === "MemberExpression"
         ? memberName(callee)
         : undefined;
-  if (node.type === "CallExpression" && ["setInterval", "addEventListener"].includes(name))
+  if (
+    node.type === "CallExpression" &&
+    ["setInterval", "setTimeout", "addEventListener"].includes(name)
+  )
     return true;
   if (
     node.type === "NewExpression" &&
@@ -227,6 +239,7 @@ function createResourceEvidence(ctx: RuleContext) {
     const api = browserApi(node.callee);
     let kind: ResourceKind | undefined;
     if (node.type === "CallExpression" && api === "setInterval") kind = "interval";
+    if (node.type === "CallExpression" && api === "setTimeout") kind = "timeout";
     if (
       node.type === "NewExpression" &&
       (api === "ResizeObserver" || api === "IntersectionObserver")
@@ -274,7 +287,7 @@ function createResourceEvidence(ctx: RuleContext) {
     }
     if (!resource.handle) return false;
     if (changedAfterAcquisition(resource.handle, resource, node)) return false;
-    if (resource.kind === "interval") {
+    if (resource.kind === "interval" || resource.kind === "timeout") {
       return (
         ["clearInterval", "clearTimeout"].includes(browserApi(node.callee) ?? "") &&
         identity(node.arguments[0]) === resource.handle
@@ -528,6 +541,9 @@ function createResourceEvidence(ctx: RuleContext) {
 
   return {
     resources,
+    watcherResources: resources
+      .map((resource) => ({ ...resource, owner: owner(resource.node, false) }))
+      .filter((resource) => watchers.has(resource.owner)),
     cleans,
     cleansWatcher,
     transfers,
