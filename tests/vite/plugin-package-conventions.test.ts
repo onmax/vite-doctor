@@ -231,10 +231,12 @@ module.exports = () => ({ name: 'config', options: {} });`,
     "function nested() { return { name: 'nested', transform() {} } }; return {}",
     "return { metadata: { name: 'metadata', transform() {} } }",
     "const metadata: Plugin = { name: 'metadata' }; return {}",
+    "const metadata: Option = { name: 'metadata' }; return {}",
+    "const plugin: Plugin = { name: 'icons' }; { const plugin = {}; return plugin }",
     "return { name: 'config', transform: { handler: true } }",
   ])("ignores unrelated plugin evidence: %s", async (body) => {
     const result = await run(manifest(), {
-      "src/index.ts": `import type { Plugin } from 'vite'; export default function config() { ${body} }`,
+      "src/index.ts": `import type { Plugin, PluginOption as Option } from 'vite'; export default function config() { ${body} }`,
     });
     expect(result.diagnostics).toEqual([]);
   });
@@ -242,12 +244,15 @@ module.exports = () => ({ name: 'config', options: {} });`,
   test.each([
     "return [{ name: 'icons', transform() {} }]",
     "const plugin = { name: 'icons', transform() {} }; return plugin",
+    "const plugin: Plugin = { name: 'icons' }; return plugin",
+    "const plugin: Option = { name: 'icons' }; return plugin",
+    "const plugin: Plugin = { name: 'icons' }; const alias = plugin; return [alias]",
     "return ({ name: 'icons' } as Plugin)",
     "if (enabled) return { name: 'icons', transform() {} }; return false",
     "return enabled ? { name: 'icons', transform() {} } : false",
   ])("recognizes returned plugin values: %s", async (body) => {
     const result = await run(manifest(), {
-      "src/index.ts": `import type { Plugin } from 'vite'; export default function icons(enabled = true) { ${body} }`,
+      "src/index.ts": `import type { Plugin, PluginOption as Option } from 'vite'; export default function icons(enabled = true) { ${body} }`,
     });
     expect(result.diagnostics).toHaveLength(2);
   });

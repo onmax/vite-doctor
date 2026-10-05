@@ -384,6 +384,11 @@ function isPluginFactory(fn: AnyNode, pluginTypes: ReadonlySet<string>): boolean
     seen = new Set<string>(),
   ): boolean => {
     if (!node) return false;
+    if (node.type === "VariableDeclarator") {
+      if (containsNode(node.id.typeAnnotation, (type) => isPluginTypeReference(type, pluginTypes)))
+        return true;
+      return isPluginValue(node.init, bindings, seen);
+    }
     const value = unwrap(node);
     if (value !== node) {
       if (containsNode(node.typeAnnotation, (type) => isPluginTypeReference(type, pluginTypes)))
@@ -419,8 +424,7 @@ function isPluginFactory(fn: AnyNode, pluginTypes: ReadonlySet<string>): boolean
       for (const statement of node.body) {
         if (statement.type === "VariableDeclaration") {
           for (const declaration of statement.declarations) {
-            if (declaration.id?.type === "Identifier")
-              local.set(declaration.id.name, declaration.init);
+            if (declaration.id?.type === "Identifier") local.set(declaration.id.name, declaration);
           }
         }
       }
