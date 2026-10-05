@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "pathe";
+import { parseForESLint } from "@typescript-eslint/parser";
 import { createRule, type RuleContext } from "../../../core/index.js";
-import { parseScript } from "../../../core/internal/script.js";
 import { diagnostics } from "../../../diagnostics.js";
 import type { AnyNode } from "./shared.js";
 
@@ -254,8 +254,29 @@ function exportsPluginFactory(
   if (depth > MAX_REEXPORT_DEPTH || seen.has(key)) return false;
   seen.add(key);
   let program: AnyNode;
+  const pluginTypeReferences = new Set<AnyNode>();
   try {
-    program = parseScript(file, readFileSync(file, "utf8"));
+    const parsed = parseForESLint(readFileSync(file, "utf8"), {
+      filePath: file,
+      sourceType: "module",
+    });
+    program = parsed.ast;
+    for (const scope of parsed.scopeManager.scopes) {
+      for (const reference of scope.references) {
+        if (!reference.isTypeReference) continue;
+        const imported = reference.resolved?.defs.some((definition) => {
+          if (definition.type !== "ImportBinding") return false;
+          const specifier = definition.node;
+          return (
+            definition.parent.type === "ImportDeclaration" &&
+            definition.parent.source.value === "vite" &&
+            specifier.type === "ImportSpecifier" &&
+            ["Plugin", "PluginOption"].includes(exportName(specifier.imported) ?? "")
+          );
+        });
+        if (imported) pluginTypeReferences.add(reference.identifier);
+      }
+    }
   } catch {
     return false;
   }
@@ -263,7 +284,6 @@ function exportsPluginFactory(
 
   const functions = new Map<string, AnyNode>();
   const imports = new Map<string, { from: string; name: string }>();
-  const pluginTypes = new Set<string>();
   for (const statement of program.body) {
     const declaration =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
@@ -286,8 +306,6 @@ function exportsPluginFactory(
             ? exportName(item.imported)
             : null;
       if (!imported) continue;
-      if (source === "vite" && (imported === "Plugin" || imported === "PluginOption"))
-        pluginTypes.add(item.local.name);
       const from = typeof source === "string" ? localModule(file, source) : null;
       if (from) imports.set(item.local.name, { from, name: imported });
     }
@@ -295,7 +313,7 @@ function exportsPluginFactory(
 
   const isFactoryBinding = (local: string) => {
     const fn = functions.get(local);
-    if (fn) return isPluginFactory(fn, pluginTypes);
+    if (fn) return isPluginFactory(fn, pluginTypeReferences);
     const binding = imports.get(local);
     return binding ? exportsPluginFactory(binding.from, binding.name, depth + 1, seen) : false;
   };
@@ -307,24 +325,25 @@ function exportsPluginFactory(
       const exported = commonJsExportName(assignment.left);
       if (exported && wants(exported)) {
         const value = unwrap(assignment.right);
-        if (isFunction(value) && isPluginFactory(value, pluginTypes)) return true;
+        if (isFunction(value) && isPluginFactory(value, pluginTypeReferences)) return true;
         if (value?.type === "Identifier" && isFactoryBinding(value.name)) return true;
       }
     }
     if (statement.type === "ExportDefaultDeclaration" && wants("default")) {
       const declaration = unwrap(statement.declaration);
-      if (isFunction(declaration) && isPluginFactory(declaration, pluginTypes)) return true;
+      if (isFunction(declaration) && isPluginFactory(declaration, pluginTypeReferences))
+        return true;
       if (declaration?.type === "Identifier" && isFactoryBinding(declaration.name)) return true;
     }
     if (statement.type === "ExportNamedDeclaration") {
       const declaration = statement.declaration;
       if (declaration?.type === "FunctionDeclaration" && wants(declaration.id?.name ?? null))
-        if (isPluginFactory(declaration, pluginTypes)) return true;
+        if (isPluginFactory(declaration, pluginTypeReferences)) return true;
       if (declaration?.type === "VariableDeclaration") {
         for (const declarator of declaration.declarations) {
           const init = unwrap(declarator.init);
           if (wants(declarator.id?.name ?? null) && isFunction(init))
-            if (isPluginFactory(init, pluginTypes)) return true;
+            if (isPluginFactory(init, pluginTypeReferences)) return true;
         }
       }
       const from =
@@ -375,8 +394,9 @@ function commonJsExportName(node: AnyNode): string | null {
   return null;
 }
 
-function isPluginFactory(fn: AnyNode, pluginTypes: ReadonlySet<string>): boolean {
-  if (containsNode(fn.returnType, (node) => isPluginTypeReference(node, pluginTypes))) return true;
+function isPluginFactory(fn: AnyNode, pluginTypeReferences: ReadonlySet<AnyNode>): boolean {
+  if (containsNode(fn.returnType, (node) => isPluginTypeReference(node, pluginTypeReferences)))
+    return true;
 
   const isPluginValue = (
     node: AnyNode,
@@ -385,13 +405,21 @@ function isPluginFactory(fn: AnyNode, pluginTypes: ReadonlySet<string>): boolean
   ): boolean => {
     if (!node) return false;
     if (node.type === "VariableDeclarator") {
-      if (containsNode(node.id.typeAnnotation, (type) => isPluginTypeReference(type, pluginTypes)))
+      if (
+        containsNode(node.id.typeAnnotation, (type) =>
+          isPluginTypeReference(type, pluginTypeReferences),
+        )
+      )
         return true;
       return isPluginValue(node.init, bindings, seen);
     }
     const value = unwrap(node);
     if (value !== node) {
-      if (containsNode(node.typeAnnotation, (type) => isPluginTypeReference(type, pluginTypes)))
+      if (
+        containsNode(node.typeAnnotation, (type) =>
+          isPluginTypeReference(type, pluginTypeReferences),
+        )
+      )
         return true;
       return isPluginValue(node.expression, bindings, seen);
     }
@@ -440,11 +468,11 @@ function isPluginFactory(fn: AnyNode, pluginTypes: ReadonlySet<string>): boolean
     : isPluginValue(fn.body, new Map());
 }
 
-function isPluginTypeReference(node: AnyNode, pluginTypes: ReadonlySet<string>): boolean {
+function isPluginTypeReference(node: AnyNode, pluginTypeReferences: ReadonlySet<AnyNode>): boolean {
   return (
     node.type === "TSTypeReference" &&
     node.typeName?.type === "Identifier" &&
-    pluginTypes.has(node.typeName.name)
+    pluginTypeReferences.has(node.typeName)
   );
 }
 

@@ -232,6 +232,12 @@ module.exports = () => ({ name: 'config', options: {} });`,
     "return { metadata: { name: 'metadata', transform() {} } }",
     "const metadata: Plugin = { name: 'metadata' }; return {}",
     "const metadata: Option = { name: 'metadata' }; return {}",
+    "type Plugin = {}; const result: Plugin = {}; return result",
+    "type Option = {}; const result: Option = {}; return result",
+    "interface Plugin {}; const result: Plugin = {}; return result",
+    "class Plugin {}; const result: Plugin = {}; return result",
+    "{ type Plugin = {}; return {} as Plugin }",
+    "{ type Option = {}; return {} satisfies Option }",
     "const plugin: Plugin = { name: 'icons' }; { const plugin = {}; return plugin }",
     "return { name: 'config', transform: { handler: true } }",
   ])("ignores unrelated plugin evidence: %s", async (body) => {
@@ -242,9 +248,23 @@ module.exports = () => ({ name: 'config', options: {} });`,
   });
 
   test.each([
+    "export default function config<Plugin>(): Plugin { return {} as Plugin }",
+    "export default function config<Option>() { const result: Option = {}; return result }",
+    "export default <Plugin>() => ({} as Plugin)",
+  ])("ignores shadowing generic parameters: %s", async (factory) => {
+    const result = await run(manifest(), {
+      "src/index.ts": `import type { Plugin, PluginOption as Option } from 'vite'; ${factory}`,
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test.each([
     "return [{ name: 'icons', transform() {} }]",
     "const plugin = { name: 'icons', transform() {} }; return plugin",
     "const plugin: Plugin = { name: 'icons' }; return plugin",
+    "const plugin: Plugin = { name: 'icons' }; { type Plugin = {}; return plugin }",
+    "{ type Plugin = {} }; const plugin: Plugin = { name: 'icons' }; return plugin",
+    "const Plugin = {}; const plugin: Plugin = { name: 'icons' }; return plugin",
     "const plugin: Option = { name: 'icons' }; return plugin",
     "const plugin: Plugin = { name: 'icons' }; const alias = plugin; return [alias]",
     "return ({ name: 'icons' } as Plugin)",
