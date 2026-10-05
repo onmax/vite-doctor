@@ -16,6 +16,7 @@ export { noDynamicWorkerUrl, noNodeApiInWorker, requireWorkerUrlPattern } from "
 export { noBrowserGlobalInSsrEntry } from "./ssr.js";
 export { requireStaticGlobPattern } from "./imports.js";
 export { noBarrelFiles } from "./barrels.js";
+export { pluginPackageNamingConventions } from "./plugin-package.js";
 export { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
 export {
   requireDisposeForSideEffects,
@@ -42,6 +43,7 @@ import { noDynamicWorkerUrl, noNodeApiInWorker, requireWorkerUrlPattern } from "
 import { noBrowserGlobalInSsrEntry } from "./ssr.js";
 import { requireStaticGlobPattern } from "./imports.js";
 import { noBarrelFiles } from "./barrels.js";
+import { pluginPackageNamingConventions } from "./plugin-package.js";
 import { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
 import {
   requireDisposeForSideEffects,
@@ -73,6 +75,7 @@ const rules = [
   requireDisposeForSideEffects,
   requireStaticGlobPattern,
   noBarrelFiles,
+  pluginPackageNamingConventions,
 ];
 
 const recommended = [
@@ -90,6 +93,7 @@ const recommended = [
   noBroadFsAllow,
   requireDisposeForSideEffects,
   requireStaticGlobPattern,
+  pluginPackageNamingConventions,
 ].map((rule) => rule.meta.id);
 
 const viteRulePack = defineRulePack({

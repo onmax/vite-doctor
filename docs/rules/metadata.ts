@@ -1604,6 +1604,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/plugin-package/naming-conventions": {
+    description:
+      "Checks that a published Vite plugin package uses the package name prefix and package.json keywords from Vite's plugin conventions.",
+    why: "Vite's plugin conventions ask Vite-only plugins to use the vite-plugin- prefix and the vite-plugin keyword. Plugins that only work with Vue, React, or Svelte should put the framework in the prefix, as in vite-plugin-vue-. Plugins that also work with Rolldown should use the rolldown-plugin- prefix and the rolldown-plugin and vite-plugin keywords; Vite 7 and earlier gave the same guidance for rollup-plugin- packages. These names and keywords are how users find plugins on npm and recognize what a package works with. The Rule runs only on a public package (not private and without bin) that declares vite as a required peer dependency and whose main entry exports a function returning a Vite plugin. Scoped packages are exempt from the prefix checks because Vite's conventions do not define a scoped form; they still need the keywords. The plugin object's name property is not checked: the conventions say nothing about its format, and vite/plugin/require-name already reports a missing name.",
+    recommendedReplacement:
+      'Add the "vite-plugin" keyword, plus "rolldown-plugin" or "rollup-plugin" for packages with those prefixes. Use the vite-plugin- prefix, or vite-plugin-vue-, vite-plugin-react-, or vite-plugin-svelte- for framework-specific plugins. Renaming an already published package means publishing under the new name and deprecating the old one.',
+    examples: [
+      {
+        title: "Use the Vite plugin prefix and keyword",
+        language: "json",
+        invalid: '{\n  "name": "my-icons",\n  "keywords": ["icons"]\n}',
+        valid: '{\n  "name": "vite-plugin-icons",\n  "keywords": ["vite-plugin", "icons"]\n}',
+      },
+    ],
+  },
   "vite/plugin/require-name": {
     description: "Checks that Vite plugin code includes the name needed for predictable behavior.",
     why: "Vite configuration runs in both dev and build pipelines. Narrow, explicit settings reduce surprises across SSR, workers, and local file access.",
