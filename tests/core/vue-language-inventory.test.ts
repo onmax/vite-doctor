@@ -55,6 +55,19 @@ test.each([
     languages: [],
   },
   {
+    source: '<template><template></template><script lang="ts"></script><div>{{</template>',
+    languages: [],
+  },
+  {
+    source:
+      '<template><template data-example="</template> >"/><script lang="ts"></script><div>{{</template>',
+    languages: [],
+  },
+  {
+    source: '<template><!-- </template> --><script lang="ts"></script><div>{{</template>',
+    languages: [],
+  },
+  {
     source: '<template><div>{{</template><script>const text = "<script lang=\\"ts\\">"</script>',
     languages: ["javascript"],
   },
@@ -78,6 +91,7 @@ test("recovers script language evidence from a partially malformed SFC", async (
 test.each([
   '<docs data-description="a sufficiently long custom block opening attribute"></docs>',
   '<style>.x { content: <script lang="js">; }</style>',
+  '<template><template></template><script lang="js"></script><div>{{</template>',
 ])("recovers a real script after %s in a malformed SFC", async (block) => {
   await withProject(
     `<template><div>{{</template>${block}<script setup lang="ts">const value: string = "ok"</script>`,

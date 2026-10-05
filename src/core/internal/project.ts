@@ -181,20 +181,7 @@ function recoverVueScriptLanguages(source: string): ProjectLanguage[] {
       continue;
     }
     if (source[index] === "<" && /^<template(?:\s|>)/i.test(source.slice(index))) {
-      let cursor = index + 1;
-      let attributeQuote = "";
-      for (; cursor < source.length; cursor++) {
-        const character = source[cursor];
-        if (attributeQuote) {
-          if (character === attributeQuote) attributeQuote = "";
-        } else if (character === '"' || character === "'") {
-          attributeQuote = character;
-        } else if (character === ">") {
-          break;
-        }
-      }
-      const close = source.indexOf("</template", cursor + 1);
-      index = close === -1 ? source.length : close + 9;
+      index = skipVueTemplate(source, index) - 1;
       continue;
     }
     if (quote) {
@@ -217,6 +204,48 @@ function recoverVueScriptLanguages(source: string): ProjectLanguage[] {
     }
   }
   return [...languages];
+}
+
+function skipVueTemplate(source: string, start: number): number {
+  let depth = 0;
+  for (let index = start; index < source.length; index++) {
+    if (source.startsWith("<!--", index)) {
+      const end = source.indexOf("-->", index + 4);
+      if (end === -1) return source.length;
+      index = end + 2;
+      continue;
+    }
+    if (source[index] !== "<") continue;
+    const tag = source.slice(index).match(/^<(\/?)([A-Za-z][\w-]*)(?=[\s/>])/);
+    if (!tag) continue;
+    let cursor = index + tag[0].length;
+    let quote = "";
+    for (; cursor < source.length; cursor++) {
+      const character = source[cursor];
+      if (quote) {
+        if (character === quote) quote = "";
+      } else if (character === '"' || character === "'") {
+        quote = character;
+      } else if (character === ">") {
+        break;
+      }
+    }
+    if (cursor === source.length) return source.length;
+    const name = tag[2].toLowerCase();
+    const closing = tag[1] === "/";
+    const selfClosing = source[cursor - 1] === "/";
+    if (name === "template") {
+      if (closing) depth--;
+      else if (!selfClosing) depth++;
+      if (depth === 0) return cursor + 1;
+    } else if (!closing && !selfClosing && (name === "script" || name === "style")) {
+      const close = new RegExp(`</${name}\\s*>`, "i").exec(source.slice(cursor + 1));
+      if (!close) return source.length;
+      cursor += close.index + close[0].length;
+    }
+    index = cursor;
+  }
+  return source.length;
 }
 
 function hasVueSsrEvidence(
