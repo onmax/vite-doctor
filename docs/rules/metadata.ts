@@ -1207,6 +1207,40 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/structure/no-composable-in-utils": {
+    description:
+      "Finds functions in Nuxt utils/ that need a component setup context and belong in composables/.",
+    why: "Nuxt auto-imports both composables/ and utils/, so the directory is how readers know whether a function must run during setup. A utils/ function that calls lifecycle hooks, inject(), provide(), or other composables breaks when it is called from an event handler, timer, or plugin the way plain utilities are.",
+    recommendedReplacement:
+      "Move the function to composables/ and name it with the use prefix. Functions that only read Nuxt app context, such as useNuxtApp(), useRuntimeConfig(), useRouter(), or useState(), can stay in utils/, like Nuxt's own navigateTo().",
+    examples: [
+      {
+        title: "Move setup-bound tracking into a composable",
+        language: "ts",
+        invalid:
+          "// app/utils/track.ts\nexport function trackPageView() {\n  const route = useRoute()\n  onMounted(() => analytics.page(route.fullPath))\n}",
+        valid:
+          "// app/composables/usePageTracking.ts\nexport function usePageTracking() {\n  const route = useRoute()\n  onMounted(() => analytics.page(route.fullPath))\n}",
+      },
+    ],
+  },
+  "nuxt/structure/no-stateless-composable": {
+    description:
+      "Finds use-prefixed functions in Nuxt composables/ that use no Vue or Nuxt API and are plain helpers.",
+    why: "The use prefix and the composables/ directory tell readers a function must be called from setup. A use* function that never touches Vue reactivity, lifecycle, injection, Nuxt APIs, or other composables can run anywhere, so presenting it as a composable hides that it is safe in event handlers and plain modules.",
+    recommendedReplacement:
+      "Move the function to utils/ and drop the use prefix. The rule only reports functions it can prove are plain; calls to unknown auto-imports or reads of project module state keep a function out of scope.",
+    examples: [
+      {
+        title: "Move a plain helper to utils",
+        language: "ts",
+        invalid:
+          "// app/composables/useSlugify.ts\nexport function useSlugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
+        valid:
+          "// app/utils/slugify.ts\nexport function slugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
+      },
+    ],
+  },
   "nuxt/state/no-nonserializable-usestate": {
     description: "Report unsupported live values stored in Nuxt payload state.",
     why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",

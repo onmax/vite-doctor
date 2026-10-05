@@ -83,6 +83,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/seo/prefer-seo-composables": "SEO composables",
   "nuxt/shared/no-nested-shared-autoimport-assumption": "Nested shared/ files",
   "nuxt/shared/no-vue-or-nitro-context-in-shared": "Shared code context",
+  "nuxt/structure/no-composable-in-utils": "utils/ composables",
+  "nuxt/structure/no-stateless-composable": "Plain use* helpers",
   "nuxt/state/no-nonserializable-usestate": "useState values",
   "nuxt/state/prefer-explicit-usestate-key-in-exported-composables": "useState keys",
   "nuxthub/no-personalized-cached-handler": "Per-user caching",
