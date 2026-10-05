@@ -136,7 +136,8 @@ function mayThrowExpression(value: AnyNode, invokeGetters = false): boolean {
         (property.kind === "init" && mayThrowExpression(property.value))
       );
     });
-  if (node.type === "ArrayExpression") return node.elements.some(mayThrowExpression);
+  if (node.type === "ArrayExpression")
+    return node.elements.some((element: AnyNode) => mayThrowExpression(element));
   return true;
 }
 

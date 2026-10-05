@@ -75,6 +75,7 @@ const safe = [
   "() => { try { if (false) throw new Error('unreachable'); return 2 } catch { return () => 1 } }",
   "() => { try { { return 1 } throw new Error('unreachable') } catch { return () => 1 } }",
   "() => { try { if (flag) return 1; return 2 } catch {} return () => 1 }",
+  "() => { try { return [1, { get value() { throw new Error('stop') } }] } catch {} return () => 1 }",
   "() => ({ get value() { return 1 } })",
   "() => ({ set value(value) {} })",
 ];
