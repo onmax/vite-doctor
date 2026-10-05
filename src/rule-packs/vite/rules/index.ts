@@ -15,6 +15,7 @@ export { noDynamicNewUrl, noPublicSrcImport, noSrcAbsolutePublicUrl } from "./as
 export { noDynamicWorkerUrl, noNodeApiInWorker, requireWorkerUrlPattern } from "./worker.js";
 export { noBrowserGlobalInSsrEntry } from "./ssr.js";
 export { requireStaticGlobPattern } from "./imports.js";
+export { pluginPackageNamingConventions } from "./plugin-package.js";
 export { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
 export {
   requireDisposeForSideEffects,
@@ -40,6 +41,7 @@ import { noDynamicNewUrl, noPublicSrcImport, noSrcAbsolutePublicUrl } from "./as
 import { noDynamicWorkerUrl, noNodeApiInWorker, requireWorkerUrlPattern } from "./worker.js";
 import { noBrowserGlobalInSsrEntry } from "./ssr.js";
 import { requireStaticGlobPattern } from "./imports.js";
+import { pluginPackageNamingConventions } from "./plugin-package.js";
 import { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
 import {
   requireDisposeForSideEffects,
@@ -70,6 +72,7 @@ const rules = [
   preferTransformFilter,
   requireDisposeForSideEffects,
   requireStaticGlobPattern,
+  pluginPackageNamingConventions,
 ];
 
 const recommended = [
@@ -87,6 +90,7 @@ const recommended = [
   noBroadFsAllow,
   requireDisposeForSideEffects,
   requireStaticGlobPattern,
+  pluginPackageNamingConventions,
 ].map((rule) => rule.meta.id);
 
 const viteRulePack = defineRulePack({
