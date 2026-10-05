@@ -8,9 +8,16 @@ import type {
   DoctorRunResult,
   RulePack,
 } from "./primitives.js";
-import { allDiagnosticCodesByRuleId } from "./diagnostic-code-map.js";
+import {
+  allDiagnosticCodeListsByRuleId,
+  allDiagnosticCodesByRuleId,
+} from "./diagnostic-code-map.js";
 import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
+import {
+  workspaceDiagnosticMetadataByCode,
+  workspaceDiagnosticMetadataByRuleId,
+} from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
 
 export interface DoctorReportContext {
@@ -157,6 +164,7 @@ export function createAgentReport(
       "<code>",
       "--framework",
       result.framework,
+      ...(context.configFile ? ["--config", context.configFile] : []),
       "--format",
       "agent",
     ],
@@ -200,6 +208,8 @@ export function createAgentReport(
 }
 
 export function createSarifReport(result: DoctorRunResult): string {
+  const status = reportStatus(result);
+  const gaps = result.project.evidenceGaps;
   const ruleId = (diagnostic: Diagnostic) => `${diagnostic.ruleId}:${diagnostic.code}`;
   const rules = new Map<string, Diagnostic>();
   for (const diagnostic of result.diagnostics) rules.set(ruleId(diagnostic), diagnostic);
@@ -209,6 +219,29 @@ export function createSarifReport(result: DoctorRunResult): string {
       $schema: "https://json.schemastore.org/sarif-2.1.0.json",
       runs: [
         {
+          properties: { status },
+          invocations: [
+            {
+              executionSuccessful: status !== "incomplete",
+              toolExecutionNotifications:
+                status === "incomplete"
+                  ? gaps?.length
+                    ? gaps.map((gap) => ({
+                        level: "error",
+                        message: { text: gap.message },
+                        properties: { source: gap.source, files: gap.files },
+                      }))
+                    : [
+                        {
+                          level: "error",
+                          message: {
+                            text: "Install project dependencies and run Doctor from the target package before relying on version-specific results.",
+                          },
+                        },
+                      ]
+                  : undefined,
+            },
+          ],
           columnKind: "utf16CodeUnits",
           tool: {
             driver: {
@@ -326,12 +359,57 @@ export function explainRule(
         item.rule.meta.diagnosticCodes?.includes(ruleId) ||
         codeListForRule(item.rule.meta.id).includes(ruleId),
     );
-  if (!match) return "";
+  if (!match) {
+    const metadata =
+      workspaceDiagnosticMetadataByCode.get(ruleId) ??
+      workspaceDiagnosticMetadataByRuleId.get(ruleId);
+    if (!metadata) return "";
+    const diagnosticCodes = [metadata.code];
+    const meta = {
+      id: metadata.ruleId,
+      title: metadata.title,
+      description: metadata.description,
+      why: metadata.why,
+      recommendedReplacement: metadata.fix,
+      category: metadata.category,
+      severity: metadata.severity,
+      fixable: "no" as const,
+      docsUrl: diagnosticReferenceUrl(metadata.code),
+      diagnosticCodes,
+      analysis: metadata.analysis,
+    };
+    const payload = {
+      ...meta,
+      diagnosticCodes,
+      diagnostics: diagnosticCodes.map((code) => ({ code, docs: diagnosticReferenceUrl(code) })),
+    };
+    if (format === "json") return `${JSON.stringify(payload, null, 2)}\n`;
+    if (format === "agent") {
+      return `${JSON.stringify({ schema: "vite-doctor.explain/v1", status: "ready", ...payload })}\n`;
+    }
+    return (
+      [
+        `${meta.id} (${meta.severity})`,
+        meta.title,
+        meta.description,
+        `Why: ${meta.why}`,
+        `Prefer: ${meta.recommendedReplacement}`,
+        `Diagnostics: ${diagnosticCodes.join(", ")}`,
+        ...diagnosticCodes.map((code) => `Docs: ${diagnosticReferenceUrl(code)}`),
+      ].join("\n") + "\n"
+    );
+  }
   const diagnosticCodes = match.rule.meta.diagnosticCodes ?? codeListForRule(match.rule.meta.id);
+  const documentedCodes =
+    (allDiagnosticCodeListsByRuleId as Record<string, readonly string[]>)[match.rule.meta.id] ?? [];
+  const diagnostics = diagnosticCodes.map((code) => ({
+    code,
+    docs: documentedCodes.includes(code) ? diagnosticReferenceUrl(code) : undefined,
+  }));
   const payload = {
     pack: match.pack,
     diagnosticCodes,
-    diagnostics: diagnosticCodes.map((code) => ({ code, docs: diagnosticReferenceUrl(code) })),
+    diagnostics,
     ...match.rule.meta,
   };
   if (format === "json") return `${JSON.stringify(payload, null, 2)}\n`;
@@ -347,7 +425,8 @@ export function explainRule(
       meta.why ? `Why: ${meta.why}` : undefined,
       meta.recommendedReplacement ? `Prefer: ${meta.recommendedReplacement}` : undefined,
       `Diagnostics: ${diagnosticCodes.join(", ")}`,
-      ...diagnosticCodes.map((code) => `Docs: ${diagnosticReferenceUrl(code)}`),
+      ...diagnostics.flatMap((diagnostic) => (diagnostic.docs ? [`Docs: ${diagnostic.docs}`] : [])),
+      meta.docsUrl ? `Reference: ${meta.docsUrl}` : undefined,
     ]
       .filter(Boolean)
       .join("\n") + "\n"

@@ -1,3 +1,4 @@
+import { packageRulePack } from "../../src/rule-packs/package/index.ts";
 import { createNuxtAuthorizationReviewExtension } from "../../src/rule-packs/nuxt/review/authorization.ts";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -625,7 +626,7 @@ test("since scans no files when the requested Git diff is empty", async () => {
   });
 });
 
-test("changed scope reports diagnostics whose source ranges overlap changed lines", async () => {
+test("changed scope reports overlapping ranges and findings without source ranges", async () => {
   await withFixture({ "src/app.ts": "const first = true\nconst second = true\n" }, async (root) => {
     git(root, "init");
     git(root, "add", ".");
@@ -649,7 +650,7 @@ test("changed scope reports diagnostics whose source ranges overlap changed line
     });
 
     expect(result.scope).toMatchObject({ mode: "changed", files: 1 });
-    expect(result.diagnostics).toHaveLength(2);
+    expect(result.diagnostics).toHaveLength(3);
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -658,6 +659,7 @@ test("changed scope reports diagnostics whose source ranges overlap changed line
           range: expect.objectContaining({ line: 2 }),
         }),
         expect.objectContaining({ ruleId: "test/report-program" }),
+        expect.objectContaining({ ruleId: "test/second-rule" }),
       ]),
     );
     const agent = JSON.parse(createAgentReport(result));
@@ -1466,6 +1468,14 @@ test("rules and explain reports expose rule metadata as json", () => {
 
   expect(rules.rules[0].id).toBe("test/report-program");
   expect(explain.id).toBe("test/report-program");
+
+  const packageExplain = JSON.parse(
+    explainRule([packageRulePack], "package/no-phantom-dependencies", "json"),
+  );
+  expect(packageExplain.diagnostics).toEqual([
+    { code: "PKG0001", docs: "https://vite-doctor.onmax.me/diagnostics/PKG0001" },
+    { code: "PKG0002", docs: "https://vite-doctor.onmax.me/diagnostics/PKG0002" },
+  ]);
 });
 
 test("executable config preserves Doctor preset selection without loading config layers", async () => {

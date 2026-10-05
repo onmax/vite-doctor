@@ -655,6 +655,19 @@ test("CLI returns structured failures for unknown Diagnostic Codes", async () =>
   });
 });
 
+test("CLI explains workspace Diagnostic Codes by code and rule ID", async () => {
+  await withFixture({ "package.json": "{}", "index.ts": "export {}" }, async (root) => {
+    for (const diagnostic of ["DOC0001", "workspace/health/high-fan-out"]) {
+      const result = await runCli(["explain", diagnostic, "--format", "agent"], root);
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.output)).toMatchObject({
+        schema: "vite-doctor.explain/v1",
+        status: "ready",
+      });
+    }
+  });
+});
+
 test("CLI rejects the removed scan alias", async () => {
   const repoRoot = findRepoRoot();
   const result = await runWithCapturedStdout(() =>
