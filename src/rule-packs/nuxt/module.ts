@@ -6,7 +6,7 @@ import {
 } from "../../core/internal/runtime-graph.js";
 import { defineNuxtModule, getLayerDirectories, resolvePath } from "nuxt/kit";
 import type { Nuxt, NuxtModule } from "nuxt/schema";
-import { join, relative, resolve } from "pathe";
+import { join, normalize, relative, resolve } from "pathe";
 import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 
@@ -449,7 +449,8 @@ async function collectExtensionEntries(nuxt: any): Promise<string[]> {
       extensions: [".mjs", ".js", ".mts", ".ts"],
       fallbackToOriginal: true,
     });
-    if (!resolved.includes(path)) resolved.push(path);
+    const normalized = normalize(path);
+    if (!resolved.includes(normalized)) resolved.push(normalized);
   }
   return resolved;
 }

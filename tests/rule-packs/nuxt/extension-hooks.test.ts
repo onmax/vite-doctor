@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, join } from "pathe";
+import { dirname, join, normalize } from "pathe";
 import type { NuxtHooks } from "nuxt/schema";
 import { afterEach, expect, expectTypeOf, test, vi } from "vite-plus/test";
 import { main } from "../../../src/cli-main.ts";
@@ -9,8 +9,8 @@ import { hostDoctorExtensions, runViteDoctor } from "../../../src/doctor.ts";
 import nuxtDoctorModule, { writeManifest } from "../../../src/rule-packs/nuxt/module.ts";
 import type { NuxtModuleSource } from "../../../src/core/index.ts";
 
-const extensionEntry = fileURLToPath(
-  new URL("../../fixtures/extension-library/doctor.ts", import.meta.url),
+const extensionEntry = normalize(
+  fileURLToPath(new URL("../../fixtures/extension-library/doctor.ts", import.meta.url)),
 );
 const roots: string[] = [];
 
