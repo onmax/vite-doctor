@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SfcBlockHashes, SfcHandle, SourceRange } from "../primitives.js";
-import { parseScript, type ScriptParseLang } from "./script.js";
+import { parseScriptResult, type ScriptParseLang } from "./script.js";
 import { parseTemplate } from "./template.js";
 
 const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
@@ -78,16 +78,29 @@ export function parseVueScripts(
   descriptor: any,
   source: string,
 ): Record<string, unknown> | null {
+  return parseVueScriptsResult(file, descriptor, source).ast;
+}
+
+export function parseVueScriptsResult(
+  file: string,
+  descriptor: any,
+  source: string,
+): { ast: Record<string, unknown> | null; errors: string[]; incomplete: boolean } {
   const blocks = [descriptor?.script, descriptor?.scriptSetup]
     .filter(Boolean)
     .sort((left, right) => (left.loc?.start?.offset ?? 0) - (right.loc?.start?.offset ?? 0));
   const lang = vueScriptLang(blocks);
   let program: Record<string, unknown> | null = null;
+  const errors: string[] = [];
+  let incomplete = false;
   for (const block of blocks) {
     const script = createVueScriptForParsing({ script: block }, source);
     if (!script.text.trim()) continue;
-    const ast = parseScript(file, script.text.slice(0, block.loc.end.offset), lang);
-    if (!ast) return null;
+    const parsed = parseScriptResult(file, script.text.slice(0, block.loc.end.offset), lang);
+    errors.push(...parsed.errors);
+    incomplete ||= parsed.incomplete;
+    const ast = parsed.ast;
+    if (!ast) continue;
     if (!program) program = ast;
     else {
       (program.body as unknown[]).push(...(ast.body as unknown[]));
@@ -95,7 +108,7 @@ export function parseVueScripts(
     }
   }
   if (program) program.end = source.length;
-  return program;
+  return { ast: program, errors, incomplete };
 }
 
 function vueScriptLang(blocks: any[]): ScriptParseLang {

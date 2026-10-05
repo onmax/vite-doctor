@@ -9,8 +9,8 @@ import type {
   SourceFileHandle,
   TemplateFact,
 } from "../primitives.js";
-import { createVueScriptForParsing, parseSfcFile, parseVueScripts } from "./sfc.js";
-import { parseScript } from "./script.js";
+import { createVueScriptForParsing, parseSfcFile, parseVueScriptsResult } from "./sfc.js";
+import { parseScriptResult } from "./script.js";
 import { parseTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
 import { createCacheKey, markSession, type ScanSession } from "./scan-session.js";
@@ -47,13 +47,28 @@ async function parseSourceFile(
   const cachedFacts = session.cache.get<unknown>(cacheKey);
   const isVueSfc = absolute.endsWith(".vue");
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
-  const script = isVueSfc ? createVueScriptForParsing(sfc?.descriptor as any, text) : undefined;
-  const scriptAst = isVueSfc
-    ? parseVueScripts(absolute, sfc?.descriptor, text)
+  const parsedScript = isVueSfc
+    ? parseVueScriptsResult(absolute, sfc?.descriptor, text)
     : text.trim()
-      ? parseScript(absolute, text)
-      : null;
-  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text, script?.lang) : null;
+      ? parseScriptResult(absolute, text)
+      : undefined;
+  const scriptAst = parsedScript?.ast ?? null;
+  if (
+    parsedScript?.errors.length &&
+    parsedScript.incomplete &&
+    (isVueSfc || ["js", "jsx", "ts", "tsx"].includes(detectLang(absolute)))
+  ) {
+    session.project.evidenceGaps = [
+      ...(session.project.evidenceGaps ?? []),
+      {
+        source: "script-parser",
+        message: `Cannot parse ${file.displayPath}: ${parsedScript.errors.join("; ")}. Check the source syntax and parser support, then rerun Doctor.`,
+        files: [absolute],
+      },
+    ];
+  }
+  const scriptLang = isVueSfc ? createVueScriptForParsing(sfc?.descriptor, text).lang : undefined;
+  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text, scriptLang) : null;
   const facts =
     isCachedFileFacts(cachedFacts) &&
     cachedFacts.fileHash === hash &&
