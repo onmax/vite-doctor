@@ -84,6 +84,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0020", ruleId: "vite/worker/no-node-api-in-worker" },
   { code: "VITE0021", ruleId: "vite/worker/require-worker-url-pattern" },
   { code: "VITE0022", ruleId: "vite/imports/require-static-glob-pattern" },
+  { code: "VITE0023", ruleId: "vite/imports/no-barrel-files" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
   { code: "TS0003", ruleId: "typescript/evidence/no-unknown-type-aliases" },

@@ -905,7 +905,13 @@ function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {
   return pathParts.map(slugSegment).join("/");
 }
 
+export const strictOnlyRulePresets: ReadonlyMap<string, string> = new Map([
+  ["vite/imports/no-barrel-files", "vite/strict"],
+]);
+
 function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
+  const strictPreset = strictOnlyRulePresets.get(rule.id);
+  if (strictPreset) return `pnpm vite-doctor . --extends auto,${strictPreset} --rules ${rule.id}`;
   if (rule.id === "nuxt/review/api-authorization-coverage")
     return `pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules ${rule.id}`;
   if (rule.framework === "package")

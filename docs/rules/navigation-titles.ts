@@ -133,6 +133,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/env/no-untyped-env": "Typed env",
   "vite/env/prefer-direct-import-meta-env-access": "import.meta.env",
   "vite/hmr/require-dispose-for-side-effects": "HMR dispose",
+  "vite/imports/no-barrel-files": "Barrel files",
   "vite/imports/require-static-glob-pattern": "Static glob patterns",
   "vite/plugin/prefer-transform-filter": "Transform filters",
   "vite/plugin/require-name": "Plugin names",
