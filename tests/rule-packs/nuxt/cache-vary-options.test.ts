@@ -78,6 +78,7 @@ test.each([
   '{ varies: ["cookie"], ...{ maxAge: 60 } }',
   '{ allowCookies: ["session"] }',
   '{ varies: ["cookie"], allowCookies: ["session"] }',
+  '{ allowCookies: ["session"], ...{ allowCookies: undefined }, varies: [] }',
   "{ allowCookies: cookieNames }",
   "{ allowAuthorization: true }",
 ])("preserves explicit cache vary strategies: %s", async (options) => {

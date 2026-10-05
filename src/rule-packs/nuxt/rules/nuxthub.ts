@@ -38,7 +38,11 @@ function hasMeaningfulCacheControl(node: AnyNode) {
       if (property.type !== "Property") continue;
       const name = propertyName(property);
       if (name === undefined) controls.clear();
-      else controls.set(name, property.kind === "init" ? unwrap(property.value) : undefined);
+      else {
+        const value = property.kind === "init" ? unwrap(property.value) : undefined;
+        if (isUndefinedOption(value)) continue;
+        controls.set(name, value);
+      }
     }
   };
   collect(options);
@@ -75,6 +79,10 @@ function hasMeaningfulCacheControl(node: AnyNode) {
       });
     return isDynamicOption(value);
   });
+}
+
+function isUndefinedOption(node: AnyNode): boolean {
+  return node?.type === "Identifier" && node.name === "undefined";
 }
 
 function hasNonEmptyStringArray(node: AnyNode): boolean {
