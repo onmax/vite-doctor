@@ -5,10 +5,19 @@ import { fileURLToPath } from "node:url";
 import { ruleDocumentationMetadata } from "./metadata.js";
 import { ruleNavigationTitles } from "./navigation-titles.js";
 import { workspaceDiagnosticMetadata } from "../../src/core/diagnostic-metadata.js";
+import { piniaRecommendedRuleIds } from "../../src/rule-packs/pinia/presets.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
 export type RuleFix = "safe" | "suggestion" | "no";
-export type RuleFramework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn" | "package";
+export type RuleFramework =
+  | "vue"
+  | "vite"
+  | "nuxt"
+  | "nitro"
+  | "typescript"
+  | "shadcn"
+  | "package"
+  | "pinia";
 
 export interface RuleExample {
   title: string;
@@ -88,6 +97,7 @@ const require = createRequire(import.meta.url);
 let cachedRules: RuleDocument[] | null = null;
 let cachedDiagnostics: DiagnosticDocument[] | null = null;
 let parser: typeof import("oxc-parser") | null = null;
+let cachedNuxtStrictOnlyRuleIds: Set<string> | null = null;
 
 export function getRuleDocuments() {
   if (!cachedRules) cachedRules = collectRuleDocuments();
@@ -104,6 +114,7 @@ export function getRuleReports() {
     typescript: rules.filter((rule) => rule.framework === "typescript"),
     package: rules.filter((rule) => rule.framework === "package"),
     shadcn: rules.filter((rule) => rule.framework === "shadcn"),
+    pinia: rules.filter((rule) => rule.framework === "pinia"),
     all: rules,
   };
 
@@ -116,7 +127,7 @@ export function getRuleReports() {
       },
     ]),
   ) as unknown as Record<
-    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "package" | "all",
+    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "package" | "pinia" | "all",
     RulesReport
   >;
 }
@@ -229,6 +240,7 @@ function readDiagnosticCodeMaps() {
     "src/rule-packs/nuxt/diagnostics.ts",
     "src/rule-packs/typescript/diagnostics.ts",
     "src/rule-packs/shadcn/diagnostics.ts",
+    "src/rule-packs/pinia/diagnostics.ts",
   ];
   const map = new Map<string, string[]>();
   for (const file of files) {
@@ -356,6 +368,11 @@ function collectRuleDocuments() {
       .sort()
       .map((file) => join(nuxtRulesDir, file)),
   ];
+  const piniaRulesDir = join(root, "src/rule-packs/pinia/rules");
+  const piniaSources = readdirSync(piniaRulesDir)
+    .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
+    .sort()
+    .map((file) => join(piniaRulesDir, file));
   const shadcnSources = readdirSync(shadcnRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "shared.ts")
     .sort()
@@ -377,6 +394,7 @@ function collectRuleDocuments() {
       ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
       ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
       ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
+      ...withRulePath(collectRules(piniaSources, "vite-doctor/pinia", "pinia"), "/pinia/rules"),
     ]),
   );
 }
@@ -523,6 +541,74 @@ function ruleSourcesFromIndex(indexFile: string) {
       sources.add(join(dirname(indexFile), `${source.slice(0, -3)}.ts`));
   }
   return [...sources];
+}
+
+function nuxtStrictOnlyRuleIds() {
+  cachedNuxtStrictOnlyRuleIds ??= strictOnlyRuleIdsFromIndex(
+    join(root, "src/rule-packs/nuxt/rules/nuxt/index.ts"),
+  );
+  return cachedNuxtStrictOnlyRuleIds;
+}
+
+function strictOnlyRuleIdsFromIndex(indexFile: string) {
+  const { parseSync, visitorKeys } = loadParser();
+  const parse = (file: string) =>
+    parseSync(file, readFileSync(file, "utf8"), { sourceType: "module", lang: "ts" }).program;
+  const ast = parse(indexFile);
+  const names = new Set<string>();
+  for (const statement of ast.body) {
+    if (statement.type !== "VariableDeclaration") continue;
+    for (const declarator of statement.declarations) {
+      if (declarator.id.type !== "Identifier" || declarator.id.name !== "strictOnlyRules") continue;
+      if (declarator.init?.type !== "ArrayExpression") continue;
+      for (const element of declarator.init.elements)
+        if (element?.type === "Identifier") names.add(element.name);
+    }
+  }
+
+  const ids = new Set<string>();
+  for (const statement of ast.body) {
+    if (statement.type !== "ImportDeclaration" || !statement.source.value.startsWith("./"))
+      continue;
+    const imported = new Set(
+      statement.specifiers
+        .filter((specifier) => names.has(specifier.local.name))
+        .map((specifier) =>
+          specifier.type === "ImportSpecifier" && specifier.imported.type === "Identifier"
+            ? specifier.imported.name
+            : specifier.local.name,
+        ),
+    );
+    if (!imported.size) continue;
+    const ruleAst = parse(join(dirname(indexFile), `${statement.source.value.slice(0, -3)}.ts`));
+    const constants = ruleAst.body.filter(isStringConstantDeclaration);
+    for (const ruleStatement of ruleAst.body) {
+      const declaration =
+        ruleStatement.type === "ExportNamedDeclaration" ? ruleStatement.declaration : ruleStatement;
+      if (declaration?.type !== "VariableDeclaration") continue;
+      const declares = declaration.declarations.some(
+        (declarator) => declarator.id.type === "Identifier" && imported.has(declarator.id.name),
+      );
+      if (!declares) continue;
+      for (const { id } of findMetaObjects(
+        { ...ruleAst, body: [...constants, ruleStatement] },
+        visitorKeys,
+      ))
+        ids.add(id);
+    }
+  }
+  return ids;
+}
+
+function isStringConstantDeclaration(statement: any) {
+  return (
+    statement.type === "VariableDeclaration" &&
+    statement.kind === "const" &&
+    statement.declarations.every(
+      (declarator: any) =>
+        declarator.init?.type === "Literal" && typeof declarator.init.value === "string",
+    )
+  );
 }
 
 function withRulePath(
@@ -905,13 +991,25 @@ function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {
   return pathParts.map(slugSegment).join("/");
 }
 
+export const strictOnlyRulePresets: ReadonlyMap<string, string> = new Map([
+  ["vite/imports/no-barrel-files", "vite/strict"],
+]);
+
 function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
+  const strictPreset = strictOnlyRulePresets.get(rule.id);
+  if (strictPreset) return `pnpm vite-doctor . --extends auto,${strictPreset} --rules ${rule.id}`;
   if (rule.id === "nuxt/review/api-authorization-coverage")
     return `pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules ${rule.id}`;
   if (rule.framework === "package")
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "shadcn")
     return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
+  if (rule.framework === "pinia")
+    return piniaRecommendedRuleIds.includes(rule.id)
+      ? `pnpm vite-doctor . --rules ${rule.id}`
+      : `pnpm vite-doctor . --extends auto,pinia/strict --rules ${rule.id}`;
+  if (rule.framework === "nuxt" && nuxtStrictOnlyRuleIds().has(rule.id))
+    return `pnpm nuxt doctor --extends auto,nuxt/strict --rules ${rule.id}`;
   if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
   if (rule.framework === "typescript") return `pnpm vite-doctor . --rules ${rule.id}`;
   return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;

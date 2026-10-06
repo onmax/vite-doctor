@@ -1,12 +1,19 @@
+import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
 } from "../../core/internal/runtime-graph.js";
-import { defineNuxtModule, getLayerDirectories, resolvePath } from "nuxt/kit";
+import {
+  createIsIgnored,
+  defineNuxtModule,
+  getLayerDirectories,
+  importModule,
+  resolvePath,
+} from "nuxt/kit";
 import type { Nuxt, NuxtModule } from "nuxt/schema";
-import { isAbsolute, join, normalize, relative, resolve } from "pathe";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
 import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
 export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
@@ -195,9 +202,30 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     };
   });
 
-  nuxt.hook?.("imports:dirs", (dirs: unknown[]) => {
-    evidence.importDirs.push(...toArray(dirs));
-  });
+  const nuxtRuntimeUrl = import.meta.resolve("nuxt");
+  let callHook = nuxt.callHook;
+  if (callHook) {
+    Object.defineProperty(nuxt, "callHook", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        // Bind at Nuxt's method lookup, before decorators can add frames or await.
+        // Public callers (including nested hooks) still receive the current delegate.
+        const delegate = callHook;
+        if (getCallSites(2, { sourceMap: false })[1]?.scriptName !== nuxtRuntimeUrl)
+          return delegate;
+        return async function (this: unknown, name: string, ...args: unknown[]) {
+          const result = await delegate.call(this, name, ...args);
+          if (name === "imports:dirs")
+            evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
+          return result;
+        };
+      },
+      set(delegate) {
+        callHook = delegate;
+      },
+    });
+  }
 
   nuxt.hook?.("components:dirs", (dirs: unknown[]) => {
     evidence.componentDirs.push(...toArray(dirs));
@@ -252,6 +280,30 @@ export async function writeManifest(
     normalizeAutoImports(evidence?.autoImportEntries ?? []),
   );
   const layerDirectories = nuxt.options._layers ? getLayerDirectories(nuxt) : [];
+  const composableScanRoots = new Set<string>(
+    nuxt.options.imports?.scan === false
+      ? []
+      : toArray(nuxt.options._layers ?? [{ config: { srcDir } }])
+          .filter((layer: any) => layer.config?.srcDir && layer.config?.imports?.scan !== false)
+          .map((layer: any) => resolve(rootDir, layer.config.srcDir, "composables")),
+  );
+  let scannedAutoImportEntries: unknown[] | undefined;
+  if (evidence?.autoImportContext) {
+    scannedAutoImportEntries = [];
+    if (composableScanRoots.size && evidence.importDirs?.length) {
+      // Use Nuxt's scanner without the public dynamic-import list, which modules can mutate.
+      const { scanDirExports } = await importModule<{
+        scanDirExports: (
+          dirs: string[],
+          options: { fileFilter: (file: string) => boolean },
+        ) => Promise<unknown[]>;
+      }>("unimport", { url: new URL(import.meta.resolve("nuxt")) });
+      const isIgnored = createIsIgnored(nuxt);
+      scannedAutoImportEntries = await scanDirExports(evidence.importDirs.map(String), {
+        fileFilter: (file) => !isIgnored(file),
+      });
+    }
+  }
   const manifest = {
     nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
     autoRegisteredLayers: autoRegisteredNuxtLayers(rootDir),
@@ -264,6 +316,16 @@ export async function writeManifest(
     buildDir,
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
+    scannedComposableFiles:
+      scannedAutoImportEntries === undefined
+        ? undefined
+        : [
+            ...new Set(
+              normalizeAutoImports(scannedAutoImportEntries)
+                .filter((entry) => !entry.type && composableScanRoots.has(dirname(entry.from)))
+                .map((entry) => relative(rootDir, entry.from)),
+            ),
+          ].sort(),
     autoImports,
     components: toArray(nuxt.options.components ?? nuxt._components),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(

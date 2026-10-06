@@ -211,6 +211,7 @@ export interface NuxtProjectInfo {
   modules?: Array<{ name: string; version?: string; doctorPlugin?: string }>;
   moduleSources?: NuxtModuleSource[];
   manifest?: {
+    scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
     keyedComposables: string[];
@@ -250,7 +251,19 @@ export interface NuxtModuleSource {
   appDirs?: string[];
 }
 
+export interface NuxtModuleDefinition {
+  /** `package` is a publishable module package; `local` is auto-registered from an app `modules/` directory. */
+  kind: "package" | "local";
+  entry: string;
+  /** Directory that owns module definition code, or the entry itself for single-file local modules. */
+  root: string;
+  runtimeDir?: string;
+  /** The package root is also a Nuxt layer, so Nuxt transforms its files even inside node_modules. */
+  layer?: boolean;
+}
+
 export interface NuxtDoctorManifest {
+  scannedComposableFiles?: string[];
   autoRegisteredLayers?: string[];
   generatedAt?: string;
   nuxtConfigMtimeMs?: number;
@@ -314,6 +327,7 @@ export interface ProjectInfo {
   tsconfigPath?: string;
   languages?: ProjectLanguage[];
   nuxt?: NuxtProjectInfo;
+  nuxtModuleDefinitions?: NuxtModuleDefinition[];
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
   evidenceGaps?: Array<{ source: string; message: string; files: string[] }>;

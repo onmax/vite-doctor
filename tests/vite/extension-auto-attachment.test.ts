@@ -205,6 +205,7 @@ test("extension Diagnostic Codes cannot use built-in or malformed prefixes", () 
     "DOC0027",
   );
   expect(thrownName(() => packWithCodes("NUXT9001"))).toBe("DOC0028");
+  expect(thrownName(() => packWithCodes("PINIA9001"))).toBe("DOC0028");
   expect(thrownName(() => packWithCodes("Acme0001"))).toBe("DOC0027");
   expect(packWithCodes("ACME0001").name).toBe("acme");
 });
