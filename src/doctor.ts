@@ -8,10 +8,13 @@ import {
   type DoctorFramework,
   type DoctorRunOptions,
   type DoctorRunResult,
+  type NuxtDoctorManifest,
 } from "./core/index.js";
 import { collectRulePacks, resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "pathe";
+import { pathToFileURL } from "node:url";
+import { isAbsolute, join } from "pathe";
+import { doctorInternalDiagnostics } from "./core/internal-diagnostic-handles.js";
 import { nitroRulePack } from "./rule-packs/nitro/index.js";
 import { nuxtDoctorExtensions } from "./rule-packs/nuxt/rules/index.js";
 import { vueRulePack } from "./rule-packs/vue/rules.js";
@@ -27,6 +30,7 @@ export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
     ...(options.config?.extensions ?? []),
     ...(await viteDoctorExtensions(options)),
     ...(options.extensions ?? []),
+    ...(await hostDoctorExtensions(options)),
   ]);
   return registry.packs;
 }
@@ -71,9 +75,50 @@ export async function runViteDoctor(options: DoctorRunOptions) {
   const result = await runDoctor({
     ...options,
     framework,
-    extensions: [...extensions, ...(options.extensions ?? [])],
+    extensions: [
+      ...extensions,
+      ...(options.extensions ?? []),
+      ...(await hostDoctorExtensions(options)),
+    ],
   });
   return { ...result, version: viteDoctorVersion };
+}
+
+export async function hostDoctorExtensions(
+  options: DoctorRunOptions = {},
+): Promise<DoctorExtension[]> {
+  if (!options.hostExtensions || detectRequestedFramework(options) !== "nuxt") return [];
+  const root = options.root ?? process.cwd();
+  const manifest = readJson<Pick<NuxtDoctorManifest, "extensions">>(
+    join(root, ".nuxt/doctor.manifest.json"),
+  );
+  return Promise.all((manifest?.extensions ?? []).map(loadHostExtensionEntry));
+}
+
+async function loadHostExtensionEntry(entry: string): Promise<DoctorExtension> {
+  if (!isAbsolute(entry)) {
+    throw doctorInternalDiagnostics.DOC0029({
+      entry,
+      reason: "host inventory must record an absolute module path.",
+    });
+  }
+  let module: { default?: unknown };
+  try {
+    module = await import(pathToFileURL(entry).href);
+  } catch (error) {
+    throw doctorInternalDiagnostics.DOC0029({
+      entry,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+  const extension = module.default as Partial<DoctorExtension> | undefined;
+  if (!extension || typeof extension !== "object" || typeof extension.name !== "string") {
+    throw doctorInternalDiagnostics.DOC0029({
+      entry,
+      reason: "the default export is not a Doctor Extension.",
+    });
+  }
+  return extension as DoctorExtension;
 }
 
 export async function cleanViteDoctorCache(
@@ -125,8 +170,12 @@ function readPackageJson(root: string): {
   devDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
 } | null {
+  return readJson(join(root, "package.json"));
+}
+
+function readJson<T>(file: string): T | null {
   try {
-    return JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    return JSON.parse(readFileSync(file, "utf8")) as T;
   } catch {
     return null;
   }

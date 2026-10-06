@@ -28,6 +28,9 @@ export const coreDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0024", ruleId: "doctor/config/ambiguous-rule-pack-alias", docs: false },
   { code: "DOC0025", ruleId: "doctor/baseline/invalid-input", docs: false },
   { code: "DOC0026", ruleId: "doctor/extension/duplicate-contributor-name", docs: false },
+  { code: "DOC0027", ruleId: "doctor/extension/invalid-diagnostic-code", docs: false },
+  { code: "DOC0028", ruleId: "doctor/extension/reserved-diagnostic-prefix", docs: false },
+  { code: "DOC0029", ruleId: "doctor/extension/unloadable-host-entry", docs: false },
 ]);
 
 export const diagnostics = coreDiagnosticRegistry.diagnostics;
