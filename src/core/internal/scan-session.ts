@@ -197,7 +197,15 @@ export async function runPhase(
 }
 
 export function persistScanCache(session: ScanSession): void {
-  session.cache.persist({ prune: !session.gitChanges, files: session.files.length });
+  const { options } = session;
+  const subset = Boolean(options.rules) || Boolean(options.analyses);
+  session.cache.persist({
+    prune: !session.gitChanges,
+    files: session.files.length,
+    activeRuleKeys: subset
+      ? new Set(options.analyses && !options.rules ? [] : session.ruleKeys.values())
+      : undefined,
+  });
 }
 
 export function cacheDirectory(root: string, config?: DoctorConfig): string {

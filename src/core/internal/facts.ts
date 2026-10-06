@@ -67,7 +67,7 @@ async function prepareSourceFile(
     hash: "",
   };
   content.hash ||= sha256(content.text!);
-  const cached = session.cache.file(absolute, content.hash);
+  const cached = session.cache.file(absolute, content.hash, entryKey(file));
   if (cached) {
     addEvidenceGaps(session, cached.gaps);
     return createSourceHandle(session, file, content.hash, {
@@ -84,8 +84,19 @@ async function prepareSourceFile(
   const state: SourceState = { entry: file, text, parsed, shape: shapeOf(parsed), fileId };
   const handle = createSourceHandle(session, file, content.hash, state);
   state.facts = createFileFacts(session, file, fileId, text, content.hash, parsed);
-  session.cache.recordFile(absolute, content.hash, state.shape, parsed.gaps, state.facts);
+  session.cache.recordFile(
+    absolute,
+    content.hash,
+    entryKey(file),
+    state.shape,
+    parsed.gaps,
+    state.facts,
+  );
   return handle;
+}
+
+function entryKey(file: ScanFileEntry): string {
+  return JSON.stringify([file.displayPath, file.sourceKind, file.moduleName ?? null]);
 }
 
 /** Loads the ASTs of a file prepared from the cache. Its parser evidence was already reported. */
@@ -118,6 +129,7 @@ export async function sourceFacts(session: ScanSession): Promise<FileFacts[]> {
       session.cache.recordFile(
         handle.path,
         handle.hash,
+        entryKey(state.entry),
         state.shape,
         state.parsed!.gaps,
         state.facts,

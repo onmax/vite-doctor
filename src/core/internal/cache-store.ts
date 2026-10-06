@@ -59,6 +59,8 @@ interface StoredRuleResult {
 
 interface StoredFile {
   hash: string;
+  /** Inventory identity: display path, source kind, and module name. */
+  entry: string;
   /** Bit 1: SFC, bit 2: script AST, bit 4: template AST. */
   shape: number;
   gaps?: EvidenceGap[];
@@ -260,15 +262,21 @@ export class DoctorCache implements SourceInventoryMemo {
   }
 
   /** Shape, parser evidence, and File Facts of a file whose content a run already analyzed. */
-  file(path: string, hash: string): CachedFile | undefined {
+  file(path: string, hash: string, entry: string): CachedFile | undefined {
     const stored = this.loaded?.files[path];
     if (
       stored?.hash !== hash ||
+      stored.entry !== entry ||
       typeof stored.shape !== "number" ||
       (stored.gaps !== undefined && !isEvidenceGaps(stored.gaps))
     )
       return undefined;
-    this.files[path] = { hash, shape: stored.shape, ...(stored.gaps ? { gaps: stored.gaps } : {}) };
+    this.files[path] = {
+      hash,
+      entry,
+      shape: stored.shape,
+      ...(stored.gaps ? { gaps: stored.gaps } : {}),
+    };
     return {
       shape: stored.shape,
       gaps: stored.gaps ?? [],
@@ -284,13 +292,14 @@ export class DoctorCache implements SourceInventoryMemo {
   recordFile(
     path: string,
     hash: string,
+    entry: string,
     shape: number,
     gaps: readonly EvidenceGap[],
     facts: FileFacts,
   ): void {
     this.stats.filesParsed++;
     if (!this.enabled) return;
-    this.files[path] = { hash, shape, ...(gaps.length ? { gaps: [...gaps] } : {}) };
+    this.files[path] = { hash, entry, shape, ...(gaps.length ? { gaps: [...gaps] } : {}) };
     const { fileId: _fileId, ...stored } = facts;
     this.facts[path] = stored;
     this.dirty = true;
@@ -309,7 +318,8 @@ export class DoctorCache implements SourceInventoryMemo {
     if (scope === undefined) stored = loaded.runs[index];
     else {
       const file = loaded.files[scope];
-      if (!file || this.files[scope]?.hash !== file.hash) return undefined;
+      const current = this.files[scope];
+      if (!file || current?.hash !== file.hash || current.entry !== file.entry) return undefined;
       stored = file.r?.[index];
       if (!stored && file.rs !== undefined && loaded.ruleSets[file.rs]?.includes(index))
         stored = {};
@@ -372,12 +382,24 @@ export class DoctorCache implements SourceInventoryMemo {
     return this.stats;
   }
 
-  /** Writes the store when the run changed it. Partial runs keep entries for files they did not see. */
-  persist({ prune, files }: { prune: boolean; files: number }): void {
+  /**
+   * Writes the store when the run changed it. Partial runs keep entries for files they did not
+   * see; runs of a Rule subset keep the results of every Rule outside `activeRuleKeys`.
+   */
+  persist({
+    prune,
+    files,
+    activeRuleKeys,
+  }: {
+    prune: boolean;
+    files: number;
+    activeRuleKeys?: ReadonlySet<string>;
+  }): void {
     if (!this.enabled) return;
     this.stats.at = this.startedAt;
     this.stats.files = files;
     const loaded = this.loaded;
+    if (loaded && activeRuleKeys) this.keepInactiveResults(loaded, activeRuleKeys);
     if (!loaded) this.dirty = true;
     else if (!prune) this.mergeUntouched(loaded);
     else if (
@@ -415,6 +437,22 @@ export class DoctorCache implements SourceInventoryMemo {
     }
   }
 
+  private keepInactiveResults(loaded: StoreIndex, active: ReadonlySet<string>): void {
+    const keep = (scope: string | undefined, index: number, result: StoredRuleResult) => {
+      const key = loaded.ruleKeys[index];
+      if (key === undefined || active.has(key)) return;
+      this.storeResult(scope, key, result.d, this.loadedInputIds(result.i));
+    };
+    for (const [path, file] of Object.entries(loaded.files)) {
+      if (this.files[path]?.hash !== file.hash || this.files[path]?.entry !== file.entry) continue;
+      for (const index of file.rs === undefined ? [] : (loaded.ruleSets[file.rs] ?? []))
+        keep(path, index, {});
+      for (const [index, result] of Object.entries(file.r ?? {})) keep(path, Number(index), result);
+    }
+    for (const [index, result] of Object.entries(loaded.runs))
+      keep(undefined, Number(index), result);
+  }
+
   private mergeUntouched(loaded: StoreIndex): void {
     for (const [key, files] of Object.entries(loaded.walks ?? {})) this.walks[key] ??= files;
     for (const [path, signature] of Object.entries(loaded.generated ?? {}))
@@ -425,6 +463,7 @@ export class DoctorCache implements SourceInventoryMemo {
       if (this.files[path]) continue;
       this.files[path] = {
         hash: file.hash,
+        entry: file.entry,
         shape: file.shape,
         ...(file.gaps ? { gaps: file.gaps } : {}),
       };

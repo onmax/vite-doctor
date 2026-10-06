@@ -375,3 +375,37 @@ test("a store whose facts section is unreadable is rebuilt from source", async (
     expect(readStoreFile(storePath(root)).facts).toEqual(store.facts);
   });
 });
+
+test("a Rule subset run keeps the cached results of the Rules it did not run", async () => {
+  await withProject(
+    async (root) => {
+      const run = { root, framework: "vue" as const, cache: true };
+      const resultsFor = (path: string) => {
+        const { index } = readStoreFile(storePath(root));
+        const file = index.files[join(root, path)]!;
+        return (
+          Object.keys(file.r ?? {}).length +
+          (file.rs === undefined ? 0 : index.ruleSets[file.rs]!.length)
+        );
+      };
+      await runViteDoctor(run);
+      const before = resultsFor("src/Other.vue");
+      writeFileSync(join(root, "src/App.vue"), "<template><button>Edit</button></template>\n");
+
+      await runViteDoctor({ ...run, rules: "vue/template/html-button-has-type" });
+
+      expect(resultsFor("src/Other.vue")).toBe(before);
+      await settle();
+      const full = await runViteDoctor(run);
+      expect(full.diagnostics).toEqual((await runViteDoctor({ ...run, cache: false })).diagnostics);
+      const { lastWrite } = readStoreFile(storePath(root)).index;
+      expect(lastWrite?.ruleResultsReused).toBeGreaterThan(
+        lastWrite?.ruleResultsComputed as number,
+      );
+    },
+    {
+      "src/App.vue": "<template><button>Save</button></template>\n",
+      "src/Other.vue": "<template><button>Open</button></template>\n",
+    },
+  );
+});
