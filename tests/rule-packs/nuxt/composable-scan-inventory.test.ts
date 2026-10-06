@@ -8,16 +8,20 @@ import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
 import { exportNameMatchesFile } from "../../../src/rule-packs/nuxt/rules/nuxt/export-name-matches-file.ts";
 
-test.each([
-  { scan: true, manualFirst: false, removeRoot: false },
-  { scan: true, manualFirst: true, removeRoot: false },
-  { scan: false, manualFirst: false, removeRoot: false },
-  { scan: false, manualFirst: true, removeRoot: false },
-  { scan: true, manualFirst: false, removeRoot: true },
-  { scan: true, manualFirst: true, removeRoot: true },
-])(
-  "captures Nuxt's effective composable scan ($scan, manual module first: $manualFirst, root removed: $removeRoot)",
-  async ({ scan, manualFirst, removeRoot }) => {
+test.each(
+  [
+    { scan: true, manualFirst: false, removeRoot: false },
+    { scan: true, manualFirst: true, removeRoot: false },
+    { scan: false, manualFirst: false, removeRoot: false },
+    { scan: false, manualFirst: true, removeRoot: false },
+    { scan: true, manualFirst: false, removeRoot: true },
+    { scan: true, manualFirst: true, removeRoot: true },
+  ].flatMap((scenario) =>
+    ["none", "sync", "async"].map((decorator) => ({ ...scenario, decorator })),
+  ),
+)(
+  "captures Nuxt's effective composable scan ($scan, manual module first: $manualFirst, root removed: $removeRoot, decorator: $decorator)",
+  async ({ scan, manualFirst, removeRoot, decorator }) => {
     const root = mkdtempSync(join(tmpdir(), "doctor-composable-scan-"));
     const files = {
       "app/composables/useCart.ts": "export enum useShoppingCart { Item }",
@@ -52,6 +56,17 @@ test.each([
       }
       const manualModule = defineNuxtModule({
         async setup(_options, host) {
+          if (decorator !== "none") {
+            const callHook = host.callHook;
+            host.callHook = function (
+              this: typeof host,
+              ...args: Parameters<typeof host.callHook>
+            ) {
+              if (decorator === "async")
+                return Promise.resolve().then(() => Reflect.apply(callHook, this, args));
+              return Reflect.apply(callHook, this, args);
+            } as typeof host.callHook;
+          }
           await host.callHook("imports:dirs", [join(root, "app/composables")]);
           host.hook("modules:done", async () => {
             await host.callHook("imports:dirs", [join(root, "app/composables")]);

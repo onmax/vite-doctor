@@ -172,18 +172,28 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   const nuxtRuntimeUrl = import.meta.resolve("nuxt");
-  const callHook = nuxt.callHook;
+  let callHook = nuxt.callHook;
   if (callHook) {
-    nuxt.callHook = async function (name: string, ...args: unknown[]) {
-      // Public hook names and payloads do not establish scanner ownership. Nuxt calls
-      // this hook directly from its runtime entry; other callers must not supply evidence.
-      const scannerOwned =
-        name === "imports:dirs" &&
-        getCallSites(2, { sourceMap: false })[1]?.scriptName === nuxtRuntimeUrl;
-      const result = await callHook.call(this, name, ...args);
-      if (scannerOwned) evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
-      return result;
-    };
+    Object.defineProperty(nuxt, "callHook", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        // Bind at Nuxt's method lookup, before decorators can add frames or await.
+        // Public callers (including nested hooks) still receive the current delegate.
+        const delegate = callHook;
+        if (getCallSites(2, { sourceMap: false })[1]?.scriptName !== nuxtRuntimeUrl)
+          return delegate;
+        return async function (this: unknown, name: string, ...args: unknown[]) {
+          const result = await delegate.call(this, name, ...args);
+          if (name === "imports:dirs")
+            evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
+          return result;
+        };
+      },
+      set(delegate) {
+        callHook = delegate;
+      },
+    });
   }
 
   nuxt.hook?.("components:dirs", (dirs: unknown[]) => {
