@@ -8,6 +8,7 @@ import {
   explainRule,
   loadDoctorConfig,
   reportStatus,
+  type CacheStatus,
   type DoctorConfig,
   type DoctorReportFormat,
   type DoctorRunOptions,
@@ -128,10 +129,25 @@ export async function main(
       process.stdout.write(report);
     });
   cli
-    .command("cache <action>", "Manage Doctor cache.")
+    .command("cache <action>", "Show (status) or remove (clean) the Doctor cache.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
     .option("--framework <framework>", "Framework override: vite, vue, nitro, or nuxt.")
+    .option("--format <format>", "Output for cache status: text, json, or agent.")
     .action(async (action: string, options) => {
+      if (action === "status") {
+        const format = await presentationFormat(options.format, metadataFormats);
+        const runOptions: DoctorRunOptions = { root: cwd };
+        applyDoctorOptions(runOptions, options);
+        validateCliRunOptions(runOptions);
+        const { viteDoctorCacheStatus } = await import("./doctor.js");
+        const status = await viteDoctorCacheStatus(
+          cwd,
+          await loadCliConfig(cwd, stringFlag(options.config)),
+          runOptions.framework === "auto" ? undefined : runOptions.framework,
+        );
+        process.stdout.write(formatCacheStatus(status, format));
+        return;
+      }
       if (action === "clean") {
         const runOptions: DoctorRunOptions = { root: cwd };
         applyDoctorOptions(runOptions, options);
@@ -145,7 +161,7 @@ export async function main(
         consola.log("Doctor cache cleaned");
         return;
       }
-      throw new Error(`Unknown cache action: ${action}`);
+      throw new Error(`Unknown cache action: ${action}. Use status or clean.`);
     });
   cli.help();
 
@@ -164,6 +180,33 @@ export async function main(
     });
     return 2;
   }
+}
+
+function formatCacheStatus(status: CacheStatus, format: MetadataReportFormat): string {
+  if (format === "json") return `${JSON.stringify(status, null, 2)}\n`;
+  if (format === "agent")
+    return `${JSON.stringify({ schema: "vite-doctor.cache/v1", status: "ready", cache: status })}\n`;
+  const state = !status.exists
+    ? "missing"
+    : status.version === undefined
+      ? "unreadable, rebuilt on the next run"
+      : status.compatible
+        ? "current"
+        : "written by another Doctor build, rebuilt on the next run";
+  const lines = [`Doctor cache: ${status.path}`, `  state: ${state}`];
+  if (status.version !== undefined) {
+    lines.push(
+      `  size: ${(status.bytes / 1024).toFixed(1)} KiB, written ${status.writtenAt}`,
+      `  entries: ${status.files} files, ${status.ruleResults.file} file Rule results, ${status.ruleResults.run} run Rule results, ${status.inputs} Rule inputs${status.graph ? ", workspace graph summary" : ""}`,
+    );
+  }
+  const last = status.lastWrite;
+  if (last) {
+    lines.push(
+      `  last write: ${last.files} files, ${last.filesRead} read, ${last.filesParsed} parsed, ${last.ruleResultsReused} Rule results reused, ${last.ruleResultsComputed} computed, ${last.ruleResultsUncacheable} not cacheable${last.graphReused ? ", graph reused" : ""}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 const hostExtensionsHelp =

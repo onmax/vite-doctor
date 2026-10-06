@@ -1,5 +1,5 @@
 import { globSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { resolve } from "pathe";
+import { basename, dirname, resolve } from "pathe";
 import type { RuleCache, RuleDirEntry, RuleFileStat, RuleFileSystem } from "../primitives.js";
 
 type EntryKind = "file" | "directory" | "symlink" | "other";
@@ -24,10 +24,27 @@ export class RuleInputs {
   private readonly memory = new Map<string, unknown>();
   private readonly memoryInputs = new Map<string, readonly string[]>();
   private readonly knownText: (path: string) => string | undefined;
+  private readonly hidden = new Map<string, Set<string>>();
 
-  constructor(root: string, knownText: (path: string) => string | undefined = () => undefined) {
+  constructor(
+    root: string,
+    knownText: (path: string) => string | undefined = () => undefined,
+    cacheDirectory?: string,
+  ) {
     this.root = resolve(root);
     this.knownText = knownText;
+    // Doctor's own cache directory changes when Doctor writes it, so listings leave it out
+    // instead of making every Rule that walks the project depend on it.
+    if (cacheDirectory) {
+      const owned = ["doctor", ".vite-doctor"].includes(basename(dirname(cacheDirectory)))
+        ? dirname(cacheDirectory)
+        : cacheDirectory;
+      for (const path of new Set([cacheDirectory, owned])) {
+        const names = this.hidden.get(dirname(path)) ?? new Set();
+        names.add(basename(path));
+        this.hidden.set(dirname(path), names);
+      }
+    }
   }
 
   /**
@@ -37,6 +54,10 @@ export class RuleInputs {
    */
   frame(scope?: string): RuleInputFrame {
     return new RuleInputFrame(this, scope);
+  }
+
+  hasText(path: string): boolean {
+    return this.texts.has(path);
   }
 
   text(path: string): string | undefined {
@@ -73,19 +94,22 @@ export class RuleInputs {
   dir(path: string): RuleDirEntry[] | undefined {
     if (this.dirs.has(path)) return this.dirs.get(path);
     let entries: RuleDirEntry[] | undefined;
+    const hidden = this.hidden.get(path);
     try {
-      entries = readdirSync(path, { withFileTypes: true }).map((dirent) =>
-        dirEntry(
-          dirent.name,
-          dirent.isFile()
-            ? "file"
-            : dirent.isDirectory()
-              ? "directory"
-              : dirent.isSymbolicLink()
-                ? "symlink"
-                : "other",
-        ),
-      );
+      entries = readdirSync(path, { withFileTypes: true })
+        .filter((dirent) => !hidden?.has(dirent.name))
+        .map((dirent) =>
+          dirEntry(
+            dirent.name,
+            dirent.isFile()
+              ? "file"
+              : dirent.isDirectory()
+                ? "directory"
+                : dirent.isSymbolicLink()
+                  ? "symlink"
+                  : "other",
+          ),
+        );
     } catch {
       entries = undefined;
     }
@@ -190,12 +214,12 @@ function createRuleFileSystem(inputs: RuleInputs, log: string[]): RuleFileSystem
     readText(path) {
       return text(absolute(path));
     },
-    readJson<T>(path: string): T | undefined {
+    readJson(path) {
       const value = text(absolute(path));
       if (value === undefined) return undefined;
       try {
         const parsed: unknown = JSON.parse(value);
-        return parsed as T;
+        return parsed;
       } catch {
         return undefined;
       }

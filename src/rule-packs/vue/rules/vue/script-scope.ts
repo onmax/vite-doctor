@@ -1,4 +1,4 @@
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
 import type { SFCDescriptor } from "@vue/compiler-sfc";
 import type { RuleContext, SourceFileHandle } from "../../../../core/index.js";
 import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";

@@ -1,4 +1,4 @@
-import * as typescriptParser from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
 import type { SFCBlock, SFCDescriptor } from "@vue/compiler-sfc";
 import type { RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule } from "./shared.js";
@@ -60,10 +60,7 @@ function findGlobalProcessReferences(ctx: RuleContext): Set<number> {
     if (!descriptor) {
       return new Set(
         collectGlobalProcessReferences(
-          typescriptParser.parseForESLint(
-            ctx.file.text,
-            parserOptions(/\.[jt]sx$/.test(ctx.file.relativePath)),
-          ),
+          parseForESLint(ctx.file.text, parserOptions(/\.[jt]sx$/.test(ctx.file.relativePath))),
         ),
       );
     }
@@ -95,14 +92,11 @@ function parserOptions(jsx: boolean) {
 }
 
 function parseVueBlock(block: SFCBlock) {
-  return typescriptParser.parseForESLint(
-    block.content,
-    parserOptions(["jsx", "tsx"].includes(block.lang ?? "")),
-  );
+  return parseForESLint(block.content, parserOptions(["jsx", "tsx"].includes(block.lang ?? "")));
 }
 
 function collectGlobalProcessReferences(
-  parsed: ReturnType<typeof typescriptParser.parseForESLint> | undefined,
+  parsed: ReturnType<typeof parseForESLint> | undefined,
   block?: SFCBlock | null,
 ) {
   if (!parsed) return [];

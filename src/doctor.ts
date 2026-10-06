@@ -1,6 +1,8 @@
 import {
   defineDoctorExtension,
+  cacheStatus,
   cleanCache,
+  type CacheStatus,
   detectProject,
   runDoctor,
   type DoctorConfig,
@@ -147,6 +149,15 @@ export async function cleanViteDoctorCache(
 ): Promise<void> {
   const project = await detectProject(root, requestedFramework ?? "auto");
   cleanCache(root, resolveProjectDoctorConfig(project, config));
+}
+
+export async function viteDoctorCacheStatus(
+  root: string,
+  config?: DoctorConfig,
+  requestedFramework?: DoctorFramework,
+): Promise<CacheStatus> {
+  const project = await detectProject(root, requestedFramework ?? "auto");
+  return cacheStatus(root, resolveProjectDoctorConfig(project, config));
 }
 
 export function shouldFailDoctorRun(result: DoctorRunResult, maxWarnings?: number) {

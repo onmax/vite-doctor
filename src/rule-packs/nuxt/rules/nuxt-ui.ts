@@ -1,4 +1,3 @@
-import { parse as parseVueSfc } from "@vue/compiler-sfc";
 import { join } from "pathe";
 import {
   createRule,
@@ -6,6 +5,7 @@ import {
   type DoctorRule,
   type RuleFileSystem,
 } from "../../../core/index.js";
+import { loadVueCompilerSfc } from "../../../core/internal/lazy-parsers.js";
 import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
@@ -147,7 +147,7 @@ function projectHasUAppRoot(fs: RuleFileSystem, root: string): boolean {
 }
 
 function hasUAppTemplate(source: string): boolean {
-  const ast = parseVueSfc(source).descriptor.template?.ast;
+  const ast = loadVueCompilerSfc().parse(source).descriptor.template?.ast;
   const hasProvider = (node: AnyNode): boolean =>
     (node.type === 1 && node.tagType === 1 && ["UApp", "u-app"].includes(node.tag)) ||
     (node.children ?? []).some(hasProvider);

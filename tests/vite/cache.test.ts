@@ -11,7 +11,7 @@ import {
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 
@@ -328,3 +328,43 @@ async function withFixture(files: Record<string, string>, fn: (root: string) => 
     rmSync(root, { recursive: true, force: true });
   }
 }
+
+test("CLI cache status reports the store a Doctor Run wrote", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "src/main.ts": "export const secret = import.meta.env.VITE_SECRET_TOKEN;",
+    },
+    async (root) => {
+      const output: string[] = [];
+      const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+        output.push(String(chunk));
+        return true;
+      });
+      try {
+        expect(await main(["cache", "status", "--format", "json"], root)).toBe(0);
+        expect(JSON.parse(output.join(""))).toMatchObject({ exists: false, files: 0 });
+        output.length = 0;
+
+        await runViteDoctor({ root, cache: true });
+        expect(await main(["cache", "status", "--format", "json"], root)).toBe(0);
+        const status = JSON.parse(output.join(""));
+        expect(status).toMatchObject({
+          path: join(root, ".vite-doctor/cache/store.json"),
+          exists: true,
+          compatible: true,
+          files: 1,
+          graph: true,
+          lastWrite: expect.objectContaining({ files: 1, filesParsed: 1 }),
+        });
+        expect(status.ruleResults.file).toBeGreaterThan(0);
+        output.length = 0;
+
+        expect(await main(["cache", "status", "--format", "text"], root)).toBe(0);
+        expect(output.join("")).toContain("state: current");
+      } finally {
+        write.mockRestore();
+      }
+    },
+  );
+});

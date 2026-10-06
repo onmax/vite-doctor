@@ -1,5 +1,5 @@
 import type { SFCDescriptor } from "@vue/compiler-sfc";
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
 import { type RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";

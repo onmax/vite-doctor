@@ -548,8 +548,8 @@ export interface RuleDirEntry {
  */
 export interface RuleFileSystem {
   readText(path: string): string | undefined;
-  /** Parsed JSON, or `undefined` when the file is missing or is not valid JSON. */
-  readJson<T = unknown>(path: string): T | undefined;
+  /** Parsed JSON, or `undefined` when the file is missing or is not valid JSON. Validate it before use. */
+  readJson(path: string): unknown;
   exists(path: string): boolean;
   /** Follows symbolic links, like `fs.statSync`. */
   stat(path: string): RuleFileStat | undefined;

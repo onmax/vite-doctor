@@ -52,9 +52,8 @@ test("rebuilding an invalid hardlinked cache entry preserves the other file", as
 
     expect(readFileSync(outside, "utf8")).toBe(original);
     expect(statSync(outside).nlink).toBe(1);
-    expect(Object.values(JSON.parse(readFileSync(cached, "utf8")).entries)).toEqual([
-      expect.objectContaining({ path: join(root, "src/main.ts") }),
-    ]);
+    const index = JSON.parse(readFileSync(cached, "utf8").split("\n")[0]!);
+    expect(Object.keys(index.files)).toEqual([join(root, "src/main.ts")]);
     expect(rerun.diagnostics.map((item) => item.code)).toEqual(
       initial.diagnostics.map((item) => item.code),
     );
@@ -64,6 +63,8 @@ test("rebuilding an invalid hardlinked cache entry preserves the other file", as
 
 test("ordinary cache writes remain readable and preserve warm-run diagnostics", async () => {
   await fixture(async (root) => {
+    // Signatures recorded within one timestamp tick of a write are not trusted.
+    await new Promise((resolve) => setTimeout(resolve, 150));
     const cold = await runViteDoctor({ root, ...options });
     const cache = join(root, ".vite-doctor/cache");
     const entries = readdirSync(cache);

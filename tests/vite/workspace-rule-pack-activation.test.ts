@@ -417,3 +417,54 @@ test("a root Nuxt owner can include a nested Nuxt workspace package", async () =
   });
   expect((await detectProject(root)).framework).toBe("nuxt");
 });
+
+test("cached runs of a workspace with several Nuxt apps equal uncached runs for each app", async () => {
+  const root = multiNuxtMonorepo();
+  const options = { root, runtimeTarget: { nuxt: "4.1.0" } };
+  const comparable = (result: Awaited<ReturnType<typeof runViteDoctor>>) =>
+    result.diagnostics.map(({ diagnostic, ...rest }) => ({ ...rest, code: diagnostic.name }));
+  const expectParity = async () => {
+    const cached = await runViteDoctor({ ...options, cache: true });
+    expect(comparable(cached)).toEqual(
+      comparable(await runViteDoctor({ ...options, cache: false })),
+    );
+    return cached;
+  };
+
+  await expectParity();
+  await expectParity();
+  writeFileSync(
+    join(root, "packages/app-b/.nuxt/doctor.manifest.json"),
+    JSON.stringify({
+      nuxtVersion: "4.0.0",
+      appDir: "web",
+      autoImports: [
+        { name: "useFoo", from: "~/composables/a" },
+        { name: "useFoo", from: "~/composables/b" },
+      ],
+    }),
+  );
+  mkdirSync(join(root, "packages/app-a/.nuxt"), { recursive: true });
+  writeFileSync(
+    join(root, "packages/app-a/.nuxt/doctor.manifest.json"),
+    JSON.stringify({
+      nuxtVersion: "4.0.0",
+      appDir: "app",
+      autoImports: [
+        { name: "useBar", from: "~/composables/c" },
+        { name: "useBar", from: "~/composables/d" },
+      ],
+    }),
+  );
+  const collisions = (await expectParity()).diagnostics.filter(
+    (diagnostic) => diagnostic.ruleId === "nuxt/imports/no-auto-import-collision",
+  );
+  expect(collisions.map((diagnostic) => diagnostic.file.slice(root.length + 1))).toEqual([
+    "packages/app-a/app/pages/index.vue",
+    "packages/app-b/nuxt.config.ts",
+  ]);
+  // Each Nuxt app's manifest Rule result is replayed for that app only.
+  writeFileSync(join(root, "packages/app-a/app/pages/index.vue"), button);
+  await expectParity();
+  await expectParity();
+});

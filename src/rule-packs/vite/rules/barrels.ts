@@ -1,6 +1,7 @@
 import { basename, dirname, extname, join, relative, resolve } from "pathe";
-import ts from "typescript";
+import type ts from "typescript";
 import { createRule, type RuleContext } from "../../../core/index.js";
+import { loadTypeScript } from "../../../core/internal/lazy-parsers.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { diagnostics } from "../../../diagnostics.js";
 import type { AnyNode } from "./shared.js";
@@ -359,6 +360,7 @@ function tsconfigPaths(ctx: RuleContext): Array<[string, string[]]> {
   const cached = ctx.cache.get<Array<[string, string[]]>>(key);
   if (cached) return cached;
   const paths: Array<[string, string[]]> = [];
+  const ts = loadTypeScript();
   for (const name of ["tsconfig.json", "tsconfig.app.json"]) {
     const file = resolve(ctx.project.root, name);
     if (!ctx.fs.stat(file)?.isFile()) continue;
@@ -390,8 +392,8 @@ function isPackageEntry(ctx: RuleContext, file: string): boolean {
   while (dir.startsWith(root)) {
     const manifestPath = join(dir, "package.json");
     if (ctx.fs.stat(manifestPath)?.isFile()) {
-      const manifest = ctx.fs.readJson<Record<string, unknown>>(manifestPath);
-      if (manifest === undefined) return false;
+      const manifest = ctx.fs.readJson(manifestPath);
+      if (!isRecord(manifest)) return false;
       const entries = packageEntryTargets(manifest);
       return entries.some((entry) => {
         if (!entry.target) return false;
@@ -537,4 +539,8 @@ function exportName(node: AnyNode): string | null {
   if (!node) return null;
   if (node.type === "Identifier") return node.name;
   return typeof node.value === "string" ? node.value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -1,4 +1,4 @@
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
 import type { RuleContext } from "../../../core/index.js";
 import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
 import { type AnyNode, createRule, report } from "./shared.js";

@@ -1,4 +1,4 @@
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
 import { type AnyNode, createRule, isNitroServerFile, report, walkScriptLocal } from "./shared.js";
 import { isNitroRouteFile, singleMethodCheck } from "./request-helpers.js";
 

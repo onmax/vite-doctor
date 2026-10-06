@@ -1,4 +1,4 @@
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
 import { AnyNode, createRule, getDirectiveExpression, getElementName, report } from "./shared.js";
 
 export const noRouteObjectPageKey = createRule({

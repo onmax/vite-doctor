@@ -6,8 +6,9 @@ import { compileScript, parse } from "@vue/compiler-sfc";
 import { runVueSfcRuleFixture } from "../rule-fixtures.ts";
 import { parseSfcFile } from "../../src/core/internal/sfc.ts";
 import { restrictVHtml } from "../../src/rule-packs/vue/rules/vue/restrict-v-html.ts";
-import { parseSourceFiles } from "../../src/core/internal/facts.ts";
-import { createCacheKey, createScanSession } from "../../src/core/internal/scan-session.ts";
+import { parseSourceFiles, sourceFacts } from "../../src/core/internal/facts.ts";
+import { createScanSession } from "../../src/core/internal/scan-session.ts";
+import { readStoreFile, writeStoreFile } from "./cache-store-file.ts";
 
 const scripts = [
   '<script setup lang="jsx">const render = () => <span />;</script>',
@@ -16,7 +17,7 @@ const scripts = [
   '<script lang="tsx">export default { render: (text: string) => <span>{text}</span> };</script>',
 ];
 
-test("rebuilds template references from persisted pre-JSX File Facts", async () => {
+test("ignores File Facts persisted by another Doctor build", async () => {
   const root = mkdtempSync(join(tmpdir(), "doctor-template-jsx-cache-"));
   try {
     writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
@@ -24,23 +25,24 @@ test("rebuilds template references from persisted pre-JSX File Facts", async () 
       join(root, "App.vue"),
       `${scripts[0]}\n<template><div ref="element" /></template>`,
     );
-    const options = { root, framework: "vue" as const, cache: true };
+    const options = { root, framework: "vue" as const, cache: true, analyses: "graph" };
     const initial = await createScanSession(options);
     await parseSourceFiles(initial);
-    const facts = initial.facts[0]!;
+    const facts = (await sourceFacts(initial))[0]!;
     expect(facts.templateRefs).toEqual([
       expect.objectContaining({ name: "ref", value: "element" }),
     ]);
-    rmSync(join(root, ".vite-doctor/cache"), { recursive: true, force: true });
-    const legacy = await createScanSession(options);
-    const oldKey = createCacheKey(legacy, "fileFacts", `4:${facts.path}:${facts.fileHash}`);
-    legacy.cache.set(oldKey, { ...facts, templateRefs: [] });
-    legacy.cache.persist({ prune: false });
+    initial.cache.persist({ prune: true, files: 1 });
+    const path = join(root, ".vite-doctor/cache/store.json");
+    const store = readStoreFile(path);
+    store.index.engine = "an-older-build";
+    store.facts[facts.path] = { ...store.facts[facts.path], templateRefs: [] };
+    writeStoreFile(path, store);
 
     const upgraded = await createScanSession(options);
     await parseSourceFiles(upgraded);
 
-    expect(upgraded.facts[0]!.templateRefs).toEqual(facts.templateRefs);
+    expect((await sourceFacts(upgraded))[0]!.templateRefs).toEqual(facts.templateRefs);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

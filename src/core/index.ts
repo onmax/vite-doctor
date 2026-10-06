@@ -10,6 +10,7 @@ import {
   runManifestRules,
 } from "./internal/rule-execution.js";
 import {
+  cacheStatus,
   cleanCache,
   createScanSession,
   markSession,
@@ -35,7 +36,8 @@ export {
   normalizeNuxtModuleSources,
   relativeNuxtScanRoot,
 } from "./internal/nuxt-inventory.js";
-export { cleanCache };
+export { cacheStatus, cleanCache };
+export type { CacheRunStats, CacheStatus } from "./internal/cache-store.js";
 export { evaluatePackActivation, evaluateRuleApplicability } from "./internal/applicability.js";
 export { detectProject } from "./internal/project.js";
 
@@ -81,7 +83,7 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
     session.config,
     options.profile ? session.timings : undefined,
     options.profile ? session.phases : undefined,
-    session.graph,
+    session.graphSummary,
     session.gitChanges
       ? {
           mode: "changed",

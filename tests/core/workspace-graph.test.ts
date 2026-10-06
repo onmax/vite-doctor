@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { relative } from "pathe";
 import { expect, test } from "vite-plus/test";
 import type { GraphEdge } from "../../src/core/primitives.ts";
-import { parseSourceFiles } from "../../src/core/internal/facts.ts";
+import { parseSourceFiles, sourceFacts } from "../../src/core/internal/facts.ts";
 import { createScanSession } from "../../src/core/internal/scan-session.ts";
 import {
   buildWorkspaceGraph,
@@ -170,7 +170,8 @@ test("pins the workspace graph for a monorepo with aliases and workspace package
   await withProject(monorepo, async (root) => {
     const session = await createScanSession({ root, cache: false, analyses: "dead-code,graph" });
     await parseSourceFiles(session);
-    const graph = buildWorkspaceGraph(session);
+    session.facts = await sourceFacts(session);
+    const graph = buildWorkspaceGraph(session, session.ruleInputs.frame().fs);
     const name = (id: number | undefined) =>
       id === undefined ? "?" : graph.files.get(id)!.relativePath;
     const edge = (item: GraphEdge) =>
@@ -295,7 +296,8 @@ test("pins package entry roots for directory, nested, wildcard, and missing targ
     async (root) => {
       const session = await createScanSession({ root, cache: false });
       await parseSourceFiles(session);
-      const graph = buildWorkspaceGraph(session);
+      session.facts = await sourceFacts(session);
+      const graph = buildWorkspaceGraph(session, session.ruleInputs.frame().fs);
       expect(
         graph.virtualRoots
           .filter((item) => item.id.startsWith("package-entry:"))
