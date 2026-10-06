@@ -110,9 +110,10 @@ function resolveServerDirs(project: ProjectInfo): string[] {
 function nuxtServerDirs(project: ProjectInfo): string[] {
   const root = project.root;
   const nuxt = project.nuxt;
-  const layerDirs = nuxt?.manifestPath
-    ? nuxt.layers.flatMap((layer) => (layer.serverDir ? [resolve(root, layer.serverDir)] : []))
-    : [];
+  const layerDirs =
+    nuxt?.manifest?.isCurrent && nuxt.manifestPath
+      ? nuxt.layers.flatMap((layer) => (layer.serverDir ? [resolve(root, layer.serverDir)] : []))
+      : [];
   if (layerDirs.length) return [...new Set(layerDirs)];
   const options = readStaticConfigOptions(project, "nuxt");
   const serverDir = staticOptionValue(options, (path) => path.join(".") === "serverDir");
@@ -171,6 +172,7 @@ function configOptions(file: string): StaticConfigOption[] {
   } catch {
     return [{ path: [], value: null }];
   }
+  if (file.includes("vite.config.")) return viteConfigOptions(program);
   const options: StaticConfigOption[] = [];
   const expression = (program as any).body.find(
     (statement: any) => statement.type === "ExportDefaultDeclaration",
@@ -178,20 +180,44 @@ function configOptions(file: string): StaticConfigOption[] {
   const config = unwrapConfig(expression);
   if (!config) return [{ path: [], value: null }];
   collectOptions(config, [], options);
-  if (file.includes("vite.config.")) {
-    const plugins = config.properties.find(
-      (property: any) => propertyKey(property.key) === "plugins",
-    )?.value;
-    if (plugins) {
-      if (plugins.type !== "ArrayExpression") return [{ path: [], value: null }];
-      for (const plugin of plugins.elements) {
-        if (plugin?.type !== "CallExpression" || plugin.callee?.name !== "nitro") continue;
-        const config = plugin.arguments.length
-          ? unwrapConfig(plugin.arguments[0])
-          : { type: "ObjectExpression", properties: [] };
-        if (!config) return [{ path: [], value: null }];
-        collectOptions(config, ["nitro"], options);
-      }
+  return options;
+}
+
+function viteConfigOptions(program: any): StaticConfigOption[] {
+  const pluginNames = new Set<string>();
+  for (const statement of program.body) {
+    if (statement.type !== "ImportDeclaration" || statement.source.value !== "nitro/vite") continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === "ImportSpecifier" && propertyKey(specifier.imported) === "nitro")
+        pluginNames.add(specifier.local.name);
+    }
+  }
+  const expression = program.body.find(
+    (statement: any) => statement.type === "ExportDefaultDeclaration",
+  )?.declaration;
+  const config = unwrapConfig(expression);
+  if (!config) return pluginNames.size ? [{ path: [], value: null }] : [];
+  const options: StaticConfigOption[] = [];
+  for (const property of config.properties) {
+    if (property.type !== "Property" || property.computed) continue;
+    const key = propertyKey(property.key);
+    if (key === "nitro") {
+      const nested = unwrapConfig(property.value);
+      if (nested) collectOptions(nested, ["nitro"], options);
+      else options.push({ path: [], value: null });
+    }
+    if (key !== "plugins") continue;
+    if (property.value.type !== "ArrayExpression") {
+      if (pluginNames.size) options.push({ path: [], value: null });
+      continue;
+    }
+    for (const plugin of property.value.elements) {
+      if (plugin?.type !== "CallExpression" || !pluginNames.has(plugin.callee?.name)) continue;
+      const nested = plugin.arguments.length
+        ? unwrapConfig(plugin.arguments[0])
+        : { type: "ObjectExpression", properties: [] };
+      if (nested) collectOptions(nested, ["nitro"], options);
+      else options.push({ path: [], value: null });
     }
   }
   return options;
@@ -218,6 +244,17 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
     }
     const key = propertyKey(property.key);
     if (!key) continue;
+    if (key === "imports" || key === "experimental") {
+      const nested = unwrapConfig(property.value);
+      if (nested) {
+        for (const option of nested.properties) {
+          if (option.type !== "Property" || option.computed) continue;
+          const name = propertyKey(option.key);
+          if (name === (key === "imports" ? "autoImport" : "nitroAutoImports"))
+            options.push({ path: [...path, key, name], value: literalValue(option.value) });
+        }
+      }
+    }
     if (
       !["srcDir", "serverDir", "scanDirs", "apiDir", "routesDir", "nitro", "imports"].includes(key)
     )

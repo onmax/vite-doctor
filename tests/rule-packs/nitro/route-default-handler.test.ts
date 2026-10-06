@@ -301,12 +301,67 @@ describe("route classification evidence", () => {
     ).toEqual([]);
   });
 
+  test.each([
+    "export default defineConfig(() => ({ plugins: [] }))",
+    "export default async () => ({ plugins: [] })",
+    "export default makeConfig()",
+    "export default { plugins: dynamic, serverDir: 'wrong' }",
+    "export default { ...dynamic }",
+    "import { nitro } from 'unrelated'; export default { plugins: [nitro({ serverDir: 'wrong' })] }",
+  ])("ignores unrelated Vite configuration: %s", async (config) => {
+    expect(
+      await codes(
+        {
+          "nitro.config.ts": "export default { serverDir: 'backend' }",
+          "vite.config.ts": config,
+          "backend/api/helper.ts": helper,
+        },
+        "nitro",
+        { nitro: "3.0.0-beta.1" },
+      ),
+    ).toEqual(["NITRO0019"]);
+  });
+
+  test.each([
+    "import { nitro as server } from 'nitro/vite'; export default { plugins: [server({ serverDir: 'backend' })] }",
+    "export default { nitro: { serverDir: 'backend' }, plugins: dynamic }",
+  ])("reads only the Vite Nitro integration: %s", async (config) => {
+    expect(
+      await codes(
+        {
+          "vite.config.ts": config,
+          "backend/api/helper.ts": helper,
+        },
+        "nitro",
+        { nitro: "3.0.0-beta.1" },
+      ),
+    ).toEqual(["NITRO0019"]);
+  });
+
+  test.each([
+    "import { nitro } from 'nitro/vite'; export default defineConfig(() => ({ plugins: [nitro(dynamic)] }))",
+    "import { nitro } from 'nitro/vite'; export default { plugins: [nitro(dynamic)] }",
+    "export default { nitro: dynamic }",
+  ])("retains ambiguity from a proven Nitro integration: %s", async (config) => {
+    expect(
+      await codes(
+        {
+          "nitro.config.ts": "export default { serverDir: 'backend' }",
+          "vite.config.ts": config,
+          "backend/api/helper.ts": helper,
+        },
+        "nitro",
+        { nitro: "3.0.0-beta.1" },
+      ),
+    ).toEqual([]);
+  });
+
   test("reads the Nitro plugin config in Vite", async () => {
     expect(
       await codes(
         {
           "vite.config.ts":
-            "export default defineConfig({ plugins: [nitro({ serverDir: 'backend' })] })",
+            "import { nitro } from 'nitro/vite'; export default defineConfig({ plugins: [nitro({ serverDir: 'backend' })] })",
           "backend/api/helper.ts": helper,
         },
         "nitro",
