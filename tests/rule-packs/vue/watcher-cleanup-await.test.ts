@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runVueSfcRuleFixture } from "../../../src/core/testkit.ts";
+import { runVueSfcRuleFixture } from "../../rule-fixtures.ts";
 import { noOnWatcherCleanupAfterAwait } from "../../../src/rule-packs/vue/rules/vue/no-on-watcher-cleanup-after-await.ts";
 
 test.each([

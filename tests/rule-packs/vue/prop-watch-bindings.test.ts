@@ -1,6 +1,6 @@
 import { compileScript, parse } from "@vue/compiler-sfc";
 import { expect, test } from "vite-plus/test";
-import { runVueSfcRuleFixture } from "../../../src/core/testkit.ts";
+import { runVueSfcRuleFixture } from "../../rule-fixtures.ts";
 import { definePropsWatchGetter } from "../../../src/rule-packs/vue/rules/vue/define-props-watch-getter.ts";
 
 const props = "const { count } = defineProps<{ count: number }>()";

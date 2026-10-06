@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
-import { runRuleFixture, runVueSfcRuleFixture } from "../../../src/core/testkit.ts";
+import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { runVueSfcRuleFixture } from "../../rule-fixtures.ts";
 import { noSetupPropsDestructure } from "../../../src/rule-packs/vue/rules/vue/no-setup-props-destructure.ts";
 
 test.each([

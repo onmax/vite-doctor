@@ -1,6 +1,9 @@
-import { expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../src/core/testkit.ts";
+import { afterAll, expect, test } from "vite-plus/test";
+import { createProjectFixture } from "../../src/core/testkit.ts";
 import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/plugin-hmr.ts";
+
+const viteProject = createProjectFixture({ framework: "vite" });
+afterAll(() => viteProject.dispose());
 
 for (const [name, source, leaks] of [
   [
@@ -483,8 +486,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
     });
@@ -521,8 +523,7 @@ for (const [name, source, leaks] of [
   test(
     name,
     async () => {
-      const result = await runRuleFixture({
-        framework: "vite",
+      const result = await viteProject.run({
         rule: requireDisposeForSideEffects,
         files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
       });
@@ -535,8 +536,7 @@ for (const [name, source, leaks] of [
 }
 
 test("an unrelated dispose callback does not hide a leaked interval", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: requireDisposeForSideEffects,
     files: {
       "src/main.ts": `const timer = setInterval(refresh, 1000)
@@ -550,8 +550,7 @@ import.meta.hot.dispose(() => { console.log('disposing') })`,
 });
 
 test("a matching cleanup satisfies the rule", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: requireDisposeForSideEffects,
     files: {
       "src/main.ts": `const timer = setInterval(refresh, 1000)
@@ -565,8 +564,7 @@ import.meta.hot.dispose(() => { clearInterval(timer) })`,
 });
 
 test("finds cleanup after a nested dispose block", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: requireDisposeForSideEffects,
     files: {
       "src/main.ts": `const timer = setInterval(refresh, 1000)
@@ -597,8 +595,7 @@ for (const [kind, setup, cleanup] of [
     for (const cleaned of [false, true]) {
       test(`${kind}: ${callback("cleanup()")} ${cleaned ? "cleans" : "leaks"}`, async () => {
         const body = cleaned ? cleanup : "saveState()";
-        const result = await runRuleFixture({
-          framework: "vite",
+        const result = await viteProject.run({
           rule: requireDisposeForSideEffects,
           files: {
             "src/main.ts": `${setup}
@@ -641,8 +638,7 @@ import.meta.hot.dispose(() => saveState())`,
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: {
         "src/main.ts": `import.meta.hot.accept()
@@ -657,8 +653,7 @@ const timer = setInterval(refresh, 1000)`,
 }
 
 test("resources in deferred functions are not live module resources", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: requireDisposeForSideEffects,
     files: {
       "src/main.ts": `function start() { const timer = setInterval(refresh, 1000) }
@@ -698,8 +693,7 @@ for (const [name, setup, callback, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: {
         "src/main.ts": `const handle = setInterval(refresh, 1000)
@@ -727,8 +721,7 @@ for (const [setup, cleanup] of [
     `() => { { var handle = other }; ${cleanup} }`,
   ]) {
     test(`shadowed ${setup}: ${callback}`, async () => {
-      const result = await runRuleFixture({
-        framework: "vite",
+      const result = await viteProject.run({
         rule: requireDisposeForSideEffects,
         files: {
           "src/main.ts": `const handle = ${setup}
@@ -743,8 +736,7 @@ import.meta.hot.dispose(${callback})`,
 
 for (const callback of ["unsubscribe", "() => unsubscribe()", "() => { unsubscribe() }"]) {
   test(`callable subscription: ${callback}`, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: {
         "src/main.ts": `const unsubscribe = store.subscribe(refresh)
@@ -758,8 +750,7 @@ import.meta.hot.dispose(${callback})`,
 
 for (const qualifier of ["window", "globalThis", "self"]) {
   test(`${qualifier} clears a timeout`, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: {
         "src/main.ts": `const timer = setTimeout(refresh, 1000)
@@ -803,8 +794,7 @@ for (const [setup, cleanup] of [
     ["cast handle", "", cleanup.replaceAll("value", "(handle as any)"), false],
   ] as const) {
     test(`${setup}: ${name}`, async () => {
-      const result = await runRuleFixture({
-        framework: "vite",
+      const result = await viteProject.run({
         rule: requireDisposeForSideEffects,
         files: {
           "src/main.ts": `const handle = ${setup}
@@ -851,8 +841,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -1198,8 +1187,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `function refresh() {}; import.meta.hot.accept(); ${source}` },
     });
@@ -1315,8 +1303,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `function refresh() {}; import.meta.hot.accept(); ${source}` },
     });

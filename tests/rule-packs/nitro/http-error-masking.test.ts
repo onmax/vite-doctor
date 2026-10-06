@@ -1,13 +1,15 @@
-import { expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { afterAll, expect, test } from "vite-plus/test";
+import { createProjectFixture, runRuleFixture } from "../../../src/core/testkit.ts";
 import { noHttpErrorMasking } from "../../../src/rule-packs/nitro/rules/no-http-error-masking.ts";
+
+const nitroProject = createProjectFixture({ framework: "nitro" });
+afterAll(() => nitroProject.dispose());
 
 test.each([
   ["options.statusCode = 500", 0],
   ["options.statusCode = 404", 1],
 ])("replays module-level status writes: %s", async (mutation, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `const options = { statusCode: 404 }; ${mutation}; export default defineEventHandler(() => { try { throw createError(options) } catch { throw new Error() } })`,
@@ -119,8 +121,7 @@ for (const [name, body, expected] of [
   ]),
 ] as [string, string, number][]) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "nitro",
+    const result = await nitroProject.run({
       rule: noHttpErrorMasking,
       files: {
         "server/api/account.ts": `export default defineEventHandler(async () => { ${body} })`,
@@ -131,8 +132,7 @@ for (const [name, body, expected] of [
 }
 
 test("reports when a Nitro catch masks an intentional HTTP error", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(async () => {
@@ -167,8 +167,7 @@ test("keeps binding stability per scope across many try statements in one file",
   export function literal() {
     try { throw createError({ statusCode: 403 }) } catch /* literal */ { throw new Error() }
   }`;
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": source },
   });
@@ -179,8 +178,7 @@ test("keeps binding stability per scope across many try statements in one file",
 });
 
 test("resolves a module-scoped status constant in a handler", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts":
@@ -191,8 +189,7 @@ test("resolves a module-scoped status constant in a handler", async () => {
 });
 
 test("resolves an exported module-scoped status constant", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts":
@@ -203,8 +200,7 @@ test("resolves an exported module-scoped status constant", async () => {
 });
 
 test("follows a stored promise rejection into a later catch", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts":
@@ -215,8 +211,7 @@ test("follows a stored promise rejection into a later catch", async () => {
 });
 
 test("follows a stored promise through a local helper parameter", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts":
@@ -227,8 +222,7 @@ test("follows a stored promise through a local helper parameter", async () => {
 });
 
 test("keeps a catch that preserves intentional HTTP errors", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(async () => {
@@ -1382,8 +1376,7 @@ test.each([
     false,
   ],
 ])("handles %s", async (name, body, handler, expected) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(async () => {
@@ -1397,8 +1390,7 @@ test.each([
 test.each(["api/account.ts", "routes/account.ts", "server/api/account.ts", "middleware/auth.ts"])(
   "analyzes Nitro handler %s",
   async (file) => {
-    const result = await runRuleFixture({
-      framework: "nitro",
+    const result = await nitroProject.run({
       rule: noHttpErrorMasking,
       files: {
         [file]: `export default defineEventHandler(() => {
@@ -1609,8 +1601,7 @@ test.each([
     true,
   ],
 ])("handles %s", async (_name, body, expected) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(async () => { ${body} })`,
@@ -1621,8 +1612,7 @@ test.each([
 
 test("bounds correlated path exploration without affecting the next try", async () => {
   const branches = Array.from({ length: 20 }, (_, index) => `if (flag${index}) {}`).join("\n");
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1643,8 +1633,7 @@ test("bounds correlated path exploration without affecting the next try", async 
 }, 5000);
 
 test.each([false, true])("respects enclosing for initializer %s", async (enter) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1742,8 +1731,7 @@ test.each([
   ],
   ["asserted rethrow", "throw createError({ statusCode: 404 })", "throw error as Error", false],
 ])("handles %s", async (_name, body, handler, expected) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1761,8 +1749,7 @@ test.each([
   ["let original; original = error", "original"],
   ["const first = error; const original = first", "original"],
 ])("preserves caught error aliases through %s", async (declaration, alias) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1794,8 +1781,7 @@ test.each([
     false,
   ],
 ])("respects enclosing switch %s", async (_name, source, expected) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1807,8 +1793,7 @@ test.each([
 });
 
 test("keeps the unmatched path for a possibly NaN switch identifier", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1853,8 +1838,7 @@ test.each([
   ["nullish right", "const value = null ?? notFound()", true],
   ["skipped nullish right", "const value = false ?? notFound()", false],
 ] as const)("models expression execution: %s", async (_name, source, expected) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1876,8 +1860,7 @@ test.each([
   ],
   ["const alias = error; if (flag) { alias.statusCode = 500; return }; throw error", false],
 ] as const)("preserves error identity: %s", async (source, expected) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1900,8 +1883,7 @@ test.each([
   ["switch (2) { case 1: const enabled = false; break; case 2: typeof enabled; MASK }", false],
   ["switch (1) { case 1: const enabled = true; case 2: if (enabled) { MASK } }", true],
 ] as const)("models enclosing switch values and scope: %s", async (source, expected) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1913,8 +1895,7 @@ test.each([
 });
 
 test("preserves a returned HTTP error through a normal finalizer", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -1961,8 +1942,7 @@ test.each([
     "isError",
   ],
 ])("handles %s bindings", async (_name, imports, factory, guard, reports, parameter = "") => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "api/account.ts": `${imports}
@@ -2001,8 +1981,7 @@ test.each([
     true,
   ],
 ])("propagates supplied values through %s", async (_name, helpers, handler, reports) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "api/account.ts": `export default defineEventHandler(() => {
@@ -2041,8 +2020,7 @@ test.each([
     true,
   ],
 ])("resolves closed-over helpers by lexical binding: %s", async (_, outer, inner, reports) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => {
@@ -2061,8 +2039,7 @@ test.each([
 test.each(["in", "of"])(
   "evaluates enclosing for-%s sources before entering the body",
   async (operator) => {
-    const result = await runRuleFixture({
-      framework: "nitro",
+    const result = await nitroProject.run({
       rule: noHttpErrorMasking,
       files: {
         "server/api/account.ts": `export default defineEventHandler(() => {
@@ -2164,8 +2141,7 @@ test.each([
     1,
   ],
 ])("tracks review regression: %s", async (_name, body, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
@@ -2229,8 +2205,7 @@ test.each([
     true,
   ],
 ])("respects %s", async (_name, source, reports) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${source} })` },
   });
@@ -2247,8 +2222,7 @@ test.each([
     `const fail = function self() { self = () => { throw createError({ statusCode: 404 }) }; self() }; try { fail() } catch { throw new Error() }`,
   ],
 ])("does not report unreachable masking after %s", async (_name, source) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${source} })` },
   });
@@ -2256,8 +2230,7 @@ test.each([
 });
 
 test("evaluates computed destructuring keys", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `function missing() { throw createError({ statusCode: 404 }) }
@@ -2328,8 +2301,7 @@ test.each([
     false,
   ],
 ])("models %s in HTTP error paths", async (_name, protectedBody, catchBody, reports) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `import * as h3 from 'h3';
@@ -2444,8 +2416,7 @@ test.each([
     1,
   ],
 ])("respects reviewed execution path: %s", async (_name, body, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
@@ -2514,8 +2485,7 @@ test.each([
     1,
   ],
 ])("preserves reviewed helper and iteration behavior: %s", async (_name, body, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(async () => { ${body} })`,
@@ -2545,8 +2515,7 @@ test.each([
   ["computed increment", "const key = 'statusCode'; error[key]++; throw error", 1],
   ["decrement preserves", "error.statusCode--; throw error", 0],
 ])("tracks reviewed catch mutations: %s", async (_name, body, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => { try { throw createError({ statusCode: 499 }) } catch (error) { ${body} } })`,
@@ -2597,8 +2566,7 @@ test.each([
     0,
   ],
 ])("tracks reviewed spread arguments: %s", async (_name, body, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
@@ -2667,8 +2635,7 @@ test.each([
     0,
   ],
 ])("tracks reviewed closure, assignment, and iteration paths: %s", async (_name, body, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
@@ -2853,8 +2820,7 @@ test.each([
     0,
   ],
 ])("tracks reviewed call ordering and nullish paths: %s", async (_name, body, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
@@ -2862,8 +2828,7 @@ test.each([
 });
 
 test("enclosing async handler adopts rejected return", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts":
@@ -2874,8 +2839,7 @@ test("enclosing async handler adopts rejected return", async () => {
 });
 
 test("enclosing synchronous handler adopts rejected return", async () => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts":
@@ -2907,8 +2871,7 @@ test.each([
     0,
   ],
 ])("respects known functions and TypeScript wrappers: %s", async (body, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
@@ -2929,8 +2892,7 @@ test.each([
     0,
   ],
 ])("adopts only H3 handler returns: %s", async (source, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": source },
   });
@@ -2945,8 +2907,7 @@ test.each([
   "await (null ?? Promise.reject(createError({ statusCode: 404 })))",
   "await (unknownValue ?? Promise.reject(createError({ statusCode: 404 })))",
 ])("adopts the result of a composite await: %s", async (expression) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(async () => { try { ${expression} } catch { throw new Error() } })`,
@@ -2972,8 +2933,7 @@ test.each([
     0,
   ],
 ])("binds literal values inside protected for-of loops: %s", async (statement, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => { try { ${statement} } catch { throw new Error() } })`,
@@ -3041,8 +3001,7 @@ test.each([
     0,
   ],
 ])("preserves known HTTP errors through local options and guards: %s", async (statement, count) => {
-  const result = await runRuleFixture({
-    framework: "nitro",
+  const result = await nitroProject.run({
     rule: noHttpErrorMasking,
     files: {
       "server/api/account.ts": `export default defineEventHandler(() => { ${statement} })`,

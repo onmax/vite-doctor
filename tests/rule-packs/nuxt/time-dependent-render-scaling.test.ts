@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vite-plus/test";
-import { runNuxtAppRuleFixture } from "../../../src/core/testkit.ts";
+import { runNuxtAppRuleFixture } from "../../rule-fixtures.ts";
 import { noTimeDependentRenderWithoutNuxtTimeOrClientOnly } from "../../../src/rule-packs/nuxt/rules/nuxt/no-time-dependent-render-without-nuxt-time-or-client-only.ts";
 
 const walked = vi.hoisted(() => ({ nodes: 0 }));

@@ -1,12 +1,14 @@
-import { expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../src/core/testkit.ts";
+import { afterAll, expect, test } from "vite-plus/test";
+import { createProjectFixture } from "../../src/core/testkit.ts";
 import { noRuntimeObjectDefine, noSecretDefine } from "../../src/rule-packs/vite/rules/define.ts";
+
+const viteProject = createProjectFixture({ framework: "vite" });
+afterAll(() => viteProject.dispose());
 
 test.each(["false", "0", '""', '"safe"'])(
   "applies non-nullish merge overrides: %s",
   async (value) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: noSecretDefine,
       files: {
         "vite.config.ts": `import { mergeConfig } from "vite";
@@ -40,8 +42,7 @@ test.each([
   ["const replacement = process.env.PRIVATE_TOKEN;", "true && replacement", true],
   ["const replacement = process.env.PRIVATE_TOKEN;", '"" || replacement', true],
 ])("resolves reviewed value semantics: %s %s", async (setup, value, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `${setup} export default { define: { VALUE: JSON.stringify(${value}) } }`,
@@ -53,8 +54,7 @@ test.each([
 test.each(["[key]", "[...keys]", '[...keys, "other"]'])(
   "resolves JSON property list %s",
   async (list) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: noSecretDefine,
       files: {
         "vite.config.ts": `const key = "value"; const keys = [key]; export default { define: { VALUE: JSON.stringify({ value: process.env.PRIVATE_TOKEN }, ${list}) } }`,
@@ -67,8 +67,7 @@ test.each(["[key]", "[...keys]", '[...keys, "other"]'])(
 test.each([noSecretDefine, noRuntimeObjectDefine])(
   "reads CommonJS Vite helpers: $meta.id",
   async (rule) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule,
       files: {
         "vite.config.cjs": `const { defineConfig: config, mergeConfig } = require("vite"); module.exports = config(mergeConfig({}, { define: { VALUE: { token: process.env.PRIVATE_TOKEN } } }));`,
@@ -83,8 +82,7 @@ test.each([
   ["`PRIVATE_TOKEN`", true],
   ['"PUBLIC_VERSION"', false],
 ])("resolves computed environment destructuring keys: %s", async (key, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `const key = ${key}; const { [key]: replacement } = process.env;
@@ -105,8 +103,7 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
   ])(
     `resolves config member projections for ${rule.meta.id}: %s`,
     async (projection, argument, expected) => {
-      const result = await runRuleFixture({
-        framework: "vite",
+      const result = await viteProject.run({
         rule,
         files: {
           "vite.config.ts": `const make = options => ${projection}; export default make(${argument})`,
@@ -126,8 +123,7 @@ test.each([
   ["`public` || process.env.PRIVATE_TOKEN", false],
   ["`` || process.env.PRIVATE_TOKEN", true],
 ])("selects reachable logical values: %s", async (value, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `export default { define: { VALUE: JSON.stringify(${value}) } }`,
@@ -143,8 +139,7 @@ test.each([
   ['if (flag) return "public"; return process.env.PRIVATE_TOKEN', true],
   ["throw new Error(); return process.env.PRIVATE_TOKEN", false],
 ])("ignores unreachable helper returns: %s", async (body, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `const read = () => { ${body} }; export default { define: { VALUE: JSON.stringify(read()) } }`,
@@ -154,8 +149,7 @@ test.each([
 });
 
 test.each(['["other"]', '["public"]'])("filters template keys with %s", async (list) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -178,8 +172,7 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
   ])(
     `projects getters and unresolved spreads for ${rule.meta.id}: %s`,
     async (argument, expected) => {
-      const result = await runRuleFixture({
-        framework: "vite",
+      const result = await viteProject.run({
         rule,
         files: {
           "vite.config.ts": `const make = options => options.config; export default make(${argument})`,
@@ -200,8 +193,7 @@ test.each([
   ],
   ['try { return "public" } finally { return process.env.PRIVATE_TOKEN }', true],
 ])("respects finally completion: %s", async (body, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `const read = () => { ${body} }; export default { define: { VALUE: JSON.stringify(read()) } }`,
@@ -213,8 +205,7 @@ test.each([
 test.each([noSecretDefine, noRuntimeObjectDefine])(
   "recognizes Vitest config helpers for $meta.id",
   async (rule) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule,
       files: {
         "vitest.config.ts": `import { defineConfig, mergeConfig } from 'vitest/config'; export default defineConfig(mergeConfig({}, { define: { VALUE: { value: process.env.PRIVATE_TOKEN } } }))`,
@@ -228,8 +219,7 @@ test.each([
   'const undefined = "public"; const read = (value = process.env.PRIVATE_TOKEN) => value; export default { define: { VALUE: JSON.stringify(read(undefined)) } }',
   'const undefined = "public"; const config = (value = process.env.PRIVATE_TOKEN) => ({ define: { VALUE: value } }); export default config(undefined)',
 ])("respects shadowed undefined arguments: %s", async (source) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: { "vite.config.ts": source },
   });
@@ -248,8 +238,7 @@ test.each([
   ["[process.env.PRIVATE_TOKEN]", '"safe"', true],
   ["{ value: process.env.PRIVATE_TOKEN }", '"safe"', false],
 ])("traces recursively merged define values: %s + %s", async (base, override, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `import { mergeConfig } from 'vite'; export default mergeConfig({ define: { VALUE: ${base} } }, { define: { VALUE: ${override} } })`,
@@ -269,8 +258,7 @@ test.each([
   ["true ? {} : { define: { PRIVATE_TOKEN: {} } }", false],
 ])("reads conditional config spreads: %s", async (spread, expected) => {
   for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule,
       files: {
         "vite.config.ts": `const flag = process.env.MODE; export default { ...(${spread}) }`,
@@ -286,8 +274,7 @@ test.each([
   ["export default { define: { ...(flag && { PRIVATE_TOKEN: {} }) } }", true],
 ])("reads effective config values: %s", async (source, expected) => {
   for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule,
       files: { "vite.config.ts": `const flag = process.env.MODE; ${source}` },
     });
@@ -303,8 +290,7 @@ test.each([
   ['"safe"', false],
   ['{ public: "safe" }', true],
 ])("reads getter overrides before merging: %s", async (value, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `import { mergeConfig } from 'vite'; export default mergeConfig(
@@ -343,8 +329,7 @@ test.each([
     [noSecretDefine, secret],
     [noRuntimeObjectDefine, runtimeObject],
   ] as const) {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule,
       files: { "vite.config.ts": source },
     });
@@ -372,8 +357,7 @@ test.each([
     true,
   ],
 ])("traces destructured local values: %s", async (declarations, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
@@ -389,8 +373,7 @@ test.each([
   ["[`toJSON`]() { return process.env.PUBLIC_VERSION }", false],
   ["[`other`]() { return process.env.PRIVATE_TOKEN }", false],
 ])("recognizes static serialization hooks: %s", async (property, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -408,8 +391,7 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
     ["(first, ...configs) => configs[1]", "{}, {}, { define: { PRIVATE_TOKEN: {} } }"],
     ["(...[config]) => config", "{ define: { PRIVATE_TOKEN: {} } }"],
   ])(`discovers rest parameter configs for ${rule.meta.id}: %s`, async (factory, args) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule,
       files: {
         "vite.config.ts": `const make = ${factory}; export default make(${args})`,
@@ -425,8 +407,7 @@ test.each([
 ])(
   "preserves dynamic getter alternatives through another merge: %s",
   async (override, expected) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: noSecretDefine,
       files: {
         "vite.config.ts": `import { mergeConfig } from 'vite'; export default mergeConfig(
@@ -468,8 +449,7 @@ test.each([
   ['const [, ...replacement] = ["public", process.env.PRIVATE_TOKEN]', true],
   ['const [, ...replacement] = [process.env.PRIVATE_TOKEN, "public"]', false],
 ])("projects effective destructuring values: %s", async (declarations, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
@@ -490,7 +470,7 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
     ],
     ["vite.config.cts", "export = { define: { PRIVATE_TOKEN: {} } }"],
   ])("reads effective factory arguments and exports: %s %s", async (file, source) => {
-    const result = await runRuleFixture({ framework: "vite", rule, files: { [file]: source } });
+    const result = await viteProject.run({ rule, files: { [file]: source } });
     expect(result.diagnostics.length).toBeGreaterThan(0);
   });
 }
@@ -501,8 +481,7 @@ test.each([
   ["null", true],
   ["undefined", true],
 ])("preserves runtime-nullish merge bases: %s", async (override, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `import { mergeConfig } from 'vite'; export default mergeConfig({ define: { VALUE: process.env.PRIVATE_TOKEN } }, { define: { VALUE: ${override} } })`,
@@ -516,8 +495,7 @@ test.each([
   ['get value() { return "public" }', false],
   ["set value(input) { consume(process.env.PRIVATE_TOKEN) }", false],
 ])("projects getter-backed destructuring: %s", async (property, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `const source = { ${property} }; const { value: replacement } = source; export default { define: { VALUE: JSON.stringify(replacement) } }`,
@@ -549,8 +527,7 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
       false,
     ],
   ])("projects factory bindings for " + rule.meta.id + ": %s", async (source, expected) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule,
       files: { "vite.config.ts": source },
     });
@@ -583,8 +560,7 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
   ])(
     "respects reviewed config projections for " + rule.meta.id + ": %s",
     async (source, expected) => {
-      const result = await runRuleFixture({
-        framework: "vite",
+      const result = await viteProject.run({
         rule,
         files: { "vite.config.ts": source },
       });
@@ -604,8 +580,7 @@ test.each([
     false,
   ],
 ])("checks the environment receiver binding: %s", async (source, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noRuntimeObjectDefine,
     files: { "vite.config.ts": source },
   });
@@ -630,8 +605,7 @@ test.each([
       `const source = { ${property} }; const { value: replacement = process.env.PRIVATE_TOKEN } = source; export default { define: { VALUE: JSON.stringify(replacement) } }`,
       `const read = ({ value = process.env.PRIVATE_TOKEN }) => value; export default { define: { VALUE: JSON.stringify(read({ ${property} })) } }`,
     ]) {
-      const result = await runRuleFixture({
-        framework: "vite",
+      const result = await viteProject.run({
         rule: noSecretDefine,
         files: { "vite.config.ts": source },
       });
@@ -644,8 +618,7 @@ test.each([
   ["process.env.PRIVATE_TOKEN", true],
   ["process.env.PUBLIC_VERSION", false],
 ])("follows neutral aliases returned by parameter getters: %s", async (value, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `const replacement = ${value}; const read = ({ value }) => value; export default { define: { VALUE: JSON.stringify(read({ get value() { return replacement } })) } }`,
@@ -668,8 +641,7 @@ test.each([
     true,
   ],
 ])("classifies effective primitive alternatives: %s", async (source, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noRuntimeObjectDefine,
     files: { "vite.config.ts": source },
   });
@@ -679,8 +651,7 @@ test.each([
 test.each(["process.env.PRIVATE_TOKEN", "process.env.PUBLIC_VERSION"])(
   "resolves computed helper parameter keys: %s",
   async (value) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: noSecretDefine,
       files: {
         "vite.config.ts": `const key = "value"; const read = ({ [key]: value }) => value; export default { define: { VALUE: JSON.stringify(read({ [key]: ${value} })) } }`,
@@ -695,8 +666,7 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
     'import { defineConfig } from "vite"; const wrap = defineConfig; export default wrap({ define: { PRIVATE_TOKEN: {} } })',
     'import { mergeConfig } from "vite"; const merge = mergeConfig; export default merge({}, { define: { PRIVATE_TOKEN: {} } })',
   ])("follows imported configuration helper aliases: %s", async (source) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule,
       files: { "vite.config.ts": source },
     });
@@ -710,8 +680,7 @@ test.each([
   ['if (process.env.MODE) return "safe"', true],
   ['return "safe"', false],
 ])("preserves nullish merge getter completion: %s", async (body, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `import { mergeConfig } from "vite"; export default mergeConfig({ define: { VALUE: { value: process.env.PRIVATE_TOKEN } } }, { define: { VALUE: { get value() { ${body} } } } })`,
@@ -729,8 +698,7 @@ test.each([
     false,
   ],
 ])("tracks switch completion in invoked helpers: %s", async (body, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `function read() { ${body}; return process.env.PRIVATE_TOKEN } export default { define: { VALUE: JSON.stringify(read()) } }`,
@@ -759,8 +727,7 @@ test.each([
     `const source = { get value() { ${body} } }; const { value: replacement = process.env.PRIVATE_TOKEN } = source; export default { define: { VALUE: JSON.stringify(replacement) } }`,
     `const read = ({ value = process.env.PRIVATE_TOKEN }) => value; export default { define: { VALUE: JSON.stringify(read({ get value() { ${body} } })) } }`,
   ]) {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: noSecretDefine,
       files: { "vite.config.ts": source },
     });
@@ -769,8 +736,7 @@ test.each([
 });
 
 test("does not trace unrelated secrets through an undefined merge getter", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `import { mergeConfig } from "vite"; const unrelated = process.env.PRIVATE_TOKEN; export default mergeConfig({ define: { VALUE: {} } }, { define: { VALUE: { get value() { if (process.env.MODE) return "safe" } } } })`,
@@ -839,8 +805,7 @@ test.each([
     true,
   ],
 ])("traces serialization helper bindings: %s", async (declarations, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
@@ -855,8 +820,7 @@ for (const rule of [noSecretDefine, noRuntimeObjectDefine]) {
     "const make = ({ config }) => ({ ...config }); export default make({ get config() { return { define: { PRIVATE_TOKEN: {} } } } })",
     "const make = ({ config }) => ({ ...config }); export default make({ get config() { if (process.env.MODE) return { define: { PRIVATE_TOKEN: {} } }; return {} } })",
   ])(`projects config factory arguments for ${rule.meta.id}: %s`, async (source) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule,
       files: { "vite.config.ts": source },
     });
@@ -900,8 +864,7 @@ test.each([
 ])(
   "respects effective serialization arguments and branches: %s",
   async (declarations, expected) => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: noSecretDefine,
       files: {
         "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
@@ -912,8 +875,7 @@ test.each([
 );
 
 test("preserves immutable arrays passed directly to JSON.stringify", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -962,8 +924,7 @@ test.each([
     false,
   ],
 ])("tracks effective values in mutated arrays: %s", async (declarations, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `${declarations}; export default { define: { VALUE: JSON.stringify(replacement) } }`,
@@ -982,8 +943,7 @@ test.each([
     ['"safe"', "values.push(process.env.PRIVATE_TOKEN)", true],
     ["process.env.PRIVATE_TOKEN", 'values[0] = "safe"', false],
   ] as const) {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: noSecretDefine,
       files: {
         "vite.config.ts": `${declaration}; export default ${invocation}(() => { const values = [${initial}]; ${write}; return { define: { VALUE: JSON.stringify(values) } } })`,
@@ -994,8 +954,7 @@ test.each([
 });
 
 test("binds serialized getters to their object", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -1011,8 +970,7 @@ test.each([
   ['const [first, ...replacement] = ["safe", "public", process.env.PRIVATE_TOKEN]', false],
   ['const [first, ...replacement] = ["safe", "public", process.env.PRIVATE_TOKEN]', true],
 ])("preserves array rest indices for %s at index %s", async (declaration, secret) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `${declaration}; export default { define: { VALUE: JSON.stringify(replacement[${secret ? 1 : 0}]) } }`,
@@ -1022,8 +980,7 @@ test.each([
 });
 
 test("skips returns behind static unary conditions", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -1034,8 +991,7 @@ test("skips returns behind static unary conditions", async () => {
 });
 
 test("binds the receiver of an exported config getter", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -1046,8 +1002,7 @@ test("binds the receiver of an exported config getter", async () => {
 });
 
 test("binds the receiver of a getter projected into factory parameters", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -1058,8 +1013,7 @@ test("binds the receiver of a getter projected into factory parameters", async (
 });
 
 test("binds a projected getter receiver inside a nested arrow", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -1079,8 +1033,7 @@ test.each([
   ["`safe` ?? values.push(process.env.PRIVATE_TOKEN)", false],
   ["`` || values.push(process.env.PRIVATE_TOKEN)", true],
 ])("tracks only reachable logical mutations: %s", async (expression, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `const values = []; ${expression}; export default { define: { VALUE: JSON.stringify(values) } }`,
@@ -1093,8 +1046,7 @@ test.each([
   ['const values = ["safe"]; values.push(process.env.PRIVATE_TOKEN)', true],
   ['const values = [process.env.PRIVATE_TOKEN]; values[0] = "safe"', false],
 ])("tracks array writes inside executed config callbacks: %s", async (body, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts": `import { defineConfig } from 'vite'; export default defineConfig(() => { ${body}; return { define: { VALUE: JSON.stringify(values) } } })`,
@@ -1104,8 +1056,7 @@ test.each([
 });
 
 test("tracks array writes inside invoked config factories", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -1116,8 +1067,7 @@ test("tracks array writes inside invoked config factories", async () => {
 });
 
 test("binds array-rest values in serialization helpers", async () => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: {
       "vite.config.ts":
@@ -1149,8 +1099,7 @@ test.each([
     true,
   ],
 ])("retains array secrets at the serialization site: %s", async (source, expected) => {
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: noSecretDefine,
     files: { "vite.config.ts": source },
   });

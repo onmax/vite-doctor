@@ -1,6 +1,9 @@
-import { expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { afterAll, expect, test } from "vite-plus/test";
+import { createProjectFixture } from "../../../src/core/testkit.ts";
 import { noNonSerializableUseState } from "../../../src/rule-packs/nuxt/rules/nuxt/no-non-serializable-use-state.ts";
+
+const nuxtProject = createProjectFixture({ framework: "nuxt", files: { "app/.gitkeep": "" } });
+afterAll(() => nuxtProject.dispose());
 
 const unsafe = [
   "() => ({ get callback() { return () => 1 }, set callback(value) {} })",
@@ -81,9 +84,8 @@ const safe = [
 ];
 
 async function diagnose(initializer: string, keyed = true, path = "app/pages/state.vue") {
-  return runRuleFixture({
+  return nuxtProject.run({
     rule: noNonSerializableUseState,
-    framework: "nuxt",
     files: {
       [path]: `<script setup lang="ts">const state = useState(${keyed ? "'state', " : ""}${initializer})</script>`,
     },

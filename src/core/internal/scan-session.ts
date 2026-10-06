@@ -315,7 +315,7 @@ export interface ResolvedRuleConfig {
 }
 
 export async function createScanSession(options: DoctorRunOptions): Promise<ScanSession> {
-  const root = resolve(options.root ?? process.cwd());
+  const root = resolve(options.root ?? options.project?.root ?? process.cwd());
   const timings: Record<string, number> = {};
   const phases: Record<string, number> = {};
 
@@ -325,7 +325,10 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   markSession(sessionBase, "config", started);
 
   started = performance.now();
-  const project = await detectProject(root, options.framework ?? "auto", options.runtimeTarget);
+  // Runs reassign `inventory` and `evidenceGaps` on the project, so a shared inventory is copied first.
+  const project = options.project
+    ? { ...options.project }
+    : await detectProject(root, options.framework ?? "auto", options.runtimeTarget);
   config = resolveProjectDoctorConfig(project, options.config);
   sessionBase.config = config;
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];

@@ -1,6 +1,10 @@
-import { expect, test } from "vite-plus/test";
-import { runNuxtAppRuleFixture, runRuleFixture } from "../../../src/core/testkit.ts";
+import { afterAll, expect, test } from "vite-plus/test";
+import { createProjectFixture } from "../../../src/core/testkit.ts";
+import { runNuxtAppRuleFixture } from "../../rule-fixtures.ts";
 import { noTimeDependentRenderWithoutNuxtTimeOrClientOnly } from "../../../src/rule-packs/nuxt/rules/nuxt/no-time-dependent-render-without-nuxt-time-or-client-only.ts";
+
+const nuxtProject = createProjectFixture({ framework: "nuxt", files: { "app/.gitkeep": "" } });
+afterAll(() => nuxtProject.dispose());
 
 test("finds time dependence through local render helpers", async () => {
   const result = await runNuxtAppRuleFixture(
@@ -322,9 +326,8 @@ test("diagnoses byte-identical files independently", async () => {
 function clock() { return Date.now() }
 function label() { return clock() }
 </script><template>{{ label() }}</template>`;
-  const result = await runRuleFixture({
+  const result = await nuxtProject.run({
     rule: noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
-    framework: "nuxt",
     files: { "app/pages/one.vue": source, "app/pages/two.vue": source },
   });
   expect(result.diagnostics).toHaveLength(2);

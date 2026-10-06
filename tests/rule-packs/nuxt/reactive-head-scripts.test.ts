@@ -1,6 +1,9 @@
-import { expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { afterAll, expect, test } from "vite-plus/test";
+import { createProjectFixture } from "../../../src/core/testkit.ts";
 import { noUnsafeUseHeadScript } from "../../../src/rule-packs/nuxt/rules/nuxt/no-unsafe-use-head-script.ts";
+
+const nuxtProject = createProjectFixture({ framework: "nuxt", files: { "app/.gitkeep": "" } });
+afterAll(() => nuxtProject.dispose());
 
 test.each([
   '() => ({ script: [{ innerHTML: "window.ready = true" }] })',
@@ -25,9 +28,8 @@ test.each([
   '() => enabled && { script: [{ innerHTML: "code" }] }',
   '() => { for (const item of items) { return { title: "Ready" } } return { script: [{ innerHTML: "code" }] } }',
 ])("reports executable script entries returned by reactive head getters: %s", async (getter) => {
-  const result = await runRuleFixture({
+  const result = await nuxtProject.run({
     rule: noUnsafeUseHeadScript,
-    framework: "nuxt",
     files: { "app/pages/head.vue": `<script setup lang="ts">useHead(${getter})</script>` },
   });
   expect(result.diagnostics.map((d) => d.ruleId)).toEqual([noUnsafeUseHeadScript.meta.id]);
@@ -60,9 +62,8 @@ test.each([
   '() => { while (false) { return { script: [{ innerHTML: "code" }] } } return { title: "Ready" } }',
   '() => { switch (mode) { case "ready": break; return { script: [{ innerHTML: "code" }] } } return { title: "Ready" } }',
 ])("preserves safe head getters and ignores unreturned nested values: %s", async (getter) => {
-  const result = await runRuleFixture({
+  const result = await nuxtProject.run({
     rule: noUnsafeUseHeadScript,
-    framework: "nuxt",
     files: { "app/pages/head.vue": `<script setup lang="ts">useHead(${getter})</script>` },
   });
   expect(result.diagnostics).toEqual([]);

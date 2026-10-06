@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runVueSfcRuleFixture } from "../../../src/core/testkit.ts";
+import { runVueSfcRuleFixture } from "../../rule-fixtures.ts";
 import { preferUseTemplateRef } from "../../../src/rule-packs/vue/rules/vue/prefer-use-template-ref.ts";
 
 test.each([

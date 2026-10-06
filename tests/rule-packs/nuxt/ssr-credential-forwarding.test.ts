@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runNuxtAppRuleFixture } from "../../../src/core/testkit.ts";
+import { runNuxtAppRuleFixture } from "../../rule-fixtures.ts";
 import { forwardAuthHeadersSsr } from "../../../src/rule-packs/nuxt/rules/nuxt/forward-auth-headers-ssr.ts";
 
 test("unrelated headers do not hide missing SSR credentials", async () => {
