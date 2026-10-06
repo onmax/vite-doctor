@@ -324,7 +324,6 @@ describe("route classification evidence", () => {
 
   test.each([
     "import { nitro as server } from 'nitro/vite'; export default { plugins: [server({ serverDir: 'backend' })] }",
-    "export default { nitro: { serverDir: 'backend' }, plugins: dynamic }",
   ])("reads only the Vite Nitro integration: %s", async (config) => {
     expect(
       await codes(
@@ -338,16 +337,43 @@ describe("route classification evidence", () => {
     ).toEqual(["NITRO0019"]);
   });
 
-  test.each([
-    "import { nitro } from 'nitro/vite'; export default defineConfig(() => ({ plugins: [nitro(dynamic)] }))",
-    "import { nitro } from 'nitro/vite'; export default { plugins: [nitro(dynamic)] }",
-    "export default { nitro: dynamic }",
-  ])("retains ambiguity from a proven Nitro integration: %s", async (config) => {
+  test.each(["import { nitro } from 'nitro/vite'; export default { plugins: [nitro(dynamic)] }"])(
+    "retains ambiguity from a proven Nitro integration: %s",
+    async (config) => {
+      expect(
+        await codes(
+          {
+            "nitro.config.ts": "export default { serverDir: 'backend' }",
+            "vite.config.ts": config,
+            "backend/api/helper.ts": helper,
+          },
+          "nitro",
+          { nitro: "3.0.0-beta.1" },
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  test("ignores an unwrappable Vite config when Nitro config is authoritative", async () => {
     expect(
       await codes(
         {
           "nitro.config.ts": "export default { serverDir: 'backend' }",
-          "vite.config.ts": config,
+          "vite.config.ts":
+            "import { nitro } from 'nitro/vite'; export default defineConfig(() => ({ plugins: [nitro(dynamic)] }))",
+          "backend/api/helper.ts": helper,
+        },
+        "nitro",
+        { nitro: "3.0.0-beta.1" },
+      ),
+    ).toEqual(["NITRO0019"]);
+  });
+
+  test("ignores a Nitro key without an active Vite plugin", async () => {
+    expect(
+      await codes(
+        {
+          "vite.config.ts": "export default { nitro: dynamic, plugins: dynamic }",
           "backend/api/helper.ts": helper,
         },
         "nitro",

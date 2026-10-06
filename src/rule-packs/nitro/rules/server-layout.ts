@@ -185,18 +185,25 @@ function configOptions(file: string): StaticConfigOption[] {
 
 function viteConfigOptions(program: any): StaticConfigOption[] {
   const pluginNames = new Set<string>();
+  const namespaceNames = new Set<string>();
   for (const statement of program.body) {
     if (statement.type !== "ImportDeclaration" || statement.source.value !== "nitro/vite") continue;
     for (const specifier of statement.specifiers) {
       if (specifier.type === "ImportSpecifier" && propertyKey(specifier.imported) === "nitro")
         pluginNames.add(specifier.local.name);
+      if (specifier.type === "ImportNamespaceSpecifier") namespaceNames.add(specifier.local.name);
     }
   }
   const expression = program.body.find(
     (statement: any) => statement.type === "ExportDefaultDeclaration",
   )?.declaration;
   const config = unwrapConfig(expression);
-  if (!config) return pluginNames.size ? [{ path: [], value: null }] : [];
+  if (!config) return [];
+  const plugins = config.properties.find(
+    (property: any) =>
+      property.type === "Property" && !property.computed && propertyKey(property.key) === "plugins",
+  )?.value;
+  if (!hasNitroPlugin(plugins, pluginNames, namespaceNames)) return [];
   const options: StaticConfigOption[] = [];
   for (const property of config.properties) {
     if (property.type !== "Property" || property.computed) continue;
@@ -207,20 +214,58 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
       else options.push({ path: [], value: null });
     }
     if (key !== "plugins") continue;
-    if (property.value.type !== "ArrayExpression") {
-      if (pluginNames.size) options.push({ path: [], value: null });
-      continue;
-    }
-    for (const plugin of property.value.elements) {
-      if (plugin?.type !== "CallExpression" || !pluginNames.has(plugin.callee?.name)) continue;
-      const nested = plugin.arguments.length
-        ? unwrapConfig(plugin.arguments[0])
-        : { type: "ObjectExpression", properties: [] };
-      if (nested) collectOptions(nested, ["nitro"], options);
-      else options.push({ path: [], value: null });
-    }
+    collectNitroPluginOptions(property.value, pluginNames, namespaceNames, options);
   }
   return options;
+}
+
+function hasNitroPlugin(node: any, names: Set<string>, namespaces: Set<string>): boolean {
+  if (!node) return false;
+  if (node.type === "TSAsExpression" || node.type === "TSSatisfiesExpression")
+    return hasNitroPlugin(node.expression, names, namespaces);
+  if (node.type === "ArrayExpression")
+    return node.elements.some((element: any) => hasNitroPlugin(element, names, namespaces));
+  if (node.type !== "CallExpression") return false;
+  return isNitroPluginCallee(node.callee, names, namespaces);
+}
+
+function collectNitroPluginOptions(
+  node: any,
+  names: Set<string>,
+  namespaces: Set<string>,
+  options: StaticConfigOption[],
+) {
+  if (!node) return;
+  if (node.type === "TSAsExpression" || node.type === "TSSatisfiesExpression") {
+    collectNitroPluginOptions(node.expression, names, namespaces, options);
+    return;
+  }
+  if (node.type === "ArrayExpression") {
+    for (const element of node.elements)
+      collectNitroPluginOptions(element, names, namespaces, options);
+    return;
+  }
+  if (node.type !== "CallExpression" || !isNitroPluginCallee(node.callee, names, namespaces))
+    return;
+  const nested =
+    node.arguments.length === 1
+      ? unwrapConfig(node.arguments[0])
+      : node.arguments.length === 0
+        ? { type: "ObjectExpression", properties: [] }
+        : undefined;
+  if (nested) collectOptions(nested, ["nitro"], options);
+  else options.push({ path: [], value: null });
+}
+
+function isNitroPluginCallee(node: any, names: Set<string>, namespaces: Set<string>): boolean {
+  if (node?.type === "Identifier") return names.has(node.name);
+  return (
+    node?.type === "MemberExpression" &&
+    !node.computed &&
+    node.object?.type === "Identifier" &&
+    namespaces.has(node.object.name) &&
+    propertyKey(node.property) === "nitro"
+  );
 }
 
 function unwrapConfig(node: any): any {
