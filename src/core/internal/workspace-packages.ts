@@ -61,7 +61,8 @@ export function workspaceFrameworkPackage(
   packages: readonly WorkspacePackage[],
   framework: DoctorFramework,
 ): WorkspacePackage | undefined {
-  if (framework === "nuxt" && packages.filter((item) => item.framework === "nuxt").length > 1) {
+  const nuxtPackages = packages.filter((item) => item.framework === "nuxt");
+  if (framework === "nuxt" && nuxtPackages.filter((item) => item.root !== ".").length > 1) {
     throw new Error(
       "Multi-Nuxt workspace runs are not supported. Run Doctor separately from each Nuxt package root.",
     );

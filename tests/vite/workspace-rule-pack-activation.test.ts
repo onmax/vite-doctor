@@ -241,23 +241,24 @@ test("nested Nuxt host extensions require explicit trust and use the inventory o
   ]);
 });
 
-test.each([false, true])(
-  "multi-Nuxt runs fail before activation (root Nuxt: %s)",
-  async (rootNuxt) => {
-    const root = nitroRootMonorepo({
-      ...(rootNuxt
-        ? { "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }) }
-        : {
-            "packages/first/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
-          }),
-      "packages/site/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
-    });
-    await expect(detectProject(root)).rejects.toThrow(
-      "Run Doctor separately from each Nuxt package root",
-    );
-    await expect(runViteDoctor({ root, cache: false })).rejects.toThrow(
-      "Multi-Nuxt workspace runs are not supported",
-    );
-    expect((await detectProject(join(root, "packages/site"))).framework).toBe("nuxt");
-  },
-);
+test("multi-Nuxt runs fail before activation when multiple nested packages own Nuxt", async () => {
+  const root = nitroRootMonorepo({
+    "packages/first/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+    "packages/site/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+  });
+  await expect(detectProject(root)).rejects.toThrow(
+    "Run Doctor separately from each Nuxt package root",
+  );
+  await expect(runViteDoctor({ root, cache: false })).rejects.toThrow(
+    "Multi-Nuxt workspace runs are not supported",
+  );
+  expect((await detectProject(join(root, "packages/site"))).framework).toBe("nuxt");
+});
+
+test("a root Nuxt owner can include a nested Nuxt workspace package", async () => {
+  const root = nitroRootMonorepo({
+    "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+    "packages/site/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+  });
+  expect((await detectProject(root)).framework).toBe("nuxt");
+});
