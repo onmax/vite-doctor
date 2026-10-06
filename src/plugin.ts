@@ -1,6 +1,12 @@
 import { resolve } from "pathe";
 import { createReport, defineDoctorExtension, reportStatus } from "./core/index.js";
-import type { DoctorConfig, DoctorExtension, DoctorRunOptions } from "./core/index.js";
+import type {
+  DoctorConfig,
+  DoctorExtension,
+  DoctorExtensionInput,
+  DoctorPluginApi,
+  DoctorRunOptions,
+} from "./core/index.js";
 import type { Plugin, ResolvedConfig } from "vite";
 import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
 
@@ -12,7 +18,8 @@ export interface ViteDoctorSurfaceOptions {
   framework?: "auto" | "vite" | "vue" | "nitro" | "nuxt";
   config?: DoctorConfig;
   extends?: DoctorRunOptions["extends"];
-  extensions?: DoctorExtension[];
+  /** Explicit Doctor Extensions. Extensions exposed by other Vite plugins through `api.doctor` attach automatically. */
+  extensions?: DoctorExtensionInput[];
   rules?: string;
   severity?: "error" | "warn" | "info";
   maxWarnings?: number;
@@ -41,7 +48,11 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         framework: options.framework ?? "auto",
         config: options.config,
         extends: options.extends,
-        extensions: [viteSurfaceExtension(resolved), ...(options.extensions ?? [])],
+        extensions: [
+          viteSurfaceExtension(resolved),
+          ...(options.extensions ?? []),
+          ...hostPluginExtensions(resolved),
+        ],
         rules: options.rules,
         severity: options.severity,
         maxWarnings: options.maxWarnings,
@@ -70,6 +81,13 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       }
     },
   };
+}
+
+function hostPluginExtensions(config: ResolvedConfig): DoctorExtensionInput[] {
+  return (config.plugins ?? []).flatMap((plugin) => {
+    const api = (plugin.api as { doctor?: Partial<DoctorPluginApi> } | undefined)?.doctor;
+    return Array.isArray(api?.extensions) ? api.extensions : [];
+  });
 }
 
 function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
