@@ -172,6 +172,7 @@ export function createAgentReport(
       "--framework",
       result.framework,
       ...(context.configFile ? ["--config", context.configFile] : []),
+      ...(context.runOptions?.hostExtensions ? ["--host-extensions"] : []),
       "--format",
       "agent",
     ],
@@ -337,7 +338,7 @@ export function createRulesReport(
     pack.rules.map((rule) => ({
       pack: pack.name,
       version: pack.version,
-      diagnosticCodes: rule.meta.diagnosticCodes ?? codeListForRule(rule.meta.id),
+      diagnosticCodes: rule.meta.diagnosticCodes ?? codeListForRule(pack, rule.meta.id),
       ...rule.meta,
     })),
   );
@@ -359,12 +360,12 @@ export function explainRule(
   format: Exclude<DoctorReportFormat, "sarif"> = "text",
 ): string {
   const match = packs
-    .flatMap((pack) => pack.rules.map((rule) => ({ pack: pack.name, rule })))
+    .flatMap((pack) => pack.rules.map((rule) => ({ pack, rule })))
     .find(
       (item) =>
         item.rule.meta.id === ruleId ||
         item.rule.meta.diagnosticCodes?.includes(ruleId) ||
-        codeListForRule(item.rule.meta.id).includes(ruleId),
+        codeListForRule(item.pack, item.rule.meta.id).includes(ruleId),
     );
   if (!match) {
     const metadata =
@@ -406,15 +407,23 @@ export function explainRule(
       ].join("\n") + "\n"
     );
   }
-  const diagnosticCodes = match.rule.meta.diagnosticCodes ?? codeListForRule(match.rule.meta.id);
+  const diagnosticCodes =
+    match.rule.meta.diagnosticCodes ?? codeListForRule(match.pack, match.rule.meta.id);
   const documentedCodes =
     (allDiagnosticCodeListsByRuleId as Record<string, readonly string[]>)[match.rule.meta.id] ?? [];
+  const packDocs: Readonly<Record<string, string | undefined>> =
+    match.pack.diagnostics?.docsByCode ?? {};
   const diagnostics = diagnosticCodes.map((code) => ({
     code,
-    docs: documentedCodes.includes(code) ? diagnosticReferenceUrl(code) : undefined,
+    docs:
+      code in packDocs
+        ? packDocs[code]
+        : documentedCodes.includes(code)
+          ? diagnosticReferenceUrl(code)
+          : undefined,
   }));
   const payload = {
-    pack: match.pack,
+    pack: match.pack.name,
     diagnosticCodes,
     diagnostics,
     ...match.rule.meta,
@@ -550,6 +559,7 @@ function agentRunArguments(
     args.push("--extends", result.extends.join(","));
   const options = context.runOptions;
   if (context.configFile) args.push("--config", context.configFile);
+  if (options?.hostExtensions) args.push("--host-extensions");
   if (focused) args.push("--rules", "<rule>");
   else if (options?.rules) args.push("--rules", options.rules);
   for (const [flag, value] of [
@@ -599,7 +609,10 @@ function labelSeverity(severity: string): string {
         : "Info";
 }
 
-function codeListForRule(ruleId: string): string[] {
+function codeListForRule(pack: RulePack, ruleId: string): string[] {
+  const packCodes: Readonly<Record<string, readonly string[] | undefined>> | undefined =
+    pack.diagnostics?.codesByRuleIdAll;
+  if (packCodes?.[ruleId]) return [...packCodes[ruleId]];
   const code = codeForRuleId(allDiagnosticCodesByRuleId, ruleId);
   return code ? [code] : [];
 }
