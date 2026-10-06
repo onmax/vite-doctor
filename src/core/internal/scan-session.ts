@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
 import {
+  closeSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
@@ -44,7 +49,11 @@ const DEFAULT_CONFIG: DoctorConfig = {
   cache: { dir: ".vite-doctor/cache" },
 };
 
-class MemoryRuleCache implements RuleCache {
+export interface ScanCache extends RuleCache {
+  persist(options: { prune: boolean }): void;
+}
+
+class MemoryRuleCache implements ScanCache {
   private values = new Map<string, unknown>();
   get<T = unknown>(key: string): T | undefined {
     return this.values.get(key) as T | undefined;
@@ -52,45 +61,84 @@ class MemoryRuleCache implements RuleCache {
   set<T = unknown>(key: string, value: T): void {
     this.values.set(key, value);
   }
+  persist(_options: { prune: boolean }): void {}
+}
+
+const CACHE_STORE_FILE = "store.json";
+const CACHE_STORE_VERSION = 1;
+const PERSISTED_PREFIX = "fileFacts:";
+
+interface CacheStore {
+  version: number;
+  entries: Record<string, unknown>;
 }
 
 class PersistentRuleCache extends MemoryRuleCache {
   private root: string;
   private dir: string;
+  private stored: Map<string, unknown>;
+  private touched = new Set<string>();
+  private written = new Set<string>();
 
   constructor(root: string, config: DoctorConfig) {
     super();
     this.root = resolve(root);
     this.dir = resolve(root, config.cache?.dir ?? ".vite-doctor/cache");
     assertCachePath(this.root, this.dir);
+    this.stored = this.load();
   }
 
   override get<T = unknown>(key: string): T | undefined {
     const memory = super.get<T>(key);
     if (memory !== undefined) return memory;
-    if (!key.startsWith("fileFacts:")) return undefined;
-    try {
-      const path = this.cachePath(key);
-      const value = JSON.parse(readFileSync(path, "utf8"));
-      super.set(key, value);
-      return value as T;
-    } catch {
-      return undefined;
-    }
+    if (!key.startsWith(PERSISTED_PREFIX) || !this.stored.has(key)) return undefined;
+    this.touched.add(key);
+    return this.stored.get(key) as T;
   }
 
   override set<T = unknown>(key: string, value: T): void {
     super.set(key, value);
-    if (!key.startsWith("fileFacts:")) return;
+    if (!key.startsWith(PERSISTED_PREFIX)) return;
+    this.touched.add(key);
+    this.written.add(key);
+  }
+
+  /**
+   * Partial runs (`--changed`, `--since`) see only part of the inventory, so they keep untouched
+   * entries; full runs drop them to bound the store to the current project.
+   */
+  override persist({ prune }: { prune: boolean }): void {
+    const removed = prune ? [...this.stored.keys()].filter((key) => !this.touched.has(key)) : [];
+    if (!this.written.size && !removed.length) return;
     let temporary: string | undefined;
+    let lock: { fd: number; path: string } | undefined;
     try {
       mkdirSync(this.dir, { recursive: true });
-      const target = this.cachePath(key);
+      lock = acquireStoreLock(this.root, this.dir);
+      // A run may have started from an older snapshot. Re-read while holding the
+      // lock so concurrent runs never replace a newer store with stale entries.
+      const current = this.load();
+      const entries: Record<string, unknown> = {};
+      for (const [key, value] of current) {
+        if (
+          !prune ||
+          this.touched.has(key) ||
+          !this.stored.has(key) ||
+          JSON.stringify(value) !== JSON.stringify(this.stored.get(key))
+        ) {
+          entries[key] = value;
+        }
+      }
+      for (const key of this.written) entries[key] = super.get(key);
+      const target = this.storePath();
+      const store: CacheStore = { version: CACHE_STORE_VERSION, entries };
       temporary = resolve(this.dir, `.doctor-${randomUUID()}.tmp`);
       assertCachePath(this.root, temporary);
-      writeFileSync(temporary, JSON.stringify(value), { flag: "wx", mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify(store), { flag: "wx", mode: 0o600 });
       renameSync(temporary, target);
-    } catch {
+      temporary = undefined;
+    } catch (error) {
+      if (error instanceof LegacyStoreLockError) console.warn(error.message);
       // Cache writes are best-effort and must not change diagnostics.
     } finally {
       if (temporary) {
@@ -98,13 +146,123 @@ class PersistentRuleCache extends MemoryRuleCache {
           rmSync(temporary, { force: true });
         } catch {}
       }
+      if (lock) releaseStoreLock(lock);
     }
   }
 
-  private cachePath(key: string): string {
-    const path = resolve(this.dir, `${sha256(key)}.json`);
+  private load(): Map<string, unknown> {
+    try {
+      const store: unknown = JSON.parse(readFileSync(this.storePath(), "utf8"));
+      if (
+        typeof store !== "object" ||
+        store === null ||
+        !("version" in store) ||
+        store.version !== CACHE_STORE_VERSION ||
+        !("entries" in store) ||
+        typeof store.entries !== "object" ||
+        store.entries === null ||
+        Array.isArray(store.entries)
+      ) {
+        return new Map();
+      }
+      return new Map(
+        Object.entries(store.entries).filter(([key]) => key.startsWith(PERSISTED_PREFIX)),
+      );
+    } catch {
+      return new Map();
+    }
+  }
+
+  private storePath(): string {
+    const path = resolve(this.dir, CACHE_STORE_FILE);
     assertCachePath(this.root, path);
     return path;
+  }
+}
+
+const STORE_LOCK_PREFIX = ".store-lock-";
+const LEGACY_STORE_LOCK_FILE = ".store.lock";
+
+class LegacyStoreLockError extends Error {
+  constructor() {
+    super(
+      "Doctor cache persistence is blocked by a legacy or unrecognized store lock; stop all Doctor processes sharing this cache, then run `vite-doctor cache clean` with the same cache configuration to rebuild it.",
+    );
+  }
+}
+
+function acquireStoreLock(root: string, dir: string): { fd: number; path: string } {
+  if (readdirSync(dir).includes(LEGACY_STORE_LOCK_FILE)) throw new LegacyStoreLockError();
+  const namespace = pidNamespaceIdentity();
+  const name = `${STORE_LOCK_PREFIX}${process.pid}-${namespace ?? "unknown"}-${randomUUID()}`;
+  const path = resolve(dir, name);
+  assertCachePath(root, path);
+  const lock = { fd: openSync(path, "wx", 0o600), path };
+  try {
+    writeFileSync(path, JSON.stringify({ pid: process.pid, namespace }), { flag: "w" });
+    // Publish ownership atomically in the name, then check for other writers.
+    // Unique claims let concurrent reclaimers remove only a dead owner's file.
+    for (const entry of readdirSync(dir)) {
+      if (entry === name || !entry.startsWith(STORE_LOCK_PREFIX)) continue;
+      const [ownerText, ownerNamespace] = entry.slice(STORE_LOCK_PREFIX.length).split("-");
+      const owner = Number(ownerText);
+      if (
+        !Number.isSafeInteger(owner) ||
+        owner <= 0 ||
+        namespace === undefined ||
+        ownerNamespace === undefined ||
+        !/^\d+$/.test(ownerNamespace) ||
+        ownerNamespace !== namespace ||
+        processIsAlive(owner)
+      ) {
+        if (
+          !Number.isSafeInteger(owner) ||
+          owner <= 0 ||
+          ownerNamespace === undefined ||
+          !/^\d+$/.test(ownerNamespace)
+        ) {
+          throw new LegacyStoreLockError();
+        }
+        throw new Error("Doctor cache store has an active writer.");
+      }
+      try {
+        unlinkSync(resolve(dir, entry));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    return lock;
+  } catch (error) {
+    releaseStoreLock(lock);
+    throw error;
+  }
+}
+
+function pidNamespaceIdentity(): string | undefined {
+  try {
+    return String(statSync("/proc/self/ns/pid").ino);
+  } catch {
+    return undefined;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function releaseStoreLock(lock: { fd: number; path: string }): void {
+  try {
+    closeSync(lock.fd);
+  } catch {
+  } finally {
+    try {
+      unlinkSync(lock.path);
+    } catch {}
   }
 }
 
@@ -128,7 +286,7 @@ export interface ScanSession {
   graph?: WorkspaceGraph;
   diagnostics: Diagnostic[];
   suppressedDiagnostics: Diagnostic[];
-  cache: RuleCache;
+  cache: ScanCache;
   helpers: DoctorHelpers;
   enabledRules: DoctorRule[];
   ruleConfigs: Map<string, ResolvedRuleConfig>;
@@ -225,6 +383,10 @@ export async function runPhase(
   const started = performance.now();
   await run();
   session.phases[name] = Math.round(performance.now() - started);
+}
+
+export function persistScanCache(session: ScanSession): void {
+  session.cache.persist({ prune: !session.gitChanges });
 }
 
 export function cleanCache(root = process.cwd(), config?: DoctorConfig): void {

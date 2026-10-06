@@ -42,7 +42,6 @@ export function isCachedFileFacts(value: unknown): value is FileFacts {
     integer(value.complexity.lines, 1) &&
     record(value.tokens) &&
     strings(value.tokens.hashes) &&
-    strings(value.tokens.normalizedTokens) &&
     strings(value.diagnosticsHints)
   );
 }

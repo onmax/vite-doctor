@@ -423,7 +423,6 @@ export interface ComplexityFact {
 
 export interface TokenFingerprintFacts {
   hashes: string[];
-  normalizedTokens: string[];
 }
 
 export interface FileFacts {

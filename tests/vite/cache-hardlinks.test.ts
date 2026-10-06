@@ -52,10 +52,9 @@ test("rebuilding an invalid hardlinked cache entry preserves the other file", as
 
     expect(readFileSync(outside, "utf8")).toBe(original);
     expect(statSync(outside).nlink).toBe(1);
-    expect(JSON.parse(readFileSync(cached, "utf8"))).toHaveProperty(
-      "path",
-      join(root, "src/main.ts"),
-    );
+    expect(Object.values(JSON.parse(readFileSync(cached, "utf8")).entries)).toEqual([
+      expect.objectContaining({ path: join(root, "src/main.ts") }),
+    ]);
     expect(rerun.diagnostics.map((item) => item.code)).toEqual(
       initial.diagnostics.map((item) => item.code),
     );
