@@ -9,6 +9,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -197,10 +198,10 @@ function acquireStoreLock(root: string, dir: string): { fd: number; path: string
       if (
         !Number.isSafeInteger(owner) ||
         owner <= 0 ||
-        (namespace !== undefined &&
-          ownerNamespace !== undefined &&
-          /^\d+$/.test(ownerNamespace) &&
-          ownerNamespace !== namespace) ||
+        namespace === undefined ||
+        ownerNamespace === undefined ||
+        !/^\d+$/.test(ownerNamespace) ||
+        ownerNamespace !== namespace ||
         processIsAlive(owner)
       ) {
         throw new Error("Doctor cache store has an active writer.");
@@ -220,7 +221,7 @@ function acquireStoreLock(root: string, dir: string): { fd: number; path: string
 
 function pidNamespaceIdentity(): string | undefined {
   try {
-    return String(lstatSync("/proc/self/ns/pid").ino);
+    return String(statSync("/proc/self/ns/pid").ino);
   } catch {
     return undefined;
   }

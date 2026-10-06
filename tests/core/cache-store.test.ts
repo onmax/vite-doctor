@@ -224,15 +224,9 @@ test("a contended store write is best-effort and leaves the lock and store intac
 test("an abandoned store lock is recovered", async () => {
   await withProject(async (root) => {
     await runDoctor(options(root));
-    const lock = execFileSync(
-      process.execPath,
-      [
-        "-e",
-        'const fs = require("node:fs"); const path = require("node:path").join(process.argv[1], `.store-lock-${process.pid}-abandoned`); fs.closeSync(fs.openSync(path, "wx")); process.stdout.write(path);',
-        join(root, ".vite-doctor/cache"),
-      ],
-      { encoding: "utf8" },
-    );
+    const namespace = String(statSync("/proc/self/ns/pid").ino);
+    const lock = join(root, `.vite-doctor/cache/.store-lock-999999999-${namespace}-abandoned`);
+    writeFileSync(lock, "abandoned");
     const session = await createScanSession(options(root));
     session.cache.set("fileFacts:recovered", { value: "ok" });
     session.cache.persist({ prune: false });
@@ -242,5 +236,20 @@ test("an abandoned store lock is recovered", async () => {
       value: "ok",
     });
     expect(existsSync(lock)).toBe(false);
+  });
+});
+
+test("an unrecognized store lock is never reclaimed", async () => {
+  await withProject(async (root) => {
+    await runDoctor(options(root));
+    const lock = join(root, ".vite-doctor/cache/.store-lock-999999-legacy");
+    writeFileSync(lock, "legacy");
+    const session = await createScanSession(options(root));
+    session.cache.set("fileFacts:blocked", { value: "no" });
+    session.cache.persist({ prune: false });
+    expect(existsSync(lock)).toBe(true);
+    expect(
+      JSON.parse(readFileSync(storePath(root), "utf8")).entries["fileFacts:blocked"],
+    ).toBeUndefined();
   });
 });
