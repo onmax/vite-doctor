@@ -15,9 +15,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { isAbsolute, join } from "pathe";
 import { doctorInternalDiagnostics } from "./core/internal-diagnostic-handles.js";
-import { nitroRulePack } from "./rule-packs/nitro/index.js";
-import { nuxtDoctorExtensions } from "./rule-packs/nuxt/rules/index.js";
-import { vueRulePack } from "./rule-packs/vue/rules.js";
 import { viteRulePack } from "./rules.js";
 import { typescriptRulePack } from "./rule-packs/typescript/index.js";
 import shadcnRulePack from "./rule-packs/shadcn/index.js";
@@ -50,16 +47,19 @@ export async function viteDoctorExtensions(
     defineDoctorExtension({ name: "vite-doctor/builtin-pinia", rulePacks: [piniaRulePack] }),
   ];
   if (framework === "vue") {
+    const { vueRulePack } = await import("./rule-packs/vue/rules.js");
     extensions.push(
       defineDoctorExtension({ name: "vite-doctor/builtin-vue", rulePacks: [vueRulePack] }),
     );
   }
   if (framework === "nitro") {
+    const { nitroRulePack } = await import("./rule-packs/nitro/index.js");
     extensions.push(
       defineDoctorExtension({ name: "vite-doctor/builtin-nitro", rulePacks: [nitroRulePack] }),
     );
   }
   if (framework === "nuxt") {
+    const { nuxtDoctorExtensions } = await import("./rule-packs/nuxt/rules/index.js");
     extensions.push(...nuxtDoctorExtensions());
   }
   return extensions.map((extension) => ({

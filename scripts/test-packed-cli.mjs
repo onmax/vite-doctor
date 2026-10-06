@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cacheDirectory = join(homedir(), ".cache");
@@ -44,6 +44,7 @@ try {
     stdio: "pipe",
   });
   verifyExports();
+  verifyLightweightEntries();
   writeFileSync(
     join(fixture, "package.json"),
     `${JSON.stringify({ private: true, dependencies: { nuxt: nuxt.version } }, null, 2)}\n`,
@@ -150,6 +151,71 @@ function verifyDoctor(args, expectedStatuses = [0], expectedCode, expectedFramew
     assert.deepEqual(report.diagnostics, []);
   }
   return report;
+}
+
+function verifyLightweightEntries() {
+  const analyzers = [
+    "typescript",
+    "eslint",
+    "eslint-plugin-vue",
+    "vue-eslint-parser",
+    "@typescript-eslint/parser",
+    "@shadcn/lint",
+  ];
+  const hooks = join(temporary, "record-analyzers.mjs");
+  writeFileSync(
+    hooks,
+    `import { registerHooks } from "node:module";
+import { writeFileSync } from "node:fs";
+const analyzers = ${JSON.stringify(analyzers)};
+const loaded = new Set();
+registerHooks({
+  resolve(specifier, context, next) {
+    const result = next(specifier, context);
+    for (const name of analyzers) if (result.url.includes(\`/node_modules/\${name}/\`)) loaded.add(name);
+    return result;
+  },
+});
+process.on("exit", () => writeFileSync(process.env.DOCTOR_LOADED_ANALYZERS, JSON.stringify([...loaded])));
+`,
+  );
+  const evaluate = (source) => ["--input-type=module", "-e", source];
+  const probes = [
+    {
+      name: "the analyzer recorder",
+      args: evaluate(
+        'import { createRequire } from "node:module"; createRequire(import.meta.resolve("vite-doctor/package.json"))("typescript");',
+      ),
+      expected: ["typescript"],
+    },
+    { name: "vite-doctor/plugin", args: evaluate('await import("vite-doctor/plugin");') },
+    { name: "vite-doctor", args: evaluate('await import("vite-doctor");') },
+    {
+      name: "vite-doctor --version",
+      args: [join(temporary, "node_modules/vite-doctor/dist/cli.mjs"), "--version"],
+    },
+    ...["--version", "-v", "--help", "--invalid"].map((flag) => ({
+      name: `nuxt-doctor ${flag}`,
+      args: [join(temporary, "node_modules/vite-doctor/dist/nuxt-cli.mjs"), flag],
+      status: flag === "--invalid" ? 2 : 0,
+    })),
+  ];
+  for (const { name, args, expected = [], status = 0 } of probes) {
+    const record = join(temporary, "loaded-analyzers.json");
+    const result = spawnSync(process.execPath, ["--import", pathToFileURL(hooks).href, ...args], {
+      cwd: temporary,
+      env: { ...env, DOCTOR_LOADED_ANALYZERS: record },
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    if (result.error) throw result.error;
+    assert.equal(result.status, status, `${name}: ${result.stdout}\n${result.stderr}`);
+    assert.deepEqual(
+      JSON.parse(readFileSync(record, "utf8")),
+      expected,
+      `${name} loaded unexpected analyzers before a Doctor Run.`,
+    );
+  }
 }
 
 function verifyExports() {

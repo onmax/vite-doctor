@@ -1,5 +1,4 @@
 import { resolve } from "pathe";
-import { createReport, defineDoctorExtension, reportStatus } from "./core/index.js";
 import type {
   DoctorConfig,
   DoctorExtension,
@@ -8,7 +7,6 @@ import type {
   DoctorRunOptions,
 } from "./core/index.js";
 import type { Plugin, ResolvedConfig } from "vite";
-import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
 
 export interface ViteDoctorSurfaceOptions {
   enabled?: boolean;
@@ -43,6 +41,10 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       if (!resolved || !shouldRun(options.run ?? "build", resolved.command)) return;
       ran = true;
 
+      // The Doctor Run path pulls in every Rule Pack and its parsers; loading it here keeps
+      // `vite dev` and builds that never run Doctor from paying for it in config loading.
+      const [{ createReport, reportStatus }, { runViteDoctor, shouldFailDoctorRun }] =
+        await Promise.all([import("./core/index.js"), import("./doctor.js")]);
       const result = await runViteDoctor({
         root: options.root ? resolve(resolved.root, options.root) : resolved.root,
         framework: options.framework ?? "auto",
@@ -91,7 +93,7 @@ function hostPluginExtensions(config: ResolvedConfig): DoctorExtensionInput[] {
 }
 
 function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
-  return defineDoctorExtension({
+  return {
     name: "vite-doctor/surface-vite",
     setup(api) {
       api.registerProjectInventoryContributor({
@@ -144,7 +146,7 @@ function viteSurfaceExtension(config: ResolvedConfig): DoctorExtension {
         },
       });
     },
-  });
+  };
 }
 
 function shouldRun(run: NonNullable<ViteDoctorSurfaceOptions["run"]>, command: "build" | "serve") {

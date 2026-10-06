@@ -14,14 +14,7 @@ import {
 } from "./core/index.js";
 import { selectDoctorPresentation } from "./core/internal/agent-runtime.js";
 import { applyDoctorOptions, stringFlag } from "./core/internal/cli.js";
-import {
-  cleanViteDoctorCache,
-  runViteDoctor,
-  shouldFailDoctorRun,
-  viteDoctorRulePacks,
-} from "./doctor.js";
 import { viteDoctorVersion } from "./version.js";
-import { createMigrationReport, formatMigrationReport } from "./migration.js";
 
 type MetadataReportFormat = Exclude<DoctorReportFormat, "sarif">;
 
@@ -91,6 +84,7 @@ export async function main(
         exitCode = 2;
         return;
       }
+      const { createMigrationReport, formatMigrationReport } = await import("./migration.js");
       const report = await createMigrationReport(root, options.to ? [options.to] : []);
       process.stdout.write(formatMigrationReport(report, format));
       exitCode = report.summary.errors > 0 ? 1 : 0;
@@ -108,6 +102,7 @@ export async function main(
       applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
       runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
+      const { viteDoctorRulePacks } = await import("./doctor.js");
       process.stdout.write(createRulesReport(await viteDoctorRulePacks(runOptions), format));
     });
   cli
@@ -123,6 +118,7 @@ export async function main(
       applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
       runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
+      const { viteDoctorRulePacks } = await import("./doctor.js");
       const report = explainRule(await viteDoctorRulePacks(runOptions), diagnostic, format);
       if (!report) {
         await writeCliError(`Unknown Diagnostic Code or Rule: ${diagnostic}`, format);
@@ -140,6 +136,7 @@ export async function main(
         const runOptions: DoctorRunOptions = { root: cwd };
         applyDoctorOptions(runOptions, options);
         validateCliRunOptions(runOptions);
+        const { cleanViteDoctorCache } = await import("./doctor.js");
         await cleanViteDoctorCache(
           cwd,
           await loadCliConfig(cwd, stringFlag(options.config)),
@@ -250,6 +247,7 @@ async function runDoctorCommand(
   format: DoctorReportFormat,
   configFile?: string,
 ): Promise<number> {
+  const { runViteDoctor, shouldFailDoctorRun } = await import("./doctor.js");
   const result = await runViteDoctor(options);
   process.stdout.write(createReport(result, format, { runOptions: options, configFile }));
   if (reportStatus(result) === "incomplete") return 3;

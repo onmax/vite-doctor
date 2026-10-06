@@ -5,6 +5,7 @@ import { dirname, join, normalize } from "pathe";
 import type { NuxtHooks } from "nuxt/schema";
 import { afterEach, expect, expectTypeOf, test, vi } from "vite-plus/test";
 import { main } from "../../../src/cli-main.ts";
+import { main as standaloneMain } from "../../../src/cli.ts";
 import { hostDoctorExtensions, runViteDoctor } from "../../../src/doctor.ts";
 import nuxtDoctorModule, { writeManifest } from "../../../src/rule-packs/nuxt/module.ts";
 import type { NuxtModuleSource } from "../../../src/core/index.ts";
@@ -161,6 +162,10 @@ test("the Nuxt Doctor Command trusts host extensions; the standalone CLI needs a
   expect(flagged.code).toBe(0);
   const hostCommand = await captureStdout(() => main(args, root, { hostExtensions: true }));
   expect(hostCommand.code).toBe(0);
+  const lazyCommand = await captureStdout(() =>
+    standaloneMain(args, root, { hostExtensions: true }),
+  );
+  expect(lazyCommand).toEqual(hostCommand);
   expect(JSON.parse(hostCommand.output)).toMatchObject({
     id: "vitehub/no-legacy-kv-import",
     pack: "vitehub",
