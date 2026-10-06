@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { createScanSession } from "../../src/core/internal/scan-session.ts";
 import { cleanCache, runDoctor } from "../../src/core/index.ts";
 
@@ -253,3 +253,43 @@ test("an unrecognized store lock is never reclaimed", async () => {
     ).toBeUndefined();
   });
 });
+
+test.each([".store.lock", ".store-lock-999999-legacy", ".store-lock-999999-unknown-claim"])(
+  "explicit upgrade cleanup restores persistence after %s",
+  async (name) => {
+    await withProject(async (root) => {
+      await runDoctor(options(root));
+      const original = readFileSync(storePath(root), "utf8");
+      const lock = join(root, ".vite-doctor/cache", name);
+      writeFileSync(lock, "");
+      writeFileSync(join(root, "src/b.ts"), "export const b = 2;\n");
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const blocked = await runDoctor(options(root));
+        expect(readFileSync(storePath(root), "utf8")).toBe(original);
+        expect(existsSync(lock)).toBe(true);
+        expect(warning).toHaveBeenCalledWith(
+          expect.stringContaining("stop all Doctor processes sharing this cache"),
+        );
+        expect(warning).toHaveBeenCalledWith(expect.stringContaining("vite-doctor cache clean"));
+
+        cleanCache(root);
+        const recovered = await runDoctor(options(root));
+        expect(existsSync(lock)).toBe(false);
+        expect(readFileSync(storePath(root), "utf8")).not.toBe(original);
+        expect(recovered.diagnostics).toEqual(blocked.diagnostics);
+        expect(recovered.graph).toEqual(blocked.graph);
+        expect(storedPaths(root)).toEqual(
+          Object.keys(files)
+            .map((path) => join(root, path))
+            .sort(),
+        );
+        const modified = statSync(storePath(root)).mtimeMs;
+        await runDoctor(options(root));
+        expect(statSync(storePath(root)).mtimeMs).toBe(modified);
+      } finally {
+        warning.mockRestore();
+      }
+    });
+  },
+);

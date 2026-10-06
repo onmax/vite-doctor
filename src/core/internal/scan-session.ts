@@ -186,7 +186,7 @@ const LEGACY_STORE_LOCK_FILE = ".store.lock";
 class LegacyStoreLockError extends Error {
   constructor() {
     super(
-      "Doctor cache persistence is blocked by a legacy store lock; run `vite-doctor cache clean` to remove it.",
+      "Doctor cache persistence is blocked by a legacy or unrecognized store lock; stop all Doctor processes sharing this cache, then run `vite-doctor cache clean` with the same cache configuration to rebuild it.",
     );
   }
 }
