@@ -179,7 +179,10 @@ function resolveSpecifier(
   const rest = slash === -1 ? "" : specifier.slice(slash + 1);
   const nuxt = ctx.project.nuxt;
   const root = toPosixPath(ctx.project.root);
-  const localLayer = layer.root !== root && nuxt?.localLayerAliases !== false;
+  const localLayer =
+    layer.root !== root &&
+    nuxt?.localLayerAliases !== false &&
+    isInside(file, layerSrcDir(file, layer));
   const aliases = nuxt?.manifest?.aliases ?? {};
   if (ROOT_RELATIVE_ALIASES.has(head)) {
     const base = localLayer
@@ -205,10 +208,11 @@ function resolveSpecifier(
 
 function layerAlias(layer: LayerDirs, alias: string, root: string, fallback: string) {
   const value = layer.aliases?.[alias];
-  return value ? absolute(isAbsolute(value) ? root : layer.root, value) : fallback;
+  return value ? absolute(root, value) : fallback;
 }
 
 function layerSrcDir(file: string, layer: LayerDirs) {
+  if (layer.srcDir) return layer.srcDir;
   const appDir = `${layer.root}/app`;
   if (isInside(file, appDir)) return appDir;
   return layer.srcDir ?? layer.root;

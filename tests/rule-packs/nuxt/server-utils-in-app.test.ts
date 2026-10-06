@@ -25,7 +25,7 @@ async function run(files: Record<string, string>, dependencies?: Record<string, 
 }
 
 function fixturePath(file: string | undefined) {
-  return file?.replace(/^.*\/vue-doctor-[^/]+\//, "");
+  return file?.replace(/^.*\/(?:vue-doctor|vite-doctor-fixture)-[^/]+\//, "");
 }
 
 test.each([
@@ -151,7 +151,7 @@ test("resolves custom serverDir and aliases from the Nuxt manifest", async () =>
         root: "layers/billing",
         srcDir: "layers/billing/app",
         serverDir: "layers/billing/server",
-        aliases: { "~": "." },
+        aliases: { "~": "layers/billing" },
         priority: 1,
       },
     ],
@@ -187,3 +187,61 @@ test("puts runtime imports in recommended and type-only imports in strict", () =
     expect.arrayContaining([noServerUtilsInApp.meta.id, noServerTypesInApp.meta.id]),
   );
 });
+
+test.each(["~", "@", "~~", "@@"])(
+  "resolves %s layer overrides in the project context",
+  async (alias) => {
+    const manifest = {
+      nuxtVersion: "4.0.0",
+      rootDir: "/fixture",
+      srcDir: "app",
+      appDir: "app",
+      buildDir: ".nuxt",
+      autoImports: [],
+      components: [],
+      modules: [],
+      routeRules: {},
+      serverHandlers: [],
+      aliases: { "~": "app", "@": "app", "~~": ".", "@@": "." },
+      layers: [
+        { root: ".", srcDir: "app", serverDir: "server", priority: 0 },
+        {
+          root: "layers/billing",
+          srcDir: "layers/billing/app",
+          serverDir: "layers/billing/server",
+          aliases: { [alias]: "." },
+          priority: 1,
+        },
+        {
+          root: "layers/absolute",
+          srcDir: "layers/absolute/app",
+          aliases: { [alias]: "/external" },
+          priority: 2,
+        },
+        { root: "/external", serverDir: "/external/server", priority: 3 },
+      ],
+    };
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      files: {
+        ".nuxt/doctor.manifest.json": JSON.stringify(manifest),
+        "layers/billing/app/utils/a.ts": `import { price } from '${alias}/server/utils/pricing'`,
+        "layers/absolute/app/utils/b.ts": `import { price } from '${alias}/server/utils/pricing'`,
+        "layers/billing/shared/utils/c.ts": `import { price } from '~/server/utils/pricing'`,
+        "layers/billing/shared/utils/d.ts": `import { price } from '~~/server/utils/pricing'`,
+      },
+      rules: [noServerUtilsInApp],
+    });
+    expect(result.diagnostics.map((d) => [fixturePath(d.file), d.message])).toEqual([
+      ["layers/absolute/app/utils/b.ts", expect.stringContaining("/external/server/utils/pricing")],
+      [
+        "layers/billing/app/utils/a.ts",
+        expect.stringContaining("resolves to server/utils/pricing,"),
+      ],
+      [
+        "layers/billing/shared/utils/d.ts",
+        expect.stringContaining("resolves to server/utils/pricing,"),
+      ],
+    ]);
+  },
+);

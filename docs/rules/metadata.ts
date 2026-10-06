@@ -233,6 +233,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/structure/prefer-server-utils": {
+    description:
+      "Suggests server/utils for helpers that Nitro server routes, middleware, and plugins import from ad-hoc directories.",
+    why: "Nitro 2 and Nuxt auto-import exports from server/utils in server code and generate their types. Helpers kept in directories such as server/lib or server/helpers need a relative import in every caller.",
+    recommendedReplacement:
+      "Move shared server helpers to server/utils/ when server auto-imports are enabled. NITRO0022 is currently suppressed: Doctor does not yet capture Nitro’s resolved provider and exclusion evidence, so it cannot establish that an explicit utility import selects the same implementation as an auto-import.",
+    examples: [
+      {
+        title: "Let Nitro auto-import server helpers",
+        language: "ts",
+        invalid:
+          "// server/api/admin/users.get.ts\nimport { requireAdmin } from '../../lib/auth'\nimport { paginate } from '../../helpers/paginate'\n\nexport default defineEventHandler(async (event) => {\n  await requireAdmin(event)\n  return paginate(event, users)\n})",
+        valid:
+          "// server/utils/auth.ts exports requireAdmin\n// server/utils/paginate.ts exports paginate\n\n// server/api/admin/users.get.ts\nexport default defineEventHandler(async (event) => {\n  await requireAdmin(event)\n  return paginate(event, users)\n})",
+      },
+    ],
+  },
   "nitro/h3/no-removed-send": {
     description: "Flags send() and sendError(), which H3 v2 removes.",
     why: "H3 v2 handlers return Web API response values and throw HTTPError instances instead of using imperative send helpers.",
@@ -543,6 +560,31 @@ export const ruleDocumentationMetadata = {
           "const { data } = await useFetch('/api/orders', {\n  method: 'POST',\n  body: { status: 'draft' },\n})",
         valid:
           "async function createOrder() {\n  return await $fetch('/api/orders', {\n    method: 'POST',\n    body: { status: 'draft' },\n  })\n}",
+      },
+    ],
+  },
+  "nuxt/composables/export-name-matches-file": {
+    description:
+      "Finds Nuxt composable files whose auto-imported names do not match the file name or do not start with use.",
+    why: "Nuxt auto-imports named exports from top-level composables/ files under their own names, and a default export under a name derived from the file name. When useCart.ts exports useShoppingCart, or fetch-user.ts default-exports a function that becomes fetchUser, readers cannot find a composable from its name or tell it is a composable at all.",
+    recommendedReplacement:
+      "Name the main export after the file (useCart.ts exports useCart; use-cart.ts also maps to useCart), and name files with default exports so the derived name starts with use. Run Nuxt prepare with the Doctor module to capture current composable scan evidence. Only files in that inventory are checked, respecting resolved layer source directories, disabled scanning, and ignored files. Index files, files without use* exports, and files where any use* export matches are not reported.",
+    examples: [
+      {
+        title: "Export the composable the file name promises",
+        language: "ts",
+        invalid:
+          "// app/composables/useCart.ts\nexport function useShoppingCart() {\n  return useState('cart', () => [])\n}",
+        valid:
+          "// app/composables/useCart.ts\nexport function useCart() {\n  return useState('cart', () => [])\n}",
+      },
+      {
+        title: "Name default-export files with use",
+        language: "ts",
+        invalid:
+          "// app/composables/fetch-user.ts (auto-imported as fetchUser)\nexport default function () {\n  return useFetch('/api/user')\n}",
+        valid:
+          "// app/composables/use-user.ts (auto-imported as useUser)\nexport default function () {\n  return useFetch('/api/user')\n}",
       },
     ],
   },
@@ -863,6 +905,55 @@ export const ruleDocumentationMetadata = {
           "export default defineNuxtRouteMiddleware((to) => {\n  if (!to.query.token) return abortNavigation()\n})",
         valid:
           "export default defineEventHandler((event) => {\n  const token = getQuery(event).token\n  if (!token) throw createError({ statusCode: 401 })\n})",
+      },
+    ],
+  },
+  "nuxt/module/explicit-runtime-imports": {
+    description:
+      "Finds runtime files of a published Nuxt module package that call Nuxt, Vue, Nitro, or h3 auto-imports without importing them.",
+    why: "Nuxt and Nitro skip auto-import transforms for files inside node_modules, where a published module's runtime directory lives. The module playground links the source, so auto-imports work during development and the missing import only fails as a ReferenceError in projects that install the module. Doctor checks files under the runtime directory next to the module entry, such as src/runtime/, and skips local modules and packages that are also Nuxt layers because Nuxt still transforms those.",
+    recommendedReplacement:
+      "Import runtime helpers explicitly from #imports, or from their source package such as vue or h3.",
+    examples: [
+      {
+        title: "Import runtime helpers in a module plugin",
+        language: "ts",
+        invalid:
+          "// src/runtime/plugin.ts\nexport default defineNuxtPlugin(() => {\n  const config = useRuntimeConfig()\n})",
+        valid:
+          "// src/runtime/plugin.ts\nimport { defineNuxtPlugin, useRuntimeConfig } from '#imports'\n\nexport default defineNuxtPlugin(() => {\n  const config = useRuntimeConfig()\n})",
+      },
+    ],
+  },
+  "nuxt/module/require-meta": {
+    description:
+      "Finds the default-exported defineNuxtModule() of a Nuxt module package that does not declare meta.name, meta.configKey, or meta.compatibility.",
+    why: "@nuxt/kit identifies a module by meta.name: it installs the module only once and hasNuxtModule() looks it up by name. meta.configKey is the nuxt.config key that holds the module options and falls back to meta.name, so a scoped package name makes options awkward to set. meta.compatibility lets @nuxt/kit check the installed Nuxt version before setup and disable the module with a clear message. Doctor only asks for configKey when the module accepts options and meta.name is not already a usable key.",
+    recommendedReplacement:
+      "Declare meta.name with the package name, a camelCase meta.configKey, and meta.compatibility with the supported Nuxt range.",
+    examples: [
+      {
+        title: "Declare module meta",
+        language: "ts",
+        invalid: "export default defineNuxtModule({\n  setup(options, nuxt) { /* ... */ },\n})",
+        valid:
+          "export default defineNuxtModule<ModuleOptions>({\n  meta: { name: '@acme/nuxt-analytics', configKey: 'analytics', compatibility: { nuxt: '>=4.0.0' } },\n  defaults: { enabled: true },\n  setup(options, nuxt) { /* ... */ },\n})",
+      },
+    ],
+  },
+  "nuxt/module/resolve-runtime-paths": {
+    description:
+      "Finds relative string paths passed to @nuxt/kit helpers such as addPlugin, addComponent, addComponentsDir, addImportsDir, addServerHandler, addServerPlugin, and addLayout in Nuxt module code.",
+    why: "@nuxt/kit does not resolve relative paths against the module file. Nuxt resolves them later against the consuming project's rootDir or the process working directory, so a module that works in its playground breaks once it is installed from node_modules. createResolver(import.meta.url) resolves paths from the module file instead. For local modules in modules/, Doctor only reports paths that exist next to the module and not in the project.",
+    recommendedReplacement:
+      "Create a resolver with createResolver(import.meta.url) and pass resolver.resolve('./runtime/...') to kit helpers.",
+    examples: [
+      {
+        title: "Resolve runtime paths from the module file",
+        language: "ts",
+        invalid: "addPlugin('./runtime/plugin')",
+        valid:
+          "const resolver = createResolver(import.meta.url)\naddPlugin(resolver.resolve('./runtime/plugin'))",
       },
     ],
   },
@@ -1207,6 +1298,40 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/structure/no-composable-in-utils": {
+    description:
+      "Finds functions in Nuxt utils/ that need a component setup context and belong in composables/.",
+    why: "Nuxt auto-imports both composables/ and utils/, so the directory is how readers know whether a function must run during setup. A utils/ function that calls lifecycle hooks, inject(), provide(), or other composables breaks when it is called from an event handler, timer, or plugin the way plain utilities are.",
+    recommendedReplacement:
+      "Move the function to composables/ and name it with the use prefix. Functions that only read Nuxt app context, such as useNuxtApp(), useRuntimeConfig(), useRouter(), or useState(), can stay in utils/, like Nuxt's own navigateTo().",
+    examples: [
+      {
+        title: "Move setup-bound tracking into a composable",
+        language: "ts",
+        invalid:
+          "// app/utils/track.ts\nexport function trackPageView() {\n  const route = useRoute()\n  onMounted(() => analytics.page(route.fullPath))\n}",
+        valid:
+          "// app/composables/usePageTracking.ts\nexport function usePageTracking() {\n  const route = useRoute()\n  onMounted(() => analytics.page(route.fullPath))\n}",
+      },
+    ],
+  },
+  "nuxt/structure/no-stateless-composable": {
+    description:
+      "Finds use-prefixed functions in Nuxt composables/ that use no Vue or Nuxt API and are plain helpers.",
+    why: "The use prefix and the composables/ directory tell readers a function must be called from setup. A use* function that never touches Vue reactivity, lifecycle, injection, Nuxt APIs, or other composables can run anywhere, so presenting it as a composable hides that it is safe in event handlers and plain modules.",
+    recommendedReplacement:
+      "Move the function to utils/ and drop the use prefix. The rule only reports functions it can prove are plain; calls to unknown auto-imports or reads of project module state keep a function out of scope.",
+    examples: [
+      {
+        title: "Move a plain helper to utils",
+        language: "ts",
+        invalid:
+          "// app/composables/useSlugify.ts\nexport function useSlugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
+        valid:
+          "// app/utils/slugify.ts\nexport function slugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
+      },
+    ],
+  },
   "nuxt/state/no-nonserializable-usestate": {
     description: "Report unsupported live values stored in Nuxt payload state.",
     why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",
@@ -1298,6 +1423,22 @@ export const ruleDocumentationMetadata = {
           "export default defineEventHandler(async () => {\n  return await queryCollection('docs').all()\n})",
         valid:
           "export default cachedEventHandler(async () => {\n  return await queryCollection('docs').all()\n})",
+      },
+    ],
+  },
+  "vite/imports/no-barrel-files": {
+    description:
+      "Reports imports that load a local barrel file when the imported bindings come from only some of the modules it re-exports.",
+    why: "A barrel file only re-exports other modules. When code imports one binding from it, Vite cannot tell which re-exported module provides that binding or whether any of them has initialization side effects, so in dev it fetches and transforms every module the barrel re-exports. The page loads more files than it needs. Doctor reports the import site only when every imported binding traces to a defining module and some re-exported modules are unused. It ignores type-only imports, namespace imports, module IDs with query or hash suffixes, modules with side-effect or unre-exported value imports, barrels with fewer than three re-exported modules, package entry points declared by package.json exports (including subpath patterns), main, or module, and files under node_modules or generated directories.",
+    recommendedReplacement:
+      "Import each binding from the module that defines it. The diagnostic lists the direct imports to use. Keep the barrel if it is a public package entry point or other code still needs it.",
+    examples: [
+      {
+        title: "Import from the defining module",
+        language: "ts",
+        invalid:
+          "// src/utils/index.ts\nexport * from './date'\nexport * from './currency'\nexport * from './charts'\n\n// src/pages/Home.vue\nimport { formatDate } from '@/utils'",
+        valid: "// src/pages/Home.vue\nimport { formatDate } from '@/utils/date'",
       },
     ],
   },
@@ -1534,6 +1675,21 @@ export const ruleDocumentationMetadata = {
           "export default function markdownPlugin() {\n  return {\n    name: 'markdown',\n    transform(code, id) {\n      if (!id.endsWith('.md')) return\n      return code\n    },\n  }\n}",
         valid:
           "export default function markdownPlugin() {\n  return {\n    name: 'markdown',\n    transform: {\n      filter: { id: /\\.md$/ },\n      handler(code) { return code },\n    },\n  }\n}",
+      },
+    ],
+  },
+  "vite/plugin-package/naming-conventions": {
+    description:
+      "Checks that a published Vite plugin package uses the package name prefix and package.json keywords from Vite's plugin conventions.",
+    why: "Vite's plugin conventions ask Vite-only plugins to use the vite-plugin- prefix and the vite-plugin keyword. Plugins that only work with Vue, React, or Svelte should put the framework in the prefix, as in vite-plugin-vue-. Plugins that also work with Rolldown should use the rolldown-plugin- prefix and the rolldown-plugin and vite-plugin keywords; Vite 7 and earlier gave the same guidance for rollup-plugin- packages. These names and keywords are how users find plugins on npm and recognize what a package works with. The Rule runs only on a public package (not private and without bin) that declares vite as a required peer dependency and whose main entry exports a function returning a Vite plugin. Scoped packages are exempt from the prefix checks because Vite's conventions do not define a scoped form; they still need the keywords. The plugin object's name property is not checked: the conventions say nothing about its format, and vite/plugin/require-name already reports a missing name.",
+    recommendedReplacement:
+      'Add the "vite-plugin" keyword, plus "rolldown-plugin" or "rollup-plugin" for packages with those prefixes. Use the vite-plugin- prefix, or vite-plugin-vue-, vite-plugin-react-, or vite-plugin-svelte- for framework-specific plugins. Renaming an already published package means publishing under the new name and deprecating the old one.',
+    examples: [
+      {
+        title: "Use the Vite plugin prefix and keyword",
+        language: "json",
+        invalid: '{\n  "name": "my-icons",\n  "keywords": ["icons"]\n}',
+        valid: '{\n  "name": "vite-plugin-icons",\n  "keywords": ["vite-plugin", "icons"]\n}',
       },
     ],
   },
