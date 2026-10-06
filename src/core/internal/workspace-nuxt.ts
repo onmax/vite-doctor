@@ -1,7 +1,7 @@
 import type { NuxtProjectInfo, ProjectInfo } from "../primitives.js";
-import { resolve } from "pathe";
 
 const views = new WeakMap<ProjectInfo, Map<string, ProjectInfo>>();
+const viewRoots = new WeakMap<ProjectInfo, string>();
 
 /**
  * `project` as Rules see it from workspace package `packageRoot`. A Nuxt workspace package with
@@ -16,7 +16,6 @@ export function workspaceProjectView(project: ProjectInfo, packageRoot: string):
   const existing = cached.get(packageRoot);
   if (existing) return existing;
   const overrides: Partial<ProjectInfo> = {
-    root: resolve(project.root, packageRoot),
     nuxt: inventory.nuxt,
     nuxtVersion: inventory.nuxtVersion,
     nuxtModuleDefinitions: inventory.nuxtModuleDefinitions,
@@ -46,7 +45,13 @@ export function workspaceProjectView(project: ProjectInfo, packageRoot: string):
     },
   });
   cached.set(packageRoot, view);
+  viewRoots.set(view, packageRoot);
   return view;
+}
+
+/** The workspace package root of a Nuxt package view, or `undefined` for the run's project. */
+export function workspaceViewRoot(project: ProjectInfo): string | undefined {
+  return viewRoots.get(project);
 }
 
 /** Workspace package roots that read their own Nuxt Project Inventory. */

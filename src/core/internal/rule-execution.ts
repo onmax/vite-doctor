@@ -12,7 +12,7 @@ import { projectWorkspacePackages } from "./applicability.js";
 import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
 import { canMatchPrefilter } from "./rule-prefilter.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
-import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
+import { workspaceNuxtRoots, workspaceProjectView, workspaceViewRoot } from "./workspace-nuxt.js";
 import {
   buildWorkspaceGraph,
   runDuplicationRules,
@@ -191,7 +191,7 @@ function createRuleContext(
   project: ProjectInfo = phase === "file" ? initialFile.project : session.project,
 ): MutableRuleContext {
   let file = initialFile;
-  const frame = session.ruleInputs.frame();
+  const frame = session.ruleInputs.frame(workspaceViewRoot(project));
   const currentRuleConfig = resolvedConfigFor(session, rule.meta.id);
   const currentSeverity = currentRuleConfig.severity ?? rule.meta.severity;
   return {

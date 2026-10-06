@@ -117,6 +117,21 @@ test("cache sets without a pending miss do not replace remembered inputs", () =>
   expect(next.readInputs()).toEqual([`t:${join(root, "src/a.ts")}`]);
 });
 
+test("scoped frames keep remembered values apart", () => {
+  const inputs = new RuleInputs(root);
+  const appA = inputs.frame("packages/app-a");
+  expect(appA.cache.get("sources")).toBeUndefined();
+  appA.cache.set("sources", "a");
+
+  const appB = inputs.frame("packages/app-b");
+  expect(appB.cache.get("sources")).toBeUndefined();
+  appB.cache.set("sources", "b");
+
+  expect(inputs.frame().cache.get("sources")).toBeUndefined();
+  expect(inputs.frame("packages/app-a").cache.get("sources")).toBe("a");
+  expect(inputs.frame("packages/app-b").cache.get("sources")).toBe("b");
+});
+
 test("Rules read other project files through ctx.fs", async () => {
   const rule = createRule({
     meta: {

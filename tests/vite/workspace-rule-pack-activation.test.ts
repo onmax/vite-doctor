@@ -4,6 +4,7 @@ import { dirname, join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
 import { createAgentReport, createJsonReport, detectProject } from "../../src/core/index.ts";
 import { hostDoctorExtensions, runViteDoctor, viteDoctorExtensions } from "../../src/doctor.ts";
+import { workspaceProjectView } from "../../src/core/internal/workspace-nuxt.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -284,6 +285,9 @@ test("a workspace with several Nuxt apps reads each app's own Nuxt Project Inven
   expect(appB!.nuxt.manifestPath).toBe(join(root, "packages/app-b/.nuxt/doctor.manifest.json"));
   expect((appA!.nuxt.modules ?? []).map((module) => module.name)).not.toContain("docus");
   expect((appB!.nuxt.modules ?? []).map((module) => module.name)).toContain("docus");
+  const view = workspaceProjectView(project, "packages/app-b");
+  expect(view.nuxt).toBe(appB!.nuxt);
+  expect(view.root).toBe(project.root);
 });
 
 test("a workspace with several Nuxt apps runs Nuxt Rules on each app with its inventory", async () => {
