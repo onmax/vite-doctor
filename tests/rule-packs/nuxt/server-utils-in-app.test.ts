@@ -151,7 +151,7 @@ test("resolves custom serverDir and aliases from the Nuxt manifest", async () =>
         root: "layers/billing",
         srcDir: "layers/billing/app",
         serverDir: "layers/billing/server",
-        aliases: { "~": "layers/billing" },
+        aliases: { "~": "../.." },
         priority: 1,
       },
     ],
@@ -189,7 +189,7 @@ test("puts runtime imports in recommended and type-only imports in strict", () =
 });
 
 test.each(["~", "@", "~~", "@@"])(
-  "resolves %s layer overrides in the project context",
+  "resolves relative %s layer overrides from the importer and preserves absolute overrides",
   async (alias) => {
     const manifest = {
       nuxtVersion: "4.0.0",
@@ -226,6 +226,7 @@ test.each(["~", "@", "~~", "@@"])(
       files: {
         ".nuxt/doctor.manifest.json": JSON.stringify(manifest),
         "layers/billing/app/utils/a.ts": `import { price } from '${alias}/server/utils/pricing'`,
+        "layers/billing/app/utils/e.ts": `import { price } from '${alias}/../../server/utils/pricing'`,
         "layers/absolute/app/utils/b.ts": `import { price } from '${alias}/server/utils/pricing'`,
         "layers/billing/shared/utils/c.ts": `import { price } from '~/server/utils/pricing'`,
         "layers/billing/shared/utils/d.ts": `import { price } from '~~/server/utils/pricing'`,
@@ -235,8 +236,8 @@ test.each(["~", "@", "~~", "@@"])(
     expect(result.diagnostics.map((d) => [fixturePath(d.file), d.message])).toEqual([
       ["layers/absolute/app/utils/b.ts", expect.stringContaining("/external/server/utils/pricing")],
       [
-        "layers/billing/app/utils/a.ts",
-        expect.stringContaining("resolves to server/utils/pricing,"),
+        "layers/billing/app/utils/e.ts",
+        expect.stringContaining("resolves to layers/billing/server/utils/pricing,"),
       ],
       [
         "layers/billing/shared/utils/d.ts",

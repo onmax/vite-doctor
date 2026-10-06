@@ -186,15 +186,15 @@ function resolveSpecifier(
   const aliases = nuxt?.manifest?.aliases ?? {};
   if (ROOT_RELATIVE_ALIASES.has(head)) {
     const base = localLayer
-      ? layerAlias(layer, head, root, layer.root)
+      ? layerAlias(layer, head, layer.root)
       : absolute(root, aliases[head] ?? root);
-    return rest ? toPosixPath(resolve(base, rest)) : undefined;
+    return rest ? resolveLayerAlias(base, rest, file) : undefined;
   }
   if (SRC_RELATIVE_ALIASES.has(head)) {
     const base = localLayer
-      ? layerAlias(layer, head, root, layerSrcDir(file, layer))
+      ? layerAlias(layer, head, layerSrcDir(file, layer))
       : absolute(root, aliases[head] ?? nuxt?.appDir ?? root);
-    return rest ? toPosixPath(resolve(base, rest)) : undefined;
+    return rest ? resolveLayerAlias(base, rest, file) : undefined;
   }
   if (specifier === "#server" || specifier.startsWith("#server/")) return;
   const alias = Object.keys(aliases)
@@ -206,9 +206,13 @@ function resolveSpecifier(
   return toPosixPath(resolve(absolute(root, aliases[alias]!), specifier.slice(alias.length + 1)));
 }
 
-function layerAlias(layer: LayerDirs, alias: string, root: string, fallback: string) {
+function layerAlias(layer: LayerDirs, alias: string, fallback: string) {
   const value = layer.aliases?.[alias];
-  return value ? absolute(root, value) : fallback;
+  return value || fallback;
+}
+
+function resolveLayerAlias(base: string, rest: string, file: string) {
+  return toPosixPath(resolve(dirname(file), base, rest));
 }
 
 function layerSrcDir(file: string, layer: LayerDirs) {
