@@ -14,9 +14,8 @@ export const noBrowserApiInSetup = createRule({
     if (ctx.project.framework === "nuxt") return;
     if (!ctx.project.ssr) return;
     return {
-      ScriptNode(node: AnyNode) {
+      Identifier(node: AnyNode) {
         if (
-          node.type === "Identifier" &&
           BROWSER_GLOBALS.has(node.name) &&
           !ctx.file.relativePath.includes(".client.") &&
           !ctx.helpers.isTypeOnlyContext(node) &&

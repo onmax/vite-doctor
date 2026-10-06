@@ -34,7 +34,7 @@ export const preferUseEventListener = createRule({
     if (ctx.project.framework === "nuxt" && !isNuxtVueRuntimePath(ctx)) return;
 
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!isAddEventListenerCall(node, ctx.helpers.getCalleeName(node))) return;
         const owner = manualListenerOwner(node, ctx.file.text);
         if (!owner) return;

@@ -1,4 +1,4 @@
-import { AnyNode, createRule, report } from "./shared.js";
+import { createRule, report } from "./shared.js";
 import { uncleanedWatcherResources } from "./resource-cleanup-evidence.js";
 
 export const requireWatcherCleanup = createRule({
@@ -13,8 +13,7 @@ export const requireWatcherCleanup = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program() {
         for (const resource of uncleanedWatcherResources(ctx)) {
           report(
             ctx,

@@ -9,10 +9,11 @@ export const noOnWatcherCleanupAfterAwait = createRule({
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/essentials/watchers.html#side-effect-cleanup",
     requires: { script: true, vue: true },
+    prefilter: { calls: ["onWatcherCleanup"] },
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (ctx.helpers.isCall(node, "onWatcherCleanup") && isAfterAwaitInWatcherCallback(node)) {
           report(
             ctx,

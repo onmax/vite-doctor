@@ -1,4 +1,4 @@
-import { AnyNode, createRule, report } from "./shared.js";
+import { createRule, report } from "./shared.js";
 import { uncleanedLifecycleResources } from "./resource-cleanup-evidence.js";
 
 export const requireLifecycleCleanup = createRule({
@@ -13,8 +13,7 @@ export const requireLifecycleCleanup = createRule({
   create(ctx) {
     if (ctx.project.framework === "nuxt" && !isNuxtVueRuntimePath(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program() {
         for (const resource of uncleanedLifecycleResources(ctx)) {
           report(
             ctx,

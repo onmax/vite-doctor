@@ -23,11 +23,12 @@ export const noMutationInOnUpdated = createRule({
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/composition-api-lifecycle.html#onupdated",
     requires: { script: true, vue: true },
+    prefilter: { calls: ["onUpdated"] },
   },
   create(ctx) {
     let bindings: ReactiveBindings | undefined;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "onUpdated")) return;
         const callback = node.arguments?.[0];
         if (!isFunctionLike(callback)) return;

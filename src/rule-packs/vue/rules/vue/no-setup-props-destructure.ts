@@ -21,21 +21,19 @@ export const noSetupPropsDestructure = createRule({
   create(ctx) {
     if (!scriptMayName(ctx, SETUP_NAMES)) return;
     let snapshots: Set<string> | undefined;
-    return {
-      ScriptNode(node: AnyNode) {
-        if (!["VariableDeclarator", "ObjectPattern", "ArrayPattern"].includes(node.type)) return;
-        if (!(snapshots ??= setupPropSnapshots(ctx)).has(`${node.type}:${node.start}`)) return;
-        report(
-          ctx,
-          node,
-          "vue/reactivity/no-setup-props-destructure",
-          "error",
-          "reactivity",
-          "Destructuring a setup() props parameter creates non-reactive local values.",
-          "Use props.foo, toRefs(props), or migrate to <script setup> reactive props destructuring.",
-        );
-      },
+    const visit = (node: AnyNode) => {
+      if (!(snapshots ??= setupPropSnapshots(ctx)).has(`${node.type}:${node.start}`)) return;
+      report(
+        ctx,
+        node,
+        "vue/reactivity/no-setup-props-destructure",
+        "error",
+        "reactivity",
+        "Destructuring a setup() props parameter creates non-reactive local values.",
+        "Use props.foo, toRefs(props), or migrate to <script setup> reactive props destructuring.",
+      );
     };
+    return { VariableDeclarator: visit, ObjectPattern: visit, ArrayPattern: visit };
   },
 });
 
