@@ -198,11 +198,16 @@ export async function runPhase(
 
 export function persistScanCache(session: ScanSession): void {
   const { options } = session;
-  const subset = Boolean(options.rules) || Boolean(options.analyses);
+  // Changed-files runs and Rule subset runs skip work, so they keep the results they did not touch.
+  const subset = Boolean(options.rules) || Boolean(options.analyses) || Boolean(session.gitChanges);
   session.cache.persist({
     files: session.files.length,
     activeRuleKeys: subset
-      ? new Set(options.analyses && !options.rules ? [] : session.ruleKeys.values())
+      ? new Set(
+          session.gitChanges || (options.analyses && !options.rules)
+            ? []
+            : session.ruleKeys.values(),
+        )
       : undefined,
   });
 }

@@ -439,6 +439,11 @@ export class DoctorCache implements SourceInventoryMemo {
     const keep = (scope: string | undefined, index: number, result: StoredRuleResult) => {
       const key = loaded.ruleKeys[index];
       if (key === undefined || active.has(key)) return;
+      const current = this.ruleKeys.get(key);
+      if (current !== undefined) {
+        if (scope === undefined ? this.runs[current] : this.files[scope]?.r?.[current]) return;
+        if (scope !== undefined && this.emptyRules.get(scope)?.has(current)) return;
+      }
       this.storeResult(scope, key, result.d, this.loadedInputIds(result.i));
     };
     for (const [path, file] of Object.entries(loaded.files)) {
@@ -449,6 +454,11 @@ export class DoctorCache implements SourceInventoryMemo {
     }
     for (const [index, result] of Object.entries(loaded.runs))
       keep(undefined, Number(index), result);
+    if (!this.graphEntry && loaded.graph)
+      this.graphEntry = {
+        ...loaded.graph,
+        i: this.loadedInputIds(loaded.graph.i).map((id) => this.internInput(id)),
+      };
   }
 
   private storeResult(

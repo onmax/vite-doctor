@@ -30,12 +30,14 @@ interface ParsedSource {
 }
 
 interface SourceState {
+  session: ScanSession;
   entry: ScanFileEntry;
   text?: string;
   parsed?: ParsedSource;
   facts?: FileFacts;
   cachedFacts?: () => Omit<FileFacts, "fileId"> | undefined;
-  shape: number;
+  /** Undefined until a file that a changed-files run deferred is parsed. */
+  shape?: number;
   fileId: number;
 }
 
@@ -71,6 +73,7 @@ async function prepareSourceFile(
   if (cached) {
     addEvidenceGaps(session, cached.gaps);
     return createSourceHandle(session, file, content.hash, {
+      session,
       entry: file,
       text: content.text,
       shape: cached.shape,
@@ -78,17 +81,33 @@ async function prepareSourceFile(
       fileId,
     });
   }
+  // A changed-files run reports nothing from an unchanged file, so it parses one only when a
+  // project-scoped Rule or an analysis needs it; its parser evidence would not be reported.
+  if (session.gitChanges && !file.reportEligibility)
+    return createSourceHandle(session, file, content.hash, {
+      session,
+      entry: file,
+      text: content.text,
+      fileId,
+    });
   const text = content.text ?? readFileSync(absolute, "utf8");
   const parsed = await parseSource(file, text, content.hash);
   addEvidenceGaps(session, parsed.gaps);
-  const state: SourceState = { entry: file, text, parsed, shape: shapeOf(parsed), fileId };
+  const state: SourceState = {
+    session,
+    entry: file,
+    text,
+    parsed,
+    shape: shapeOf(parsed),
+    fileId,
+  };
   const handle = createSourceHandle(session, file, content.hash, state);
   state.facts = createFileFacts(session, file, fileId, text, content.hash, parsed);
   session.cache.recordFile(
     absolute,
     content.hash,
     entryKey(file),
-    state.shape,
+    state.shape!,
     parsed.gaps,
     state.facts,
   );
@@ -104,11 +123,33 @@ export async function loadSourceFile(handle: SourceFileHandle): Promise<void> {
   const state = sourceStates.get(handle);
   if (!state || state.parsed) return;
   state.parsed = await parseSource(state.entry, handle.text, handle.hash);
+  if (state.shape !== undefined) return;
+  state.shape = shapeOf(state.parsed);
+  state.facts = createFileFacts(
+    state.session,
+    state.entry,
+    state.fileId,
+    handle.text,
+    handle.hash,
+    state.parsed,
+  );
+  state.session.cache.recordFile(
+    handle.path,
+    handle.hash,
+    entryKey(state.entry),
+    state.shape,
+    state.parsed.gaps,
+    state.facts,
+  );
 }
 
-/** Bit 1: SFC, bit 2: script AST, bit 4: template AST, known without parsing cached files. */
-export function sourceShape(handle: SourceFileHandle): number {
-  return sourceStates.get(handle)?.shape ?? 0;
+/**
+ * Bit 1: SFC, bit 2: script AST, bit 4: template AST, known without parsing cached files.
+ * Undefined for a file a changed-files run has not parsed yet.
+ */
+export function sourceShape(handle: SourceFileHandle): number | undefined {
+  const state = sourceStates.get(handle);
+  return state ? state.shape : 0;
 }
 
 /** File Facts for every source file, computing the ones the cache could not provide. */
@@ -116,8 +157,8 @@ export async function sourceFacts(session: ScanSession): Promise<FileFacts[]> {
   const facts: FileFacts[] = [];
   for (const handle of session.handles) {
     const state = sourceStates.get(handle)!;
+    if (!handle.facts) await loadSourceFile(handle);
     if (!handle.facts) {
-      await loadSourceFile(handle);
       state.facts = createFileFacts(
         session,
         state.entry,
@@ -130,7 +171,7 @@ export async function sourceFacts(session: ScanSession): Promise<FileFacts[]> {
         handle.path,
         handle.hash,
         entryKey(state.entry),
-        state.shape,
+        state.shape ?? 0,
         state.parsed!.gaps,
         state.facts,
       );

@@ -91,6 +91,11 @@ export const doctorInternalDiagnostics = defineDiagnostics({
         `${params.owner} uses Diagnostic Code "${params.code}" with the "${params.prefix}" prefix reserved for built-in Doctor Rule Packs.`,
       fix: "Pick a Diagnostic Code Prefix owned by your package, such as an uppercase abbreviation of the package name, and declare its codes with defineDoctorDiagnostics.",
     },
+    DOC0030: {
+      why: (params: { ruleId: string; file: string; target: string }) =>
+        `File Rule "${params.ruleId}" reported a Diagnostic location in ${params.target} while analyzing ${params.file}, but it does not declare a project report scope.`,
+      fix: 'Report on the file being analyzed, or declare meta.reportScope: "project" on the Rule so Doctor gives it whole-project context.',
+    },
     DOC0029: {
       why: (params: { entry: string; reason: string }) =>
         `Doctor could not load the Doctor Extension entry "${params.entry}" registered by the host: ${params.reason}`,

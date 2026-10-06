@@ -9,6 +9,7 @@ import {
   defineDoctorExtension,
   defineRulePack,
   type Diagnostic,
+  type DoctorRule,
 } from "../../src/core/index.ts";
 import { collectGitChangeInventory } from "../../src/core/internal/git-change-ranges.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
@@ -36,17 +37,60 @@ const importsTodo = createRule({
   },
 });
 
-const extension = defineDoctorExtension({
-  name: "fixture/changed-parity",
-  rulePacks: [
-    defineRulePack({
-      name: "fixture/changed-parity",
-      version: "0.0.0",
-      rules: [importsTodo],
-      presets: { recommended: [importsTodo.meta.id] },
-    }),
-  ],
+/**
+ * Declared project-scoped: reports on the TODO in each imported file, with the import as a
+ * related location, so a changed file can receive a Diagnostic from an unchanged importer.
+ */
+const todoImportedBy = createRule({
+  meta: {
+    id: "fixture/todo-imported-by",
+    title: "TODO in an imported file",
+    category: "fixture",
+    severity: "info",
+    reportScope: "project",
+  },
+  create(ctx) {
+    for (const match of ctx.file.text.matchAll(/from "(\.\/[\w-]+)"/g)) {
+      const target = join(dirname(ctx.file.path), `${match[1]}.ts`);
+      const text = ctx.fs.readText(target);
+      const offset = text?.indexOf("TODO") ?? -1;
+      if (offset === -1) continue;
+      ctx.report(
+        allDiagnostics.DOC9999({
+          why: `TODO imported by ${ctx.file.relativePath}.`,
+          fix: "Finish it.",
+        }),
+        {
+          file: target,
+          range: ctx.helpers.rangeFromOffsets(target, text!, offset, offset + 4),
+          related: [
+            {
+              file: ctx.file.path,
+              range: ctx.range(match.index, match.index + match[0].length),
+              message: "Imported here",
+            },
+          ],
+        },
+      );
+    }
+  },
 });
+
+function fixtureExtension(rules: DoctorRule[]) {
+  return defineDoctorExtension({
+    name: "fixture/changed-parity",
+    rulePacks: [
+      defineRulePack({
+        name: "fixture/changed-parity",
+        version: "0.0.0",
+        rules,
+        presets: { recommended: rules.map((rule) => rule.meta.id) },
+      }),
+    ],
+  });
+}
+
+const extension = fixtureExtension([importsTodo, todoImportedBy]);
 
 function random(seed: number) {
   let state = seed;
@@ -102,7 +146,7 @@ async function filterToChangedLines(root: string, diagnostics: Diagnostic[]) {
 const comparable = (diagnostics: Diagnostic[]) =>
   diagnostics.map(({ diagnostic, ...rest }) => ({ ...rest, code: diagnostic.name }));
 
-test.each([1, 2, 3])(
+test.each([1, 2, 3, 4, 5])(
   "--changed equals the full run filtered to changed lines (seed %i)",
   async (seed) => {
     const next = random(seed);
@@ -125,7 +169,9 @@ test.each([1, 2, 3])(
         JSON.stringify({ type: "module", devDependencies: { vite: "^7.0.0" } }),
       );
       write(".gitignore", ".vite-doctor\n");
-      for (const name of names) write(`src/${name}.ts`, moduleText(name, []));
+      // Committed TODOs make every new importer the target of a cross-file report.
+      for (const name of names)
+        write(`src/${name}.ts`, moduleText(name, [], name === "beta" ? "" : "// TODO"));
       write("src/main.ts", 'import { alpha } from "./alpha";\nexport const main = alpha;\n');
       git(root, "init", "-q");
       commit(root);
@@ -138,12 +184,13 @@ test.each([1, 2, 3])(
       await runViteDoctor({ ...options, changed: true, cache: true });
 
       let reported = 0;
-      for (let step = 0; step < 8; step++) {
+      let crossFile = 0;
+      for (let step = 0; step < 10; step++) {
         const name = names[next(names.length)]!;
         const imports = names.filter((other) => other !== name && next(3) === 0);
         switch (next(5)) {
           case 0:
-            write(`src/${name}.ts`, moduleText(name, imports, next(2) ? "// TODO" : ""));
+            write(`src/${name}.ts`, moduleText(name, imports, next(3) ? `// TODO ${step}` : ""));
             break;
           case 1:
             write(
@@ -176,8 +223,10 @@ test.each([1, 2, 3])(
           expected,
         );
         reported += expected.length;
+        crossFile += expected.filter((item) => item.ruleId === todoImportedBy.meta.id).length;
       }
       expect(reported).toBeGreaterThan(0);
+      expect(crossFile).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -207,6 +256,36 @@ test("--changed reports parser evidence only for changed files", async () => {
     expect(touched.project.evidenceGaps?.map((gap) => gap.files)).toEqual([
       [join(root, "src/broken.ts")],
     ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an undeclared cross-file report from a file Rule is an authoring error", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-changed-scope-"));
+  const undeclared = createRule({
+    meta: { id: "fixture/undeclared", title: "Undeclared", category: "fixture", severity: "warn" },
+    create(ctx) {
+      if (!ctx.file.path.endsWith("a.ts")) return;
+      ctx.report(allDiagnostics.DOC9999({ why: "Elsewhere.", fix: "Look there." }), {
+        file: join(ctx.project.root, "src/b.ts"),
+      });
+    },
+  });
+  try {
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
+    writeFileSync(join(root, "src/a.ts"), "export const a = 1;\n");
+    writeFileSync(join(root, "src/b.ts"), "export const b = 1;\n");
+    git(root, "init", "-q");
+    commit(root);
+    writeFileSync(join(root, "src/a.ts"), "export const a = 2;\n");
+    const options = { root, cache: false, extensions: [fixtureExtension([undeclared])] };
+    for (const run of [options, { ...options, changed: true }])
+      await expect(runViteDoctor(run)).rejects.toMatchObject({
+        name: "DOC0030",
+        message: expect.stringContaining('"fixture/undeclared"'),
+      });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

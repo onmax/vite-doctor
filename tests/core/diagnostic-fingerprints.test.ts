@@ -78,6 +78,7 @@ function crossFileRule(execution: "file" | "manifest" | "workspace", reported: s
       category: "architecture",
       severity: "warn",
       execution,
+      reportScope: "project",
     },
     create(ctx) {
       const report = () =>

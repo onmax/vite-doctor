@@ -1,4 +1,5 @@
-import { resolve } from "pathe";
+import { relative, resolve } from "pathe";
+import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import type {
   Diagnostic,
   DoctorRule,
@@ -53,12 +54,24 @@ export async function runFileRules(session: ScanSession): Promise<void> {
   const reported = rules.map((): Diagnostic[] => []);
   const timings = session.options.profile ? rules.map(() => ({ ms: 0, files: 0 })) : undefined;
   const workspacePackages = projectWorkspacePackages(session.project);
+  const changed = session.gitChanges
+    ? new Set(session.files.flatMap((file) => (file.reportEligibility ? [file.path] : [])))
+    : undefined;
   for (const file of session.handles) {
     const owner = session.ruleScopes.size
       ? owningWorkspacePackage(workspacePackages, file.relativePath)
       : ".";
+    // File-scoped Rules can only report into the file they analyze, so a changed-files run
+    // needs them on changed files only; project-scoped Rules keep whole-project context.
+    const candidates =
+      changed && !changed.has(file.path)
+        ? [...rules.keys()].filter((index) => rules[index]!.meta.reportScope === "project")
+        : [...rules.keys()];
+    if (!candidates.length) continue;
+    if (sourceShape(file) === undefined) await loadSourceFile(file);
     const pending: number[] = [];
-    for (const [index, rule] of rules.entries()) {
+    for (const index of candidates) {
+      const rule = rules[index]!;
       if (!canRunRuleOnFile(rule, file)) continue;
       if (session.ruleScopes.get(rule.meta.id)?.has(owner) === false) continue;
       const key = keys[index];
@@ -225,8 +238,12 @@ function manifestRuleProjects(
 
 export async function buildGraphPhase(session: ScanSession): Promise<void> {
   const analyses = selectedAnalyses(session);
+  const graphAnalyses = analyses.has("dead-code") || analyses.has("graph");
+  // A changed-files report describes the change, so it skips the project graph summary unless an
+  // analysis needs the graph.
+  if (session.gitChanges && !graphAnalyses) return;
   const key = graphKey(session);
-  if (!analyses.has("dead-code") && !analyses.has("graph")) {
+  if (!graphAnalyses) {
     const cached = session.cache.graph(key);
     if (cached) {
       session.graphSummary = cached;
@@ -344,6 +361,17 @@ function createRuleRun(
         diagnostic,
         file: metadata.file ?? file.path,
       });
+      if (phase === "file" && rule.meta.reportScope !== "project") {
+        const outside = [input.file, ...(input.related ?? []).map((item) => item.file)]
+          .map((target) => resolve(session.root, target))
+          .find((target) => target !== file.path);
+        if (outside)
+          throw doctorInternalDiagnostics.DOC0030({
+            ruleId: rule.meta.id,
+            file: relative(session.root, file.path),
+            target: relative(session.root, outside),
+          });
+      }
       const diagnosticConfig = resolvedConfigFor(session, input.ruleId);
       if (diagnosticConfig.enabled === false) return;
       if (input.file !== file.path) frame.log.push(`t:${resolve(session.root, input.file)}`);
@@ -416,7 +444,7 @@ function canRunRuleOnFile(rule: DoctorRule, file: SourceFileHandle): boolean {
   if (rule.meta.sourceKinds && !rule.meta.sourceKinds.includes(file.sourceKind)) return false;
   const requires = rule.meta.requires;
   if (!requires) return true;
-  const shape = sourceShape(file);
+  const shape = sourceShape(file) ?? 0;
   if (requires.sfc && !(shape & 1)) return false;
   if (requires.template && !(shape & 4)) return false;
   if (requires.script && !(shape & 2)) return false;

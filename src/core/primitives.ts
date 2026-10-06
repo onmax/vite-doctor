@@ -141,6 +141,12 @@ export interface RuleMeta {
    * file has any listed signal, so list every entry point the Rule reports from.
    */
   prefilter?: RulePrefilter;
+  /**
+   * Where a file Rule's Diagnostics can land. `"file"` (the default) means only the file being
+   * analyzed, `file` and `related` locations included, and Doctor enforces it. `"project"` lets
+   * the Rule report on any file. Manifest and workspace Rules are always project-scoped.
+   */
+  reportScope?: "file" | "project";
   sourceKinds?: Array<"app" | "layer" | "module">;
   execution?: ExecutionKind;
   cost?: RuleCost;
