@@ -10,6 +10,7 @@ import type {
   ProjectLanguage,
 } from "../primitives.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
+import { detectNuxtModuleDefinitions } from "./nuxt-module-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
 import { ProjectFileWalk, rememberProjectFileWalk, type ProjectEntry } from "./project-files.js";
 import {
@@ -94,6 +95,9 @@ export async function detectProject(
     tsconfigPath,
     languages: await detectProjectLanguages(walk, Boolean(tsconfigPath)),
     nuxt,
+    nuxtModuleDefinitions: nuxt
+      ? await detectNuxtModuleDefinitions(root, nuxt.appRoots)
+      : undefined,
     runtimeGraph: targeted.graph,
     nuxtCompatibility: targeted.compatibility,
     inventory: { packages: deps },
@@ -377,7 +381,9 @@ function readNuxtConfigText(root: string): { primary: string | null; anyFormat: 
     anyFormat:
       primary ??
       readFileSyncIfExists(join(root, "nuxt.config.mjs")) ??
-      readFileSyncIfExists(join(root, "nuxt.config.mts")),
+      readFileSyncIfExists(join(root, "nuxt.config.mts")) ??
+      readFileSyncIfExists(join(root, "nuxt.config.cjs")) ??
+      readFileSyncIfExists(join(root, "nuxt.config.cts")),
   };
 }
 

@@ -223,6 +223,22 @@ test("Nuxt manifest freshness is shared within a run and recomputed by the next 
   );
 });
 
+test.each(["cjs", "cts"])("detects docus from nuxt.config.%s", async (extension) => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "4.4.6" } }),
+      [`nuxt.config.${extension}`]: "module.exports = { extends: 'docus' }\n",
+      "content/index.md": "# Home\n",
+    },
+    async (root) => {
+      const project = await detectProject(root);
+      expect(project.nuxt?.modules).toEqual(expect.arrayContaining([{ name: "docus" }]));
+      const files = await selectScanFiles(root, {}, {}, project);
+      expect(files.map((file) => file.displayPath)).toContain("content/index.md");
+    },
+  );
+});
+
 function project(root: string, modules: string[] = []): ProjectInfo {
   return {
     root,

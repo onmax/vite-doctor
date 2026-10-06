@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { parseSync } from "oxc-parser";
+import { parseScriptSync } from "../../../core/internal/script.js";
 import { parseForESLint } from "@typescript-eslint/parser";
 import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { dirname, extname, relative, resolve } from "pathe";
@@ -552,7 +552,7 @@ function localImports(
     const { aliases, autoImports, unknownLayerAliases } = resolveAliases(current);
     const file = resolve(root, current.path);
     if (!/\.[cm]?[jt]sx?$/.test(file)) continue;
-    const parsed = parseSync(file, current.text);
+    const parsed = parseScriptSync(file, current.text);
     if (parsed.errors.length) {
       omitted.push(current.path);
       continue;

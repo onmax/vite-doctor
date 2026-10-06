@@ -3,6 +3,7 @@ import { isNuxtManifestCurrent } from "./runtime-graph.js";
 import type { NuxtDoctorManifest, NuxtModuleSource } from "../primitives.js";
 
 export interface NuxtProjectInventory {
+  scannedComposableFiles?: string[];
   importsDirs: string[];
   pluginFiles: string[];
   keyedComposables: string[];
@@ -39,6 +40,7 @@ export function createNuxtProjectInventory(
   isCurrent = isNuxtManifestCurrent(root, manifest),
 ): NuxtProjectInventory {
   return {
+    scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
     keyedComposables: (manifest?.keyedComposables ?? []).map(String),
