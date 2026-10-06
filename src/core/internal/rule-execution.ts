@@ -19,6 +19,7 @@ import {
   defaultConfidenceForPhase,
   evidenceKindForPhase,
   normalizeDiagnostic,
+  sourceTextFor,
 } from "./diagnostics.js";
 import {
   markSession,
@@ -194,7 +195,13 @@ function createRuleContext(
           { kind: evidenceKindForPhase(phase), summary: `${phase} analysis` },
         ],
         analysisPhase: input.analysisPhase ?? phase,
-        fingerprint: input.fingerprint ?? createDiagnosticFingerprint(session.root, input, file),
+        fingerprint:
+          input.fingerprint ??
+          createDiagnosticFingerprint(
+            session.root,
+            input,
+            input.file === file.path ? file.text : sourceTextFor(session, input.file),
+          ),
       };
       (sink ?? session.diagnostics).push(next);
     },
