@@ -1,7 +1,9 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { resolve as resolveNativePath } from "node:path";
 import { cac } from "cac";
 import { consola } from "consola";
-import { resolve } from "pathe";
+import { dirname, relative, resolve } from "pathe";
+import { fileURLToPath } from "node:url";
 import {
   createReport,
   createRulesReport,
@@ -15,6 +17,8 @@ import {
 } from "./core/index.js";
 import { selectDoctorPresentation } from "./core/internal/agent-runtime.js";
 import { applyDoctorOptions, stringFlag } from "./core/internal/cli.js";
+import type { DoctorProcessStatus } from "./doctor-process/client.js";
+import { DOCTOR_PROCESS_ENV } from "./doctor-process/protocol.js";
 import { viteDoctorVersion } from "./version.js";
 
 type MetadataReportFormat = Exclude<DoctorReportFormat, "sarif">;
@@ -72,7 +76,7 @@ export async function main(
 
   let exitCode = 0;
   const cli = cac("vite-doctor");
-  addDoctorRunCommand(cli, cwd, surface, (code) => (exitCode = code));
+  addDoctorRunCommand(cli, args, cwd, surface, (code) => (exitCode = code));
   cli
     .command("migrate [path]", "Evaluate source against a future runtime graph.")
     .option("--to <target>", "Explicit target such as nuxt@5 or nitro@3.")
@@ -163,6 +167,32 @@ export async function main(
       }
       throw new Error(`Unknown cache action: ${action}. Use status or clean.`);
     });
+  cli
+    .command(
+      "server <action> [path]",
+      "Show (status) or stop (stop) the long-lived Doctor process.",
+    )
+    .option("--format <format>", "Output for server status: text, json, or agent.")
+    .action(async (action: string, path = ".", options) => {
+      const root = resolveNativePath(cwd, path);
+      const client = await import("./doctor-process/client.js");
+      if (action === "status") {
+        const format = await presentationFormat(options.format, metadataFormats);
+        const status = await client.doctorProcessStatus(root, doctorProcessEntry());
+        process.stdout.write(formatServerStatus(status, format));
+        return;
+      }
+      if (action === "stop") {
+        const result = await client.stopDoctorProcess(root);
+        consola.log(
+          result.stopped
+            ? `Doctor process ${result.pid} stopped`
+            : `No Doctor process is running for ${root}`,
+        );
+        return;
+      }
+      throw new Error(`Unknown server action: ${action}. Use status or stop.`);
+    });
   cli.help();
 
   try {
@@ -209,6 +239,34 @@ function formatCacheStatus(status: CacheStatus, format: MetadataReportFormat): s
   return `${lines.join("\n")}\n`;
 }
 
+function formatServerStatus(status: DoctorProcessStatus, format: MetadataReportFormat): string {
+  if (format === "json") return `${JSON.stringify(status, null, 2)}\n`;
+  if (format === "agent")
+    return `${JSON.stringify({ schema: "vite-doctor.server/v1", status: "ready", server: status })}\n`;
+  const { state, activity } = status;
+  if (!status.running || !state || !activity) {
+    return `Doctor process for ${status.root}: not running\n  enable it with --server or ${DOCTOR_PROCESS_ENV}=1\n`;
+  }
+  const mib = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+  return `${[
+    `Doctor process for ${status.root}: running`,
+    `  pid ${activity.pid}, Doctor ${state.version}, Node.js ${state.node}`,
+    `  started ${state.startedAt}, stops after ${Math.round(state.idleTimeoutMs / 1000)} s idle`,
+    `  runs: ${activity.runs}${activity.lastRunAt ? `, last ${activity.lastRunAt}` : ""}${activity.queued ? `, ${activity.queued} queued` : ""}`,
+    `  memory: rss ${mib(activity.rssBytes)}, heap ${mib(activity.heapUsedBytes)}`,
+    status.current
+      ? "  current: yes, this CLI reuses it"
+      : "  current: no, the next Doctor Run replaces it (Doctor, Node.js, config, or environment differ)",
+    `  socket: ${state.socket}`,
+    `  log: ${state.log}`,
+  ].join("\n")}\n`;
+}
+
+function doctorProcessEntry(): URL | undefined {
+  const entry = new URL("./doctor-process.mjs", import.meta.url);
+  return existsSync(fileURLToPath(entry)) ? entry : undefined;
+}
+
 const hostExtensionsHelp =
   "Load Doctor Extension entries registered by host integrations, such as Nuxt modules.";
 
@@ -231,6 +289,7 @@ function validateSingleValueOptions(cli: ReturnType<typeof cac>): void {
 
 function addDoctorRunCommand(
   cli: ReturnType<typeof cac>,
+  args: string[],
   cwd: string,
   surface: CliSurfaceOptions,
   setExitCode: (code: number) => void,
@@ -259,6 +318,12 @@ function addDoctorRunCommand(
     .option("--format <format>", "Output: text, json, sarif, or agent.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
     .option("--host-extensions", hostExtensionsHelp)
+    .option("--watch", "Rerun Doctor when project files change.")
+    .option(
+      "--server",
+      `Run through the long-lived Doctor process (or set ${DOCTOR_PROCESS_ENV}=1).`,
+    )
+    .option("--no-server", "Run in this process even when the Doctor process is enabled.")
     .action(async (path = ".", options) => {
       const format = await presentationFormat(options.format, reportFormats);
       const root = resolve(cwd, path);
@@ -274,6 +339,10 @@ function addDoctorRunCommand(
       const explicitConfig = stringFlag(options.config);
       const configFile = cliConfigFile(root, explicitConfig);
       runOptions.config = await loadCliConfig(root, explicitConfig);
+      if (options.watch) {
+        setExitCode(await watchDoctorCommand(args, cwd, surface, root, runOptions));
+        return;
+      }
       try {
         setExitCode(await runDoctorCommand(runOptions, format, explicitConfig));
       } catch (error) {
@@ -286,6 +355,45 @@ function addDoctorRunCommand(
   // cac defaults negated flags to true, which renders as `(default: true)` on `--no-cache`
   // and makes every run look like an explicit `--cache` in rerun commands.
   for (const option of command.options) if (option.negated) option.config.default = undefined;
+}
+
+async function watchDoctorCommand(
+  args: string[],
+  cwd: string,
+  surface: CliSurfaceOptions,
+  root: string,
+  options: DoctorRunOptions,
+): Promise<number> {
+  if (options.fix || options.unsafeFix || options.updateBaseline) {
+    throw new Error("--watch cannot be combined with --fix, --unsafe-fix, or --update-baseline.");
+  }
+  const [{ watchDoctorRuns }, { viteDoctorCacheStatus }] = await Promise.all([
+    import("./doctor-process/watch.js"),
+    import("./doctor.js"),
+  ]);
+  const cache = await viteDoctorCacheStatus(
+    root,
+    options.config,
+    options.framework === "auto" ? undefined : options.framework,
+  );
+  const runArgs = args.filter((arg) => arg !== "--watch");
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", abort);
+  try {
+    return await watchDoctorRuns({
+      root,
+      ignore: [dirname(cache.path)],
+      run: () => main(runArgs, cwd, surface),
+      signal: controller.signal,
+      onRerun: (changed) =>
+        process.stderr.write(`\n[vite-doctor] ${relative(root, changed)} changed, rerunning\n`),
+    });
+  } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
+  }
 }
 
 async function runDoctorCommand(

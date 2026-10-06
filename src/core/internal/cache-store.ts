@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -109,6 +110,11 @@ interface StoreIndex {
 
 type StoredFacts = Omit<FileFacts, "fileId">;
 
+interface PersistOptions {
+  files: number;
+  activeRuleKeys?: ReadonlySet<string>;
+}
+
 export interface CachedFile {
   shape: number;
   gaps: EvidenceGap[];
@@ -139,10 +145,13 @@ export class DoctorCache implements SourceInventoryMemo {
   private readonly root: string;
   private readonly dir: string;
   private readonly engine: string;
+  /** Store identity observed when this run loaded its retained snapshot. */
+  private readonly loadedStoreSignature: string | undefined;
   private readonly startedAt = Date.now();
   private loaded: StoreIndex | undefined;
   private loadedFactsText: string | undefined;
   private loadedFacts: Record<string, StoredFacts> | undefined;
+  private resident: LoadedStore | undefined;
   private readonly loadedRuleKeys = new Map<string, number>();
   private readonly ruleKeys = new Map<string, number>();
   private readonly inputs = new Map<string, number>();
@@ -178,9 +187,12 @@ export class DoctorCache implements SourceInventoryMemo {
     this.engine = enabled ? engineIdentity() : "";
     if (!enabled) return;
     assertCachePath(this.root, this.dir);
+    flushStoreWrites();
     let loaded: ReturnType<typeof readStore>;
     try {
-      loaded = readStore(this.storePath());
+      const storePath = this.storePath();
+      this.loadedStoreSignature = fileSignature(storePath);
+      loaded = readResidentStore(storePath);
     } catch {
       // A store path that escapes the project root is never read; the write path refuses it too.
       loaded = undefined;
@@ -188,6 +200,8 @@ export class DoctorCache implements SourceInventoryMemo {
     if (loaded?.index.engine === this.engine) {
       this.loaded = loaded.index;
       this.loadedFactsText = loaded.factsText;
+      this.loadedFacts = loaded.facts;
+      this.resident = loaded;
       loaded.index.ruleKeys.forEach((key, index) => this.loadedRuleKeys.set(key, index));
     }
   }
@@ -301,7 +315,11 @@ export class DoctorCache implements SourceInventoryMemo {
     if (!this.enabled) return;
     this.files[path] = { hash, entry, shape, ...(gaps.length ? { gaps: [...gaps] } : {}) };
     const { fileId: _fileId, ...stored } = facts;
-    this.facts[path] = stored;
+    // A retained store outlives the run, and File Facts can hold slices of source text or parser
+    // buffers, so it keeps the stored form instead.
+    this.facts[path] = residentStores
+      ? (JSON.parse(JSON.stringify(stored)) as StoredFacts)
+      : stored;
     this.dirty = true;
     this.factsDirty = true;
   }
@@ -387,14 +405,13 @@ export class DoctorCache implements SourceInventoryMemo {
    * store keeps only its files; a run of a Rule subset keeps the results of every Rule outside
    * `activeRuleKeys`.
    */
-  persist({
-    files,
-    activeRuleKeys,
-  }: {
-    files: number;
-    activeRuleKeys?: ReadonlySet<string>;
-  }): void {
+  persist(options: PersistOptions): void {
     if (!this.enabled) return;
+    if (pendingWrites) pendingWrites.push(() => this.persistNow(options));
+    else this.persistNow(options);
+  }
+
+  private persistNow({ files, activeRuleKeys }: PersistOptions): void {
     this.stats.at = this.startedAt;
     this.stats.files = files;
     const loaded = this.loaded;
@@ -409,19 +426,40 @@ export class DoctorCache implements SourceInventoryMemo {
       Object.keys(loaded.generated ?? {}).some((path) => !this.generated[path])
     )
       this.dirty = true;
-    if (!this.dirty) return;
+    if (this.dirty) this.write();
+  }
+
+  private write(): void {
     let temporary: string | undefined;
     let lock: { fd: number; path: string } | undefined;
     try {
+      const path = this.storePath();
       const index = JSON.stringify(this.buildIndex());
       const facts = this.factsSection();
       mkdirSync(this.dir, { recursive: true });
       lock = acquireStoreLock(this.root, this.dir);
+      // A retained run may report before this deferred write executes. Another Doctor process
+      // can write a newer store in that gap; never replace it with this run's older snapshot.
+      if (fileSignature(path) !== this.loadedStoreSignature) return;
       temporary = resolve(this.dir, `.doctor-${randomUUID()}.tmp`);
       assertCachePath(this.root, temporary);
-      writeFileSync(temporary, `${index}\n${facts}`, { flag: "wx", mode: 0o600 });
-      renameSync(temporary, this.storePath());
-      temporary = undefined;
+      const fd = openSync(temporary, "wx", 0o600);
+      try {
+        writeFileSync(fd, `${index}\n${facts.text}`);
+        renameSync(temporary, path);
+        temporary = undefined;
+        // A retained index is parsed back from what was written, so it shares nothing with this
+        // run. The written inode's stats keep a store another writer renamed over it untrusted.
+        const written: unknown = residentStores ? JSON.parse(index) : undefined;
+        if (isStoreIndex(written))
+          retainStore(
+            path,
+            { index: written, factsText: facts.text, facts: facts.parsed },
+            signatureOf(fstatSync(fd)),
+          );
+      } finally {
+        closeSync(fd);
+      }
     } catch (error) {
       if (error instanceof LegacyStoreLockError) console.warn(error.message);
       // Cache writes are best-effort and must not change Diagnostics.
@@ -510,7 +548,7 @@ export class DoctorCache implements SourceInventoryMemo {
     };
   }
 
-  private factsSection(): string {
+  private factsSection(): { text: string; parsed?: Record<string, StoredFacts> } {
     const paths = Object.keys(this.files);
     const loaded = this.loaded;
     if (
@@ -520,13 +558,13 @@ export class DoctorCache implements SourceInventoryMemo {
       paths.length === Object.keys(loaded.files).length &&
       paths.every((path) => loaded.files[path]?.hash === this.files[path]!.hash)
     )
-      return this.loadedFactsText;
+      return { text: this.loadedFactsText, parsed: this.loadedFacts };
     const facts: Record<string, StoredFacts> = {};
     for (const path of paths) {
       const stored = this.facts[path] ?? this.loadedFactsSection()[path];
       if (stored?.fileHash === this.files[path]!.hash) facts[path] = stored;
     }
-    return JSON.stringify(facts);
+    return { text: serializeFacts(facts), parsed: facts };
   }
 
   private loadedFactsSection(): Record<string, StoredFacts> {
@@ -537,6 +575,7 @@ export class DoctorCache implements SourceInventoryMemo {
     } catch {
       this.loadedFacts = {};
     }
+    if (this.resident) this.resident.facts = this.loadedFacts;
     return this.loadedFacts;
   }
 
@@ -624,6 +663,81 @@ export class DoctorCache implements SourceInventoryMemo {
   }
 }
 
+const factsJson = new WeakMap<StoredFacts, string>();
+
+/** `JSON.stringify(facts)`, reusing the text of File Facts a retained store already wrote. */
+function serializeFacts(facts: Record<string, StoredFacts>): string {
+  const entries: string[] = [];
+  for (const [path, value] of Object.entries(facts)) {
+    let json = factsJson.get(value);
+    if (json === undefined) factsJson.set(value, (json = JSON.stringify(value)));
+    entries.push(`${JSON.stringify(path)}:${json}`);
+  }
+  return `{${entries.join(",")}}`;
+}
+
+interface LoadedStore {
+  index: StoreIndex;
+  factsText: string;
+  facts?: Record<string, StoredFacts>;
+}
+
+const MAX_RESIDENT_STORES = 4;
+let residentStores: Map<string, LoadedStore & { signature: string }> | undefined;
+let pendingWrites: Array<() => void> | undefined;
+
+/**
+ * A long-lived Doctor process keeps parsed stores between Doctor Runs and writes them after the
+ * run reported. A retained store is used only while the store file keeps the inode, size, and
+ * times this process saw; any other writer renames a new file into place, so it is read again.
+ */
+export function retainCacheStores(): void {
+  residentStores ??= new Map();
+  pendingWrites ??= [];
+}
+
+/** Writes every store a retained Doctor Run deferred, in run order. */
+export function flushStoreWrites(): void {
+  if (!pendingWrites?.length) return;
+  const writes = pendingWrites.splice(0);
+  for (const write of writes) {
+    try {
+      write();
+    } catch {
+      // Cache writes are best-effort and must not fail the next Doctor Run.
+    }
+  }
+}
+
+function readResidentStore(path: string): LoadedStore | undefined {
+  if (!residentStores) return readStore(path);
+  const signature = fileSignature(path);
+  const resident = residentStores.get(path);
+  if (resident && resident.signature === signature) return resident;
+  residentStores.delete(path);
+  const loaded = readStore(path);
+  return loaded && signature ? retainStore(path, loaded, signature) : loaded;
+}
+
+function retainStore(path: string, store: LoadedStore, signature: string): LoadedStore {
+  if (!residentStores) return store;
+  residentStores.delete(path);
+  if (residentStores.size >= MAX_RESIDENT_STORES)
+    residentStores.delete(residentStores.keys().next().value!);
+  const resident = { ...store, signature };
+  residentStores.set(path, resident);
+  return resident;
+}
+
+function fileSignature(path: string): string | undefined {
+  const stats = statSync(path, { throwIfNoEntry: false });
+  return stats && signatureOf(stats);
+}
+
+function signatureOf(stats: Stats): string {
+  return `${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
+}
+
 export function readCacheStatus(root: string, dir: string): CacheStatus {
   assertCacheDirectory(resolve(root), dir);
   const path = resolve(dir, CACHE_STORE_FILE);
@@ -664,7 +778,7 @@ export function readCacheStatus(root: string, dir: string): CacheStatus {
   };
 }
 
-function readStore(path: string): { index: StoreIndex; factsText: string } | undefined {
+function readStore(path: string): LoadedStore | undefined {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
