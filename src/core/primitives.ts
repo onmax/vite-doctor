@@ -191,6 +191,7 @@ export interface NuxtProjectInfo {
     srcDir?: string;
     appMiddlewareDir?: string;
     serverDir?: string;
+    aliases?: Record<string, string>;
     priority: number;
   }>;
   localLayerAliases?: boolean;
@@ -270,6 +271,7 @@ export interface NuxtDoctorManifest {
     srcDir?: string;
     appMiddlewareDir?: string;
     serverDir?: string;
+    aliases?: Record<string, string>;
     name?: string;
     priority: number;
   }>;

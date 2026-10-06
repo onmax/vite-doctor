@@ -14,6 +14,7 @@ interface LayerDirs {
   root: string;
   srcDir?: string;
   serverDirs: string[];
+  aliases?: Record<string, string>;
 }
 
 interface ServerImport {
@@ -123,13 +124,19 @@ function serverImport(
   const targetLayer = layerFor(resolved, layers, ctx.project.root);
   const serverDir = targetLayer.serverDirs.find((dir) => isInside(resolved, dir));
   if (!serverDir) return;
+  const foundTypeOnly = isTypeOnly(node);
   const isRootLayer = targetLayer.root === toPosixPath(ctx.project.root);
-  if (isRootLayer && NUXT_PROTECTED_SERVER_SUBDIR.test(relative(serverDir, resolved))) return;
+  if (
+    isRootLayer &&
+    !foundTypeOnly &&
+    NUXT_PROTECTED_SERVER_SUBDIR.test(relative(serverDir, resolved))
+  )
+    return;
   return {
     node: source,
     specifier,
     target: toPosixPath(relative(ctx.project.root, resolved)) || ".",
-    typeOnly: isTypeOnly(node),
+    typeOnly: foundTypeOnly,
   };
 }
 
@@ -175,12 +182,14 @@ function resolveSpecifier(
   const localLayer = layer.root !== root && nuxt?.localLayerAliases !== false;
   const aliases = nuxt?.manifest?.aliases ?? {};
   if (ROOT_RELATIVE_ALIASES.has(head)) {
-    const base = localLayer ? layer.root : absolute(root, aliases[head] ?? root);
+    const base = localLayer
+      ? layerAlias(layer, head, root, layer.root)
+      : absolute(root, aliases[head] ?? root);
     return rest ? toPosixPath(resolve(base, rest)) : undefined;
   }
   if (SRC_RELATIVE_ALIASES.has(head)) {
     const base = localLayer
-      ? layerSrcDir(file, layer)
+      ? layerAlias(layer, head, root, layerSrcDir(file, layer))
       : absolute(root, aliases[head] ?? nuxt?.appDir ?? root);
     return rest ? toPosixPath(resolve(base, rest)) : undefined;
   }
@@ -192,6 +201,11 @@ function resolveSpecifier(
     .sort((a, b) => b.length - a.length)[0];
   if (!alias) return;
   return toPosixPath(resolve(absolute(root, aliases[alias]!), specifier.slice(alias.length + 1)));
+}
+
+function layerAlias(layer: LayerDirs, alias: string, root: string, fallback: string) {
+  const value = layer.aliases?.[alias];
+  return value ? absolute(isAbsolute(value) ? root : layer.root, value) : fallback;
 }
 
 function layerSrcDir(file: string, layer: LayerDirs) {
@@ -217,6 +231,7 @@ function projectLayers(ctx: RuleContext): LayerDirs[] {
     return {
       root: layerRoot,
       srcDir: srcDir ? absolute(root, srcDir) : undefined,
+      aliases: layer.aliases,
       serverDirs: layer.serverDir
         ? [absolute(root, layer.serverDir)]
         : defaultServerDirs(layerRoot),

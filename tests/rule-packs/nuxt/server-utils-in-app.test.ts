@@ -116,6 +116,15 @@ test.each([
 });
 
 test.each([
+  `import type { Handler } from '~~/server/api/price.get'`,
+  `import { type Handler } from '~~/server/routes/feed'`,
+  `export type { Handler } from '~~/server/plugins/db'`,
+])("reports type-only imports from Nuxt-protected directories: %s", async (source) => {
+  const diagnostics = await run({ "app/utils/price.ts": source });
+  expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["NUXT0076"]);
+});
+
+test.each([
   `import { handler } from '~~/server/api/price.get'`,
   `import { route } from '../../server/routes/feed'`,
   `import { auth } from '~~/server/middleware/auth'`,
@@ -136,7 +145,16 @@ test("resolves custom serverDir and aliases from the Nuxt manifest", async () =>
     autoImports: [],
     components: [],
     modules: [],
-    layers: [{ root: ".", srcDir: "app", serverDir: "backend", priority: 0 }],
+    layers: [
+      { root: ".", srcDir: "app", serverDir: "backend", priority: 0 },
+      {
+        root: "layers/billing",
+        srcDir: "layers/billing/app",
+        serverDir: "layers/billing/server",
+        aliases: { "~": "." },
+        priority: 1,
+      },
+    ],
     aliases: { "#db": "backend/database" },
     routeRules: {},
     serverHandlers: [],
@@ -149,13 +167,17 @@ test("resolves custom serverDir and aliases from the Nuxt manifest", async () =>
       "app/utils/b.ts": `import { price } from '~~/backend/utils/pricing'`,
       "app/utils/c.ts": `import { price } from '~~/server/utils/pricing'`,
       "app/utils/d.ts": `import { handler } from '~~/backend/api/price'`,
+      "layers/billing/app/utils/e.ts": `import { price } from "~/server/utils/pricing"`,
+      "layers/billing/server/utils/pricing.ts": "export const price = 1",
       "backend/utils/e.ts": `import { db } from '#db/client'`,
     },
     rules: [noServerUtilsInApp],
   });
   const files = result.diagnostics.map((diagnostic) => fixturePath(diagnostic.file));
-  expect(files).toHaveLength(2);
-  expect(files).toEqual(expect.arrayContaining(["app/utils/a.ts", "app/utils/b.ts"]));
+  expect(files).toHaveLength(3);
+  expect(files).toEqual(
+    expect.arrayContaining(["app/utils/a.ts", "app/utils/b.ts", "layers/billing/app/utils/e.ts"]),
+  );
 });
 
 test("puts runtime imports in recommended and type-only imports in strict", () => {
