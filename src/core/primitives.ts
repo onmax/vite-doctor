@@ -207,6 +207,7 @@ export interface NuxtProjectInfo {
   modules?: Array<{ name: string; version?: string; doctorPlugin?: string }>;
   moduleSources?: NuxtModuleSource[];
   manifest?: {
+    scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
     keyedComposables: string[];
@@ -258,6 +259,7 @@ export interface NuxtModuleDefinition {
 }
 
 export interface NuxtDoctorManifest {
+  scannedComposableFiles?: string[];
   autoRegisteredLayers?: string[];
   generatedAt?: string;
   nuxtConfigMtimeMs?: number;

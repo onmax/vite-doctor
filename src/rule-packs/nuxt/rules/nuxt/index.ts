@@ -45,6 +45,7 @@ export { keyedComposableRegistrationRequired } from "./keyed-composable-registra
 export { preferSeoComposables } from "./prefer-seo-composables.js";
 export { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 export { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
+export { exportNameMatchesFile } from "./export-name-matches-file.js";
 export { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
 export { moduleRequireMeta } from "./module-require-meta.js";
 export { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
@@ -97,6 +98,7 @@ import { keyedComposableRegistrationRequired } from "./keyed-composable-registra
 import { preferSeoComposables } from "./prefer-seo-composables.js";
 import { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 import { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
+import { exportNameMatchesFile } from "./export-name-matches-file.js";
 import { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
 import { moduleRequireMeta } from "./module-require-meta.js";
 import { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
@@ -157,7 +159,7 @@ const rules = [
   moduleExplicitRuntimeImports,
 ];
 
-const strictOnlyRules = [noStatelessComposable];
+const strictOnlyRules = [noStatelessComposable, exportNameMatchesFile];
 
 const nuxtRulePack = defineRulePack({
   name: "vite-doctor/nuxt",

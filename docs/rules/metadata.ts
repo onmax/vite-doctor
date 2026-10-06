@@ -546,6 +546,31 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/composables/export-name-matches-file": {
+    description:
+      "Finds Nuxt composable files whose auto-imported names do not match the file name or do not start with use.",
+    why: "Nuxt auto-imports named exports from top-level composables/ files under their own names, and a default export under a name derived from the file name. When useCart.ts exports useShoppingCart, or fetch-user.ts default-exports a function that becomes fetchUser, readers cannot find a composable from its name or tell it is a composable at all.",
+    recommendedReplacement:
+      "Name the main export after the file (useCart.ts exports useCart; use-cart.ts also maps to useCart), and name files with default exports so the derived name starts with use. Run Nuxt prepare with the Doctor module to capture current composable scan evidence. Only files in that inventory are checked, respecting resolved layer source directories, disabled scanning, and ignored files. Index files, files without use* exports, and files where any use* export matches are not reported.",
+    examples: [
+      {
+        title: "Export the composable the file name promises",
+        language: "ts",
+        invalid:
+          "// app/composables/useCart.ts\nexport function useShoppingCart() {\n  return useState('cart', () => [])\n}",
+        valid:
+          "// app/composables/useCart.ts\nexport function useCart() {\n  return useState('cart', () => [])\n}",
+      },
+      {
+        title: "Name default-export files with use",
+        language: "ts",
+        invalid:
+          "// app/composables/fetch-user.ts (auto-imported as fetchUser)\nexport default function () {\n  return useFetch('/api/user')\n}",
+        valid:
+          "// app/composables/use-user.ts (auto-imported as useUser)\nexport default function () {\n  return useFetch('/api/user')\n}",
+      },
+    ],
+  },
   "nuxt/composables/no-nested-autoimport-assumption": {
     description:
       "Flags nested autoimport assumption in Nuxt composables code before it leaks into runtime behavior.",

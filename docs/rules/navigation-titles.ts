@@ -40,6 +40,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/async-data-explicit-key-for-refreshable": "Refresh keys",
   "nuxt/async-data-handler-pure": "Pure handlers",
   "nuxt/async-data-no-mutation-methods": "Mutating async data",
+  "nuxt/composables/export-name-matches-file": "Export names",
   "nuxt/composables/no-nested-autoimport-assumption": "Composable subdirs",
   "nuxt/config/no-ignored-compatibility-config": "Ignored config",
   "nuxt/context/no-composable-after-await": "Calls after await",
