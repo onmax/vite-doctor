@@ -868,6 +868,9 @@ test("async data rules skip files that cannot call async data", () => {
   const ctx = (text: string) => ({ file: { text }, options: {} }) as any;
   for (const rule of rules) {
     expect(rule.create(ctx(`const data = await $fetch('/api/settings')`))).toBeUndefined();
+    expect(
+      rule.create(ctx(String.raw`const path = "C:\\temp"; const pattern = /foo\\d+/`)),
+    ).toBeUndefined();
     expect(rule.create(ctx(`const { refresh } = useFetch('/api/settings')`))).toBeDefined();
     expect(rule.create(ctx(`const { refresh } = \\u0075seFetch('/api/settings')`))).toBeDefined();
   }

@@ -62,7 +62,10 @@ export const NUXT_AUTO_IMPORTS = new Set([
   "defineNuxtRouteMiddleware",
   "useState",
 ]);
-const NUXT_AUTO_IMPORT_TEXT_RE = new RegExp(`${[...NUXT_AUTO_IMPORTS].join("|")}|\\\\`);
+const JS_ESCAPE_TOKEN = String.raw`\\(?:u|x|[0-7]|\r\n?|\n|\u2028|\u2029)`;
+const NUXT_AUTO_IMPORT_TEXT_RE = new RegExp(
+  `${[...NUXT_AUTO_IMPORTS].join("|")}|${JS_ESCAPE_TOKEN}|use(?:Lazy)?F\\\\etch|use(?:Lazy)?A\\\\syncData`,
+);
 export const BROWSER_SIDE_EFFECTS = new Set([
   "localStorage.setItem",
   "sessionStorage.setItem",

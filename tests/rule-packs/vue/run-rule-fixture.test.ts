@@ -542,6 +542,16 @@ test("event listener rule skips files without addEventListener before reading pr
   expect(preferUseEventListener.create(ctx)).toBeUndefined();
 });
 
+test("event listener rule keeps unrelated escapes on the fast path", () => {
+  const ctx = {
+    file: { text: String.raw`const path = "C:\\temp"; const pattern = /foo\\d+/` },
+    getJson() {
+      throw new Error("package.json should not be read");
+    },
+  } as any;
+  expect(preferUseEventListener.create(ctx)).toBeUndefined();
+});
+
 test("event listener rule rereads project facts on every Doctor Run", async () => {
   const root = await mkdtemp(join(tmpdir(), "vue-doctor-"));
   const write = (file: string, text: string) => {

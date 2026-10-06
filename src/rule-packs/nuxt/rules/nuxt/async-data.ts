@@ -66,7 +66,8 @@ export interface SideEffectMatch {
 
 // getAsyncDataCall only matches a callee, or a local alias initializer, spelled as one of these
 // names. Escapes could spell one without the literal text, so they keep the full check.
-const ASYNC_DATA_TEXT_RE = /use(?:Lazy)?(?:Fetch|AsyncData)|\\/;
+const ASYNC_DATA_TEXT_RE =
+  /use(?:Lazy)?(?:Fetch|AsyncData)|\\(?:u|x|[0-7]|\r\n?|\n|\u2028|\u2029)|use(?:Lazy)?F\\etch|use(?:Lazy)?A\\syncData/;
 
 export function fileMayCallAsyncData(ctx: RuleContext): boolean {
   return ASYNC_DATA_TEXT_RE.test(ctx.file.text);

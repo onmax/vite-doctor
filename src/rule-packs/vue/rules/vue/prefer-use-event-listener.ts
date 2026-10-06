@@ -17,7 +17,18 @@ const NUXT_CONFIG_FILES = [
   "nuxt.config.mts",
 ];
 // Reports start from a callee spelled addEventListener; escapes could spell it without the text.
-const ADD_EVENT_LISTENER_TEXT_RE = /addEventListener|\\/;
+const JS_ESCAPE_TOKEN = String.raw`\\(?:u|x|[0-7]|\r\n?|\n|\u2028|\u2029)`;
+const identityEscape = (char: string) => String.raw`\\\\${char}`;
+const escapedNamePattern = (name: string) =>
+  [...name]
+    .map(
+      (_, index) =>
+        `${name.slice(0, index)}(?:${JS_ESCAPE_TOKEN}|${identityEscape(name[index]!)})${name.slice(index + 1)}`,
+    )
+    .join("|");
+const ADD_EVENT_LISTENER_TEXT_RE = new RegExp(
+  `addEventListener|${escapedNamePattern("addEventListener")}|addEventL\\\\istener|\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029)`,
+);
 
 export const preferUseEventListener = createRule({
   meta: {
