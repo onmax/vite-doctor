@@ -62,6 +62,25 @@ export const NUXT_AUTO_IMPORTS = new Set([
   "defineNuxtRouteMiddleware",
   "useState",
 ]);
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const hexDigit = (value: string) => `[${value.toLowerCase()}${value.toUpperCase()}]`;
+const escapedNamePattern = (name: string) => {
+  const continuation = `(?:\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029))`;
+  const character = (value: string) => {
+    const code = value.charCodeAt(0);
+    const hex = code.toString(16).padStart(2, "0");
+    const unicode = code.toString(16).padStart(4, "0");
+    const octal = code.toString(8);
+    const codePoint = code.toString(16);
+    return `(?:${escapeRegex(value)}|\\\\u${[...unicode].map(hexDigit).join("")}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${[...hex].map(hexDigit).join("")}|\\\\${octal}|\\\\(?![uUxX0-7])${escapeRegex(value)})`;
+  };
+  return `(?:${continuation}*${[...name]
+    .map((value) => `${character(value)}${continuation}*`)
+    .join("")})`;
+};
+const NUXT_AUTO_IMPORT_TEXT_RE = new RegExp(
+  [...NUXT_AUTO_IMPORTS, "useLazyFetch", "useLazyAsyncData"].map(escapedNamePattern).join("|"),
+);
 export const BROWSER_SIDE_EFFECTS = new Set([
   "localStorage.setItem",
   "sessionStorage.setItem",
@@ -124,12 +143,14 @@ function getLocalAliasMap(ctx: RuleContext): Map<string, string> {
   const cached = ctx.cache.get<Map<string, string>>(key);
   if (cached) return cached;
   const aliases = new Map<string, string>();
+  ctx.cache.set(key, aliases);
+  // An alias initializer must spell an auto-import name, unless escapes hide it.
+  if (!NUXT_AUTO_IMPORT_TEXT_RE.test(ctx.file.text)) return aliases;
   walkScriptLocal(ctx.file.scriptAst, (node) => {
     if (node.type !== "VariableDeclarator" || node.id?.type !== "Identifier") return;
     const initName = ctx.helpers.getCalleeName({ callee: node.init });
     if (initName && NUXT_AUTO_IMPORTS.has(initName)) aliases.set(node.id.name, initName);
   });
-  ctx.cache.set(key, aliases);
   return aliases;
 }
 

@@ -2,6 +2,7 @@ import { AnyNode, createRule, report } from "./shared.js";
 import {
   MUTATING_METHODS,
   asyncDataRuleOptions,
+  fileMayCallAsyncData,
   getAsyncDataCall,
   getDestructuredAsyncDataCommands,
   isWriteLikePath,
@@ -18,6 +19,7 @@ export const noManualActionUseFetch = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
+    if (!fileMayCallAsyncData(ctx)) return;
     const options = asyncDataRuleOptions(ctx);
     return {
       ScriptNode(node: AnyNode) {

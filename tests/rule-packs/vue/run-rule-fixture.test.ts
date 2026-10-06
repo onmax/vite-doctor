@@ -1,3 +1,7 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { relative } from "pathe";
 import { vueRulePack } from "../../../src/rule-packs/vue/index.ts";
@@ -21,7 +25,10 @@ import {
   allDiagnostics,
   createRule,
   createRulesReport,
+  defineDoctorExtension,
+  defineRulePack,
   explainRule,
+  runDoctor,
 } from "../../../src/core/index.ts";
 import {
   runNuxtAppRuleFixture,
@@ -487,6 +494,25 @@ test("event listener rule reports Vue-owned cleanup patterns", async () => {
   expect(results[0]?.diagnostics[0]?.code).toBe("VUE0025");
 });
 
+test.each(["\n", "\r", "\r\n", "\u2028", "\u2029", ""])(
+  "event listener rule preserves escaped computed properties (%j)",
+  async (continuation) => {
+    const result = await runRuleFixture({
+      rule: preferUseEventListener,
+      framework: "vue",
+      dependencies: VUEUSE_DEPENDENCIES,
+      files: {
+        "src/useViewport.ts": `export function useViewport() {
+  const onResize = () => {}
+  onMounted(() => window["addEventL\\${continuation}istener"]('resize', onResize))
+  onUnmounted(() => window["removeEventL\\${continuation}istener"]('resize', onResize))
+}`,
+      },
+    });
+    expectEventListenerDiagnostics(result);
+  },
+);
+
 test("event listener rule honors Nuxt runtime roots", async () => {
   const result = await runRuleFixture({
     rule: preferUseEventListener,
@@ -504,6 +530,89 @@ test("event listener rule honors Nuxt runtime roots", async () => {
   });
 
   expectEventListenerDiagnostics(result, 5);
+});
+
+test("event listener rule skips files without addEventListener before reading project files", () => {
+  const ctx = {
+    file: { text: `onMounted(() => window.removeEventListener('resize', onResize))` },
+    getJson() {
+      throw new Error("package.json should not be read");
+    },
+  } as any;
+  expect(preferUseEventListener.create(ctx)).toBeUndefined();
+});
+
+test("event listener rule keeps unrelated escapes on the fast path", () => {
+  for (const text of [
+    String.raw`const path = "C:\\temp"; const pattern = /foo\\d+/`,
+    String.raw`const value = "\\u0061"`,
+    String.raw`const value = "\\x61"`,
+    String.raw`const value = "\\141"`,
+    `const value = "\\\nother"`,
+  ]) {
+    const ctx = {
+      file: { text },
+      getJson() {
+        throw new Error("package.json should not be read");
+      },
+    } as any;
+    expect(preferUseEventListener.create(ctx)).toBeUndefined();
+  }
+});
+
+test("event listener rule rereads project facts on every Doctor Run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vue-doctor-"));
+  const write = (file: string, text: string) => {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), text);
+  };
+  const run = () =>
+    runDoctor({
+      root,
+      framework: "nuxt",
+      runtimeTarget: {
+        nuxt: "4.0.0",
+        nitro: "2.0.0",
+        h3: "1.0.0",
+        vue: "3.5.0",
+        nuxtCompatibility: 4,
+      },
+      extensions: [
+        defineDoctorExtension({
+          name: "fixture",
+          rulePacks: [
+            defineRulePack({
+              name: "fixture",
+              version: "0.0.0",
+              rules: [preferUseEventListener],
+              presets: { recommended: [EVENT_LISTENER_RULE_ID] },
+            }),
+          ],
+        }),
+      ],
+    });
+  const packageJson = (dependencies: Record<string, string>) =>
+    JSON.stringify({
+      type: "module",
+      dependencies: { vue: "^3.5.0", nuxt: "^4.0.0", ...dependencies },
+    });
+  try {
+    write("package.json", packageJson({}));
+    write("nuxt.config.ts", `export default defineNuxtConfig({})`);
+    write("src/app/plugins/focus.client.ts", nuxtPluginManualListener("focus"));
+    expectEventListenerDiagnostics(await run(), 0);
+
+    write("package.json", packageJson(VUEUSE_DEPENDENCIES));
+    expectEventListenerDiagnostics(await run(), 0);
+
+    write("nuxt.config.ts", `export default defineNuxtConfig({ srcDir: 'src' })`);
+    expectEventListenerDiagnostics(await run(), 1);
+
+    write("package.json", packageJson({}));
+    expectEventListenerDiagnostics(await run(), 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("event listener rule requires VueUse and existing manual cleanup evidence", async () => {

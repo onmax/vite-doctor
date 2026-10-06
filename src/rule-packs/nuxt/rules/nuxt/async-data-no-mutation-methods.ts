@@ -1,5 +1,10 @@
 import { AnyNode, createRule, report } from "./shared.js";
-import { FETCH_ASYNC_DATA_COMPOSABLES, MUTATING_METHODS, getAsyncDataCall } from "./async-data.js";
+import {
+  FETCH_ASYNC_DATA_COMPOSABLES,
+  MUTATING_METHODS,
+  fileMayCallAsyncData,
+  getAsyncDataCall,
+} from "./async-data.js";
 
 export const asyncDataNoMutationMethods = createRule({
   meta: {
@@ -13,6 +18,7 @@ export const asyncDataNoMutationMethods = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
+    if (!fileMayCallAsyncData(ctx)) return;
     return {
       ScriptNode(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);
