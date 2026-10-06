@@ -1241,15 +1241,7 @@ function evaluateOutcomes(
     // An exhausted analysis budget is not evidence that the call returns.
     if ((path.calls?.length ?? 0) >= 16) return [];
     const local = new Map(bindings);
-    const shadows = new Set<string>();
-    const nested = new Set<AnyNode>();
-    walkScriptLocal(callee.body, (child) => {
-      if (isFunction(child)) walkScriptLocal(child, (descendant) => nested.add(descendant));
-      if (nested.has(child) || child.type !== "VariableDeclaration" || child.kind !== "var") return;
-      for (const declaration of child.declarations)
-        for (const name of bindingNames(declaration.id)) shadows.add(name);
-    });
-    for (const param of callee.params) for (const name of bindingNames(param)) shadows.add(name);
+    const shadows = new Set(functionLocalNames(callee));
     const functions = new Map(path.functions);
     const objects = new Map(path.objects);
     const promises = new Map(path.promises);
@@ -1513,20 +1505,21 @@ function evaluateOutcomes(
     const values = new Map(bindings);
     for (const binding of values.keys())
       if (!stableBinding(node, binding?.name)) values.delete(binding);
-    walkScriptLocal(node, (child) => {
-      if (child.type !== "CallExpression") return;
-      for (const reference of [child.callee, ...child.arguments]) {
-        if (reference.type !== "Identifier") continue;
-        const fn = path.functions?.get(path.resolveBinding(reference));
-        if (!fn) continue;
-        for (const binding of values.keys())
-          if (!stableBinding(fn, binding?.name)) values.delete(binding);
-      }
-    });
-    const literals = new Map(path.literals);
-    for (const binding of literals.keys())
-      if (binding.type === "Identifier" && !stableBinding(node, binding.name))
-        literals.delete(binding);
+    for (const reference of callReferences(node)) {
+      const fn = path.functions?.get(path.resolveBinding(reference));
+      if (!fn) continue;
+      for (const binding of values.keys())
+        if (!stableBinding(fn, binding?.name)) values.delete(binding);
+    }
+    let literals = path.literals;
+    const unstableLiterals = [...(literals?.keys() ?? [])].filter(
+      (binding) => binding.type === "Identifier" && !stableBinding(node, binding.name),
+    );
+    if (unstableLiterals.length) {
+      const copy = new Map(literals);
+      for (const binding of unstableLiterals) copy.delete(binding);
+      literals = copy;
+    }
     const objects = new Map(normal.objects);
     if (node.type === "CallExpression" || node.type === "NewExpression") {
       const callee = unwrapExpression(node.callee);
@@ -1860,7 +1853,15 @@ function catchOutcomes(
   );
 }
 
+const stableConditionsCache = new WeakMap<AnyNode, Set<string>>();
+
 function stableConditions(node: AnyNode): Set<string> {
+  let conditions = stableConditionsCache.get(node);
+  if (!conditions) stableConditionsCache.set(node, (conditions = collectStableConditions(node)));
+  return conditions;
+}
+
+function collectStableConditions(node: AnyNode): Set<string> {
   const uses = new Map<string, number>();
   const unstable = new Set<string>();
   const assignments = new Set<AnyNode>();
@@ -2273,11 +2274,22 @@ function blockBindings(node: AnyNode): Set<string> {
   return names;
 }
 
+const stableBindingCache = new WeakMap<AnyNode, Map<string, boolean>>();
+
 function stableBinding(body: AnyNode, name: string): boolean {
+  let byName = stableBindingCache.get(body);
+  if (!byName) stableBindingCache.set(body, (byName = new Map()));
+  let stable = byName.get(name);
+  if (stable === undefined) byName.set(name, (stable = collectStableBinding(body, name)));
+  return stable;
+}
+
+function collectStableBinding(body: AnyNode, name: string): boolean {
   let stable = true;
-  const nested = unreferencedFunctionNodes(body);
+  const skipped = unreferencedFunctionNodes(body);
+  const nested = new Set<AnyNode>();
   walkScriptLocal(body, (node) => {
-    if (nested.has(node)) return;
+    if (skipped.has(node) || nested.has(node)) return;
     if (
       (node !== body && node.type === "BlockStatement" && blockBindings(node).has(name)) ||
       (isFunction(node) && node.params.some((param: AnyNode) => assignsBinding(param, name))) ||
@@ -2297,6 +2309,39 @@ function stableBinding(body: AnyNode, name: string): boolean {
   return stable;
 }
 
+const functionLocalNamesCache = new WeakMap<AnyNode, readonly string[]>();
+
+function functionLocalNames(fn: AnyNode): readonly string[] {
+  let names = functionLocalNamesCache.get(fn);
+  if (names) return names;
+  const local = new Set<string>();
+  const nested = new Set<AnyNode>();
+  walkScriptLocal(fn.body, (child) => {
+    if (isFunction(child)) walkScriptLocal(child, (descendant) => nested.add(descendant));
+    if (nested.has(child) || child.type !== "VariableDeclaration" || child.kind !== "var") return;
+    for (const declaration of child.declarations)
+      for (const name of bindingNames(declaration.id)) local.add(name);
+  });
+  for (const param of fn.params) for (const name of bindingNames(param)) local.add(name);
+  functionLocalNamesCache.set(fn, (names = [...local]));
+  return names;
+}
+
+const callReferencesCache = new WeakMap<AnyNode, readonly AnyNode[]>();
+
+function callReferences(node: AnyNode): readonly AnyNode[] {
+  let references = callReferencesCache.get(node);
+  if (references) return references;
+  const found: AnyNode[] = [];
+  walkScriptLocal(node, (child) => {
+    if (child.type !== "CallExpression") return;
+    for (const reference of [child.callee, ...child.arguments])
+      if (reference.type === "Identifier") found.push(reference);
+  });
+  callReferencesCache.set(node, (references = found));
+  return references;
+}
+
 function isFunction(node: AnyNode): boolean {
   return ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
     node?.type,
@@ -2307,7 +2352,20 @@ function isLocalCallable(node: AnyNode): boolean {
   return isFunction(node) || node?.type === "ClassExpression";
 }
 
-function lexicalBindings(root: AnyNode) {
+type LexicalBindings = {
+  names: Map<AnyNode, AnyNode>;
+  resolve: (reference: AnyNode, location?: AnyNode) => AnyNode;
+};
+
+const lexicalBindingsCache = new WeakMap<AnyNode, LexicalBindings>();
+
+function lexicalBindings(root: AnyNode): LexicalBindings {
+  let lexical = lexicalBindingsCache.get(root);
+  if (!lexical) lexicalBindingsCache.set(root, (lexical = collectLexicalBindings(root)));
+  return lexical;
+}
+
+function collectLexicalBindings(root: AnyNode): LexicalBindings {
   type Scope = { parent?: Scope; bindings: Map<string, AnyNode>; functionScope?: boolean };
   const scopes = new Map<AnyNode, Scope>();
   const names = new Map<AnyNode, AnyNode>();
@@ -2383,7 +2441,16 @@ function lexicalBindings(root: AnyNode) {
   };
 }
 
-function declaredFunctions(lexical: ReturnType<typeof lexicalBindings>) {
+const declaredFunctionsCache = new WeakMap<LexicalBindings, ReadonlyMap<AnyNode, AnyNode>>();
+
+function declaredFunctions(lexical: LexicalBindings): ReadonlyMap<AnyNode, AnyNode> {
+  let functions = declaredFunctionsCache.get(lexical);
+  if (!functions)
+    declaredFunctionsCache.set(lexical, (functions = collectDeclaredFunctions(lexical)));
+  return functions;
+}
+
+function collectDeclaredFunctions(lexical: LexicalBindings) {
   return new Map(
     [...lexical.names]
       .filter(([fn]) => fn.type === "FunctionDeclaration")
@@ -2646,8 +2713,19 @@ function isUndefinedArgument(node: AnyNode, resolve: Path["resolveBinding"]): bo
   return !resolve(node);
 }
 
-function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
+const unreferencedFunctionNodesCache = new WeakMap<AnyNode, ReadonlySet<AnyNode>>();
+
+function unreferencedFunctionNodes(root: AnyNode): ReadonlySet<AnyNode> {
+  let skipped = unreferencedFunctionNodesCache.get(root);
+  if (!skipped)
+    unreferencedFunctionNodesCache.set(root, (skipped = collectUnreferencedFunctionNodes(root)));
+  return skipped;
+}
+
+function collectUnreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
   const { names, resolve } = lexicalBindings(root);
+  const skipped = new Set<AnyNode>();
+  if (names.size === 0) return skipped;
   const invoked = new Set<AnyNode>();
   walkScriptLocal(root, (node) => {
     if (node.type !== "CallExpression") return;
@@ -2657,7 +2735,6 @@ function unreferencedFunctionNodes(root: AnyNode): Set<AnyNode> {
       if (binding) invoked.add(binding);
     }
   });
-  const skipped = new Set<AnyNode>();
   for (const [fn, binding] of names) {
     if (fn !== root && !invoked.has(binding)) walkScriptLocal(fn, (node) => skipped.add(node));
   }
