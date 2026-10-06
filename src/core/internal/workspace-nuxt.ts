@@ -1,4 +1,5 @@
 import type { NuxtProjectInfo, ProjectInfo } from "../primitives.js";
+import { resolve } from "pathe";
 
 const views = new WeakMap<ProjectInfo, Map<string, ProjectInfo>>();
 
@@ -15,6 +16,7 @@ export function workspaceProjectView(project: ProjectInfo, packageRoot: string):
   const existing = cached.get(packageRoot);
   if (existing) return existing;
   const overrides: Partial<ProjectInfo> = {
+    root: resolve(project.root, packageRoot),
     nuxt: inventory.nuxt,
     nuxtVersion: inventory.nuxtVersion,
     nuxtModuleDefinitions: inventory.nuxtModuleDefinitions,
