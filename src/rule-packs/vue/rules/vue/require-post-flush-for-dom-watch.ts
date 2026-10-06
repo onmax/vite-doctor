@@ -19,8 +19,7 @@ export const requirePostFlushForDomWatch = createRule({
     if (!scriptMayName(ctx, WATCH_NAMES)) return;
     let unsafeWatchers: Set<number> | undefined;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "CallExpression") return;
+      CallExpression(node: AnyNode) {
         if (!(unsafeWatchers ??= watchersWithEarlyDomReads(ctx)).has(node.start)) return;
         report(
           ctx,

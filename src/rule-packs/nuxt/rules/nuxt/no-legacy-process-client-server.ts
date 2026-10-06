@@ -18,9 +18,8 @@ export const noLegacyProcessClientServer = createRule({
   create(ctx) {
     let globalProcessReferences: Set<number> | undefined;
     return {
-      ScriptNode(node: AnyNode) {
+      MemberExpression(node: AnyNode) {
         if (
-          node.type !== "MemberExpression" ||
           node.computed ||
           node.optional ||
           node.object?.type !== "Identifier" ||

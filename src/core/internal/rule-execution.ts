@@ -4,10 +4,12 @@ import type {
   DoctorRule,
   RuleContext,
   RuleVisitor,
+  SfcHandle,
   SourceFileHandle,
 } from "../primitives.js";
 import { projectWorkspacePackages } from "./applicability.js";
-import { runVisitors } from "./rule-runner.js";
+import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
+import { canMatchPrefilter } from "./rule-prefilter.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
 import {
   buildWorkspaceGraph,
@@ -50,6 +52,7 @@ export async function runFileRules(session: ScanSession): Promise<void> {
       : ".";
     for (const [index, rule] of rules.entries()) {
       if (!canRunRuleOnFile(rule, file)) continue;
+      if (!canMatchPrefilter(rule, file)) continue;
       if (session.ruleScopes.get(rule.meta.id)?.has(owner) === false) continue;
       const context = createRuleContext(session, file, rule, "file", reported[index]);
       if (!timings) {
@@ -83,9 +86,9 @@ export async function runFileRules(session: ScanSession): Promise<void> {
 }
 
 function timeVisitor(visitor: RuleVisitor, timing: RuleTiming): RuleVisitor {
-  const timed: RuleVisitor = {};
+  const timed: Record<string, unknown> = {};
   if (visitor.SFC)
-    timed.SFC = async (sfc) => {
+    timed.SFC = async (sfc: SfcHandle) => {
       const started = performance.now();
       try {
         await visitor.SFC!(sfc);
@@ -93,13 +96,15 @@ function timeVisitor(visitor: RuleVisitor, timing: RuleTiming): RuleVisitor {
         timing.ms += performance.now() - started;
       }
     };
-  if (visitor.ScriptNode)
-    timed.ScriptNode = (node) => timeCall(timing, () => visitor.ScriptNode!(node));
-  if (visitor.ImportDeclaration)
-    timed.ImportDeclaration = (node) => timeCall(timing, () => visitor.ImportDeclaration!(node));
   if (visitor.TemplateNode)
-    timed.TemplateNode = (node) => timeCall(timing, () => visitor.TemplateNode!(node));
-  return timed;
+    timed.TemplateNode = (node: unknown) => timeCall(timing, () => visitor.TemplateNode!(node));
+  for (const key in visitor) {
+    if (!isScriptVisitorKey(key)) continue;
+    const handler = (visitor as Record<string, unknown>)[key];
+    if (typeof handler !== "function") continue;
+    timed[key] = (node: unknown) => timeCall(timing, () => handler.call(visitor, node));
+  }
+  return timed as RuleVisitor;
 }
 
 function timeCall(timing: RuleTiming, call: () => void): void {

@@ -23,13 +23,13 @@ export const noClientComposablesInServer = createRule({
     fixable: "suggestion",
     docsUrl: "https://nitro.build/guide/routing#request-handler",
     requires: { script: true, nitro: true },
+    prefilter: { names: [...clientComposables] },
   },
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
     const calls = appComposableCalls(ctx.file.text, ctx.file.relativePath);
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "CallExpression") return;
+      CallExpression(node: AnyNode) {
         const name = calls
           ? calls.get(node.start)
           : node.callee?.type === "Identifier" && clientComposables.has(node.callee.name)

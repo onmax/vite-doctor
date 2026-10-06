@@ -17,10 +17,11 @@ export const noUnsafeUseHeadScript = createRule({
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-head-safe#usage",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["useHead"] },
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useHead")) return;
         if (!hasExecutableScriptHeadEntry(node.arguments?.[0])) return;
         report(

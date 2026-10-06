@@ -22,7 +22,7 @@ export const postFetchRequiresReadonlyMarker = createRule({
     if (!fileMayCallAsyncData(ctx)) return;
     const options = asyncDataRuleOptions(ctx);
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);
         if (!call || !FETCH_ASYNC_DATA_COMPOSABLES.has(call.name)) return;
         if (call.method !== "POST" || call.readonlyMarked || isReadonlyPath(call.path, options))

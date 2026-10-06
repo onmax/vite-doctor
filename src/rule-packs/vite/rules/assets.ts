@@ -105,8 +105,8 @@ export const noDynamicNewUrl = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "NewExpression" || node.callee?.name !== "URL") return;
+      NewExpression(node: AnyNode) {
+        if (node.callee?.name !== "URL") return;
         if (isToolingOrServerPath(ctx.file.relativePath) || isFixturePath(ctx.file.relativePath))
           return;
         const [first, second] = node.arguments ?? [];

@@ -61,7 +61,7 @@ test("runs a Nuxt rule fixture", async () => {
     },
     create(ctx) {
       return {
-        ScriptNode(node) {
+        CallExpression(node) {
           if (!ctx.helpers.isCall(node, "useFetch")) return;
           ctx.helpers.report(
             ctx,
@@ -143,7 +143,7 @@ test("rule helpers provide shared AST and template predicates", async () => {
     },
     create(ctx) {
       return {
-        ScriptNode(node) {
+        CallExpression(node) {
           if (!ctx.helpers.isCall(node, "watch")) return;
           ctx.helpers.report(
             ctx,

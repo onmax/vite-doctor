@@ -146,11 +146,12 @@ export const noPersonalizedCachedHandler = createRule({
     fixable: "suggestion",
     docsUrl: "https://hub.nuxt.com/docs/features/cache#when-to-use-cache",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["cachedEventHandler", "defineCachedEventHandler"] },
   },
   create(ctx) {
     if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!isCachedEventHandler(node)) return;
         const handler = node.arguments?.[0];
         if (!handler) return;
@@ -191,8 +192,7 @@ export const preferCachedEventHandler = createRule({
     const method = routeMethodSuffix(ctx.file.relativePath);
     if (method && method !== "GET" && method !== "HEAD") return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         let hasCachedHandler = false;
         let consumesBody = false;
         walkScriptLocal(node, (child) => {

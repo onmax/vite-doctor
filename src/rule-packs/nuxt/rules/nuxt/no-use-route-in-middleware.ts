@@ -10,6 +10,7 @@ export const noUseRouteInMiddleware = createRule({
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/directory-structure/app/middleware#accessing-route-in-middleware",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["useRoute"] },
   },
   create(ctx) {
     if (
@@ -19,7 +20,7 @@ export const noUseRouteInMiddleware = createRule({
     )
       return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (ctx.helpers.isCall(node, "useRoute")) {
           report(
             ctx,

@@ -16,8 +16,7 @@ export const noDisabledFsStrict = createRule({
   create(ctx) {
     if (!isViteConfigFile(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program() {
         for (const fact of serverFsFacts(ctx)) {
           if (fact.strict?.value !== false) continue;
           ctx.report(
@@ -52,8 +51,7 @@ export const noBroadFsAllow = createRule({
   create(ctx) {
     if (!isViteConfigFile(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program() {
         for (const fact of serverFsFacts(ctx)) {
           for (const entry of fact.allow) {
             if (!isBroadAllowedPath(entry.value)) continue;

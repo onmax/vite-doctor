@@ -33,12 +33,11 @@ export const noArrayFilterMap = createRule({
     if (!isTypeScriptSource(ctx)) return;
     let evidence: ReturnType<typeof createLocalEvidence>;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type === "Program") {
-          evidence = createLocalEvidence(node, { unwrapArrayAssertions: false });
-          return;
-        }
-        if (node.type !== "CallExpression" || node.optional) return;
+      Program(node: AnyNode) {
+        evidence = createLocalEvidence(node, { unwrapArrayAssertions: false });
+      },
+      CallExpression(node: AnyNode) {
+        if (node.optional) return;
         const outer = arrayMethod(node.callee);
         if (!outer || !["map", "filter"].includes(outer.name)) return;
         const innerCall = expression(outer.object);

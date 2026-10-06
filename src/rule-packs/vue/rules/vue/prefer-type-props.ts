@@ -38,13 +38,14 @@ const props = defineProps<Props>()
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/sfc-script-setup.html#type-only-props-emit-declarations",
     requires: { sfc: true, script: true, vue: true },
+    prefilter: { calls: ["defineProps"] },
   },
   create(ctx) {
     const options = (ctx.options ?? {}) as Options;
     if (options.allowRuntimeValidators || !isTypeScriptScriptSetup(ctx.file.text)) return;
 
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "defineProps")) return;
         if (!node.arguments?.length || hasTypeParameters(node)) return;
         ctx.report(

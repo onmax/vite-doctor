@@ -18,8 +18,7 @@ export const noAsyncWatchEffectAfterAwaitRead = createRule({
     if (!scriptMayName(ctx, WATCH_EFFECT_NAMES)) return;
     let effects: Set<number> | undefined;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "CallExpression") return;
+      CallExpression(node: AnyNode) {
         if (!(effects ??= effectsWithUntrackedReads(ctx)).has(node.start)) return;
         report(
           ctx,

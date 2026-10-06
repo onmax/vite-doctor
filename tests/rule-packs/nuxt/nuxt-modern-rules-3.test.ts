@@ -103,7 +103,7 @@ test("Nuxt runtime evidence classifies setup, client, server, lifecycle, command
     create(ctx) {
       const evidence = createNuxtRuntimeEvidence(ctx);
       return {
-        ScriptNode(node: any) {
+        CallExpression(node: any) {
           if (!ctx.helpers.isCall(node, "mark")) return;
           ctx.report(
             allDiagnostics.DOC9999({
@@ -198,8 +198,8 @@ test("explicit Nuxt module sources are scanned with module metadata", async () =
         },
         create(ctx) {
           return {
-            ScriptNode(node: any) {
-              if (node.type !== "Program" || !ctx.file.isModuleSource()) return;
+            Program() {
+              if (!ctx.file.isModuleSource()) return;
               ctx.report(
                 allDiagnostics.DOC9999({
                   why: `${ctx.file.moduleName}:${ctx.file.relativePath}`,

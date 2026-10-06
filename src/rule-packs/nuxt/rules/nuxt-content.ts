@@ -12,10 +12,11 @@ export const noQueryContentLegacyApi = createRule({
     fixable: "suggestion",
     docsUrl: "https://content.nuxt.com/docs/utils/query-collection#usage",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["queryContent"] },
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "queryContent")) return;
         ctx.helpers.report(
           ctx,

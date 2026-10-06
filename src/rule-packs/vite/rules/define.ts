@@ -181,8 +181,7 @@ export const noRuntimeObjectDefine = createRule({
   create(ctx) {
     if (!isViteConfigFile(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node) {
-        if ((node as { type?: string }).type !== "Program") return;
+      Program(node) {
         const { bindingKeys } = readAliasInitializers(ctx.file.text);
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
           function primitive(value: AnyNode): boolean {
@@ -228,8 +227,7 @@ export const noSecretDefine = createRule({
   create(ctx) {
     if (!isViteConfigFile(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node) {
-        if ((node as { type?: string }).type !== "Program") return;
+      Program(node) {
         const {
           initializers,
           memberReturns,

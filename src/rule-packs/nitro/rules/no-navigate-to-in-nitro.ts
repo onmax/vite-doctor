@@ -13,11 +13,12 @@ export const noNavigateToInNitro = createRule({
     severity: "error",
     fixable: "suggestion",
     requires: { script: true, nitro: true },
+    prefilter: { calls: ["navigateTo"] },
   },
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (ctx.helpers.isCall(node, "navigateTo")) {
           const h3 = ctx.project.runtimeGraph?.packages.h3;
           const replacement =

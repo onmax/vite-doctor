@@ -37,7 +37,7 @@ bench("SFC visitor on a 200-binding component", async () => {
 });
 
 bench("script visitor on a 200-binding component", async () => {
-  await runVisitor({ ScriptNode() {} }, file);
+  await runVisitor({ Identifier() {} }, file);
 });
 
 bench("template visitor on a 200-binding component", async () => {

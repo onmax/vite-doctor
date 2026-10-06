@@ -48,10 +48,11 @@ export const noThirdPartyUseHeadScript = createRule({
     fixable: "suggestion",
     docsUrl: "https://scripts.nuxt.com/docs/guides/script-triggers#how-triggers-work",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["useHead"] },
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useHead")) return;
         const snippet = ctx.file.text.slice(node.start, node.end);
         if (!/script\s*:/.test(snippet) || !/https?:\/\//.test(snippet)) return;
@@ -86,8 +87,7 @@ export const noThirdPartyConfigScript = createRule({
   create(ctx) {
     if (!/nuxt\.config\.[cm]?[jt]s$/.test(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Property") return;
+      Property(node: AnyNode) {
         const key = node.key?.name ?? node.key?.value;
         if (key !== "script") return;
         const snippet = ctx.file.text.slice(node.start, node.end);

@@ -14,6 +14,7 @@ export const requireEventRuntimeConfigInServer = createRule({
     fixable: "suggestion",
     docsUrl: "https://v2.nitro.build/guide/configuration#runtime-configuration",
     requires: { script: true, nitro: true },
+    prefilter: { calls: ["useRuntimeConfig"] },
     applicability: { runtimes: { nitro: ">=2 <3" } },
   },
   create(ctx) {
@@ -24,7 +25,7 @@ export const requireEventRuntimeConfigInServer = createRule({
     if (!isNitroServerFile(ctx) && !nitroUtility) return;
     let startupCalls: Set<number> | undefined;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useRuntimeConfig")) return;
         if (node.arguments?.length) return;
         if ((startupCalls ??= pluginStartupCalls(ctx)).has(node.start)) return;

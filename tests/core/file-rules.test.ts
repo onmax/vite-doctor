@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { allDiagnostics } from "../../src/core/index.ts";
-import { createRule } from "../../src/core/primitives.ts";
+import { createRule, type RulePrefilter } from "../../src/core/primitives.ts";
 import { runProjectFixture } from "../../src/core/testkit.ts";
 
 function reportingRule(id: string) {
@@ -8,8 +8,7 @@ function reportingRule(id: string) {
     meta: { id, title: id, category: "correctness", severity: "warn", requires: { script: true } },
     create(ctx) {
       return {
-        ScriptNode(node: any) {
-          if (node.type !== "VariableDeclarator") return;
+        VariableDeclarator(node: any) {
           ctx.report(allDiagnostics.DOC9999({ why: "Fixture.", fix: "Fixture." }), {
             ruleId: id,
             severity: "warn",
@@ -83,8 +82,7 @@ test.each([false, true])(
               events.push(`${file}:${name}:sfc:${state}`);
               state = `${name}:sfc`;
             },
-            ScriptNode(node: any) {
-              if (node.type !== "Program") return;
+            Program() {
               events.push(`${file}:${name}:script:${state}`);
               state = `${name}:script`;
             },
@@ -122,3 +120,43 @@ test.each([false, true])(
     );
   },
 );
+
+test.each<[RulePrefilter, string[]]>([
+  [{ calls: ["useThing"] }, ["src/call.ts", "src/escaped-call.ts"]],
+  [{ calls: ["api.load"] }, ["src/member.ts"]],
+  [{ imports: ["thing"] }, ["src/import.ts"]],
+  [{ names: ["useThing"] }, ["src/call.ts", "src/escaped-call.ts", "src/string.ts"]],
+  [
+    { calls: ["useThing"], imports: ["thing"] },
+    ["src/call.ts", "src/escaped-call.ts", "src/import.ts"],
+  ],
+  [{}, ["src/call.ts", "src/escaped-call.ts", "src/import.ts", "src/member.ts", "src/string.ts"]],
+])("prefilter %j skips create() on files without a listed signal", async (prefilter, expected) => {
+  const created: string[] = [];
+  const rule = createRule({
+    meta: {
+      id: "test/prefilter",
+      title: "Prefilter",
+      category: "correctness",
+      severity: "warn",
+      prefilter,
+    },
+    create(ctx) {
+      created.push(ctx.file.relativePath);
+    },
+  });
+
+  await runProjectFixture({
+    framework: "vite",
+    rules: [rule],
+    files: {
+      "src/call.ts": "useThing()",
+      "src/escaped-call.ts": "\\u0075seThing()",
+      "src/import.ts": 'import { other } from "thing"; other()',
+      "src/member.ts": "api.load()",
+      "src/string.ts": 'const name = "useThing"',
+    },
+  });
+
+  expect(created.sort()).toEqual(expected);
+});

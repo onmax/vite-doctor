@@ -41,8 +41,7 @@ const reportProgramRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program(node: any) {
         ctx.report(
           allDiagnostics.DOC9999({
             why: "Program was visited.",
@@ -71,8 +70,7 @@ const safeFixRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program(node: any) {
         const start = ctx.file.text.indexOf("bad");
         if (start < 0) return;
         ctx.report(
@@ -107,8 +105,7 @@ const reportIdentifiersRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Identifier") return;
+      Identifier(node: any) {
         ctx.report(
           allDiagnostics.DOC9999({
             why: `Identifier ${node.name} was visited.`,
@@ -150,8 +147,7 @@ test("numeric diagnostic ranges preserve an offset of zero", async () => {
     },
     create(ctx) {
       return {
-        ScriptNode(node: any) {
-          if (node.type !== "Program") return;
+        Program() {
           for (const [label, start, end] of [
             ["zero", 0, 1],
             ["nonzero", 1, 2],
@@ -313,8 +309,7 @@ const secondRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program() {
         ctx.report(
           allDiagnostics.DOC9999({
             why: "Second rule was visited.",
@@ -342,8 +337,7 @@ const duplicateRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program(node: any) {
         for (let index = 0; index < 2; index++) {
           ctx.report(
             allDiagnostics.DOC9999({
@@ -375,8 +369,7 @@ const optionRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program() {
         ctx.report(
           allDiagnostics.DOC9999({
             why: `option:${(ctx.options as any)?.mode ?? "missing"}`,
@@ -404,8 +397,7 @@ const missingFixRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program() {
         ctx.report((allDiagnostics.DOC9999 as any)({ why: "Missing fix." }), {
           ruleId: "test/missing-fix-rule",
           severity: "warn",

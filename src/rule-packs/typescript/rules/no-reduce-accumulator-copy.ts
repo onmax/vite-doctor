@@ -46,12 +46,11 @@ export const noReduceAccumulatorCopy = createRule({
       return references(target.init, accumulator, owner, seen);
     }
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type === "Program") {
-          evidence = createLocalEvidence(node);
-          return;
-        }
-        if (node.type !== "CallExpression" || node.optional) return;
+      Program(node: AnyNode) {
+        evidence = createLocalEvidence(node);
+      },
+      CallExpression(node: AnyNode) {
+        if (node.optional) return;
         const method = arrayMethod(node.callee);
         if (!method) return;
         const callback = evidence.owner(node);

@@ -14,6 +14,7 @@ export const preferDefineModel = createRule({
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/sfc-script-setup.html#definemodel",
     requires: { sfc: true, script: true, vue: true },
+    prefilter: { calls: ["defineProps"] },
     frameworkVersions: { vue: ">=3.4" },
   },
   create(ctx) {
@@ -49,7 +50,7 @@ export const preferDefineModel = createRule({
     }
 
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (ctx.helpers.isCall(node, "defineModel")) hasDefineModel = true;
         if (ctx.helpers.isCall(node, "defineProps")) {
           for (const item of propNamesFromDefineProps(node)) props.set(item.name, item.node);

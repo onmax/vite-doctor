@@ -19,9 +19,8 @@ export const definePropsWatchGetter = createRule({
     if (!descriptor?.scriptSetup) return;
     let propArguments: Set<number> | undefined;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (
-          node.type === "CallExpression" &&
           node.arguments?.[0]?.type === "Identifier" &&
           (propArguments ??= propWatchArguments(ctx, descriptor)).has(node.arguments[0].start)
         ) {

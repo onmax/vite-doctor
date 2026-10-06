@@ -10,11 +10,12 @@ export const forwardAuthHeadersSsr = createRule({
     docsUrl:
       "https://nuxt.com/docs/4.x/getting-started/data-fetching#pass-client-headers-to-the-api",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["$fetch"] },
   },
   create(ctx) {
     if (!isNuxtRuntimeFile(ctx) || isClientOnlyPath(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "$fetch")) return;
         const first = node.arguments?.[0];
         const url =

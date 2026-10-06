@@ -23,8 +23,7 @@ const symlinkFixRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program(node: any) {
         const start = ctx.file.text.indexOf("bad");
         if (start < 0) return;
         ctx.report(

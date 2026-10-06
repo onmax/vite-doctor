@@ -28,8 +28,7 @@ export const exportNameMatchesFile = createRule({
     const autoImportName = defaultExportAutoImportName(fileName);
 
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         const defaultExport = findDefaultExport(node);
         if (defaultExport) {
           if (COMPOSABLE_NAME.test(autoImportName)) return;

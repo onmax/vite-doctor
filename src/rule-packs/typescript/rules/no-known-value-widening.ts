@@ -32,13 +32,11 @@ export const noKnownValueWidening = createRule({
     if (!isTypeScriptSource(ctx)) return;
     let evidence: ReturnType<typeof createLocalEvidence>;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type === "Program") {
-          evidence = createLocalEvidence(node);
-          return;
-        }
-        if (node.type !== "VariableDeclarator" || node.id?.type !== "Identifier" || !node.init)
-          return;
+      Program(node: AnyNode) {
+        evidence = createLocalEvidence(node);
+      },
+      VariableDeclarator(node: AnyNode) {
+        if (node.id?.type !== "Identifier" || !node.init) return;
         const annotation = node.id.typeAnnotation?.typeAnnotation;
         if (!annotation) return;
         const initial = expression(node.init, true);

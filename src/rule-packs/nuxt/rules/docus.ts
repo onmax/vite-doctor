@@ -107,8 +107,8 @@ export const noUnknownAppConfigKey = createRule({
     if (ctx.file.relativePath !== "app/app.config.ts" && ctx.file.relativePath !== "app.config.ts")
       return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Property" || node.computed) return;
+      Property(node: AnyNode) {
+        if (node.computed) return;
         if (!isTopLevelDefineAppConfigProperty(node)) return;
         const key = staticPropertyKey(node);
         if (!key || ALLOWED_DOCUS_APP_CONFIG_KEYS.has(key)) return;

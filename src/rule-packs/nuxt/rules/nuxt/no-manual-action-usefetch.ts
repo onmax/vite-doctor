@@ -22,7 +22,7 @@ export const noManualActionUseFetch = createRule({
     if (!fileMayCallAsyncData(ctx)) return;
     const options = asyncDataRuleOptions(ctx);
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);
         if (!call || !call.hasImmediateFalse) return;
         const commands = getDestructuredAsyncDataCommands(node);

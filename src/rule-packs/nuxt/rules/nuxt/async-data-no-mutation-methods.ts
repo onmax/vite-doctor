@@ -20,7 +20,7 @@ export const asyncDataNoMutationMethods = createRule({
   create(ctx) {
     if (!fileMayCallAsyncData(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);
         if (!call || !FETCH_ASYNC_DATA_COMPOSABLES.has(call.name)) return;
         if (!call.method || !MUTATING_METHODS.has(call.method)) return;

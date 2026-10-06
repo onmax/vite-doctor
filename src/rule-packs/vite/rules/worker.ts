@@ -21,7 +21,7 @@ export const requireWorkerUrlPattern = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
+      NewExpression(node: AnyNode) {
         if (!isWorkerConstructor(node)) return;
         if (isFixturePath(ctx.file.relativePath)) return;
         const first = node.arguments?.[0];
@@ -56,7 +56,7 @@ export const noDynamicWorkerUrl = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
+      NewExpression(node: AnyNode) {
         if (!isWorkerConstructor(node)) return;
         const first = node.arguments?.[0];
         if (isFixturePath(ctx.file.relativePath)) return;
@@ -113,8 +113,8 @@ export const noNodeApiInWorker = createRule({
           },
         );
       },
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Identifier" || node.name !== "process") return;
+      Identifier(node: AnyNode) {
+        if (node.name !== "process") return;
         if (processReferences === undefined)
           processReferences = globalReferenceStarts(ctx, new Set(["process"]));
         if (ctx.helpers.isTypeOnlyContext(node) || processReferences?.has(node.start) === false)

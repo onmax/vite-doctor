@@ -34,26 +34,25 @@ export const noChainedTypeAssertions = createRule({
     aiGeneratedCodeRisk: "high",
   },
   create(ctx) {
-    return {
-      ScriptNode(node: AnyNode) {
-        if (!isTypeAssertion(node) || !isOutermostTypeAssertion(node)) return;
-        let current = node;
-        let count = 0;
-        let hasNonConst = false;
-        while (isTypeAssertion(current)) {
-          count += 1;
-          hasNonConst ||= !isConstAssertion(current);
-          current = unwrapParentheses(current.expression);
-        }
-        if (count < 2 || !hasNonConst) return;
-        report(
-          ctx,
-          node,
-          ruleId,
-          "This assertion chain discards the value's known type before claiming a new one.",
-          "Keep the original type, narrow it with a guard, or parse the value at its boundary.",
-        );
-      },
+    const visit = (node: AnyNode) => {
+      if (!isOutermostTypeAssertion(node)) return;
+      let current = node;
+      let count = 0;
+      let hasNonConst = false;
+      while (isTypeAssertion(current)) {
+        count += 1;
+        hasNonConst ||= !isConstAssertion(current);
+        current = unwrapParentheses(current.expression);
+      }
+      if (count < 2 || !hasNonConst) return;
+      report(
+        ctx,
+        node,
+        ruleId,
+        "This assertion chain discards the value's known type before claiming a new one.",
+        "Keep the original type, narrow it with a guard, or parse the value at its boundary.",
+      );
     };
+    return { TSAsExpression: visit, TSTypeAssertion: visit };
   },
 });

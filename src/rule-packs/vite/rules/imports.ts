@@ -13,8 +13,7 @@ export const requireStaticGlobPattern = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "CallExpression") return;
+      CallExpression(node: AnyNode) {
         const callee = node.callee;
         if (
           callee?.type !== "MemberExpression" ||

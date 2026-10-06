@@ -22,7 +22,7 @@ export const asyncDataExplicitKeyForRefreshable = createRule({
     if (!fileMayCallAsyncData(ctx)) return;
     let onlyRefreshableEntryForKeyedRefresh: boolean | undefined;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);
         if (!call || call.hasExplicitKey) return;
         const hasLocalRefresh = getDestructuredAsyncDataCommands(node).has("refresh");

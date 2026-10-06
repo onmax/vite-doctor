@@ -20,8 +20,7 @@ export const preferComposableRefReturn = createRule({
     if (options.allowReactiveObjectReturn) return;
 
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "ReturnStatement") return;
+      ReturnStatement(node: AnyNode) {
         const fn = nearestFunction(node);
         if (!fn || !isExportedUseComposable(fn)) return;
         if (isToRefsReturn(node.argument)) return;

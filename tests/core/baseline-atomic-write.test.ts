@@ -47,8 +47,7 @@ const reportRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program() {
         ctx.report(
           allDiagnostics.DOC9999({
             why: "The baseline atomic fixture reports.",

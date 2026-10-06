@@ -14,11 +14,12 @@ export const preferGetRequestIp = createRule({
     fixable: "suggestion",
     docsUrl: "https://h3.dev/utils/request#getrequestipevent",
     requires: { script: true, nitro: true },
+    prefilter: { names: ["getHeader", "getRequestHeader"] },
   },
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!isIpHeaderRead(node, ctx.file.text)) return;
         if (!isRequestSensitiveUse(ctx, node)) return;
         report(

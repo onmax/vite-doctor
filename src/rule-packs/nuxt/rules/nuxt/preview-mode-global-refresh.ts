@@ -12,13 +12,14 @@ export const previewModeGlobalRefresh = createRule({
     docsUrl:
       "https://nuxt.com/docs/4.x/api/composables/use-preview-mode#customize-the-onenable-and-ondisable-callbacks",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["usePreviewMode"] },
   },
   create(ctx) {
     const options = asyncDataRuleOptions(ctx);
     const allowExplicitCallbacks =
       options.allowPreviewBroadEnablementWithExplicitCallbacks !== false;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "usePreviewMode")) return;
         const previewOptions = node.arguments?.[0];
         if (previewOptions?.type !== "ObjectExpression") return;

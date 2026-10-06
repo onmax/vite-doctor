@@ -14,7 +14,7 @@ export const requirePluginName = createRule({
   create(ctx) {
     if (!isPluginSource(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      ObjectExpression(node: AnyNode) {
         if (!isPluginObject(node)) return;
         const hasName = (node.properties ?? []).some(
           (property: AnyNode) => property.key?.name === "name",
@@ -50,7 +50,7 @@ export const preferTransformFilter = createRule({
   create(ctx) {
     if (!isPluginSource(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      Property(node: AnyNode) {
         if (!isTransformProperty(node)) return;
         const value = node.value;
         const source = ctx.file.text.slice(node.start ?? 0, node.end ?? 0);
@@ -84,8 +84,7 @@ export const requireDisposeForSideEffects = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         if (isServerSidePath(ctx.file.relativePath) || isFixturePath(ctx.file.relativePath)) return;
         const text = stripCommentsAndStrings(ctx.file.text);
         if (!/import\.meta\.hot\.accept\s*\(/.test(text)) return;

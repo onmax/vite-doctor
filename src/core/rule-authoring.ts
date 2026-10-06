@@ -1,3 +1,5 @@
+export { namePattern } from "./internal/name-pattern.js";
+
 export type AnyNode = any;
 
 const FN_OR_PROG_TYPES = new Set([

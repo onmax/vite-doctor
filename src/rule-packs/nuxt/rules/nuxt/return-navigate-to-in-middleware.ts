@@ -10,6 +10,7 @@ export const returnNavigateToInMiddleware = createRule({
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/utils/navigate-to#within-route-middleware",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["navigateTo"] },
   },
   create(ctx) {
     if (
@@ -19,7 +20,7 @@ export const returnNavigateToInMiddleware = createRule({
     )
       return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "navigateTo")) return;
         const expression = navigationExpression(node);
         if (isReturned(expression)) return;

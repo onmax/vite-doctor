@@ -12,11 +12,8 @@ export const noAwaitInsideCustomWrapper = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
-        if (
-          node.type === "AwaitExpression" &&
-          ["useFetch", "useAsyncData"].includes(ctx.helpers.getCalleeName(node.argument) ?? "")
-        ) {
+      AwaitExpression(node: AnyNode) {
+        if (["useFetch", "useAsyncData"].includes(ctx.helpers.getCalleeName(node.argument) ?? "")) {
           const text = ctx.file.text.slice(Math.max(0, node.start - 80), node.start);
           if (/function\s+use[A-Z]\w+|const\s+use[A-Z]\w+\s*=/.test(text)) {
             report(

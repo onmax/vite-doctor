@@ -9,6 +9,7 @@ export const preferUseTemplateRef = createRule({
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/essentials/template-refs.html#accessing-the-refs",
     requires: { sfc: true, template: true, script: true, vue: true },
+    prefilter: { calls: ["ref"] },
   },
   create(ctx) {
     const refs = new Set<string>();
@@ -22,9 +23,8 @@ export const preferUseTemplateRef = createRule({
     };
     collectRefs(ctx.file.templateAst);
     return {
-      ScriptNode(node: AnyNode) {
+      VariableDeclarator(node: AnyNode) {
         if (
-          node.type === "VariableDeclarator" &&
           node.id?.type === "Identifier" &&
           refs.has(node.id.name) &&
           ctx.helpers.isCall(node.init, "ref")

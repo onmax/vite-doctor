@@ -15,8 +15,8 @@ export const noBrowserGlobalInSsrEntry = createRule({
     if (!isLikelySsrFile(ctx.file.relativePath)) return;
     let globalReferences: Set<number> | null | undefined;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Identifier" || !globalNames.has(node.name)) return;
+      Identifier(node: AnyNode) {
+        if (!globalNames.has(node.name)) return;
         const name = node.name === "globalThis" ? staticMemberName(node.__doctorParent) : node.name;
         if (!name || !browserGlobals.has(name)) return;
         if (globalReferences === undefined)

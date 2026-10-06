@@ -1,4 +1,4 @@
-import { AnyNode, NUXT_APP_DIRS, createRule } from "./shared.js";
+import { NUXT_APP_DIRS, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 export const preferAppDirectoryPlacement = createRule({
@@ -35,8 +35,8 @@ export const preferAppDirectoryPlacement = createRule({
     };
     return {
       SFC: reportOnce,
-      ScriptNode(node: AnyNode) {
-        if (node.type === "Program") reportOnce();
+      Program() {
+        reportOnce();
       },
     };
   },

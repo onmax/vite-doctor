@@ -36,47 +36,46 @@ export const noUnvalidatedDeserialization = createRule({
     aiGeneratedCodeRisk: "high",
   },
   create(ctx) {
+    const visitAssertion = (node: AnyNode) => {
+      if (!isOutermostTypeAssertion(node)) return;
+      if (isUntrustedDeserialization(ctx, node.expression) && !isUnknownType(node.typeAnnotation)) {
+        reportBoundary(ctx, node);
+      }
+    };
     return {
-      ScriptNode(node: AnyNode) {
-        if (isTypeAssertion(node) && isOutermostTypeAssertion(node)) {
-          if (
-            isUntrustedDeserialization(ctx, node.expression) &&
-            !isUnknownType(node.typeAnnotation)
-          ) {
-            reportBoundary(ctx, node);
-          }
-          return;
+      TSAsExpression: visitAssertion,
+      TSTypeAssertion: visitAssertion,
+      ReturnStatement(node: AnyNode) {
+        if (!node.argument || isTypeAssertion(node.argument)) return;
+        const owner = containingFunction(node);
+        if (hasConcreteReturnType(owner) && isUntrustedDeserialization(ctx, node.argument)) {
+          reportBoundary(ctx, node.argument);
         }
-        if (node.type === "ReturnStatement" && node.argument && !isTypeAssertion(node.argument)) {
-          const owner = containingFunction(node);
-          if (hasConcreteReturnType(owner) && isUntrustedDeserialization(ctx, node.argument)) {
-            reportBoundary(ctx, node.argument);
-          }
-          return;
-        }
+      },
+      ArrowFunctionExpression(node: AnyNode) {
         if (
-          node.type === "ArrowFunctionExpression" &&
           node.body?.type !== "BlockStatement" &&
           !isTypeAssertion(node.body) &&
           hasConcreteReturnType(node) &&
           isUntrustedDeserialization(ctx, node.body)
         ) {
           reportBoundary(ctx, node.body);
-          return;
         }
-        if (node.type === "PropertyDefinition" && node.value) {
-          const annotation = node.typeAnnotation?.typeAnnotation;
-          if (
-            annotation &&
-            !isUnknownType(annotation) &&
-            !isAnyType(annotation) &&
-            isUntrustedDeserialization(ctx, node.value)
-          ) {
-            reportBoundary(ctx, node.value);
-          }
-          return;
+      },
+      PropertyDefinition(node: AnyNode) {
+        if (!node.value) return;
+        const annotation = node.typeAnnotation?.typeAnnotation;
+        if (
+          annotation &&
+          !isUnknownType(annotation) &&
+          !isAnyType(annotation) &&
+          isUntrustedDeserialization(ctx, node.value)
+        ) {
+          reportBoundary(ctx, node.value);
         }
-        if (node.type !== "VariableDeclarator" || !node.init) return;
+      },
+      VariableDeclarator(node: AnyNode) {
+        if (!node.init) return;
         const annotation = node.id.typeAnnotation?.typeAnnotation;
         if (
           annotation &&

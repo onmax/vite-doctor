@@ -40,15 +40,13 @@ export const preferRouteMethodSuffix = createRule({
     if (!isNitroRouteFile(ctx)) return;
 
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type === "IfStatement") {
-          const checks = methodChecks(node.test, ctx.file.text, node);
-          if (!checks.length) return;
-          reportMethodCheck(node.test ?? node, checks, wholeHandlerAllowed(node, checks));
-          return;
-        }
-
-        if (node.type !== "BinaryExpression" || isInIfStatementTest(node)) return;
+      IfStatement(node: AnyNode) {
+        const checks = methodChecks(node.test, ctx.file.text, node);
+        if (!checks.length) return;
+        reportMethodCheck(node.test ?? node, checks, wholeHandlerAllowed(node, checks));
+      },
+      BinaryExpression(node: AnyNode) {
+        if (isInIfStatementTest(node)) return;
         const check = singleMethodCheck(node, ctx.file.text, node);
         if (!check) return;
         reportMethodCheck(node, [check], false);

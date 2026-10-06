@@ -33,8 +33,7 @@ const missingFileFixRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program() {
         ctx.report(
           allDiagnostics.DOC9999({
             why: "The generated source needs an update.",
@@ -150,8 +149,7 @@ const insertionRule = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program(node: any) {
         ctx.report(
           allDiagnostics.DOC9999({ why: "The fixture needs a header.", fix: "Add a header." }),
           {
@@ -233,8 +231,7 @@ test.each([
         },
         create(ctx) {
           return {
-            ScriptNode(node: any) {
-              if (node.type !== "Program") return;
+            Program(node: any) {
               const report = (edits: { start: number; end: number; text: string }[]) =>
                 ctx.report(
                   allDiagnostics.DOC9999({

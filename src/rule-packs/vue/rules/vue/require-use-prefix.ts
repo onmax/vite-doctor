@@ -88,8 +88,7 @@ export const requireUsePrefix = createRule({
     if (isNuxtUtilsFile(ctx)) return;
 
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         const candidates = exportedFunctions(node).filter(
           (exported) => !isExemptName(exported.name),
         );

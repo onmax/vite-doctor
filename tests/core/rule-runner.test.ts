@@ -1,5 +1,6 @@
-import { expect, test, vi } from "vite-plus/test";
-import type { RuleVisitor, SourceFileHandle } from "../../src/core/primitives.ts";
+import { expect, expectTypeOf, test, vi } from "vite-plus/test";
+import type { RuleVisitor, ScriptAstNodeOf, SourceFileHandle } from "../../src/core/primitives.ts";
+import { createRule } from "../../src/extension.ts";
 import { runVisitor, runVisitors } from "../../src/core/internal/rule-runner.ts";
 import { parseSfcFile } from "../../src/core/internal/sfc.ts";
 import { parseScript } from "../../src/core/internal/script.ts";
@@ -43,7 +44,7 @@ test.each<keyof RuleVisitor>(["SFC", "onProjectStart", "TemplateNode"])(
   },
 );
 
-test.each<keyof RuleVisitor>(["SFC", "onProjectStart", "ScriptNode", "ImportDeclaration"])(
+test.each<keyof RuleVisitor>(["SFC", "onProjectStart", "Identifier", "ImportDeclaration"])(
   "%s visitors do not traverse the template AST",
   async (hook) => {
     const file = createFile();
@@ -83,11 +84,17 @@ test("awaits SFC hooks before dispatching script and template visitors", async (
         await Promise.resolve();
         events.push("sfc");
       },
-      ScriptNode(node: { type: string }) {
+      Program(node) {
         events.push(node.type);
       },
       ImportDeclaration() {
         events.push("import");
+      },
+      Literal(node) {
+        events.push(node.type);
+      },
+      "Program:exit"() {
+        events.push("program:exit");
       },
       TemplateNode(node: { type: string }) {
         events.push(node.type);
@@ -99,9 +106,9 @@ test("awaits SFC hooks before dispatching script and template visitors", async (
   expect(events).toEqual([
     "sfc",
     "Program",
-    "ImportDeclaration",
     "import",
     "Literal",
+    "program:exit",
     "VDocumentFragment",
   ]);
 });
@@ -119,7 +126,7 @@ test("walks each AST once no matter how many visitors run", async () => {
 
   await runVisitors(
     visits.map((_, index) => ({
-      ScriptNode() {
+      Identifier() {
         visits[index]! += 1;
       },
       TemplateNode() {},
@@ -129,8 +136,7 @@ test("walks each AST once no matter how many visitors run", async () => {
 
   expect(body).toHaveBeenCalledOnce();
   expect(children).toHaveBeenCalledOnce();
-  expect(new Set(visits).size).toBe(1);
-  expect(visits[0]).toBeGreaterThan(2);
+  expect(visits).toEqual([2, 2, 2, 2, 2]);
 });
 
 test("links every script parent before the first visitor runs", async () => {
@@ -142,8 +148,7 @@ test("links every script parent before the first visitor runs", async () => {
 
   await runVisitors(
     [0, 1, 2].map(() => ({
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program() {
         let current = deepest;
         while (current.__doctorParent) current = current.__doctorParent;
         seen.push(current === program);
@@ -166,8 +171,8 @@ test("dispatches each node to visitors in order after awaiting every SFC hook", 
       await Promise.resolve();
       events.push(`${name}:sfc`);
     },
-    ScriptNode(node: any) {
-      if (node.type === "Program") events.push(`${name}:program`);
+    Program() {
+      events.push(`${name}:program`);
     },
     ImportDeclaration() {
       events.push(`${name}:import`);
@@ -201,18 +206,22 @@ test.each([1, 2])(
     const replacement = { type: "EmptyStatement" };
     const inserted = { type: "DebuggerStatement" };
     const visits: unknown[][] = Array.from({ length: count }, () => []);
-    const visitors = visits.map(
-      (seen, index): RuleVisitor => ({
-        ScriptNode(node) {
-          seen.push(node);
-          if (node === program && index === 0) {
-            program.body.splice(0, 1);
-            program.body[0] = replacement;
-            program.body.push(inserted);
-          }
-        },
-      }),
-    );
+    const visitors = visits.map((seen, index): RuleVisitor => {
+      const visit = (node: unknown) => {
+        seen.push(node);
+        if (node === program && index === 0) {
+          program.body.splice(0, 1);
+          program.body[0] = replacement;
+          program.body.push(inserted);
+        }
+      };
+      return {
+        Program: visit,
+        VariableDeclaration: visit,
+        EmptyStatement: visit,
+        DebuggerStatement: visit,
+      };
+    });
 
     if (count === 1) await runVisitor(visitors[0]!, file);
     else await runVisitors(visitors, file);
@@ -224,3 +233,83 @@ test.each([1, 2])(
     }
   },
 );
+
+test("dispatches each node only to visitors for its type", async () => {
+  const file = createFile();
+  file.scriptAst = parseScript("app.ts", "const a = f(b); g()");
+  const calls: string[] = [];
+  const identifiers: string[] = [];
+
+  await runVisitor(
+    {
+      CallExpression(node) {
+        calls.push(node.type);
+      },
+      Identifier(node) {
+        identifiers.push(node.name);
+      },
+    },
+    file,
+  );
+
+  expect(calls).toEqual(["CallExpression", "CallExpression"]);
+  expect(identifiers).toEqual(["a", "f", "b", "g"]);
+});
+
+test("runs exit visitors after the node's children in rule order", async () => {
+  const file = createFile();
+  file.scriptAst = parseScript("app.ts", "f(g(1)); h()");
+  const events: string[] = [];
+  const visitor = (name: string): RuleVisitor => ({
+    CallExpression(node) {
+      events.push(`${name}:enter:${(node.callee as { name: string }).name}`);
+    },
+    "CallExpression:exit"(node) {
+      events.push(`${name}:exit:${(node.callee as { name: string }).name}`);
+    },
+    "Program:exit"() {
+      events.push(`${name}:program:exit`);
+    },
+  });
+
+  await runVisitors([visitor("a"), visitor("b")], file);
+
+  expect(events).toEqual([
+    "a:enter:f",
+    "b:enter:f",
+    "a:enter:g",
+    "b:enter:g",
+    "a:exit:g",
+    "b:exit:g",
+    "a:exit:f",
+    "b:exit:f",
+    "a:enter:h",
+    "b:enter:h",
+    "a:exit:h",
+    "b:exit:h",
+    "a:program:exit",
+    "b:program:exit",
+  ]);
+});
+
+test("visitor keys type their node parameter", () => {
+  createRule({
+    meta: { id: "test/types", title: "Types", category: "correctness", severity: "warn" },
+    create() {
+      return {
+        CallExpression(node) {
+          expectTypeOf(node).toEqualTypeOf<ScriptAstNodeOf<"CallExpression">>();
+        },
+        "ImportDeclaration:exit"(node) {
+          expectTypeOf(node.source.value).toEqualTypeOf<string>();
+        },
+        Identifier(node) {
+          expectTypeOf(node.name).toEqualTypeOf<string>();
+        },
+      };
+    },
+  });
+  // @ts-expect-error ScriptNode was removed in favor of node type visitors.
+  const legacy: RuleVisitor = { ScriptNode() {} };
+  expect(legacy).toBeDefined();
+});

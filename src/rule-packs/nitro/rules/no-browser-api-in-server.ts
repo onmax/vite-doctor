@@ -20,12 +20,13 @@ export const noBrowserApiInServer = createRule({
     fixable: "suggestion",
     docsUrl: "https://nitro.build/guide/routing#request-handler",
     requires: { script: true, nitro: true },
+    prefilter: { names: [...BROWSER_GLOBALS] },
   },
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Identifier" || !BROWSER_GLOBALS.has(node.name)) return;
+      Identifier(node: AnyNode) {
+        if (!BROWSER_GLOBALS.has(node.name)) return;
         if (
           ctx.helpers.isTypeOnlyContext(node) ||
           ctx.helpers.isTypeofOperand(node) ||

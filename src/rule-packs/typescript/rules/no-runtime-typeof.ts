@@ -29,8 +29,8 @@ export const noRuntimeTypeof = createRule({
   create(ctx) {
     if (!isTypeScriptSource(ctx)) return {};
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "UnaryExpression" || node.operator !== "typeof") return;
+      UnaryExpression(node: AnyNode) {
+        if (node.operator !== "typeof") return;
         report(
           ctx,
           node,

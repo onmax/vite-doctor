@@ -59,27 +59,23 @@ export const noWidenThenAssert = createRule({
         return evidence.known(initial.expression, owner);
       return widened(initial, owner, seen);
     }
+    const visitAssertion = (node: AnyNode) => {
+      if (isConstAssertion(node) || evidence.broadType(node.typeAnnotation)) return;
+      if (!widened(node.expression, evidence.owner(node))) return;
+      report(
+        ctx,
+        node,
+        ruleId,
+        "This assertion claims a concrete type after an immutable local value discarded known type evidence.",
+        "Preserve the original type, or validate the value before asserting a different contract.",
+      );
+    };
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type === "Program") {
-          evidence = createLocalEvidence(node);
-          return;
-        }
-        if (
-          !isTypeAssertion(node) ||
-          isConstAssertion(node) ||
-          evidence.broadType(node.typeAnnotation)
-        )
-          return;
-        if (!widened(node.expression, evidence.owner(node))) return;
-        report(
-          ctx,
-          node,
-          ruleId,
-          "This assertion claims a concrete type after an immutable local value discarded known type evidence.",
-          "Preserve the original type, or validate the value before asserting a different contract.",
-        );
+      Program(node: AnyNode) {
+        evidence = createLocalEvidence(node);
       },
+      TSAsExpression: visitAssertion,
+      TSTypeAssertion: visitAssertion,
     };
   },
 });

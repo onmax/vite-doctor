@@ -10,11 +10,12 @@ export const noNonSerializableUseState = createRule({
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-state#usage",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["useState"] },
   },
   create(ctx) {
     const evidence = createNuxtRuntimeEvidence(ctx);
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useState")) return;
         if (!evidence.isPayloadSerialized(node)) return;
         const init = node.arguments?.[1] ?? node.arguments?.[0];

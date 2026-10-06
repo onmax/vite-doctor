@@ -19,8 +19,7 @@ test("text output exposes a fix run whose only edit was skipped", async () => {
         },
         create(ctx) {
           return {
-            ScriptNode(node: any) {
-              if (node.type !== "Program") return;
+            Program() {
               ctx.report(
                 allDiagnostics.DOC9999({
                   why: "Missing source fixture.",

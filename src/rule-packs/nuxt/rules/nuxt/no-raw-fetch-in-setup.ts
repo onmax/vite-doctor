@@ -19,8 +19,7 @@ export const noRawFetchInSetup = createRule({
         ctx.file.inAppDir("layouts"));
     if (!appSurface) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "AwaitExpression") return;
+      AwaitExpression(node: AnyNode) {
         const call = node.argument;
         const name = ctx.helpers.getCalleeName(call);
         if (name === "$fetch" || name === "fetch" || name === "axios.get") {

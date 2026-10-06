@@ -29,8 +29,7 @@ export const noConditionalEmptyObjectSpread = createRule({
   create(ctx) {
     if (!isTypeScriptSource(ctx)) return {};
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "SpreadElement") return;
+      SpreadElement(node: AnyNode) {
         const conditional = unwrapConditional(node.argument);
         if (
           conditional?.type !== "ConditionalExpression" ||

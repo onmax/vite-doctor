@@ -1,4 +1,4 @@
-import { AnyNode, createRule, isExplicitPlugin } from "./shared.js";
+import { createRule, isExplicitPlugin } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 export const noSubdirPluginAutoRegistrationAssumption = createRule({
@@ -35,8 +35,8 @@ export const noSubdirPluginAutoRegistrationAssumption = createRule({
       );
     };
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type === "Program") reportOnce();
+      Program() {
+        reportOnce();
       },
     };
   },

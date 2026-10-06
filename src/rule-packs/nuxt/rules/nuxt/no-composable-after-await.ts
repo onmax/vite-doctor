@@ -28,28 +28,27 @@ export const noComposableAfterAwait = createRule({
     const evidence = createNuxtRuntimeEvidence(ctx);
     if (!isNuxtRuntimeFile(ctx) || isClientOnlyPath(ctx.file.relativePath)) return;
     const composables = new Set([...NUXT_AUTO_IMPORTS, "useSeoMeta", "useHead", "useHeadSafe"]);
-    return {
-      ScriptNode(node: AnyNode) {
-        const name = resolveLocalCalleeName(ctx, node);
-        if (!name || !composables.has(name) || !hasPriorAwaitInSameExecutionScope(node)) return;
-        if (isTopLevelVueScriptSetupCall(ctx, node)) return;
-        if (name === "navigateTo" && isReturnedFromRouteMiddleware(ctx.file.relativePath, node))
-          return;
-        if (name === "navigateTo" && isVueComponentFunctionNavigation(ctx.file.relativePath, node))
-          return;
-        if (evidence.isClientCallable(node)) return;
-        if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
-        report(
-          ctx,
-          node,
-          "nuxt/context/no-composable-after-await",
-          "error",
-          "context",
-          `${name}() is called after await in Nuxt context and may lose async context.`,
-          "Call Nuxt composables before the first await or use Nuxt's compiler-aware data factories.",
-        );
-      },
+    const visit = (node: AnyNode) => {
+      const name = resolveLocalCalleeName(ctx, node);
+      if (!name || !composables.has(name) || !hasPriorAwaitInSameExecutionScope(node)) return;
+      if (isTopLevelVueScriptSetupCall(ctx, node)) return;
+      if (name === "navigateTo" && isReturnedFromRouteMiddleware(ctx.file.relativePath, node))
+        return;
+      if (name === "navigateTo" && isVueComponentFunctionNavigation(ctx.file.relativePath, node))
+        return;
+      if (evidence.isClientCallable(node)) return;
+      if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
+      report(
+        ctx,
+        node,
+        "nuxt/context/no-composable-after-await",
+        "error",
+        "context",
+        `${name}() is called after await in Nuxt context and may lose async context.`,
+        "Call Nuxt composables before the first await or use Nuxt's compiler-aware data factories.",
+      );
     };
+    return { CallExpression: visit, NewExpression: visit };
   },
 });
 

@@ -53,7 +53,7 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
       if (!isNitroServerFile(ctx)) return;
       let bindings: Map<number, Set<number>> | undefined;
       return {
-        ScriptNode(node: AnyNode) {
+        VariableDeclarator(node: AnyNode) {
           if (!rawInputVariable(node, opts.rawUtilities)) return;
           const match = rawInputValidatedNearby(
             ctx,

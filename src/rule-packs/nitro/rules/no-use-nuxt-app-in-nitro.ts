@@ -12,11 +12,12 @@ export const noUseNuxtAppInNitro = createRule({
     severity: "error",
     fixable: "suggestion",
     requires: { script: true, nitro: true },
+    prefilter: { calls: ["useNuxtApp"] },
   },
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (ctx.helpers.isCall(node, "useNuxtApp"))
           report(
             ctx,

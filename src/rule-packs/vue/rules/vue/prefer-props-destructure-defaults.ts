@@ -14,6 +14,7 @@ export const preferPropsDestructureDefaults = createRule({
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/sfc-script-setup.html#reactive-props-destructure",
     requires: { sfc: true, script: true, vue: true },
+    prefilter: { calls: ["withDefaults"] },
     frameworkVersions: { vue: ">=3.5" },
   },
   create(ctx) {
@@ -21,7 +22,7 @@ export const preferPropsDestructureDefaults = createRule({
     if (options.allowWithDefaults || !ctx.file.text.includes("<script setup")) return;
 
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "withDefaults")) return;
         if (!ctx.helpers.isCall(node.arguments?.[0], "defineProps")) return;
         ctx.report(

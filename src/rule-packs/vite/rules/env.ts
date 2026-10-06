@@ -21,7 +21,7 @@ export const noUntypedEnv = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
+      MemberExpression(node: AnyNode) {
         const name = importMetaEnvKey(node);
         if (!name || builtInEnvKeys.has(name) || hasTypeDeclaration(ctx, name, true)) return;
         ctx.report(
@@ -54,7 +54,7 @@ export const noClientSecretPattern = createRule({
   create(ctx) {
     const exposure = envExposureEvidence(ctx.project.runtimeEvidence?.vite, ctx.project.root);
     return {
-      ScriptNode(node: AnyNode) {
+      MemberExpression(node: AnyNode) {
         const name = importMetaEnvKey(node);
         if (!name || !SECRET_NAME_RE.test(name)) return;
         if (
@@ -122,8 +122,7 @@ export const preferDirectImportMetaEnvAccess = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "VariableDeclarator") return;
+      VariableDeclarator(node: AnyNode) {
         if (node.id?.type !== "ObjectPattern") return;
         if (memberPath(node.init) !== "import.meta.env") return;
         ctx.report(

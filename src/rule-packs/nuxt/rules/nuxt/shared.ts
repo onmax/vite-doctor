@@ -7,6 +7,7 @@ import {
 import { doctorInternalDiagnostics } from "../../../../core/internal-diagnostic-handles.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../../diagnostics.js";
 import {
+  namePattern,
   nearestFunctionOrProgram,
   sourceForNode,
   walkScriptLocal,
@@ -16,6 +17,7 @@ import {
 export { createRule };
 export {
   findAncestor,
+  namePattern,
   nearestFunctionOrProgram,
   sourceForNode,
   walkScriptLocal,
@@ -62,25 +64,11 @@ export const NUXT_AUTO_IMPORTS = new Set([
   "defineNuxtRouteMiddleware",
   "useState",
 ]);
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const hexDigit = (value: string) => `[${value.toLowerCase()}${value.toUpperCase()}]`;
-const escapedNamePattern = (name: string) => {
-  const continuation = `(?:\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029))`;
-  const character = (value: string) => {
-    const code = value.charCodeAt(0);
-    const hex = code.toString(16).padStart(2, "0");
-    const unicode = code.toString(16).padStart(4, "0");
-    const octal = code.toString(8);
-    const codePoint = code.toString(16);
-    return `(?:${escapeRegex(value)}|\\\\u${[...unicode].map(hexDigit).join("")}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${[...hex].map(hexDigit).join("")}|\\\\${octal}|\\\\(?![uUxX0-7])${escapeRegex(value)})`;
-  };
-  return `(?:${continuation}*${[...name]
-    .map((value) => `${character(value)}${continuation}*`)
-    .join("")})`;
-};
-const NUXT_AUTO_IMPORT_TEXT_RE = new RegExp(
-  [...NUXT_AUTO_IMPORTS, "useLazyFetch", "useLazyAsyncData"].map(escapedNamePattern).join("|"),
-);
+const NUXT_AUTO_IMPORT_TEXT_RE = namePattern([
+  ...NUXT_AUTO_IMPORTS,
+  "useLazyFetch",
+  "useLazyAsyncData",
+]);
 export const BROWSER_SIDE_EFFECTS = new Set([
   "localStorage.setItem",
   "sessionStorage.setItem",
