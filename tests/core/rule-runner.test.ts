@@ -190,3 +190,37 @@ test("dispatches each node to visitors in order after awaiting every SFC hook", 
     "b:template",
   ]);
 });
+
+test.each([1, 2])(
+  "script traversal snapshots children before %i visitors dispatch",
+  async (count) => {
+    const file = createFile();
+    file.scriptAst = parseScript("app.ts", "const removed = 1; const replaced = 2");
+    const program = file.scriptAst as { body: unknown[] };
+    const original = [...program.body];
+    const replacement = { type: "EmptyStatement" };
+    const inserted = { type: "DebuggerStatement" };
+    const visits: unknown[][] = Array.from({ length: count }, () => []);
+    const visitors = visits.map(
+      (seen, index): RuleVisitor => ({
+        ScriptNode(node) {
+          seen.push(node);
+          if (node === program && index === 0) {
+            program.body.splice(0, 1);
+            program.body[0] = replacement;
+            program.body.push(inserted);
+          }
+        },
+      }),
+    );
+
+    if (count === 1) await runVisitor(visitors[0]!, file);
+    else await runVisitors(visitors, file);
+
+    for (const seen of visits) {
+      for (const node of original) expect(seen).toContain(node);
+      expect(seen).not.toContain(replacement);
+      expect(seen).not.toContain(inserted);
+    }
+  },
+);
