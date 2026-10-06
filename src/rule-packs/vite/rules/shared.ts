@@ -176,11 +176,11 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
       sourceType: "module",
       astType: "ts",
     });
-    // Fatal errors can discard declaration evidence; recoverable ambient-context errors retain it.
-    if (
-      errors.some((error) => error.severity === "Error") &&
-      !program.body.some((statement) => statement.type === "EmptyStatement")
-    )
+    // Recover only the ambient-context diagnostic emitted for otherwise valid semicolons.
+    const recoverableAmbientErrors =
+      program.body.some((statement) => statement.type === "EmptyStatement") &&
+      errors.every((error) => error.message === "Statements are not allowed in ambient contexts.");
+    if (errors.some((error) => error.severity === "Error") && !recoverableAmbientErrors)
       declarations.incomplete = true;
     if (!isExternalModule(program.body)) collect(program.body);
     else {
