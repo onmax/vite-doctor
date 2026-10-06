@@ -184,7 +184,8 @@ function createRuleFileSystem(inputs: RuleInputs, log: string[]): RuleFileSystem
       const value = text(absolute(path));
       if (value === undefined) return undefined;
       try {
-        return JSON.parse(value) as T;
+        const parsed: unknown = JSON.parse(value);
+        return parsed as T;
       } catch {
         return undefined;
       }
