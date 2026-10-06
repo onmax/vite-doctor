@@ -1,15 +1,5 @@
 <script setup lang="ts">
-const props = withDefaults(
-  defineProps<{
-    title?: string;
-    description?: string;
-  }>(),
-  {
-    title: "Catch the AI slop your agents ship.",
-    description:
-      "Doctor scans your project before review and flags framework bugs agents often miss.",
-  },
-);
+import { homeDescription, homeTitle } from "../../utils/home-copy";
 </script>
 
 <template>
@@ -33,7 +23,7 @@ const props = withDefaults(
     "
   >
     <img
-      src="/og/doctor-lifeline-bg.png"
+      src="/og/doctor-home-bg.jpg"
       alt=""
       style="position: absolute; inset: 0; width: 1200px; height: 630px; object-fit: cover"
     />
@@ -71,7 +61,7 @@ const props = withDefaults(
           white-space: nowrap;
         "
       >
-        Catch the AI slop your agents ship.
+        {{ homeTitle }}
       </div>
       <p
         style="
@@ -82,7 +72,7 @@ const props = withDefaults(
           color: #52525b;
         "
       >
-        {{ props.description }}
+        {{ homeDescription }}
       </p>
     </div>
   </div>

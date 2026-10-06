@@ -7,8 +7,7 @@ const props = defineProps<{
 }>();
 
 const { sidebarNavigation } = useSubNavigation();
-const { navigation: rulesNavigation, groupKey, ready } = useRulesNavigation();
-await ready;
+const { navigation: rulesNavigation, groupKey } = useRulesNavigation();
 
 const navigation = computed(() =>
   appendRulesNavigation(sidebarNavigation.value || [], rulesNavigation.value),
