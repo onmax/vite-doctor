@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 import { matchesGlob } from "node:path";
 import { relative, resolve } from "pathe";
 import type { DoctorConfig } from "../config.js";
@@ -6,7 +6,6 @@ import type { DoctorRunOptions } from "../config.js";
 import type { ProjectInfo, SourceFileHandle } from "../primitives.js";
 import {
   collectGitChangeInventory,
-  type AvailableGitChangeInventory,
   type ChangedLineRange,
   type GitChangeInventory,
   type UnavailableGitChangeInventory,
@@ -93,7 +92,23 @@ export async function selectSourceInventory(
         !exclude.some((pattern) => matchesGlob(path, pattern)),
     );
     if (git.status === "unavailable") return { files: [], git };
-    return { files: selectChangedFiles(root, config, project, git), git };
+    // Changed files are analyzed with the whole inventory, so cross-file Rules and analyses see
+    // the same project as a full run; only the reported Diagnostics are limited to changed lines.
+    const changed = new Map(
+      git.files.flatMap((change) =>
+        change.path ? [[resolve(root, change.path), change.reportRanges] as const] : [],
+      ),
+    );
+    const files = await selectAllFiles(root, config, project, memo);
+    return {
+      files: files.map((file) => {
+        const ranges = changed.get(file.path);
+        return ranges
+          ? { ...file, reportEligibility: { kind: "changed-lines" as const, ranges } }
+          : file;
+      }),
+      git,
+    };
   }
 
   return { files: await selectAllFiles(root, config, project, memo) };
@@ -151,36 +166,6 @@ async function selectAllFiles(
   }
 
   return [...files.values()].sort((a, b) => a.displayPath.localeCompare(b.displayPath));
-}
-
-function selectChangedFiles(
-  root: string,
-  config: DoctorConfig,
-  project: ProjectInfo,
-  git: AvailableGitChangeInventory,
-): ScanFileEntry[] {
-  const include = config.include ?? defaultIncludeForProject(project);
-  const exclude = [...DEFAULT_EXCLUDE, ...(config.exclude ?? [])];
-  return git.files
-    .filter((change) => change.path)
-    .filter(
-      (change) =>
-        include.some((pattern) => matchesGlob(change.path!, pattern)) &&
-        !exclude.some((pattern) => matchesGlob(change.path!, pattern)),
-    )
-    .filter((change) => isScannableFile(resolve(root, change.path!)))
-    .map((change) => ({
-      ...createAppFileEntry(root, change.path!),
-      reportEligibility: {
-        kind: "changed-lines" as const,
-        ranges: change.reportRanges,
-      },
-    }))
-    .sort((left, right) => left.displayPath.localeCompare(right.displayPath));
-}
-
-function isScannableFile(file: string): boolean {
-  return Boolean(statSync(file, { throwIfNoEntry: false })?.isFile()) && isAuthoredSource(file);
 }
 
 // The project walk can run well before this read, so a file deleted in between is skipped like

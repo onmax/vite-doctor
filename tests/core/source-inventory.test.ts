@@ -70,7 +70,8 @@ test.skipIf(process.platform === "win32")(
         { ...vueProject, root },
       );
       expect(selection.git?.status).toBe("available");
-      expect(selection.files.map((file) => file.displayPath)).toEqual(["src/new.ts"]);
+      expect(changedPaths(selection)).toEqual(["src/new.ts"]);
+      expect(selection.files.map((file) => file.displayPath)).toEqual(["src/app.ts", "src/new.ts"]);
     });
   },
 );
@@ -110,14 +111,17 @@ test("changed source inventory includes staged, unstaged, untracked, renamed, an
       );
 
       expect(selection.git?.status).toBe("available");
-      expect(selection.files.map((file) => file.displayPath)).toEqual([
+      expect(changedPaths(selection)).toEqual([
         "src/new-name.ts",
         "src/staged file.ts",
         "src/unstaged.ts",
         "src/untracked.ts",
       ]);
+      expect(selection.files.map((file) => file.displayPath)).toContain("src/unchanged.ts");
       expect(
-        selection.files.map((file) => [file.displayPath, file.reportEligibility?.ranges]),
+        selection.files
+          .filter((file) => file.reportEligibility)
+          .map((file) => [file.displayPath, file.reportEligibility?.ranges]),
       ).toEqual([
         ["src/new-name.ts", []],
         ["src/staged file.ts", [{ startLine: 2, endLine: 2 }]],
@@ -176,8 +180,10 @@ test("since compares HEAD and the worktree with the ref merge base", async () =>
       expect(selection.git?.status).toBe("available");
       if (selection.git?.status !== "available") throw new Error("Expected Git inventory.");
       expect(selection.git.base).toBe(mergeBase);
-      expect(selection.files.map((file) => file.displayPath)).toEqual(["src/app.ts"]);
+      expect(changedPaths(selection)).toEqual(["src/app.ts"]);
       expect(selection.files[0]?.reportEligibility?.ranges).toEqual([{ startLine: 2, endLine: 2 }]);
+      expect(selection.files[1]).toMatchObject({ displayPath: "src/comparison.ts" });
+      expect(selection.files[1]?.reportEligibility).toBeUndefined();
     },
   );
 });
@@ -271,6 +277,11 @@ async function withFixture(files: Record<string, string>, run: (root: string) =>
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+/** Changed runs analyze the whole inventory; changed files carry their report ranges. */
+function changedPaths(selection: Awaited<ReturnType<typeof selectSourceInventory>>): string[] {
+  return selection.files.filter((file) => file.reportEligibility).map((file) => file.displayPath);
 }
 
 function write(root: string, file: string, source: string) {
