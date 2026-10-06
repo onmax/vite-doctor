@@ -95,10 +95,7 @@ export async function hostDoctorExtensions(
     return [];
   }
   const root = options.root ?? process.cwd();
-  const packages = await detectWorkspacePackages(
-    root,
-    options.framework && options.framework !== "auto" ? options.framework : undefined,
-  );
+  const packages = await detectWorkspacePackages(root);
   const frameworkPackage = workspaceFrameworkPackage(packages, "nuxt");
   const manifestRoot = join(root, frameworkPackage?.root ?? ".");
   const manifest = readJson<Pick<NuxtDoctorManifest, "extensions">>(

@@ -45,12 +45,10 @@ export async function detectProject(
   };
   const nuxtVersion = deps.nuxt ?? deps["@nuxt/kit"];
   const vueVersion = deps.vue ?? ">=3.5";
-  const workspacePackages = await detectWorkspacePackages(
-    root,
-    requested === "auto" ? undefined : requested,
-  );
+  const workspacePackages = await detectWorkspacePackages(root);
   const framework = requested === "auto" ? workspaceFramework(workspacePackages) : requested;
   const frameworkPackage = workspaceFrameworkPackage(workspacePackages, framework);
+  if (requested !== "auto") workspacePackages[0]!.framework = requested;
   const frameworkRoot = join(root, frameworkPackage?.root ?? ".");
   const frameworkDeps = frameworkPackage?.packages ?? deps;
   const frameworkNuxtVersion = frameworkDeps.nuxt ?? frameworkDeps["@nuxt/kit"];

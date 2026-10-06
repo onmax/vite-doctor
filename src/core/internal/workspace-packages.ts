@@ -19,13 +19,9 @@ interface PackageManifest {
  * Project Inventory for the workspace root and every workspace package it declares through
  * `pnpm-workspace.yaml` or the `workspaces` field. The root is always the first entry.
  */
-export async function detectWorkspacePackages(
-  root: string,
-  rootFramework?: DoctorFramework,
-): Promise<WorkspacePackage[]> {
+export async function detectWorkspacePackages(root: string): Promise<WorkspacePackage[]> {
   const manifest = readManifest(join(root, "package.json"));
   const rootPackage = describePackage(root, ".", manifest);
-  if (rootFramework) rootPackage.framework = rootFramework;
   const patterns = workspacePatterns(root, manifest);
   if (!patterns.length) return [rootPackage];
   const include = patterns.filter((pattern) => !pattern.startsWith("!"));
