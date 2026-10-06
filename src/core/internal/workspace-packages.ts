@@ -61,6 +61,21 @@ export function workspaceFramework(packages: readonly WorkspacePackage[]): Docto
   return FRAMEWORK_PRECEDENCE.find((framework) => frameworks.has(framework)) ?? "vite";
 }
 
+export function workspaceFrameworkPackage(
+  packages: readonly WorkspacePackage[],
+  framework: DoctorFramework,
+): WorkspacePackage | undefined {
+  if (framework === "nuxt" && packages.filter((item) => item.framework === "nuxt").length > 1) {
+    throw new Error(
+      "Multi-Nuxt workspace runs are not supported. Run Doctor separately from each Nuxt package root.",
+    );
+  }
+  return (
+    packages.find((item) => item.root === "." && item.framework === framework) ??
+    packages.find((item) => item.framework === framework)
+  );
+}
+
 /** Longest workspace package root that contains `relativePath`, or `.` for the workspace root. */
 export function owningWorkspacePackage(
   packages: readonly WorkspacePackage[],

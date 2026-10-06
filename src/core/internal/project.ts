@@ -9,7 +9,11 @@ import type {
   ProjectInfo,
   ProjectLanguage,
 } from "../primitives.js";
-import { detectWorkspacePackages, workspaceFramework } from "./workspace-packages.js";
+import {
+  detectWorkspacePackages,
+  workspaceFramework,
+  workspaceFrameworkPackage,
+} from "./workspace-packages.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
 import { detectNuxtModuleDefinitions } from "./nuxt-module-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
@@ -46,11 +50,7 @@ export async function detectProject(
     requested === "auto" ? undefined : requested,
   );
   const framework = requested === "auto" ? workspaceFramework(workspacePackages) : requested;
-  // A Doctor Run has one Nuxt inventory: the root owns it when eligible, otherwise the first
-  // sorted Nuxt workspace package owns both inventory and runtime compatibility.
-  const frameworkPackage =
-    workspacePackages.find((item) => item.root === "." && item.framework === framework) ??
-    workspacePackages.find((item) => item.framework === framework);
+  const frameworkPackage = workspaceFrameworkPackage(workspacePackages, framework);
   const frameworkRoot = join(root, frameworkPackage?.root ?? ".");
   const frameworkDeps = frameworkPackage?.packages ?? deps;
   const frameworkNuxtVersion = frameworkDeps.nuxt ?? frameworkDeps["@nuxt/kit"];

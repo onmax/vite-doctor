@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
 import { createAgentReport, createJsonReport, detectProject } from "../../src/core/index.ts";
-import { runViteDoctor, viteDoctorExtensions } from "../../src/doctor.ts";
+import { hostDoctorExtensions, runViteDoctor, viteDoctorExtensions } from "../../src/doctor.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -221,3 +221,43 @@ test("a pnpm declaration without packages does not fall back to manifest workspa
   });
   expect((await detectProject(root)).workspacePackages?.map((item) => item.root)).toEqual(["."]);
 });
+
+test("nested Nuxt host extensions require explicit trust and use the inventory owner", async () => {
+  const root = nitroRootMonorepo({
+    "packages/site/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+    "packages/site/doctor.mjs": "export default { name: 'nested-host' };",
+  });
+  const manifestDir = join(root, "packages/site/.nuxt");
+  mkdirSync(manifestDir, { recursive: true });
+  writeFileSync(
+    join(manifestDir, "doctor.manifest.json"),
+    JSON.stringify({
+      extensions: [join(root, "packages/site/doctor.mjs")],
+    }),
+  );
+  expect(await hostDoctorExtensions({ root })).toEqual([]);
+  expect(await hostDoctorExtensions({ root, hostExtensions: true })).toEqual([
+    { name: "nested-host" },
+  ]);
+});
+
+test.each([false, true])(
+  "multi-Nuxt runs fail before activation (root Nuxt: %s)",
+  async (rootNuxt) => {
+    const root = nitroRootMonorepo({
+      ...(rootNuxt
+        ? { "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }) }
+        : {
+            "packages/first/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+          }),
+      "packages/site/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+    });
+    await expect(detectProject(root)).rejects.toThrow(
+      "Run Doctor separately from each Nuxt package root",
+    );
+    await expect(runViteDoctor({ root, cache: false })).rejects.toThrow(
+      "Multi-Nuxt workspace runs are not supported",
+    );
+    expect((await detectProject(join(root, "packages/site"))).framework).toBe("nuxt");
+  },
+);

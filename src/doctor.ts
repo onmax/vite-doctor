@@ -11,7 +11,11 @@ import {
   type NuxtDoctorManifest,
 } from "./core/index.js";
 import { collectRulePacks, resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
-import { detectWorkspacePackages, workspaceFramework } from "./core/internal/workspace-packages.js";
+import {
+  detectWorkspacePackages,
+  workspaceFramework,
+  workspaceFrameworkPackage,
+} from "./core/internal/workspace-packages.js";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { isAbsolute, join } from "pathe";
@@ -91,8 +95,14 @@ export async function hostDoctorExtensions(
     return [];
   }
   const root = options.root ?? process.cwd();
+  const packages = await detectWorkspacePackages(
+    root,
+    options.framework && options.framework !== "auto" ? options.framework : undefined,
+  );
+  const frameworkPackage = workspaceFrameworkPackage(packages, "nuxt");
+  const manifestRoot = join(root, frameworkPackage?.root ?? ".");
   const manifest = readJson<Pick<NuxtDoctorManifest, "extensions">>(
-    join(root, ".nuxt/doctor.manifest.json"),
+    join(manifestRoot, ".nuxt/doctor.manifest.json"),
   );
   return Promise.all((manifest?.extensions ?? []).map(loadHostExtensionEntry));
 }
@@ -151,8 +161,10 @@ async function requestedFrameworks(
     return { framework: options.framework, frameworks: new Set([options.framework]) };
   }
   const packages = await detectWorkspacePackages(options.root ?? process.cwd());
+  const framework = workspaceFramework(packages);
+  workspaceFrameworkPackage(packages, framework);
   return {
-    framework: workspaceFramework(packages),
+    framework,
     frameworks: new Set(packages.map((item) => item.framework)),
   };
 }
