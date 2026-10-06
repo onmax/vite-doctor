@@ -14,6 +14,7 @@ import { join } from "pathe";
 import { expect, test, vi } from "vite-plus/test";
 import { createScanSession } from "../../src/core/internal/scan-session.ts";
 import { cleanCache, runDoctor } from "../../src/core/index.ts";
+import { readCacheStatus } from "../../src/core/internal/cache-store.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import { readStoreFile, writeStoreFile } from "./cache-store-file.ts";
 
@@ -112,6 +113,35 @@ test.each([
       return `${JSON.stringify({ ...JSON.parse(original.slice(0, newline)), files: [] })}${original.slice(newline)}`;
     },
   ],
+  [
+    "forged signature hash",
+    (original: string) => {
+      const newline = original.indexOf("\n");
+      const index = JSON.parse(original.slice(0, newline));
+      const path = Object.keys(index.signatures)[0]!;
+      index.signatures[path][5] = "forged";
+      return `${JSON.stringify(index)}${original.slice(newline)}`;
+    },
+  ],
+  [
+    "forged file hash",
+    (original: string) => {
+      const newline = original.indexOf("\n");
+      const index = JSON.parse(original.slice(0, newline));
+      const path = Object.keys(index.files)[0]!;
+      index.files[path].hash = "forged";
+      return `${JSON.stringify(index)}${original.slice(newline)}`;
+    },
+  ],
+  [
+    "unrepresentable timestamp",
+    (original: string) => {
+      const newline = original.indexOf("\n");
+      const index = JSON.parse(original.slice(0, newline));
+      index.writtenAt = 1e20;
+      return `${JSON.stringify(index)}${original.slice(newline)}`;
+    },
+  ],
 ])("Doctor rebuilds a corrupt cache store: %s", async (_name, corrupt) => {
   await withProject(async (root) => {
     const initial = await runDoctor(options(root));
@@ -125,6 +155,20 @@ test.each([
     expect(recovered.graph).toEqual(initial.graph);
     expect(storedPaths(root)).toEqual(Object.keys(files).map((path) => join(root, path)));
     expect(readStoreFile(storePath(root)).facts).toEqual(facts);
+  });
+});
+
+test("cache status treats an unrepresentable timestamp as unreadable", async () => {
+  await withProject(async (root) => {
+    await runDoctor(options(root));
+    const store = readStoreFile(storePath(root));
+    store.index.writtenAt = 1e20;
+    writeStoreFile(storePath(root), store);
+
+    expect(readCacheStatus(root, join(root, ".vite-doctor/cache"))).toMatchObject({
+      exists: true,
+      compatible: false,
+    });
   });
 });
 

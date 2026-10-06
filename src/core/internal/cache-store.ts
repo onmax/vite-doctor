@@ -729,7 +729,7 @@ function isStoreIndex(value: unknown): value is StoreIndex {
     !isRecord(value) ||
     value.version !== CACHE_STORE_VERSION ||
     typeof value.engine !== "string" ||
-    !finite(value.writtenAt) ||
+    !isTimestamp(value.writtenAt) ||
     !Array.isArray(value.ruleKeys) ||
     !value.ruleKeys.every((key) => typeof key === "string") ||
     !Array.isArray(value.ruleSets) ||
@@ -783,12 +783,20 @@ function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function isTimestamp(value: unknown): value is number {
+  return finite(value) && Math.abs(value) <= 8.64e15;
+}
+
+function isContentHash(value: unknown): value is string {
+  return value === "" || (typeof value === "string" && /^[a-f0-9]{64}$/.test(value));
+}
+
 function isSignature(value: unknown): value is Signature {
   return (
     Array.isArray(value) &&
     value.length === 6 &&
     value.slice(0, 5).every(finite) &&
-    typeof value[5] === "string"
+    isContentHash(value[5])
   );
 }
 
@@ -837,6 +845,8 @@ function isStoredFile(
   return (
     isRecord(value) &&
     typeof value.hash === "string" &&
+    isContentHash(value.hash) &&
+    value.hash.length === 64 &&
     typeof value.entry === "string" &&
     finite(value.shape) &&
     (value.gaps === undefined || isEvidenceGaps(value.gaps)) &&
