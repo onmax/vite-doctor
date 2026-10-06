@@ -1769,6 +1769,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/composables/require-use-prefix": {
+    description:
+      "Finds exported functions that need a component setup context but are not named like composables.",
+    why: "Vue composables are named with a use prefix so readers know a function must run synchronously during setup or inside another composable. Lifecycle hooks, inject(), provide(), getCurrentInstance(), and other composables fail or leak when a plainly named helper is called from an event handler, timer, or module scope.",
+    recommendedReplacement:
+      "Rename the function with a use prefix and call it only from setup or another composable. Functions that only create ref(), reactive(), or computed() state, only read Nuxt app context such as useNuxtApp() or useState(), define*/create* factories, Pinia stores, and on*/provide*/inject* helpers are not reported.",
+    examples: [
+      {
+        title: "Name setup-bound functions as composables",
+        language: "ts",
+        invalid:
+          "// app/composables/cart.ts\nexport function cartState() {\n  const items = useState<CartItem[]>('cart', () => [])\n  onMounted(() => hydrateCart(items))\n  return { items }\n}",
+        valid:
+          "// app/composables/cart.ts\nexport function useCart() {\n  const items = useState<CartItem[]>('cart', () => [])\n  onMounted(() => hydrateCart(items))\n  return { items }\n}",
+      },
+    ],
+  },
   "vue/i18n/no-untranslated-text": {
     description: "Flags untranslated text in Vue i18n code before it leaks into runtime behavior.",
     why: "Vue gives this pattern a specific contract. Staying inside that contract makes the code easier to test, refactor, and run across server and client runtimes.",
