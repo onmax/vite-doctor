@@ -159,21 +159,23 @@ test("rule helpers provide shared AST and template predicates", async () => {
             },
           );
         },
-        TemplateNode(node) {
-          if (!ctx.helpers.hasVueDirective(node, "for")) return;
-          ctx.helpers.report(
-            ctx,
-            node,
-            allDiagnostics.DOC9999({
-              why: ctx.helpers.getStaticVueAttributeValue(node, "ref") ?? "missing-ref",
-              fix: "Inspect the shared helper template diagnostic.",
-            }),
-            {
-              ruleId: "test/shared-helpers",
-              severity: "warn",
-              category: "architecture",
-            },
-          );
+        template: {
+          element(node) {
+            if (!ctx.helpers.hasVueDirective(node, "for")) return;
+            ctx.helpers.report(
+              ctx,
+              node,
+              allDiagnostics.DOC9999({
+                why: ctx.helpers.getStaticVueAttributeValue(node, "ref") ?? "missing-ref",
+                fix: "Inspect the shared helper template diagnostic.",
+              }),
+              {
+                ruleId: "test/shared-helpers",
+                severity: "warn",
+                category: "architecture",
+              },
+            );
+          },
         },
       };
     },

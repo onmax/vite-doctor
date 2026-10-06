@@ -1,4 +1,5 @@
-import { AnyNode, createRule } from "./shared.js";
+import { startTagEnd } from "../../../../core/rule-authoring.js";
+import { createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/html-button-has-type";
@@ -26,39 +27,36 @@ export const htmlButtonHasType = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || node.rawName !== "button") return;
-        if (hasAttributeOrBinding(node, "type")) return;
+      template: {
+        element(node) {
+          if (node.tag !== "button") return;
+          if (
+            ctx.helpers.hasVueAttribute(node, "type") ||
+            ctx.helpers.hasVueDirective(node, "bind", "type")
+          )
+            return;
 
-        const insertAt = node.startTag?.range?.[0] + "<button".length;
-        ctx.report(
-          diagnostics.VUE0022({
-            why: 'Native buttons should declare type="button", type="submit", or type="reset".',
-            fix: 'Add type="button" unless this button intentionally submits a form.',
-          }),
-          {
-            ruleId: RULE_ID,
-            severity: "warn",
-            category: "template",
-            file: ctx.file.path,
-            range: ctx.range(node.startTag ?? node),
-            fix:
-              typeof insertAt === "number"
-                ? {
-                    kind: "suggestion",
-                    edits: [{ range: { start: insertAt, end: insertAt }, text: ' type="button"' }],
-                  }
-                : null,
-          },
-        );
+          const start = node.loc.start.offset;
+          const insertAt = start + "<button".length;
+          ctx.report(
+            diagnostics.VUE0022({
+              why: 'Native buttons should declare type="button", type="submit", or type="reset".',
+              fix: 'Add type="button" unless this button intentionally submits a form.',
+            }),
+            {
+              ruleId: RULE_ID,
+              severity: "warn",
+              category: "template",
+              file: ctx.file.path,
+              range: ctx.range(start, startTagEnd(node, ctx.file.text)),
+              fix: {
+                kind: "suggestion",
+                edits: [{ range: { start: insertAt, end: insertAt }, text: ' type="button"' }],
+              },
+            },
+          );
+        },
       },
     };
   },
 });
-
-function hasAttributeOrBinding(node: AnyNode, name: string): boolean {
-  return (node.startTag?.attributes ?? []).some((attribute: AnyNode) => {
-    if (!attribute.directive) return attribute.key?.name === name;
-    return attribute.key?.name?.name === "bind" && attribute.key?.argument?.name === name;
-  });
-}

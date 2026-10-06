@@ -1,4 +1,4 @@
-import { AnyNode, createRule } from "./shared.js";
+import { createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/prefer-true-attribute-shorthand";
@@ -55,20 +55,15 @@ export const preferTrueAttributeShorthand = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (!isNativeElement(node)) return;
+      template: {
+        directive(attribute, element) {
+          if (!isNativeElement(element.tag)) return;
+          if (attribute.name !== "bind" || !attribute.arg?.isStatic || !attribute.exp) return;
 
-        for (const attribute of node.startTag?.attributes ?? []) {
-          if (attribute.type !== "VAttribute" || !attribute.directive) continue;
-          if (attribute.key?.name?.name !== "bind") continue;
-
-          const argumentName = attribute.key?.argument?.name;
-          if (!argumentName || !BOOLEAN_ATTRIBUTES.has(argumentName)) continue;
-          if (
-            attribute.value?.expression?.type !== "Literal" ||
-            attribute.value.expression.value !== true
-          )
-            continue;
+          const argumentName = attribute.arg.content;
+          if (!BOOLEAN_ATTRIBUTES.has(argumentName)) return;
+          const expression = ctx.helpers.parseTemplateExpression(attribute.exp);
+          if (expression?.type !== "Literal" || expression.value !== true) return;
 
           ctx.report(
             diagnostics.VUE0024({
@@ -81,25 +76,23 @@ export const preferTrueAttributeShorthand = createRule({
               category: "template",
               file: ctx.file.path,
               range: ctx.range(attribute),
-              fix: attribute.range
-                ? {
-                    kind: "suggestion",
-                    edits: [
-                      {
-                        range: { start: attribute.range[0], end: attribute.range[1] },
-                        text: argumentName,
-                      },
-                    ],
-                  }
-                : null,
+              fix: {
+                kind: "suggestion",
+                edits: [
+                  {
+                    range: { start: attribute.loc.start.offset, end: attribute.loc.end.offset },
+                    text: argumentName,
+                  },
+                ],
+              },
             },
           );
-        }
+        },
       },
     };
   },
 });
 
-function isNativeElement(node: AnyNode): boolean {
-  return node?.type === "VElement" && /^[a-z][a-z0-9-]*$/.test(node.rawName ?? "");
+function isNativeElement(tag: string): boolean {
+  return /^[a-z][a-z0-9-]*$/.test(tag);
 }

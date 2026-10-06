@@ -1,3 +1,4 @@
+import { TemplateNodeType, walkTemplate } from "../../../../core/rule-authoring.js";
 import { AnyNode, createRule, report } from "./shared.js";
 
 export const preferUseTemplateRef = createRule({
@@ -13,15 +14,12 @@ export const preferUseTemplateRef = createRule({
   },
   create(ctx) {
     const refs = new Set<string>();
-    const collectRefs = (node: AnyNode) => {
-      if (!node) return;
-      if (node.type === "VElement") {
+    if (ctx.file.templateAst)
+      walkTemplate(ctx.file.templateAst, (node) => {
+        if (node.type !== TemplateNodeType.ELEMENT) return;
         const ref = ctx.helpers.getStaticVueAttributeValue(node, "ref");
         if (ref) refs.add(ref);
-      }
-      for (const child of node.children ?? []) collectRefs(child);
-    };
-    collectRefs(ctx.file.templateAst);
+      });
     return {
       VariableDeclarator(node: AnyNode) {
         if (

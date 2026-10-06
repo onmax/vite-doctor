@@ -1,4 +1,4 @@
-import { AnyNode, createRule } from "./shared.js";
+import { createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/prefer-same-name-prop-shorthand";
@@ -35,56 +35,42 @@ export const preferSameNamePropShorthand = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VAttribute" || !node.directive) return;
-        if (directiveName(node) !== "bind") return;
+      template: {
+        directive(node) {
+          if (node.name !== "bind" || !node.arg?.isStatic || !node.exp) return;
+          const argumentName = node.arg.content;
 
-        const argumentName = staticArgumentName(node);
-        if (!argumentName) return;
+          const expression = ctx.helpers.parseTemplateExpression(node.exp);
+          if (expression?.type !== "Identifier") return;
+          if (normalizePropName(argumentName) !== expression.name) return;
 
-        const expression = node.value?.expression;
-        if (expression?.type !== "Identifier" || !expression.end) return;
-        if (normalizePropName(argumentName) !== expression.name) return;
+          const start = node.loc.start.offset;
+          const keyEnd = start + (node.rawName ?? "").length;
+          const attributeEnd = node.loc.end.offset;
+          if (keyEnd <= start || keyEnd >= attributeEnd) return;
 
-        const keyEnd = node.key?.range?.[1];
-        const attributeEnd = node.range?.[1];
-        if (
-          typeof keyEnd !== "number" ||
-          typeof attributeEnd !== "number" ||
-          keyEnd >= attributeEnd
-        )
-          return;
-
-        ctx.report(
-          diagnostics.VUE0023({
-            why: `Use Vue's same-name prop shorthand for ${argumentName}.`,
-            fix: `Use ${ctx.file.text.slice(node.range[0], keyEnd)}.`,
-          }),
-          {
-            ruleId: RULE_ID,
-            severity: "info",
-            category: "template",
-            file: ctx.file.path,
-            range: ctx.range(node),
-            fix: {
-              kind: "suggestion",
-              edits: [{ range: { start: keyEnd, end: attributeEnd }, text: "" }],
+          ctx.report(
+            diagnostics.VUE0023({
+              why: `Use Vue's same-name prop shorthand for ${argumentName}.`,
+              fix: `Use ${ctx.file.text.slice(start, keyEnd)}.`,
+            }),
+            {
+              ruleId: RULE_ID,
+              severity: "info",
+              category: "template",
+              file: ctx.file.path,
+              range: ctx.range(node),
+              fix: {
+                kind: "suggestion",
+                edits: [{ range: { start: keyEnd, end: attributeEnd }, text: "" }],
+              },
             },
-          },
-        );
+          );
+        },
       },
     };
   },
 });
-
-function directiveName(node: AnyNode): string | null {
-  return node.key?.name?.name ?? node.key?.name ?? null;
-}
-
-function staticArgumentName(node: AnyNode): string | null {
-  const argument = node.key?.argument;
-  return argument?.type === "VIdentifier" ? argument.name : null;
-}
 
 function normalizePropName(name: string): string {
   return name.replace(/-([a-zA-Z0-9])/g, (_, char: string) => char.toUpperCase());
