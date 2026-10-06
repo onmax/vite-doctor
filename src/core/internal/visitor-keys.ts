@@ -16,9 +16,18 @@ const ignoredFallbackKeys = new Set([
   "tokens",
 ]);
 
-export function getNodeVisitorKeys(node: { type?: string } & Record<string, unknown>): string[] {
+const PROGRAM_TEMPLATE_KEYS = ["body", "templateBody"] as const;
+const ELEMENT_KEYS = ["children", "startTag", "endTag"] as const;
+const START_TAG_KEYS = ["attributes"] as const;
+const ATTRIBUTE_KEYS = ["key", "value"] as const;
+const EXPRESSION_CONTAINER_KEYS = ["expression", "references"] as const;
+const FOR_EXPRESSION_KEYS = ["left", "right"] as const;
+
+export function getNodeVisitorKeys(
+  node: { type?: string } & Record<string, unknown>,
+): readonly string[] {
   const keys = node.type ? parserVisitorKeys[node.type] : undefined;
-  if (keys) return [...keys];
+  if (keys) return keys;
   return Object.keys(node).filter(
     (key) => !ignoredFallbackKeys.has(key) && isTraversableChild(node[key]),
   );
@@ -26,22 +35,22 @@ export function getNodeVisitorKeys(node: { type?: string } & Record<string, unkn
 
 export function getTemplateVisitorKeys(
   node: { type?: string } & Record<string, unknown>,
-): string[] {
+): readonly string[] {
   switch (node.type) {
     case "Program":
-      return ["body", "templateBody"];
+      return PROGRAM_TEMPLATE_KEYS;
     case "VDocumentFragment":
     case "VElement":
-      return ["children", "startTag", "endTag"];
+      return ELEMENT_KEYS;
     case "VStartTag":
-      return ["attributes"];
+      return START_TAG_KEYS;
     case "VAttribute":
     case "VDirective":
-      return ["key", "value"];
+      return ATTRIBUTE_KEYS;
     case "VExpressionContainer":
-      return ["expression", "references"];
+      return EXPRESSION_CONTAINER_KEYS;
     case "VForExpression":
-      return ["left", "right"];
+      return FOR_EXPRESSION_KEYS;
     default:
       return getNodeVisitorKeys(node);
   }
