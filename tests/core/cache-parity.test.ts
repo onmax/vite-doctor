@@ -277,3 +277,83 @@ test("a prefilter skip is cached and re-evaluated when the file changes", async 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("cached template Rules read and parse nothing until the template changes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-cache-template-"));
+  const parsedExpressions: string[] = [];
+  const rule = createRule({
+    meta: {
+      id: "fixture/bound-title",
+      title: "Bound title",
+      category: "fixture",
+      severity: "warn",
+      requires: { template: true },
+    },
+    create(ctx) {
+      return {
+        template: {
+          directive(node) {
+            if (node.name !== "bind" || node.arg?.content !== "title" || !node.exp) return;
+            const expression = ctx.helpers.parseTemplateExpression(node.exp);
+            if (expression?.type !== "Identifier") return;
+            parsedExpressions.push(expression.name);
+            ctx.report(allDiagnostics.DOC9999({ why: "Binds title.", fix: "Inline it." }), {
+              range: ctx.range(expression),
+            });
+          },
+        },
+      };
+    },
+  });
+  const pack = defineDoctorExtension({
+    name: "fixture/template",
+    rulePacks: [
+      defineRulePack({
+        name: "fixture/template",
+        version: "0.0.0",
+        rules: [rule],
+        presets: { recommended: [rule.meta.id] },
+      }),
+    ],
+  });
+  try {
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
+    const file = join(root, "src/App.vue");
+    writeFileSync(file, '<template><p :title="heading" /></template>\n');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const options = {
+      root,
+      framework: "vue" as const,
+      cache: true,
+      extensions: [pack],
+      rules: "fixture/",
+    };
+    const first = await runViteDoctor(options);
+    expect(first.diagnostics.map((item) => item.range?.start)).toEqual([21]);
+    expect(parsedExpressions).toEqual(["heading"]);
+
+    const warm = await createScanSession(options);
+    const { parseSourceFiles } = await import("../../src/core/internal/facts.ts");
+    const { runFileRules } = await import("../../src/core/internal/rule-execution.ts");
+    await parseSourceFiles(warm);
+    await runFileRules(warm);
+    expect(warm.cache.runStats()).toMatchObject({
+      filesRead: 0,
+      filesParsed: 0,
+      ruleResultsReused: 1,
+    });
+    expect(warm.diagnostics.map((item) => item.range?.start)).toEqual([21]);
+    expect(parsedExpressions).toEqual(["heading"]);
+
+    writeFileSync(file, '<template>\n  <p :title="subtitle" /></template>\n');
+    const edited = await runViteDoctor(options);
+    expect(parsedExpressions).toEqual(["heading", "subtitle"]);
+    expect(edited.diagnostics.map((item) => item.range?.start)).toEqual([24]);
+    expect(edited.diagnostics).toEqual(
+      (await runViteDoctor({ ...options, cache: false })).diagnostics,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
