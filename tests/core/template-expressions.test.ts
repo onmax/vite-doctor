@@ -67,6 +67,24 @@ test("collects free references and template bindings", async () => {
   ).toEqual(["list:r", "id:r", "offset:r", "sep:r"]);
 });
 
+test.each([
+  ["{ const local = 1; local; } return local", ["local"]],
+  ["{ let local = 1; local; } return local", ["local"]],
+  ["{ class local {}; local; } return local", ["local"]],
+  ["{ function local() {}; local; } return local", ["local"]],
+  ["{ var local = 1; } return local", []],
+  ["const local = 1; return local", []],
+  ["function local() {}; return local", []],
+  ["for (let local = 0; local < 1; local++) {} return local", ["local"]],
+  ["switch (value) { case 1: const local = 1; local; } return local", ["value", "local"]],
+])("preserves lexical scopes in %s", async (body, names) => {
+  const { directives } = await template(
+    `<template><div :value="(() => { ${body} })()" /></template>`,
+  );
+  const references = templateExpressionReferences(parseTemplateExpression(directives[0]!.exp!)!);
+  expect(references.map(({ id }) => id.name)).toEqual(names);
+});
+
 test("does not expose non-HTML templates", async () => {
   const sfc = await parseSfcFile(
     "/app.vue",

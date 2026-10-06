@@ -322,6 +322,28 @@ function visitReferences(
       visitReferences(node.body, [...scopes, scope], references);
       return;
     }
+    case "BlockStatement": {
+      const scope = new Set<string>();
+      for (const statement of node.body ?? []) collectLexicalNames(statement, scope);
+      visitReferencesChildren(node, [...scopes, scope], references);
+      return;
+    }
+    case "ForStatement":
+    case "ForInStatement":
+    case "ForOfStatement": {
+      const scope = new Set<string>();
+      collectLexicalNames(node.init ?? node.left, scope);
+      visitReferencesChildren(node, [...scopes, scope], references);
+      return;
+    }
+    case "SwitchStatement": {
+      visitReferences(node.discriminant, scopes, references);
+      const scope = new Set<string>();
+      for (const branch of node.cases)
+        for (const statement of branch.consequent) collectLexicalNames(statement, scope);
+      for (const branch of node.cases) visitReferences(branch, [...scopes, scope], references);
+      return;
+    }
     case "VariableDeclarator":
       visitPatternDefaults(node.id, scopes, references);
       visitReferences(node.init, scopes, references);
@@ -428,17 +450,43 @@ function collectPatternNames(pattern: AnyEstree | null | undefined, names: Set<s
   }
 }
 
+function collectLexicalNames(node: AnyEstree | null | undefined, scope: Set<string>) {
+  if (node?.type === "VariableDeclaration" && node.kind !== "var")
+    for (const declaration of node.declarations ?? []) collectPatternNames(declaration.id, scope);
+  if ((node?.type === "FunctionDeclaration" || node?.type === "ClassDeclaration") && node.id?.name)
+    scope.add(node.id.name);
+}
+
 function collectDeclaredNames(node: AnyEstree | null | undefined, scope: Set<string>) {
   if (!node || typeof node.type !== "string") return;
-  if (node.type === "VariableDeclarator") collectPatternNames(node.id, scope);
-  if ((node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") && node.id?.name) {
-    scope.add(node.id.name);
+  if (node.type === "VariableDeclaration" && node.kind === "var")
+    for (const declaration of node.declarations ?? []) collectPatternNames(declaration.id, scope);
+  if (
+    [
+      "FunctionDeclaration",
+      "ClassDeclaration",
+      "ArrowFunctionExpression",
+      "FunctionExpression",
+      "ClassExpression",
+    ].includes(node.type)
+  )
     return;
-  }
-  if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression") return;
   for (const key of getNodeVisitorKeys(node)) {
     const value = node[key];
     if (Array.isArray(value)) for (const child of value) collectDeclaredNames(child, scope);
     else if (value && typeof value === "object") collectDeclaredNames(value, scope);
+  }
+}
+
+function visitReferencesChildren(
+  node: AnyEstree,
+  scopes: Set<string>[],
+  references: TemplateExpressionReference[],
+) {
+  for (const key of getNodeVisitorKeys(node)) {
+    if (TYPE_KEYS.has(key)) continue;
+    const value = node[key];
+    if (Array.isArray(value)) for (const child of value) visitReferences(child, scopes, references);
+    else visitReferences(value, scopes, references);
   }
 }

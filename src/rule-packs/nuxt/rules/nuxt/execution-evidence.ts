@@ -1699,7 +1699,13 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
       if (prop.type !== TemplateNodeType.DIRECTIVE || !RENDERED_DIRECTIVES.has(prop.name)) continue;
       if (prop.name === "for")
         collect(prop.forParseResult?.source, outer, (right) => ({ type: "VForExpression", right }));
-      else collect(prop.exp, locals, expressionContainer);
+      // Vue evaluates conditionals before introducing same-element loop aliases.
+      else
+        collect(
+          prop.exp,
+          prop.name === "if" || prop.name === "else-if" ? outer : locals,
+          expressionContainer,
+        );
       if (prop.name === "bind" && prop.arg && !prop.arg.isStatic)
         collect(prop.arg, locals, expressionContainer);
     }
