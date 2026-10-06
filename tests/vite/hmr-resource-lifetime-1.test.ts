@@ -282,11 +282,6 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
-    "Set iteration skips only harmless added members at its bound",
-    `const sentinel = {}; const timer = setInterval(refresh); const values = new Set([timer, ${Array.from({ length: 2047 }, () => "{}").join(", ")}]); import.meta.hot.dispose(() => values.forEach(value => { clearInterval(value); values.add(sentinel) }))`,
-    false,
-  ],
-  [
     "Set iteration visits members added by the callback",
     "const timers = new Set([setInterval(refresh)]); let added = false; import.meta.hot.dispose(() => timers.forEach(timer => { if (!added) { added = true; timers.add(setInterval(refresh)) } clearInterval(timer) }))",
     false,
@@ -322,16 +317,6 @@ for (const [name, source, leaks] of [
     true,
   ],
   [
-    "six listener orders with no resource creation do not leak",
-    `${Array.from({ length: 6 }, (_, index) => `const handler${index} = () => {}; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 6 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
-    false,
-  ],
-  [
-    "truncated listener orders without resource creators do not leak",
-    `${Array.from({ length: 7 }, (_, index) => `const handler${index} = () => {}; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 7 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
-    false,
-  ],
-  [
     "subscription callback creates a resource before disposal",
     "const sub = events.subscribe(() => setInterval(refresh)); import.meta.hot.dispose(() => sub.unsubscribe())",
     true,
@@ -349,11 +334,6 @@ for (const [name, source, leaks] of [
   [
     "sequential subscriptions create an undisposed resource",
     "let emitted = false; const first = events.subscribe(() => { emitted = true }); const second = events.subscribe(() => { if (emitted) setInterval(refresh) }); import.meta.hot.dispose(() => { first.unsubscribe(); second.unsubscribe() })",
-    true,
-  ],
-  [
-    "unexplored listener order can create a resource",
-    `let order = 0; ${Array.from({ length: 7 }, (_, index) => `const handler${index} = () => { if (order === ${6 - index}) order++; if (order === 7) setInterval(refresh) }; document.addEventListener('event${index}', handler${index}, { once: true });`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 7 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
     true,
   ],
   [
@@ -512,6 +492,46 @@ for (const [name, source, leaks] of [
       result.diagnostics.some((item) => item.ruleId === requireDisposeForSideEffects.meta.id),
     ).toBe(leaks);
   });
+}
+
+// These cases run the Rule up to its iteration and ordering bounds, so they take ~1s idle and several
+// seconds on a loaded machine; the timeout absorbs that load, the assertions check the bound semantics.
+for (const [name, source, leaks] of [
+  [
+    "Set iteration skips only harmless added members at its bound",
+    `const sentinel = {}; const timer = setInterval(refresh); const values = new Set([timer, ${Array.from({ length: 2047 }, () => "{}").join(", ")}]); import.meta.hot.dispose(() => values.forEach(value => { clearInterval(value); values.add(sentinel) }))`,
+    false,
+  ],
+  [
+    "six listener orders with no resource creation do not leak",
+    `${Array.from({ length: 6 }, (_, index) => `const handler${index} = () => {}; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 6 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
+    false,
+  ],
+  [
+    "truncated listener orders without resource creators do not leak",
+    `${Array.from({ length: 7 }, (_, index) => `const handler${index} = () => {}; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 7 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
+    false,
+  ],
+  [
+    "unexplored listener order can create a resource",
+    `let order = 0; ${Array.from({ length: 7 }, (_, index) => `const handler${index} = () => { if (order === ${6 - index}) order++; if (order === 7) setInterval(refresh) }; document.addEventListener('event${index}', handler${index}, { once: true });`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 7 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
+    true,
+  ],
+] as const) {
+  test(
+    name,
+    async () => {
+      const result = await runRuleFixture({
+        framework: "vite",
+        rule: requireDisposeForSideEffects,
+        files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+      });
+      expect(
+        result.diagnostics.some((item) => item.ruleId === requireDisposeForSideEffects.meta.id),
+      ).toBe(leaks);
+    },
+    30_000,
+  );
 }
 
 test("an unrelated dispose callback does not hide a leaked interval", async () => {

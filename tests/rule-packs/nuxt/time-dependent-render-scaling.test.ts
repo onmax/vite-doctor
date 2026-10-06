@@ -47,9 +47,11 @@ async function walkedNodes(count: number) {
   return walked.nodes;
 }
 
+// Walk counts are load-independent; small sizes keep the fixture cheap while the old per-candidate
+// rescans still blow up by ~100x here. The timeout only covers fixture boot on a loaded machine.
 test("indexes script walks once per root instead of per time-dependent candidate", async () => {
-  const small = await walkedNodes(10);
-  const large = await walkedNodes(40);
+  const small = await walkedNodes(2);
+  const large = await walkedNodes(8);
   // Script size grows 4x; per-root indexes keep the walked nodes roughly proportional to it.
   expect(large / small).toBeLessThan(8);
-});
+}, 30_000);
