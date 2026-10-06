@@ -282,6 +282,7 @@ export interface ScanSession {
   files: ScanFileEntry[];
   gitChanges?: AvailableGitChangeInventory;
   handles: SourceFileHandle[];
+  sourceTexts: Map<string, string | null>;
   facts: FileFacts[];
   graph?: WorkspaceGraph;
   diagnostics: Diagnostic[];
@@ -343,6 +344,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     files,
     gitChanges: sourceInventory.git,
     handles: [],
+    sourceTexts: new Map(),
     facts: [],
     diagnostics: [],
     suppressedDiagnostics: [],

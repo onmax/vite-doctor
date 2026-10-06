@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
-import { runDoctor } from "../../src/core/index.ts";
+import { allDiagnostics, runDoctor, type DoctorRule } from "../../src/core/index.ts";
+import { createRule, defineDoctorExtension, defineRulePack } from "../../src/extension.ts";
 
 const roots: string[] = [];
 const ruleId = "workspace/dead-code/unresolved-import";
@@ -61,4 +62,97 @@ test("fingerprints survive repeated runs and insertion of unrelated lines", asyn
   expect(await fingerprints()).toEqual(original);
   writeFileSync(join(root, "index.ts"), "// unrelated heading\n\nimport './missing-one';");
   expect(await fingerprints()).toEqual(original);
+});
+
+const crossFileRuleId = "test/cross-file-anchor";
+const target = "export function target() {\n  return 1;\n}\n";
+const targetOffset = target.indexOf("return");
+
+function crossFileRule(execution: "file" | "manifest" | "workspace", reported: string): DoctorRule {
+  return createRule({
+    meta: {
+      id: crossFileRuleId,
+      title: "Report into another file",
+      category: "architecture",
+      severity: "warn",
+      execution,
+    },
+    create(ctx) {
+      const report = () =>
+        ctx.report(
+          allDiagnostics.DOC9999({ why: "Cross-file finding.", fix: "Review the target file." }),
+          {
+            file: join(ctx.project.root, reported),
+            range: { start: targetOffset, end: targetOffset + 6, line: 2, column: 3 },
+          },
+        );
+      if (execution !== "file") return { onProjectStart: report };
+      if (ctx.file.relativePath === "a.ts") report();
+      return undefined;
+    },
+  });
+}
+
+async function crossFileFingerprint(root: string, rule: DoctorRule) {
+  const result = await runDoctor({
+    root,
+    cache: false,
+    rules: crossFileRuleId,
+    extensions: [
+      defineDoctorExtension({
+        name: "test/cross-file",
+        rulePacks: [
+          defineRulePack({
+            name: "test/cross-file",
+            version: "0.0.0",
+            rules: [rule],
+            presets: { recommended: [crossFileRuleId] },
+          }),
+        ],
+      }),
+    ],
+  });
+  const diagnostics = result.diagnostics.filter(
+    (diagnostic) => diagnostic.ruleId === crossFileRuleId,
+  );
+  expect(diagnostics).toHaveLength(1);
+  return diagnostics[0]!.fingerprint;
+}
+
+test.each([
+  ["manifest", "b.ts"],
+  ["workspace", "b.ts"],
+  ["file", "b.ts"],
+  ["manifest", "missing.ts"],
+] as const)(
+  "%s Rule reporting into %s anchors its fingerprint outside the first scanned file",
+  async (execution, reported) => {
+    const root = fixture("export const alpha = 1;\n");
+    writeFileSync(join(root, "a.ts"), "export const zeta = 0;\n");
+    writeFileSync(join(root, "b.ts"), target);
+    const rule = crossFileRule(execution, reported);
+    const original = await crossFileFingerprint(root, rule);
+    writeFileSync(join(root, "index.ts"), "export function other() {}\nexport const beta = 2;\n");
+    writeFileSync(join(root, "a.ts"), "export function first() {}\nexport const gamma = 3;\n");
+    expect(await crossFileFingerprint(root, rule)).toBe(original);
+  },
+);
+
+test("a cross-file report and a same-file report at one location share a fingerprint", async () => {
+  const root = fixture("export const alpha = 1;\n");
+  writeFileSync(join(root, "a.ts"), "export const beta = 2;\n");
+  writeFileSync(join(root, "b.ts"), target);
+  const fromOtherFile = await crossFileFingerprint(root, crossFileRule("file", "b.ts"));
+  const sameFile = createRule({
+    ...crossFileRule("file", "b.ts"),
+    create(ctx) {
+      if (ctx.file.relativePath !== "b.ts") return undefined;
+      ctx.report(
+        allDiagnostics.DOC9999({ why: "Cross-file finding.", fix: "Review the target file." }),
+        { range: { start: targetOffset, end: targetOffset + 6, line: 2, column: 3 } },
+      );
+      return undefined;
+    },
+  });
+  expect(await crossFileFingerprint(root, sameFile)).toBe(fromOtherFile);
 });

@@ -18,7 +18,6 @@ import type {
   DoctorSeverity,
   FixEdit,
   ProjectInfo,
-  SourceFileHandle,
   WorkspaceGraph,
 } from "../primitives.js";
 import { applyDiagnosticPolicy } from "./diagnostic-policy.js";
@@ -233,12 +232,21 @@ export function createResult(
 export function createDiagnosticFingerprint(
   root: string,
   diagnostic: Diagnostic,
-  file: SourceFileHandle,
+  source: string | null,
 ): string {
   const rel = relative(root, diagnostic.file);
-  const anchor = nearestAnchor(file.text, diagnostic.range?.start ?? 0);
+  const anchor = nearestAnchor(source ?? "", diagnostic.range?.start ?? 0);
   const message = diagnostic.why.replace(/\s+/g, " ");
   return sha256(`${diagnostic.ruleId}:${rel}:${anchor}:${message}`);
+}
+
+export function sourceTextFor(session: ScanSession, file: string): string | null {
+  const path = resolve(session.root, file);
+  const cached = session.sourceTexts.get(path);
+  if (cached !== undefined) return cached;
+  const text = readFileSyncIfExists(path);
+  session.sourceTexts.set(path, text);
+  return text;
 }
 
 export function normalizeDiagnostic(input: DoctorDiagnosticNormalizationInput): Diagnostic {
@@ -326,18 +334,11 @@ export function pushDiagnostic(
     ...normalized,
     fingerprint:
       normalized.fingerprint ??
-      createDiagnosticFingerprint(session.root, normalized, {
-        path: normalized.file,
-        relativePath: relative(session.root, normalized.file),
-        sourceKind: "app",
-        text: readFileSyncIfExists(diagnostic.file) ?? "",
-        hash: "",
-        isVueSfc: false,
-        project: session.project,
-        matches: () => false,
-        inAppDir: () => false,
-        isModuleSource: () => false,
-      }),
+      createDiagnosticFingerprint(
+        session.root,
+        normalized,
+        sourceTextFor(session, normalized.file),
+      ),
   });
 }
 

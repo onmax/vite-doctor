@@ -26,6 +26,7 @@ export async function parseSourceFiles(session: ScanSession): Promise<void> {
   for (const file of session.files) {
     const handle = await parseSourceFile(session, file, fileId++);
     session.handles.push(handle);
+    session.sourceTexts.set(handle.path, handle.text);
     if (handle.facts) session.facts.push(handle.facts);
   }
   markSession(session, "parse", started);
