@@ -523,8 +523,7 @@ for (const [name, source, leaks] of [
   test(
     name,
     async () => {
-      const result = await runRuleFixture({
-        framework: "vite",
+      const result = await viteProject.run({
         rule: requireDisposeForSideEffects,
         files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
       });

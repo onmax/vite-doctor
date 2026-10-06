@@ -1222,8 +1222,7 @@ for (const [name, source, leaks] of [
 test("many listeners have bounded ordering exploration", async () => {
   const handlers = Array.from({ length: 11 }, (_, index) => index);
   const source = `${handlers.map((index) => `const handler${index} = () => { ${index === 0 ? "setInterval(refresh)" : ""} }; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${handlers.map((index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`;
-  const result = await runRuleFixture({
-    framework: "vite",
+  const result = await viteProject.run({
     rule: requireDisposeForSideEffects,
     files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
   });
