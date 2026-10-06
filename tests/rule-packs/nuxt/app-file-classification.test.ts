@@ -94,6 +94,10 @@ test("uses the configured srcDir and layers from the Nuxt manifest", async () =>
       "layers/base/app/composables/useKey.ts": env,
       "layers/base/scripts/build.mjs": env,
       "layers/base/server/api/key.ts": env,
+      "docs/nuxt.config.ts": config,
+      "docs/app/pages/index.vue": vueEnv,
+      "docs/scripts/build.mjs": env,
+      "docs/server/api/key.ts": env,
     },
     {},
     async (root) => {
@@ -129,6 +133,7 @@ test("uses the configured srcDir and layers from the Nuxt manifest", async () =>
         ],
       });
       expect(nuxt0053Files(result.diagnostics, root)).toEqual([
+        "docs/app/pages/index.vue",
         "layers/base/app/composables/useKey.ts",
         "src/pages/index.vue",
       ]);

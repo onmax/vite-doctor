@@ -322,12 +322,15 @@ async function detectNuxt(
 ): Promise<NuxtProjectInfo> {
   const config = readNuxtConfigText(root);
   const autoImportEntries = (manifest?.autoImports ?? coreAutoImports()) as AutoImportEntry[];
+  const detectedAppRoots = await detectNuxtAppRoots(root);
+  const appRoots = [
+    ...(manifest?.layers ?? []).map((layer) => resolve(root, layer.root)),
+    ...detectedAppRoots,
+  ];
   return {
     version: cleanVersion(manifest?.nuxtVersion ?? version),
     appDir: resolve(root, manifest?.appDir ?? (existsSync(join(root, "app")) ? "app" : ".")),
-    appRoots: manifest?.layers?.length
-      ? manifest.layers.map((layer) => resolve(root, layer.root)).sort()
-      : await detectNuxtAppRoots(root),
+    appRoots: [...new Set(appRoots)].sort(),
     autoImportEnabled: manifest ? manifest.autoImportEnabled === true : true,
     autoImportsAuthoritative: manifest?.autoImportEnabled !== undefined && manifestCurrent,
     autoImports: new Map(autoImportEntries.map((entry) => [entry.as ?? entry.name, entry])),
