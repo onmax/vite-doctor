@@ -27,7 +27,7 @@ const escapedNamePattern = (name: string) => {
     const unicode = code.toString(16).padStart(4, "0");
     const octal = code.toString(8);
     const codePoint = code.toString(16);
-    return `(?:${escapeRegex(value)}|\\\\u${[...unicode].map(hexDigit).join("")}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${[...hex].map(hexDigit).join("")}|\\\\${octal}|\\\\${escapeRegex(value)})`;
+    return `(?:${escapeRegex(value)}|\\\\u${[...unicode].map(hexDigit).join("")}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${[...hex].map(hexDigit).join("")}|\\\\${octal}|\\\\(?![uUxX0-7])${escapeRegex(value)})`;
   };
   return `(?:${continuation}*${[...name]
     .map((value) => `${character(value)}${continuation}*`)

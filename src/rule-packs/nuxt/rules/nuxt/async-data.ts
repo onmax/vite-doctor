@@ -76,7 +76,7 @@ const escapedCharacter = (character: string) => {
   const hexPattern = [...hex].map(hexDigit).join("");
   const octal = code.toString(8);
   const codePoint = code.toString(16);
-  return `(?:${escapeRegex(character)}|\\\\u${unicodePattern}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${hexPattern}|\\\\${octal}|\\\\${escapeRegex(character)})`;
+  return `(?:${escapeRegex(character)}|\\\\u${unicodePattern}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${hexPattern}|\\\\${octal}|\\\\(?![uUxX0-7])${escapeRegex(character)})`;
 };
 const escapedNamePattern = (name: string) => {
   const continuation = `(?:\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029))`;
