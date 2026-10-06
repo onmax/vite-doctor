@@ -2,6 +2,7 @@ import { resolve } from "pathe";
 import type {
   Diagnostic,
   DoctorRule,
+  ProjectInfo,
   RuleContext,
   RuleVisitor,
   SfcHandle,
@@ -11,6 +12,7 @@ import { projectWorkspacePackages } from "./applicability.js";
 import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
 import { canMatchPrefilter } from "./rule-prefilter.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
+import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import {
   buildWorkspaceGraph,
   runDuplicationRules,
@@ -120,20 +122,47 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
   if (session.options.analyses && !session.options.rules) return;
   const started = performance.now();
   const fallbackFile = session.handles[0] ?? createEmptySourceFileHandle(session);
+  const nuxtRoots = workspaceNuxtRoots(session.project);
   for (const rule of session.enabledRules) {
     if (rule.meta.execution !== "manifest" && rule.meta.execution !== "workspace") continue;
     const ruleStarted = performance.now();
-    const visitor = await rule.create(
-      createRuleContext(session, fallbackFile, rule, rule.meta.execution),
-    );
-    await visitor?.onWorkspaceStart?.();
-    await visitor?.onProjectStart?.(session.project);
-    if (session.project.nuxt) visitor?.NuxtManifest?.(session.project.nuxt);
-    await visitor?.onProjectEnd?.(session.project);
-    await visitor?.onWorkspaceEnd?.();
+    for (const project of manifestRuleProjects(session, rule, nuxtRoots)) {
+      const file =
+        project === session.project
+          ? fallbackFile
+          : (session.handles.find((handle) => handle.project === project) ?? fallbackFile);
+      const visitor = await rule.create(
+        createRuleContext(session, file, rule, rule.meta.execution, undefined, project),
+      );
+      await visitor?.onWorkspaceStart?.();
+      await visitor?.onProjectStart?.(project);
+      if (project.nuxt) visitor?.NuxtManifest?.(project.nuxt);
+      await visitor?.onProjectEnd?.(project);
+      await visitor?.onWorkspaceEnd?.();
+    }
     if (session.options.profile) recordRuleTiming(session, rule.meta.id, ruleStarted, 0);
   }
   markSession(session, "manifestRules", started);
+}
+
+/**
+ * Nuxt manifest Rules run once per Nuxt Project Inventory in their scope, so each Nuxt workspace
+ * package is reviewed against its own inventory. Other manifest Rules run once per Doctor Run.
+ */
+function manifestRuleProjects(
+  session: ScanSession,
+  rule: DoctorRule,
+  nuxtRoots: readonly string[],
+): ProjectInfo[] {
+  if (!rule.meta.requires?.nuxt || !nuxtRoots.length) return [session.project];
+  const scope = session.ruleScopes.get(rule.meta.id);
+  const inScope = nuxtRoots.filter((root) => !scope || scope.has(root));
+  const runOwner =
+    session.project.nuxt && (!scope || [...scope].some((root) => !nuxtRoots.includes(root)));
+  return [
+    ...(runOwner ? [session.project] : []),
+    ...inScope.map((root) => workspaceProjectView(session.project, root)),
+  ];
 }
 
 export async function buildGraphPhase(session: ScanSession): Promise<void> {
@@ -159,6 +188,7 @@ function createRuleContext(
   rule: DoctorRule,
   phase: Diagnostic["analysisPhase"] = "file",
   sink?: Diagnostic[],
+  project: ProjectInfo = phase === "file" ? initialFile.project : session.project,
 ): MutableRuleContext {
   let file = initialFile;
   const frame = session.ruleInputs.frame();
@@ -166,7 +196,7 @@ function createRuleContext(
   const currentSeverity = currentRuleConfig.severity ?? rule.meta.severity;
   return {
     get project() {
-      return session.project;
+      return project;
     },
     get file() {
       return file;

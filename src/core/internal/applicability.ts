@@ -7,6 +7,7 @@ import type {
   RuntimePackageName,
   WorkspacePackage,
 } from "../primitives.js";
+import { workspaceProjectView } from "./workspace-nuxt.js";
 
 export interface ApplicabilityResult {
   state: ApplicabilityState;
@@ -41,7 +42,7 @@ export function evaluatePackActivation(pack: RulePack, project: ProjectInfo): Ap
   if (pack.activation === false)
     return inactive(`Rule Pack ${pack.name} requires explicit preset selection.`);
   const results = projectWorkspacePackages(project).map((item) =>
-    evaluateWorkspacePackageActivation(pack, project, item),
+    evaluateWorkspacePackageActivation(pack, workspaceProjectView(project, item.root), item),
   );
   return (
     results.find((result) => result.state === "active") ??
@@ -56,7 +57,11 @@ export function evaluatePackActivation(pack: RulePack, project: ProjectInfo): Ap
 export function activatingWorkspacePackages(pack: RulePack, project: ProjectInfo): string[] {
   if (pack.activation === false) return [];
   return projectWorkspacePackages(project)
-    .filter((item) => evaluateWorkspacePackageActivation(pack, project, item).state === "active")
+    .filter(
+      (item) =>
+        evaluateWorkspacePackageActivation(pack, workspaceProjectView(project, item.root), item)
+          .state === "active",
+    )
     .map((item) => item.root);
 }
 

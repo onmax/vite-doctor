@@ -14,6 +14,7 @@ import { resolvedConfigFor, type ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { pushDiagnostic } from "./diagnostics.js";
 import { walkAstFacts } from "./facts.js";
+import { projectNuxtInventories } from "./workspace-nuxt.js";
 
 interface GraphIndex {
   resolveImport(from: FileFacts, specifier: string): number | undefined;
@@ -227,28 +228,30 @@ function createVirtualRoots(
     }
   }
 
-  const manifest = session.project.nuxt?.manifest;
-  for (const page of manifest?.pages ?? []) addRoot("nuxt-page", page.file, "Nuxt manifest page");
-  for (const plugin of manifest?.pluginFiles ?? [])
-    addRoot("nuxt-plugin", plugin, "Nuxt manifest plugin");
-  for (const handler of [
-    ...(session.project.nuxt?.serverDirs.api ?? []),
-    ...(session.project.nuxt?.serverDirs.routes ?? []),
-    ...(session.project.nuxt?.serverDirs.middleware ?? []),
-    ...(session.project.nuxt?.serverDirs.plugins ?? []),
-  ])
-    addRoot("nuxt-server", handler, "Nuxt server handler");
-  for (const component of session.project.nuxt?.components.values() ?? [])
-    addRoot("nuxt-component", component.file, "Nuxt manifest component");
-  for (const source of session.project.nuxt?.moduleSources ?? [])
-    addRoot("nuxt-module", source.root, `Nuxt module source ${source.module}`);
+  for (const nuxt of projectNuxtInventories(session.project)) {
+    for (const page of nuxt.manifest?.pages ?? [])
+      addRoot("nuxt-page", page.file, "Nuxt manifest page");
+    for (const plugin of nuxt.manifest?.pluginFiles ?? [])
+      addRoot("nuxt-plugin", plugin, "Nuxt manifest plugin");
+    for (const handler of [
+      ...nuxt.serverDirs.api,
+      ...nuxt.serverDirs.routes,
+      ...nuxt.serverDirs.middleware,
+      ...nuxt.serverDirs.plugins,
+    ])
+      addRoot("nuxt-server", handler, "Nuxt server handler");
+    for (const component of nuxt.components.values())
+      addRoot("nuxt-component", component.file, "Nuxt manifest component");
+    for (const source of nuxt.moduleSources ?? [])
+      addRoot("nuxt-module", source.root, `Nuxt module source ${source.module}`);
+  }
   return roots;
 }
 
 function aliasImportRoots(session: ScanSession): string[] {
   const roots = new Set(["", "app", "shared"]);
-  for (const root of session.project.nuxt?.manifest?.appScanRoots ?? []) {
-    roots.add(relative(session.root, root));
+  for (const nuxt of projectNuxtInventories(session.project)) {
+    for (const root of nuxt.manifest?.appScanRoots ?? []) roots.add(relative(session.root, root));
   }
   for (const fact of session.facts) {
     const appIndex = fact.relativePath.indexOf("/app/");

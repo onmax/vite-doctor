@@ -342,6 +342,11 @@ export interface ProjectInfo {
   isMonorepo: boolean;
   packageName?: string;
   workspacePackages?: WorkspacePackage[];
+  /**
+   * Nuxt Project Inventory of Nuxt workspace packages that do not own `nuxt`. Rules read it
+   * through `ctx.project` for files those packages own.
+   */
+  workspaceNuxt?: WorkspaceNuxtInventory[];
   tsconfigPath?: string;
   languages?: ProjectLanguage[];
   nuxt?: NuxtProjectInfo;
@@ -359,6 +364,15 @@ export interface WorkspacePackage {
   name?: string;
   framework: DoctorFramework;
   packages: Record<string, string>;
+}
+
+export interface WorkspaceNuxtInventory extends Pick<
+  ProjectInfo,
+  "nuxtVersion" | "nuxtModuleDefinitions" | "runtimeGraph" | "nuxtCompatibility"
+> {
+  /** Workspace package root relative to the Doctor Run root. */
+  root: string;
+  nuxt: NuxtProjectInfo;
 }
 
 /** The Rule Packs whose Activation matched one workspace package. */

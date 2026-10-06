@@ -35,6 +35,7 @@ import {
   type WorkspacePackageActivation,
 } from "../primitives.js";
 import { detectProject } from "./project.js";
+import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import {
   GitChangeUnavailableError,
   selectSourceInventory,
@@ -637,16 +638,34 @@ function selectRules(
       (rule) => !wanted?.length || wanted.some((pattern) => nativeMatch(rule.meta.id, pattern)),
     )
     .filter((rule) => resolvedConfig(ruleConfigs, rule.meta.id).enabled);
-  const evaluated = candidates.map((rule) => ({
-    rule,
-    applicability: evaluateRuleApplicability(rule, project),
-  }));
-  return {
-    rules: evaluated
-      .filter((item) => item.applicability.state === "active")
-      .map((item) => item.rule),
-    scopes: selected.scopes,
-  };
+  const nuxtRoots = workspaceNuxtRoots(project);
+  if (!nuxtRoots.length) {
+    return {
+      rules: candidates.filter(
+        (rule) => evaluateRuleApplicability(rule, project).state === "active",
+      ),
+      scopes: selected.scopes,
+    };
+  }
+  const roots = projectWorkspacePackages(project).map((item) => item.root);
+  const rules: DoctorRule[] = [];
+  for (const rule of candidates) {
+    const runActive = evaluateRuleApplicability(rule, project).state === "active";
+    const active = new Set(
+      roots.filter((root) =>
+        nuxtRoots.includes(root)
+          ? evaluateRuleApplicability(rule, workspaceProjectView(project, root)).state === "active"
+          : runActive,
+      ),
+    );
+    const scope = selected.scopes.get(rule.meta.id);
+    const included = (scope ? [...scope] : roots).filter((root) => active.has(root));
+    if (!included.length) continue;
+    rules.push(rule);
+    if (scope || included.length < roots.length)
+      selected.scopes.set(rule.meta.id, new Set(included));
+  }
+  return { rules, scopes: selected.scopes };
 }
 
 function resolveRulePackActivations(

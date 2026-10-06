@@ -13,8 +13,8 @@ import {
 import { collectRulePacks, resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
 import {
   detectWorkspacePackages,
+  nuxtInventoryOwner,
   workspaceFramework,
-  workspaceFrameworkPackage,
 } from "./core/internal/workspace-packages.js";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -96,12 +96,22 @@ export async function hostDoctorExtensions(
   }
   const root = options.root ?? process.cwd();
   const packages = await detectWorkspacePackages(root);
-  const frameworkPackage = workspaceFrameworkPackage(packages, "nuxt");
-  const manifestRoot = join(root, frameworkPackage?.root ?? ".");
-  const manifest = readJson<Pick<NuxtDoctorManifest, "extensions">>(
-    join(manifestRoot, ".nuxt/doctor.manifest.json"),
+  const owner = nuxtInventoryOwner(packages)?.root ?? ".";
+  const nuxtRoots = [
+    owner,
+    ...packages
+      .filter((item) => item.framework === "nuxt" && item.root !== owner)
+      .map((item) => item.root),
+  ];
+  const entries = new Set(
+    nuxtRoots.flatMap(
+      (packageRoot) =>
+        readJson<Pick<NuxtDoctorManifest, "extensions">>(
+          join(root, packageRoot, ".nuxt/doctor.manifest.json"),
+        )?.extensions ?? [],
+    ),
   );
-  return Promise.all((manifest?.extensions ?? []).map(loadHostExtensionEntry));
+  return Promise.all([...entries].map(loadHostExtensionEntry));
 }
 
 async function loadHostExtensionEntry(entry: string): Promise<DoctorExtension> {
@@ -158,10 +168,8 @@ async function requestedFrameworks(
     return { framework: options.framework, frameworks: new Set([options.framework]) };
   }
   const packages = await detectWorkspacePackages(options.root ?? process.cwd());
-  const framework = workspaceFramework(packages);
-  workspaceFrameworkPackage(packages, framework);
   return {
-    framework,
+    framework: workspaceFramework(packages),
     frameworks: new Set(packages.map((item) => item.framework)),
   };
 }

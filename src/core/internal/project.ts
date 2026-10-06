@@ -8,11 +8,13 @@ import type {
   NuxtProjectInfo,
   ProjectInfo,
   ProjectLanguage,
+  WorkspaceNuxtInventory,
 } from "../primitives.js";
 import {
   detectWorkspacePackages,
+  nuxtInventoryOwner,
+  runtimeGraphPackage,
   workspaceFramework,
-  workspaceFrameworkPackage,
 } from "./workspace-packages.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
 import { detectNuxtModuleDefinitions } from "./nuxt-module-inventory.js";
@@ -47,41 +49,46 @@ export async function detectProject(
   const vueVersion = deps.vue ?? ">=3.5";
   const workspacePackages = await detectWorkspacePackages(root);
   const framework = requested === "auto" ? workspaceFramework(workspacePackages) : requested;
-  const frameworkPackage = workspaceFrameworkPackage(workspacePackages, framework);
+  const detectedOwner = nuxtInventoryOwner(workspacePackages);
+  const graphPackage = runtimeGraphPackage(workspacePackages, framework);
   if (requested !== "auto") workspacePackages[0]!.framework = requested;
-  const frameworkRoot = join(root, frameworkPackage?.root ?? ".");
-  const frameworkDeps = frameworkPackage?.packages ?? deps;
-  const frameworkNuxtVersion = frameworkDeps.nuxt ?? frameworkDeps["@nuxt/kit"];
+  // An explicit Nuxt run with several nested Nuxt apps treats the workspace root as the owner.
+  const nuxtOwnerRoot =
+    framework !== "nuxt"
+      ? undefined
+      : (detectedOwner?.root ?? (requested === "nuxt" ? "." : undefined));
   const ssr = framework === "nuxt" || framework === "nitro" || hasVueSsrEvidence(packageJson, deps);
   const isMonorepo =
     workspacePackages.length > 1 ||
     existsSync(join(root, "pnpm-workspace.yaml")) ||
     existsSync(join(root, "turbo.json"));
-  const nuxtFacts = framework === "nuxt" ? readNuxtRunFacts(frameworkRoot) : undefined;
-  const nuxt = nuxtFacts
-    ? await detectNuxt(
-        frameworkRoot,
-        frameworkNuxtVersion ?? nuxtVersion ?? ">=4",
-        frameworkDeps,
-        nuxtFacts,
-      )
-    : undefined;
-  const detectedGraph = resolveRuntimeGraph(root, framework, join(frameworkRoot, "package.json"));
-  const targeted = applyRuntimeTarget(
-    detectedGraph,
-    nuxtFacts
-      ? resolveNuxtCompatibility(
-          frameworkRoot,
-          detectedGraph,
-          nuxtFacts.manifest,
-          nuxtFacts.configs,
-          nuxtFacts.manifestCurrent,
+  const owner =
+    nuxtOwnerRoot === undefined
+      ? undefined
+      : await detectNuxtInventory(
+          root,
+          nuxtOwnerRoot,
+          workspacePackages.find((item) => item.root === nuxtOwnerRoot)?.packages ?? deps,
+          nuxtVersion,
+          runtimeTarget,
+        );
+  const runtime = owner
+    ? { graph: owner.runtimeGraph, compatibility: owner.nuxtCompatibility }
+    : applyRuntimeTarget(
+        resolveRuntimeGraph(root, framework, join(root, graphPackage?.root ?? ".", "package.json")),
+        undefined,
+        runtimeTarget,
+      );
+  const workspaceNuxt =
+    framework === "nuxt"
+      ? await Promise.all(
+          workspacePackages
+            .filter((item) => item.framework === "nuxt" && item.root !== nuxtOwnerRoot)
+            .map((item) =>
+              detectNuxtInventory(root, item.root, item.packages, nuxtVersion, runtimeTarget),
+            ),
         )
-      : undefined,
-    runtimeTarget,
-  );
-  const resolvedNuxtVersion = targeted.graph.packages.nuxt?.version;
-  const resolvedVueVersion = targeted.graph.packages.vue?.version;
+      : [];
   const tsconfigPath = existsSync(join(root, "tsconfig.json"))
     ? join(root, "tsconfig.json")
     : undefined;
@@ -90,25 +97,64 @@ export async function detectProject(
     root: resolve(root),
     framework,
     ssr,
-    vueVersion: resolvedVueVersion ?? cleanVersion(vueVersion),
-    nuxtVersion: nuxt
-      ? (resolvedNuxtVersion ?? cleanVersion(nuxtVersion ?? nuxt.version))
-      : undefined,
+    vueVersion: runtime.graph.packages.vue?.version ?? cleanVersion(vueVersion),
+    nuxtVersion: owner?.nuxtVersion,
     isMonorepo,
     packageName: packageJson?.name,
     workspacePackages,
+    ...(workspaceNuxt.length ? { workspaceNuxt } : {}),
     tsconfigPath,
     languages: await detectProjectLanguages(walk, Boolean(tsconfigPath)),
-    nuxt,
-    nuxtModuleDefinitions: nuxt
-      ? await detectNuxtModuleDefinitions(frameworkRoot, nuxt.appRoots)
-      : undefined,
-    runtimeGraph: targeted.graph,
-    nuxtCompatibility: targeted.compatibility,
+    nuxt: owner?.nuxt,
+    nuxtModuleDefinitions: owner?.nuxtModuleDefinitions,
+    runtimeGraph: runtime.graph,
+    nuxtCompatibility: runtime.compatibility,
     inventory: { packages: deps },
   };
+  const unappliedConfigs = workspaceNuxt.filter((item) => item.nuxt.doctorConfig);
+  if (unappliedConfigs.length) {
+    project.evidenceGaps = unappliedConfigs.map((item) => ({
+      source: "vite-doctor/workspace-nuxt",
+      message: `Doctor options from the vite-doctor/nuxt module in ${item.root} only apply when Doctor runs from that package. Run Doctor from ${item.root} to apply them.`,
+      files: [relative(root, item.nuxt.manifestPath ?? join(root, item.root))],
+    }));
+  }
   rememberProjectFileWalk(project, walk);
   return project;
+}
+
+/** Nuxt Project Inventory and runtime graph of the Nuxt app at workspace package `packageRoot`. */
+async function detectNuxtInventory(
+  workspaceRoot: string,
+  packageRoot: string,
+  packageDeps: Record<string, string | undefined>,
+  fallbackVersion: string | undefined,
+  runtimeTarget: RuntimeTarget | undefined,
+): Promise<WorkspaceNuxtInventory & Required<Pick<WorkspaceNuxtInventory, "runtimeGraph">>> {
+  const appRoot = join(workspaceRoot, packageRoot);
+  const declaredVersion = packageDeps.nuxt ?? packageDeps["@nuxt/kit"];
+  const facts = readNuxtRunFacts(appRoot);
+  const nuxt = await detectNuxt(
+    appRoot,
+    declaredVersion ?? fallbackVersion ?? ">=4",
+    packageDeps,
+    facts,
+  );
+  const graph = resolveRuntimeGraph(workspaceRoot, "nuxt", join(appRoot, "package.json"));
+  const targeted = applyRuntimeTarget(
+    graph,
+    resolveNuxtCompatibility(appRoot, graph, facts.manifest, facts.configs, facts.manifestCurrent),
+    runtimeTarget,
+  );
+  return {
+    root: packageRoot,
+    nuxt,
+    nuxtVersion:
+      targeted.graph.packages.nuxt?.version ?? cleanVersion(fallbackVersion ?? nuxt.version),
+    nuxtModuleDefinitions: await detectNuxtModuleDefinitions(appRoot, nuxt.appRoots),
+    runtimeGraph: targeted.graph,
+    nuxtCompatibility: targeted.compatibility,
+  };
 }
 
 const LANGUAGE_SOURCE = /\.(?:vue|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
