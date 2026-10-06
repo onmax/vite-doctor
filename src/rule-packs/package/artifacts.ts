@@ -2,7 +2,7 @@ import { isBuiltin } from "node:module";
 import { basename } from "node:path";
 import { existsSync, globSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "pathe";
-import ts from "typescript";
+import { parseSync } from "oxc-parser";
 import type { ProjectInfo, SourceRange } from "../../core/primitives.js";
 
 export interface PackageManifest {
@@ -436,19 +436,13 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
       }
     }
     const text = readFileSync(current.path, "utf8");
-    const parsed = ts.createSourceFile(current.path, text, ts.ScriptTarget.Latest, true);
+    const parsed = parseModule(current.path, text);
     const commonjs =
       commonjsModule(current.path) &&
-      (explicitCommonjsModule(current.path) || !hasRuntimeModuleSyntax(parsed));
-    const source = ts.createSourceFile(
-      current.path,
-      commonjs ? text : `${text}\nexport {};`,
-      ts.ScriptTarget.Latest,
-      true,
-    );
+      (explicitCommonjsModule(current.path) || !hasRuntimeModuleSyntax(parsed.program));
     const scope = packageScope(current.path);
     for (const edge of importEdges(
-      source,
+      parsed,
       current.kind,
       commonjs,
       explicitCommonjsModule(current.path),
@@ -517,7 +511,7 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
           }
           continue;
         }
-        const position = source.getLineAndCharacterOfPosition(edge.start);
+        const position = positionOf(parsed, edge.start);
         references.push({
           specifier,
           packageName,
@@ -689,63 +683,348 @@ function resolvePackageImport(
   return flatten(target, kind, addons) ?? [];
 }
 
-function hasRuntimeModuleSyntax(source: ts.SourceFile): boolean {
-  let esmSyntax = false;
-  function visit(node: ts.Node): void {
-    if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
-      esmSyntax = true;
-      return;
+// oxc ESTree node, linked to its parent with TypeScript-shaped ancestry (see linkParents).
+type Node = any;
+
+interface ParsedModule {
+  program: Node;
+  text: string;
+  comments: Array<{ type: string; start: number; end: number }>;
+  lineStarts?: number[];
+}
+
+interface FileReference {
+  fileName: string;
+  pos: number;
+  end: number;
+}
+
+const wrapperTypes = new Set([
+  "ParenthesizedExpression",
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "TSTypeAssertion",
+]);
+const signatureTypes = new Set([
+  "TSMethodSignature",
+  "TSCallSignatureDeclaration",
+  "TSConstructSignatureDeclaration",
+  "TSFunctionType",
+  "TSConstructorType",
+  "TSIndexSignature",
+]);
+const propertyDeclarationTypes = new Set([
+  "PropertyDefinition",
+  "AccessorProperty",
+  "TSAbstractPropertyDefinition",
+  "TSAbstractAccessorProperty",
+]);
+const exportedDeclarationTypes = new Set([
+  "FunctionDeclaration",
+  "TSDeclareFunction",
+  "ClassDeclaration",
+  "TSInterfaceDeclaration",
+]);
+
+function parseModule(path: string, text: string): ParsedModule {
+  const lang = declarationExtension.test(path)
+    ? "dts"
+    : path.endsWith(".tsx")
+      ? "tsx"
+      : /\.[cm]?ts$/.test(path)
+        ? "ts"
+        : "jsx";
+  let source = text;
+  for (let attempt = 0; ; attempt++) {
+    // oxc keeps the full AST next to recoverable errors, so CommonJS-only syntax such as a
+    // top-level return still yields every import edge when parsed in module mode.
+    const result = parseSync(path, source, {
+      lang,
+      sourceType: "module",
+      astType: "ts",
+      preserveParens: true,
+    });
+    const offset = result.errors[0]?.labels[0]?.start;
+    // Unrecoverable errors discard the whole program, while TypeScript recovers around the
+    // broken statement (for example malformed declaration emit), so blank the failing line
+    // without shifting offsets and parse again.
+    if (result.program.body.length || offset === undefined || attempt === 16) {
+      linkParents(result.program);
+      return { program: result.program, text, comments: result.comments };
     }
-    if (ts.isAwaitExpression(node) && !ts.findAncestor(node, ts.isFunctionLike)) {
-      esmSyntax = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
+    source = blankLine(source, offset);
   }
-  visit(source);
-  if (esmSyntax) return true;
-  return source.statements.some((statement) => {
-    if (ts.isImportDeclaration(statement)) {
-      const clause = statement.importClause;
-      if (!clause) return true;
-      if (clause.isTypeOnly) return false;
-      const bindings = clause.namedBindings;
-      return !(
-        !clause.name &&
-        bindings &&
-        ts.isNamedImports(bindings) &&
-        bindings.elements.length > 0 &&
-        bindings.elements.every((element) => element.isTypeOnly)
-      );
+}
+
+function blankLine(source: string, offset: number): string {
+  let start = offset;
+  while (start > 0 && !isLineBreak(source.charCodeAt(start - 1))) start--;
+  let end = offset;
+  while (end < source.length && !isLineBreak(source.charCodeAt(end))) end++;
+  return source.slice(0, start) + " ".repeat(end - start) + source.slice(end);
+}
+
+function isNode(value: unknown): value is Node {
+  return value !== null && typeof value === "object" && typeof (value as Node).type === "string";
+}
+
+function childNodes(node: Node): Node[] {
+  const children: Node[] = [];
+  for (const key in node) {
+    if (key === "parent") continue;
+    const value = node[key];
+    if (Array.isArray(value)) {
+      for (const item of value) if (isNode(item)) children.push(item);
+    } else if (isNode(value)) children.push(value);
+  }
+  return children;
+}
+
+// The reachability checks below mirror TypeScript's AST, which has no node for optional chains
+// or for the export wrapper around declarations.
+function linkParents(program: Node): void {
+  const stack: Array<[Node, Node]> = [[program, undefined]];
+  while (stack.length) {
+    const [node, parent] = stack.pop()!;
+    node.parent = parent;
+    for (const key in node) {
+      if (key === "parent") continue;
+      const value = node[key];
+      const childParent =
+        key === "declaration" &&
+        (node.type === "ExportNamedDeclaration" ||
+          (node.type === "ExportDefaultDeclaration" && exportedDeclarationTypes.has(value?.type)))
+          ? parent
+          : node;
+      if (Array.isArray(value)) {
+        for (let index = 0; index < value.length; index++)
+          if (isNode(value[index]))
+            stack.push([(value[index] = unchain(value[index])), childParent]);
+      } else if (isNode(value)) stack.push([(node[key] = unchain(value)), childParent]);
     }
-    if (ts.isExportDeclaration(statement)) {
-      if (statement.isTypeOnly) return false;
-      const clause = statement.exportClause;
-      return !(
-        clause &&
-        ts.isNamedExports(clause) &&
-        clause.elements.length > 0 &&
-        clause.elements.every((element) => element.isTypeOnly)
-      );
-    }
-    if (ts.isExportAssignment(statement)) return !statement.isExportEquals;
+  }
+}
+
+function unchain(node: Node): Node {
+  return node.type === "ChainExpression" ? node.expression : node;
+}
+
+function walk(root: Node, enter: (node: Node) => boolean | void): void {
+  const stack = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (enter(node) === false) continue;
+    const children = childNodes(node);
+    for (let index = children.length - 1; index >= 0; index--) stack.push(children[index]);
+  }
+}
+
+function unwrapParens(node: Node): Node {
+  while (node?.type === "ParenthesizedExpression") node = node.expression;
+  return node;
+}
+
+function isWithin(node: Node, ancestor: Node): boolean {
+  if (!ancestor) return false;
+  for (let current = node; current; current = current.parent) if (current === ancestor) return true;
+  return false;
+}
+
+function isFunctionLike(node: Node): boolean {
+  return (
+    node?.type === "FunctionDeclaration" ||
+    node?.type === "FunctionExpression" ||
+    node?.type === "ArrowFunctionExpression" ||
+    node?.type === "TSDeclareFunction" ||
+    node?.type === "TSEmptyBodyFunctionExpression" ||
+    signatureTypes.has(node?.type)
+  );
+}
+
+// ESTree wraps methods, accessors and constructors around a FunctionExpression; TypeScript
+// treats those as method declarations, not function expressions.
+function isFunctionExpression(node: Node): boolean {
+  if (node?.type !== "FunctionExpression") return false;
+  const parent = node.parent;
+  if (parent?.type === "MethodDefinition" || parent?.type === "TSAbstractMethodDefinition")
+    return parent.value !== node;
+  return !(
+    parent?.type === "Property" &&
+    parent.value === node &&
+    (parent.method || parent.kind !== "init")
+  );
+}
+
+function isConstructor(node: Node): boolean {
+  return (
+    node?.type === "FunctionExpression" &&
+    node.parent?.type === "MethodDefinition" &&
+    node.parent.kind === "constructor"
+  );
+}
+
+function isClass(node: Node): boolean {
+  return node?.type === "ClassDeclaration" || node?.type === "ClassExpression";
+}
+
+function hasHeritage(node: Node): boolean {
+  return Boolean(node.superClass) || (node.implements?.length ?? 0) > 0;
+}
+
+function isPropertyDeclaration(node: Node): boolean {
+  return propertyDeclarationTypes.has(node?.type);
+}
+
+function isPropertyAssignment(node: Node): boolean {
+  return node?.type === "Property" && node.kind === "init" && !node.method && !node.shorthand;
+}
+
+function isOptionalChain(node: Node): boolean {
+  for (let current = node; ;) {
+    if (current?.type === "CallExpression" || current?.type === "MemberExpression") {
+      if (current.optional) return true;
+      current = current.type === "CallExpression" ? current.callee : current.object;
+    } else if (current?.type === "TSNonNullExpression") current = current.expression;
+    else return false;
+  }
+}
+
+function accessName(node: Node): string | undefined {
+  if (node?.type !== "MemberExpression" || node.computed) return undefined;
+  return node.property.type === "PrivateIdentifier" ? `#${node.property.name}` : node.property.name;
+}
+
+function isIdentifier(node: Node, name: string): boolean {
+  return node?.type === "Identifier" && node.name === name;
+}
+
+function isPromiseAll(node: Node): boolean {
+  return accessName(node) === "all" && isIdentifier(node.object, "Promise");
+}
+
+function argumentsOf(node: Node): Node[] {
+  if (node.type === "ImportExpression")
+    return node.options ? [node.source, node.options] : [node.source];
+  return node.arguments ?? [];
+}
+
+function isNullLiteral(node: Node): boolean {
+  return node?.type === "Literal" && node.value === null && !node.regex;
+}
+
+function isBooleanLiteral(node: Node, value: boolean): boolean {
+  return node?.type === "Literal" && node.value === value;
+}
+
+function isNumericLiteral(node: Node): boolean {
+  return node?.type === "Literal" && typeof node.value === "number";
+}
+
+function stringLiteralText(node: Node): string | undefined {
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
+    return node.quasis[0].value.cooked ?? node.quasis[0].value.raw;
+  return undefined;
+}
+
+// TypeScript literal expressions: strings, numbers, bigints, regexes and plain templates.
+function isLiteralExpression(node: Node): boolean {
+  if (node?.type === "TemplateLiteral") return node.expressions.length === 0;
+  return (
+    node?.type === "Literal" &&
+    (Boolean(node.regex) || ["string", "number", "bigint"].includes(typeof node.value))
+  );
+}
+
+function isKeywordLiteral(node: Node): boolean {
+  return isNullLiteral(node) || isBooleanLiteral(node, true) || isBooleanLiteral(node, false);
+}
+
+function isPrefixUnary(node: Node): boolean {
+  return (
+    (node?.type === "UnaryExpression" && ["!", "~", "-", "+"].includes(node.operator)) ||
+    (node?.type === "UpdateExpression" && node.prefix)
+  );
+}
+
+function isAssignmentTarget(pattern: Node): boolean {
+  let current = pattern;
+  while (
+    ["ArrayPattern", "ObjectPattern", "AssignmentPattern", "RestElement"].includes(
+      current.parent?.type,
+    ) ||
+    (current.parent?.type === "Property" && current.parent.parent?.type === "ObjectPattern")
+  )
+    current = current.parent;
+  const parent = current.parent;
+  return (
+    (parent?.type === "AssignmentExpression" ||
+      parent?.type === "ForInStatement" ||
+      parent?.type === "ForOfStatement") &&
+    parent.left === current
+  );
+}
+
+function hasRuntimeModuleSyntax(program: Node): boolean {
+  let esmSyntax = false;
+  walk(program, (node) => {
+    if (esmSyntax) return false;
     if (
-      ts.isTypeAliasDeclaration(statement) ||
-      ts.isInterfaceDeclaration(statement) ||
-      ts.isImportEqualsDeclaration(statement)
-    )
+      (node.type === "MetaProperty" && node.meta.name === "import") ||
+      (node.type === "AwaitExpression" && !hasAncestor(node, isFunctionLike))
+    ) {
+      esmSyntax = true;
       return false;
-    if (!ts.canHaveModifiers(statement)) return false;
-    const modifiers = ts.getModifiers(statement);
-    return Boolean(
-      modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) &&
-      !modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword),
-    );
+    }
+  });
+  if (esmSyntax) return true;
+  return program.body.some((statement: Node) => {
+    switch (statement.type) {
+      case "ImportDeclaration":
+        return (
+          statement.importKind !== "type" &&
+          !(
+            statement.specifiers.length > 0 &&
+            statement.specifiers.every(
+              (specifier: Node) =>
+                specifier.type === "ImportSpecifier" && specifier.importKind === "type",
+            )
+          )
+        );
+      case "ExportNamedDeclaration":
+        if (statement.declaration)
+          return (
+            ![
+              "TSTypeAliasDeclaration",
+              "TSInterfaceDeclaration",
+              "TSImportEqualsDeclaration",
+            ].includes(statement.declaration.type) && !statement.declaration.declare
+          );
+        return (
+          statement.exportKind !== "type" &&
+          !(
+            statement.specifiers.length > 0 &&
+            statement.specifiers.every((specifier: Node) => specifier.exportKind === "type")
+          )
+        );
+      case "ExportAllDeclaration":
+        return statement.exportKind !== "type";
+      case "ExportDefaultDeclaration":
+        return statement.declaration.type !== "TSInterfaceDeclaration";
+      default:
+        return false;
+    }
   });
 }
 
+function hasAncestor(node: Node, predicate: (node: Node) => boolean): boolean {
+  for (let current = node; current; current = current.parent) if (predicate(current)) return true;
+  return false;
+}
+
 function importEdges(
-  source: ts.SourceFile,
+  parsed: ParsedModule,
   kind: "runtime" | "types",
   commonjs: boolean,
   explicitCommonjs: boolean,
@@ -753,17 +1032,18 @@ function importEdges(
   const edges: ImportEdge[] = [];
   const supportsStaticImports = !explicitCommonjs;
   function add(
-    literal: ts.Node | undefined,
+    literal: Node,
     typeOnly: boolean,
     required: boolean,
     probe: boolean | "commonjs" = false,
     resolutionOnly = false,
   ) {
-    while (literal && ts.isParenthesizedExpression(literal)) literal = literal.expression;
-    if (!literal || !ts.isStringLiteralLike(literal)) return;
+    literal = unwrapParens(literal);
+    const specifier = stringLiteralText(literal);
+    if (specifier === undefined) return;
     edges.push({
-      specifier: literal.text,
-      start: literal.getStart(source),
+      specifier,
+      start: literal.start,
       end: literal.end,
       kind: typeOnly ? "types" : kind,
       required: !typeOnly && required,
@@ -771,56 +1051,45 @@ function importEdges(
       resolutionOnly,
     });
   }
-  function visit(node: ts.Node) {
-    if (ts.isImportDeclaration(node)) {
-      const clause = node.importClause;
-      const named = clause?.namedBindings;
-      const typeOnly = Boolean(
-        clause?.isTypeOnly ||
-        (!clause?.name &&
-          named &&
-          ts.isNamedImports(named) &&
-          named.elements.length &&
-          named.elements.every((item) => item.isTypeOnly)),
-      );
-      if (typeOnly || supportsStaticImports) add(node.moduleSpecifier, typeOnly, true);
-    } else if (ts.isExportDeclaration(node)) {
-      const typeOnly = Boolean(
-        node.isTypeOnly ||
-        (node.exportClause &&
-          ts.isNamedExports(node.exportClause) &&
-          node.exportClause.elements.length &&
-          node.exportClause.elements.every((item) => item.isTypeOnly)),
-      );
-      if (typeOnly || supportsStaticImports) add(node.moduleSpecifier, typeOnly, true);
+  walk(parsed.program, (node) => {
+    if (node.type === "ImportDeclaration") {
+      const typeOnly =
+        node.importKind === "type" ||
+        (node.specifiers.length > 0 &&
+          node.specifiers.every(
+            (specifier: Node) =>
+              specifier.type === "ImportSpecifier" && specifier.importKind === "type",
+          ));
+      if (typeOnly || supportsStaticImports) add(node.source, typeOnly, true);
+    } else if (node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") {
+      const typeOnly =
+        node.exportKind === "type" ||
+        (node.type === "ExportNamedDeclaration" &&
+          node.specifiers.length > 0 &&
+          node.specifiers.every((specifier: Node) => specifier.exportKind === "type"));
+      if (typeOnly || supportsStaticImports) add(node.source, typeOnly, true);
     } else if (
-      ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference)
+      node.type === "TSImportEqualsDeclaration" &&
+      node.moduleReference.type === "TSExternalModuleReference"
     ) {
-      add(node.moduleReference.expression, node.isTypeOnly, true, "commonjs");
-    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
-      add(node.argument.literal, true, false);
-    } else if (ts.isCallExpression(node)) {
-      const member = node.expression;
-      const memberName = ts.isPropertyAccessExpression(member)
-        ? member.name.text
-        : ts.isElementAccessExpression(member) && ts.isStringLiteral(member.argumentExpression)
-          ? member.argumentExpression.text
-          : undefined;
-      const receiver =
-        ts.isPropertyAccessExpression(member) || ts.isElementAccessExpression(member)
-          ? member.expression
-          : undefined;
-      if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
-        add(node.arguments[0], false, isUnconditional(node, true));
-      else if (
-        (commonjs &&
-          ts.isIdentifier(node.expression) &&
-          node.expression.text === "require" &&
-          !shadowsRequire(node)) ||
-        (receiver &&
-          ts.isIdentifier(receiver) &&
-          receiver.text === "module" &&
+      add(node.moduleReference.expression, node.importKind === "type", true, "commonjs");
+    } else if (node.type === "TSImportType") {
+      add(node.source, true, false);
+    } else if (node.type === "ImportExpression") {
+      add(node.source, false, isUnconditional(node, true));
+    } else if (node.type === "CallExpression") {
+      const member = node.callee;
+      const memberName =
+        accessName(member) ??
+        (member.type === "MemberExpression" &&
+        member.property.type === "Literal" &&
+        typeof member.property.value === "string"
+          ? member.property.value
+          : undefined);
+      const receiver = member.type === "MemberExpression" ? member.object : undefined;
+      if (
+        (commonjs && isIdentifier(member, "require") && !shadowsName(node, "require")) ||
+        (isIdentifier(receiver, "module") &&
           memberName === "require" &&
           commonjs &&
           !shadowsName(node, "module"))
@@ -828,28 +1097,24 @@ function importEdges(
         add(node.arguments[0], false, isUnconditional(node, false), "commonjs");
       else if (
         commonjs &&
-        receiver &&
-        ts.isIdentifier(receiver) &&
-        receiver.text === "require" &&
+        isIdentifier(receiver, "require") &&
         memberName === "resolve" &&
-        !shadowsRequire(node)
+        !shadowsName(node, "require")
       )
         add(node.arguments[0], false, isUnconditional(node, false), "commonjs", true);
       else if (
         !commonjs &&
-        receiver &&
         memberName === "resolve" &&
-        ts.isMetaProperty(receiver) &&
-        receiver.keywordToken === ts.SyntaxKind.ImportKeyword &&
-        receiver.name.text === "meta"
+        receiver?.type === "MetaProperty" &&
+        receiver.meta.name === "import" &&
+        receiver.property.name === "meta"
       )
         add(node.arguments[0], false, isUnconditional(node, false), false, true);
     }
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
+  });
+  edges.sort((left, right) => left.start - right.start);
   const jsdoc = /\/\*\*[\s\S]*?\*\//g;
-  for (let comment; (comment = jsdoc.exec(source.text));) {
+  for (let comment; (comment = jsdoc.exec(parsed.text));) {
     const imports = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
     for (let match; (match = imports.exec(comment[0]));) {
       const start = comment.index + match.index + match[0].indexOf(match[1]!);
@@ -863,7 +1128,8 @@ function importEdges(
       });
     }
   }
-  for (const ref of source.typeReferenceDirectives)
+  const { types, paths } = referenceDirectives(parsed);
+  for (const ref of types)
     edges.push({
       specifier: ref.fileName,
       start: ref.pos,
@@ -872,7 +1138,7 @@ function importEdges(
       required: false,
       typeReference: true,
     });
-  for (const ref of source.referencedFiles)
+  for (const ref of paths)
     edges.push({
       specifier: ref.fileName.startsWith(".") ? ref.fileName : `./${ref.fileName}`,
       start: ref.pos,
@@ -883,310 +1149,420 @@ function importEdges(
   return edges;
 }
 
-function isDecoratorExpression(node: ts.Node, ancestor: ts.Node): boolean {
+// Same leading-comment and `/// <reference />` matching as TypeScript's pragma scanner.
+function referenceDirectives(parsed: ParsedModule): {
+  types: FileReference[];
+  paths: FileReference[];
+} {
+  const types: FileReference[] = [];
+  const paths: FileReference[] = [];
+  const { text } = parsed;
+  let position = parsed.program.hashbang?.end ?? (text.charCodeAt(0) === 0xfeff ? 1 : 0);
+  for (const comment of parsed.comments) {
+    if (comment.end <= position) continue;
+    if (!/^[\s\u0085\u200b]*$/.test(text.slice(position, comment.start))) break;
+    position = comment.end;
+    const value = text.slice(comment.start, comment.end);
+    if (
+      comment.type !== "Line" ||
+      /^\/\/\/\s*<(\S+)\s.*?\/>/m.exec(value)?.[1]?.toLowerCase() !== "reference"
+    )
+      continue;
+    const argument = (name: string) => {
+      const match = new RegExp(`(\\s${name}\\s*=\\s*)(?:(?:'([^']*)')|(?:"([^"]*)"))`, "im").exec(
+        value,
+      );
+      const fileName = match && (match[2] || match[3]);
+      if (!fileName) return undefined;
+      const pos = comment.start + match.index + match[1]!.length + 1;
+      return { fileName, pos, end: pos + fileName.length };
+    };
+    if (argument("no-default-lib")?.fileName === "true") continue;
+    const typesReference = argument("types");
+    if (typesReference) types.push(typesReference);
+    else if (!argument("lib")) {
+      const pathReference = argument("path");
+      if (pathReference) paths.push(pathReference);
+    }
+  }
+  return { types, paths };
+}
+
+function positionOf(parsed: ParsedModule, offset: number): { line: number; character: number } {
+  const lineStarts = (parsed.lineStarts ??= computeLineStarts(parsed.text));
+  let low = 0;
+  let high = lineStarts.length - 1;
+  while (low < high) {
+    const middle = (low + high + 1) >> 1;
+    if (lineStarts[middle]! <= offset) low = middle;
+    else high = middle - 1;
+  }
+  return { line: low, character: offset - lineStarts[low]! };
+}
+
+function computeLineStarts(text: string): number[] {
+  const starts = [0];
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 13 && text.charCodeAt(index + 1) === 10) index++;
+    if (isLineBreak(code)) starts.push(index + 1);
+  }
+  return starts;
+}
+
+function isLineBreak(code: number): boolean {
+  return code === 10 || code === 13 || code === 0x2028 || code === 0x2029;
+}
+
+function isDecoratorExpression(node: Node, ancestor: Node): boolean {
   for (let current = node.parent; current && current !== ancestor; current = current.parent)
-    if (ts.isDecorator(current))
+    if (current.type === "Decorator")
       return (
         current.parent === ancestor ||
-        (ts.isParameter(current.parent) && current.parent.parent === ancestor)
+        (current.parent?.parent === ancestor && ancestor.params?.includes(current.parent))
       );
   return false;
 }
 
-function isNonAbruptElement(node: ts.Expression): boolean {
-  if (ts.isParenthesizedExpression(node)) return isNonAbruptElement(node.expression);
-  if (ts.isPrefixUnaryExpression(node))
-    return (
-      (node.operator === ts.SyntaxKind.ExclamationToken ||
-        ((node.operator === ts.SyntaxKind.TildeToken ||
-          node.operator === ts.SyntaxKind.MinusToken ||
-          node.operator === ts.SyntaxKind.PlusToken) &&
-          (ts.isNumericLiteral(node.operand) ||
-            ts.isStringLiteral(node.operand) ||
-            (node.operator !== ts.SyntaxKind.PlusToken && ts.isBigIntLiteral(node.operand)) ||
-            node.operand.kind === ts.SyntaxKind.TrueKeyword ||
-            node.operand.kind === ts.SyntaxKind.FalseKeyword ||
-            node.operand.kind === ts.SyntaxKind.NullKeyword))) &&
-      isNonAbruptElement(node.operand)
-    );
-  if (ts.isVoidExpression(node) || ts.isTypeOfExpression(node))
-    return isNonAbruptElement(node.expression);
-  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.CommaToken)
-    return isNonAbruptElement(node.left) && isNonAbruptElement(node.right);
-  return (
-    ts.isLiteralExpression(node) ||
-    isUndefined(node) ||
-    node.kind === ts.SyntaxKind.ThisKeyword ||
-    ts.isArrowFunction(node) ||
-    ts.isFunctionExpression(node) ||
-    (ts.isClassExpression(node) && !node.heritageClauses?.length && node.members.length === 0) ||
-    (ts.isArrayLiteralExpression(node) && node.elements.every(isNonAbruptElement)) ||
-    (ts.isObjectLiteralExpression(node) &&
-      node.properties.every(
-        (property) =>
-          ts.isPropertyAssignment(property) &&
-          literalPropertyName(property.name) !== undefined &&
-          isNonAbruptElement(property.initializer),
-      )) ||
-    ts.isOmittedExpression(node) ||
-    node.kind === ts.SyntaxKind.TrueKeyword ||
-    node.kind === ts.SyntaxKind.FalseKeyword ||
-    node.kind === ts.SyntaxKind.NullKeyword ||
-    (ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments.length === 1 &&
-      ts.isStringLiteralLike(node.arguments[0]!))
-  );
-}
-
-function isNonAbruptStatement(statement: ts.Statement): boolean {
-  if (ts.isExpressionStatement(statement)) return isNonAbruptElement(statement.expression);
-  if (ts.isVariableStatement(statement))
-    return statement.declarationList.declarations.every(
-      (declaration) =>
-        ts.isIdentifier(declaration.name) &&
-        (!declaration.initializer || isNonAbruptElement(declaration.initializer)),
-    );
-  if (ts.isBlock(statement)) return statement.statements.every(isNonAbruptStatement);
-  return ts.isEmptyStatement(statement);
-}
-
-function isValidClassHeritage(node: ts.Expression): boolean {
-  if (ts.isParenthesizedExpression(node)) return isValidClassHeritage(node.expression);
-  return (
-    node.kind === ts.SyntaxKind.NullKeyword ||
-    (ts.isClassExpression(node) && !node.heritageClauses?.length && node.members.length === 0) ||
-    (ts.isFunctionExpression(node) &&
-      !node.asteriskToken &&
-      !node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword))
-  );
-}
-
-function hasAbruptPredecessor(node: ts.Node, parent: ts.Node): boolean {
-  if (ts.isTemplateExpression(parent)) {
-    const index = parent.templateSpans.findIndex((span) => isWithin(node, span.expression));
-    return (
-      index >= 0 &&
-      parent.templateSpans.slice(0, index).some((span) => {
-        let expression = span.expression;
-        while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+function isNonAbruptElement(node: Node): boolean {
+  // Array holes are TypeScript omitted expressions.
+  if (!node) return true;
+  switch (node.type) {
+    case "ParenthesizedExpression":
+      return isNonAbruptElement(node.expression);
+    case "UnaryExpression":
+      if (node.operator === "!") return isNonAbruptElement(node.argument);
+      if (["~", "-", "+"].includes(node.operator))
         return (
-          !isNonAbruptElement(expression) ||
-          !(
-            ts.isLiteralExpression(expression) ||
-            isUndefined(expression) ||
-            expression.kind === ts.SyntaxKind.TrueKeyword ||
-            expression.kind === ts.SyntaxKind.FalseKeyword ||
-            expression.kind === ts.SyntaxKind.NullKeyword ||
-            ts.isVoidExpression(expression) ||
-            ts.isTypeOfExpression(expression) ||
-            ts.isPrefixUnaryExpression(expression)
-          )
+          node.argument.type === "Literal" &&
+          !node.argument.regex &&
+          (["number", "string", "boolean"].includes(typeof node.argument.value) ||
+            node.argument.value === null ||
+            (node.operator !== "+" && typeof node.argument.value === "bigint"))
         );
-      })
-    );
+      if (node.operator === "void" || node.operator === "typeof")
+        return isNonAbruptElement(node.argument);
+      return false;
+    case "SequenceExpression":
+      return node.expressions.every(isNonAbruptElement);
+    case "ArrayExpression":
+    case "ArrayPattern":
+      return node.elements.every(isNonAbruptElement);
+    case "ObjectExpression":
+    case "ObjectPattern":
+      return node.properties.every(
+        (property: Node) =>
+          isPropertyAssignment(property) &&
+          literalPropertyName(property.key, property.computed) !== undefined &&
+          isNonAbruptElement(property.value),
+      );
+    case "ClassExpression":
+      return !hasHeritage(node) && node.body.body.length === 0;
+    case "ImportExpression":
+      return !node.options && stringLiteralText(node.source) !== undefined;
+    case "ThisExpression":
+    case "ArrowFunctionExpression":
+    case "FunctionExpression":
+      return true;
+    default:
+      return isLiteralExpression(node) || isUndefined(node) || isKeywordLiteral(node);
   }
-  if (ts.isTaggedTemplateExpression(parent) && isWithin(node, parent.template))
-    return !isNonAbruptElement(parent.tag);
-  if (ts.isElementAccessExpression(parent) && isWithin(node, parent.argumentExpression))
-    return !isNonAbruptElement(parent.expression);
-  if (
-    ts.isBinaryExpression(parent) &&
-    isWithin(node, parent.right) &&
-    !(
-      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      (ts.isIdentifier(parent.left) ||
-        (ts.isPropertyAccessExpression(parent.left) &&
-          ((ts.isIdentifier(parent.left.expression) &&
-            parent.left.expression.text === "exports" &&
-            !shadowsName(parent, "exports")) ||
-            (ts.isIdentifier(parent.left.expression) &&
-              parent.left.expression.text === "module" &&
-              parent.left.name.text === "exports" &&
-              !shadowsName(parent, "module")) ||
-            (ts.isPropertyAccessExpression(parent.left.expression) &&
-              ts.isIdentifier(parent.left.expression.expression) &&
-              parent.left.expression.expression.text === "module" &&
-              parent.left.expression.name.text === "exports" &&
-              !shadowsName(parent, "module")))) ||
-        (ts.isElementAccessExpression(parent.left) &&
-          isNonAbruptElement(parent.left.argumentExpression) &&
-          ((ts.isIdentifier(parent.left.expression) &&
-            parent.left.expression.text === "exports" &&
-            !shadowsName(parent, "exports")) ||
-            (ts.isPropertyAccessExpression(parent.left.expression) &&
-              ts.isIdentifier(parent.left.expression.expression) &&
-              parent.left.expression.expression.text === "module" &&
-              parent.left.expression.name.text === "exports" &&
-              !shadowsName(parent, "module")))))
-    )
-  )
-    return !isNonAbruptElement(parent.left);
-  if (ts.isArrayLiteralExpression(parent))
-    return parent.elements
-      .slice(
-        0,
-        parent.elements.findIndex((item) => isWithin(node, item)),
-      )
-      .some((item) => !isNonAbruptElement(item));
-  if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
-    const args = parent.arguments ?? [];
-    const index = args.findIndex((arg) => isWithin(node, arg));
-    const safeCallee =
-      isNonAbruptElement(parent.expression) ||
-      (ts.isCallExpression(parent) &&
-        ts.isPropertyAccessExpression(parent.expression) &&
-        ts.isIdentifier(parent.expression.expression) &&
-        parent.expression.expression.text === "Promise" &&
-        parent.expression.name.text === "all" &&
-        !shadowsName(parent, "Promise"));
-    return (
-      index >= 0 && (!safeCallee || args.slice(0, index).some((arg) => !isNonAbruptElement(arg)))
-    );
-  }
-  if (ts.isVariableDeclarationList(parent)) {
-    const index = parent.declarations.findIndex((declaration) => isWithin(node, declaration));
-    return (
-      index >= 0 &&
-      parent.declarations
-        .slice(0, index)
-        .some((declaration) =>
-          Boolean(declaration.initializer && !isNonAbruptElement(declaration.initializer)),
-        )
-    );
-  }
-  if (ts.isObjectLiteralExpression(parent)) {
-    const index = parent.properties.findIndex((property) => isWithin(node, property));
-    const current = parent.properties[index];
-    return (
-      index >= 0 &&
-      (parent.properties.slice(0, index).some((property) => {
-        if (ts.isSpreadAssignment(property)) return true;
-        if (ts.isShorthandPropertyAssignment(property)) return true;
-        if (
-          ts.isComputedPropertyName(property.name) &&
-          !isNonAbruptElement(property.name.expression)
-        )
-          return true;
-        return ts.isPropertyAssignment(property) && !isNonAbruptElement(property.initializer);
-      }) ||
-        (current &&
-          ts.isPropertyAssignment(current) &&
-          ts.isComputedPropertyName(current.name) &&
-          isWithin(node, current.initializer) &&
-          !isNonAbruptElement(current.name.expression)))
-    );
-  }
-  return false;
 }
 
-function isNonCallable(node: ts.Expression): boolean {
-  while (ts.isParenthesizedExpression(node)) node = node.expression;
+function isNonAbruptStatement(statement: Node): boolean {
+  switch (statement.type) {
+    case "ExpressionStatement":
+      return isNonAbruptElement(statement.expression);
+    case "VariableDeclaration":
+      return statement.declarations.every(
+        (declaration: Node) =>
+          declaration.id.type === "Identifier" &&
+          (!declaration.init || isNonAbruptElement(declaration.init)),
+      );
+    case "BlockStatement":
+      return statement.body.every(isNonAbruptStatement);
+    case "EmptyStatement":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isValidClassHeritage(node: Node): boolean {
+  node = unwrapParens(node);
   return (
-    isUndefined(node) ||
-    ts.isLiteralExpression(node) ||
-    ((ts.isObjectLiteralExpression(node) || ts.isArrayLiteralExpression(node)) &&
-      isNonAbruptElement(node)) ||
-    node.kind === ts.SyntaxKind.NullKeyword ||
-    node.kind === ts.SyntaxKind.TrueKeyword ||
-    node.kind === ts.SyntaxKind.FalseKeyword
+    isNullLiteral(node) ||
+    (node.type === "ClassExpression" && !hasHeritage(node) && node.body.body.length === 0) ||
+    (isFunctionExpression(node) && !node.generator && !node.async)
   );
 }
 
-function isImmediateField(field: ts.PropertyDeclaration): boolean {
-  const owner = field.parent;
-  if (!ts.isClassExpression(owner) || owner.heritageClauses?.length || owner.modifiers?.length)
+function isExportsTarget(left: Node, assignment: Node): boolean {
+  if (left.type === "Identifier") return true;
+  if (left.type !== "MemberExpression") return false;
+  const object = left.object;
+  const moduleExports =
+    accessName(object) === "exports" &&
+    isIdentifier(object.object, "module") &&
+    !shadowsName(assignment, "module");
+  if (!left.computed)
+    return (
+      (isIdentifier(object, "exports") && !shadowsName(assignment, "exports")) ||
+      (isIdentifier(object, "module") &&
+        accessName(left) === "exports" &&
+        !shadowsName(assignment, "module")) ||
+      moduleExports
+    );
+  return (
+    isNonAbruptElement(left.property) &&
+    ((isIdentifier(object, "exports") && !shadowsName(assignment, "exports")) || moduleExports)
+  );
+}
+
+function hasAbruptPredecessor(node: Node, parent: Node): boolean {
+  switch (parent.type) {
+    case "TemplateLiteral": {
+      const index = parent.expressions.findIndex((expression: Node) => isWithin(node, expression));
+      return (
+        index >= 0 &&
+        parent.expressions.slice(0, index).some((expression: Node) => {
+          expression = unwrapParens(expression);
+          return (
+            !isNonAbruptElement(expression) ||
+            !(
+              isLiteralExpression(expression) ||
+              isUndefined(expression) ||
+              isKeywordLiteral(expression) ||
+              (expression.type === "UnaryExpression" &&
+                (expression.operator === "void" || expression.operator === "typeof")) ||
+              isPrefixUnary(expression)
+            )
+          );
+        })
+      );
+    }
+    case "TaggedTemplateExpression":
+      return isWithin(node, parent.quasi) && !isNonAbruptElement(parent.tag);
+    case "MemberExpression":
+      return (
+        parent.computed && isWithin(node, parent.property) && !isNonAbruptElement(parent.object)
+      );
+    case "BinaryExpression":
+    case "LogicalExpression":
+      return isWithin(node, parent.right) && !isNonAbruptElement(parent.left);
+    case "AssignmentExpression":
+      return (
+        isWithin(node, parent.right) &&
+        !(parent.operator === "=" && isExportsTarget(parent.left, parent)) &&
+        !isNonAbruptElement(parent.left)
+      );
+    case "SequenceExpression": {
+      const index = parent.expressions.findIndex((expression: Node) => isWithin(node, expression));
+      return parent.expressions
+        .slice(0, Math.max(index, 0))
+        .some((expression: Node) => !isNonAbruptElement(expression));
+    }
+    case "ArrayPattern":
+      if (!isAssignmentTarget(parent)) return false;
+    // falls through
+    case "ArrayExpression":
+      return parent.elements
+        .slice(
+          0,
+          parent.elements.findIndex((item: Node) => item && isWithin(node, item)),
+        )
+        .some((item: Node) => !isNonAbruptElement(item));
+    case "CallExpression":
+    case "NewExpression":
+    case "ImportExpression": {
+      const args = argumentsOf(parent);
+      const index = args.findIndex((arg) => isWithin(node, arg));
+      const safeCallee =
+        parent.type !== "ImportExpression" &&
+        (isNonAbruptElement(parent.callee) ||
+          (parent.type === "CallExpression" &&
+            isPromiseAll(parent.callee) &&
+            !shadowsName(parent, "Promise")));
+      return (
+        index >= 0 && (!safeCallee || args.slice(0, index).some((arg) => !isNonAbruptElement(arg)))
+      );
+    }
+    case "VariableDeclaration": {
+      const index = parent.declarations.findIndex((declaration: Node) =>
+        isWithin(node, declaration),
+      );
+      return (
+        index >= 0 &&
+        parent.declarations
+          .slice(0, index)
+          .some(
+            (declaration: Node) =>
+              Boolean(declaration.init) && !isNonAbruptElement(declaration.init),
+          )
+      );
+    }
+    case "ObjectPattern":
+      if (!isAssignmentTarget(parent)) return false;
+    // falls through
+    case "ObjectExpression": {
+      const index = parent.properties.findIndex((property: Node) => isWithin(node, property));
+      const current = parent.properties[index];
+      return (
+        index >= 0 &&
+        (parent.properties
+          .slice(0, index)
+          .some(
+            (property: Node) =>
+              property.type !== "Property" ||
+              property.shorthand ||
+              (property.computed && !isNonAbruptElement(property.key)) ||
+              (isPropertyAssignment(property) && !isNonAbruptElement(property.value)),
+          ) ||
+          (isPropertyAssignment(current) &&
+            current.computed &&
+            isWithin(node, current.value) &&
+            !isNonAbruptElement(current.key)))
+      );
+    }
+    default:
+      return false;
+  }
+}
+
+function isNonCallable(node: Node): boolean {
+  node = unwrapParens(node);
+  return (
+    isUndefined(node) ||
+    isLiteralExpression(node) ||
+    ((node.type === "ObjectExpression" || node.type === "ArrayExpression") &&
+      isNonAbruptElement(node)) ||
+    isKeywordLiteral(node)
+  );
+}
+
+function isImmediateField(field: Node): boolean {
+  const owner = field.parent?.parent;
+  if (owner?.type !== "ClassExpression" || hasHeritage(owner) || owner.decorators?.length)
     return false;
-  let expression: ts.Node = owner;
-  while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  let expression = owner;
+  while (expression.parent?.type === "ParenthesizedExpression") expression = expression.parent;
   const call = expression.parent;
   if (
-    !ts.isNewExpression(call) ||
-    call.expression !== expression ||
-    !(call.arguments ?? []).every(isNonAbruptElement)
+    call?.type !== "NewExpression" ||
+    call.callee !== expression ||
+    !call.arguments.every(isNonAbruptElement)
   )
     return false;
-  for (const member of owner.members) {
+  for (const member of owner.body.body) {
+    if (member.computed || member.type === "StaticBlock" || member.decorators?.length) return false;
     if (
-      (member.name && ts.isComputedPropertyName(member.name)) ||
-      ts.isClassStaticBlockDeclaration(member) ||
-      (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length)
-    )
-      return false;
-    if (
-      ts.isPropertyDeclaration(member) &&
+      isPropertyDeclaration(member) &&
       member !== field &&
-      member.initializer &&
-      (member.pos < field.pos ||
-        member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)) &&
-      !isNonAbruptElement(member.initializer)
+      member.value &&
+      (member.start < field.start || member.static) &&
+      !isNonAbruptElement(member.value)
     )
       return false;
   }
   return true;
 }
 
-function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
-  if (ts.isCallChain(node) || node.arguments.slice(1).some((arg) => !isNonAbruptElement(arg)))
-    return false;
-  let expression: ts.Node = node;
-  while (
-    ts.isParenthesizedExpression(expression.parent) ||
-    ts.isAsExpression(expression.parent) ||
-    ts.isSatisfiesExpression(expression.parent) ||
-    ts.isNonNullExpression(expression.parent) ||
-    ts.isTypeAssertionExpression(expression.parent) ||
-    (dynamic &&
-      ts.isBinaryExpression(expression.parent) &&
-      expression.parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
-      expression.parent.right === expression &&
-      isNonAbruptElement(expression.parent.left))
+function hasAbruptClassPrefix(member: Node, node: Node): boolean {
+  const owner = member.parent?.parent;
+  if (!isClass(owner)) return false;
+  const members = owner.body.body;
+  return (
+    (owner.superClass && !isValidClassHeritage(owner.superClass)) ||
+    (isPropertyDeclaration(member) &&
+      member.computed &&
+      member.value &&
+      isWithin(node, member.value) &&
+      !isNonAbruptElement(member.key)) ||
+    members
+      .slice(0, members.indexOf(member))
+      .some(
+        (previous: Node) =>
+          (previous.computed && !isNonAbruptElement(previous.key)) ||
+          (previous.type === "StaticBlock" && !previous.body.every(isNonAbruptStatement)) ||
+          (isPropertyDeclaration(previous) &&
+            previous.static &&
+            previous.value &&
+            !isNonAbruptElement(previous.value)),
+      )
+  );
+}
+
+function isUnconditional(node: Node, dynamic: boolean): boolean {
+  if (
+    isOptionalChain(node) ||
+    argumentsOf(node)
+      .slice(1)
+      .some((arg) => !isNonAbruptElement(arg))
   )
-    expression = expression.parent;
-  const awaitedCalls = new Set<ts.CallExpression>();
-  let awaitedImmediate = false;
-  if (dynamic && ts.isArrayLiteralExpression(expression.parent)) {
-    const elements = expression.parent.elements;
-    if (!elements.slice(0, elements.indexOf(expression as ts.Expression)).every(isNonAbruptElement))
+    return false;
+  let expression = node;
+  while (true) {
+    const parent = expression.parent;
+    if (wrapperTypes.has(parent?.type)) {
+      expression = parent;
+      continue;
+    }
+    // TypeScript nests comma expressions to the left, so only the last operand of a sequence
+    // with non-abrupt predecessors climbs out of it.
+    if (dynamic && parent?.type === "SequenceExpression") {
+      const index = parent.expressions.indexOf(expression);
+      if (
+        index === parent.expressions.length - 1 &&
+        parent.expressions.slice(0, index).every(isNonAbruptElement)
+      ) {
+        expression = parent;
+        continue;
+      }
       return false;
-    let array: ts.Node = expression.parent;
-    while (ts.isParenthesizedExpression(array.parent)) array = array.parent;
+    }
+    break;
+  }
+  const awaitedCalls = new Set<Node>();
+  let awaitedImmediate = false;
+  if (dynamic && expression.parent?.type === "ArrayExpression") {
+    const elements = expression.parent.elements;
+    if (!elements.slice(0, elements.indexOf(expression)).every(isNonAbruptElement)) return false;
+    let array = expression.parent;
+    while (array.parent?.type === "ParenthesizedExpression") array = array.parent;
     const call = array.parent;
     if (
-      ts.isCallExpression(call) &&
-      !ts.isCallChain(call) &&
+      call?.type === "CallExpression" &&
+      !isOptionalChain(call) &&
       call.arguments.length === 1 &&
       call.arguments[0] === array &&
-      ts.isPropertyAccessExpression(call.expression) &&
-      ts.isIdentifier(call.expression.expression) &&
-      call.expression.expression.text === "Promise" &&
-      call.expression.name.text === "all" &&
+      isPromiseAll(call.callee) &&
       !shadowsName(call, "Promise")
     ) {
       awaitedCalls.add(call);
       expression = call;
-      while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+      while (expression.parent?.type === "ParenthesizedExpression") expression = expression.parent;
     }
   }
-  while (dynamic && ts.isPropertyAccessExpression(expression.parent)) {
+  while (dynamic && accessName(expression.parent) !== undefined) {
     const member = expression.parent;
     const call = member.parent;
+    const name = accessName(member)!;
     if (
-      member.expression !== expression ||
-      !["then", "finally", "catch"].includes(member.name.text) ||
-      !ts.isCallExpression(call) ||
-      ts.isCallChain(call) ||
-      call.expression !== member ||
-      (member.name.text === "then"
+      member.object !== expression ||
+      !["then", "finally", "catch"].includes(name) ||
+      call?.type !== "CallExpression" ||
+      isOptionalChain(call) ||
+      call.callee !== member ||
+      (name === "then"
         ? call.arguments.length > 2 || (call.arguments[1] && !isNonCallable(call.arguments[1]))
         : call.arguments.length > 1 ||
-          (member.name.text === "catch" &&
+          (name === "catch" &&
             call.arguments[0] &&
             !isNonCallable(call.arguments[0]) &&
             !(
-              (ts.isArrowFunction(call.arguments[0]) ||
-                ts.isFunctionExpression(call.arguments[0])) &&
-              ts.isBlock(call.arguments[0].body) &&
+              (call.arguments[0].type === "ArrowFunctionExpression" ||
+                isFunctionExpression(call.arguments[0])) &&
+              call.arguments[0].body.type === "BlockStatement" &&
               isRethrowingCatch(call.arguments[0].body)
             ))) ||
       !call.arguments.every(isNonAbruptElement)
@@ -1194,33 +1570,34 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
       break;
     awaitedCalls.add(call);
     expression = call;
-    while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+    while (expression.parent?.type === "ParenthesizedExpression") expression = expression.parent;
   }
-  if (dynamic && !ts.isAwaitExpression(expression.parent)) {
-    let returned: ts.Node = expression;
-    if (ts.isReturnStatement(returned.parent)) returned = returned.parent;
+  if (dynamic && expression.parent?.type !== "AwaitExpression") {
+    let returned = expression;
+    if (returned.parent?.type === "ReturnStatement") returned = returned.parent;
     const body = returned.parent;
-    const immediate = ts.isBlock(body) ? body.parent : body;
+    const immediate = body?.type === "BlockStatement" ? body.parent : body;
     if (
-      !(ts.isFunctionExpression(immediate) || ts.isArrowFunction(immediate)) ||
+      !(isFunctionExpression(immediate) || immediate?.type === "ArrowFunctionExpression") ||
       !isImmediateInvocation(immediate, node, true)
     )
       return false;
-    let callee: ts.Node = immediate;
-    while (ts.isParenthesizedExpression(callee.parent)) callee = callee.parent;
+    let callee = immediate;
+    while (callee.parent?.type === "ParenthesizedExpression") callee = callee.parent;
     const invocation = callee.parent;
-    if (!ts.isCallExpression(invocation) || !ts.isAwaitExpression(invocation.parent)) return false;
+    if (invocation?.type !== "CallExpression" || invocation.parent?.type !== "AwaitExpression")
+      return false;
     awaitedCalls.add(invocation);
     awaitedImmediate = true;
   }
   if (dynamic) {
     for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
-      if (!ts.isArrowFunction(ancestor) && !ts.isFunctionExpression(ancestor)) continue;
+      if (ancestor.type !== "ArrowFunctionExpression" && !isFunctionExpression(ancestor)) continue;
       if (!isImmediateInvocation(ancestor, node, true)) break;
-      let callee: ts.Node = ancestor;
-      while (ts.isParenthesizedExpression(callee.parent)) callee = callee.parent;
+      let callee = ancestor;
+      while (callee.parent?.type === "ParenthesizedExpression") callee = callee.parent;
       const invocation = callee.parent;
-      if (ts.isCallExpression(invocation) && ts.isAwaitExpression(invocation.parent)) {
+      if (invocation?.type === "CallExpression" && invocation.parent?.type === "AwaitExpression") {
         awaitedCalls.add(invocation);
         awaitedImmediate = true;
       }
@@ -1229,389 +1606,351 @@ function isUnconditional(node: ts.CallExpression, dynamic: boolean): boolean {
   for (let parent = node.parent; parent; parent = parent.parent) {
     if (hasAbruptPredecessor(node, parent)) return false;
     if (
-      (ts.isFunctionLike(parent) &&
+      (isFunctionLike(parent) &&
         !isDecoratorExpression(node, parent) &&
-        !(parent.name && isWithin(node, parent.name)) &&
         !isImmediateInvocation(parent, node, dynamic)) ||
-      (ts.isPropertyDeclaration(parent) &&
+      (isPropertyDeclaration(parent) &&
         !isDecoratorExpression(node, parent) &&
-        !(parent.name && isWithin(node, parent.name)) &&
-        !parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) &&
+        !isWithin(node, parent.key) &&
+        !parent.static &&
         !isImmediateField(parent)) ||
-      ((ts.isPropertyDeclaration(parent) || ts.isClassStaticBlockDeclaration(parent)) &&
-        ts.isClassLike(parent.parent) &&
-        (parent.parent.heritageClauses?.some(
-          (clause) =>
-            clause.token === ts.SyntaxKind.ExtendsKeyword &&
-            clause.types.some((type) => !isValidClassHeritage(type.expression)),
-        ) ||
-          (ts.isPropertyDeclaration(parent) &&
-            parent.name &&
-            ts.isComputedPropertyName(parent.name) &&
-            parent.initializer &&
-            isWithin(node, parent.initializer) &&
-            !isNonAbruptElement(parent.name.expression)) ||
-          parent.parent.members
-            .slice(0, parent.parent.members.indexOf(parent))
-            .some(
-              (member) =>
-                (member.name &&
-                  ts.isComputedPropertyName(member.name) &&
-                  !isNonAbruptElement(member.name.expression)) ||
-                (ts.isClassStaticBlockDeclaration(member) &&
-                  !member.body.statements.every(isNonAbruptStatement)) ||
-                (ts.isPropertyDeclaration(member) &&
-                  member.modifiers?.some(
-                    (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
-                  ) &&
-                  member.initializer &&
-                  !isNonAbruptElement(member.initializer)),
-            ))) ||
-      (ts.isIfStatement(parent) && !isWithin(node, parent.expression)) ||
-      (ts.isConditionalExpression(parent) && !isWithin(node, parent.condition)) ||
-      (ts.isSwitchStatement(parent) && !isWithin(node, parent.expression)) ||
-      (ts.isWhileStatement(parent) && !isWithin(node, parent.expression)) ||
-      (ts.isDoStatement(parent) &&
-        !isWithin(node, parent.statement) &&
-        hasAbruptCompletion(parent.statement)) ||
-      (ts.isForStatement(parent) &&
-        !(parent.initializer && isWithin(node, parent.initializer)) &&
-        !(parent.condition && isWithin(node, parent.condition))) ||
-      ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) &&
-        !isWithin(node, parent.expression)) ||
-      (ts.isTryStatement(parent) &&
-        ((parent.catchClause &&
-          (isWithin(node, parent.catchClause) ||
-            (isWithin(node, parent.tryBlock) &&
-              (!isRethrowingCatch(parent.catchClause.block) ||
-                parent.tryBlock.statements
+      ((isPropertyDeclaration(parent) || parent.type === "StaticBlock") &&
+        hasAbruptClassPrefix(parent, node)) ||
+      (parent.type === "IfStatement" && !isWithin(node, parent.test)) ||
+      (parent.type === "ConditionalExpression" && !isWithin(node, parent.test)) ||
+      (parent.type === "SwitchStatement" && !isWithin(node, parent.discriminant)) ||
+      (parent.type === "WhileStatement" && !isWithin(node, parent.test)) ||
+      (parent.type === "DoWhileStatement" &&
+        !isWithin(node, parent.body) &&
+        hasAbruptCompletion(parent.body)) ||
+      (parent.type === "ForStatement" &&
+        !isWithin(node, parent.init) &&
+        !isWithin(node, parent.test)) ||
+      ((parent.type === "ForInStatement" || parent.type === "ForOfStatement") &&
+        !isWithin(node, parent.right)) ||
+      (parent.type === "TryStatement" &&
+        ((parent.handler &&
+          (isWithin(node, parent.handler) ||
+            (isWithin(node, parent.block) &&
+              (!isRethrowingCatch(parent.handler.body) ||
+                parent.block.body
                   .slice(
                     0,
-                    parent.tryBlock.statements.findIndex((statement) => isWithin(node, statement)),
+                    parent.block.body.findIndex((statement: Node) => isWithin(node, statement)),
                   )
-                  .some((statement) => !isNonAbruptStatement(statement)))))) ||
-          (parent.finallyBlock &&
-            !isWithin(node, parent.finallyBlock) &&
-            hasAbruptCompletion(parent.finallyBlock, false)))) ||
-      (ts.isBinaryExpression(parent) &&
-        [
-          ts.SyntaxKind.AmpersandAmpersandToken,
-          ts.SyntaxKind.BarBarToken,
-          ts.SyntaxKind.QuestionQuestionToken,
-          ts.SyntaxKind.AmpersandAmpersandEqualsToken,
-          ts.SyntaxKind.BarBarEqualsToken,
-          ts.SyntaxKind.QuestionQuestionEqualsToken,
-        ].includes(parent.operatorToken.kind) &&
+                  .some((statement: Node) => !isNonAbruptStatement(statement)))))) ||
+          (parent.finalizer &&
+            !isWithin(node, parent.finalizer) &&
+            hasAbruptCompletion(parent.finalizer, false)))) ||
+      ((parent.type === "LogicalExpression" ||
+        (parent.type === "AssignmentExpression" &&
+          ["&&=", "||=", "??="].includes(parent.operator))) &&
         isWithin(node, parent.right)) ||
-      ((ts.isCallChain(parent) || ts.isElementAccessChain(parent)) &&
-        !isWithin(node, parent.expression))
+      (isOptionalChain(parent) &&
+        (parent.type === "CallExpression" || parent.computed) &&
+        !isWithin(node, parent.type === "CallExpression" ? parent.callee : parent.object))
     )
       return false;
-    if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
-      const index = parent.statements.findIndex((statement) => isWithin(node, statement));
+    if (
+      parent.type === "BlockStatement" ||
+      parent.type === "Program" ||
+      parent.type === "StaticBlock"
+    ) {
+      const statements = parent.body;
+      const index = statements.findIndex((statement: Node) => isWithin(node, statement));
       if (
         awaitedImmediate &&
-        ts.isBlock(parent) &&
-        ts.isFunctionLike(parent.parent) &&
-        parent.statements.slice(0, index).some((statement) => !isNonAbruptStatement(statement))
+        parent.type === "BlockStatement" &&
+        isFunctionLike(parent.parent) &&
+        statements.slice(0, index).some((statement: Node) => !isNonAbruptStatement(statement))
       )
         return false;
       if (
-        parent.statements
+        statements
           .slice(0, index)
           .some(
-            (statement) => isDefinitelyAbrupt(statement) || hasAbruptCompletion(statement, false),
+            (statement: Node) =>
+              isDefinitelyAbrupt(statement) || hasAbruptCompletion(statement, false),
           )
       )
         return false;
     }
-    if (dynamic && ts.isCallExpression(parent) && !awaitedCalls.has(parent)) return false;
+    if (
+      dynamic &&
+      (parent.type === "CallExpression" || parent.type === "ImportExpression") &&
+      !awaitedCalls.has(parent)
+    )
+      return false;
   }
   return true;
 }
 
-function isDefinitelyAbrupt(statement: ts.Statement): boolean {
-  if (ts.isExpressionStatement(statement)) {
-    let expression = statement.expression;
-    while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
-    if (ts.isPropertyAccessExpression(expression) && !expression.questionDotToken) {
-      let base: ts.Expression = expression.expression;
-      while (ts.isParenthesizedExpression(base)) base = base.expression;
-      if (base.kind === ts.SyntaxKind.NullKeyword) return true;
+function isDefinitelyAbrupt(statement: Node): boolean {
+  switch (statement.type) {
+    case "ExpressionStatement": {
+      const expression = unwrapParens(statement.expression);
+      return (
+        expression.type === "MemberExpression" &&
+        !expression.computed &&
+        !expression.optional &&
+        isNullLiteral(unwrapParens(expression.object))
+      );
     }
+    case "WhileStatement":
+    case "DoWhileStatement":
+    case "ForStatement": {
+      const condition = unwrapParens(statement.test);
+      return (
+        (!condition || isBooleanLiteral(condition, true)) && !hasAbruptCompletion(statement.body)
+      );
+    }
+    case "ReturnStatement":
+    case "ThrowStatement":
+    case "BreakStatement":
+    case "ContinueStatement":
+      return true;
+    case "TryStatement":
+      return Boolean(statement.finalizer) && isDefinitelyAbrupt(statement.finalizer);
+    case "BlockStatement":
+      return statement.body.some(isDefinitelyAbrupt);
+    case "IfStatement":
+      return (
+        Boolean(statement.alternate) &&
+        isDefinitelyAbrupt(statement.consequent) &&
+        isDefinitelyAbrupt(statement.alternate)
+      );
+    default:
+      return false;
   }
-  if (
-    ts.isWhileStatement(statement) ||
-    ts.isDoStatement(statement) ||
-    ts.isForStatement(statement)
-  ) {
-    let condition = ts.isForStatement(statement) ? statement.condition : statement.expression;
-    while (condition && ts.isParenthesizedExpression(condition)) condition = condition.expression;
-    return (
-      (!condition || condition.kind === ts.SyntaxKind.TrueKeyword) &&
-      !hasAbruptCompletion(statement.statement)
-    );
-  }
-  if (
-    ts.isReturnStatement(statement) ||
-    ts.isThrowStatement(statement) ||
-    ts.isBreakStatement(statement) ||
-    ts.isContinueStatement(statement)
-  )
-    return true;
-  if (
-    ts.isTryStatement(statement) &&
-    statement.finallyBlock &&
-    isDefinitelyAbrupt(statement.finallyBlock)
-  )
-    return true;
-  if (ts.isBlock(statement)) return statement.statements.some(isDefinitelyAbrupt);
-  if (ts.isIfStatement(statement))
-    return (
-      !!statement.elseStatement &&
-      isDefinitelyAbrupt(statement.thenStatement) &&
-      isDefinitelyAbrupt(statement.elseStatement)
-    );
-  return false;
 }
 
-function isRethrowingCatch(block: ts.Block): boolean {
-  const last = block.statements.at(-1);
+function isRethrowingCatch(block: Node): boolean {
+  const statements = block.body;
+  const last = statements.at(-1);
   return (
     !!last &&
-    block.statements.slice(0, -1).every(isNonAbruptStatement) &&
-    (ts.isThrowStatement(last) ||
-      (ts.isBlock(last) && isRethrowingCatch(last)) ||
-      (ts.isIfStatement(last) &&
-        !!last.elseStatement &&
-        ts.isBlock(last.thenStatement) &&
-        ts.isBlock(last.elseStatement) &&
-        isRethrowingCatch(last.thenStatement) &&
-        isRethrowingCatch(last.elseStatement)))
+    statements.slice(0, -1).every(isNonAbruptStatement) &&
+    (last.type === "ThrowStatement" ||
+      (last.type === "BlockStatement" && isRethrowingCatch(last)) ||
+      (last.type === "IfStatement" &&
+        !!last.alternate &&
+        last.consequent.type === "BlockStatement" &&
+        last.alternate.type === "BlockStatement" &&
+        isRethrowingCatch(last.consequent) &&
+        isRethrowingCatch(last.alternate)))
   );
 }
 
-function literalTruthiness(node: ts.Expression): boolean | undefined {
-  if (ts.isParenthesizedExpression(node)) return literalTruthiness(node.expression);
-  if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
-  if (node.kind === ts.SyntaxKind.FalseKeyword || node.kind === ts.SyntaxKind.NullKeyword)
-    return false;
-  if (ts.isStringLiteralLike(node)) return Boolean(node.text);
-  if (ts.isNumericLiteral(node)) return Boolean(Number(node.text));
-  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
-    const value = literalTruthiness(node.operand);
+function literalTruthiness(node: Node): boolean | undefined {
+  node = unwrapParens(node);
+  if (isBooleanLiteral(node, true)) return true;
+  if (isBooleanLiteral(node, false) || isNullLiteral(node)) return false;
+  const text = stringLiteralText(node);
+  if (text !== undefined) return Boolean(text);
+  if (isNumericLiteral(node)) return Boolean(node.value);
+  if (node.type === "UnaryExpression" && node.operator === "!") {
+    const value = literalTruthiness(node.argument);
     return value === undefined ? undefined : !value;
   }
   return undefined;
 }
 
-function hasAbruptCompletion(statement: ts.Statement, includeThrow = true): boolean {
+const iterationTypes = new Set([
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
+  "DoWhileStatement",
+  "WhileStatement",
+]);
+
+function hasAbruptCompletion(statement: Node, includeThrow = true): boolean {
   let abrupt = false;
-  function visit(node: ts.Node) {
-    if (ts.isFunctionLike(node)) return;
-    if (ts.isIfStatement(node)) {
-      visit(node.expression);
-      const condition = literalTruthiness(node.expression);
-      if (condition !== false) visit(node.thenStatement);
-      if (condition !== true && node.elseStatement) visit(node.elseStatement);
+  function visit(node: Node) {
+    if (abrupt || isFunctionLike(node)) return;
+    if (node.type === "IfStatement") {
+      visit(node.test);
+      const condition = literalTruthiness(node.test);
+      if (condition !== false) visit(node.consequent);
+      if (condition !== true && node.alternate) visit(node.alternate);
       return;
     }
     if (
-      (ts.isWhileStatement(node) && literalTruthiness(node.expression) === false) ||
-      (ts.isForStatement(node) && node.condition && literalTruthiness(node.condition) === false)
+      (node.type === "WhileStatement" && literalTruthiness(node.test) === false) ||
+      (node.type === "ForStatement" && node.test && literalTruthiness(node.test) === false)
     )
       return;
-    if (ts.isTryStatement(node) && node.finallyBlock && isDefinitelyAbrupt(node.finallyBlock)) {
-      visit(node.finallyBlock);
+    if (node.type === "TryStatement" && node.finalizer && isDefinitelyAbrupt(node.finalizer)) {
+      visit(node.finalizer);
       return;
     }
-    if (ts.isReturnStatement(node) || (includeThrow && ts.isThrowStatement(node))) abrupt = true;
-    if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) {
+    if (node.type === "ReturnStatement" || (includeThrow && node.type === "ThrowStatement"))
+      abrupt = true;
+    if (node.type === "BreakStatement" || node.type === "ContinueStatement") {
       let target = node.parent;
       while (target) {
         if (
           node.label
-            ? ts.isLabeledStatement(target) && target.label.text === node.label.text
-            : ts.isIterationStatement(target, false) ||
-              (ts.isBreakStatement(node) && ts.isSwitchStatement(target))
+            ? target.type === "LabeledStatement" && target.label.name === node.label.name
+            : iterationTypes.has(target.type) ||
+              (node.type === "BreakStatement" && target.type === "SwitchStatement")
         )
           break;
         target = target.parent;
       }
       if (target && !isWithin(target, statement)) {
-        const loop = ts.isLabeledStatement(target) ? target.statement : target;
-        if (ts.isBreakStatement(node) || loop !== statement.parent) abrupt = true;
+        const loop = target.type === "LabeledStatement" ? target.body : target;
+        if (node.type === "BreakStatement" || loop !== statement.parent) abrupt = true;
       }
     }
-    ts.forEachChild(node, visit);
+    for (const child of childNodes(node)) visit(child);
   }
   visit(statement);
   return abrupt;
 }
 
-function isImmediateInvocation(
-  node: ts.SignatureDeclaration,
-  load: ts.Node,
-  allowAwaitedAsync = false,
-): boolean {
+interface BindingParts {
+  name: Node;
+  initializer?: Node;
+}
+
+function bindingParts(node: Node): BindingParts {
+  if (node.type === "TSParameterProperty") return bindingParts(node.parameter);
+  if (node.type === "AssignmentPattern") return { name: node.left, initializer: node.right };
+  if (node.type === "RestElement") return { name: node.argument };
+  return { name: node };
+}
+
+function isImmediateInvocation(node: Node, load: Node, allowAwaitedAsync = false): boolean {
+  const constructor = isConstructor(node);
   if (
-    !(
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isConstructorDeclaration(node)
-    ) ||
-    node.asteriskToken
+    !(isFunctionExpression(node) || node.type === "ArrowFunctionExpression" || constructor) ||
+    node.generator
   )
     return false;
-  let expression: ts.Node = ts.isConstructorDeclaration(node) ? node.parent : node;
-  if (ts.isConstructorDeclaration(node) && !ts.isClassExpression(expression)) return false;
-  while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+  let expression = constructor ? node.parent.parent?.parent : node;
+  if (constructor && expression?.type !== "ClassExpression") return false;
+  while (expression.parent?.type === "ParenthesizedExpression") expression = expression.parent;
   let method: string | undefined;
-  if (
-    ts.isPropertyAccessExpression(expression.parent) &&
-    expression.parent.expression === expression &&
-    ["call", "apply"].includes(expression.parent.name.text)
-  ) {
-    method = expression.parent.name.text;
+  const name = accessName(expression.parent);
+  if (expression.parent?.object === expression && (name === "call" || name === "apply")) {
+    method = name;
     expression = expression.parent;
-    while (ts.isParenthesizedExpression(expression.parent)) expression = expression.parent;
+    while (expression.parent?.type === "ParenthesizedExpression") expression = expression.parent;
   }
   const call = expression.parent;
   if (
-    node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
-    !(allowAwaitedAsync && ts.isCallExpression(call) && ts.isAwaitExpression(call.parent))
+    node.async &&
+    !(
+      allowAwaitedAsync &&
+      call?.type === "CallExpression" &&
+      call.parent?.type === "AwaitExpression"
+    )
   )
     return false;
   if (
-    !(ts.isCallExpression(call) || ts.isNewExpression(call)) ||
-    ts.isCallChain(call) ||
-    call.expression !== expression ||
-    (ts.isConstructorDeclaration(node) && !ts.isNewExpression(call)) ||
-    (ts.isNewExpression(call) && (method || ts.isArrowFunction(node)))
+    !(call?.type === "CallExpression" || call?.type === "NewExpression") ||
+    isOptionalChain(call) ||
+    call.callee !== expression ||
+    (constructor && call.type !== "NewExpression") ||
+    (call.type === "NewExpression" && (method || node.type === "ArrowFunctionExpression"))
   )
     return false;
-  if (!(call.arguments ?? []).every(isNonAbruptElement)) return false;
-  if (ts.isNewExpression(call)) {
-    if (ts.isConstructorDeclaration(node)) {
-      const owner = node.parent;
-      if (
-        owner.heritageClauses?.length ||
-        owner.modifiers?.length ||
-        owner.members.some(
-          (member) =>
-            (member.name && ts.isComputedPropertyName(member.name)) ||
-            ts.isClassStaticBlockDeclaration(member) ||
-            (ts.isPropertyDeclaration(member) &&
-              member.initializer &&
-              !isNonAbruptElement(member.initializer)) ||
-            (ts.canHaveDecorators(member) && ts.getDecorators(member)?.length),
-        )
-      )
-        return false;
-    }
-  }
-  const index = node.parameters.findIndex((parameter) => isWithin(load, parameter));
-  if (call.arguments?.some(ts.isSpreadElement)) return false;
-  let args: readonly ts.Expression[] = call.arguments ?? [];
-  if (method === "call") args = args.slice(1);
-  if (method === "apply") {
-    let list = args[1];
-    while (list && ts.isParenthesizedExpression(list)) list = list.expression;
-    if (!list || isUndefined(list) || list.kind === ts.SyntaxKind.NullKeyword) args = [];
-    else if (ts.isArrayLiteralExpression(list) && !list.elements.some(ts.isSpreadElement))
-      args = list.elements;
-    else return false;
-  }
-  for (const [offset, parameter] of node.parameters.entries()) {
-    if (offset === index) break;
-    if (!ts.isIdentifier(parameter.name)) return false;
+  if (!call.arguments.every(isNonAbruptElement)) return false;
+  if (call.type === "NewExpression" && constructor) {
+    const owner = node.parent.parent.parent;
     if (
-      isUndefined(args[offset]) &&
-      parameter.initializer &&
-      !isNonAbruptElement(parameter.initializer)
+      hasHeritage(owner) ||
+      owner.decorators?.length ||
+      owner.body.body.some(
+        (member: Node) =>
+          member.computed ||
+          member.type === "StaticBlock" ||
+          (isPropertyDeclaration(member) && member.value && !isNonAbruptElement(member.value)) ||
+          member.decorators?.length,
+      )
     )
       return false;
   }
+  const params: Node[] = node.params;
+  const index = params.findIndex((parameter) => isWithin(load, parameter));
+  if (call.arguments.some((arg: Node) => arg.type === "SpreadElement")) return false;
+  let args: Node[] = call.arguments;
+  if (method === "call") args = args.slice(1);
+  if (method === "apply") {
+    const list = unwrapParens(args[1]);
+    if (!list || isUndefined(list) || isNullLiteral(list)) args = [];
+    else if (
+      list.type === "ArrayExpression" &&
+      !list.elements.some((element: Node) => element?.type === "SpreadElement")
+    )
+      args = list.elements;
+    else return false;
+  }
+  for (const [offset, parameter] of params.entries()) {
+    if (offset === index) break;
+    const { name, initializer } = bindingParts(parameter);
+    if (name.type !== "Identifier") return false;
+    if (isUndefined(args[offset]) && initializer && !isNonAbruptElement(initializer)) return false;
+  }
   if (node.body && isWithin(load, node.body)) return true;
   if (index < 0) return false;
-  const parameter = node.parameters[index]!;
-  const value = args[index];
-  return bindingDefaultExecutes(
-    parameter,
-    value && !ts.isOmittedExpression(value) ? value : undefined,
-    load,
-  );
+  return bindingDefaultExecutes(bindingParts(params[index]), args[index] ?? undefined, load);
 }
 
-function isUndefined(value: ts.Expression | undefined): boolean {
-  if (!value || ts.isOmittedExpression(value)) return true;
-  while (ts.isParenthesizedExpression(value)) value = value.expression;
+function isUndefined(value: Node): boolean {
+  if (!value) return true;
+  value = unwrapParens(value);
   return (
-    (ts.isVoidExpression(value) && ts.isNumericLiteral(value.expression)) ||
-    (ts.isIdentifier(value) && value.text === "undefined" && !shadowsName(value, "undefined"))
+    (value.type === "UnaryExpression" &&
+      value.operator === "void" &&
+      isNumericLiteral(value.argument)) ||
+    (isIdentifier(value, "undefined") && !shadowsName(value, "undefined"))
   );
 }
 
-function literalPropertyName(name: ts.Node): string | undefined {
-  if (ts.isComputedPropertyName(name)) {
-    name = name.expression;
-    while (ts.isParenthesizedExpression(name)) name = name.expression;
-    if (!ts.isStringLiteral(name) && !ts.isNumericLiteral(name)) return undefined;
-  }
-  return ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)
-    ? name.text
+function literalPropertyName(key: Node, computed: boolean): string | undefined {
+  if (computed) key = unwrapParens(key);
+  else if (key.type === "Identifier") return key.name;
+  return key.type === "Literal" && (typeof key.value === "string" || typeof key.value === "number")
+    ? String(key.value)
     : undefined;
 }
 
-function bindingDefaultExecutes(
-  binding: ts.ParameterDeclaration | ts.BindingElement,
-  value: ts.Expression | undefined,
-  load: ts.Node,
-): boolean {
+function bindingDefaultExecutes(binding: BindingParts, value: Node, load: Node): boolean {
   if (isUndefined(value) && binding.initializer) {
     if (isWithin(load, binding.initializer)) return true;
     value = binding.initializer;
   }
-  if (!value || ts.isIdentifier(binding.name)) return false;
-  while (ts.isParenthesizedExpression(value)) value = value.expression;
-  if (ts.isObjectBindingPattern(binding.name) && ts.isObjectLiteralExpression(value)) {
+  if (!value || binding.name.type === "Identifier") return false;
+  value = unwrapParens(value);
+  if (binding.name.type === "ObjectPattern" && value.type === "ObjectExpression") {
     if (
       value.properties.some(
-        (property) =>
-          !ts.isPropertyAssignment(property) ||
-          literalPropertyName(property.name) === undefined ||
-          (!ts.isComputedPropertyName(property.name) &&
-            literalPropertyName(property.name) === "__proto__"),
+        (property: Node) =>
+          !isPropertyAssignment(property) ||
+          literalPropertyName(property.key, property.computed) === undefined ||
+          (!property.computed && literalPropertyName(property.key, false) === "__proto__"),
       )
     )
       return false;
-    for (const element of binding.name.elements) {
-      if (element.dotDotDotToken || !isWithin(load, element)) continue;
-      const name = literalPropertyName(element.propertyName ?? element.name);
+    for (const element of binding.name.properties) {
+      if (element.type === "RestElement" || !isWithin(load, element)) continue;
+      const name = literalPropertyName(element.key, element.computed);
       if (name === undefined) return false;
-      const property = [...value.properties]
-        .reverse()
-        .find(
-          (property) =>
-            ts.isPropertyAssignment(property) && literalPropertyName(property.name) === name,
-        );
+      const property = value.properties.findLast(
+        (item: Node) => literalPropertyName(item.key, item.computed) === name,
+      );
       if (!property && Object.hasOwn(Object.prototype, name)) return false;
-      return bindingDefaultExecutes(
-        element,
-        property && ts.isPropertyAssignment(property) ? property.initializer : undefined,
-        load,
-      );
+      return bindingDefaultExecutes(bindingParts(element.value), property?.value, load);
     }
   }
-  if (ts.isArrayBindingPattern(binding.name) && ts.isArrayLiteralExpression(value)) {
-    if (value.elements.some(ts.isSpreadElement)) return false;
+  if (binding.name.type === "ArrayPattern" && value.type === "ArrayExpression") {
+    if (value.elements.some((element: Node) => element?.type === "SpreadElement")) return false;
     for (const [index, element] of binding.name.elements.entries()) {
-      if (!ts.isBindingElement(element) || element.dotDotDotToken || !isWithin(load, element))
-        continue;
-      const item = value.elements[index];
+      if (!element || element.type === "RestElement" || !isWithin(load, element)) continue;
       return bindingDefaultExecutes(
-        element,
-        item && !ts.isOmittedExpression(item) ? item : undefined,
+        bindingParts(element),
+        value.elements[index] ?? undefined,
         load,
       );
     }
@@ -1619,110 +1958,105 @@ function bindingDefaultExecutes(
   return false;
 }
 
-function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
-  for (let current: ts.Node | undefined = node; current; current = current.parent)
-    if (current === ancestor) return true;
-  return false;
+function binds(pattern: Node, identifier: string): boolean {
+  switch (pattern?.type) {
+    case "Identifier":
+      return pattern.name === identifier;
+    case "AssignmentPattern":
+      return binds(pattern.left, identifier);
+    case "RestElement":
+      return binds(pattern.argument, identifier);
+    case "TSParameterProperty":
+      return binds(pattern.parameter, identifier);
+    case "ObjectPattern":
+      return pattern.properties.some((property: Node) =>
+        binds(property.type === "Property" ? property.value : property, identifier),
+      );
+    case "ArrayPattern":
+      return pattern.elements.some((element: Node) => binds(element, identifier));
+    default:
+      return false;
+  }
 }
 
-function shadowsRequire(node: ts.Node): boolean {
-  return shadowsName(node, "require");
-}
-
-function bindingContains(declaration: ts.VariableDeclaration, node: ts.Node): boolean {
-  const blockScoped =
-    !ts.isVariableDeclarationList(declaration.parent) ||
-    Boolean(declaration.parent.flags & ts.NodeFlags.BlockScoped);
-  for (let scope: ts.Node | undefined = declaration.parent; scope; scope = scope.parent) {
+function bindingContains(declarator: Node, node: Node): boolean {
+  const blockScoped = declarator.parent?.kind !== "var";
+  for (let scope = declarator.parent; scope; scope = scope.parent) {
     if (
-      ts.isSourceFile(scope) ||
-      ts.isModuleBlock(scope) ||
-      ts.isFunctionLike(scope) ||
+      scope.type === "Program" ||
+      scope.type === "TSModuleBlock" ||
+      isFunctionLike(scope) ||
       (blockScoped &&
-        (ts.isBlock(scope) ||
-          ts.isCatchClause(scope) ||
-          ts.isForStatement(scope) ||
-          ts.isForInStatement(scope) ||
-          ts.isForOfStatement(scope) ||
-          ts.isCaseBlock(scope)))
+        [
+          "BlockStatement",
+          "StaticBlock",
+          "CatchClause",
+          "ForStatement",
+          "ForInStatement",
+          "ForOfStatement",
+        ].includes(scope.type))
     )
       return isWithin(node, scope);
+    // TypeScript scopes switch declarations to the case block, which excludes the discriminant.
+    if (blockScoped && scope.type === "SwitchStatement")
+      return scope.cases.some((item: Node) => isWithin(node, item));
   }
   return false;
 }
 
-function shadowsName(node: ts.Node, identifier: string): boolean {
-  function binds(name: ts.BindingName): boolean {
-    return ts.isIdentifier(name)
-      ? name.text === identifier
-      : name.elements.some((element) => ts.isBindingElement(element) && binds(element.name));
-  }
+function shadowsName(node: Node, identifier: string): boolean {
   for (let scope = node.parent; scope; scope = scope.parent) {
     if (
-      (ts.isFunctionExpression(scope) || ts.isClassExpression(scope)) &&
-      scope.name?.text === identifier
+      (isFunctionExpression(scope) || scope.type === "ClassExpression") &&
+      scope.id?.name === identifier
     )
       return true;
-    if (ts.isFunctionLike(scope) && scope.parameters.some((param) => binds(param.name)))
+    if (isFunctionLike(scope) && scope.params?.some((param: Node) => binds(param, identifier)))
       return true;
+    if (scope.type === "CatchClause" && binds(scope.param, identifier)) return true;
     if (
-      ts.isCatchClause(scope) &&
-      scope.variableDeclaration &&
-      binds(scope.variableDeclaration.name)
+      scope.type !== "Program" &&
+      scope.type !== "BlockStatement" &&
+      scope.type !== "TSModuleBlock" &&
+      scope.type !== "StaticBlock"
     )
-      return true;
-    if (!ts.isSourceFile(scope) && !ts.isBlock(scope) && !ts.isModuleBlock(scope)) continue;
+      continue;
     let found = false;
-    function search(child: ts.Node) {
+    const program = scope.type === "Program";
+    walk(scope, (child) => {
+      if (found) return false;
+      if (child === scope) return;
       if (
-        (ts.isVariableDeclaration(child) &&
-          binds(child.name) &&
+        (child.type === "VariableDeclarator" &&
+          binds(child.id, identifier) &&
           bindingContains(child, node) &&
           !(
             (identifier === "require" || identifier === "module") &&
-            ts.isSourceFile(scope) &&
-            !child.initializer &&
-            ts.isVariableDeclarationList(child.parent) &&
-            !(child.parent.flags & ts.NodeFlags.BlockScoped)
+            program &&
+            !child.init &&
+            child.parent.kind === "var"
           ) &&
-          !(
-            ts.isVariableDeclarationList(child.parent) &&
-            ts.isVariableStatement(child.parent.parent) &&
-            child.parent.parent.modifiers?.some(
-              (modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword,
-            )
-          )) ||
-        ((ts.isFunctionDeclaration(child) || ts.isClassDeclaration(child)) &&
-          !child.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) &&
-          child.name?.text === identifier &&
+          !child.parent.declare) ||
+        ((child.type === "FunctionDeclaration" ||
+          child.type === "TSDeclareFunction" ||
+          child.type === "ClassDeclaration") &&
+          !child.declare &&
+          child.id?.name === identifier &&
           isWithin(node, child.parent)) ||
-        (ts.isImportClause(child) && !child.isTypeOnly && child.name?.text === identifier) ||
-        ((ts.isImportSpecifier(child) ||
-          ts.isNamespaceImport(child) ||
-          ts.isImportEqualsDeclaration(child)) &&
-          !(ts.isImportSpecifier(child) && child.isTypeOnly) &&
-          !(ts.isImportEqualsDeclaration(child) && child.isTypeOnly) &&
-          !(
-            ts.isNamespaceImport(child) &&
-            ts.isImportClause(child.parent) &&
-            child.parent.isTypeOnly
-          ) &&
-          !(
-            ts.isImportSpecifier(child) &&
-            ts.isImportClause(child.parent.parent) &&
-            child.parent.parent.isTypeOnly
-          ) &&
-          child.name.text === identifier)
+        ((child.type === "ImportDefaultSpecifier" || child.type === "ImportNamespaceSpecifier") &&
+          child.parent.importKind !== "type" &&
+          child.local.name === identifier) ||
+        (child.type === "ImportSpecifier" &&
+          child.importKind !== "type" &&
+          child.parent.importKind !== "type" &&
+          child.local.name === identifier) ||
+        (child.type === "TSImportEqualsDeclaration" &&
+          child.importKind !== "type" &&
+          child.id.name === identifier)
       )
         found = true;
-      if (
-        child !== scope &&
-        (ts.isModuleBlock(child) || ts.isFunctionLike(child) || ts.isClassLike(child))
-      )
-        return;
-      ts.forEachChild(child, search);
-    }
-    ts.forEachChild(scope, search);
+      if (child.type === "TSModuleBlock" || isFunctionLike(child) || isClass(child)) return false;
+    });
     if (found) return true;
   }
   return false;

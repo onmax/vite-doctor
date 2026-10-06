@@ -74,6 +74,8 @@
   "dependencies": {
     "@shadcn/lint": "catalog:analysis",
     "@typescript-eslint/parser": "catalog:analysis",
+    "@typescript-eslint/scope-manager": "catalog:analysis",
+    "@typescript-eslint/visitor-keys": "catalog:analysis",
     "@vue/compiler-sfc": "catalog:analysis",
     "c12": "catalog:prod",
     "cac": "catalog:prod",

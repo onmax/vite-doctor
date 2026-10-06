@@ -21,6 +21,12 @@ catalogs:
     '@typescript-eslint/parser':
       specifier: ^8.66.0
       version: 8.66.0
+    '@typescript-eslint/scope-manager':
+      specifier: ^8.66.0
+      version: 8.66.0
+    '@typescript-eslint/visitor-keys':
+      specifier: ^8.66.0
+      version: 8.66.0
     '@vue/compiler-sfc':
       specifier: ^3.5.40
       version: 3.5.40
@@ -191,6 +197,12 @@ importers:
       '@typescript-eslint/parser':
         specifier: catalog:analysis
         version: 8.66.0(eslint@10.8.0(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)
+      '@typescript-eslint/scope-manager':
+        specifier: catalog:analysis
+        version: 8.66.0
+      '@typescript-eslint/visitor-keys':
+        specifier: catalog:analysis
+        version: 8.66.0
       '@vue/compiler-sfc':
         specifier: catalog:analysis
         version: 3.5.40
