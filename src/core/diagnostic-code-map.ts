@@ -201,6 +201,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0072", ruleId: "vueuse/prefer-usewindow-size" },
   { code: "NUXT0073", ruleId: "nuxt/config/no-ignored-compatibility-config" },
   { code: "NUXT0074", ruleId: "nuxt/review/api-authorization-coverage" },
+  { code: "NUXT0075", ruleId: "nuxt/structure/no-server-utils-in-app" },
+  { code: "NUXT0076", ruleId: "nuxt/structure/no-server-types-in-app" },
   { code: "NUXT0077", ruleId: "nuxt/structure/no-composable-in-utils" },
   { code: "NUXT0078", ruleId: "nuxt/structure/no-stateless-composable" },
   { code: "NUXT0079", ruleId: "nuxt/composables/export-name-matches-file" },

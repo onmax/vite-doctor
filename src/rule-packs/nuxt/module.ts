@@ -342,6 +342,9 @@ export async function writeManifest(
           layerDirectories[index]?.server ??
             resolve(layer.cwd ?? rootDir, layer.config?.serverDir ?? "server"),
         ),
+        aliases: Object.fromEntries(
+          Object.entries(layer.config?.alias ?? {}).map(([key, value]) => [key, String(value)]),
+        ),
         name: layer.config?.name,
         priority: index,
       }),

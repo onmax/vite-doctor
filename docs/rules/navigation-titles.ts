@@ -92,6 +92,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/structure/no-stateless-composable": "Plain use* helpers",
   "nuxt/state/no-nonserializable-usestate": "useState values",
   "nuxt/state/prefer-explicit-usestate-key-in-exported-composables": "useState keys",
+  "nuxt/structure/no-server-types-in-app": "Server types in app",
+  "nuxt/structure/no-server-utils-in-app": "Server code in app",
   "nuxthub/no-personalized-cached-handler": "Per-user caching",
   "nuxthub/prefer-cached-event-handler": "Cached handlers",
   "vueuse/no-nuxt-auto-import-collision": "VueUse collisions",

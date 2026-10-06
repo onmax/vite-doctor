@@ -207,3 +207,31 @@ test("the final Nuxt manifest write keeps entries registered before Nuxt removes
   const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
   expect(manifest.extensions).toEqual([extensionEntry]);
 });
+
+test("the Nuxt manifest preserves relative and absolute layer alias overrides", async () => {
+  const root = nuxtProject();
+  const aliases = {
+    "~": ".",
+    "@": "./custom",
+    "~~": join(root, "server"),
+    "@@": join(root, "layers/billing"),
+  };
+  const nuxt = fakeNuxt(root, () => {});
+  const manifest = await writeManifest({
+    ...nuxt,
+    options: {
+      ...nuxt.options,
+      _layers: [
+        {
+          cwd: join(root, "layers/billing"),
+          config: {
+            rootDir: join(root, "layers/billing"),
+            srcDir: join(root, "layers/billing/app"),
+            alias: aliases,
+          },
+        },
+      ],
+    },
+  });
+  expect(manifest.layers[0]?.aliases).toEqual(aliases);
+});
