@@ -205,11 +205,15 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
   );
   const plugins = pluginsProperty?.value;
   if (!hasNitroPlugin(plugins, pluginNames, namespaceNames)) return [];
+  const nitroProperty = config.properties.findLast(
+    (property: any) =>
+      property.type === "Property" && !property.computed && propertyKey(property.key) === "nitro",
+  );
   const options: StaticConfigOption[] = [];
   for (const property of config.properties) {
     if (property.type !== "Property" || property.computed) continue;
     const key = propertyKey(property.key);
-    if (key === "nitro") {
+    if (key === "nitro" && property === nitroProperty) {
       const nested = unwrapConfig(property.value);
       if (nested) collectOptions(nested, ["nitro"], options);
       else options.push({ path: [], value: null });

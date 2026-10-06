@@ -396,6 +396,27 @@ describe("route classification evidence", () => {
     ).toEqual(["NITRO0019"]);
   });
 
+  test.each([
+    ["dynamic", "{ serverDir: 'backend' }", ["NITRO0019"]],
+    ["{ scanDirs: ['extra'] }", "{ serverDir: 'backend' }", ["NITRO0019"]],
+    ["{ serverDir: 'backend' }", "dynamic", []],
+    ["{ serverDir: 'backend' }", "{ serverDir: 'backend', scanDirs: ['extra'] }", []],
+  ])(
+    "uses the effective Vite nitro property: %s then %s",
+    async (shadowed, effective, expected) => {
+      expect(
+        await codes(
+          {
+            "vite.config.ts": `import { nitro } from 'nitro/vite'; export default { plugins: [nitro()], nitro: ${shadowed}, nitro: ${effective} }`,
+            "backend/api/helper.ts": helper,
+          },
+          "nitro",
+          { nitro: "3.0.0-beta.1" },
+        ),
+      ).toEqual(expected);
+    },
+  );
+
   test("uses the effective Vite plugins property", async () => {
     expect(
       await codes(
