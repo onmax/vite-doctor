@@ -1,15 +1,32 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, resolve } from "pathe";
+import { resolve } from "pathe";
 import { AnyNode, createRule } from "./shared.js";
 import { parseScript } from "./script.js";
 import { diagnostics } from "../../diagnostics.js";
 
+interface LocaleFile {
+  path: string;
+  text: string;
+  quotedKeyOffsets?: Map<string, number>;
+}
+
 interface LocaleMessage {
   key: string;
-  file: string;
-  valueStart?: number;
+  value: string;
+  file: LocaleFile;
   locale: string;
 }
+
+const SOURCE_EXTENSIONS = [".vue", ".ts", ".tsx", ".js", ".jsx"];
+const SOURCE_IGNORED_ENTRIES = new Set([
+  "node_modules",
+  ".nuxt",
+  ".output",
+  "dist",
+  "coverage",
+  "public",
+]);
+const LOCALE_EXTENSIONS = [".json", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"];
 
 const I18N_PACKAGE_NAMES = new Set(["vue-i18n", "@nuxtjs/i18n"]);
 const STATIC_TEXT_ATTRIBUTES = new Set(["alt", "aria-label", "label", "placeholder", "title"]);
@@ -39,7 +56,6 @@ export const noUnusedTranslations = createRule({
             isLocaleMetadataKey(message.key)
           )
             continue;
-          const text = readFileSync(message.file, "utf8");
           ctx.report(
             diagnostics.VUE0002({
               why: `Translation key "${message.key}" is not used by any static Vue i18n call.`,
@@ -49,11 +65,11 @@ export const noUnusedTranslations = createRule({
               ruleId: "vue/i18n/no-unused-translations",
               severity: "warn",
               category: "i18n",
-              file: message.file,
+              file: message.file.path,
               range: ctx.helpers.rangeFromOffsets(
-                message.file,
-                text,
-                message.valueStart ?? findKeyOffset(text, message.key),
+                message.file.path,
+                message.file.text,
+                findKeyOffset(message.file, message.key, message.value),
               ),
             },
           );
@@ -141,18 +157,14 @@ function projectHasI18nPackage(root: string): boolean {
 
 function collectLocaleMessages(root: string): LocaleMessage[] {
   const messages: LocaleMessage[] = [];
-  for (const file of collectLocaleFiles(root)) {
-    const text = readFileSync(file, "utf8");
-    const object = file.endsWith(".json") ? parseJsonObject(text) : parseModuleMessages(file, text);
+  for (const path of collectLocaleFiles(root)) {
+    const text = readFileSync(path, "utf8");
+    const object = path.endsWith(".json") ? parseJsonObject(text) : parseModuleMessages(path, text);
     if (!object) continue;
-    const locale = localeNameFromFile(file);
+    const file: LocaleFile = { path, text };
+    const locale = localeNameFromFile(path);
     for (const [key, value] of flattenMessages(object)) {
-      messages.push({
-        key,
-        file,
-        locale,
-        valueStart: findKeyOffset(text, key, value),
-      });
+      messages.push({ key, value, file, locale });
     }
   }
   return messages;
@@ -168,8 +180,10 @@ function collectLocaleFiles(root: string): string[] {
   for (const dir of dirs) {
     const absoluteDir = resolve(root, dir);
     if (!statSync(absoluteDir, { throwIfNoEntry: false })?.isDirectory()) continue;
-    for (const pattern of ["*.json", "*.js", "*.mjs", "*.cjs", "*.ts", "*.mts", "*.cts"]) {
-      for (const file of globSyncLike(`${dir}/${pattern}`, root)) files.add(file);
+    for (const entry of readdirSync(absoluteDir)) {
+      if (!LOCALE_EXTENSIONS.some((extension) => entry.endsWith(extension))) continue;
+      const file = resolve(absoluteDir, entry);
+      if (statSync(file, { throwIfNoEntry: false })?.isFile()) files.add(file);
     }
   }
   return [...files].sort();
@@ -188,31 +202,6 @@ function collectNuxtI18nLangDirs(root: string): string[] {
   return [...dirs];
 }
 
-function globSyncLike(pattern: string, root: string): string[] {
-  const dir = dirname(resolve(root, pattern));
-  const prefix = pattern.slice(0, pattern.indexOf("*"));
-  const extension = pattern.slice(pattern.lastIndexOf("."));
-  if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return [];
-  return Array.from(new BunGlobCompat(dir, prefix, extension, root));
-}
-
-class BunGlobCompat {
-  constructor(
-    private dir: string,
-    private prefix: string,
-    private extension: string,
-    private root: string,
-  ) {}
-
-  *[Symbol.iterator]() {
-    for (const entry of readdirSync(this.dir)) {
-      if (!entry.endsWith(this.extension)) continue;
-      const file = resolve(this.root, this.prefix + entry);
-      if (statSync(file, { throwIfNoEntry: false })?.isFile()) yield file;
-    }
-  }
-}
-
 function parseJsonObject(text: string): Record<string, unknown> | null {
   try {
     return JSON.parse(text);
@@ -225,7 +214,6 @@ function parseModuleMessages(file: string, text: string): Record<string, unknown
   const ast = parseScript(file, text);
   let found: Record<string, unknown> | null = null;
   walkAny(ast, (node: AnyNode) => {
-    if (found) return;
     if (node.type === "ExportDefaultDeclaration") {
       found = evaluateStaticObject(node.declaration);
     }
@@ -236,6 +224,7 @@ function parseModuleMessages(file: string, text: string): Record<string, unknown
       const argument = node.arguments?.[0];
       found = evaluateStaticObject(argument);
     }
+    return found !== null;
   });
   return found;
 }
@@ -310,22 +299,16 @@ function collectUsedTranslationKeys(root: string): Set<string> {
 
 function collectSourceFiles(root: string): string[] {
   const files: string[] = [];
-  for (const pattern of ["**/*.vue", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]) {
-    for (const file of globSyncRecursive(root, pattern)) files.push(file);
-  }
-  return files;
-}
-
-function globSyncRecursive(root: string, pattern: string): string[] {
-  const files: string[] = [];
-  const extension = pattern.slice(pattern.lastIndexOf("."));
   const visit = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (["node_modules", ".nuxt", ".output", "dist", "coverage", "public"].includes(entry.name))
-        continue;
+      if (SOURCE_IGNORED_ENTRIES.has(entry.name)) continue;
       const absolute = resolve(dir, entry.name);
       if (entry.isDirectory()) visit(absolute);
-      else if (entry.isFile() && absolute.endsWith(extension)) files.push(absolute);
+      else if (
+        entry.isFile() &&
+        SOURCE_EXTENSIONS.some((extension) => absolute.endsWith(extension))
+      )
+        files.push(absolute);
     }
   };
   visit(root);
@@ -344,15 +327,37 @@ function localeNameFromFile(file: string): string {
     .replace(/\.(json|[cm]?[jt]s)$/, "");
 }
 
-function findKeyOffset(text: string, key: string, value?: string): number {
+function findKeyOffset(file: LocaleFile, key: string, value: string): number {
   const leaf = key.split(".").at(-1) ?? key;
-  const keyIndex = text.search(new RegExp(`["'\`]${escapeRegExp(leaf)}["'\`]\\s*:`));
+  const keyIndex = /["'`]/.test(leaf)
+    ? file.text.search(new RegExp(`["'\`]${escapeRegExp(leaf)}["'\`]\\s*:`))
+    : ((file.quotedKeyOffsets ??= indexQuotedKeys(file.text)).get(leaf) ?? -1);
   if (keyIndex >= 0) return keyIndex;
   if (value) {
-    const valueIndex = text.indexOf(value);
+    const valueIndex = file.text.indexOf(value);
     if (valueIndex >= 0) return valueIndex;
   }
   return 0;
+}
+
+// Matches what /["'`]<leaf>["'`]\s*:/ finds for every quote-free leaf in one pass: such a match
+// always closes on the first quote after its opening quote.
+function indexQuotedKeys(text: string): Map<string, number> {
+  const offsets = new Map<string, number>();
+  const quote = /["'`]/g;
+  const colon = /\s*:/y;
+  let open = quote.exec(text)?.index;
+  while (open !== undefined) {
+    const close = quote.exec(text)?.index;
+    if (close === undefined) break;
+    colon.lastIndex = close + 1;
+    if (colon.test(text)) {
+      const leaf = text.slice(open + 1, close);
+      if (!offsets.has(leaf)) offsets.set(leaf, open);
+    }
+    open = close;
+  }
+  return offsets;
 }
 
 function normalizeVisibleText(value: string): string {
@@ -398,18 +403,19 @@ function readJson(file: string): unknown {
   }
 }
 
-function walkAny(node: unknown, visit: (node: AnyNode) => void) {
-  if (!node || typeof node !== "object") return;
+function walkAny(node: unknown, visit: (node: AnyNode) => boolean): boolean {
+  if (!node || typeof node !== "object") return false;
   const typed = node as AnyNode;
-  if (typeof typed.type === "string") visit(typed);
+  if (typeof typed.type === "string" && visit(typed)) return true;
   for (const [key, value] of Object.entries(typed)) {
     if (key === "__doctorParent") continue;
     if (Array.isArray(value)) {
-      for (const child of value) walkAny(child, visit);
-    } else if (value && typeof value === "object") {
-      walkAny(value, visit);
+      for (const child of value) if (walkAny(child, visit)) return true;
+    } else if (value && typeof value === "object" && walkAny(value, visit)) {
+      return true;
     }
   }
+  return false;
 }
 
 function escapeRegExp(value: string): string {
