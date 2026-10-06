@@ -41,5 +41,5 @@ bench("script visitor on a 200-binding component", async () => {
 });
 
 bench("template visitor on a 200-binding component", async () => {
-  await runVisitor({ TemplateNode() {} }, file);
+  await runVisitor({ template: { element() {} } }, file);
 });

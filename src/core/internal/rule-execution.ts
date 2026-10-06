@@ -37,7 +37,7 @@ import {
   type RuleTiming,
   type ScanSession,
 } from "./scan-session.js";
-import { nativeMatch, sha256 } from "./utils.js";
+import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
 
 interface RuleRun {
   context: RuleContext;
@@ -137,8 +137,15 @@ function timeVisitor(visitor: RuleVisitor, timing: RuleTiming): RuleVisitor {
         timing.ms += performance.now() - started;
       }
     };
-  if (visitor.TemplateNode)
-    timed.TemplateNode = (node: unknown) => timeCall(timing, () => visitor.TemplateNode!(node));
+  if (visitor.template) {
+    const template: Record<string, unknown> = {};
+    for (const [key, handler] of Object.entries(visitor.template as Record<string, unknown>)) {
+      if (typeof handler !== "function") continue;
+      template[key] = (node: unknown, parent: unknown) =>
+        timeCall(timing, () => handler.call(visitor.template, node, parent));
+    }
+    timed.template = template;
+  }
   for (const key in visitor) {
     if (!isScriptVisitorKey(key)) continue;
     const handler = (visitor as Record<string, unknown>)[key];
@@ -377,11 +384,9 @@ function createRuleRun(
       if (nodeOrStart === undefined || nodeOrStart === null) return undefined;
       if (typeof nodeOrStart === "number")
         return session.helpers.rangeFromOffsets(file.path, file.text, nodeOrStart, end);
-      const node = nodeOrStart as { start?: number; end?: number; range?: [number, number] };
-      const start = node.start ?? node.range?.[0];
-      const stop = node.end ?? node.range?.[1] ?? start;
-      return typeof start === "number"
-        ? session.helpers.rangeFromOffsets(file.path, file.text, start, stop)
+      const offsets = nodeOffsets(nodeOrStart);
+      return offsets
+        ? session.helpers.rangeFromOffsets(file.path, file.text, offsets.start, offsets.end)
         : undefined;
     },
   };

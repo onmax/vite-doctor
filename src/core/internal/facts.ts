@@ -8,14 +8,15 @@ import type {
   ImportFact,
   SourceFileHandle,
   TemplateFact,
+  TemplateRootNode,
 } from "../primitives.js";
-import { createVueScriptForParsing, parseSfcFile, parseVueScriptsResult } from "./sfc.js";
+import { parseSfcFile, parseVueScriptsResult } from "./sfc.js";
 import { parseScriptResult } from "./script.js";
-import { parseTemplate } from "./template.js";
+import { TemplateNodeType, walkTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
-import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
+import { getNodeVisitorKeys } from "./visitor-keys.js";
 import type { EvidenceGap } from "./cache-store.js";
 import { isCachedFileFacts } from "./cached-file-facts.js";
 import { projectWorkspacePackages } from "./applicability.js";
@@ -25,7 +26,7 @@ import { owningWorkspacePackage } from "./workspace-packages.js";
 interface ParsedSource {
   sfc: SourceFileHandle["sfc"];
   scriptAst: Record<string, unknown> | null;
-  templateAst: Record<string, unknown> | null;
+  templateAst: TemplateRootNode | null;
   gaps: EvidenceGap[];
 }
 
@@ -238,8 +239,7 @@ async function parseSource(file: ScanFileEntry, text: string, hash: string): Pro
       files: [absolute],
     });
   }
-  const scriptLang = isVueSfc ? createVueScriptForParsing(sfc?.descriptor, text).lang : undefined;
-  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text, scriptLang) : null;
+  const templateAst = sfc?.getTemplateAst() ?? null;
   return { sfc, scriptAst: parsedScript?.ast ?? null, templateAst, gaps };
 }
 
@@ -353,16 +353,19 @@ function createFileFacts(
   }
 
   if (templateAst) {
-    walkTemplateFacts(templateAst, (node: any) => {
-      if (node.type !== "VAttribute" && node.type !== "VDirective") return;
-      const name = node.key?.name?.name ?? node.key?.name;
-      if (name === "ref" || name === "key") {
-        templateRefs.push({
-          name,
-          value: node.value?.value,
-          range: nodeRange(session, file.path, text, node),
-        });
-      }
+    walkTemplate(templateAst, (node) => {
+      if (node.type !== TemplateNodeType.ATTRIBUTE) return;
+      if (node.name !== "ref" && node.name !== "key") return;
+      templateRefs.push({
+        name: node.name,
+        value: node.value?.content,
+        range: session.helpers.rangeFromOffsets(
+          file.path,
+          text,
+          node.loc.start.offset,
+          node.loc.end.offset,
+        ),
+      });
     });
   }
 
@@ -433,21 +436,6 @@ export function walkAstFacts(node: unknown, visit: (node: unknown) => void) {
       for (const child of value) walkAstFacts(child, visit);
     } else if (value && typeof value === "object") {
       walkAstFacts(value, visit);
-    }
-  }
-}
-
-function walkTemplateFacts(node: unknown, visit: (node: unknown) => void) {
-  if (!node || typeof node !== "object") return;
-  const typed = node as { type?: string };
-  if (!typed.type) return;
-  visit(typed);
-  for (const key of getTemplateVisitorKeys(typed as Record<string, unknown>)) {
-    const value = (typed as Record<string, unknown>)[key];
-    if (Array.isArray(value)) {
-      for (const child of value) walkTemplateFacts(child, visit);
-    } else if (value && typeof value === "object") {
-      walkTemplateFacts(value, visit);
     }
   }
 }

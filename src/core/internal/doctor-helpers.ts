@@ -1,5 +1,10 @@
 import type { DoctorHelpers } from "../primitives.js";
 import { lineColumnAt } from "./line-index.js";
+import {
+  findTemplateAttribute,
+  findTemplateDirective,
+  parseTemplateExpression,
+} from "./template.js";
 import { getNodeVisitorKeys } from "./visitor-keys.js";
 
 export function createHelpers(): DoctorHelpers {
@@ -38,25 +43,16 @@ export function createHelpers(): DoctorHelpers {
         range: metadata.range ?? (node ? ctx.range(node) : undefined),
       });
     },
-    hasVueDirective(node, name, argument) {
-      return ((node as any)?.startTag?.attributes ?? []).some(
-        (attr: any) =>
-          attr.directive &&
-          attr.key?.name?.name === name &&
-          (!argument || attr.key?.argument?.name === argument),
-      );
+    hasVueDirective(element, name, argument) {
+      return findTemplateDirective(element, name, argument) !== undefined;
     },
-    hasVueAttribute(node, name) {
-      return ((node as any)?.startTag?.attributes ?? []).some(
-        (attr: any) => !attr.directive && attr.key?.name === name,
-      );
+    hasVueAttribute(element, name) {
+      return findTemplateAttribute(element, name) !== undefined;
     },
-    getStaticVueAttributeValue(node, name) {
-      const attr = ((node as any)?.startTag?.attributes ?? []).find(
-        (item: any) => !item.directive && item.key?.name === name,
-      );
-      return attr?.value?.value ?? null;
+    getStaticVueAttributeValue(element, name) {
+      return findTemplateAttribute(element, name)?.value?.content ?? null;
     },
+    parseTemplateExpression,
     isNuxtServerFile(relativePath) {
       return relativePath.startsWith("server/") || relativePath.startsWith("app/server/");
     },

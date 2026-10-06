@@ -86,10 +86,11 @@ test.each([false, true])(
               events.push(`${file}:${name}:script:${state}`);
               state = `${name}:script`;
             },
-            TemplateNode(node: any) {
-              if (node !== ctx.file.templateAst) return;
-              events.push(`${file}:${name}:template:${state}`);
-              state = `${name}:template`;
+            template: {
+              root() {
+                events.push(`${file}:${name}:template:${state}`);
+                state = `${name}:template`;
+              },
             },
           };
         },

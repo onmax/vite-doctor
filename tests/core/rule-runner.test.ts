@@ -1,5 +1,12 @@
 import { expect, expectTypeOf, test, vi } from "vite-plus/test";
-import type { RuleVisitor, ScriptAstNodeOf, SourceFileHandle } from "../../src/core/primitives.ts";
+import type {
+  RuleVisitor,
+  ScriptAstNodeOf,
+  SourceFileHandle,
+  TemplateElementNode,
+  TemplateParentNode,
+  TemplateRootNode,
+} from "../../src/core/primitives.ts";
 import { createRule } from "../../src/extension.ts";
 import { runVisitor, runVisitors } from "../../src/core/internal/rule-runner.ts";
 import { parseSfcFile } from "../../src/core/internal/sfc.ts";
@@ -14,7 +21,16 @@ function createFile(): SourceFileHandle {
     hash: "fixture",
     isVueSfc: true,
     scriptAst: { type: "Program", body: [] },
-    templateAst: { type: "VDocumentFragment", children: [] },
+    templateAst: {
+      type: 0,
+      source: "",
+      children: [],
+      loc: {
+        start: { offset: 0, line: 1, column: 1 },
+        end: { offset: 0, line: 1, column: 1 },
+        source: "",
+      },
+    },
     project: {
       root: "/",
       framework: "vue",
@@ -28,7 +44,7 @@ function createFile(): SourceFileHandle {
   };
 }
 
-test.each<keyof RuleVisitor>(["SFC", "onProjectStart", "TemplateNode"])(
+test.each(["SFC", "onProjectStart", "template"])(
   "%s visitors do not traverse the script AST",
   async (hook) => {
     const file = createFile();
@@ -37,7 +53,10 @@ test.each<keyof RuleVisitor>(["SFC", "onProjectStart", "TemplateNode"])(
     Object.defineProperty(file.scriptAst, "body", { get: body, enumerable: true });
     const callback = vi.fn();
 
-    await runVisitor({ [hook]: callback }, file);
+    await runVisitor(
+      hook === "template" ? { template: { root: callback } } : { [hook]: callback },
+      file,
+    );
 
     expect(body).not.toHaveBeenCalled();
     if (hook !== "onProjectStart") expect(callback).toHaveBeenCalledOnce();
@@ -96,21 +115,16 @@ test("awaits SFC hooks before dispatching script and template visitors", async (
       "Program:exit"() {
         events.push("program:exit");
       },
-      TemplateNode(node: { type: string }) {
-        events.push(node.type);
+      template: {
+        root() {
+          events.push("template");
+        },
       },
     },
     file,
   );
 
-  expect(events).toEqual([
-    "sfc",
-    "Program",
-    "import",
-    "Literal",
-    "program:exit",
-    "VDocumentFragment",
-  ]);
+  expect(events).toEqual(["sfc", "Program", "import", "Literal", "program:exit", "template"]);
 });
 
 test("walks each AST once no matter how many visitors run", async () => {
@@ -129,7 +143,7 @@ test("walks each AST once no matter how many visitors run", async () => {
       Identifier() {
         visits[index]! += 1;
       },
-      TemplateNode() {},
+      template: { element() {} },
     })),
     file,
   );
@@ -177,8 +191,10 @@ test("dispatches each node to visitors in order after awaiting every SFC hook", 
     ImportDeclaration() {
       events.push(`${name}:import`);
     },
-    TemplateNode(node: any) {
-      if (node.type === "VDocumentFragment") events.push(`${name}:template`);
+    template: {
+      root() {
+        events.push(`${name}:template`);
+      },
     },
   });
 
@@ -312,4 +328,82 @@ test("visitor keys type their node parameter", () => {
   // @ts-expect-error ScriptNode was removed in favor of node type visitors.
   const legacy: RuleVisitor = { ScriptNode() {} };
   expect(legacy).toBeDefined();
+  // @ts-expect-error TemplateNode was removed in favor of template visitors.
+  const legacyTemplate: RuleVisitor = { TemplateNode() {} };
+  expect(legacyTemplate).toBeDefined();
+});
+
+test("template visitor keys type their node and parent parameters", () => {
+  createRule({
+    meta: { id: "test/template-types", title: "Types", category: "template", severity: "warn" },
+    create() {
+      return {
+        template: {
+          element(node, parent) {
+            expectTypeOf(node).toEqualTypeOf<TemplateElementNode>();
+            expectTypeOf(parent).toEqualTypeOf<TemplateParentNode>();
+          },
+          directive(node, element) {
+            expectTypeOf(node.exp?.content).toEqualTypeOf<string | undefined>();
+            expectTypeOf(element).toEqualTypeOf<TemplateElementNode>();
+          },
+          "root:exit"(node) {
+            expectTypeOf(node).toEqualTypeOf<TemplateRootNode>();
+          },
+        },
+      };
+    },
+  });
+});
+
+test("visits template props before children and runs exits after them", async () => {
+  const file = createFile();
+  file.sfc = await parseSfcFile(
+    file.path,
+    '<template><p :class="a" title="t">{{ b }}<!-- c --><i>d</i></p></template>',
+  );
+  file.templateAst = file.sfc.getTemplateAst();
+  const events: string[] = [];
+  const label = (node: { type: number; loc: { source: string } }) =>
+    `${node.type}:${node.loc.source}`;
+  const visitor = (name: string): RuleVisitor => ({
+    template: {
+      element(node, parent) {
+        events.push(`${name}:element:${node.tag}:${parent.type}`);
+      },
+      "element:exit"(node) {
+        events.push(`${name}:element:exit:${node.tag}`);
+      },
+      directive(node, element) {
+        events.push(`${name}:directive:${node.rawName}:${element.tag}`);
+      },
+      attribute(node) {
+        events.push(`${name}:attribute:${node.name}`);
+      },
+      interpolation(node) {
+        events.push(`${name}:${label(node)}`);
+      },
+      comment(node) {
+        events.push(`${name}:${label(node)}`);
+      },
+      text(node) {
+        events.push(`${name}:text:${node.content}`);
+      },
+    },
+  });
+
+  await runVisitors([visitor("a"), visitor("b")], file);
+
+  expect(events.filter((event) => event.startsWith("a:"))).toEqual([
+    "a:element:p:0",
+    "a:directive::class:p",
+    "a:attribute:title",
+    "a:5:{{ b }}",
+    "a:3:<!-- c -->",
+    "a:element:i:1",
+    "a:text:d",
+    "a:element:exit:i",
+    "a:element:exit:p",
+  ]);
+  expect(events.slice(0, 2)).toEqual(["a:element:p:0", "b:element:p:0"]);
 });

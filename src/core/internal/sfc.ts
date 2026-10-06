@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { SfcBlockHashes, SfcHandle, SourceRange } from "../primitives.js";
 import { lineColumnAt } from "./line-index.js";
 import { parseScriptResult, type ScriptParseLang } from "./script.js";
-import { parseTemplate } from "./template.js";
+import { SFC_TEMPLATE_PARSE_OPTIONS, templateAstFromDescriptor } from "./template.js";
 
 const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
 
@@ -12,7 +12,11 @@ export async function parseSfcFile(
   hash = sha256(source),
 ): Promise<SfcHandle & { errors: string[] }> {
   const { parse } = await optionalImport<typeof import("@vue/compiler-sfc")>("@vue/compiler-sfc");
-  const { descriptor, errors } = parse(source, { filename: file, sourceMap: false });
+  const { descriptor, errors } = parse(source, {
+    filename: file,
+    sourceMap: false,
+    templateParseOptions: SFC_TEMPLATE_PARSE_OPTIONS,
+  });
   const blockHashes: SfcBlockHashes = {
     template: descriptor.template ? sha256(descriptor.template.content) : undefined,
     script: descriptor.script ? sha256(descriptor.script.content) : undefined,
@@ -28,17 +32,10 @@ export async function parseSfcFile(
     errors: errors.map((error) => (typeof error === "string" ? error : error.message)),
     blockHashes,
     getTemplateAst() {
-      return (descriptor.template?.ast as unknown as Record<string, unknown>) ?? null;
+      return templateAstFromDescriptor(descriptor);
     },
     getScriptAst() {
       return parseVueScripts(file, descriptor, source);
-    },
-    async getTemplateTokens() {
-      return parseTemplate(
-        file,
-        source,
-        vueScriptLang([descriptor.script, descriptor.scriptSetup].filter(Boolean)),
-      );
     },
     offsetToPosition(offset) {
       return rangeFromOffset(source, offset);

@@ -1,4 +1,16 @@
+import { nodeOffsets } from "./internal/utils.js";
+
 export { namePattern } from "./internal/name-pattern.js";
+export {
+  findTemplateAttribute,
+  findTemplateDirective,
+  startTagEnd,
+  templateDirectiveBindings,
+  templateExpressionReferences,
+  TemplateNodeType,
+  walkTemplate,
+  type TemplateExpressionReference,
+} from "./internal/template.js";
 
 export type AnyNode = any;
 
@@ -45,7 +57,6 @@ export function walkScriptLocal(node: AnyNode, visit: (node: AnyNode) => void) {
 }
 
 export function sourceForNode(node: AnyNode, source: string) {
-  const start = node.start ?? node.range?.[0];
-  const end = node.end ?? node.range?.[1];
-  return typeof start === "number" && typeof end === "number" ? source.slice(start, end) : "";
+  const offsets = nodeOffsets(node);
+  return offsets ? source.slice(offsets.start, offsets.end) : "";
 }
