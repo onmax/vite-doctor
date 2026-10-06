@@ -181,17 +181,28 @@ class PersistentRuleCache extends MemoryRuleCache {
 const STORE_LOCK_PREFIX = ".store-lock-";
 
 function acquireStoreLock(root: string, dir: string): { fd: number; path: string } {
-  const name = `${STORE_LOCK_PREFIX}${process.pid}-${randomUUID()}`;
+  const namespace = pidNamespaceIdentity();
+  const name = `${STORE_LOCK_PREFIX}${process.pid}-${namespace ?? "unknown"}-${randomUUID()}`;
   const path = resolve(dir, name);
   assertCachePath(root, path);
   const lock = { fd: openSync(path, "wx", 0o600), path };
   try {
+    writeFileSync(path, JSON.stringify({ pid: process.pid, namespace }), { flag: "w" });
     // Publish ownership atomically in the name, then check for other writers.
     // Unique claims let concurrent reclaimers remove only a dead owner's file.
     for (const entry of readdirSync(dir)) {
       if (entry === name || !entry.startsWith(STORE_LOCK_PREFIX)) continue;
-      const owner = Number(entry.slice(STORE_LOCK_PREFIX.length).split("-")[0]);
-      if (!Number.isSafeInteger(owner) || owner <= 0 || processIsAlive(owner)) {
+      const [ownerText, ownerNamespace] = entry.slice(STORE_LOCK_PREFIX.length).split("-");
+      const owner = Number(ownerText);
+      if (
+        !Number.isSafeInteger(owner) ||
+        owner <= 0 ||
+        (namespace !== undefined &&
+          ownerNamespace !== undefined &&
+          /^\d+$/.test(ownerNamespace) &&
+          ownerNamespace !== namespace) ||
+        processIsAlive(owner)
+      ) {
         throw new Error("Doctor cache store has an active writer.");
       }
       try {
@@ -204,6 +215,14 @@ function acquireStoreLock(root: string, dir: string): { fd: number; path: string
   } catch (error) {
     releaseStoreLock(lock);
     throw error;
+  }
+}
+
+function pidNamespaceIdentity(): string | undefined {
+  try {
+    return String(lstatSync("/proc/self/ns/pid").ino);
+  } catch {
+    return undefined;
   }
 }
 
