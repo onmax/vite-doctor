@@ -395,4 +395,18 @@ describe("route classification evidence", () => {
       ),
     ).toEqual(["NITRO0019"]);
   });
+
+  test("uses the effective Vite plugins property", async () => {
+    expect(
+      await codes(
+        {
+          "vite.config.ts":
+            "import { nitro } from 'nitro/vite'; export default { plugins: [nitro({ serverDir: 'backend' })], plugins: [] }",
+          "backend/api/helper.ts": helper,
+        },
+        "nitro",
+        { nitro: "3.0.0-beta.1" },
+      ),
+    ).toEqual([]);
+  });
 });

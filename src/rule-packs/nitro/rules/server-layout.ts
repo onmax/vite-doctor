@@ -199,10 +199,11 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
   )?.declaration;
   const config = unwrapConfig(expression);
   if (!config) return [];
-  const plugins = config.properties.find(
+  const pluginsProperty = config.properties.findLast(
     (property: any) =>
       property.type === "Property" && !property.computed && propertyKey(property.key) === "plugins",
-  )?.value;
+  );
+  const plugins = pluginsProperty?.value;
   if (!hasNitroPlugin(plugins, pluginNames, namespaceNames)) return [];
   const options: StaticConfigOption[] = [];
   for (const property of config.properties) {
@@ -213,7 +214,7 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
       if (nested) collectOptions(nested, ["nitro"], options);
       else options.push({ path: [], value: null });
     }
-    if (key !== "plugins") continue;
+    if (key !== "plugins" || property !== pluginsProperty) continue;
     collectNitroPluginOptions(property.value, pluginNames, namespaceNames, options);
   }
   return options;
