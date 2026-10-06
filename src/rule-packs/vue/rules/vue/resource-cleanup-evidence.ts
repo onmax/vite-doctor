@@ -1,11 +1,14 @@
 import type { SFCDescriptor } from "@vue/compiler-sfc";
-import { parseForESLint } from "@typescript-eslint/parser";
 import type { RuleContext } from "../../../../core/index.js";
-import { type AnyNode } from "./shared.js";
+import {
+  analyzeScript,
+  perFile,
+  scriptMayName,
+  scriptScope,
+  type ScopeVariable as Variable,
+} from "./script-scope.js";
+import { type AnyNode, namePattern } from "./shared.js";
 
-type Variable = ReturnType<
-  typeof parseForESLint
->["scopeManager"]["scopes"][number]["variables"][number];
 type ResourceKind = "interval" | "timeout" | "observer" | "socket" | "listener";
 
 interface Resource {
@@ -20,12 +23,21 @@ const GLOBAL_RECEIVERS = new Set(["window", "document", "globalThis", "self"]);
 const LIFECYCLE_CLEANUP = new Set(["onUnmounted", "onBeforeUnmount", "onScopeDispose"]);
 const MOUNT_HOOKS = new Set(["onMounted", "onBeforeMount"]);
 const WATCHERS = new Set(["watch", "watchEffect", "watchPostEffect", "watchSyncEffect"]);
+const RESOURCE_NAMES = namePattern([
+  "setInterval",
+  "setTimeout",
+  "addEventListener",
+  "ResizeObserver",
+  "IntersectionObserver",
+  "WebSocket",
+]);
+const WATCHER_NAMES = namePattern(["watch"]);
 
 export function uncleanedLifecycleResources(
   ctx: RuleContext,
 ): Array<{ start: number; end: number }> {
-  if (!mayAcquireResource(ctx.file.scriptAst)) return [];
-  const evidence = createResourceEvidence(ctx);
+  if (!fileMayAcquireResource(ctx)) return [];
+  const evidence = resourceEvidence(ctx);
   return evidence.resources
     .filter(
       (resource) =>
@@ -38,11 +50,23 @@ export function uncleanedLifecycleResources(
 }
 
 export function uncleanedWatcherResources(ctx: RuleContext): Array<{ start: number; end: number }> {
-  if (!mayAcquireResource(ctx.file.scriptAst)) return [];
-  const evidence = createResourceEvidence(ctx);
+  if (!scriptMayName(ctx, WATCHER_NAMES) || !fileMayAcquireResource(ctx)) return [];
+  const evidence = resourceEvidence(ctx);
   return evidence.watcherResources
     .filter((resource) => !evidence.cleansWatcher(resource))
     .map((resource) => ({ start: resource.node.start, end: resource.node.end }));
+}
+
+function fileMayAcquireResource(ctx: RuleContext): boolean {
+  return perFile(
+    ctx,
+    "mayAcquireResource",
+    () => scriptMayName(ctx, RESOURCE_NAMES) && mayAcquireResource(ctx.file.scriptAst),
+  );
+}
+
+function resourceEvidence(ctx: RuleContext) {
+  return perFile(ctx, "resourceEvidence", () => createResourceEvidence(ctx));
 }
 
 function mayAcquireResource(node: AnyNode): boolean {
@@ -93,12 +117,13 @@ function createResourceEvidence(ctx: RuleContext) {
       ];
 
   for (const block of blocks) {
+    // Indexing rewrites node offsets, so SFC blocks keep private ASTs instead of shared ones.
+    const analysis = descriptor
+      ? analyzeScript(block.text, block.jsx)
+      : scriptScope(ctx, block.text, block.jsx);
+    if (!analysis) continue;
     try {
-      const { ast, scopeManager } = parseForESLint(block.text, {
-        range: true,
-        sourceType: "module",
-        ecmaFeatures: { jsx: block.jsx },
-      });
+      const { ast, scopeManager } = analysis;
       index(ast, undefined, block.offset);
       for (const scope of scopeManager.scopes) {
         for (const variable of scope.variables) {
