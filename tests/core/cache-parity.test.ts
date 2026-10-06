@@ -75,7 +75,12 @@ const fixmeCount = createRule({
 function forbiddenNames(ctx: Parameters<typeof importsTodo.create>[0]): string[] {
   const cached = ctx.cache.get<string[]>("fixture:forbidden");
   if (cached) return cached;
-  const names = ctx.fs.readJson<{ forbidden?: string[] }>("markers.json")?.forbidden ?? [];
+  const markers = ctx.fs.readJson("markers.json");
+  const forbidden =
+    typeof markers === "object" && markers !== null && "forbidden" in markers
+      ? markers.forbidden
+      : [];
+  const names = Array.isArray(forbidden) ? forbidden.map(String) : [];
   ctx.cache.set("fixture:forbidden", names);
   return names;
 }
