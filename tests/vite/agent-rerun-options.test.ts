@@ -61,6 +61,20 @@ test.each([
   expect(original.report.commandArgs.rerun).toEqual(expect.arrayContaining([flag, value]));
 });
 
+test.each([
+  [[], undefined],
+  [["--cache"], "--cache"],
+  [["--no-cache"], "--no-cache"],
+])("agent rerun repeats only an explicit cache policy for %j", async (flags, expected) => {
+  const root = fixture();
+  const { report } = await run(root, [".", "--framework", "vite", "--format", "agent", ...flags]);
+  const cacheFlags = report.commandArgs.rerun.filter((arg: string) =>
+    ["--cache", "--no-cache"].includes(arg),
+  );
+  expect(cacheFlags).toEqual(expected ? [expected] : []);
+  expect(existsSync(join(root, ".vite-doctor/cache"))).toBe(flags[0] !== "--no-cache");
+});
+
 test("agent rerun retains baseline suppression and a literal baseline path", async () => {
   const root = fixture();
   const initial = await run(root, [".", "--framework", "vite", "--format", "agent"]);
