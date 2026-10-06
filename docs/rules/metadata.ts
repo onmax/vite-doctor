@@ -233,6 +233,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/routes/require-default-handler": {
+    description:
+      "Requires every file in a statically resolved Nitro api/ or routes/ directory to default-export a handler and keep helpers out of the route tree. The rule stays disabled for ambiguous configs or configured scanDirs, apiDir, or routesDir until resolved Runtime Evidence is available.",
+    why: "Nitro registers every file under server/api and server/routes as a route. A helper module placed there becomes a public URL with no working handler, and other routes that import it pull in a route module.",
+    recommendedReplacement:
+      "Default-export a handler from each route file. Move shared helpers to server/utils/, where Nitro 2 and Nuxt auto-import them, and keep only type exports next to the handler.",
+    examples: [
+      {
+        title: "Move route helpers to server/utils",
+        language: "ts",
+        invalid:
+          "// server/api/_db.ts\nexport function getDb() {\n  return drizzle(useRuntimeConfig().databaseUrl)\n}",
+        valid:
+          "// server/utils/db.ts\nexport function getDb() {\n  return drizzle(useRuntimeConfig().databaseUrl)\n}\n\n// server/api/users.get.ts\nexport default defineEventHandler(() => getDb().select().from(users))",
+      },
+    ],
+  },
   "nitro/structure/prefer-server-utils": {
     description:
       "Suggests server/utils for helpers that Nitro server routes, middleware, and plugins import from ad-hoc directories.",

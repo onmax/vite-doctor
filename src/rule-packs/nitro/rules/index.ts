@@ -16,6 +16,7 @@ import { preferAssertMethod } from "./prefer-assert-method.js";
 import { preferRouteMethodSuffix } from "./prefer-route-method-suffix.js";
 import { preferGetRequestIp } from "./prefer-get-request-ip.js";
 import { noHttpErrorMasking } from "./no-http-error-masking.js";
+import { requireDefaultHandler } from "./require-default-handler.js";
 import { preferServerUtils } from "./prefer-server-utils.js";
 
 export {
@@ -36,6 +37,7 @@ export {
   preferRouteMethodSuffix,
   preferGetRequestIp,
   noHttpErrorMasking,
+  requireDefaultHandler,
   preferServerUtils,
 };
 
@@ -57,6 +59,7 @@ const rules = [
   preferRouteMethodSuffix,
   preferGetRequestIp,
   noHttpErrorMasking,
+  requireDefaultHandler,
 ];
 
 const strictOnlyRules = [preferServerUtils];

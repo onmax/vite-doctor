@@ -45,6 +45,13 @@ export function nitroServerFile(project: ProjectInfo, file: string): NitroServer
 }
 
 export function nitroRouteFile(project: ProjectInfo, file: string): NitroServerFile | null {
+  const options = readStaticConfigOptions(project, project.framework === "nuxt" ? "nuxt" : "nitro");
+  if (
+    options.some(
+      ({ path }) => path.length === 0 || ["scanDirs", "apiDir", "routesDir"].includes(path.at(-1)!),
+    )
+  )
+    return null;
   const serverFile = nitroServerFile(project, file);
   if (!serverFile || !ROUTE_DIRS.has(serverFile.dir) || !serverFile.path.includes("/")) return null;
   if (!SCANNED_SCRIPT.test(file) || DECLARATION_FILE.test(file)) return null;
@@ -93,6 +100,8 @@ export function runtimeMajor(project: ProjectInfo, runtime: "nitro" | "nuxt"): n
 }
 
 function resolveServerDirs(project: ProjectInfo): string[] {
+  const options = readStaticConfigOptions(project, project.framework === "nuxt" ? "nuxt" : "nitro");
+  if (options.some(({ path }) => path.length === 0)) return [];
   if (project.framework === "nuxt") return nuxtServerDirs(project);
   if (project.framework === "nitro") return standaloneNitroServerDirs(project);
   return [];
@@ -157,33 +166,156 @@ function configOptions(file: string): StaticConfigOption[] {
   }
   let program: unknown;
   try {
-    program = parseSync(file, text, { sourceType: "module", lang: "ts" }).program;
+    const parsed = parseSync(file, text, { sourceType: "module", lang: "ts" });
+    if (parsed.errors.length) return [{ path: [], value: null }];
+    program = parsed.program;
   } catch {
-    return [];
+    return [{ path: [], value: null }];
   }
+  if (file.includes("vite.config.")) return viteConfigOptions(program);
   const options: StaticConfigOption[] = [];
-  collectOptions(program, [], options);
+  const expression = (program as any).body.find(
+    (statement: any) => statement.type === "ExportDefaultDeclaration",
+  )?.declaration;
+  const config = unwrapConfig(expression);
+  if (!config) return [{ path: [], value: null }];
+  collectOptions(config, [], options);
   return options;
 }
 
-function collectOptions(node: any, path: string[], options: StaticConfigOption[]) {
-  if (!node || typeof node !== "object") return;
-  if (Array.isArray(node)) {
-    for (const child of node) collectOptions(child, path, options);
-    return;
-  }
-  if (node.type === "Property" && !node.computed) {
-    const key = propertyKey(node.key);
-    if (key) {
-      const next = [...path, key];
-      options.push({ path: next, value: literalValue(node.value) });
-      collectOptions(node.value, next, options);
-      return;
+function viteConfigOptions(program: any): StaticConfigOption[] {
+  const pluginNames = new Set<string>();
+  const namespaceNames = new Set<string>();
+  for (const statement of program.body) {
+    if (statement.type !== "ImportDeclaration" || statement.source.value !== "nitro/vite") continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === "ImportSpecifier" && propertyKey(specifier.imported) === "nitro")
+        pluginNames.add(specifier.local.name);
+      if (specifier.type === "ImportNamespaceSpecifier") namespaceNames.add(specifier.local.name);
     }
   }
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "parent" || !value || typeof value !== "object") continue;
-    collectOptions(value, path, options);
+  const expression = program.body.find(
+    (statement: any) => statement.type === "ExportDefaultDeclaration",
+  )?.declaration;
+  const config = unwrapConfig(expression);
+  if (!config) return [];
+  const pluginsProperty = config.properties.findLast(
+    (property: any) =>
+      property.type === "Property" && !property.computed && propertyKey(property.key) === "plugins",
+  );
+  const plugins = pluginsProperty?.value;
+  if (!hasNitroPlugin(plugins, pluginNames, namespaceNames)) return [];
+  const nitroProperty = config.properties.findLast(
+    (property: any) =>
+      property.type === "Property" && !property.computed && propertyKey(property.key) === "nitro",
+  );
+  const options: StaticConfigOption[] = [];
+  for (const property of config.properties) {
+    if (property.type !== "Property" || property.computed) continue;
+    const key = propertyKey(property.key);
+    if (key === "nitro" && property === nitroProperty) {
+      const nested = unwrapConfig(property.value);
+      if (nested) collectOptions(nested, ["nitro"], options);
+      else options.push({ path: [], value: null });
+    }
+    if (key !== "plugins" || property !== pluginsProperty) continue;
+    collectNitroPluginOptions(property.value, pluginNames, namespaceNames, options);
+  }
+  return options;
+}
+
+function hasNitroPlugin(node: any, names: Set<string>, namespaces: Set<string>): boolean {
+  if (!node) return false;
+  if (node.type === "TSAsExpression" || node.type === "TSSatisfiesExpression")
+    return hasNitroPlugin(node.expression, names, namespaces);
+  if (node.type === "ArrayExpression")
+    return node.elements.some((element: any) => hasNitroPlugin(element, names, namespaces));
+  if (node.type !== "CallExpression") return false;
+  return isNitroPluginCallee(node.callee, names, namespaces);
+}
+
+function collectNitroPluginOptions(
+  node: any,
+  names: Set<string>,
+  namespaces: Set<string>,
+  options: StaticConfigOption[],
+) {
+  if (!node) return;
+  if (node.type === "TSAsExpression" || node.type === "TSSatisfiesExpression") {
+    collectNitroPluginOptions(node.expression, names, namespaces, options);
+    return;
+  }
+  if (node.type === "ArrayExpression") {
+    for (const element of node.elements)
+      collectNitroPluginOptions(element, names, namespaces, options);
+    return;
+  }
+  if (node.type !== "CallExpression" || !isNitroPluginCallee(node.callee, names, namespaces))
+    return;
+  const nested =
+    node.arguments.length === 1
+      ? unwrapConfig(node.arguments[0])
+      : node.arguments.length === 0
+        ? { type: "ObjectExpression", properties: [] }
+        : undefined;
+  if (nested) collectOptions(nested, ["nitro"], options);
+  else options.push({ path: [], value: null });
+}
+
+function isNitroPluginCallee(node: any, names: Set<string>, namespaces: Set<string>): boolean {
+  if (node?.type === "Identifier") return names.has(node.name);
+  return (
+    node?.type === "MemberExpression" &&
+    !node.computed &&
+    node.object?.type === "Identifier" &&
+    namespaces.has(node.object.name) &&
+    propertyKey(node.property) === "nitro"
+  );
+}
+
+function unwrapConfig(node: any): any {
+  while (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
+    node = node.expression;
+  if (
+    node?.type === "CallExpression" &&
+    ["defineConfig", "defineNitroConfig", "defineNuxtConfig"].includes(node.callee?.name) &&
+    node.arguments.length === 1
+  )
+    return unwrapConfig(node.arguments[0]);
+  return node?.type === "ObjectExpression" ? node : undefined;
+}
+
+function collectOptions(node: any, path: string[], options: StaticConfigOption[]) {
+  if (node?.type !== "ObjectExpression") return;
+  for (const property of node.properties) {
+    if (property.type !== "Property" || property.computed) {
+      options.push({ path: [], value: null });
+      continue;
+    }
+    const key = propertyKey(property.key);
+    if (!key) continue;
+    if (key === "imports" || key === "experimental") {
+      const nested = unwrapConfig(property.value);
+      if (nested) {
+        for (const option of nested.properties) {
+          if (option.type !== "Property" || option.computed) continue;
+          const name = propertyKey(option.key);
+          if (name === (key === "imports" ? "autoImport" : "nitroAutoImports"))
+            options.push({ path: [...path, key, name], value: literalValue(option.value) });
+        }
+      }
+    }
+    if (
+      !["srcDir", "serverDir", "scanDirs", "apiDir", "routesDir", "nitro", "imports"].includes(key)
+    )
+      continue;
+    const next = [...path, key];
+    options.push({ path: next, value: literalValue(property.value) });
+    if (key === "nitro") {
+      const nested = unwrapConfig(property.value);
+      if (nested) collectOptions(nested, next, options);
+      else options.push({ path: [], value: null });
+    }
   }
 }
 
