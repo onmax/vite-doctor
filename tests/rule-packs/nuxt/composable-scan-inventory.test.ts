@@ -51,10 +51,23 @@ test.each([
         writeFileSync(join(root, file), source);
       }
       const manualModule = defineNuxtModule({
-        setup(_options, host) {
+        async setup(_options, host) {
+          await host.callHook("imports:dirs", [join(root, "app/composables")]);
+          host.hook("modules:done", async () => {
+            await host.callHook("imports:dirs", [join(root, "app/composables")]);
+          });
           let retainedDirs: unknown[] | undefined;
           let laterDirs = false;
-          host.hook("imports:dirs", (dirs) => {
+          let nestedDirs = false;
+          host.hook("imports:dirs", async (dirs) => {
+            if (!nestedDirs) {
+              nestedDirs = true;
+              try {
+                await host.callHook("imports:dirs", [join(root, "app/composables")]);
+              } finally {
+                nestedDirs = false;
+              }
+            }
             retainedDirs = dirs;
             const index = dirs.indexOf(join(root, "app/composables"));
             if (!laterDirs && removeRoot && index !== -1) dirs.splice(index, 1);
@@ -69,6 +82,17 @@ test.each([
             await host.callHook("imports:dirs", [join(root, "app/composables")]);
           });
           host.hook("imports:context", (context) => {
+            host.hook("ready", async () => {
+              const imports = await context.getImports();
+              expect(
+                imports.some((entry) => entry.from === join(root, "app/composables/cart.ts")),
+              ).toBe(scan && !removeRoot);
+              expect(
+                imports.some(
+                  (entry) => entry.from === join(root, "base/source/composables/custom.ts"),
+                ),
+              ).toBe(scan);
+            });
             host.hook("ready", async () => {
               await context.modifyDynamicImports(async (imports) => {
                 imports.push({

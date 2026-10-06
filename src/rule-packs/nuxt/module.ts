@@ -1,3 +1,4 @@
+import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import {
   autoRegisteredNuxtLayers,
@@ -170,15 +171,20 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     };
   });
 
-  let importDirsEvent: { name: string; args: unknown[] } | undefined;
-  nuxt.hooks?.beforeEach((event: { name: string; args: unknown[] }) => {
-    if (event.name === "imports:dirs" && !importDirsEvent) importDirsEvent = event;
-  });
-  nuxt.hooks?.afterEach((event: { name: string; args: unknown[] }) => {
-    if (event !== importDirsEvent) return;
-    // Nuxt retains the initial invocation's finalized roots; later public calls do not replace them.
-    evidence.importDirs = Array.isArray(event.args[0]) ? [...event.args[0]] : [];
-  });
+  const nuxtRuntimeUrl = import.meta.resolve("nuxt");
+  const callHook = nuxt.callHook;
+  if (callHook) {
+    nuxt.callHook = async function (name: string, ...args: unknown[]) {
+      // Public hook names and payloads do not establish scanner ownership. Nuxt calls
+      // this hook directly from its runtime entry; other callers must not supply evidence.
+      const scannerOwned =
+        name === "imports:dirs" &&
+        getCallSites(2, { sourceMap: false })[1]?.scriptName === nuxtRuntimeUrl;
+      const result = await callHook.call(this, name, ...args);
+      if (scannerOwned) evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
+      return result;
+    };
+  }
 
   nuxt.hook?.("components:dirs", (dirs: unknown[]) => {
     evidence.componentDirs.push(...toArray(dirs));
