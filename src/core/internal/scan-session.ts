@@ -137,7 +137,8 @@ class PersistentRuleCache extends MemoryRuleCache {
       writeFileSync(temporary, JSON.stringify(store), { flag: "wx", mode: 0o600 });
       renameSync(temporary, target);
       temporary = undefined;
-    } catch {
+    } catch (error) {
+      if (error instanceof LegacyStoreLockError) console.warn(error.message);
       // Cache writes are best-effort and must not change diagnostics.
     } finally {
       if (temporary) {
@@ -180,8 +181,18 @@ class PersistentRuleCache extends MemoryRuleCache {
 }
 
 const STORE_LOCK_PREFIX = ".store-lock-";
+const LEGACY_STORE_LOCK_FILE = ".store.lock";
+
+class LegacyStoreLockError extends Error {
+  constructor() {
+    super(
+      "Doctor cache persistence is blocked by a legacy store lock; run `vite-doctor cache clean` to remove it.",
+    );
+  }
+}
 
 function acquireStoreLock(root: string, dir: string): { fd: number; path: string } {
+  if (readdirSync(dir).includes(LEGACY_STORE_LOCK_FILE)) throw new LegacyStoreLockError();
   const namespace = pidNamespaceIdentity();
   const name = `${STORE_LOCK_PREFIX}${process.pid}-${namespace ?? "unknown"}-${randomUUID()}`;
   const path = resolve(dir, name);
@@ -204,6 +215,14 @@ function acquireStoreLock(root: string, dir: string): { fd: number; path: string
         ownerNamespace !== namespace ||
         processIsAlive(owner)
       ) {
+        if (
+          !Number.isSafeInteger(owner) ||
+          owner <= 0 ||
+          ownerNamespace === undefined ||
+          !/^\d+$/.test(ownerNamespace)
+        ) {
+          throw new LegacyStoreLockError();
+        }
         throw new Error("Doctor cache store has an active writer.");
       }
       try {
