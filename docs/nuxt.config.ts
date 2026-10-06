@@ -1,6 +1,8 @@
 import { defineNuxtConfig } from "nuxt/config";
 import { join } from "pathe";
 import { env, process } from "std-env";
+import { readdirSync, rmSync } from "node:fs";
+import { kill } from "node:process";
 import { fileURLToPath } from "node:url";
 import doctorPackage from "../package.json" with { type: "json" };
 import { getDiagnosticDocuments, getRuleDocuments } from "./rules/source.js";
@@ -8,6 +10,7 @@ import { getDiagnosticDocuments, getRuleDocuments } from "./rules/source.js";
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
 const contentDatabasePath = join(tempDir, `nuxt-doctor-content-${process.pid}.sqlite`);
 const contentLocalDatabasePath = join(tempDir, `nuxt-doctor-content-local-${process.pid}.sqlite`);
+const contentLocalDatabaseFile = /^nuxt-doctor-content-local-(\d+)\.sqlite(?:-journal|-shm|-wal)?$/;
 const frameworks = ["typescript", "nuxt", "vue", "vite", "nitro", "pinia", "package"];
 const docsRoutes = ["/", "/cli"];
 const frameworkRoutes = frameworks.map((framework) => `/${framework}`);
@@ -21,6 +24,8 @@ const contentDumpRoutes = [
   "/__nuxt_content/landing/sql_dump.txt",
   "/__nuxt_content/rules/sql_dump.txt",
 ];
+
+removeContentLocalDatabases((pid) => !isRunning(pid));
 
 export default defineNuxtConfig({
   extends: ["docus"],
@@ -82,10 +87,16 @@ export default defineNuxtConfig({
 
   devtools: { enabled: true },
 
+  hooks: {
+    close: () => removeContentLocalDatabases((pid) => pid === process.pid),
+  },
+
   nitro: {
     preset: "cloudflare_module",
     sourceMap: false,
     prerender: {
+      // Higher concurrency makes `_payload.json` key order non-deterministic and
+      // pushes the home OG image past nuxt-og-image's render timeout.
       concurrency: 1,
       routes: [
         ...contentDumpRoutes,
@@ -116,3 +127,24 @@ export default defineNuxtConfig({
 
   compatibilityDate: "2026-05-11",
 } as any);
+
+// `nuxi dev` stops its fork with SIGTERM before the close hook runs, so
+// databases left by dead processes are also swept on the next start.
+function removeContentLocalDatabases(shouldRemove: (pid: number) => boolean) {
+  for (const file of readdirSync(tempDir)) {
+    const pid = Number(contentLocalDatabaseFile.exec(file)?.[1]);
+    if (!pid || !shouldRemove(pid)) continue;
+    try {
+      rmSync(join(tempDir, file), { force: true });
+    } catch {}
+  }
+}
+
+function isRunning(pid: number) {
+  try {
+    kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}

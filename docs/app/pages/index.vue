@@ -1,9 +1,7 @@
 <script setup lang="ts">
-definePageMeta({ header: false, footer: false, layout: false });
+import { homeDescription, homeTitle } from "../utils/home-copy";
 
-const homeTitle = "Catch the AI slop your agents ship.";
-const homeDescription =
-  "Doctor scans your project before review and flags framework bugs agents often miss.";
+definePageMeta({ header: false, footer: false, layout: false });
 
 useSeoMeta({
   title: homeTitle,
@@ -18,17 +16,9 @@ useSeoMeta({
   twitterDescription: homeDescription,
 });
 
-defineOgImage(
-  "DoctorHome",
-  {
-    title: homeTitle,
-    description: homeDescription,
-  },
-  {
-    width: 1200,
-    height: 630,
-  },
-);
+// Text props are encoded into the prerendered image path, and a trailing period
+// there yields an unwritable `..png` file, so the component reads its own copy.
+defineOgImage("DoctorHome", {}, { width: 1200, height: 630 });
 
 useHead({
   titleTemplate: "%s",
