@@ -180,12 +180,12 @@ function createRuleFileSystem(inputs: RuleInputs, log: string[]): RuleFileSystem
     readText(path) {
       return text(absolute(path));
     },
-    readJson<T>(path: string): T | undefined {
+    readJson(path) {
       const value = text(absolute(path));
       if (value === undefined) return undefined;
       try {
         const parsed: unknown = JSON.parse(value);
-        return parsed as T;
+        return parsed;
       } catch {
         return undefined;
       }

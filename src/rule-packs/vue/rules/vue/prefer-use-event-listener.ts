@@ -64,7 +64,7 @@ function projectHasVueUse(ctx: RuleContext) {
 }
 
 function readProjectHasVueUse(ctx: RuleContext) {
-  const pkg = ctx.fs.readJson<any>("package.json");
+  const pkg: any = ctx.fs.readJson("package.json");
   const deps = {
     ...pkg?.dependencies,
     ...pkg?.devDependencies,

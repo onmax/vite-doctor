@@ -390,8 +390,8 @@ function isPackageEntry(ctx: RuleContext, file: string): boolean {
   while (dir.startsWith(root)) {
     const manifestPath = join(dir, "package.json");
     if (ctx.fs.stat(manifestPath)?.isFile()) {
-      const manifest = ctx.fs.readJson<Record<string, unknown>>(manifestPath);
-      if (manifest === undefined) return false;
+      const manifest = ctx.fs.readJson(manifestPath);
+      if (!isRecord(manifest)) return false;
       const entries = packageEntryTargets(manifest);
       return entries.some((entry) => {
         if (!entry.target) return false;
@@ -537,4 +537,8 @@ function exportName(node: AnyNode): string | null {
   if (!node) return null;
   if (node.type === "Identifier") return node.name;
   return typeof node.value === "string" ? node.value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
