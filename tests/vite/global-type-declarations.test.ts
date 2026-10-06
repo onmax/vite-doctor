@@ -19,6 +19,7 @@ test.each([
   "declare global { const __BUILD__: string; interface ImportMetaEnv { VITE_API_URL: string } }\nexport = function legacy(): T;",
   "declare global { const __BUILD__: string }\nexport = function legacy(): T;\ndeclare global { interface ImportMetaEnv { VITE_API_URL: string } }",
   "declare global { const __BUILD__: string; interface ImportMetaEnv { VITE_API_URL: string } }\nexport = function legacy(): T;\nexport = function other(): T;",
+  "declare const __BUILD__: string; interface ImportMetaEnv { VITE_API_URL: string }\nconst broken = ;",
 ])("does not report missing declarations when parsing is incomplete: %s", async (source) => {
   expect((await diagnose(source)).diagnostics).toEqual([]);
 });

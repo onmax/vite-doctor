@@ -176,8 +176,11 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
       sourceType: "module",
       astType: "ts",
     });
-    // Fatal Oxc errors discard the program; recoverable errors retain declaration evidence.
-    if (!program.body.length && errors.some((error) => error.severity === "Error"))
+    // Fatal errors can discard declaration evidence; recoverable ambient-context errors retain it.
+    if (
+      errors.some((error) => error.severity === "Error") &&
+      !program.body.some((statement) => statement.type === "EmptyStatement")
+    )
       declarations.incomplete = true;
     if (!isExternalModule(program.body)) collect(program.body);
     else {
