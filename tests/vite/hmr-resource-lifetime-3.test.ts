@@ -1210,11 +1210,6 @@ for (const [name, source, leaks] of [
     "let finish; let timer; const ready = new Promise(resolve => { finish = resolve }); async function start() { await ready; timer = setInterval(refresh) } start(); const handler = () => finish(); addEventListener('click', handler); import.meta.hot.dispose(() => { removeEventListener('click', handler); clearInterval(timer) })",
     false,
   ],
-  [
-    "many listeners have bounded ordering exploration",
-    `${Array.from({ length: 11 }, (_, index) => `const handler${index} = () => { ${index === 0 ? "setInterval(refresh)" : ""} }; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${Array.from({ length: 11 }, (_, index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`,
-    true,
-  ],
 ] as const) {
   test(name, async () => {
     const result = await runRuleFixture({
@@ -1225,3 +1220,16 @@ for (const [name, source, leaks] of [
     expect(result.diagnostics.length > 0).toBe(leaks);
   });
 }
+
+// Explores orderings up to the Rule's cap, so it takes ~1s idle and several seconds on a loaded
+// machine; an uncapped 11! exploration would still blow far past this timeout.
+test("many listeners have bounded ordering exploration", async () => {
+  const handlers = Array.from({ length: 11 }, (_, index) => index);
+  const source = `${handlers.map((index) => `const handler${index} = () => { ${index === 0 ? "setInterval(refresh)" : ""} }; document.addEventListener('event${index}', handler${index});`).join(" ")} import.meta.hot.dispose(() => { ${handlers.map((index) => `document.removeEventListener('event${index}', handler${index});`).join(" ")} })`;
+  const result = await runRuleFixture({
+    framework: "vite",
+    rule: requireDisposeForSideEffects,
+    files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
+  });
+  expect(result.diagnostics.length > 0).toBe(true);
+}, 30_000);
