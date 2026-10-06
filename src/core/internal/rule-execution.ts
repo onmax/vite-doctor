@@ -60,12 +60,19 @@ export async function runFileRules(session: ScanSession): Promise<void> {
     const pending: number[] = [];
     for (const [index, rule] of rules.entries()) {
       if (!canRunRuleOnFile(rule, file)) continue;
-      if (!canMatchPrefilter(rule, file)) continue;
       if (session.ruleScopes.get(rule.meta.id)?.has(owner) === false) continue;
       const key = keys[index];
       const cached = key ? session.cache.ruleResult(file.path, key) : undefined;
-      if (cached) reported[index]!.push(...cached);
-      else pending.push(index);
+      if (cached) {
+        reported[index]!.push(...cached);
+        continue;
+      }
+      // The prefilter only reads this file's facts and text, so a skip caches as an empty result.
+      if (!canMatchPrefilter(rule, file)) {
+        if (key) session.cache.recordRuleResult(file.path, key, [], []);
+        continue;
+      }
+      pending.push(index);
     }
     if (!pending.length) continue;
     await loadSourceFile(file);

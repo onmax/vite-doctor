@@ -571,8 +571,7 @@ function ruleKeys(
         sha256(
           [
             context,
-            rule.meta.id,
-            rule.meta.version ?? "",
+            JSON.stringify(rule.meta),
             pack?.name ?? "",
             pack?.version ?? "",
             rule.create.toString(),

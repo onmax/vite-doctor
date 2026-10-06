@@ -9,6 +9,7 @@ import {
   defineRulePack,
   type DoctorRunResult,
 } from "../../src/core/index.ts";
+import { createScanSession } from "../../src/core/internal/scan-session.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import { readStoreFile } from "./cache-store-file.ts";
 
@@ -217,3 +218,62 @@ test.each([1, 2, 3, 4])(
     }
   },
 );
+
+test("a prefilter skip is cached and re-evaluated when the file changes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-cache-prefilter-"));
+  let created = 0;
+  const rule = createRule({
+    meta: {
+      id: "fixture/uses-legacy",
+      title: "Uses legacy",
+      category: "fixture",
+      severity: "warn",
+      prefilter: { names: ["legacyCall"] },
+    },
+    create(ctx) {
+      created++;
+      const offset = ctx.file.text.indexOf("legacyCall");
+      if (offset === -1) return;
+      ctx.report(allDiagnostics.DOC9999({ why: "Uses legacyCall.", fix: "Replace it." }), {
+        range: ctx.range(offset, offset + "legacyCall".length),
+      });
+    },
+  });
+  const pack = defineDoctorExtension({
+    name: "fixture/prefilter",
+    rulePacks: [
+      defineRulePack({
+        name: "fixture/prefilter",
+        version: "0.0.0",
+        rules: [rule],
+        presets: { recommended: [rule.meta.id] },
+      }),
+    ],
+  });
+  try {
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
+    writeFileSync(join(root, "src/a.ts"), "export const a = 1;\n");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const options = { root, cache: true, extensions: [pack], rules: "fixture/" };
+    expect((await runViteDoctor(options)).diagnostics).toEqual([]);
+    expect(created).toBe(0);
+
+    const warm = await createScanSession(options);
+    const { parseSourceFiles } = await import("../../src/core/internal/facts.ts");
+    const { runFileRules } = await import("../../src/core/internal/rule-execution.ts");
+    await parseSourceFiles(warm);
+    await runFileRules(warm);
+    expect(warm.cache.runStats()).toMatchObject({ filesRead: 0, ruleResultsReused: 1 });
+
+    writeFileSync(join(root, "src/a.ts"), "export const a = legacyCall();\n");
+    const edited = await runViteDoctor(options);
+    expect(created).toBe(1);
+    expect(edited.diagnostics.map((item) => item.ruleId)).toEqual(["fixture/uses-legacy"]);
+    expect(edited.diagnostics).toEqual(
+      (await runViteDoctor({ ...options, cache: false })).diagnostics,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
