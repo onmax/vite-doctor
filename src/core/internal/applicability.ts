@@ -5,6 +5,7 @@ import type {
   ProjectInfo,
   RulePack,
   RuntimePackageName,
+  WorkspacePackage,
 } from "../primitives.js";
 
 export interface ApplicabilityResult {
@@ -39,34 +40,72 @@ export function evaluateRuleApplicability(
 export function evaluatePackActivation(pack: RulePack, project: ProjectInfo): ApplicabilityResult {
   if (pack.activation === false)
     return inactive(`Rule Pack ${pack.name} requires explicit preset selection.`);
-  if (!pack.activation) return active();
-  if (pack.activation.nuxt && project.framework !== "nuxt") {
+  const results = projectWorkspacePackages(project).map((item) =>
+    evaluateWorkspacePackageActivation(pack, project, item),
+  );
+  return (
+    results.find((result) => result.state === "active") ??
+    results.find((result) => result.state === "unknown") ?? {
+      state: "inactive",
+      reasons: [...new Set(results.flatMap((result) => result.reasons))],
+    }
+  );
+}
+
+/** Roots of the workspace packages whose Project Inventory activates `pack`. */
+export function activatingWorkspacePackages(pack: RulePack, project: ProjectInfo): string[] {
+  if (pack.activation === false) return [];
+  return projectWorkspacePackages(project)
+    .filter((item) => evaluateWorkspacePackageActivation(pack, project, item).state === "active")
+    .map((item) => item.root);
+}
+
+export function projectWorkspacePackages(project: ProjectInfo): WorkspacePackage[] {
+  return (
+    project.workspacePackages ?? [
+      {
+        root: ".",
+        framework: project.framework,
+        packages: (project.inventory?.packages ?? {}) as Record<string, string>,
+      },
+    ]
+  );
+}
+
+function evaluateWorkspacePackageActivation(
+  pack: RulePack,
+  project: ProjectInfo,
+  workspacePackage: WorkspacePackage,
+): ApplicabilityResult {
+  const activation = pack.activation;
+  if (!activation) return active();
+  if (activation.frameworks && !activation.frameworks.includes(workspacePackage.framework)) {
+    return inactive(
+      `Rule Pack ${pack.name} requires a ${activation.frameworks.join(" or ")} workspace package.`,
+    );
+  }
+  if (activation.nuxt && workspacePackage.framework !== "nuxt") {
     return inactive(`Rule Pack ${pack.name} requires a Nuxt project.`);
   }
   const results: ApplicabilityResult[] = [];
-  if (pack.activation.nuxt) {
-    results.push(evaluateRuntimeRange(project, "nuxt", pack.activation.nuxt));
+  if (activation.nuxt) {
+    results.push(evaluateRuntimeRange(project, "nuxt", activation.nuxt));
   }
 
-  if (pack.activation.languages?.length) {
+  if (activation.languages?.length) {
     const languages = new Set(project.languages ?? []);
-    const matched = pack.activation.languages.some((language) => languages.has(language));
+    const matched = activation.languages.some((language) => languages.has(language));
     results.push(
       matched ? active() : inactive(`Rule Pack ${pack.name} language activation did not match.`),
     );
   }
 
-  const hasPackageOrModuleConstraints = Boolean(
-    pack.activation.packages?.length || pack.activation.modules?.length,
-  );
-  if (hasPackageOrModuleConstraints) {
+  if (activation.packages?.length || activation.modules?.length) {
     const moduleNames = new Set((project.nuxt?.modules ?? []).map((module) => module.name));
-    const packageNames = new Set(
-      Object.keys((project.inventory?.packages ?? {}) as Record<string, unknown>),
-    );
+    const packageNames = new Set(Object.keys(workspacePackage.packages));
     const matched =
-      pack.activation.packages?.some((name) => moduleNames.has(name) || packageNames.has(name)) ||
-      pack.activation.modules?.some((name) => moduleNames.has(name));
+      activation.packages?.some((name) => moduleNames.has(name) || packageNames.has(name)) ||
+      activation.modules?.some((name) => moduleNames.has(name));
     results.push(
       matched
         ? active()

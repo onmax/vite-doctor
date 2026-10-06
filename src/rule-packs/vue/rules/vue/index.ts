@@ -83,6 +83,7 @@ const rules = [
 const vueRulePack = defineRulePack({
   name: "vite-doctor/vue",
   version: "0.0.0",
+  activation: { frameworks: ["vue", "nuxt"] },
   rules,
   presets: {
     recommended: rules.map((rule) => rule.meta.id),

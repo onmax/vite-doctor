@@ -7,7 +7,9 @@ import type {
   RuleVisitor,
   SourceFileHandle,
 } from "../primitives.js";
+import { projectWorkspacePackages } from "./applicability.js";
 import { runVisitors } from "./rule-runner.js";
+import { owningWorkspacePackage } from "./workspace-packages.js";
 import {
   buildWorkspaceGraph,
   runDuplicationRules,
@@ -41,10 +43,15 @@ export async function runFileRules(session: ScanSession): Promise<void> {
   // Buffering per rule keeps report order rule-major, as it was when rules ran one at a time.
   const reported = rules.map((): Diagnostic[] => []);
   const timings = session.options.profile ? rules.map(() => ({ ms: 0, files: 0 })) : undefined;
+  const workspacePackages = projectWorkspacePackages(session.project);
   for (const file of session.handles) {
     const visitors: RuleVisitor[] = [];
+    const owner = session.ruleScopes.size
+      ? owningWorkspacePackage(workspacePackages, file.relativePath)
+      : ".";
     for (const [index, rule] of rules.entries()) {
       if (!canRunRuleOnFile(rule, file)) continue;
+      if (session.ruleScopes.get(rule.meta.id)?.has(owner) === false) continue;
       const context = createRuleContext(session, file, rule, "file", reported[index]);
       if (!timings) {
         const visitor = await rule.create(context);

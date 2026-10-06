@@ -93,6 +93,7 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
   );
   result.fixes = fixes;
   result.extends = options.extends ?? session.config.extends;
+  result.workspacePackages = session.workspaceActivations;
   if (options.profile) {
     result.ruleTimings = [...session.ruleTimings]
       .map(([rule, timing]) => ({ rule, ms: Math.round(timing.ms), files: timing.files }))

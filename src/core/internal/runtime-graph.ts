@@ -27,8 +27,11 @@ const acceptedIdentities: Record<RuntimePackageName, Set<string>> = {
   vue: new Set(["vue"]),
 };
 
-export function resolveRuntimeGraph(root: string, framework: DoctorFramework): RuntimeGraph {
-  const rootManifest = join(root, "package.json");
+export function resolveRuntimeGraph(
+  root: string,
+  framework: DoctorFramework,
+  rootManifest = join(root, "package.json"),
+): RuntimeGraph {
   const packages: RuntimeGraph["packages"] = {};
   const edges: RuntimeGraph["edges"] = [];
 

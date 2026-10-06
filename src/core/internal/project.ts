@@ -9,6 +9,11 @@ import type {
   ProjectInfo,
   ProjectLanguage,
 } from "../primitives.js";
+import {
+  detectWorkspacePackages,
+  workspaceFramework,
+  workspaceFrameworkPackage,
+} from "./workspace-packages.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
 import { detectNuxtModuleDefinitions } from "./nuxt-module-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
@@ -39,35 +44,34 @@ export async function detectProject(
     ...packageJson?.devDependencies,
   };
   const nuxtVersion = deps.nuxt ?? deps["@nuxt/kit"];
-  const viteVersion = deps.vite;
-  const nitroVersion = deps.nitro ?? deps["nitropack"];
-  const hasVue = Boolean(deps.vue);
   const vueVersion = deps.vue ?? ">=3.5";
-  const framework: DoctorFramework =
-    requested === "auto"
-      ? nuxtVersion
-        ? "nuxt"
-        : nitroVersion
-          ? "nitro"
-          : hasVue
-            ? "vue"
-            : viteVersion
-              ? "vite"
-              : "vue"
-      : requested;
+  const workspacePackages = await detectWorkspacePackages(root);
+  const framework = requested === "auto" ? workspaceFramework(workspacePackages) : requested;
+  const frameworkPackage = workspaceFrameworkPackage(workspacePackages, framework);
+  if (requested !== "auto") workspacePackages[0]!.framework = requested;
+  const frameworkRoot = join(root, frameworkPackage?.root ?? ".");
+  const frameworkDeps = frameworkPackage?.packages ?? deps;
+  const frameworkNuxtVersion = frameworkDeps.nuxt ?? frameworkDeps["@nuxt/kit"];
   const ssr = framework === "nuxt" || framework === "nitro" || hasVueSsrEvidence(packageJson, deps);
   const isMonorepo =
-    existsSync(join(root, "pnpm-workspace.yaml")) || existsSync(join(root, "turbo.json"));
-  const nuxtFacts = framework === "nuxt" ? readNuxtRunFacts(root) : undefined;
+    workspacePackages.length > 1 ||
+    existsSync(join(root, "pnpm-workspace.yaml")) ||
+    existsSync(join(root, "turbo.json"));
+  const nuxtFacts = framework === "nuxt" ? readNuxtRunFacts(frameworkRoot) : undefined;
   const nuxt = nuxtFacts
-    ? await detectNuxt(root, nuxtVersion ?? ">=4", deps, nuxtFacts)
+    ? await detectNuxt(
+        frameworkRoot,
+        frameworkNuxtVersion ?? nuxtVersion ?? ">=4",
+        frameworkDeps,
+        nuxtFacts,
+      )
     : undefined;
-  const detectedGraph = resolveRuntimeGraph(root, framework);
+  const detectedGraph = resolveRuntimeGraph(root, framework, join(frameworkRoot, "package.json"));
   const targeted = applyRuntimeTarget(
     detectedGraph,
     nuxtFacts
       ? resolveNuxtCompatibility(
-          root,
+          frameworkRoot,
           detectedGraph,
           nuxtFacts.manifest,
           nuxtFacts.configs,
@@ -92,11 +96,12 @@ export async function detectProject(
       : undefined,
     isMonorepo,
     packageName: packageJson?.name,
+    workspacePackages,
     tsconfigPath,
     languages: await detectProjectLanguages(walk, Boolean(tsconfigPath)),
     nuxt,
     nuxtModuleDefinitions: nuxt
-      ? await detectNuxtModuleDefinitions(root, nuxt.appRoots)
+      ? await detectNuxtModuleDefinitions(frameworkRoot, nuxt.appRoots)
       : undefined,
     runtimeGraph: targeted.graph,
     nuxtCompatibility: targeted.compatibility,

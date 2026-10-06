@@ -11,7 +11,12 @@ import {
   type NuxtDoctorManifest,
 } from "./core/index.js";
 import { collectRulePacks, resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  detectWorkspacePackages,
+  workspaceFramework,
+  workspaceFrameworkPackage,
+} from "./core/internal/workspace-packages.js";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { isAbsolute, join } from "pathe";
 import { doctorInternalDiagnostics } from "./core/internal-diagnostic-handles.js";
@@ -35,7 +40,7 @@ export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
 export async function viteDoctorExtensions(
   options: DoctorRunOptions = {},
 ): Promise<DoctorExtension[]> {
-  const framework = detectRequestedFramework(options);
+  const { frameworks } = await requestedFrameworks(options);
   const extensions = [
     defineDoctorExtension({ name: "vite-doctor/builtin-package", rulePacks: [packageRulePack] }),
     defineDoctorExtension({ name: "vite-doctor/builtin-vite", rulePacks: [viteRulePack] }),
@@ -46,21 +51,22 @@ export async function viteDoctorExtensions(
     defineDoctorExtension({ name: "vite-doctor/builtin-shadcn", rulePacks: [shadcnRulePack] }),
     defineDoctorExtension({ name: "vite-doctor/builtin-pinia", rulePacks: [piniaRulePack] }),
   ];
-  if (framework === "vue") {
-    const { vueRulePack } = await import("./rule-packs/vue/rules.js");
-    extensions.push(
-      defineDoctorExtension({ name: "vite-doctor/builtin-vue", rulePacks: [vueRulePack] }),
-    );
-  }
-  if (framework === "nitro") {
-    const { nitroRulePack } = await import("./rule-packs/nitro/index.js");
-    extensions.push(
-      defineDoctorExtension({ name: "vite-doctor/builtin-nitro", rulePacks: [nitroRulePack] }),
-    );
-  }
-  if (framework === "nuxt") {
+  if (frameworks.has("nuxt")) {
     const { nuxtDoctorExtensions } = await import("./rule-packs/nuxt/rules/index.js");
     extensions.push(...nuxtDoctorExtensions());
+  } else {
+    if (frameworks.has("vue")) {
+      const { vueRulePack } = await import("./rule-packs/vue/rules.js");
+      extensions.push(
+        defineDoctorExtension({ name: "vite-doctor/builtin-vue", rulePacks: [vueRulePack] }),
+      );
+    }
+    if (frameworks.has("nitro")) {
+      const { nitroRulePack } = await import("./rule-packs/nitro/index.js");
+      extensions.push(
+        defineDoctorExtension({ name: "vite-doctor/builtin-nitro", rulePacks: [nitroRulePack] }),
+      );
+    }
   }
   return extensions.map((extension) => ({
     ...extension,
@@ -70,11 +76,9 @@ export async function viteDoctorExtensions(
 }
 
 export async function runViteDoctor(options: DoctorRunOptions) {
-  const framework = detectRequestedFramework(options);
   const extensions = await viteDoctorExtensions(options);
   const result = await runDoctor({
     ...options,
-    framework,
     extensions: [
       ...extensions,
       ...(options.extensions ?? []),
@@ -87,10 +91,15 @@ export async function runViteDoctor(options: DoctorRunOptions) {
 export async function hostDoctorExtensions(
   options: DoctorRunOptions = {},
 ): Promise<DoctorExtension[]> {
-  if (!options.hostExtensions || detectRequestedFramework(options) !== "nuxt") return [];
+  if (!options.hostExtensions || (await requestedFrameworks(options)).framework !== "nuxt") {
+    return [];
+  }
   const root = options.root ?? process.cwd();
+  const packages = await detectWorkspacePackages(root);
+  const frameworkPackage = workspaceFrameworkPackage(packages, "nuxt");
+  const manifestRoot = join(root, frameworkPackage?.root ?? ".");
   const manifest = readJson<Pick<NuxtDoctorManifest, "extensions">>(
-    join(root, ".nuxt/doctor.manifest.json"),
+    join(manifestRoot, ".nuxt/doctor.manifest.json"),
   );
   return Promise.all((manifest?.extensions ?? []).map(loadHostExtensionEntry));
 }
@@ -126,8 +135,7 @@ export async function cleanViteDoctorCache(
   config?: DoctorConfig,
   requestedFramework?: DoctorFramework,
 ): Promise<void> {
-  const framework = detectRequestedFramework({ root, config, framework: requestedFramework });
-  const project = await detectProject(root, framework);
+  const project = await detectProject(root, requestedFramework ?? "auto");
   cleanCache(root, resolveProjectDoctorConfig(project, config));
 }
 
@@ -139,38 +147,27 @@ export function shouldFailDoctorRun(result: DoctorRunResult, maxWarnings?: numbe
   );
 }
 
-function detectRequestedFramework(options: DoctorRunOptions): DoctorFramework {
-  if (
-    options.framework === "vite" ||
-    options.framework === "vue" ||
-    options.framework === "nitro" ||
-    options.framework === "nuxt"
-  ) {
-    return options.framework;
+/**
+ * An explicit framework selects exactly its Rule Packs. Otherwise every workspace package
+ * contributes its framework, and Activation scopes each Rule Pack to the packages that need it.
+ */
+async function requestedFrameworks(
+  options: DoctorRunOptions,
+): Promise<{ framework: DoctorFramework; frameworks: Set<DoctorFramework> }> {
+  if (options.framework && options.framework !== "auto") {
+    return { framework: options.framework, frameworks: new Set([options.framework]) };
   }
-  const root = options.root ?? process.cwd();
-  const packageJson = readPackageJson(root);
-  const deps = {
-    ...packageJson?.dependencies,
-    ...packageJson?.optionalDependencies,
-    ...packageJson?.devDependencies,
+  const packages = await detectWorkspacePackages(options.root ?? process.cwd());
+  const framework = workspaceFramework(packages);
+  workspaceFrameworkPackage(packages, framework);
+  return {
+    framework,
+    frameworks: new Set(packages.map((item) => item.framework)),
   };
-  if (deps.nuxt || deps["@nuxt/kit"] || hasConfig(root, "nuxt.config")) return "nuxt";
-  if (deps.nitro || deps.nitropack || hasConfig(root, "nitro.config")) return "nitro";
-  if (deps.vue || hasVueFiles(root)) return "vue";
-  return "vite";
 }
 
 function withDistributionVersion<T extends { version: string }>(item: T): T {
   return { ...item, version: viteDoctorVersion };
-}
-
-function readPackageJson(root: string): {
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
-  optionalDependencies?: Record<string, string>;
-} | null {
-  return readJson(join(root, "package.json"));
 }
 
 function readJson<T>(file: string): T | null {
@@ -179,14 +176,4 @@ function readJson<T>(file: string): T | null {
   } catch {
     return null;
   }
-}
-
-function hasConfig(root: string, basename: string) {
-  return [".ts", ".mts", ".js", ".mjs", ".cjs"].some((ext) =>
-    existsSync(join(root, basename + ext)),
-  );
-}
-
-function hasVueFiles(root: string) {
-  return existsSync(join(root, "src/App.vue")) || existsSync(join(root, "app.vue"));
 }

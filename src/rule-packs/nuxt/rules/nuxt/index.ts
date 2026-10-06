@@ -167,6 +167,7 @@ const strictOnlyRules = [noServerTypesInApp, noStatelessComposable, exportNameMa
 const nuxtRulePack = defineRulePack({
   name: "vite-doctor/nuxt",
   version: "0.0.0",
+  activation: { frameworks: ["nuxt"] },
   rules: [...rules, ...strictOnlyRules],
   presets: {
     recommended: rules.map((rule) => rule.meta.id),

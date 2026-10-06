@@ -32,6 +32,7 @@ import {
   type RulePack,
   type SourceFileHandle,
   type WorkspaceGraph,
+  type WorkspacePackageActivation,
 } from "../primitives.js";
 import { detectProject } from "./project.js";
 import {
@@ -43,7 +44,11 @@ import type { AvailableGitChangeInventory } from "./git-change-ranges.js";
 import { createHelpers } from "./doctor-helpers.js";
 import { VERSION, nativeMatch, sha256 } from "./utils.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
-import { evaluatePackActivation, evaluateRuleApplicability } from "./applicability.js";
+import {
+  activatingWorkspacePackages,
+  evaluateRuleApplicability,
+  projectWorkspacePackages,
+} from "./applicability.js";
 
 const DEFAULT_CONFIG: DoctorConfig = {
   cache: { dir: ".vite-doctor/cache" },
@@ -290,6 +295,8 @@ export interface ScanSession {
   cache: ScanCache;
   helpers: DoctorHelpers;
   enabledRules: DoctorRule[];
+  ruleScopes: Map<string, ReadonlySet<string>>;
+  workspaceActivations: WorkspacePackageActivation[];
   ruleConfigs: Map<string, ResolvedRuleConfig>;
   timings: Record<string, number>;
   phases: Record<string, number>;
@@ -325,7 +332,8 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
   const ruleConfigs = resolveRuleConfigs(config);
-  const enabledRules = selectRules(registry, ruleConfigs, options, config, project);
+  const activations = resolveRulePackActivations(registry.packs, project);
+  const selection = selectRules(registry, ruleConfigs, options, config, project, activations);
   markSession(sessionBase, "project", started);
 
   started = performance.now();
@@ -350,7 +358,9 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     suppressedDiagnostics: [],
     cache: options.cache === false ? new MemoryRuleCache() : new PersistentRuleCache(root, config),
     helpers,
-    enabledRules,
+    enabledRules: selection.rules,
+    ruleScopes: selection.scopes,
+    workspaceActivations: workspacePackageActivations(project, activations),
     ruleConfigs,
     phases,
     ruleTimings: new Map(),
@@ -584,31 +594,38 @@ async function applyProjectContributions(
   }
 }
 
+interface RuleSelection {
+  rules: DoctorRule[];
+  /** Workspace package roots a file must belong to for a rule that only workspace packages activated. */
+  scopes: Map<string, ReadonlySet<string>>;
+}
+
 function selectRules(
   registry: RuleRegistry,
   ruleConfigs: Map<string, ResolvedRuleConfig>,
   options: DoctorRunOptions,
   config: DoctorConfig,
   project: ProjectInfo,
-): DoctorRule[] {
+  activations: ReadonlyMap<RulePack, string[]>,
+): RuleSelection {
   const wanted = options.rules
     ?.split(",")
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const selectedRules = resolveExtends(registry.packs, options.extends ?? config.extends, project);
+  const selected = resolveExtends(registry.packs, options.extends ?? config.extends, activations);
+  const frameworks = new Set([
+    project.framework,
+    ...projectWorkspacePackages(project).map((item) => item.framework),
+  ]);
 
   const candidates = registry.rules
-    .filter((rule) => selectedRules.has(rule.meta.id))
+    .filter((rule) => selected.ruleIds.has(rule.meta.id))
     .filter((rule) => !rule.meta.requires?.nuxt || project.framework === "nuxt")
     .filter(
-      (rule) =>
-        !rule.meta.requires?.nitro || project.framework === "nitro" || project.framework === "nuxt",
+      (rule) => !rule.meta.requires?.nitro || frameworks.has("nitro") || frameworks.has("nuxt"),
     )
-    .filter(
-      (rule) =>
-        !rule.meta.requires?.vue || project.framework === "vue" || project.framework === "nuxt",
-    )
+    .filter((rule) => !rule.meta.requires?.vue || frameworks.has("vue") || frameworks.has("nuxt"))
     .filter(
       (rule) => !wanted?.length || wanted.some((pattern) => nativeMatch(rule.meta.id, pattern)),
     )
@@ -617,29 +634,69 @@ function selectRules(
     rule,
     applicability: evaluateRuleApplicability(rule, project),
   }));
-  return evaluated.filter((item) => item.applicability.state === "active").map((item) => item.rule);
+  return {
+    rules: evaluated
+      .filter((item) => item.applicability.state === "active")
+      .map((item) => item.rule),
+    scopes: selected.scopes,
+  };
+}
+
+function resolveRulePackActivations(
+  packs: readonly RulePack[],
+  project: ProjectInfo,
+): Map<RulePack, string[]> {
+  return new Map(packs.map((pack) => [pack, activatingWorkspacePackages(pack, project)]));
+}
+
+function workspacePackageActivations(
+  project: ProjectInfo,
+  activations: ReadonlyMap<RulePack, string[]>,
+): WorkspacePackageActivation[] {
+  return projectWorkspacePackages(project).map((item) => ({
+    root: item.root,
+    ...(item.name ? { name: item.name } : {}),
+    framework: item.framework,
+    rulePacks: [...activations]
+      .filter(([, roots]) => roots.includes(item.root))
+      .map(([pack]) => pack.name),
+  }));
 }
 
 function resolveExtends(
   packs: RulePack[],
   requested: DoctorRunOptions["extends"] = "auto",
-  project: ProjectInfo,
-): Set<string> {
+  activations: ReadonlyMap<RulePack, string[]>,
+): { ruleIds: Set<string>; scopes: Map<string, Set<string>> } {
+  const ruleIds = new Set<string>();
+  const scopes = new Map<string, Set<string>>();
+  const select = (ruleId: string, scope?: readonly string[]) => {
+    const unscoped = ruleIds.has(ruleId) && !scopes.has(ruleId);
+    ruleIds.add(ruleId);
+    if (!scope) {
+      scopes.delete(ruleId);
+      return;
+    }
+    if (unscoped) return;
+    scopes.set(ruleId, new Set([...(scopes.get(ruleId) ?? []), ...scope]));
+  };
+  // Activation by the workspace root covers the whole workspace, so only Rule Packs that
+  // workspace packages alone activate are scoped to those packages' files.
+  const selectActivated = () => {
+    for (const [pack, roots] of activations) {
+      if (!roots.length) continue;
+      for (const ruleId of pack.presets.recommended) {
+        select(ruleId, roots.includes(".") ? undefined : roots);
+      }
+    }
+  };
   if (requested === "auto") {
-    return new Set(
-      packs
-        .filter((pack) => evaluatePackActivation(pack, project).state === "active")
-        .flatMap((pack) => pack.presets.recommended),
-    );
+    selectActivated();
+    return { ruleIds, scopes };
   }
-  const selected = new Set<string>();
   for (const entry of requested) {
     if (entry === "auto") {
-      for (const ruleId of packs
-        .filter((pack) => evaluatePackActivation(pack, project).state === "active")
-        .flatMap((pack) => pack.presets.recommended)) {
-        selected.add(ruleId);
-      }
+      selectActivated();
       continue;
     }
     const slash = entry.lastIndexOf("/");
@@ -669,9 +726,9 @@ function resolveExtends(
         pack: pack.name,
         preset: presetName,
       });
-    for (const ruleId of preset) selected.add(ruleId);
+    for (const ruleId of preset) select(ruleId);
   }
-  return selected;
+  return { ruleIds, scopes };
 }
 
 function rulePackKey(pack: RulePack): string {
