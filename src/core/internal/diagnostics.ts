@@ -20,7 +20,7 @@ import type {
   ProjectInfo,
   WorkspaceGraph,
 } from "../primitives.js";
-import { applyDiagnosticPolicy } from "./diagnostic-policy.js";
+import { applyDiagnosticPolicy, settleDiagnosticIdentity } from "./diagnostic-policy.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256 } from "./utils.js";
@@ -49,6 +49,7 @@ export function applyRequestedFixes(session: ScanSession): AppliedFixes | undefi
 }
 
 export function applyPolicyFilters(session: ScanSession): void {
+  session.diagnostics = settleDiagnosticIdentity(session.diagnostics);
   applyReportEligibility(session);
   applySeverityFilter(session);
   const result = applyDiagnosticPolicy(session);

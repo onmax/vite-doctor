@@ -938,7 +938,10 @@ useAsyncData('delete', () => $fetch('/api/settings', {
     },
   });
 
-  expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn"]);
+  expect(result.diagnostics.map((item) => [item.range?.line, item.severity])).toEqual([
+    [12, "warn"],
+    [16, "warn"],
+  ]);
 
   const deleteResult = await runRuleFixture({
     rule: asyncDataHandlerPure,

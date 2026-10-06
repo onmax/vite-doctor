@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
 import { allDiagnostics, runDoctor, type DoctorRule } from "../../src/core/index.ts";
+import { createDiagnosticFingerprint } from "../../src/core/internal/diagnostics.ts";
+import type { Diagnostic } from "../../src/core/primitives.ts";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../src/extension.ts";
 
 const roots: string[] = [];
@@ -155,4 +157,125 @@ test("a cross-file report and a same-file report at one location share a fingerp
     },
   });
   expect(await crossFileFingerprint(root, sameFile)).toBe(fromOtherFile);
+});
+
+const parseRuleId = "test/colliding-anchor";
+
+function parseRule(reportsPerMatch = 1): DoctorRule {
+  return createRule({
+    meta: {
+      id: parseRuleId,
+      title: "Report every JSON.parse call",
+      category: "correctness",
+      severity: "warn",
+      execution: "file",
+    },
+    create(ctx) {
+      for (const match of ctx.file.text.matchAll(/JSON\.parse/g)) {
+        const start = match.index;
+        const line = ctx.file.text.slice(0, start).split("\n").length;
+        for (let count = 0; count < reportsPerMatch; count++) {
+          ctx.report(
+            allDiagnostics.DOC9999({
+              why: "JSON.parse result is cast without validation.",
+              fix: "Validate the parsed value.",
+            }),
+            { range: { start, end: start + match[0].length, line, column: 1 } },
+          );
+        }
+      }
+      return undefined;
+    },
+  });
+}
+
+async function parseDiagnostics(
+  root: string,
+  options: {
+    rule?: DoctorRule;
+    baseline?: string;
+    updateBaseline?: boolean;
+    newOnly?: boolean;
+  } = {},
+) {
+  const { rule = parseRule(), ...runOptions } = options;
+  const result = await runDoctor({
+    root,
+    cache: false,
+    rules: parseRuleId,
+    ...runOptions,
+    extensions: [
+      defineDoctorExtension({
+        name: "test/colliding-anchor",
+        rulePacks: [
+          defineRulePack({
+            name: "test/colliding-anchor",
+            version: "0.0.0",
+            rules: [rule],
+            presets: { recommended: [parseRuleId] },
+          }),
+        ],
+      }),
+    ],
+  });
+  const pick = (diagnostics: Diagnostic[] | undefined) =>
+    (diagnostics ?? []).filter((diagnostic) => diagnostic.ruleId === parseRuleId);
+  return { diagnostics: pick(result.diagnostics), suppressed: pick(result.suppressedDiagnostics) };
+}
+
+const users = (input: string) => `  const users = JSON.parse(${input}) as string[];`;
+const loader = (name: string, input: string) =>
+  [`export function ${name}(${input}: string) {`, users(input), "  return users;", "}", ""].join(
+    "\n",
+  );
+const colliding = loader("load", "a") + loader("reload", "b");
+
+test("distinct findings with the same anchor are all reported with distinct fingerprints", async () => {
+  const root = fixture(colliding);
+  const { diagnostics } = await parseDiagnostics(root);
+  expect(diagnostics.map((diagnostic) => diagnostic.range?.line)).toEqual([2, 6]);
+  expect(new Set(diagnostics.map((diagnostic) => diagnostic.fingerprint)).size).toBe(2);
+});
+
+test("the first colliding finding keeps its anchor fingerprint", async () => {
+  const root = fixture(colliding);
+  const { diagnostics } = await parseDiagnostics(root);
+  const legacy = createDiagnosticFingerprint(root, diagnostics[0]!, colliding);
+  expect(createDiagnosticFingerprint(root, diagnostics[1]!, colliding)).toBe(legacy);
+  expect(diagnostics[0]!.fingerprint).toBe(legacy);
+  expect(diagnostics[1]!.fingerprint).not.toBe(legacy);
+});
+
+test("colliding fingerprints survive edits to unrelated earlier lines", async () => {
+  const root = fixture(colliding);
+  const original = (await parseDiagnostics(root)).diagnostics.map((item) => item.fingerprint);
+  const edited = colliding.replace("return users;", "return users.slice();");
+  writeFileSync(join(root, "index.ts"), `// heading\nexport const version = 2;\n\n${edited}`);
+  const next = (await parseDiagnostics(root)).diagnostics;
+  expect(next.map((item) => item.range?.line)).toEqual([5, 9]);
+  expect(next.map((item) => item.fingerprint)).toEqual(original);
+});
+
+test("the same finding reported twice is still deduplicated", async () => {
+  const root = fixture(colliding);
+  const { diagnostics } = await parseDiagnostics(root, { rule: parseRule(2) });
+  expect(diagnostics.map((diagnostic) => diagnostic.range?.line)).toEqual([2, 6]);
+  expect(new Set(diagnostics.map((diagnostic) => diagnostic.fingerprint)).size).toBe(2);
+});
+
+test("--new-only reports only the unbaselined finding among colliding fingerprints", async () => {
+  const root = fixture(loader("load", "a"));
+  const options = { baseline: "baseline.json" };
+  const first = await parseDiagnostics(root, { ...options, updateBaseline: true });
+  expect(first.diagnostics).toHaveLength(1);
+  writeFileSync(join(root, "index.ts"), colliding);
+  const second = await parseDiagnostics(root, { ...options, newOnly: true });
+  expect(second.diagnostics).toMatchObject([{ range: { line: 6 } }]);
+  expect(second.suppressed).toMatchObject([
+    {
+      range: { line: 2 },
+      fingerprint: first.diagnostics[0]!.fingerprint,
+      suppressionReason: "baseline",
+    },
+  ]);
 });

@@ -144,6 +144,7 @@ function helper() { mark('unknown') }
   expect(result.diagnostics.map((item) => item.message).sort()).toEqual([
     "client-only",
     "client-only",
+    "client-only",
     "event-handler",
     "returned-command",
     "server-only",

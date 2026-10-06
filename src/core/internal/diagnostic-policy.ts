@@ -17,6 +17,7 @@ import type { Diagnostic } from "../primitives.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import { lineColumnAt } from "./line-index.js";
 import { parseScript } from "./script.js";
+import { sha256 } from "./utils.js";
 
 const require = createRequire(import.meta.url);
 
@@ -69,24 +70,49 @@ export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticP
     nextDiagnostics.push(diagnostic);
   }
 
-  const diagnostics = dedupeDiagnostics(nextDiagnostics);
-  const suppressedDiagnostics = dedupeDiagnostics(suppressed);
   if (input.options.updateBaseline && input.options.baseline)
-    writeBaseline(input.root, input.options.baseline, [...diagnostics, ...suppressedDiagnostics]);
+    writeBaseline(input.root, input.options.baseline, [...nextDiagnostics, ...suppressed]);
 
-  return { diagnostics, suppressedDiagnostics };
+  return { diagnostics: nextDiagnostics, suppressedDiagnostics: suppressed };
 }
 
-function dedupeDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
+// Duplicates are keyed by start offset because overlapping passes can report one finding with
+// different end offsets, such as a call and its callee. The first occurrence keeps the anchor
+// fingerprint so existing baselines and suppressions still match. This runs before scope and
+// severity filters so occurrence indexes never depend on which Diagnostics a run reports.
+export function settleDiagnosticIdentity(diagnostics: Diagnostic[]): Diagnostic[] {
   const seen = new Set<string>();
-  return diagnostics.filter((diagnostic) => {
-    const key =
-      diagnostic.fingerprint ??
-      `${diagnostic.ruleId}:${diagnostic.file}:${diagnostic.range?.start ?? ""}:${diagnostic.message}`;
+  const unique = diagnostics.filter((diagnostic) => {
+    const key = [
+      diagnostic.ruleId,
+      diagnostic.code,
+      diagnostic.file,
+      diagnostic.range?.start ?? "",
+      diagnostic.message,
+    ].join("\0");
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+
+  const groups = new Map<string, number[]>();
+  for (const [index, diagnostic] of unique.entries()) {
+    if (!diagnostic.fingerprint) continue;
+    const group = groups.get(diagnostic.fingerprint);
+    if (group) group.push(index);
+    else groups.set(diagnostic.fingerprint, [index]);
+  }
+  for (const [fingerprint, group] of groups) {
+    if (group.length < 2) continue;
+    group.sort(
+      (a, b) => (unique[a]!.range?.start ?? -1) - (unique[b]!.range?.start ?? -1) || a - b,
+    );
+    for (const [occurrence, index] of group.entries()) {
+      if (occurrence === 0) continue;
+      unique[index] = { ...unique[index]!, fingerprint: sha256(`${fingerprint}:${occurrence}`) };
+    }
+  }
+  return unique;
 }
 
 function readBaseline(root: string, baseline?: string): Set<string> {
