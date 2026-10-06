@@ -1,0 +1,184 @@
+{
+  "corpus": "fixtures",
+  "root": "/tmp/vd-oxlint-fixtures-qsuFS6",
+  "framework": "auto",
+  "node": "v24.19.0",
+  "oxlint": "1.75.0",
+  "threads": 4,
+  "cpus": 4,
+  "runs": 7,
+  "doctorRules": [
+    "vue/reactivity/no-setup-props-destructure",
+    "nitro/request/prefer-validated-query",
+    "typescript/boundaries/no-unvalidated-deserialization",
+    "nuxt/fetch/no-raw-fetch-in-setup",
+    "vite/assets/no-dynamic-new-url",
+    "vite/assets/no-public-src-import"
+  ],
+  "files": {
+    "doctor": 29,
+    "oxlint": 29,
+    "oxlintFiles": 29
+  },
+  "inventory": {
+    "captureMs": 609,
+    "projectPhaseMs": 201
+  },
+  "doctorProfile": {
+    "timings": {
+      "config": 0,
+      "project": 203,
+      "files": 36,
+      "parse": 213,
+      "fileRules": 128,
+      "manifestRules": 0,
+      "score": 1
+    },
+    "phases": {
+      "parseFileFacts": 213,
+      "fileRules": 128,
+      "manifestRules": 0,
+      "workspaceGraph": 7,
+      "graphRules": 0,
+      "duplication": 0,
+      "health": 3,
+      "fixPlanning": 0,
+      "cache": 0
+    },
+    "ruleTimings": [
+      {
+        "rule": "vue/reactivity/no-setup-props-destructure",
+        "ms": 68,
+        "files": 29
+      },
+      {
+        "rule": "nitro/request/prefer-validated-query",
+        "ms": 26,
+        "files": 29
+      },
+      {
+        "rule": "nuxt/fetch/no-raw-fetch-in-setup",
+        "ms": 11,
+        "files": 29
+      },
+      {
+        "rule": "typescript/boundaries/no-unvalidated-deserialization",
+        "ms": 10,
+        "files": 29
+      },
+      {
+        "rule": "vite/assets/no-dynamic-new-url",
+        "ms": 3,
+        "files": 29
+      },
+      {
+        "rule": "vite/assets/no-public-src-import",
+        "ms": 1,
+        "files": 29
+      }
+    ]
+  },
+  "timings": {
+    "doctor": {
+      "wallMs": 1287,
+      "cpuMs": 1179,
+      "maxRssMb": 161,
+      "wallMsAll": [1287, 1365, 1172, 1282, 1400, 1205, 1344],
+      "cpuMsAll": [1250, 1178, 1179, 1130, 1203, 1166, 1203],
+      "loadAll": ["5.9", "5.9", "5.9", "5.8", "5.8", "6.2", "6.2"]
+    },
+    "oxlint": {
+      "wallMs": 292,
+      "cpuMs": 224,
+      "maxRssMb": 84,
+      "wallMsAll": [278, 340, 262, 313, 380, 292, 284],
+      "cpuMsAll": [216, 220, 215, 224, 254, 226, 233],
+      "loadAll": ["5.9", "5.9", "5.9", "5.8", "5.8", "6.2", "6.2"]
+    },
+    "oxlint-files": {
+      "wallMs": 263,
+      "cpuMs": 212,
+      "maxRssMb": 85,
+      "wallMsAll": [257, 317, 263, 263, 264, 241, 338],
+      "cpuMsAll": [212, 219, 206, 210, 223, 204, 235],
+      "loadAll": ["5.9", "5.9", "5.9", "5.9", "5.8", "5.8", "6.2"]
+    },
+    "oxlint-files-1t": {
+      "wallMs": 223,
+      "cpuMs": 178,
+      "maxRssMb": 84,
+      "wallMsAll": [236, 223, 219, 254, 191, 216, 296],
+      "cpuMsAll": [188, 180, 175, 177, 169, 178, 187],
+      "loadAll": ["5.9", "5.9", "5.9", "5.9", "5.8", "5.8", "6.2"]
+    },
+    "oxlint-files-noop": {
+      "wallMs": 264,
+      "cpuMs": 195,
+      "maxRssMb": 83,
+      "wallMsAll": [321, 264, 250, 275, 277, 229, 245],
+      "cpuMsAll": [199, 186, 191, 199, 200, 191, 195],
+      "loadAll": ["5.9", "5.9", "5.9", "5.9", "5.8", "5.8", "6.2"]
+    },
+    "oxlint-rust-correctness": {
+      "wallMs": 83,
+      "cpuMs": 46,
+      "maxRssMb": 63,
+      "wallMsAll": [91, 83, 97, 89, 72, 67, 74],
+      "cpuMsAll": [46, 48, 46, 49, 47, 45, 45],
+      "loadAll": ["5.9", "5.9", "5.9", "5.9", "5.8", "5.8", "6.2"]
+    }
+  },
+  "parity": {
+    "doctor": 27,
+    "oxlintRaw": 29,
+    "oxlint": 28,
+    "oxlintOutsideDoctorScope": 0,
+    "droppedByFingerprint": [
+      {
+        "path": "app/utils/deserialize.ts",
+        "code": "TS0005",
+        "start": 460,
+        "end": 476,
+        "line": 10,
+        "column": 31,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      }
+    ],
+    "matched": 27,
+    "byCode": {
+      "doctor": {
+        "VITE0002": 3,
+        "VITE0001": 1,
+        "TS0005": 6,
+        "VUE0007": 13,
+        "NITRO0006": 2,
+        "NUXT0026": 2
+      },
+      "oxlint": {
+        "VITE0002": 3,
+        "VITE0001": 1,
+        "TS0005": 7,
+        "VUE0007": 13,
+        "NUXT0026": 2,
+        "NITRO0006": 2
+      }
+    },
+    "messageMismatches": [],
+    "lineColumnMismatches": [],
+    "doctorOnly": [],
+    "suppressedByDoctor": [],
+    "oxlintOnly": [
+      {
+        "path": "app/components/MixedBlocks.vue",
+        "code": "TS0005",
+        "start": 163,
+        "end": 197,
+        "line": 7,
+        "column": 14,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      }
+    ],
+    "outsideDoctorScope": []
+  },
+  "filesParitySameAsDirectory": true
+}
