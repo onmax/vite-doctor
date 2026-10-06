@@ -23,7 +23,7 @@ test("ctx.fs records every read as a Rule input of the reading frame", () => {
   const inputs = new RuleInputs(root);
   const frame = inputs.frame();
 
-  expect(frame.fs.readJson<{ name: string }>("package.json")?.name).toBe("fixture");
+  expect(frame.fs.readJson("package.json")).toEqual({ name: "fixture" });
   expect(frame.fs.readText("missing.ts")).toBeUndefined();
   expect(frame.fs.exists("src")).toBe(true);
   expect(frame.fs.stat("src/a.ts")?.isFile()).toBe(true);

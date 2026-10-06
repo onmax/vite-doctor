@@ -153,7 +153,7 @@ function projectHasI18n(fs: RuleFileSystem, root: string): boolean {
 }
 
 function projectHasI18nPackage(fs: RuleFileSystem, root: string): boolean {
-  const pkg = fs.readJson<any>(resolve(root, "package.json"));
+  const pkg: any = fs.readJson(resolve(root, "package.json"));
   const deps = { ...pkg?.dependencies, ...pkg?.devDependencies, ...pkg?.peerDependencies };
   return Object.keys(deps).some((name) => I18N_PACKAGE_NAMES.has(name));
 }
