@@ -1,77 +1,66 @@
 # Doctor
 
-Start with `CONTEXT.md`, then read the relevant ADRs under `.agents/adr/` before architecture, diagnosis, surface design, issue generation, or broad refactors.
+This is the repository for Doctor, published as `vite-doctor`: framework-aware diagnostics for Vue, Vite, Nitro, Nuxt, and the projects around them. Doctor finds what a generic linter can't see and reports it in a form an agent can fix.
 
-## Current Status
+Start with `CONTEXT.md` for vocabulary, then read the relevant ADRs in `.agents/adr/` before touching architecture, diagnosis, surface design, issue generation, or broad refactors.
 
-Doctor is in active product development. Optimize changes for the final developer experience, even when that means making breaking changes, removing legacy paths, or dropping compatibility code that no longer serves the model.
+## Current status
 
-Code comments should be rare. Add them only when they explain why a non-obvious decision exists; do not narrate what the code already says.
+Active product development, pre-1.0. Breaking changes are fine when they improve the final developer experience. Remove legacy paths and compatibility code that no longer serve the model instead of carrying them forward.
 
-## Project Direction
+## A note from the author (Maxi)
 
-Doctor is a diagnostics system for Vue, Vite, Nitro, Nuxt, and adjacent ecosystem projects. Its value is not generic linting; its value is framework-specific diagnosis, runtime evidence, rule-pack composition, and output that agents can use to remediate code quickly.
+This is a letter from me to you, the agent working on Doctor. Most of Doctor's output will be read by agents, not people, so I want you building it with that reader in mind.
 
-Keep the product centered on **Doctor Runs**, **Rule Packs**, **Doctor Extensions**, **CLI Surfaces**, **Plugin Surfaces**, **Project Inventory**, **Runtime Evidence**, **Diagnostics**, and **Diagnostic Codes**. Use the vocabulary in `CONTEXT.md` when naming work, discussing architecture, writing tests, or creating issues.
+Quick glossary:
 
-## AI Stack
+- _you_: the agent reading this file and working on Doctor itself.
+- _me_/_we_/_us_: the humans contributing to Doctor.
+- _developers_: our users. They run Doctor in their Vite, Nuxt, and Nitro projects, often through their own agents, and rarely read Doctor's source.
+- _agents_: the agents developers use to read Doctor reports and fix their code. This does NOT mean you.
 
-Use modern AI tooling aggressively and pragmatically. Pre-trained chains, generated first drafts, hosted model tools, and agent workflows are acceptable when they move the project faster and the final code is still reviewed against Doctor's architecture.
+### Know the framework better than the linter
 
-Prefer tools and workflows that leave concrete, inspectable artifacts: code, tests, Doctor reports, CLI output, generated manifests, and machine-readable diagnostics. Do not hide essential behavior behind dashboard-only workflows or uninspectable state.
+Doctor's value is not generic linting. Anyone can run oxlint. Our value is framework-specific diagnosis: knowing that a Vite env variable ends up in the client bundle, or that a Nuxt auto-import shadows another one. Rule Packs should read like the framework maintainers wrote them.
 
-Treat agent-facing ergonomics as a product requirement. If an agent consumer would reasonably expect an API, report field, command, or config surface to work a certain way, try to make that assumption true unless it conflicts with a documented ADR.
+If doing this right means parsing SFCs ourselves or collecting Runtime Evidence from a live dev server, do it. Don't settle for a pattern match when real evidence is available.
 
-## Build Diagnostics Primitives, Not Everything
+### Let their agents do the fixing
 
-Avoid app-level feature creep. Build reusable Doctor primitives that library authors, framework integrations, and agent consumers can compose:
+Build primitives, not features: Rule Packs and Presets, Doctor Extensions, Project Inventory, Runtime Evidence, CLI and Plugin Surfaces, Diagnostic Codes and their docs, and structured reports. Library authors and framework integrations compose them. Developers' agents act on the output.
 
-- Rule Packs and Presets
-- Doctor Extensions
-- Project Inventory
-- Runtime Evidence
-- CLI Surfaces and Plugin Surfaces
-- Diagnostic Codes and documentation
-- structured reports for automation
+Should Doctor report an exposed env variable with the file, range, Diagnostic Code, and a safe fix? Absolutely. Should Doctor ship a dashboard to triage those reports? No. An agent can read the JSON.
 
-Do not build product-specific UI or workflow automation unless it directly improves Doctor's diagnostics model or documentation.
+### Fight for the obvious surface
 
-## Fight For The Obvious Surface
+The obvious solution is whatever an agent would assume without reading the docs. If an agent would reasonably expect a report field, flag, or config option to work a certain way, make that true unless it conflicts with an ADR. Push back on us when you see a more obvious way.
 
-Plugin Surfaces are first-class product surfaces, not thin CLI wrappers. Surface configuration should feel native in `vite.config.ts`, `nuxt.config.ts`, and future host configs while still feeding the shared Doctor Run model.
+Plugin Surfaces are first-class, not thin CLI wrappers. Doctor config should feel native in `vite.config.ts`, `nuxt.config.ts`, and future host configs while still feeding the same Doctor Run. Developers should never need to know about internal workspace packages, the Nuxt bridge, or Doctor Extension plumbing to get normal usage working.
 
-Avoid designs that force users to understand internal workspace packages, transitional Nuxt bridge details, or Doctor Extension plumbing before normal usage works.
+### Shape the output, never the evidence
 
-Executable config files are a trust boundary. Loading `doctor.config.*` must stay explicit where the CLI surface treats it as executable input. Host config options are already trusted by the host system, so they can pass in-memory Doctor configuration directly.
+Format, order, and group reports however agents work best. Severity, location, confidence, and fix safety must be true. Agents act on what we report, so a false positive costs more than a missing diagnostic. When evidence is partial, the report has to say so.
 
-## Default Rules
+## General rules
 
-- Preserve Doctor's domain language over local convenience.
-- Prefer existing libraries and modern tools when they fit the architecture.
-- Make Plugin Surface and CLI Surface behavior share one Doctor Run path.
-- Keep framework-specific implementation details behind Doctor language unless the framework boundary is the work.
-- Treat downstream workarounds as possible Doctor gaps unless they are clearly app-specific.
-- If a task contradicts an ADR, say so before changing the model.
-- If a rule should be ignored, say why explicitly before doing it.
+These are defaults, not laws. If you think one should be ignored, say so loudly and get approval before doing it.
 
-## Git / GitHub
+- preserve Doctor's domain language from `CONTEXT.md` over local convenience;
+- CLI Surface and Plugin Surface share one Doctor Run path;
+- keep framework details behind Doctor language unless the framework boundary is the work;
+- treat downstream workarounds as possible Doctor gaps unless they are clearly app-specific;
+- executable config is a trust boundary: loading `doctor.config.*` stays explicit on the CLI, while host configs are already trusted and can pass Doctor config in memory;
+- prefer existing libraries and modern tools when they fit; use AI tooling freely, but review the result against the ADRs;
+- prefer inspectable artifacts (code, tests, reports, CLI output, manifests) over dashboards and hidden state;
+- if a task contradicts an ADR, say so before changing the model;
+- comments are rare and explain why, never what.
 
-Use `gh` CLI for GitHub actions such as issues, PRs, releases, and workflow inspection. Do not use the GitHub web UI for project operations.
+## Working here
 
-Never comment on Issues or Pull Requests without explicit user consent.
-
-Issues and PRDs live in GitHub Issues for this repository. Infer the repo from `git remote -v`; see `.agents/issue-tracker.md`.
-
-Use the default triage-label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `.agents/triage-labels.md`.
-
-## CLI
-
-Available project CLIs include `gh`, `vercel`, and `wrangler`.
-
-NuxtHub CLI is deprecated: never use `npx nuxthub`. Deployments happen through git push and Cloudflare CI.
-
-Prefer the Browser skill over agent browser, Chromium, or Playwright when inspecting local web targets, unless the user explicitly asks for a different browser tool.
-
-## Parallel Work
-
-Assume other agents may be working in parallel. Do not overwrite changes you did not make. If a collision appears, inspect it and adapt around it rather than reverting someone else's work.
+- `pnpm ready` formats, builds, lints, and tests. Run it before opening a PR.
+- Use `gh` for issues, PRs, releases, and workflow runs. Issues and PRDs live in this repository's GitHub Issues.
+- Never comment on Issues or Pull Requests without explicit consent.
+- Triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`.
+- Available CLIs: `gh`, `vercel`, `wrangler`. Never use `npx nuxthub`; it is deprecated. Deployments happen through git push and Cloudflare CI.
+- Prefer the Browser skill over agent-browser, Chromium, or Playwright for local web targets unless asked otherwise.
+- Other agents may be working in parallel. Don't overwrite changes you didn't make; inspect collisions and adapt around them.
