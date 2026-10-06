@@ -16,6 +16,14 @@ async function diagnose(declaration: string) {
 }
 
 test.each([
+  "declare global { const __BUILD__: string; interface ImportMetaEnv { VITE_API_URL: string } }\nexport = function legacy(): T;",
+  "declare global { const __BUILD__: string }\nexport = function legacy(): T;\ndeclare global { interface ImportMetaEnv { VITE_API_URL: string } }",
+  "declare global { const __BUILD__: string; interface ImportMetaEnv { VITE_API_URL: string } }\nexport = function legacy(): T;\nexport = function other(): T;",
+])("does not report missing declarations when parsing is incomplete: %s", async (source) => {
+  expect((await diagnose(source)).diagnostics).toEqual([]);
+});
+
+test.each([
   "declare const __BUILD__: string; interface ImportMetaEnv { readonly VITE_API_URL: string }",
   "declare let __BUILD__: string; interface ImportMetaEnv { 'VITE_API_URL': string }",
   "declare var other: string, __BUILD__: string; interface ImportMetaEnv { VITE_API_URL?: string }",

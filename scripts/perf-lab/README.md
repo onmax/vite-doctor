@@ -35,7 +35,8 @@ To measure another checkout without copying the lab, pass its package root:
 Options:
 
 - `--corpus small,medium` limits corpora.
-- `--corpus-path name=/abs/path[:path/to/changed-file.ts]` adds a local project.
+- `--corpus-path name=/abs/path[:path/to/changed-file.ts]` measures a local project; when used
+  without `--corpus`, local projects are selected instead of the pinned corpora.
 - `--runs 3` sets samples per scenario. Results report the median.
 - `--scenarios nocache,cold,warm,changed,profile,startup` limits scenarios.
 - `PERF_LAB_DIR` moves corpora and results out of the repository, for sharing between worktrees.

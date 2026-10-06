@@ -17,6 +17,7 @@ import {
   type FileFacts,
   type DoctorHelpers,
   type DoctorExtension,
+  type DoctorExtensionInput,
   type DoctorRule,
   type DoctorSeverity,
   type ProjectInventoryContributor,
@@ -321,12 +322,31 @@ export function resolveProjectDoctorConfig(
   return mergeDoctorConfig(mergeDoctorConfig(defaults, project.nuxt?.doctorConfig), config);
 }
 
-export async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
+export async function resolveDoctorExtensions(
+  inputs: readonly DoctorExtensionInput[],
+): Promise<DoctorExtension[]> {
+  const loaded = await Promise.all(
+    inputs.map(async (input) => {
+      if (typeof input !== "function") return input;
+      const value = await input();
+      return "default" in value ? value.default : value;
+    }),
+  );
+  const names = new Set<string>();
+  return loaded.filter((extension) => {
+    if (names.has(extension.name)) return false;
+    names.add(extension.name);
+    return true;
+  });
+}
+
+export async function collectRulePacks(inputs: readonly DoctorExtensionInput[]): Promise<{
   packs: RulePack[];
   rules: DoctorRule[];
   inventoryContributors: ProjectInventoryContributor[];
   runtimeEvidenceContributors: RuntimeEvidenceContributor[];
 }> {
+  const extensions = await resolveDoctorExtensions(inputs);
   const registeredPacks: RulePack[] = [];
   const inventoryContributors: ProjectInventoryContributor[] = [];
   const runtimeEvidenceContributors: RuntimeEvidenceContributor[] = [];
@@ -354,9 +374,14 @@ export async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
     ...registeredPacks,
   ].map((pack) => defineRulePack(pack));
   const names = new Set<string>();
+  const codes = new Set<string>();
   for (const pack of packs) {
     if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
     names.add(pack.name);
+    for (const code of Object.keys(pack.diagnostics?.docsByCode ?? {})) {
+      if (codes.has(code)) throw doctorInternalDiagnostics.DOC0012({ code });
+      codes.add(code);
+    }
   }
   assertUniqueContributors(inventoryContributors, "Project Inventory");
   assertUniqueContributors(runtimeEvidenceContributors, "Runtime Evidence");

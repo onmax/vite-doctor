@@ -15,6 +15,7 @@ import { dirname, isAbsolute, relative, resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import type { Diagnostic } from "../primitives.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
+import { lineColumnAt } from "./line-index.js";
 import { parseScript } from "./script.js";
 
 const require = createRequire(import.meta.url);
@@ -322,7 +323,7 @@ function addCommentSuppressions(
       : rawComment.startsWith("//")
         ? rawComment.slice(2)
         : rawComment;
-  let line = source.slice(0, start).split("\n").length - 1;
+  let line = lineColumnAt(source, start).line - 1;
   for (const segment of comment.split("\n")) {
     addInlineSuppression(directives, line, segment);
     line++;

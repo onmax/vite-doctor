@@ -15,7 +15,7 @@
     "url": "git+https://github.com/onmax/vite-doctor.git"
   },
   "bin": {
-    "nuxt-doctor": "./dist/cli.mjs",
+    "nuxt-doctor": "./dist/nuxt-cli.mjs",
     "vite-doctor": "./dist/cli.mjs"
   },
   "files": [
@@ -38,6 +38,7 @@
     "./rule-packs/nuxt/module": "./dist/rule-packs/nuxt/module.mjs",
     "./rule-packs/nuxt/rules": "./dist/rule-packs/nuxt/rules/index.mjs",
     "./rule-packs/package": "./dist/rule-packs/package/index.mjs",
+    "./rule-packs/pinia": "./dist/rule-packs/pinia/index.mjs",
     "./rule-packs/shadcn": "./dist/rule-packs/shadcn/index.mjs",
     "./rule-packs/typescript": "./dist/rule-packs/typescript/index.mjs",
     "./rule-packs/typescript/rules": "./dist/rule-packs/typescript/rules/index.mjs",
@@ -46,6 +47,7 @@
     "./rule-packs/vue": "./dist/rule-packs/vue/index.mjs",
     "./rule-packs/vue/rules": "./dist/rule-packs/vue/rules.mjs",
     "./rules": "./dist/rules.mjs",
+    "./testkit": "./dist/testkit.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {

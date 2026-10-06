@@ -14,10 +14,17 @@ import { resolvedConfigFor, type ScanSession } from "./scan-session.js";
 import { nativeMatch } from "./utils.js";
 import { pushDiagnostic } from "./diagnostics.js";
 
+interface GraphIndex {
+  resolveImport(from: FileFacts, specifier: string): number | undefined;
+  packageDeps(): PackageDependencyFacts;
+}
+
+const graphIndexes = new WeakMap<WorkspaceGraph, GraphIndex>();
+
 export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
+  const index = createGraphIndex(session);
   const files = new Map(session.facts.map((fact) => [fact.fileId, fact]));
   const fileIdsByPath = new Map(session.facts.map((fact) => [fact.path, fact.fileId]));
-  const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
   const importEdges: GraphEdge[] = [];
   const exportEdges: GraphEdge[] = [];
   const importersByFile = new Map<number, number[]>();
@@ -28,9 +35,7 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
     for (const item of fact.exports) {
       exportEdges.push({
         from: fact.fileId,
-        to: item.source
-          ? resolveImportTarget(session, fact, item.source, byRelativePath)
-          : undefined,
+        to: item.source ? index.resolveImport(fact, item.source) : undefined,
         specifier: item.source,
         kind: item.source ? (item.kind === "type" ? "type-re-export" : "re-export") : "export",
       });
@@ -39,7 +44,7 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
       exportsByName.set(item.name, exports);
     }
     for (const item of fact.imports) {
-      const target = resolveImportTarget(session, fact, item.source, byRelativePath);
+      const target = index.resolveImport(fact, item.source);
       importEdges.push({
         from: fact.fileId,
         to: target,
@@ -56,7 +61,7 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
       if (item.source === null) continue;
       importEdges.push({
         from: fact.fileId,
-        to: resolveImportTarget(session, fact, item.source, byRelativePath),
+        to: index.resolveImport(fact, item.source),
         specifier: item.source,
         kind: "dynamic-import",
       });
@@ -75,7 +80,7 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
     importersByFile.set(edge.to, importers);
   }
 
-  const virtualRoots = createVirtualRoots(session, fileIdsByPath);
+  const virtualRoots = createVirtualRoots(session, index, fileIdsByPath);
   for (const root of virtualRoots) {
     if (root.fileId === undefined) continue;
     importEdges.push({
@@ -86,7 +91,7 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
     });
   }
 
-  return {
+  const graph: WorkspaceGraph = {
     files,
     fileIdsByPath,
     importEdges,
@@ -101,10 +106,77 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
       ],
     ),
   };
+  graphIndexes.set(graph, index);
+  return graph;
+}
+
+function createGraphIndex(session: ScanSession): GraphIndex {
+  const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
+  const resolved = new Map<string, number | undefined>();
+  const directories = new Map<string, string>();
+  let aliasRoots: string[] | undefined;
+  let rootAliasRoots: string[] | undefined;
+  let packageDeps: PackageDependencyFacts | undefined;
+
+  const firstMatch = (bases: string[]): number | undefined => {
+    for (const base of bases) {
+      for (const candidate of importCandidates(base)) {
+        const match = byRelativePath.get(candidate);
+        if (match !== undefined) return match;
+      }
+    }
+    return undefined;
+  };
+
+  const sourceDirectory = (from: FileFacts): string => {
+    let directory = directories.get(from.path);
+    if (directory === undefined) {
+      directory = dirname(from.path);
+      directories.set(from.path, directory);
+    }
+    return directory;
+  };
+
+  const resolveUncached = (from: FileFacts, specifier: string): number | undefined => {
+    if (specifier.startsWith("~~/")) {
+      rootAliasRoots ??= [...new Set(["", ...workspacePackageRoots(session)])];
+      return firstMatch(rootAliasImportBases(rootAliasRoots, specifier.slice(3)));
+    }
+    if (specifier.startsWith("~/") || specifier.startsWith("@/")) {
+      aliasRoots ??= aliasImportRoots(session);
+      const base = specifier.slice(2);
+      return firstMatch(aliasRoots.map((root) => (root ? `${root}/${base}` : base)));
+    }
+    return firstMatch([relative(session.root, resolve(sourceDirectory(from), specifier))]);
+  };
+
+  return {
+    resolveImport(from, specifier) {
+      if (!isLocalSpecifier(specifier)) return undefined;
+      // Alias imports resolve the same from every file; relative ones only per directory.
+      const key = specifier.startsWith(".")
+        ? `${sourceDirectory(from)}\0${specifier}`
+        : specifier.startsWith("@/")
+          ? `~/${specifier.slice(2)}`
+          : specifier;
+      if (resolved.has(key)) return resolved.get(key);
+      const target = resolveUncached(from, specifier);
+      resolved.set(key, target);
+      return target;
+    },
+    packageDeps() {
+      packageDeps ??= readPackageDeps(
+        session.root,
+        session.files.map((entry) => entry.path),
+      );
+      return packageDeps;
+    },
+  };
 }
 
 function createVirtualRoots(
   session: ScanSession,
+  index: GraphIndex,
   fileIdsByPath: Map<string, number>,
 ): VirtualRootNode[] {
   const roots: VirtualRootNode[] = [];
@@ -121,10 +193,7 @@ function createVirtualRoots(
   };
 
   addRoot("package", "package.json", "package metadata");
-  for (const file of readPackageDeps(
-    session.root,
-    session.files.map((entry) => entry.path),
-  ).entryFiles) {
+  for (const file of index.packageDeps().entryFiles) {
     roots.push({
       id: `package-entry:${file}`,
       kind: "package",
@@ -175,32 +244,7 @@ function createVirtualRoots(
   return roots;
 }
 
-function resolveImportTarget(
-  session: ScanSession,
-  from: FileFacts,
-  specifier: string,
-  byRelativePath: Map<string, number>,
-): number | undefined {
-  if (
-    !specifier.startsWith(".") &&
-    !specifier.startsWith("~/") &&
-    !specifier.startsWith("@/") &&
-    !specifier.startsWith("~~/")
-  )
-    return undefined;
-  const bases = specifier.startsWith("~~/")
-    ? rootAliasImportBases(session, specifier.slice(3))
-    : specifier.startsWith("~/") || specifier.startsWith("@/")
-      ? aliasImportBases(session, specifier.slice(2))
-      : [relative(session.root, resolve(dirname(from.path), specifier))];
-  for (const candidate of bases.flatMap((base) => importCandidates(base))) {
-    const match = byRelativePath.get(candidate);
-    if (match !== undefined) return match;
-  }
-  return undefined;
-}
-
-function aliasImportBases(session: ScanSession, base: string): string[] {
+function aliasImportRoots(session: ScanSession): string[] {
   const roots = new Set(["", "app", "shared"]);
   for (const root of session.project.nuxt?.manifest?.appScanRoots ?? []) {
     roots.add(relative(session.root, root));
@@ -213,11 +257,10 @@ function aliasImportBases(session: ScanSession, base: string): string[] {
       roots.add(`${prefix}/shared`);
     }
   }
-  return [...roots].flatMap((root) => (root ? [`${root}/${base}`] : [base]));
+  return [...roots];
 }
 
-function rootAliasImportBases(session: ScanSession, base: string): string[] {
-  const roots = new Set(["", ...workspacePackageRoots(session)]);
+function rootAliasImportBases(roots: readonly string[], base: string): string[] {
   const bases: string[] = [];
   for (const root of roots) {
     bases.push(root ? `${root}/${base}` : base);
@@ -274,18 +317,15 @@ function importCandidates(base: string): string[] {
 
 export function runStructuralGraphRules(session: ScanSession, graph: WorkspaceGraph) {
   const analyses = selectedAnalyses(session);
-  if (analyses.has("dead-code")) runDeadCodeRules(session, graph);
+  if (analyses.has("dead-code"))
+    runDeadCodeRules(session, graph, graphIndexes.get(graph) ?? createGraphIndex(session));
   if (analyses.has("graph")) runCycleAndDuplicateExportRules(session, graph);
 }
 
-function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
+function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph, index: GraphIndex) {
   const live = reachableFiles(graph);
-  const packageDeps = readPackageDeps(
-    session.root,
-    session.files.map((entry) => entry.path),
-  );
+  const packageDeps = index.packageDeps();
   const importedPackages = new Set<string>();
-  const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
 
   for (const fact of session.facts) {
     for (const item of [...fact.imports, ...fact.exports, ...fact.dynamicImports]) {
@@ -302,7 +342,7 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph) {
         isLocalSpecifier(item.source) &&
         !isGeneratedOrAssetImport(item.source) &&
         !isLikelyForeignFrameworkFile(session, fact.relativePath, packageDeps) &&
-        resolveImportTarget(session, fact, item.source, byRelativePath) === undefined
+        index.resolveImport(fact, item.source) === undefined
       ) {
         reportWorkspaceDiagnostic(session, {
           ruleId: "workspace/dead-code/unresolved-import",
@@ -419,9 +459,13 @@ function runCycleAndDuplicateExportRules(session: ScanSession, graph: WorkspaceG
       analysisPhase: "graph",
     });
   }
+  const exportOwners = new Map<ExportFact, string>();
+  for (const fact of graph.files.values()) {
+    for (const item of fact.exports) if (!exportOwners.has(item)) exportOwners.set(item, fact.path);
+  }
   for (const [name, exports] of graph.reverseIndex.exportsByName) {
     const files = [
-      ...new Set(exports.map((item) => findExportFile(graph, item)).filter(Boolean)),
+      ...new Set(exports.map((item) => exportOwners.get(item)).filter(Boolean)),
     ] as string[];
     if (name === "default" || name === "*" || files.length < 2) continue;
     reportWorkspaceDiagnostic(session, {
@@ -586,6 +630,7 @@ function readPackageDeps(root: string, inventoryPaths: readonly string[]): Packa
   const runtime = new Set<string>();
   const foreignRoots = new Set<string>();
   const entryFiles = new Set<string>();
+  const entries = createPackageEntryResolver(inventoryPaths);
   for (const file of findPackageJsonFiles(root)) {
     try {
       const json = JSON.parse(readFileSync(file, "utf8"));
@@ -614,7 +659,7 @@ function readPackageDeps(root: string, inventoryPaths: readonly string[]): Packa
       ) {
         foreignRoots.add(relative(root, packageRoot));
       }
-      for (const entry of packageEntryCandidates(root, packageRoot, json, inventoryPaths))
+      for (const entry of packageEntryCandidates(root, packageRoot, json, entries))
         entryFiles.add(entry);
     } catch {
       continue;
@@ -690,14 +735,89 @@ function allPackageNames(json: Record<string, unknown>): string[] {
   ];
 }
 
+interface PackageEntryResolver {
+  inventoryPaths: readonly string[];
+  inventoriedFiles(): Set<string>;
+  sourceCandidates(packageRoot: string, entry: string): string[];
+}
+
+// Monorepo export maps expand into thousands of candidate paths, most under an unbuilt dist/ or
+// below a file (`src/index.ts/index.ts`). Checking each parent directory once lets those misses
+// skip the filesystem.
+function createPackageEntryResolver(inventoryPaths: readonly string[]): PackageEntryResolver {
+  let inventoriedFiles: Set<string> | undefined;
+  const directories = new Map<string, boolean>();
+  const byEntry = new Map<string, string[]>();
+  const byTarget = new Map<string, string[]>();
+  const mayContainFiles = (directory: string): boolean => {
+    let result = directories.get(directory);
+    if (result === undefined) {
+      const parent = dirname(directory);
+      result = parent === directory || mayContainFiles(parent);
+      if (result) {
+        try {
+          result = statSync(directory, { throwIfNoEntry: false })?.isDirectory() ?? false;
+        } catch {
+          result = true;
+        }
+      }
+      directories.set(directory, result);
+    }
+    return result;
+  };
+  const fileExists = (file: string) => mayContainFiles(dirname(file)) && existsSync(file);
+  const existingCandidates = (packageRoot: string, file: string) => {
+    const key = `${packageRoot}\0${file}`;
+    let files = byTarget.get(key);
+    if (!files) {
+      const path = relative(packageRoot, file);
+      const prefix = `${packageRoot}/`;
+      // A normalized path below the package only gains extensions or `/index.*`, so joining
+      // matches `resolve` without paying for it on every candidate.
+      const joinable = path !== "" && file === prefix + path;
+      files = importCandidates(path)
+        .map((item) => (joinable ? prefix + item : resolve(packageRoot, item)))
+        .filter(fileExists);
+      byTarget.set(key, files);
+    }
+    return files;
+  };
+  return {
+    inventoryPaths,
+    inventoriedFiles() {
+      inventoriedFiles ??= new Set(inventoryPaths.map((file) => resolve(file)));
+      return inventoriedFiles;
+    },
+    sourceCandidates(packageRoot, entry) {
+      if (!entry || entry.startsWith("#")) return [];
+      const key = `${packageRoot}\0${entry}`;
+      let files = byEntry.get(key);
+      if (!files) {
+        const clean = entry.replace(/^\.\//, "");
+        const src = clean
+          .replace(/^dist\//, "src/")
+          .replace(/\.d\.[cm]?ts$/, ".ts")
+          .replace(/\.[cm]?js$/, ".ts")
+          .replace(/\.mjs$/, ".ts")
+          .replace(/\.cjs$/, ".ts");
+        files = [
+          ...existingCandidates(packageRoot, resolve(packageRoot, clean)),
+          ...existingCandidates(packageRoot, resolve(packageRoot, src)),
+        ];
+        byEntry.set(key, files);
+      }
+      return files;
+    },
+  };
+}
+
 function packageEntryCandidates(
   root: string,
   packageRoot: string,
   json: Record<string, unknown>,
-  inventoryPaths: readonly string[],
+  entries: PackageEntryResolver,
 ): string[] {
   const candidates = new Set<string>();
-  const inventoriedFiles = new Set(inventoryPaths.map((file) => resolve(file)));
   const binEntries =
     typeof json.bin === "string"
       ? [json.bin]
@@ -706,22 +826,23 @@ function packageEntryCandidates(
         : [];
   for (const value of [json.main, json.module, json.types, json.typings, ...binEntries]) {
     if (typeof value !== "string") continue;
-    for (const file of sourceCandidatesForPackageEntry(packageRoot, value)) candidates.add(file);
+    for (const file of entries.sourceCandidates(packageRoot, value)) candidates.add(file);
   }
   const directories = json.directories as Record<string, unknown> | undefined;
   if (!json.bin && typeof directories?.bin === "string" && directories.bin) {
     const binRoot = resolve(packageRoot, directories.bin);
     if (isPathInside(packageRoot, binRoot)) {
-      for (const file of inventoryPaths) {
+      const inventoriedFiles = entries.inventoriedFiles();
+      for (const file of entries.inventoryPaths) {
         if (!isPathInside(binRoot, file)) continue;
         const path = relative(packageRoot, file);
-        for (const candidate of sourceCandidatesForPackageEntry(packageRoot, path)) {
+        for (const candidate of entries.sourceCandidates(packageRoot, path)) {
           if (inventoriedFiles.has(candidate)) candidates.add(candidate);
         }
       }
     }
   }
-  collectPackageExportEntries(packageRoot, json.exports, candidates);
+  collectPackageExportEntries(packageRoot, json.exports, candidates, entries);
   for (const standard of ["src/index.ts", "src/module.ts", "src/preview.ts"]) {
     const absolute = resolve(packageRoot, standard);
     if (existsSync(absolute)) candidates.add(absolute);
@@ -746,33 +867,16 @@ function collectPackageExportEntries(
   packageRoot: string,
   value: unknown,
   candidates: Set<string>,
+  entries: PackageEntryResolver,
 ): void {
   if (typeof value === "string") {
-    for (const file of sourceCandidatesForPackageEntry(packageRoot, value)) candidates.add(file);
+    for (const file of entries.sourceCandidates(packageRoot, value)) candidates.add(file);
     return;
   }
   if (!value || typeof value !== "object") return;
   for (const item of Object.values(value as Record<string, unknown>)) {
-    collectPackageExportEntries(packageRoot, item, candidates);
+    collectPackageExportEntries(packageRoot, item, candidates, entries);
   }
-}
-
-function sourceCandidatesForPackageEntry(packageRoot: string, entry: string): string[] {
-  if (!entry || entry.startsWith("#")) return [];
-  const clean = entry.replace(/^\.\//, "");
-  const direct = resolve(packageRoot, clean);
-  const src = clean
-    .replace(/^dist\//, "src/")
-    .replace(/\.d\.[cm]?ts$/, ".ts")
-    .replace(/\.[cm]?js$/, ".ts")
-    .replace(/\.mjs$/, ".ts")
-    .replace(/\.cjs$/, ".ts");
-  const candidates = [direct, resolve(packageRoot, src)];
-  return candidates
-    .flatMap((file) =>
-      importCandidates(relative(packageRoot, file)).map((item) => resolve(packageRoot, item)),
-    )
-    .filter((file) => existsSync(file));
 }
 
 function isLikelyForeignFrameworkFile(
@@ -811,11 +915,6 @@ function isIgnoredDependencyForUnusedReport(dep: string): boolean {
 
 function isTypeSurfaceFile(relativePath: string): boolean {
   return /\.d\.[cm]?ts$/.test(relativePath) || /(^|\/)(types|shared\/types)\//.test(relativePath);
-}
-
-function findExportFile(graph: WorkspaceGraph, target: ExportFact): string | undefined {
-  for (const fact of graph.files.values()) if (fact.exports.includes(target)) return fact.path;
-  return undefined;
 }
 
 function reportWorkspaceDiagnostic(

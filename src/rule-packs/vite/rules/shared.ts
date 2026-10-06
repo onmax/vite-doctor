@@ -145,9 +145,14 @@ function unwrapTypeExpression(node: AnyNode): AnyNode {
 
 export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false): boolean {
   const cacheKey = `vite:global-type-declarations:${ctx.project.root}`;
-  let declarations = ctx.cache.get<{ globals: Set<string>; env: Set<string> }>(cacheKey);
-  if (declarations) return (env ? declarations.env : declarations.globals).has(name);
-  declarations = { globals: new Set(), env: new Set() };
+  let declarations = ctx.cache.get<{
+    globals: Set<string>;
+    env: Set<string>;
+    incomplete: boolean;
+  }>(cacheKey);
+  if (declarations)
+    return declarations.incomplete || (env ? declarations.env : declarations.globals).has(name);
+  declarations = { globals: new Set(), env: new Set(), incomplete: false };
   const interfaces = new Map<string, AnyNode[]>();
   const collect = (statements: AnyNode[]) => {
     for (const statement of statements) {
@@ -166,11 +171,14 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
     }
   };
   for (const file of findDeclarationFiles(ctx.project.root)) {
-    const { program } = parseSync(file, readFileSync(file, "utf8"), {
+    const { program, errors } = parseSync(file, readFileSync(file, "utf8"), {
       lang: "dts",
       sourceType: "module",
       astType: "ts",
     });
+    // Fatal Oxc errors discard the program; recoverable errors retain declaration evidence.
+    if (!program.body.length && errors.some((error) => error.severity === "Error"))
+      declarations.incomplete = true;
     if (!isExternalModule(program.body)) collect(program.body);
     else {
       for (const statement of program.body as AnyNode[]) {
@@ -198,7 +206,7 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
   };
   visitInterface("ImportMetaEnv");
   ctx.cache.set(cacheKey, declarations);
-  return (env ? declarations.env : declarations.globals).has(name);
+  return declarations.incomplete || (env ? declarations.env : declarations.globals).has(name);
 }
 
 export function isLiteralPrimitive(rawValue: string): boolean {

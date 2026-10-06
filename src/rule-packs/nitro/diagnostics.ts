@@ -19,6 +19,10 @@ export const nitroDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0016", ruleId: "nitro/h3/prefer-redirect-response" },
   { code: "NITRO0017", ruleId: "nitro/h3/prefer-with-base" },
   { code: "NITRO0018", ruleId: "nitro/h3/no-http-error-masking" },
+  { code: "NITRO0019", ruleId: "nitro/routes/require-default-handler" },
+  { code: "NITRO0020", ruleId: "nitro/routes/require-default-handler" },
+  { code: "NITRO0021", ruleId: "nitro/structure/prefer-server-utils" },
+  { code: "NITRO0022", ruleId: "nitro/structure/prefer-server-utils" },
 ]);
 
 export const diagnostics = nitroDiagnosticRegistry.diagnostics;

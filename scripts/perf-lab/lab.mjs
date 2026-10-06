@@ -98,9 +98,16 @@ function selectedCorpora() {
       throw new Error(`Expected --corpus-path name=/abs/path[:change/file.ts], got ${entry}`);
     return { name, local: resolve(path), changeFile };
   });
-  const all = [...corpora, ...local];
+  // A local corpus is usually supplied to measure that checkout alone. Keep
+  // the pinned corpora as the default when no local paths are provided, while
+  // an explicit --corpus selection can combine either kind of input.
+  const all = local.length ? [...corpora, ...local] : corpora;
   const wanted = values.corpus?.split(",").filter(Boolean);
-  return wanted ? all.filter((corpus) => wanted.includes(corpus.name)) : all;
+  return wanted
+    ? all.filter((corpus) => wanted.includes(corpus.name))
+    : local.length
+      ? local
+      : corpora;
 }
 
 function corpusRoot(corpus) {
@@ -158,7 +165,7 @@ async function run() {
       if (scenario === "startup") continue;
       if (scenario === "changed" && !corpus.changeFile) continue;
       const samples = [];
-      const count = scenario === "profile" || scenario === "cold" ? 1 : runs;
+      const count = scenario === "profile" ? 1 : runs;
       if (scenario === "warm") runDoctor(cli, doctor, root, []);
       for (let index = 0; index < count; index++) {
         if (scenario === "cold") clearCache(root);
