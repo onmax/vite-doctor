@@ -21,6 +21,7 @@ test.each([
     const root = mkdtempSync(join(tmpdir(), "doctor-composable-scan-"));
     const files = {
       "app/composables/useCart.ts": "export enum useShoppingCart { Item }",
+      "app/composables/cart.ts": "export default function () {}",
       "app/composables/ignored.ts": "export default function () {}",
       "app/composables/useIgnored.ts": "export function useOther() {}",
       "app/composables/modifier-only.ts": "export default function () {}",
@@ -52,13 +53,20 @@ test.each([
       const manualModule = defineNuxtModule({
         setup(_options, host) {
           let retainedDirs: unknown[] | undefined;
+          let laterDirs = false;
           host.hook("imports:dirs", (dirs) => {
             retainedDirs = dirs;
-            if (removeRoot) dirs.splice(dirs.indexOf(join(root, "app/composables")), 1);
+            const index = dirs.indexOf(join(root, "app/composables"));
+            if (!laterDirs && removeRoot && index !== -1) dirs.splice(index, 1);
           });
           host.hook("ready", () => {
             if (removeRoot) retainedDirs?.push(join(root, "app/composables"));
             else retainedDirs?.splice(0);
+          });
+          host.hook("ready", async () => {
+            // This invocation never changes the directories retained by Nuxt's scanner.
+            laterDirs = true;
+            await host.callHook("imports:dirs", [join(root, "app/composables")]);
           });
           host.hook("imports:context", (context) => {
             host.hook("ready", async () => {
@@ -120,7 +128,7 @@ test.each([
       expect(manifest.scannedComposableFiles).toEqual(
         scan
           ? [
-              ...(removeRoot ? [] : ["app/composables/useCart.ts"]),
+              ...(removeRoot ? [] : ["app/composables/cart.ts", "app/composables/useCart.ts"]),
               "base/source/composables/custom.ts",
             ]
           : [],
@@ -141,7 +149,7 @@ test.each([
         },
       });
       expect(result.diagnostics.map((diagnostic) => diagnostic.code).sort()).toEqual(
-        scan ? [...(removeRoot ? [] : ["NUXT0079"]), "NUXT0080"] : [],
+        scan ? [...(removeRoot ? [] : ["NUXT0079", "NUXT0080"]), "NUXT0080"] : [],
       );
     } finally {
       await nuxt?.close();

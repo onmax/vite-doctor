@@ -170,9 +170,13 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     };
   });
 
+  let importDirsEvent: { name: string; args: unknown[] } | undefined;
+  nuxt.hooks?.beforeEach((event: { name: string; args: unknown[] }) => {
+    if (event.name === "imports:dirs" && !importDirsEvent) importDirsEvent = event;
+  });
   nuxt.hooks?.afterEach((event: { name: string; args: unknown[] }) => {
-    if (event.name !== "imports:dirs") return;
-    // Snapshot after all modules customize the roots, before later hooks can mutate them.
+    if (event !== importDirsEvent) return;
+    // Nuxt retains the initial invocation's finalized roots; later public calls do not replace them.
     evidence.importDirs = Array.isArray(event.args[0]) ? [...event.args[0]] : [];
   });
 
