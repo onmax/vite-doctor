@@ -8,7 +8,6 @@ import type {
   NuxtProjectInfo,
   ProjectInfo,
   ProjectLanguage,
-  WorkspacePackage,
 } from "../primitives.js";
 import { detectWorkspacePackages, workspaceFramework } from "./workspace-packages.js";
 import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-inventory.js";
@@ -47,25 +46,34 @@ export async function detectProject(
     requested === "auto" ? undefined : requested,
   );
   const framework = requested === "auto" ? workspaceFramework(workspacePackages) : requested;
+  // A Doctor Run has one Nuxt inventory: the root owns it when eligible, otherwise the first
+  // sorted Nuxt workspace package owns both inventory and runtime compatibility.
+  const frameworkPackage =
+    workspacePackages.find((item) => item.root === "." && item.framework === framework) ??
+    workspacePackages.find((item) => item.framework === framework);
+  const frameworkRoot = join(root, frameworkPackage?.root ?? ".");
+  const frameworkDeps = frameworkPackage?.packages ?? deps;
+  const frameworkNuxtVersion = frameworkDeps.nuxt ?? frameworkDeps["@nuxt/kit"];
   const ssr = framework === "nuxt" || framework === "nitro" || hasVueSsrEvidence(packageJson, deps);
   const isMonorepo =
     workspacePackages.length > 1 ||
     existsSync(join(root, "pnpm-workspace.yaml")) ||
     existsSync(join(root, "turbo.json"));
-  const nuxtFacts = framework === "nuxt" ? readNuxtRunFacts(root) : undefined;
+  const nuxtFacts = framework === "nuxt" ? readNuxtRunFacts(frameworkRoot) : undefined;
   const nuxt = nuxtFacts
-    ? await detectNuxt(root, nuxtVersion ?? ">=4", deps, nuxtFacts)
+    ? await detectNuxt(
+        frameworkRoot,
+        frameworkNuxtVersion ?? nuxtVersion ?? ">=4",
+        frameworkDeps,
+        nuxtFacts,
+      )
     : undefined;
-  const detectedGraph = resolveRuntimeGraph(
-    root,
-    framework,
-    runtimeOwnerManifest(root, framework, workspacePackages),
-  );
+  const detectedGraph = resolveRuntimeGraph(root, framework, join(frameworkRoot, "package.json"));
   const targeted = applyRuntimeTarget(
     detectedGraph,
     nuxtFacts
       ? resolveNuxtCompatibility(
-          root,
+          frameworkRoot,
           detectedGraph,
           nuxtFacts.manifest,
           nuxtFacts.configs,
@@ -95,7 +103,7 @@ export async function detectProject(
     languages: await detectProjectLanguages(walk, Boolean(tsconfigPath)),
     nuxt,
     nuxtModuleDefinitions: nuxt
-      ? await detectNuxtModuleDefinitions(root, nuxt.appRoots)
+      ? await detectNuxtModuleDefinitions(frameworkRoot, nuxt.appRoots)
       : undefined,
     runtimeGraph: targeted.graph,
     nuxtCompatibility: targeted.compatibility,
@@ -103,19 +111,6 @@ export async function detectProject(
   };
   rememberProjectFileWalk(project, walk);
   return project;
-}
-
-// A workspace root that does not declare the run framework cannot resolve its runtime, so the
-// first workspace package that does owns the runtime graph.
-function runtimeOwnerManifest(
-  root: string,
-  framework: DoctorFramework,
-  packages: readonly WorkspacePackage[],
-): string {
-  const owner =
-    packages.find((item) => item.root === "." && item.framework === framework) ??
-    packages.find((item) => item.framework === framework);
-  return join(root, owner?.root ?? ".", "package.json");
 }
 
 const LANGUAGE_SOURCE = /\.(?:vue|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;

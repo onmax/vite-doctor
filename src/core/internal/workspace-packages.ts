@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { matchesGlob } from "node:path";
 import { basename, dirname, join, relative, resolve } from "pathe";
+import { parse } from "yaml";
 import type { DoctorFramework, WorkspacePackage } from "../primitives.js";
 
 const FRAMEWORK_PRECEDENCE: DoctorFramework[] = ["nuxt", "nitro", "vue", "vite"];
@@ -114,44 +115,27 @@ function hasConfig(directory: string, basename: string): boolean {
 }
 
 function workspacePatterns(root: string, manifest: PackageManifest | null): string[] {
+  if (existsSync(join(root, "pnpm-workspace.yaml"))) {
+    return readPnpmWorkspacePatterns(root);
+  }
   const declared = Array.isArray(manifest?.workspaces)
     ? manifest.workspaces
     : (manifest?.workspaces?.packages ?? []);
-  return [...readPnpmWorkspacePatterns(root), ...declared].filter(
+  return declared.filter(
     (pattern): pattern is string => typeof pattern === "string" && pattern.length > 0,
   );
 }
 
-// Reads only the top-level `packages` sequence; Doctor does not need the rest of the file.
 function readPnpmWorkspacePatterns(root: string): string[] {
-  let text: string;
   try {
-    text = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
+    const value: unknown = parse(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"));
+    if (!isRecord(value) || !Array.isArray(value.packages)) return [];
+    return value.packages.filter(
+      (pattern): pattern is string => typeof pattern === "string" && pattern.length > 0,
+    );
   } catch {
     return [];
   }
-  const patterns: string[] = [];
-  let inPackages = false;
-  for (const line of text.split(/\r?\n/)) {
-    if (/^packages\s*:/.test(line)) {
-      inPackages = true;
-      const inline = line.match(/^packages\s*:\s*\[(.*)\]/)?.[1];
-      if (inline !== undefined) {
-        patterns.push(...inline.split(",").map(unquote));
-        inPackages = false;
-      }
-      continue;
-    }
-    if (!inPackages) continue;
-    if (/^\S/.test(line)) break;
-    const item = line.match(/^\s+-\s*(.+?)\s*(?:#.*)?$/)?.[1];
-    if (item) patterns.push(unquote(item));
-  }
-  return patterns.filter(Boolean);
-}
-
-function unquote(value: string): string {
-  return value.trim().replace(/^(["'])(.*)\1$/, "$2");
 }
 
 function readManifest(file: string): PackageManifest | null {

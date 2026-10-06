@@ -92,7 +92,8 @@
     "semver": "catalog:prod",
     "std-env": "catalog:prod",
     "typescript": "catalog:analysis",
-    "vue-eslint-parser": "catalog:analysis"
+    "vue-eslint-parser": "catalog:analysis",
+    "yaml": "catalog:prod"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:deploy",

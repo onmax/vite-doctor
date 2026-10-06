@@ -115,6 +115,52 @@ test("a Nuxt workspace package selects the Nuxt run and scopes Nuxt Rule Packs t
   expect(activations.get("packages/app")).not.toContain("vite-doctor/nuxt");
 });
 
+test("pnpm workspace declarations take precedence and support multiline flow sequences", async () => {
+  const root = fixture({
+    "package.json": JSON.stringify({ workspaces: ["apps/*"] }),
+    "pnpm-workspace.yaml": 'packages: [\n  "packages/web",\n  "packages/acme,web"\n]\n',
+    "packages/web/package.json": JSON.stringify({ name: "web", dependencies: { vue: "^3.5.0" } }),
+    "packages/acme,web/package.json": JSON.stringify({
+      name: "acme",
+      dependencies: { vue: "^3.5.0" },
+    }),
+    "apps/web/package.json": JSON.stringify({ name: "ignored", dependencies: { nuxt: "4" } }),
+  });
+
+  const project = await detectProject(root);
+
+  expect(project.workspacePackages?.map((item) => item.root)).toEqual([
+    ".",
+    "packages/acme,web",
+    "packages/web",
+  ]);
+});
+
+test("Nuxt inventory is rooted at the workspace package selecting Nuxt", async () => {
+  const root = nitroRootMonorepo({
+    "packages/site/package.json": JSON.stringify({
+      name: "@workspace/site",
+      dependencies: { nuxt: "^4.0.0" },
+    }),
+    "packages/site/nuxt.config.ts": "export default defineNuxtConfig({ routeRules: {} })\n",
+    "packages/site/app/app.vue": button,
+    "packages/site/server/api/hello.ts": "export default defineEventHandler(() => 'hello')\n",
+    "packages/site/.nuxt/doctor.manifest.json": JSON.stringify({
+      nuxtVersion: "4.0.0",
+      appDir: "app",
+      modules: [{ name: "@nuxt/image", version: "1.0.0" }],
+    }),
+  });
+
+  const project = await detectProject(root);
+
+  expect(project.nuxt?.appRoots).toEqual([join(root, "packages/site")]);
+  expect(project.nuxt?.appDir).toBe(join(root, "packages/site/app"));
+  expect(project.nuxt?.manifestPath).toBe(join(root, "packages/site/.nuxt/doctor.manifest.json"));
+  expect(project.nuxt?.serverDirs.api).toEqual([join(root, "packages/site/server/api/hello.ts")]);
+  expect(project.nuxt?.modules).toContainEqual({ name: "@nuxt/image", version: "1.0.0" });
+});
+
 test("an explicit framework still selects exactly that framework's Rule Packs", async () => {
   const root = nitroRootMonorepo();
   const result = await runViteDoctor({ root, framework: "nitro", cache: false });
@@ -165,4 +211,13 @@ test("single-package projects keep root Activation unchanged", async () => {
   expect(JSON.parse(createAgentReport(result, { runOptions: { root } })).commandArgs.rerun[3]).toBe(
     "vue",
   );
+});
+
+test("a pnpm declaration without packages does not fall back to manifest workspaces", async () => {
+  const root = fixture({
+    "package.json": JSON.stringify({ workspaces: ["apps/*"] }),
+    "pnpm-workspace.yaml": "catalog: {}\n",
+    "apps/web/package.json": JSON.stringify({ dependencies: { nuxt: "4" } }),
+  });
+  expect((await detectProject(root)).workspacePackages?.map((item) => item.root)).toEqual(["."]);
 });
