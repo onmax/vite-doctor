@@ -150,6 +150,7 @@ export function createJsonReport(result: DoctorRunResult): string {
       ruleTimings: result.ruleTimings,
       graph: result.graph,
       extends: result.extends,
+      workspacePackages: result.workspacePackages,
       evidenceGaps: result.project.evidenceGaps,
       runtimeGraph: result.project.runtimeGraph,
       nuxtCompatibility: result.project.nuxtCompatibility,
@@ -170,7 +171,7 @@ export function createAgentReport(
       "explain",
       "<code>",
       "--framework",
-      result.framework,
+      agentFramework(result, context),
       ...(context.configFile ? ["--config", context.configFile] : []),
       ...(context.runOptions?.hostExtensions ? ["--host-extensions"] : []),
       "--format",
@@ -185,6 +186,7 @@ export function createAgentReport(
     project: {
       cwd: result.root,
       framework: result.framework,
+      workspacePackages: result.workspacePackages,
     },
     scope: result.scope,
     summary: result.summary,
@@ -550,7 +552,7 @@ function agentRunArguments(
   context: DoctorReportContext,
   focused = false,
 ): string[] {
-  const args = ["vite-doctor", ".", "--framework", result.framework];
+  const args = ["vite-doctor", ".", "--framework", agentFramework(result, context)];
   if (result.scope.mode === "changed") {
     if (result.scope.base) args.push("--since", result.scope.base);
     else args.push("--changed");
@@ -575,6 +577,14 @@ function agentRunArguments(
   if (options?.cache !== undefined) args.push(options.cache ? "--cache" : "--no-cache");
   args.push("--format", "agent");
   return args;
+}
+
+// Workspace runs derive Rule Packs from every workspace package, which pinning the resolved
+// framework would replace with that framework's packs alone.
+function agentFramework(result: DoctorRunResult, context: DoctorReportContext): string {
+  const requested = context.runOptions?.framework;
+  if (requested && requested !== "auto") return requested;
+  return (result.workspacePackages?.length ?? 0) > 1 ? "auto" : result.framework;
 }
 
 function shellArgument(value: string): string {

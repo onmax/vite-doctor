@@ -67,6 +67,7 @@ const strictOnlyRules = [preferServerUtils];
 const nitroRulePack = defineRulePack({
   name: "vite-doctor/nitro",
   version: "0.0.0",
+  activation: { frameworks: ["nitro", "nuxt"] },
   rules: [...rules, ...strictOnlyRules],
   presets: {
     recommended: rules.map((rule) => rule.meta.id),

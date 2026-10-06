@@ -326,6 +326,7 @@ export interface ProjectInfo {
   nuxtVersion?: string;
   isMonorepo: boolean;
   packageName?: string;
+  workspacePackages?: WorkspacePackage[];
   tsconfigPath?: string;
   languages?: ProjectLanguage[];
   nuxt?: NuxtProjectInfo;
@@ -335,6 +336,22 @@ export interface ProjectInfo {
   evidenceGaps?: Array<{ source: string; message: string; files: string[] }>;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
+}
+
+export interface WorkspacePackage {
+  /** Path relative to the Doctor Run root; `.` is the workspace root. */
+  root: string;
+  name?: string;
+  framework: DoctorFramework;
+  packages: Record<string, string>;
+}
+
+/** The Rule Packs whose Activation matched one workspace package. */
+export interface WorkspacePackageActivation {
+  root: string;
+  name?: string;
+  framework: DoctorFramework;
+  rulePacks: string[];
 }
 
 export interface RuntimePackageInstance {
@@ -623,6 +640,7 @@ export interface RulePack {
   activation?:
     | false
     | {
+        frameworks?: DoctorFramework[];
         languages?: ProjectLanguage[];
         packages?: string[];
         modules?: string[];
@@ -661,6 +679,7 @@ export interface DoctorRunResult {
   timings?: Record<string, number>;
   phases?: Record<string, number>;
   ruleTimings?: Array<{ rule: string; ms: number; files: number }>;
+  workspacePackages?: WorkspacePackageActivation[];
   graph?: {
     files: number;
     importEdges: number;
