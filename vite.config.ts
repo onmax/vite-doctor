@@ -1,4 +1,5 @@
 import { configDefaults, defineConfig } from "vite-plus";
+import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   pack: {
@@ -25,5 +26,6 @@ export default defineConfig({
   test: {
     // Agent worktrees under .claude/ are full repo checkouts; collecting them duplicates and breaks the suite.
     exclude: [...configDefaults.exclude, "**/.claude/**"],
+    setupFiles: [fileURLToPath(new URL("./tests/setup.ts", import.meta.url))],
   },
 });

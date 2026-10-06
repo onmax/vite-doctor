@@ -93,6 +93,7 @@ export async function runProjectFixture(options: ProjectFixtureOptions): Promise
       );
     return await runDoctor({
       ...options.run,
+      cache: options.run?.cache ?? false,
       config: options.config ?? options.run?.config,
       root,
       framework: options.framework ?? "vue",
