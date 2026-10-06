@@ -46,6 +46,7 @@ try {
   verifyExports();
   verifyLightweightEntries();
   verifyServeRunWorker();
+  verifyDoctorProcess();
   writeFileSync(
     join(fixture, "package.json"),
     `${JSON.stringify({ private: true, dependencies: { nuxt: nuxt.version } }, null, 2)}\n`,
@@ -297,6 +298,51 @@ await server.close();
     } else {
       assert.notDeepEqual(analyzers, [], "The main-thread control run loaded no analyzers.");
     }
+  }
+}
+
+function verifyDoctorProcess() {
+  const project = join(temporary, "process fixture");
+  mkdirSync(project, { recursive: true });
+  writeFileSync(
+    join(project, "package.json"),
+    JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+  );
+  writeFileSync(
+    join(project, "vite.config.ts"),
+    "export default { define: { SECRET_KEY: JSON.stringify('secret') } }\n",
+  );
+  const cli = join(temporary, "node_modules/vite-doctor/dist/cli.mjs");
+  const run = (args, extraEnv = {}) => {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      cwd: project,
+      env: { ...env, VITE_DOCTOR_SERVER_IDLE_MS: "120000", ...extraEnv },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 120_000,
+    });
+    if (result.error) throw result.error;
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  };
+  const status = () => JSON.parse(run(["server", "status", "--format", "json"]).stdout);
+  try {
+    for (const format of ["agent", "json", "text", "sarif"]) {
+      const direct = run([".", "--format", format]);
+      const served = run([".", "--format", format, "--server"]);
+      assert.deepEqual(served, direct, `Doctor process output differs for --format ${format}`);
+      assert.equal(direct.status, 1);
+    }
+    const running = status();
+    assert.equal(running.running, true, "The Doctor process is not running after --server.");
+    assert.equal(running.current, true);
+    assert.equal(running.activity.runs, 4);
+    run(["."], { VITE_DOCTOR_SERVER: "1" });
+    assert.equal(status().activity.pid, running.activity.pid, "The Doctor process was not reused.");
+    assert.equal(status().activity.runs, 5);
+    assert.match(run(["server", "stop"]).stdout, /Doctor process \d+ stopped/);
+    assert.equal(status().running, false);
+  } finally {
+    run(["server", "stop"]);
   }
 }
 

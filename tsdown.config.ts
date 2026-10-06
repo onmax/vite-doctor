@@ -12,6 +12,7 @@ export default defineConfig({
     "src/extension.ts",
     "src/plugin.ts",
     "src/plugin-worker.ts",
+    "src/doctor-process.ts",
     "src/nuxt.ts",
     "src/rules.ts",
     "src/testkit.ts",
@@ -30,7 +31,7 @@ export default defineConfig({
     "src/rule-packs/pinia/index.ts",
   ],
   exports: {
-    exclude: ["nuxt-cli", "plugin-worker"],
+    exclude: ["nuxt-cli", "plugin-worker", "doctor-process"],
     bin: {
       "nuxt-doctor": "src/nuxt-cli.ts",
       "vite-doctor": "src/cli.ts",
