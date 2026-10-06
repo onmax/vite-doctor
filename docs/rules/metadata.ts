@@ -233,6 +233,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/structure/prefer-server-utils": {
+    description:
+      "Suggests server/utils for helpers that Nitro server routes, middleware, and plugins import from ad-hoc directories.",
+    why: "Nitro 2 and Nuxt auto-import exports from server/utils in server code and generate their types. Helpers kept in directories such as server/lib or server/helpers need a relative import in every caller.",
+    recommendedReplacement:
+      "Move shared server helpers to server/utils/ when server auto-imports are enabled. NITRO0022 is currently suppressed: Doctor does not yet capture Nitro’s resolved provider and exclusion evidence, so it cannot establish that an explicit utility import selects the same implementation as an auto-import.",
+    examples: [
+      {
+        title: "Let Nitro auto-import server helpers",
+        language: "ts",
+        invalid:
+          "// server/api/admin/users.get.ts\nimport { requireAdmin } from '../../lib/auth'\nimport { paginate } from '../../helpers/paginate'\n\nexport default defineEventHandler(async (event) => {\n  await requireAdmin(event)\n  return paginate(event, users)\n})",
+        valid:
+          "// server/utils/auth.ts exports requireAdmin\n// server/utils/paginate.ts exports paginate\n\n// server/api/admin/users.get.ts\nexport default defineEventHandler(async (event) => {\n  await requireAdmin(event)\n  return paginate(event, users)\n})",
+      },
+    ],
+  },
   "nitro/h3/no-removed-send": {
     description: "Flags send() and sendError(), which H3 v2 removes.",
     why: "H3 v2 handlers return Web API response values and throw HTTPError instances instead of using imperative send helpers.",

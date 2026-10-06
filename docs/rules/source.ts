@@ -96,8 +96,14 @@ const require = createRequire(import.meta.url);
 
 let cachedRules: RuleDocument[] | null = null;
 let cachedDiagnostics: DiagnosticDocument[] | null = null;
+let cachedStrictOnlyRuleIds: Set<string> | null = null;
+const strictOnlyRuleIndexes = [
+  "src/rule-packs/nitro/rules/index.ts",
+  "src/rule-packs/nuxt/rules/nuxt/index.ts",
+  "src/rule-packs/typescript/rules/index.ts",
+  "src/rule-packs/vite/rules/index.ts",
+];
 let parser: typeof import("oxc-parser") | null = null;
-let cachedNuxtStrictOnlyRuleIds: Set<string> | null = null;
 
 export function getRuleDocuments() {
   if (!cachedRules) cachedRules = collectRuleDocuments();
@@ -543,28 +549,55 @@ function ruleSourcesFromIndex(indexFile: string) {
   return [...sources];
 }
 
-function nuxtStrictOnlyRuleIds() {
-  cachedNuxtStrictOnlyRuleIds ??= strictOnlyRuleIdsFromIndex(
-    join(root, "src/rule-packs/nuxt/rules/nuxt/index.ts"),
-  );
-  return cachedNuxtStrictOnlyRuleIds;
-}
-
 function strictOnlyRuleIdsFromIndex(indexFile: string) {
   const { parseSync, visitorKeys } = loadParser();
   const parse = (file: string) =>
     parseSync(file, readFileSync(file, "utf8"), { sourceType: "module", lang: "ts" }).program;
   const ast = parse(indexFile);
-  const names = new Set<string>();
+  const arrays = new Map<string, any[]>();
   for (const statement of ast.body) {
     if (statement.type !== "VariableDeclaration") continue;
     for (const declarator of statement.declarations) {
-      if (declarator.id.type !== "Identifier" || declarator.id.name !== "strictOnlyRules") continue;
-      if (declarator.init?.type !== "ArrayExpression") continue;
-      for (const element of declarator.init.elements)
-        if (element?.type === "Identifier") names.add(element.name);
+      if (declarator.id.type !== "Identifier") continue;
+      const init = declarator.init;
+      if (init?.type === "ArrayExpression") arrays.set(declarator.id.name, init.elements);
+      else if (
+        init?.type === "CallExpression" &&
+        init.callee?.type === "MemberExpression" &&
+        init.callee.property?.type === "Identifier" &&
+        init.callee.property.name === "map" &&
+        init.callee.object?.type === "ArrayExpression"
+      )
+        arrays.set(declarator.id.name, init.callee.object.elements);
     }
   }
+
+  const strictName = arrays.has("strictOnlyRules")
+    ? "strictOnlyRules"
+    : arrays.has("strictRules")
+      ? "strictRules"
+      : arrays.has("rules")
+        ? "rules"
+        : null;
+  if (!strictName) return new Set<string>();
+  const recommendedName = arrays.has("recommendedRules")
+    ? "recommendedRules"
+    : arrays.has("recommended")
+      ? "recommended"
+      : null;
+  const collectNames = (name: string, seen = new Set<string>()): Set<string> => {
+    if (seen.has(name)) return new Set();
+    seen.add(name);
+    const result = new Set<string>();
+    for (const element of arrays.get(name) ?? []) {
+      if (element?.type === "Identifier") result.add(element.name);
+      else if (element?.type === "SpreadElement" && element.argument?.type === "Identifier")
+        for (const nested of collectNames(element.argument.name, seen)) result.add(nested);
+    }
+    return result;
+  };
+  const names = collectNames(strictName);
+  if (recommendedName) for (const name of collectNames(recommendedName)) names.delete(name);
 
   const ids = new Set<string>();
   for (const statement of ast.body) {
@@ -1008,11 +1041,19 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return piniaRecommendedRuleIds.includes(rule.id)
       ? `pnpm vite-doctor . --rules ${rule.id}`
       : `pnpm vite-doctor . --extends auto,pinia/strict --rules ${rule.id}`;
-  if (rule.framework === "nuxt" && nuxtStrictOnlyRuleIds().has(rule.id))
-    return `pnpm nuxt doctor --extends auto,nuxt/strict --rules ${rule.id}`;
-  if (rule.framework === "nuxt") return `pnpm nuxt doctor --rules ${rule.id}`;
-  if (rule.framework === "typescript") return `pnpm vite-doctor . --rules ${rule.id}`;
-  return `pnpm vite-doctor . --framework ${rule.framework} --rules ${rule.id}`;
+  const strict = getStrictOnlyRuleIds().has(rule.id)
+    ? ` --extends auto,${rule.framework}/strict`
+    : "";
+  if (rule.framework === "nuxt") return `pnpm nuxt doctor${strict} --rules ${rule.id}`;
+  if (rule.framework === "typescript") return `pnpm vite-doctor .${strict} --rules ${rule.id}`;
+  return `pnpm vite-doctor . --framework ${rule.framework}${strict} --rules ${rule.id}`;
+}
+
+function getStrictOnlyRuleIds() {
+  cachedStrictOnlyRuleIds ??= new Set(
+    strictOnlyRuleIndexes.flatMap((file) => [...strictOnlyRuleIdsFromIndex(join(root, file))]),
+  );
+  return cachedStrictOnlyRuleIds;
 }
 
 function slugSegment(value: string) {
