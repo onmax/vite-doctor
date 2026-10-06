@@ -1,4 +1,5 @@
-import { relative } from "pathe";
+import { existsSync } from "node:fs";
+import { join, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
 
 export const NUXT_APP_DIRS = new Set([
@@ -21,13 +22,27 @@ export type NuxtFileClass =
   | "external-package"
   | "unknown";
 
+interface NuxtAppSource {
+  root: string;
+  srcDir: string;
+  serverDir: string;
+}
+
 export function classifyNuxtFile(ctx: RuleContext): NuxtFileClass {
   const relativePath = toPosixPath(ctx.file.relativePath);
   if (isGeneratedFile(ctx)) return "generated";
   if (isContentDocsPath(relativePath, ctx.file.sourceKind)) return "content-docs";
-  if (isConfigBuildPath(relativePath)) return "config-build";
-  if (ctx.helpers.isNuxtServerFile(relativePath)) return "server-runtime";
-  if (isRuntimeAppPath(ctx, relativePath)) return "runtime-app";
+  const file = toPosixPath(resolve(ctx.project.root, ctx.file.path));
+  const source = owningNuxtAppSource(ctx, file);
+  const appPath = source ? relative(source.root, file) : relativePath;
+  if (isConfigBuildPath(relativePath) || isConfigBuildPath(appPath)) return "config-build";
+  if (
+    ctx.helpers.isNuxtServerFile(relativePath) ||
+    (source && isNuxtServerPath(ctx, source, file, appPath))
+  )
+    return "server-runtime";
+  if (source && ctx.file.sourceKind !== "module" && isRuntimeAppPath(source, file, appPath))
+    return "runtime-app";
   if (isExternalPackagePath(relativePath)) return "external-package";
   return "unknown";
 }
@@ -95,23 +110,73 @@ export function toPosixPath(path: string) {
   return path.replace(/\\/g, "/");
 }
 
-function isRuntimeAppPath(ctx: RuleContext, relativePath: string) {
-  if (ctx.file.sourceKind === "module") return false;
-  const roots = ctx.project.nuxt?.appRoots;
-  if (roots?.length) {
-    const relativeRoots = roots
-      .map((root: string) => toPosixPath(relative(ctx.project.root, root)))
-      .filter((root: string) => root && root !== ".");
-    if (relativeRoots.length) {
-      return relativeRoots.some(
-        (root: string) => relativePath === root || relativePath.startsWith(`${root}/`),
-      );
-    }
-  }
+const appSourcesByProject = new WeakMap<object, NuxtAppSource[]>();
 
-  if (relativePath.startsWith("app/")) return true;
-  const [first] = relativePath.split("/");
+function owningNuxtAppSource(ctx: RuleContext, file: string) {
+  let owner: NuxtAppSource | undefined;
+  for (const source of nuxtAppSources(ctx)) {
+    if (isInside(file, source.root) && (!owner || source.root.length > owner.root.length))
+      owner = source;
+  }
+  return owner;
+}
+
+// Nuxt roots come from manifest layers or every detected nuxt.config, so nested apps such as
+// docs/ each get their own srcDir instead of treating the whole app root as app code.
+function nuxtAppSources(ctx: RuleContext): NuxtAppSource[] {
+  const key = ctx.project.nuxt ?? ctx.project;
+  const cached = appSourcesByProject.get(key);
+  if (cached) return cached;
+  const nuxt = ctx.project.nuxt;
+  const layers = (nuxt?.layers ?? []).map((layer) => ({
+    ...layer,
+    root: toPosixPath(resolve(ctx.project.root, layer.root)),
+  }));
+  const primaryRoot =
+    layers.find((layer) => layer.priority === 0)?.root ?? toPosixPath(ctx.project.root);
+  const roots = new Set([
+    ...(nuxt?.appRoots ?? []).map((root) => toPosixPath(resolve(ctx.project.root, root))),
+    ...layers.map((layer) => layer.root),
+    primaryRoot,
+  ]);
+  const sources = [...roots].map((root): NuxtAppSource => {
+    const layer = layers.find((candidate) => candidate.root === root);
+    const srcDir = layer?.srcDir
+      ? resolve(root, layer.srcDir)
+      : root === primaryRoot && nuxt?.appDir
+        ? resolve(ctx.project.root, nuxt.appDir)
+        : existsSync(join(root, "app"))
+          ? join(root, "app")
+          : root;
+    return {
+      root,
+      srcDir: toPosixPath(srcDir),
+      serverDir: toPosixPath(
+        layer?.serverDir ? resolve(root, layer.serverDir) : join(root, "server"),
+      ),
+    };
+  });
+  appSourcesByProject.set(key, sources);
+  return sources;
+}
+
+function isNuxtServerPath(ctx: RuleContext, source: NuxtAppSource, file: string, appPath: string) {
+  return (
+    ctx.helpers.isNuxtServerFile(appPath) ||
+    isInside(file, source.serverDir) ||
+    isInside(file, `${source.srcDir}/server`)
+  );
+}
+
+function isRuntimeAppPath(source: NuxtAppSource, file: string, appPath: string) {
+  if (source.srcDir !== source.root) return isInside(file, source.srcDir);
+  if (appPath.startsWith("app/") || /^(app|error)\.vue$/.test(appPath)) return true;
+  const [first] = appPath.split("/");
   return !!first && NUXT_APP_DIRS.has(first);
+}
+
+function isInside(file: string, dir: string) {
+  return file === dir || file.startsWith(`${dir}/`);
 }
 
 function isContentDocsPath(relativePath: string, sourceKind: string | undefined) {
