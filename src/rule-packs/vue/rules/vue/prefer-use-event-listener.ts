@@ -64,7 +64,7 @@ function projectHasVueUse(ctx: RuleContext) {
 }
 
 function readProjectHasVueUse(ctx: RuleContext) {
-  const pkg = ctx.getJson<any>("package.json");
+  const pkg = ctx.fs.readJson<any>("package.json");
   const deps = {
     ...pkg?.dependencies,
     ...pkg?.devDependencies,
@@ -330,12 +330,7 @@ function readConfiguredNuxtSrcDirs(ctx: RuleContext) {
 }
 
 function readNuxtSrcDir(ctx: RuleContext, file: string) {
-  let text = "";
-  try {
-    text = ctx.getFileText(file);
-  } catch {
-    return null;
-  }
+  const text = ctx.fs.readText(file) ?? "";
   const match = text.match(/\bsrcDir\s*:\s*(['"`])([^'"`]+)\1/);
   return match?.[2]?.replace(/\\/g, "/").replace(/\/$/, "") || null;
 }

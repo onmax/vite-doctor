@@ -42,6 +42,7 @@ import {
 } from "./source-inventory.js";
 import type { AvailableGitChangeInventory } from "./git-change-ranges.js";
 import { createHelpers } from "./doctor-helpers.js";
+import { RuleInputs } from "./rule-inputs.js";
 import { VERSION, nativeMatch, sha256 } from "./utils.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import {
@@ -293,6 +294,7 @@ export interface ScanSession {
   diagnostics: Diagnostic[];
   suppressedDiagnostics: Diagnostic[];
   cache: ScanCache;
+  ruleInputs: RuleInputs;
   helpers: DoctorHelpers;
   enabledRules: DoctorRule[];
   ruleScopes: Map<string, ReadonlySet<string>>;
@@ -345,6 +347,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   markSession(sessionBase, "files", started);
 
   const helpers = createHelpers();
+  const sourceTexts = new Map<string, string | null>();
   return {
     ...sessionBase,
     registry,
@@ -352,11 +355,12 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     files,
     gitChanges: sourceInventory.git,
     handles: [],
-    sourceTexts: new Map(),
+    sourceTexts,
     facts: [],
     diagnostics: [],
     suppressedDiagnostics: [],
     cache: options.cache === false ? new MemoryRuleCache() : new PersistentRuleCache(root, config),
+    ruleInputs: new RuleInputs(root, (path) => sourceTexts.get(path) ?? undefined),
     helpers,
     enabledRules: selection.rules,
     ruleScopes: selection.scopes,

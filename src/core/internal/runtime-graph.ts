@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "pathe";
 import { valid } from "semver";
 import { parseScript } from "./script.js";
+import { RuleInputs } from "./rule-inputs.js";
 import type {
   DoctorFramework,
   NuxtCompatibilityInfo,
@@ -11,6 +12,7 @@ import type {
   RuntimePackageInstance,
   RuntimePackageName,
   RuntimeTarget,
+  RuleFileSystem,
 } from "../primitives.js";
 
 const packageCandidates: Record<RuntimePackageName, string[]> = {
@@ -131,25 +133,19 @@ export function resolveNuxtCompatibility(
   };
 }
 
-export function autoRegisteredNuxtLayers(root: string): string[] {
+export function autoRegisteredNuxtLayers(
+  root: string,
+  fs: RuleFileSystem = new RuleInputs(root).frame().fs,
+): string[] {
   const directory = join(root, "layers");
-  try {
-    if (!statSync(directory).isDirectory()) return [];
-    return readdirSync(directory, { withFileTypes: true })
-      .filter((entry) => {
-        if (entry.isDirectory()) return true;
-        if (!entry.isSymbolicLink()) return false;
-        try {
-          return statSync(join(directory, entry.name)).isDirectory();
-        } catch {
-          return false;
-        }
-      })
-      .map((entry) => entry.name)
-      .sort();
-  } catch {
-    return [];
-  }
+  return (fs.readDir(directory) ?? [])
+    .filter(
+      (entry) =>
+        entry.isDirectory() ||
+        (entry.isSymbolicLink() && fs.stat(join(directory, entry.name))?.isDirectory() === true),
+    )
+    .map((entry) => entry.name)
+    .sort();
 }
 
 export function nuxtServerInventory(directory: string): string[] {

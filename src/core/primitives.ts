@@ -500,6 +500,38 @@ export interface RuleCache {
   set<T = unknown>(key: string, value: T): void;
 }
 
+export interface RuleFileStat {
+  isFile(): boolean;
+  isDirectory(): boolean;
+  readonly size: number;
+}
+
+export interface RuleDirEntry {
+  name: string;
+  isFile(): boolean;
+  isDirectory(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+/**
+ * Read-only file access for Rules. Relative paths resolve from the project root, and missing or
+ * unreadable paths return `undefined` instead of throwing.
+ */
+export interface RuleFileSystem {
+  readText(path: string): string | undefined;
+  /** Parsed JSON, or `undefined` when the file is missing or is not valid JSON. */
+  readJson<T = unknown>(path: string): T | undefined;
+  exists(path: string): boolean;
+  /** Follows symbolic links, like `fs.statSync`. */
+  stat(path: string): RuleFileStat | undefined;
+  readDir(path: string): RuleDirEntry[] | undefined;
+  /** Paths relative to `path`, breadth-first, like `fs.readdirSync(path, { recursive: true })`. */
+  readDirRecursive(path: string): string[] | undefined;
+  realpath(path: string): string | undefined;
+  /** Absolute paths matching a glob pattern, like `fs.globSync`. `cwd` defaults to the project root. */
+  glob(pattern: string, options?: { cwd?: string; exclude?: readonly string[] }): string[];
+}
+
 export interface DoctorHelpers {
   rangeFromOffsets(file: string, source: string, start: number, end?: number): SourceRange;
   isInSetupLikeContext(node: unknown): boolean;
@@ -580,8 +612,9 @@ export interface RuleContext {
   severity: DoctorSeverity;
   options: unknown;
   report(diagnostic: NosticsDiagnostic, metadata?: RuleReportMetadata): void;
-  getFileText(file: string): string;
-  getJson<T = unknown>(file: string): T | null;
+  /** The only file system a Rule may read. Doctor records every read as a Rule input. */
+  fs: RuleFileSystem;
+  /** Run-scoped memory shared by all Rules. Entries carry the Rule inputs read to compute them. */
   cache: RuleCache;
   helpers: DoctorHelpers;
   range(nodeOrStart: unknown, end?: number): SourceRange | undefined;

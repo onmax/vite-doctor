@@ -1,4 +1,3 @@
-import { statSync } from "node:fs";
 import { dirname, extname, isAbsolute, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
 import {
@@ -88,8 +87,8 @@ function sameImportSource(ctx: RuleContext, source: string, autoImportSource: st
   const automatic = resolveImportSource(ctx, autoImportSource);
   if (!explicit || !automatic) return source === autoImportSource;
   if (explicit === automatic) return true;
-  const explicitFile = resolveSourceFile(explicit);
-  const automaticFile = resolveSourceFile(automatic);
+  const explicitFile = resolveSourceFile(ctx, explicit);
+  const automaticFile = resolveSourceFile(ctx, automatic);
   return explicitFile !== null && explicitFile === automaticFile;
 }
 
@@ -115,18 +114,16 @@ function canonicalPath(path: string) {
   return toPosixPath(resolve(path));
 }
 
-function resolveSourceFile(path: string): string | null {
-  const entry = statSync(path, { throwIfNoEntry: false });
+function resolveSourceFile(ctx: RuleContext, path: string): string | null {
+  const entry = ctx.fs.stat(path);
   if (entry?.isFile()) return path;
   if ((entry && !entry.isDirectory()) || (!entry && extname(path))) return null;
-  if (statSync(resolve(path, "package.json"), { throwIfNoEntry: false })) return null;
+  if (ctx.fs.exists(resolve(path, "package.json"))) return null;
   const extensions = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
   const candidates = [path, resolve(path, "index")].flatMap((base) =>
     extensions.map((extension) => `${base}${extension}`),
   );
-  const files = candidates.filter((candidate) =>
-    statSync(candidate, { throwIfNoEntry: false })?.isFile(),
-  );
+  const files = candidates.filter((candidate) => ctx.fs.stat(candidate)?.isFile());
   return files.length === 1 ? files[0]! : null;
 }
 

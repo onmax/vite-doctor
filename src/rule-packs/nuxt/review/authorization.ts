@@ -1,9 +1,13 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { parseScriptSync } from "../../../core/internal/script.js";
 import { parseForESLint } from "@typescript-eslint/parser";
 import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { dirname, extname, relative, resolve } from "pathe";
-import { createRule, defineDoctorExtension, defineRulePack } from "../../../core/index.js";
+import {
+  createRule,
+  defineDoctorExtension,
+  defineRulePack,
+  type RuleFileSystem,
+} from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { autoRegisteredNuxtLayers } from "../../../core/internal/runtime-graph.js";
 import {
@@ -62,6 +66,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
       category: "middleware",
       severity: "warn",
       execution: "manifest",
+      determinism: "runtime-dependent",
       docsUrl:
         "https://nuxt.com/docs/4.x/guide/directory-structure/app/middleware#when-middleware-runs",
       requires: { nuxt: true, crossFile: true },
@@ -85,11 +90,16 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             return;
           }
           const fallbackRoots = !nuxt.manifest?.isCurrent
-            ? [root, ...autoRegisteredNuxtLayers(root).map((name) => resolve(root, "layers", name))]
+            ? [
+                root,
+                ...autoRegisteredNuxtLayers(root, ctx.fs).map((name) =>
+                  resolve(root, "layers", name),
+                ),
+              ]
             : [];
           const fallbackConfig = fallbackRoots.map((layerRoot) => ({
             layerRoot,
-            config: rootMiddlewareConfiguration(layerRoot),
+            config: rootMiddlewareConfiguration(ctx.fs, layerRoot),
           }));
           if (fallbackConfig.some(({ config }) => !config || config.customServerRegistration)) {
             ctx.project.evidenceGaps = [
@@ -124,13 +134,13 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
             !nuxt.layers.some((layer) => resolve(root, layer.root) === root)
           )
             middlewareDirs.push(resolve(nuxt.appDir, "middleware"));
-          const middlewareFiles = appMiddlewareFiles(middlewareDirs).filter((file) =>
+          const middlewareFiles = appMiddlewareFiles(ctx.fs, middlewareDirs).filter((file) =>
             middlewareDirs.some(
               (directory) =>
                 isWithin(directory, file) && authMiddlewareName.test(relative(directory, file)),
             ),
           );
-          const middleware = projectSources(root, middlewareFiles);
+          const middleware = projectSources(ctx.fs, root, middlewareFiles);
           const collectedMiddleware = new Set(
             middleware.map((source) => resolve(root, source.path)),
           );
@@ -178,10 +188,10 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                 ...fallbackRoots
                   .slice(1)
                   .flatMap((layerRoot) =>
-                    appMiddlewareFiles([resolve(layerRoot, "server", "middleware")]),
+                    appMiddlewareFiles(ctx.fs, [resolve(layerRoot, "server", "middleware")]),
                   ),
               ];
-          const serverMiddleware = projectSources(root, serverMiddlewareFiles);
+          const serverMiddleware = projectSources(ctx.fs, root, serverMiddlewareFiles);
           if (serverMiddleware.length !== serverMiddlewareFiles.length) {
             const collected = new Set(serverMiddleware.map((source) => resolve(root, source.path)));
             ctx.project.evidenceGaps = [
@@ -225,7 +235,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                   ...fallbackRoots
                     .slice(1)
                     .flatMap((layerRoot) =>
-                      appMiddlewareFiles([
+                      appMiddlewareFiles(ctx.fs, [
                         resolve(layerRoot, "server", "api"),
                         resolve(layerRoot, "server", "routes"),
                       ]),
@@ -239,7 +249,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
                     !isPublicAuthOperation(relative(directory, file)),
                 ),
               );
-          const handlers = projectSources(root, handlerFiles);
+          const handlers = projectSources(ctx.fs, root, handlerFiles);
           const collectedHandlers = new Set(handlers.map((source) => resolve(root, source.path)));
           const omittedHandlers = handlerFiles.filter((file) => !collectedHandlers.has(file));
           if (omittedHandlers.length) {
@@ -255,6 +265,7 @@ export function createNuxtAuthorizationReviewExtension(reviewer: AuthorizationRe
           }
           for (const handler of handlers) {
             const imports = localImports(
+              ctx.fs,
               root,
               [handler, ...middleware, ...serverMiddleware],
               (source) => {
@@ -498,21 +509,21 @@ function parseReviewResult(value: unknown): AuthorizationReviewResult {
   };
 }
 
-function projectSources(root: string, files: string[]): AuthorizationReviewSource[] {
-  const realRoot = realpathSync(root);
+function projectSources(
+  fs: RuleFileSystem,
+  root: string,
+  files: string[],
+): AuthorizationReviewSource[] {
+  const realRoot = fs.realpath(root) ?? root;
   return [...new Set(files)].flatMap((file) => {
     const path = relative(root, file);
-    if (
-      path === ".." ||
-      path.startsWith("../") ||
-      path.startsWith("..\\") ||
-      !existsSync(file) ||
-      !isWithin(realRoot, realpathSync(file)) ||
-      !statSync(file).isFile() ||
-      statSync(file).size > maxSourceBytes
-    )
-      return [];
-    return [{ path: path.replaceAll("\\", "/"), text: readFileSync(file, "utf8") }];
+    if (path === ".." || path.startsWith("../") || path.startsWith("..\\")) return [];
+    const real = fs.realpath(file);
+    if (real === undefined || !isWithin(realRoot, real)) return [];
+    const stat = fs.stat(file);
+    if (!stat?.isFile() || stat.size > maxSourceBytes) return [];
+    const text = fs.readText(file);
+    return text === undefined ? [] : [{ path: path.replaceAll("\\", "/"), text }];
   });
 }
 
@@ -521,13 +532,12 @@ function isWithin(root: string, file: string): boolean {
   return path !== ".." && !path.startsWith("../") && !path.startsWith("..\\");
 }
 
-function appMiddlewareFiles(directories: string[]): string[] {
+function appMiddlewareFiles(fs: RuleFileSystem, directories: string[]): string[] {
   const files: string[] = [];
   const visit = (directory: string) => {
-    if (!existsSync(directory)) return;
-    for (const entry of readdirSync(directory)) {
-      const file = resolve(directory, entry);
-      if (lstatSync(file).isDirectory()) visit(file);
+    for (const entry of fs.readDir(directory) ?? []) {
+      const file = resolve(directory, entry.name);
+      if (entry.isDirectory()) visit(file);
       else if (/\.[cm]?[jt]s$/.test(file)) files.push(file);
     }
   };
@@ -536,6 +546,7 @@ function appMiddlewareFiles(directories: string[]): string[] {
 }
 
 function localImports(
+  fs: RuleFileSystem,
   root: string,
   seeds: AuthorizationReviewSource[],
   resolveAliases: (source: AuthorizationReviewSource) => {
@@ -629,11 +640,11 @@ function localImports(
         : [base, `${base}/index`].flatMap((path) =>
             ["ts", "js", "mts", "mjs", "cts", "cjs"].map((extension) => `${path}.${extension}`),
           )) {
-        if (existsSync(candidate)) {
+        if (fs.exists(candidate)) {
           found = true;
           if (visited.has(candidate)) break;
           visited.add(candidate);
-          const collected = sources.length < 4 ? projectSources(root, [candidate]) : [];
+          const collected = sources.length < 4 ? projectSources(fs, root, [candidate]) : [];
           if (collected.length) {
             sources.push(...collected);
             queue.push(...collected);

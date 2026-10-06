@@ -1,4 +1,3 @@
-import { statSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "pathe";
 import type { ProjectInfo, RuleContext } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
@@ -48,9 +47,9 @@ export const preferServerUtils = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    const serverFile = nitroServerFile(ctx.project, ctx.file.path);
+    const serverFile = nitroServerFile(ctx, ctx.file.path);
     if (!serverFile || !SCANNED_SERVER_DIRS.has(serverFile.dir)) return;
-    if (!SCRIPT_FILE.test(ctx.file.path) || !serverAutoImportsEnabled(ctx.project)) return;
+    if (!SCRIPT_FILE.test(ctx.file.path) || !serverAutoImportsEnabled(ctx)) return;
     return {
       ImportDeclaration(node: AnyNode) {
         if (node.importKind === "type") return;
@@ -58,7 +57,7 @@ export const preferServerUtils = createRule({
         if (!names.length) return;
         const target = resolveImport(ctx, String(node.source?.value ?? ""));
         if (!target) return;
-        const targetFile = nitroServerFile(ctx.project, target);
+        const targetFile = nitroServerFile(ctx, target);
         if (!targetFile || !targetFile.path.includes("/")) return;
         if (targetFile.dir === "utils") {
           // Runtime Evidence does not yet include Nitro's resolved provider and exclusion set.
@@ -91,14 +90,15 @@ function reportAdHocHelper(
   );
 }
 
-function serverAutoImportsEnabled(project: ProjectInfo): boolean {
+function serverAutoImportsEnabled(ctx: RuleContext): boolean {
+  const project = ctx.project;
   if (project.framework === "nuxt") {
     if (project.nuxt?.autoImportEnabled === false) return false;
     // Nuxt 4 runs on Nitro 2; later majors are not assumed to keep server auto-imports.
     const nitro =
       runtimeMajor(project, "nitro") ?? ((runtimeMajor(project, "nuxt") ?? 4) >= 5 ? 3 : 2);
     if (nitro >= 3) return false;
-    const options = readStaticConfigOptions(project, "nuxt");
+    const options = readStaticConfigOptions(ctx, "nuxt");
     return ![
       "imports.autoImport",
       "experimental.nitroAutoImports",
@@ -107,7 +107,7 @@ function serverAutoImportsEnabled(project: ProjectInfo): boolean {
     ].some((key) => staticOptionValue(options, (path) => path.join(".") === key) === false);
   }
   if (project.framework !== "nitro" || (runtimeMajor(project, "nitro") ?? 2) >= 3) return false;
-  const options = readStaticConfigOptions(project, "nitro");
+  const options = readStaticConfigOptions(ctx, "nitro");
   return !["imports", "imports.autoImport"].some(
     (key) => staticOptionValue(options, (path) => path.join(".") === key) === false,
   );
@@ -125,27 +125,30 @@ function valueNames(node: AnyNode): ImportedName[] {
 function resolveImport(ctx: RuleContext, source: string): string | null {
   const project = ctx.project;
   if (source.startsWith("./") || source.startsWith("../"))
-    return resolveSourceFile(resolve(dirname(ctx.file.path), source));
-  if (/^(?:~~|@@)\//.test(source)) return resolveSourceFile(resolve(project.root, source.slice(3)));
+    return resolveSourceFile(ctx, resolve(dirname(ctx.file.path), source));
+  if (/^(?:~~|@@)\//.test(source))
+    return resolveSourceFile(ctx, resolve(project.root, source.slice(3)));
   if (/^[~@]\//.test(source)) {
-    const base = project.nuxt?.appDir ?? nitroServerDirs(project)[0];
-    return base ? resolveSourceFile(resolve(base, source.slice(2))) : null;
+    const base = project.nuxt?.appDir ?? nitroServerDirs(ctx)[0];
+    return base ? resolveSourceFile(ctx, resolve(base, source.slice(2))) : null;
   }
   const aliases = Object.entries(project.nuxt?.manifest?.aliases ?? {});
-  const serverDir = nitroServerDirs(project)[0];
+  const serverDir = nitroServerDirs(ctx)[0];
   if (project.framework === "nuxt" && serverDir && !aliases.some(([alias]) => alias === "#server"))
     aliases.push(["#server", serverDir]);
   aliases.sort(([left], [right]) => right.length - left.length);
   for (const [alias, target] of aliases) {
     if (source !== alias && !source.startsWith(`${alias}/`)) continue;
     return resolveSourceFile(
+      ctx,
       resolve(String(target), source.slice(alias.length).replace(/^\//, "")),
     );
   }
   return null;
 }
 
-function resolveSourceFile(path: string): string | null {
+function resolveSourceFile(ctx: RuleContext, path: string): string | null {
+  const isFile = (candidate: string) => ctx.fs.stat(candidate)?.isFile() === true;
   if (isFile(path)) return SCRIPT_FILE.test(path) ? path : null;
   const withoutJsExtension = path.replace(/\.([cm]?)js$/, ".$1ts");
   if (withoutJsExtension !== path && isFile(withoutJsExtension)) return withoutJsExtension;
@@ -153,10 +156,6 @@ function resolveSourceFile(path: string): string | null {
     RESOLVE_EXTENSIONS.map((extension) => `${base}${extension}`),
   );
   return candidates.find(isFile) ?? null;
-}
-
-function isFile(path: string) {
-  return statSync(path, { throwIfNoEntry: false })?.isFile() === true;
 }
 
 function utilsDir(project: ProjectInfo, file: NitroServerFile) {

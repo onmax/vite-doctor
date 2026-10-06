@@ -1,6 +1,10 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "pathe";
-import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
+import {
+  createRule,
+  defineRulePack,
+  type DoctorRule,
+  type RuleFileSystem,
+} from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
@@ -31,10 +35,10 @@ export const noBrokenInternalToLink = createRule({
     return {
       onProjectEnd() {
         const contentRoot = join(ctx.project.root, "content");
-        if (!existsSync(contentRoot)) return;
-        const routes = collectContentRoutes(contentRoot);
-        for (const file of collectMarkdownFiles(contentRoot)) {
-          const text = readFileSync(file, "utf8");
+        if (!ctx.fs.exists(contentRoot)) return;
+        const routes = collectContentRoutes(ctx.fs, contentRoot);
+        for (const file of collectMarkdownFiles(ctx.fs, contentRoot)) {
+          const text = ctx.fs.readText(file) ?? "";
           for (const link of findInternalToLinks(text)) {
             const route = normalizeRoute(link.value);
             if (!route || routes.has(route)) continue;
@@ -142,19 +146,19 @@ export const docusRulePack = defineRulePack({
 
 export default docusRulePack;
 
-function collectMarkdownFiles(root: string): string[] {
+function collectMarkdownFiles(fs: RuleFileSystem, root: string): string[] {
   const files: string[] = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
+  for (const entry of fs.readDir(root) ?? []) {
     const absolute = join(root, entry.name);
-    if (entry.isDirectory()) files.push(...collectMarkdownFiles(absolute));
+    if (entry.isDirectory()) files.push(...collectMarkdownFiles(fs, absolute));
     else if (/\.(md|mdc)$/.test(entry.name)) files.push(absolute);
   }
   return files;
 }
 
-function collectContentRoutes(root: string): Set<string> {
+function collectContentRoutes(fs: RuleFileSystem, root: string): Set<string> {
   const routes = new Set<string>();
-  for (const file of collectMarkdownFiles(root)) {
+  for (const file of collectMarkdownFiles(fs, root)) {
     routes.add(contentFileToRoute(root, file));
   }
   return routes;
