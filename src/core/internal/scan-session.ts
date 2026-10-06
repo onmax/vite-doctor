@@ -5,6 +5,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -177,14 +178,42 @@ class PersistentRuleCache extends MemoryRuleCache {
   }
 }
 
-const STORE_LOCK_FILE = ".store.lock";
+const STORE_LOCK_PREFIX = ".store-lock-";
 
 function acquireStoreLock(root: string, dir: string): { fd: number; path: string } {
-  const path = resolve(dir, STORE_LOCK_FILE);
+  const name = `${STORE_LOCK_PREFIX}${process.pid}-${randomUUID()}`;
+  const path = resolve(dir, name);
   assertCachePath(root, path);
-  // Contention (or a lock left by an interrupted writer) skips this best-effort
-  // write. Never steal a lock from a potentially active writer; cache clean removes it.
-  return { fd: openSync(path, "wx", 0o600), path };
+  const lock = { fd: openSync(path, "wx", 0o600), path };
+  try {
+    // Publish ownership atomically in the name, then check for other writers.
+    // Unique claims let concurrent reclaimers remove only a dead owner's file.
+    for (const entry of readdirSync(dir)) {
+      if (entry === name || !entry.startsWith(STORE_LOCK_PREFIX)) continue;
+      const owner = Number(entry.slice(STORE_LOCK_PREFIX.length).split("-")[0]);
+      if (!Number.isSafeInteger(owner) || owner <= 0 || processIsAlive(owner)) {
+        throw new Error("Doctor cache store has an active writer.");
+      }
+      try {
+        unlinkSync(resolve(dir, entry));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    return lock;
+  } catch (error) {
+    releaseStoreLock(lock);
+    throw error;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
 }
 
 function releaseStoreLock(lock: { fd: number; path: string }): void {

@@ -201,17 +201,45 @@ test("a contended store write is best-effort and leaves the lock and store intac
   await withProject(async (root) => {
     await runDoctor(options(root));
     const original = readFileSync(storePath(root), "utf8");
-    const lock = join(root, ".vite-doctor/cache/.store.lock");
+    const lock = join(root, `.vite-doctor/cache/.store-lock-${process.pid}-active`);
     writeFileSync(lock, "another writer");
     const session = await createScanSession(options(root));
     session.cache.set("fileFacts:new", { value: "new" });
     expect(() => session.cache.persist({ prune: false })).not.toThrow();
     expect(readFileSync(storePath(root), "utf8")).toBe(original);
     expect(readFileSync(lock, "utf8")).toBe("another writer");
+    expect(readdirSync(join(root, ".vite-doctor/cache")).sort()).toEqual([
+      `.store-lock-${process.pid}-active`,
+      "store.json",
+    ]);
     rmSync(lock);
     session.cache.persist({ prune: false });
     expect(JSON.parse(readFileSync(storePath(root), "utf8")).entries["fileFacts:new"]).toEqual({
       value: "new",
+    });
+    expect(existsSync(lock)).toBe(false);
+  });
+});
+
+test("an abandoned store lock is recovered", async () => {
+  await withProject(async (root) => {
+    await runDoctor(options(root));
+    const lock = execFileSync(
+      process.execPath,
+      [
+        "-e",
+        'const fs = require("node:fs"); const path = require("node:path").join(process.argv[1], `.store-lock-${process.pid}-abandoned`); fs.closeSync(fs.openSync(path, "wx")); process.stdout.write(path);',
+        join(root, ".vite-doctor/cache"),
+      ],
+      { encoding: "utf8" },
+    );
+    const session = await createScanSession(options(root));
+    session.cache.set("fileFacts:recovered", { value: "ok" });
+    session.cache.persist({ prune: false });
+    expect(
+      JSON.parse(readFileSync(storePath(root), "utf8")).entries["fileFacts:recovered"],
+    ).toEqual({
+      value: "ok",
     });
     expect(existsSync(lock)).toBe(false);
   });
