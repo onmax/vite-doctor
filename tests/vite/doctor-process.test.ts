@@ -147,7 +147,12 @@ test("server stop stops the Doctor process and reports when none runs", async ()
   await viaProcess(launcher, [".", "--format", "json"], root);
   const pid = readDoctorProcessState(doctorProcessPaths(root))?.pid;
 
-  expect(await stopDoctorProcess(root)).toEqual({ stopped: true, pid });
+  const running = await captured(() => main(["server", "status", ".", "--format", "json"], root));
+  expect(running.code).toBe(0);
+  expect(JSON.parse(running.stdout)).toMatchObject({ root, running: true, state: { pid } });
+  const stopped = await captured(() => main(["server", "stop", "."], root));
+  expect(stopped.code).toBe(0);
+  expect(readDoctorProcessState(doctorProcessPaths(root))).toBeUndefined();
   await launcher.servers[0]!.closed;
   expect(await stopDoctorProcess(root)).toEqual({ stopped: false });
 

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { resolve as resolveNativePath } from "node:path";
 import { cac } from "cac";
 import { consola } from "consola";
 import { dirname, relative, resolve } from "pathe";
@@ -173,7 +174,7 @@ export async function main(
     )
     .option("--format <format>", "Output for server status: text, json, or agent.")
     .action(async (action: string, path = ".", options) => {
-      const root = resolve(cwd, path);
+      const root = resolveNativePath(cwd, path);
       const client = await import("./doctor-process/client.js");
       if (action === "status") {
         const format = await presentationFormat(options.format, metadataFormats);

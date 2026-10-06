@@ -145,6 +145,8 @@ export class DoctorCache implements SourceInventoryMemo {
   private readonly root: string;
   private readonly dir: string;
   private readonly engine: string;
+  /** Store identity observed when this run loaded its retained snapshot. */
+  private readonly loadedStoreSignature: string | undefined;
   private readonly startedAt = Date.now();
   private loaded: StoreIndex | undefined;
   private loadedFactsText: string | undefined;
@@ -188,7 +190,9 @@ export class DoctorCache implements SourceInventoryMemo {
     flushStoreWrites();
     let loaded: ReturnType<typeof readStore>;
     try {
-      loaded = readResidentStore(this.storePath());
+      const storePath = this.storePath();
+      this.loadedStoreSignature = fileSignature(storePath);
+      loaded = readResidentStore(storePath);
     } catch {
       // A store path that escapes the project root is never read; the write path refuses it too.
       loaded = undefined;
@@ -429,16 +433,19 @@ export class DoctorCache implements SourceInventoryMemo {
     let temporary: string | undefined;
     let lock: { fd: number; path: string } | undefined;
     try {
+      const path = this.storePath();
       const index = JSON.stringify(this.buildIndex());
       const facts = this.factsSection();
       mkdirSync(this.dir, { recursive: true });
       lock = acquireStoreLock(this.root, this.dir);
+      // A retained run may report before this deferred write executes. Another Doctor process
+      // can write a newer store in that gap; never replace it with this run's older snapshot.
+      if (fileSignature(path) !== this.loadedStoreSignature) return;
       temporary = resolve(this.dir, `.doctor-${randomUUID()}.tmp`);
       assertCachePath(this.root, temporary);
       const fd = openSync(temporary, "wx", 0o600);
       try {
         writeFileSync(fd, `${index}\n${facts.text}`);
-        const path = this.storePath();
         renameSync(temporary, path);
         temporary = undefined;
         // A retained index is parsed back from what was written, so it shares nothing with this

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
@@ -35,6 +35,18 @@ test("a retained store is written after the run and dropped once another writer 
     flushStoreWrites();
     expect(status().lastWrite!.ruleResultsReused).toBeGreaterThan(0);
     expect(warm.diagnostics).toEqual(cold.diagnostics);
+
+    writeFileSync(join(root, "src/b.ts"), "export const b = 20;\n");
+    await runDoctor(options);
+    // Simulate another Doctor process replacing the store after this run replied but before its
+    // deferred write acquired the lock. The stale retained snapshot must not replace it.
+    const storePath = join(cacheDir, "store.json");
+    const newerStore = readFileSync(storePath);
+    const replacementStore = join(cacheDir, "replacement-store");
+    writeFileSync(replacementStore, newerStore);
+    renameSync(replacementStore, storePath);
+    flushStoreWrites();
+    expect(readFileSync(storePath)).toEqual(newerStore);
 
     const replacement = join(cacheDir, "replacement");
     writeFileSync(replacement, "not a store");
