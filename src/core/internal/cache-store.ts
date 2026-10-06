@@ -741,7 +741,7 @@ function isStoreIndex(value: unknown): value is StoreIndex {
         input.every((part) => typeof part === "string"),
     ) ||
     !isRecord(value.signatures) ||
-    !Object.values(value.signatures).every(isSignature) ||
+    !Object.values(value.signatures).every((signature) => isSignature(signature)) ||
     !isRecord(value.files) ||
     !isRecord(value.runs)
   )
@@ -773,7 +773,8 @@ function isStoreIndex(value: unknown): value is StoreIndex {
     return false;
   if (
     value.generated !== undefined &&
-    (!isRecord(value.generated) || !Object.values(value.generated).every(isSignature))
+    (!isRecord(value.generated) ||
+      !Object.values(value.generated).every((signature) => isSignature(signature, true)))
   )
     return false;
   return value.lastWrite === undefined || isCacheRunStats(value.lastWrite);
@@ -787,16 +788,18 @@ function isTimestamp(value: unknown): value is number {
   return finite(value) && Math.abs(value) <= 8.64e15;
 }
 
-function isContentHash(value: unknown): value is string {
-  return value === "" || (typeof value === "string" && /^[a-f0-9]{64}$/.test(value));
+function isContentHash(value: unknown, allowEmpty = false): value is string {
+  return (
+    (allowEmpty && value === "") || (typeof value === "string" && /^[a-f0-9]{64}$/.test(value))
+  );
 }
 
-function isSignature(value: unknown): value is Signature {
+function isSignature(value: unknown, allowEmpty = false): value is Signature {
   return (
     Array.isArray(value) &&
     value.length === 6 &&
     value.slice(0, 5).every(finite) &&
-    isContentHash(value[5])
+    isContentHash(value[5], allowEmpty)
   );
 }
 

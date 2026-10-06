@@ -124,6 +124,16 @@ test.each([
     },
   ],
   [
+    "empty ordinary signature hash",
+    (original: string) => {
+      const newline = original.indexOf("\n");
+      const index = JSON.parse(original.slice(0, newline));
+      const path = Object.keys(index.signatures)[0]!;
+      index.signatures[path][5] = "";
+      return `${JSON.stringify(index)}${original.slice(newline)}`;
+    },
+  ],
+  [
     "forged file hash",
     (original: string) => {
       const newline = original.indexOf("\n");
