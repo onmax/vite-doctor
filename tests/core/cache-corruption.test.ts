@@ -8,7 +8,6 @@ test.each([
   ["null", () => null],
   ["missing facts", (facts: Record<string, unknown>) => ({ fileHash: facts.fileHash })],
   ["invalid imports", (facts: Record<string, unknown>) => ({ ...facts, imports: [null] })],
-  ["invalid tokens", (facts: Record<string, unknown>) => ({ ...facts, tokens: null })],
   ["invalid export", (facts: Record<string, unknown>) => ({ ...facts, exports: [null] })],
   [
     "invalid import source",
@@ -33,11 +32,6 @@ test.each([
   [
     "invalid template ref",
     (facts: Record<string, unknown>) => ({ ...facts, templateRefs: [{ name: "div", value: {} }] }),
-  ],
-  ["invalid complexity", (facts: Record<string, unknown>) => ({ ...facts, complexity: null })],
-  [
-    "invalid hashes",
-    (facts: Record<string, unknown>) => ({ ...facts, tokens: { hashes: [null] } }),
   ],
   [
     "invalid range",

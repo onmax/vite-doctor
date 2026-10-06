@@ -18,7 +18,7 @@ import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 import { isCachedFileFacts } from "./cached-file-facts.js";
 
-const FILE_FACTS_VERSION = 6;
+const FILE_FACTS_VERSION = 7;
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
@@ -250,8 +250,6 @@ function createFileFacts(
     calls,
     templateRefs,
     macros,
-    complexity: computeComplexity(text, scriptAst),
-    tokens: createTokenFacts(text),
     diagnosticsHints: [],
   };
 }
@@ -293,7 +291,7 @@ function collectDeclarationExports(
   }
 }
 
-function walkAstFacts(node: unknown, visit: (node: unknown) => void) {
+export function walkAstFacts(node: unknown, visit: (node: unknown) => void) {
   if (!node || typeof node !== "object") return;
   const typed = node as { type?: string };
   if (!typed.type) return;
@@ -340,34 +338,4 @@ function detectLang(file: string): FileFacts["lang"] {
   if (file.endsWith(".mdc")) return "mdc";
   if (file.endsWith(".md")) return "md";
   return "unknown";
-}
-
-function computeComplexity(text: string, ast: Record<string, unknown> | null) {
-  let cyclomatic = 1;
-  let cognitive = 0;
-  if (ast) {
-    walkAstFacts(ast, (node: any) => {
-      if (
-        /^(IfStatement|ForStatement|ForInStatement|ForOfStatement|WhileStatement|DoWhileStatement|CatchClause|ConditionalExpression|LogicalExpression|SwitchCase)$/.test(
-          node.type,
-        )
-      ) {
-        cyclomatic++;
-        cognitive++;
-      }
-    });
-  }
-  return { cyclomatic, cognitive, lines: text.split(/\r?\n/).length };
-}
-
-function createTokenFacts(text: string): FileFacts["tokens"] {
-  const normalizedTokens = (
-    text.match(/[A-Za-z_$][\w$]*|\d+|=>|===|!==|==|!=|[{}()[\].,;:+\-*/%<>]/g) ?? []
-  ).map((token) => (/^[A-Za-z_$]/.test(token) ? token : token.replace(/\d+/g, "0")));
-  const hashes: string[] = [];
-  const window = 30;
-  for (let index = 0; index + window <= normalizedTokens.length; index += 10) {
-    hashes.push(sha256(normalizedTokens.slice(index, index + window).join(" ")).slice(0, 16));
-  }
-  return { hashes };
 }
