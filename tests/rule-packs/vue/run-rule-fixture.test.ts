@@ -240,13 +240,7 @@ onUpdated(() => {
   expect(result.diagnostics).toHaveLength(0);
 });
 
-test("vue browser API rule terminates on recursive client-only call chains", async () => {
-  const result = await runRuleFixture({
-    rule: noBrowserApiInSetup,
-    framework: "vue",
-    dependencies: { "@vue/server-renderer": "^3.5.0" },
-    files: {
-      "app.vue": `<script setup lang="ts">
+const recursiveDrawScript = `<script setup lang="ts">
 function draw() {
   window.dispatchEvent(new Event('draw'))
   update()
@@ -255,14 +249,32 @@ function draw() {
 function update() {
   draw()
 }
-</script>
-<template><button @click="update">Draw</button></template>`,
-    },
+</script>`;
+
+test("vue browser API rule terminates on recursive call chains", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInSetup,
+    framework: "vue",
+    dependencies: { "@vue/server-renderer": "^3.5.0" },
+    files: { "app.vue": `${recursiveDrawScript}\n<template><button>Draw</button></template>` },
   });
 
   expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
     "vue/ssr/no-browser-api-in-setup",
   ]);
+});
+
+test("vue browser API rule accepts recursive call chains entered from a template handler", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInSetup,
+    framework: "vue",
+    dependencies: { "@vue/server-renderer": "^3.5.0" },
+    files: {
+      "app.vue": `${recursiveDrawScript}\n<template><button @click="update">Draw</button></template>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
 });
 
 test("vue browser API rule accepts boolean client guard identifiers", async () => {

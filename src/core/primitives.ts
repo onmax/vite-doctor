@@ -590,6 +590,13 @@ export interface RuleExample {
   valid?: string;
 }
 
+/**
+ * File rules share read-only ASTs. For each file, all create() calls finish in enabled-rule
+ * order, then all SFC hooks finish in that order. Script nodes (DFS pre-order), then
+ * template nodes, dispatch to visitors in rule order per node. Script parents are fully
+ * linked before script dispatch. Script traversal is snapshotted; AST mutation is unsupported.
+ * Cross-rule state must not depend on another rule completing its traversal first.
+ */
 export interface RuleVisitor {
   onWorkspaceStart?(): void | Promise<void>;
   onProjectStart?(project: ProjectInfo): void | Promise<void>;
