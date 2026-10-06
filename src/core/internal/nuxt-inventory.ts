@@ -37,6 +37,7 @@ export function createNuxtProjectInventory(
   manifest: NuxtDoctorManifest | null,
   manifestPath?: string,
   fallbackImportsDirs: string[] = [],
+  isCurrent = isNuxtManifestCurrent(root, manifest),
 ): NuxtProjectInventory {
   return {
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
@@ -52,7 +53,7 @@ export function createNuxtProjectInventory(
       resolve(root, dir),
     ),
     hasManifest: Boolean(manifestPath),
-    isCurrent: isNuxtManifestCurrent(root, manifest),
+    isCurrent,
     serverHandlers: (manifest?.serverHandlers ?? []).map((handler) => ({
       ...handler,
       file: resolve(root, handler.file),
