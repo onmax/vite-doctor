@@ -454,7 +454,7 @@ export class DoctorCache implements SourceInventoryMemo {
     }
     for (const [index, result] of Object.entries(loaded.runs))
       keep(undefined, Number(index), result);
-    if (!this.graphEntry && loaded.graph)
+    if (!this.graphEntry && loaded.graph && loaded.graph.i.every((input) => this.inputValid(input)))
       this.graphEntry = {
         ...loaded.graph,
         i: this.loadedInputIds(loaded.graph.i).map((id) => this.internInput(id)),
