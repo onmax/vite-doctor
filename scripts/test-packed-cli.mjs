@@ -194,14 +194,22 @@ process.on("exit", () => writeFileSync(process.env.DOCTOR_LOADED_ANALYZERS, JSON
       name: "vite-doctor --version",
       args: [join(temporary, "node_modules/vite-doctor/dist/cli.mjs"), "--version"],
     },
+    ...["--version", "-v", "--help", "--invalid"].map((flag) => ({
+      name: `nuxt-doctor ${flag}`,
+      args: [join(temporary, "node_modules/vite-doctor/dist/nuxt-cli.mjs"), flag],
+      status: flag === "--invalid" ? 2 : 0,
+    })),
   ];
-  for (const { name, args, expected = [] } of probes) {
+  for (const { name, args, expected = [], status = 0 } of probes) {
     const record = join(temporary, "loaded-analyzers.json");
-    execFileSync(process.execPath, ["--import", pathToFileURL(hooks).href, ...args], {
+    const result = spawnSync(process.execPath, ["--import", pathToFileURL(hooks).href, ...args], {
       cwd: temporary,
       env: { ...env, DOCTOR_LOADED_ANALYZERS: record },
+      encoding: "utf8",
       stdio: "pipe",
     });
+    if (result.error) throw result.error;
+    assert.equal(result.status, status, `${name}: ${result.stdout}\n${result.stderr}`);
     assert.deepEqual(
       JSON.parse(readFileSync(record, "utf8")),
       expected,
