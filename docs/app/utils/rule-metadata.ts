@@ -1,4 +1,12 @@
-export type Framework = "vue" | "vite" | "nuxt" | "nitro" | "typescript" | "shadcn" | "package";
+export type Framework =
+  | "vue"
+  | "vite"
+  | "nuxt"
+  | "nitro"
+  | "typescript"
+  | "shadcn"
+  | "package"
+  | "pinia";
 export type FrameworkFilter = Framework | "all";
 export type Severity = "error" | "warn" | "info";
 export type FixKind = "safe" | "suggestion" | "no";
@@ -26,6 +34,7 @@ export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; ic
     icon: "i-unjs-nitro",
   },
   shadcn: { label: "shadcn", pack: "vite-doctor/shadcn", icon: "i-simple-icons-shadcnui" },
+  pinia: { label: "Pinia", pack: "vite-doctor/pinia", icon: "i-logos-pinia" },
   typescript: {
     label: "TypeScript",
     pack: "vite-doctor/typescript",
@@ -60,6 +69,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   links: "Links",
   middleware: "Middleware",
   migration: "Migration",
+  modules: "Modules",
   plugin: "Plugins",
   plugins: "Plugins",
   project: "Project",
@@ -75,6 +85,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   shared: "Shared",
   ssr: "SSR safety",
   state: "State",
+  stores: "Stores",
   style: "Style",
   template: "Template",
   ui: "UI",
@@ -96,6 +107,7 @@ export function frameworkOfPack(pack: string): Framework {
   if (pack === "vite-doctor/package") return "package";
   if (pack === "vite-doctor/typescript") return "typescript";
   if (pack === "vite-doctor/shadcn") return "shadcn";
+  if (pack === "vite-doctor/pinia") return "pinia";
   if (pack === "vite-doctor/nitro") return "nitro";
   if (pack === "vite-doctor/vue") return "vue";
   if (pack === "vite-doctor/vite") return "vite";

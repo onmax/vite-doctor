@@ -7,6 +7,7 @@ import {
   defineRulePack,
   runDoctor,
   type DoctorConfig,
+  type DoctorExtensionInput,
   type DoctorRule,
   type DoctorRunOptions,
   type DoctorRunResult,
@@ -14,7 +15,9 @@ import {
 
 export interface RuleFixtureOptions {
   rule: DoctorRule;
+  /** Project files keyed by root-relative path. `package.json` is generated from `framework` and `dependencies`. */
   files: Record<string, string>;
+  /** Defaults to `"vue"`. */
   framework?: "vue" | "nuxt" | "vite" | "nitro";
   dependencies?: Record<string, string>;
 }
@@ -23,7 +26,10 @@ export interface ProjectFixtureOptions {
   files: Record<string, string>;
   framework?: "vue" | "nuxt" | "vite" | "nitro";
   dependencies?: Record<string, string>;
+  /** Rules registered in an always-active `fixture` Rule Pack. */
   rules?: DoctorRule[];
+  /** Doctor Extensions registered for the run, such as a library's published extension. */
+  extensions?: DoctorExtensionInput[];
   config?: DoctorConfig;
   run?: Omit<DoctorRunOptions, "root" | "framework" | "extensions">;
 }
@@ -60,7 +66,7 @@ export async function runNuxtManifestRuleFixture(
 }
 
 export async function runProjectFixture(options: ProjectFixtureOptions): Promise<DoctorRunResult> {
-  const root = await mkdtemp(join(tmpdir(), "vue-doctor-"));
+  const root = await mkdtemp(join(tmpdir(), "vite-doctor-fixture-"));
   try {
     writeFileSync(
       join(root, "package.json"),
@@ -92,17 +98,22 @@ export async function runProjectFixture(options: ProjectFixtureOptions): Promise
       framework: options.framework ?? "vue",
       runtimeTarget: options.run?.runtimeTarget ?? fixtureRuntimeTarget(options),
       extensions: [
-        defineDoctorExtension({
-          name: "fixture",
-          rulePacks: [
-            defineRulePack({
-              name: "fixture",
-              version: "0.0.0",
-              rules: options.rules ?? [],
-              presets: { recommended: (options.rules ?? []).map((rule) => rule.meta.id) },
-            }),
-          ],
-        }),
+        ...(options.rules?.length
+          ? [
+              defineDoctorExtension({
+                name: "fixture",
+                rulePacks: [
+                  defineRulePack({
+                    name: "fixture",
+                    version: "0.0.0",
+                    rules: options.rules,
+                    presets: { recommended: options.rules.map((rule) => rule.meta.id) },
+                  }),
+                ],
+              }),
+            ]
+          : []),
+        ...(options.extensions ?? []),
       ],
     });
   } finally {
