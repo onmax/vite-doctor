@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SfcBlockHashes, SfcHandle, SourceRange } from "../primitives.js";
+import { lineColumnAt } from "./line-index.js";
 import { parseScriptResult, type ScriptParseLang } from "./script.js";
 import { parseTemplate } from "./template.js";
 
@@ -121,8 +122,7 @@ function vueScriptLang(blocks: any[]): ScriptParseLang {
 }
 
 function rangeFromOffset(source: string, offset: number): SourceRange {
-  const lines = source.slice(0, offset).split(/\r?\n/);
-  return { start: offset, end: offset, line: lines.length, column: lines.at(-1)!.length + 1 };
+  return { start: offset, end: offset, ...lineColumnAt(source, offset) };
 }
 
 function sha256(input: string): string {
