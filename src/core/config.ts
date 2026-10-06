@@ -1,7 +1,7 @@
 import { loadConfig } from "c12";
 import { defu } from "defu";
 import type {
-  DoctorExtension,
+  DoctorExtensionInput,
   DoctorFramework,
   DoctorSerializableConfig,
   RuntimeTarget,
@@ -9,7 +9,7 @@ import type {
 export type { DoctorRuleConfig, DoctorSerializableConfig } from "./primitives.js";
 
 export interface DoctorConfig extends DoctorSerializableConfig {
-  extensions?: DoctorExtension[];
+  extensions?: DoctorExtensionInput[];
 }
 
 export interface DoctorRunOptions {
@@ -33,7 +33,14 @@ export interface DoctorRunOptions {
   fix?: boolean;
   unsafeFix?: boolean;
   maxWarnings?: number;
-  extensions?: DoctorExtension[];
+  extensions?: DoctorExtensionInput[];
+  /**
+   * Load Doctor Extension entries that host integrations recorded in their Project Inventory,
+   * such as `doctor:extendExtensions` registrations in the Nuxt manifest. This executes code
+   * registered by the host, so CLI Surfaces only enable it through the host command or an
+   * explicit flag.
+   */
+  hostExtensions?: boolean;
   runtimeTarget?: RuntimeTarget;
 }
 
