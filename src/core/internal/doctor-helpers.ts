@@ -1,12 +1,11 @@
 import type { DoctorHelpers } from "../primitives.js";
+import { lineColumnAt } from "./line-index.js";
 import { getNodeVisitorKeys } from "./visitor-keys.js";
 
 export function createHelpers(): DoctorHelpers {
   return {
     rangeFromOffsets(file, source, start, end = start) {
-      const prefix = source.slice(0, start);
-      const lines = prefix.split(/\r?\n/);
-      return { start, end, line: lines.length, column: lines.at(-1)!.length + 1 };
+      return { start, end, ...lineColumnAt(source, start) };
     },
     isInSetupLikeContext() {
       return false;

@@ -16,6 +16,8 @@ import { preferAssertMethod } from "./prefer-assert-method.js";
 import { preferRouteMethodSuffix } from "./prefer-route-method-suffix.js";
 import { preferGetRequestIp } from "./prefer-get-request-ip.js";
 import { noHttpErrorMasking } from "./no-http-error-masking.js";
+import { requireDefaultHandler } from "./require-default-handler.js";
+import { preferServerUtils } from "./prefer-server-utils.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -35,6 +37,8 @@ export {
   preferRouteMethodSuffix,
   preferGetRequestIp,
   noHttpErrorMasking,
+  requireDefaultHandler,
+  preferServerUtils,
 };
 
 const rules = [
@@ -55,15 +59,18 @@ const rules = [
   preferRouteMethodSuffix,
   preferGetRequestIp,
   noHttpErrorMasking,
+  requireDefaultHandler,
 ];
+
+const strictOnlyRules = [preferServerUtils];
 
 const nitroRulePack = defineRulePack({
   name: "vite-doctor/nitro",
   version: "0.0.0",
-  rules,
+  rules: [...rules, ...strictOnlyRules],
   presets: {
     recommended: rules.map((rule) => rule.meta.id),
-    strict: rules.map((rule) => rule.meta.id),
+    strict: [...rules, ...strictOnlyRules].map((rule) => rule.meta.id),
   },
 });
 

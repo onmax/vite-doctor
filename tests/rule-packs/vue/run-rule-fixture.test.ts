@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
+import { relative } from "pathe";
 import { vueRulePack } from "../../../src/rule-packs/vue/index.ts";
 import {
   definePropsWatchGetter,
@@ -247,13 +248,7 @@ onUpdated(() => {
   expect(result.diagnostics).toHaveLength(0);
 });
 
-test("vue browser API rule terminates on recursive client-only call chains", async () => {
-  const result = await runRuleFixture({
-    rule: noBrowserApiInSetup,
-    framework: "vue",
-    dependencies: { "@vue/server-renderer": "^3.5.0" },
-    files: {
-      "app.vue": `<script setup lang="ts">
+const recursiveDrawScript = `<script setup lang="ts">
 function draw() {
   window.dispatchEvent(new Event('draw'))
   update()
@@ -262,14 +257,32 @@ function draw() {
 function update() {
   draw()
 }
-</script>
-<template><button @click="update">Draw</button></template>`,
-    },
+</script>`;
+
+test("vue browser API rule terminates on recursive call chains", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInSetup,
+    framework: "vue",
+    dependencies: { "@vue/server-renderer": "^3.5.0" },
+    files: { "app.vue": `${recursiveDrawScript}\n<template><button>Draw</button></template>` },
   });
 
   expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
     "vue/ssr/no-browser-api-in-setup",
   ]);
+});
+
+test("vue browser API rule accepts recursive call chains entered from a template handler", async () => {
+  const result = await runRuleFixture({
+    rule: noBrowserApiInSetup,
+    framework: "vue",
+    dependencies: { "@vue/server-renderer": "^3.5.0" },
+    files: {
+      "app.vue": `${recursiveDrawScript}\n<template><button @click="update">Draw</button></template>`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
 });
 
 test("vue browser API rule accepts boolean client guard identifiers", async () => {
@@ -480,6 +493,25 @@ test("event listener rule reports Vue-owned cleanup patterns", async () => {
   for (const result of results) expectEventListenerDiagnostics(result);
   expect(results[0]?.diagnostics[0]?.code).toBe("VUE0025");
 });
+
+test.each(["\n", "\r", "\r\n", "\u2028", "\u2029", ""])(
+  "event listener rule preserves escaped computed properties (%j)",
+  async (continuation) => {
+    const result = await runRuleFixture({
+      rule: preferUseEventListener,
+      framework: "vue",
+      dependencies: VUEUSE_DEPENDENCIES,
+      files: {
+        "src/useViewport.ts": `export function useViewport() {
+  const onResize = () => {}
+  onMounted(() => window["addEventL\\${continuation}istener"]('resize', onResize))
+  onUnmounted(() => window["removeEventL\\${continuation}istener"]('resize', onResize))
+}`,
+      },
+    });
+    expectEventListenerDiagnostics(result);
+  },
+);
 
 test("event listener rule honors Nuxt runtime roots", async () => {
   const result = await runRuleFixture({
@@ -985,6 +1017,81 @@ test("i18n unused translations reads Nuxt langDir locale files", async () => {
 
   expect(result.diagnostics.map((item) => item.message)).toEqual([
     'Translation key "home.subtitle" is not used by any static Vue i18n call.',
+  ]);
+});
+
+test("i18n unused translations scans every source extension and locale file", async () => {
+  const result = await runRuleFixture({
+    rule: noUnusedTranslations,
+    framework: "vue",
+    dependencies: { "vue-i18n": "^11.0.0" },
+    files: {
+      "src/App.vue": `<template>{{ $t('nav.home') }}</template>`,
+      "src/store.ts": `export const title = t("nav.about")`,
+      "src/View.tsx": `export const View = () => <p>{t('form.save')}</p>`,
+      "src/router.js": "i18n.global.t(`form.cancel`)",
+      "src/Button.jsx": `export const Button = () => te('form.reset')`,
+      "public/legacy.js": `t('nav.blog')`,
+      "node_modules/pkg/index.js": `t('nav.contact')`,
+      "locales/en.json": `{
+  "nav": {
+    "home": "Home",
+    "about": "About",
+    "blog": "Blog",
+    "contact": "Contact"
+  },
+  "form": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "reset": "Reset",
+    "submit": "Submit"
+  }
+}`,
+      "i18n/locales/en.ts": `export default defineI18nLocale({
+  footer: { 'legal': 'Legal', home: 'Home' },
+})`,
+      "locales/fr.json": JSON.stringify({ nav: { unusedFr: "Seulement" } }),
+    },
+  });
+
+  expect(
+    result.diagnostics.map((item) => [
+      item.message,
+      relative(result.root, item.file ?? ""),
+      item.range?.line,
+      item.range?.column,
+    ]),
+  ).toEqual([
+    [
+      'Translation key "footer.legal" is not used by any static Vue i18n call.',
+      "i18n/locales/en.ts",
+      2,
+      13,
+    ],
+    [
+      'Translation key "footer.home" is not used by any static Vue i18n call.',
+      "i18n/locales/en.ts",
+      2,
+      38,
+    ],
+    [
+      'Translation key "nav.blog" is not used by any static Vue i18n call.',
+      "locales/en.json",
+      5,
+      5,
+    ],
+    [
+      'Translation key "nav.contact" is not used by any static Vue i18n call.',
+      "locales/en.json",
+      6,
+      5,
+    ],
+    [
+      'Translation key "form.submit" is not used by any static Vue i18n call.',
+      "locales/en.json",
+      12,
+      5,
+    ],
   ]);
 });
 

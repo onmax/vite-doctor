@@ -17,7 +17,7 @@ const NUXT_CONFIG_FILES = [
   "nuxt.config.mts",
 ];
 // Reports start from a callee spelled addEventListener; escapes could spell it without the text.
-const ADD_EVENT_LISTENER_TEXT_RE = /addEventListener|\\(?:u|x|[0-7])/;
+const ADD_EVENT_LISTENER_TEXT_RE = /addEventListener|\\/;
 
 export const preferUseEventListener = createRule({
   meta: {

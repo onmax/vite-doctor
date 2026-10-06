@@ -66,10 +66,7 @@ import {
   requireEventRuntimeConfigInServer,
 } from "../../../src/rule-packs/nitro/rules.ts";
 import { runProjectFixture, runRuleFixture } from "../../../src/core/testkit.ts";
-import nuxtDoctorModule, {
-  collectNuxtDoctorRulePacks,
-  writeManifest,
-} from "../../../src/rule-packs/nuxt/module.ts";
+import nuxtDoctorModule, { writeManifest } from "../../../src/rule-packs/nuxt/module.ts";
 import { createRulesReport, createTextReport, explainRule } from "../../../src/core/index.ts";
 import {
   nitroRulePack,
@@ -896,6 +893,26 @@ const { refresh } = \\u0075seFetch('/api/settings')
   );
   expect(result.diagnostics).toHaveLength(2);
 });
+
+test.each(["\n", "\r", "\r\n", "\u2028", "\u2029", ""])(
+  "refreshable async data preserves escaped computed calls and aliases (%j)",
+  async (continuation) => {
+    const result = await runRuleFixture({
+      rule: asyncDataExplicitKeyForRefreshable,
+      framework: "nuxt",
+      files: {
+        "app/pages/direct.vue": `<script setup lang="ts">
+const { refresh } = getApi()["useF\\${continuation}etch"]('/api/settings')
+</script>`,
+        "app/pages/alias.vue": `<script setup lang="ts">
+const load = getApi()["useF\\${continuation}etch"]
+const { refresh } = load('/api/settings')
+</script>`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(2);
+  },
+);
 
 test("async data handler purity reports replayable side effects conservatively", async () => {
   const result = await runRuleFixture({
@@ -3665,64 +3682,6 @@ test("Nuxt module writes manifest source hook contributions", async () => {
       },
     ]);
   });
-});
-
-test("third-party Nuxt rule hook contributions are collected", async () => {
-  await withFixture(
-    { "app/pages/index.vue": `<script setup>const ok = true</script>` },
-    {},
-    async (root) => {
-      const hookRule = createRule({
-        meta: {
-          id: "fixture/nuxt-hook-rule",
-          title: "Nuxt hook rule",
-          category: "architecture",
-          severity: "error",
-          requires: { script: true, nuxt: true },
-        },
-        create(ctx) {
-          return {
-            ScriptNode(node: any) {
-              if (node.type !== "Program") return;
-              ctx.report(
-                allDiagnostics.DOC9999({
-                  why: "Hook rule ran.",
-                  fix: "Inspect the Nuxt hook rule.",
-                }),
-                {
-                  ruleId: "fixture/nuxt-hook-rule",
-                  severity: "error",
-                  category: "architecture",
-                  file: ctx.file.path,
-                },
-              );
-            },
-          };
-        },
-      });
-
-      const rulePacks = await collectNuxtDoctorRulePacks({
-        async callHook(name: string, packs: any[]) {
-          if (name !== "doctor:extendRules") return;
-          packs.push(
-            defineRulePack({
-              name: "fixture",
-              version: "0.0.0",
-              rules: [hookRule],
-              presets: { recommended: ["fixture/nuxt-hook-rule"] },
-            }),
-          );
-        },
-      });
-      const result = await runDoctor({
-        root,
-        framework: "nuxt",
-        extensions: [defineDoctorExtension({ name: "fixture", rulePacks })],
-      });
-
-      expect(result.diagnostics.map((item) => item.ruleId)).toContain("fixture/nuxt-hook-rule");
-    },
-  );
 });
 
 test("Nuxt runtime evidence classifies setup, client, server, lifecycle, command, and unknown execution", async () => {

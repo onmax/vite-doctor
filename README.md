@@ -161,7 +161,10 @@ Remove `coverage`, `runtimeEvidence`, `emitGraph`, `confidenceMin`, and `scoreOn
 
 Library authors can import `createRule`, `defineRulePack`, `defineDoctorExtension`, and
 `defineDoctorDiagnostics` from `vite-doctor/extension`. The same entrypoint exports their
-authoring types. Rule Pack names identify the owner of each Config Extends preset and must be
+authoring types. Vite plugins attach extensions automatically through `api.doctor`
+(`DoctorPluginApi`), and Nuxt modules use the `doctor:extendExtensions` hook. Test Rules
+with `runRuleFixture` and `runProjectFixture` from `vite-doctor/testkit`. See
+[Extending Doctor](https://vite-doctor.onmax.me/extending). Rule Pack names identify the owner of each Config Extends preset and must be
 unique within a Doctor Run. Shared final slash-delimited segments require full names in
 Config Extends; registering duplicate full names fails with the internal `DOC0023`
 authoring diagnostic.

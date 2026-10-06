@@ -1,21 +1,43 @@
+import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
 } from "../../core/internal/runtime-graph.js";
-import { defineNuxtModule, getLayerDirectories } from "nuxt/kit";
-import type { NuxtModule } from "nuxt/schema";
-import { join, relative, resolve } from "pathe";
-import type {
-  DoctorConfig,
-  DoctorExtension,
-  NuxtDoctorManifest,
-  NuxtModuleSource,
-  RulePack,
-} from "../../core/index.js";
-export type { NuxtDoctorManifest } from "../../core/index.js";
+import {
+  createIsIgnored,
+  defineNuxtModule,
+  getLayerDirectories,
+  importModule,
+  resolvePath,
+} from "nuxt/kit";
+import type { Nuxt, NuxtModule } from "nuxt/schema";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
+import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
+import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
+export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 
 export type NuxtDoctorModuleOptions = DoctorConfig;
+
+type HookResult = void | Promise<void>;
+
+export interface NuxtDoctorHooks {
+  /**
+   * Register Doctor Extension entry modules. Push an absolute path, a `file:` URL, or a module
+   * specifier resolvable from the Nuxt root. The entry's default export must be a Doctor Extension.
+   * The Nuxt 4 Bridge records entries in Project Inventory, and the Nuxt Doctor Command loads them.
+   */
+  "doctor:extendExtensions": (entries: string[]) => HookResult;
+  /** Add Nuxt module source directories to the Doctor Run source inventory. */
+  "doctor:extendSources": (sources: NuxtModuleSource[]) => HookResult;
+  /** Inspect or amend the Nuxt manifest before the Nuxt 4 Bridge writes it. */
+  "doctor:context": (context: { nuxt: Nuxt; manifest: NuxtDoctorManifest }) => HookResult;
+}
+
+declare module "nuxt/schema" {
+  interface NuxtHooks extends NuxtDoctorHooks {}
+}
 
 type EvidenceBuildManifest = {
   hasBuildManifest: boolean;
@@ -37,6 +59,8 @@ type NuxtDoctorEvidence = {
   importDirs?: unknown[];
   autoImportContext?: NuxtAutoImportContext;
   autoImportEntries?: unknown[];
+  moduleSources?: NuxtModuleSource[];
+  extensions?: string[];
 };
 
 async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
@@ -54,7 +78,15 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
     autoImportEntries: undefined as unknown[] | undefined,
+    moduleSources: undefined as NuxtModuleSource[] | undefined,
+    extensions: undefined as string[] | undefined,
   };
+
+  // Nuxt removes every hook when it starts closing, so the final manifest write cannot call them.
+  nuxt.hook?.("modules:done", async () => {
+    evidence.moduleSources = await collectModuleSources(nuxt);
+    evidence.extensions = await collectExtensionEntries(nuxt);
+  });
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
     const captureHandlers = async () => {
@@ -170,9 +202,30 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     };
   });
 
-  nuxt.hook?.("imports:dirs", (dirs: unknown[]) => {
-    evidence.importDirs.push(...toArray(dirs));
-  });
+  const nuxtRuntimeUrl = import.meta.resolve("nuxt");
+  let callHook = nuxt.callHook;
+  if (callHook) {
+    Object.defineProperty(nuxt, "callHook", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        // Bind at Nuxt's method lookup, before decorators can add frames or await.
+        // Public callers (including nested hooks) still receive the current delegate.
+        const delegate = callHook;
+        if (getCallSites(2, { sourceMap: false })[1]?.scriptName !== nuxtRuntimeUrl)
+          return delegate;
+        return async function (this: unknown, name: string, ...args: unknown[]) {
+          const result = await delegate.call(this, name, ...args);
+          if (name === "imports:dirs")
+            evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
+          return result;
+        };
+      },
+      set(delegate) {
+        callHook = delegate;
+      },
+    });
+  }
 
   nuxt.hook?.("components:dirs", (dirs: unknown[]) => {
     evidence.componentDirs.push(...toArray(dirs));
@@ -203,18 +256,6 @@ const nuxtDoctorModule: NuxtModule<NuxtDoctorModuleOptions> = defineNuxtModule({
 
 export default nuxtDoctorModule;
 
-export async function collectNuxtDoctorRulePacks(nuxt: any): Promise<RulePack[]> {
-  const extraRulePacks: RulePack[] = [];
-  await nuxt.callHook?.("doctor:extendRules", extraRulePacks);
-  return extraRulePacks;
-}
-
-export async function collectNuxtDoctorExtensions(nuxt: any): Promise<DoctorExtension[]> {
-  const extensions: DoctorExtension[] = [];
-  await nuxt.callHook?.("doctor:extendExtensions", extensions);
-  return extensions;
-}
-
 export async function writeManifest(
   nuxt: any,
   evidence?: NuxtDoctorEvidence,
@@ -223,8 +264,8 @@ export async function writeManifest(
   const buildDir = resolve(rootDir, nuxt.options.buildDir ?? ".nuxt");
   const srcDir = resolve(rootDir, nuxt.options.srcDir ?? ".");
   const appDir = srcDir;
-  const moduleSources: NuxtModuleSource[] = [];
-  await nuxt.callHook?.("doctor:extendSources", moduleSources);
+  const moduleSources = evidence?.moduleSources ?? (await collectModuleSources(nuxt));
+  const extensions = evidence?.extensions ?? (await collectExtensionEntries(nuxt));
   const modules = toArray(nuxt.options.modules).map((entry: any) => ({
     name:
       typeof entry === "string" ? entry : (entry?.meta?.name ?? entry?.name ?? "anonymous-module"),
@@ -239,6 +280,30 @@ export async function writeManifest(
     normalizeAutoImports(evidence?.autoImportEntries ?? []),
   );
   const layerDirectories = nuxt.options._layers ? getLayerDirectories(nuxt) : [];
+  const composableScanRoots = new Set<string>(
+    nuxt.options.imports?.scan === false
+      ? []
+      : toArray(nuxt.options._layers ?? [{ config: { srcDir } }])
+          .filter((layer: any) => layer.config?.srcDir && layer.config?.imports?.scan !== false)
+          .map((layer: any) => resolve(rootDir, layer.config.srcDir, "composables")),
+  );
+  let scannedAutoImportEntries: unknown[] | undefined;
+  if (evidence?.autoImportContext) {
+    scannedAutoImportEntries = [];
+    if (composableScanRoots.size && evidence.importDirs?.length) {
+      // Use Nuxt's scanner without the public dynamic-import list, which modules can mutate.
+      const { scanDirExports } = await importModule<{
+        scanDirExports: (
+          dirs: string[],
+          options: { fileFilter: (file: string) => boolean },
+        ) => Promise<unknown[]>;
+      }>("unimport", { url: new URL(import.meta.resolve("nuxt")) });
+      const isIgnored = createIsIgnored(nuxt);
+      scannedAutoImportEntries = await scanDirExports(evidence.importDirs.map(String), {
+        fileFilter: (file) => !isIgnored(file),
+      });
+    }
+  }
   const manifest = {
     nuxtConfigMtimeMs: nuxtConfigModifiedAt(rootDir),
     autoRegisteredLayers: autoRegisteredNuxtLayers(rootDir),
@@ -251,6 +316,16 @@ export async function writeManifest(
     buildDir,
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
+    scannedComposableFiles:
+      scannedAutoImportEntries === undefined
+        ? undefined
+        : [
+            ...new Set(
+              normalizeAutoImports(scannedAutoImportEntries)
+                .filter((entry) => !entry.type && composableScanRoots.has(dirname(entry.from)))
+                .map((entry) => relative(rootDir, entry.from)),
+            ),
+          ].sort(),
     autoImports,
     components: toArray(nuxt.options.components ?? nuxt._components),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
@@ -266,6 +341,9 @@ export async function writeManifest(
         serverDir: resolve(
           layerDirectories[index]?.server ??
             resolve(layer.cwd ?? rootDir, layer.config?.serverDir ?? "server"),
+        ),
+        aliases: Object.fromEntries(
+          Object.entries(layer.config?.alias ?? {}).map(([key, value]) => [key, String(value)]),
         ),
         name: layer.config?.name,
         priority: index,
@@ -295,6 +373,7 @@ export async function writeManifest(
     buildManifest: evidence?.buildManifest ?? { hasBuildManifest: false, chunks: [] },
     modules,
     moduleSources: moduleSources.map(normalizeModuleSource),
+    extensions: extensions.length ? extensions : undefined,
     doctorConfig: serializableDoctorConfig(nuxt.options.doctor),
     runtimeConfig: redactRuntimeConfig(nuxt.options.runtimeConfig),
     keyedComposables: toArray(nuxt.options.optimization?.keyedComposables).map(String),
@@ -415,6 +494,42 @@ function normalizePluginFiles(rootDir: string, plugins: unknown[]): string[] {
     .map((plugin: any) => (typeof plugin === "string" ? plugin : (plugin?.src ?? plugin?.file)))
     .filter(Boolean)
     .map((file: string) => resolve(rootDir, file));
+}
+
+async function collectModuleSources(nuxt: any): Promise<NuxtModuleSource[]> {
+  const sources: NuxtModuleSource[] = [];
+  await nuxt.callHook?.("doctor:extendSources", sources);
+  return sources;
+}
+
+async function collectExtensionEntries(nuxt: any): Promise<string[]> {
+  const entries: unknown[] = [];
+  await nuxt.callHook?.("doctor:extendExtensions", entries);
+  const rootDir = resolve(nuxt.options.rootDir ?? process.cwd());
+  const resolved: string[] = [];
+  for (const entry of entries) {
+    const value = entry instanceof URL ? entry.href : String(entry);
+    let normalized: string;
+    try {
+      const path = await resolvePath(value.startsWith("file:") ? fileURLToPath(value) : value, {
+        cwd: rootDir,
+        alias: nuxt.options.alias ?? {},
+        extensions: [".mjs", ".js", ".mts", ".ts"],
+        fallbackToOriginal: true,
+      });
+      if (!isAbsolute(path) || !statSync(path, { throwIfNoEntry: false })?.isFile()) {
+        throw new Error("host entries must resolve to an existing absolute module file.");
+      }
+      normalized = normalize(path);
+    } catch (error) {
+      throw doctorInternalDiagnostics.DOC0029({
+        entry: value,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (!resolved.includes(normalized)) resolved.push(normalized);
+  }
+  return resolved;
 }
 
 function normalizeModuleSource(source: NuxtModuleSource): NuxtModuleSource {

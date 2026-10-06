@@ -1,4 +1,4 @@
-import { parseSync } from "oxc-parser";
+import { parseScriptSync } from "../../../../core/internal/script.js";
 
 type ScriptParseLang = "js" | "jsx" | "ts" | "tsx";
 
@@ -8,10 +8,7 @@ export function parseScript(
   lang = langFromFile(file),
 ): Record<string, unknown> | null {
   try {
-    const result = parseSync(file, source, {
-      sourceType: "module",
-      lang,
-    } as any);
+    const result = parseScriptSync(file, source, { sourceType: "module", lang });
     return result.program as unknown as Record<string, unknown>;
   } catch {
     return null;

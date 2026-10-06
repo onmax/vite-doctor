@@ -62,9 +62,7 @@ export const NUXT_AUTO_IMPORTS = new Set([
   "defineNuxtRouteMiddleware",
   "useState",
 ]);
-const NUXT_AUTO_IMPORT_TEXT_RE = new RegExp(
-  `${[...NUXT_AUTO_IMPORTS].join("|")}|\\\\(?:u|x|[0-7])`,
-);
+const NUXT_AUTO_IMPORT_TEXT_RE = new RegExp(`${[...NUXT_AUTO_IMPORTS].join("|")}|\\\\`);
 export const BROWSER_SIDE_EFFECTS = new Set([
   "localStorage.setItem",
   "sessionStorage.setItem",
