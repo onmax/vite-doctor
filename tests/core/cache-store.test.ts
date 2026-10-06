@@ -6,11 +6,13 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
+import { createScanSession } from "../../src/core/internal/scan-session.ts";
 import { cleanCache, runDoctor } from "../../src/core/index.ts";
 
 const files = {
@@ -69,6 +71,8 @@ test.each([
   ["truncated JSON", (original: string) => original.slice(0, original.length / 2)],
   ["empty file", () => ""],
   ["null", () => "null"],
+  ["primitive", () => "42"],
+  ["missing entries", () => JSON.stringify({ version: 1 })],
   [
     "unknown version",
     (original: string) => JSON.stringify({ ...JSON.parse(original), version: 0 }),
@@ -148,5 +152,67 @@ test("cache clean removes the cache store", async () => {
     cleanCache(root);
 
     expect(existsSync(join(root, ".vite-doctor/cache"))).toBe(false);
+  });
+});
+
+test.each([true, false])(
+  "overlapping full and partial runs preserve concurrent changes (full first: %s)",
+  async (fullFirst) => {
+    await withProject(async (root) => {
+      const seed = (await createScanSession(options(root))).cache;
+      seed.set("fileFacts:obsolete", { value: "old" });
+      seed.set("fileFacts:updated", { value: "old" });
+      seed.set("fileFacts:kept", { value: "kept" });
+      seed.persist({ prune: false });
+      const full = (await createScanSession(options(root))).cache;
+      const partial = (await createScanSession(options(root))).cache;
+      full.get("fileFacts:kept");
+      partial.set("fileFacts:new", { value: "new" });
+      partial.set("fileFacts:updated", { value: "new" });
+      if (fullFirst) {
+        full.persist({ prune: true });
+        partial.persist({ prune: false });
+      } else {
+        partial.persist({ prune: false });
+        full.persist({ prune: true });
+      }
+      expect(JSON.parse(readFileSync(storePath(root), "utf8")).entries).toEqual({
+        "fileFacts:kept": { value: "kept" },
+        "fileFacts:updated": { value: "new" },
+        "fileFacts:new": { value: "new" },
+      });
+    });
+  },
+);
+
+test("a warm run leaves the store untouched and an empty full run prunes it", async () => {
+  await withProject(async (root) => {
+    await runDoctor(options(root));
+    const before = statSync(storePath(root));
+    await runDoctor(options(root));
+    expect(statSync(storePath(root)).mtimeMs).toBe(before.mtimeMs);
+    const session = await createScanSession(options(root));
+    session.cache.persist({ prune: true });
+    expect(JSON.parse(readFileSync(storePath(root), "utf8")).entries).toEqual({});
+  });
+});
+
+test("a contended store write is best-effort and leaves the lock and store intact", async () => {
+  await withProject(async (root) => {
+    await runDoctor(options(root));
+    const original = readFileSync(storePath(root), "utf8");
+    const lock = join(root, ".vite-doctor/cache/.store.lock");
+    writeFileSync(lock, "another writer");
+    const session = await createScanSession(options(root));
+    session.cache.set("fileFacts:new", { value: "new" });
+    expect(() => session.cache.persist({ prune: false })).not.toThrow();
+    expect(readFileSync(storePath(root), "utf8")).toBe(original);
+    expect(readFileSync(lock, "utf8")).toBe("another writer");
+    rmSync(lock);
+    session.cache.persist({ prune: false });
+    expect(JSON.parse(readFileSync(storePath(root), "utf8")).entries["fileFacts:new"]).toEqual({
+      value: "new",
+    });
+    expect(existsSync(lock)).toBe(false);
   });
 });

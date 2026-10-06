@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import {
+  closeSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
@@ -17,6 +20,7 @@ import {
   type FileFacts,
   type DoctorHelpers,
   type DoctorExtension,
+  type DoctorExtensionInput,
   type DoctorRule,
   type DoctorSeverity,
   type ProjectInventoryContributor,
@@ -104,16 +108,28 @@ class PersistentRuleCache extends MemoryRuleCache {
   override persist({ prune }: { prune: boolean }): void {
     const removed = prune ? [...this.stored.keys()].filter((key) => !this.touched.has(key)) : [];
     if (!this.written.size && !removed.length) return;
-    const entries: Record<string, unknown> = {};
-    for (const [key, value] of this.stored) {
-      if (!prune || this.touched.has(key)) entries[key] = value;
-    }
-    for (const key of this.written) entries[key] = super.get(key);
-    const store: CacheStore = { version: CACHE_STORE_VERSION, entries };
     let temporary: string | undefined;
+    let lock: { fd: number; path: string } | undefined;
     try {
       mkdirSync(this.dir, { recursive: true });
+      lock = acquireStoreLock(this.root, this.dir);
+      // A run may have started from an older snapshot. Re-read while holding the
+      // lock so concurrent runs never replace a newer store with stale entries.
+      const current = this.load();
+      const entries: Record<string, unknown> = {};
+      for (const [key, value] of current) {
+        if (
+          !prune ||
+          this.touched.has(key) ||
+          !this.stored.has(key) ||
+          JSON.stringify(value) !== JSON.stringify(this.stored.get(key))
+        ) {
+          entries[key] = value;
+        }
+      }
+      for (const key of this.written) entries[key] = super.get(key);
       const target = this.storePath();
+      const store: CacheStore = { version: CACHE_STORE_VERSION, entries };
       temporary = resolve(this.dir, `.doctor-${randomUUID()}.tmp`);
       assertCachePath(this.root, temporary);
       writeFileSync(temporary, JSON.stringify(store), { flag: "wx", mode: 0o600 });
@@ -127,14 +143,19 @@ class PersistentRuleCache extends MemoryRuleCache {
           rmSync(temporary, { force: true });
         } catch {}
       }
+      if (lock) releaseStoreLock(lock);
     }
   }
 
   private load(): Map<string, unknown> {
     try {
-      const store = JSON.parse(readFileSync(this.storePath(), "utf8")) as Partial<CacheStore>;
+      const store: unknown = JSON.parse(readFileSync(this.storePath(), "utf8"));
       if (
-        store?.version !== CACHE_STORE_VERSION ||
+        typeof store !== "object" ||
+        store === null ||
+        !("version" in store) ||
+        store.version !== CACHE_STORE_VERSION ||
+        !("entries" in store) ||
         typeof store.entries !== "object" ||
         store.entries === null ||
         Array.isArray(store.entries)
@@ -153,6 +174,27 @@ class PersistentRuleCache extends MemoryRuleCache {
     const path = resolve(this.dir, CACHE_STORE_FILE);
     assertCachePath(this.root, path);
     return path;
+  }
+}
+
+const STORE_LOCK_FILE = ".store.lock";
+
+function acquireStoreLock(root: string, dir: string): { fd: number; path: string } {
+  const path = resolve(dir, STORE_LOCK_FILE);
+  assertCachePath(root, path);
+  // Contention (or a lock left by an interrupted writer) skips this best-effort
+  // write. Never steal a lock from a potentially active writer; cache clean removes it.
+  return { fd: openSync(path, "wx", 0o600), path };
+}
+
+function releaseStoreLock(lock: { fd: number; path: string }): void {
+  try {
+    closeSync(lock.fd);
+  } catch {
+  } finally {
+    try {
+      unlinkSync(lock.path);
+    } catch {}
   }
 }
 
@@ -374,12 +416,31 @@ export function resolveProjectDoctorConfig(
   return mergeDoctorConfig(mergeDoctorConfig(defaults, project.nuxt?.doctorConfig), config);
 }
 
-export async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
+export async function resolveDoctorExtensions(
+  inputs: readonly DoctorExtensionInput[],
+): Promise<DoctorExtension[]> {
+  const loaded = await Promise.all(
+    inputs.map(async (input) => {
+      if (typeof input !== "function") return input;
+      const value = await input();
+      return "default" in value ? value.default : value;
+    }),
+  );
+  const names = new Set<string>();
+  return loaded.filter((extension) => {
+    if (names.has(extension.name)) return false;
+    names.add(extension.name);
+    return true;
+  });
+}
+
+export async function collectRulePacks(inputs: readonly DoctorExtensionInput[]): Promise<{
   packs: RulePack[];
   rules: DoctorRule[];
   inventoryContributors: ProjectInventoryContributor[];
   runtimeEvidenceContributors: RuntimeEvidenceContributor[];
 }> {
+  const extensions = await resolveDoctorExtensions(inputs);
   const registeredPacks: RulePack[] = [];
   const inventoryContributors: ProjectInventoryContributor[] = [];
   const runtimeEvidenceContributors: RuntimeEvidenceContributor[] = [];
@@ -407,9 +468,14 @@ export async function collectRulePacks(extensions: DoctorExtension[]): Promise<{
     ...registeredPacks,
   ].map((pack) => defineRulePack(pack));
   const names = new Set<string>();
+  const codes = new Set<string>();
   for (const pack of packs) {
     if (names.has(pack.name)) throw doctorInternalDiagnostics.DOC0023({ pack: pack.name });
     names.add(pack.name);
+    for (const code of Object.keys(pack.diagnostics?.docsByCode ?? {})) {
+      if (codes.has(code)) throw doctorInternalDiagnostics.DOC0012({ code });
+      codes.add(code);
+    }
   }
   assertUniqueContributors(inventoryContributors, "Project Inventory");
   assertUniqueContributors(runtimeEvidenceContributors, "Runtime Evidence");

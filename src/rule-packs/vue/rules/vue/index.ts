@@ -21,6 +21,7 @@ export { preferPropsDestructureDefaults } from "./prefer-props-destructure-defau
 export { preferTypeProps } from "./prefer-type-props.js";
 export { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 export { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
+export { requireUsePrefix } from "./require-use-prefix.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
@@ -46,6 +47,7 @@ import { preferPropsDestructureDefaults } from "./prefer-props-destructure-defau
 import { preferTypeProps } from "./prefer-type-props.js";
 import { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 import { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
+import { requireUsePrefix } from "./require-use-prefix.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 import { defineRulePack } from "../../../../core/index.js";
 
@@ -73,6 +75,7 @@ const rules = [
   preferTypeProps,
   preferComposableRefReturn,
   preferSameNamePropShorthand,
+  requireUsePrefix,
   noUnusedTranslations,
   noUntranslatedText,
 ];

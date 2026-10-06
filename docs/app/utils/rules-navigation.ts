@@ -31,6 +31,7 @@ const frameworkNavigationOrder = [
   "vue",
   "vite",
   "nitro",
+  "pinia",
   "package",
 ] as const satisfies Framework[];
 

@@ -1,6 +1,10 @@
 import type { Diagnostic as NosticsDiagnostic } from "nostics";
+import { assertExtensionDiagnosticCode, type DoctorDiagnosticRegistry } from "./diagnostics.js";
 import { doctorInternalDiagnostics } from "./internal-diagnostic-handles.js";
-export { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
+export {
+  DOCTOR_DIAGNOSTICS_DOCS_BASE,
+  RESERVED_DIAGNOSTIC_CODE_PREFIXES,
+} from "./diagnostic-constants.js";
 
 export type DoctorSeverity = "blocker" | "error" | "warn" | "info";
 export type DoctorReportFormat = "text" | "json" | "sarif" | "agent";
@@ -191,6 +195,7 @@ export interface NuxtProjectInfo {
     srcDir?: string;
     appMiddlewareDir?: string;
     serverDir?: string;
+    aliases?: Record<string, string>;
     priority: number;
   }>;
   localLayerAliases?: boolean;
@@ -207,6 +212,7 @@ export interface NuxtProjectInfo {
   modules?: Array<{ name: string; version?: string; doctorPlugin?: string }>;
   moduleSources?: NuxtModuleSource[];
   manifest?: {
+    scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
     keyedComposables: string[];
@@ -246,7 +252,19 @@ export interface NuxtModuleSource {
   appDirs?: string[];
 }
 
+export interface NuxtModuleDefinition {
+  /** `package` is a publishable module package; `local` is auto-registered from an app `modules/` directory. */
+  kind: "package" | "local";
+  entry: string;
+  /** Directory that owns module definition code, or the entry itself for single-file local modules. */
+  root: string;
+  runtimeDir?: string;
+  /** The package root is also a Nuxt layer, so Nuxt transforms its files even inside node_modules. */
+  layer?: boolean;
+}
+
 export interface NuxtDoctorManifest {
+  scannedComposableFiles?: string[];
   autoRegisteredLayers?: string[];
   generatedAt?: string;
   nuxtConfigMtimeMs?: number;
@@ -270,6 +288,7 @@ export interface NuxtDoctorManifest {
     srcDir?: string;
     appMiddlewareDir?: string;
     serverDir?: string;
+    aliases?: Record<string, string>;
     name?: string;
     priority: number;
   }>;
@@ -288,6 +307,8 @@ export interface NuxtDoctorManifest {
   };
   modules: Array<{ name: string; version?: string; doctorPlugin?: string }>;
   moduleSources?: NuxtModuleSource[];
+  /** Absolute Doctor Extension entry modules registered through `doctor:extendExtensions`. */
+  extensions?: string[];
   doctorConfig?: DoctorSerializableConfig;
   runtimeConfig?: unknown;
   keyedComposables?: unknown[];
@@ -308,6 +329,7 @@ export interface ProjectInfo {
   tsconfigPath?: string;
   languages?: ProjectLanguage[];
   nuxt?: NuxtProjectInfo;
+  nuxtModuleDefinitions?: NuxtModuleDefinition[];
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
   evidenceGaps?: Array<{ source: string; message: string; files: string[] }>;
@@ -539,13 +561,20 @@ export interface SourceFileHandle {
   isModuleSource(): boolean;
 }
 
+/** `ruleId`, `severity`, and `category` default to the reporting Rule's meta. */
+export type RuleReportMetadata = Omit<
+  DoctorDiagnosticMetadata,
+  "ruleId" | "severity" | "category"
+> &
+  Partial<Pick<DoctorDiagnosticMetadata, "ruleId" | "severity" | "category">>;
+
 export interface RuleContext {
   project: ProjectInfo;
   file: SourceFileHandle;
   sfc?: SfcHandle;
   severity: DoctorSeverity;
   options: unknown;
-  report(diagnostic: NosticsDiagnostic, metadata: DoctorDiagnosticMetadata): void;
+  report(diagnostic: NosticsDiagnostic, metadata?: RuleReportMetadata): void;
   getFileText(file: string): string;
   getJson<T = unknown>(file: string): T | null;
   cache: RuleCache;
@@ -581,6 +610,8 @@ export interface RulePack {
   name: string;
   version: string;
   rules: DoctorRule[];
+  /** Diagnostic Codes owned by this Rule Pack, created with `defineDoctorDiagnostics`. */
+  diagnostics?: Pick<DoctorDiagnosticRegistry, "codesByRuleIdAll" | "docsByCode">;
   presets: { recommended: string[]; strict?: string[] } & Record<string, string[] | undefined>;
   activation?:
     | false
@@ -634,10 +665,27 @@ export interface DoctorRunResult {
 }
 
 export interface DoctorExtension {
+  /** Stable identity. A Doctor Run registers each name once; the first registration wins. */
   name: string;
   version?: string;
   rulePacks?: RulePack[];
   setup?(api: DoctorExtensionApi): void | Promise<void>;
+}
+
+/** Loads a Doctor Extension only when a Doctor Run needs it. */
+export type DoctorExtensionLoader = () =>
+  | DoctorExtension
+  | { default: DoctorExtension }
+  | Promise<DoctorExtension | { default: DoctorExtension }>;
+
+export type DoctorExtensionInput = DoctorExtension | DoctorExtensionLoader;
+
+/**
+ * Contract a host plugin exposes as `api.doctor` so Plugin Surfaces in the same host attach
+ * its Doctor Extensions automatically.
+ */
+export interface DoctorPluginApi {
+  extensions: DoctorExtensionInput[];
 }
 
 export interface DoctorExtensionApi {
@@ -664,7 +712,14 @@ export function defineRulePack(pack: RulePack): RulePack {
   if (!pack.presets?.recommended?.length) {
     throw doctorInternalDiagnostics.DOC0015({ pack: pack.name });
   }
+  for (const code of Object.keys(pack.diagnostics?.docsByCode ?? {})) {
+    assertExtensionDiagnosticCode(code, `Rule Pack "${pack.name}"`);
+  }
   return pack;
+}
+
+export function defineDoctorPluginApi(api: DoctorPluginApi): DoctorPluginApi {
+  return api;
 }
 
 export function defineDoctorExtension(extension: DoctorExtension): DoctorExtension {

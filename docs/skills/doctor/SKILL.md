@@ -51,6 +51,9 @@ The standalone CLI also works for Nuxt one-off runs, CI fallback, or monorepo sc
 - Use `vite-doctor` for Vite, Vue, Nitro, and Nuxt projects; do not invent framework-specific packages or binaries.
 - Treat Rule IDs as execution/filtering selectors.
 - Treat Diagnostic Codes as the stable remediation identity for docs, fixes, and user-facing explanations.
+- Diagnostic Codes with non-built-in prefixes (anything other than `DOC`, `NITRO`, `NUXT`, `PKG`, `SHAD`, `TS`, `VITE`, `VUE`) come from Doctor Extensions shipped by libraries or the project. Use the `docs` URL in the Diagnostic; do not look for them in the Doctor Diagnostic Reference.
+- In Nuxt projects, Nuxt modules can register Doctor Extensions. `nuxt doctor` loads them; with the direct CLI, add `--host-extensions` to see the same Diagnostics. Keep that flag in `commandArgs` reruns.
+- To write or test custom Rules, follow https://vite-doctor.onmax.me/extending (`vite-doctor/extension`, `vite-doctor/testkit`).
 - Prefer `--format agent` for remediation work. Use JSON for full run metadata and SARIF for code-scanning integrations.
 - An explicit `--format` is deterministic. Do not depend on automatic runtime recognition in scripts.
 - Use Doctor terms consistently: Doctor, Rule, Rule Pack, Diagnostic Code, and Diagnostic.
