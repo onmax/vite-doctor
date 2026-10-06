@@ -1,5 +1,5 @@
 import { dirname, relative, resolve } from "pathe";
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
 import { createRule, type RuleContext, type RuleFileSystem } from "../../../core/index.js";
 import { diagnostics } from "../../../diagnostics.js";
 import type { AnyNode } from "./shared.js";

@@ -7,7 +7,11 @@ import type {
   RuleVisitor,
   SfcHandle,
   SourceFileHandle,
+  WorkspaceGraph,
 } from "../primitives.js";
+import type { GraphSummary } from "./cache-store.js";
+import { loadSourceFile, sourceFacts, sourceShape } from "./facts.js";
+import type { RuleInputFrame } from "./rule-inputs.js";
 import { projectWorkspacePackages } from "./applicability.js";
 import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
 import { canMatchPrefilter } from "./rule-prefilter.js";
@@ -35,41 +39,69 @@ import {
 } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 
-interface MutableRuleContext extends RuleContext {
-  setFile(file: SourceFileHandle): void;
+interface RuleRun {
+  context: RuleContext;
+  frame: RuleInputFrame;
 }
 
 export async function runFileRules(session: ScanSession): Promise<void> {
   if (session.options.analyses && !session.options.rules) return;
   const started = performance.now();
   const rules = session.enabledRules.filter((rule) => (rule.meta.execution ?? "file") === "file");
+  const keys = rules.map((rule) => cacheKeyFor(session, rule));
   // Buffering per rule keeps report order rule-major, as it was when rules ran one at a time.
   const reported = rules.map((): Diagnostic[] => []);
   const timings = session.options.profile ? rules.map(() => ({ ms: 0, files: 0 })) : undefined;
   const workspacePackages = projectWorkspacePackages(session.project);
   for (const file of session.handles) {
-    const visitors: RuleVisitor[] = [];
     const owner = session.ruleScopes.size
       ? owningWorkspacePackage(workspacePackages, file.relativePath)
       : ".";
+    const pending: number[] = [];
     for (const [index, rule] of rules.entries()) {
       if (!canRunRuleOnFile(rule, file)) continue;
       if (!canMatchPrefilter(rule, file)) continue;
       if (session.ruleScopes.get(rule.meta.id)?.has(owner) === false) continue;
-      const context = createRuleContext(session, file, rule, "file", reported[index]);
+      const key = keys[index];
+      const cached = key ? session.cache.ruleResult(file.path, key) : undefined;
+      if (cached) reported[index]!.push(...cached);
+      else pending.push(index);
+    }
+    if (!pending.length) continue;
+    await loadSourceFile(file);
+    const before = projectSnapshot(session.project);
+    const visitors: RuleVisitor[] = [];
+    const runs: Array<{ index: number; run: RuleRun; reportedBefore: number }> = [];
+    for (const index of pending) {
+      const rule = rules[index]!;
+      const run = createRuleRun(session, file, rule, "file", reported[index]);
+      runs.push({ index, run, reportedBefore: reported[index]!.length });
       if (!timings) {
-        const visitor = await rule.create(context);
+        const visitor = await rule.create(run.context);
         if (visitor) visitors.push(visitor);
         continue;
       }
       const timing = timings[index]!;
       const createStarted = performance.now();
-      const visitor = await rule.create(context);
+      const visitor = await rule.create(run.context);
       timing.ms += performance.now() - createStarted;
       timing.files += 1;
       if (visitor) visitors.push(timeVisitor(visitor, timing));
     }
     if (visitors.length > 0) await runVisitors(visitors, file);
+    const mutated = projectChanged(session.project, before);
+    for (const { index, run, reportedBefore } of runs) {
+      const key = keys[index];
+      if (!key) continue;
+      if (mutated) session.cache.recordUncacheable();
+      else
+        session.cache.recordRuleResult(
+          file.path,
+          key,
+          reported[index]!.slice(reportedBefore),
+          run.frame.readInputs(),
+        );
+    }
   }
   for (const diagnostics of reported) {
     for (const diagnostic of diagnostics) session.diagnostics.push(diagnostic);
@@ -125,20 +157,39 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
   const nuxtRoots = workspaceNuxtRoots(session.project);
   for (const rule of session.enabledRules) {
     if (rule.meta.execution !== "manifest" && rule.meta.execution !== "workspace") continue;
+    const key = cacheKeyFor(session, rule);
     const ruleStarted = performance.now();
     for (const project of manifestRuleProjects(session, rule, nuxtRoots)) {
+      // Nuxt manifest Rules run once per Nuxt package view, so each view has its own result.
+      const viewKey = key && `${key}:${workspaceViewRoot(project) ?? ""}`;
+      const cached = viewKey ? session.cache.ruleResult(undefined, viewKey) : undefined;
+      if (cached) {
+        session.diagnostics.push(...cached);
+        continue;
+      }
       const file =
         project === session.project
           ? fallbackFile
           : (session.handles.find((handle) => handle.project === project) ?? fallbackFile);
-      const visitor = await rule.create(
-        createRuleContext(session, file, rule, rule.meta.execution, undefined, project),
-      );
+      const before = projectSnapshot(session.project);
+      const reportedBefore = session.diagnostics.length;
+      const run = createRuleRun(session, file, rule, rule.meta.execution, undefined, project);
+      const visitor = await rule.create(run.context);
       await visitor?.onWorkspaceStart?.();
       await visitor?.onProjectStart?.(project);
       if (project.nuxt) visitor?.NuxtManifest?.(project.nuxt);
       await visitor?.onProjectEnd?.(project);
       await visitor?.onWorkspaceEnd?.();
+      if (!viewKey) continue;
+      if (projectChanged(session.project, before)) session.cache.recordUncacheable();
+      else
+        session.cache.recordRuleResult(
+          undefined,
+          viewKey,
+          session.diagnostics.slice(reportedBefore),
+          // Diagnostics without a file are anchored to the view's first source file.
+          [...run.frame.readInputs(), `t:${file.path}`],
+        );
     }
     if (session.options.profile) recordRuleTiming(session, rule.meta.id, ruleStarted, 0);
   }
@@ -166,7 +217,20 @@ function manifestRuleProjects(
 }
 
 export async function buildGraphPhase(session: ScanSession): Promise<void> {
-  session.graph = buildWorkspaceGraph(session);
+  const analyses = selectedAnalyses(session);
+  const key = graphKey(session);
+  if (!analyses.has("dead-code") && !analyses.has("graph")) {
+    const cached = session.cache.graph(key);
+    if (cached) {
+      session.graphSummary = cached;
+      return;
+    }
+  }
+  session.facts = await sourceFacts(session);
+  const frame = session.ruleInputs.frame();
+  session.graph = buildWorkspaceGraph(session, frame.fs);
+  session.graphSummary = summarizeGraph(session.graph);
+  session.cache.recordGraph(key, session.graphSummary, frame.readInputs());
 }
 
 export async function runGraphRules(session: ScanSession): Promise<void> {
@@ -175,26 +239,80 @@ export async function runGraphRules(session: ScanSession): Promise<void> {
 }
 
 export async function runDuplicationPhase(session: ScanSession): Promise<void> {
+  if (!selectedAnalyses(session).has("dupes")) return;
+  session.facts = await sourceFacts(session);
   runDuplicationRules(session);
 }
 
 export async function runHealthPhase(session: ScanSession): Promise<void> {
+  if (!selectedAnalyses(session).has("health")) return;
+  session.facts = await sourceFacts(session);
+  for (const handle of session.handles) await loadSourceFile(handle);
   runHealthRules(session);
 }
 
-function createRuleContext(
+function cacheKeyFor(session: ScanSession, rule: DoctorRule): string | undefined {
+  if (rule.meta.cacheScope === "none") return undefined;
+  if ((rule.meta.determinism ?? "deterministic") !== "deterministic") return undefined;
+  return session.ruleKeys.get(rule);
+}
+
+// Rules may add evidence gaps or inventory; such results stay uncached instead of replayed.
+function projectSnapshot(project: ProjectInfo): unknown[] {
+  return Object.entries(project).flat();
+}
+
+function projectChanged(project: ProjectInfo, before: unknown[]): boolean {
+  const after = projectSnapshot(project);
+  return after.length !== before.length || after.some((value, index) => value !== before[index]);
+}
+
+function graphKey(session: ScanSession): string {
+  return sha256(
+    JSON.stringify([
+      session.contextKey,
+      session.handles.map((file) => [
+        file.path,
+        file.hash,
+        file.relativePath,
+        file.sourceKind,
+        file.moduleName,
+      ]),
+    ]),
+  );
+}
+
+function summarizeGraph(graph: WorkspaceGraph): GraphSummary {
+  return {
+    files: graph.files.size,
+    importEdges: graph.importEdges.length,
+    exportEdges: graph.exportEdges.length,
+    virtualRoots: graph.virtualRoots.length,
+    cycles: graph.sccs.filter((scc) => scc.length > 1).length,
+  };
+}
+
+function selectedAnalyses(session: ScanSession): Set<string> {
+  return new Set(
+    session.options.analyses
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean) ?? [],
+  );
+}
+
+function createRuleRun(
   session: ScanSession,
-  initialFile: SourceFileHandle,
+  file: SourceFileHandle,
   rule: DoctorRule,
   phase: Diagnostic["analysisPhase"] = "file",
   sink?: Diagnostic[],
-  project: ProjectInfo = phase === "file" ? initialFile.project : session.project,
-): MutableRuleContext {
-  let file = initialFile;
+  project: ProjectInfo = phase === "file" ? file.project : session.project,
+): RuleRun {
   const frame = session.ruleInputs.frame(workspaceViewRoot(project));
   const currentRuleConfig = resolvedConfigFor(session, rule.meta.id);
   const currentSeverity = currentRuleConfig.severity ?? rule.meta.severity;
-  return {
+  const context: RuleContext = {
     get project() {
       return project;
     },
@@ -210,9 +328,6 @@ function createRuleContext(
     get options() {
       return currentRuleConfig.options;
     },
-    setFile(nextFile) {
-      file = nextFile;
-    },
     report(diagnostic, metadata = {}) {
       const input = normalizeDiagnostic({
         ...metadata,
@@ -224,6 +339,7 @@ function createRuleContext(
       });
       const diagnosticConfig = resolvedConfigFor(session, input.ruleId);
       if (diagnosticConfig.enabled === false) return;
+      if (input.file !== file.path) frame.log.push(`t:${resolve(session.root, input.file)}`);
       const severity =
         diagnosticConfig.severity ??
         currentRuleConfig.severity ??
@@ -262,6 +378,7 @@ function createRuleContext(
         : undefined;
     },
   };
+  return { context, frame };
 }
 
 function createEmptySourceFileHandle(session: ScanSession): SourceFileHandle {
@@ -292,8 +409,9 @@ function canRunRuleOnFile(rule: DoctorRule, file: SourceFileHandle): boolean {
   if (rule.meta.sourceKinds && !rule.meta.sourceKinds.includes(file.sourceKind)) return false;
   const requires = rule.meta.requires;
   if (!requires) return true;
-  if (requires.sfc && !file.sfc) return false;
-  if (requires.template && !file.templateAst) return false;
-  if (requires.script && !file.scriptAst) return false;
+  const shape = sourceShape(file);
+  if (requires.sfc && !(shape & 1)) return false;
+  if (requires.template && !(shape & 4)) return false;
+  if (requires.script && !(shape & 2)) return false;
   return true;
 }

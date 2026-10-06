@@ -1,4 +1,3 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { isBuiltin } from "node:module";
 import { dirname, relative, resolve } from "pathe";
@@ -7,6 +6,7 @@ import type {
   ExportFact,
   FileFacts,
   GraphEdge,
+  RuleFileSystem,
   VirtualRootNode,
   WorkspaceGraph,
 } from "../primitives.js";
@@ -23,8 +23,9 @@ interface GraphIndex {
 
 const graphIndexes = new WeakMap<WorkspaceGraph, GraphIndex>();
 
-export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
-  const index = createGraphIndex(session);
+/** Reads package manifests and entry files through `fs`, so the graph's inputs are tracked. */
+export function buildWorkspaceGraph(session: ScanSession, fs: RuleFileSystem): WorkspaceGraph {
+  const index = createGraphIndex(session, fs);
   const files = new Map(session.facts.map((fact) => [fact.fileId, fact]));
   const fileIdsByPath = new Map(session.facts.map((fact) => [fact.path, fact.fileId]));
   const importEdges: GraphEdge[] = [];
@@ -112,7 +113,7 @@ export function buildWorkspaceGraph(session: ScanSession): WorkspaceGraph {
   return graph;
 }
 
-function createGraphIndex(session: ScanSession): GraphIndex {
+function createGraphIndex(session: ScanSession, fs: RuleFileSystem): GraphIndex {
   const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
   const resolved = new Map<string, number | undefined>();
   const directories = new Map<string, string>();
@@ -167,6 +168,7 @@ function createGraphIndex(session: ScanSession): GraphIndex {
       packageDeps ??= readPackageDeps(
         session.root,
         session.files.map((entry) => entry.path),
+        fs,
       );
       return packageDeps;
     },
@@ -356,7 +358,11 @@ function importCandidates(base: string): string[] {
 export function runStructuralGraphRules(session: ScanSession, graph: WorkspaceGraph) {
   const analyses = selectedAnalyses(session);
   if (analyses.has("dead-code"))
-    runDeadCodeRules(session, graph, graphIndexes.get(graph) ?? createGraphIndex(session));
+    runDeadCodeRules(
+      session,
+      graph,
+      graphIndexes.get(graph) ?? createGraphIndex(session, session.ruleInputs.frame().fs),
+    );
   if (analyses.has("graph")) runCycleAndDuplicateExportRules(session, graph);
 }
 
@@ -701,15 +707,19 @@ interface PackageDependencyFacts {
   entryFiles: Set<string>;
 }
 
-function readPackageDeps(root: string, inventoryPaths: readonly string[]): PackageDependencyFacts {
+function readPackageDeps(
+  root: string,
+  inventoryPaths: readonly string[],
+  fs: RuleFileSystem,
+): PackageDependencyFacts {
   const all = new Set<string>();
   const runtime = new Set<string>();
   const foreignRoots = new Set<string>();
   const entryFiles = new Set<string>();
-  const entries = createPackageEntryResolver(inventoryPaths);
-  for (const file of findPackageJsonFiles(root)) {
+  const entries = createPackageEntryResolver(inventoryPaths, fs);
+  for (const file of findPackageJsonFiles(root, fs)) {
     try {
-      const json = JSON.parse(readFileSync(file, "utf8"));
+      const json = JSON.parse(fs.readText(file) ?? "");
       const packageRoot = dirname(file);
       for (const dep of Object.keys(json.dependencies ?? {})) {
         all.add(dep);
@@ -744,7 +754,7 @@ function readPackageDeps(root: string, inventoryPaths: readonly string[]): Packa
   return { all, runtime, foreignRoots, entryFiles };
 }
 
-function findPackageJsonFiles(root: string): string[] {
+function findPackageJsonFiles(root: string, fs: RuleFileSystem): string[] {
   const files: string[] = [];
   const ignored = new Set([
     "node_modules",
@@ -757,18 +767,14 @@ function findPackageJsonFiles(root: string): string[] {
   ]);
   const visit = (dir: string, depth: number) => {
     if (depth > 5) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    for (const entry of fs.readDir(dir) ?? []) {
       if (ignored.has(entry.name)) continue;
       const absolute = resolve(dir, entry.name);
       if (entry.isFile() && entry.name === "package.json") files.push(absolute);
       if (entry.isDirectory()) visit(absolute, depth + 1);
     }
   };
-  try {
-    if (statSync(root).isDirectory()) visit(root, 0);
-  } catch {
-    return [];
-  }
+  if (fs.stat(root)?.isDirectory()) visit(root, 0);
   return files;
 }
 
@@ -812,6 +818,7 @@ function allPackageNames(json: Record<string, unknown>): string[] {
 }
 
 interface PackageEntryResolver {
+  exists(path: string): boolean;
   inventoryPaths: readonly string[];
   inventoriedFiles(): Set<string>;
   sourceCandidates(packageRoot: string, entry: string): string[];
@@ -820,7 +827,10 @@ interface PackageEntryResolver {
 // Monorepo export maps expand into thousands of candidate paths, most under an unbuilt dist/ or
 // below a file (`src/index.ts/index.ts`). Checking each parent directory once lets those misses
 // skip the filesystem.
-function createPackageEntryResolver(inventoryPaths: readonly string[]): PackageEntryResolver {
+function createPackageEntryResolver(
+  inventoryPaths: readonly string[],
+  fs: RuleFileSystem,
+): PackageEntryResolver {
   let inventoriedFiles: Set<string> | undefined;
   const directories = new Map<string, boolean>();
   const byEntry = new Map<string, string[]>();
@@ -831,17 +841,13 @@ function createPackageEntryResolver(inventoryPaths: readonly string[]): PackageE
       const parent = dirname(directory);
       result = parent === directory || mayContainFiles(parent);
       if (result) {
-        try {
-          result = statSync(directory, { throwIfNoEntry: false })?.isDirectory() ?? false;
-        } catch {
-          result = true;
-        }
+        result = fs.stat(directory)?.isDirectory() ?? false;
       }
       directories.set(directory, result);
     }
     return result;
   };
-  const fileExists = (file: string) => mayContainFiles(dirname(file)) && existsSync(file);
+  const fileExists = (file: string) => mayContainFiles(dirname(file)) && fs.exists(file);
   const existingCandidates = (packageRoot: string, file: string) => {
     const key = `${packageRoot}\0${file}`;
     let files = byTarget.get(key);
@@ -859,6 +865,7 @@ function createPackageEntryResolver(inventoryPaths: readonly string[]): PackageE
     return files;
   };
   return {
+    exists: (path) => fs.exists(path),
     inventoryPaths,
     inventoriedFiles() {
       inventoriedFiles ??= new Set(inventoryPaths.map((file) => resolve(file)));
@@ -921,7 +928,7 @@ function packageEntryCandidates(
   collectPackageExportEntries(packageRoot, json.exports, candidates, entries);
   for (const standard of ["src/index.ts", "src/module.ts", "src/preview.ts"]) {
     const absolute = resolve(packageRoot, standard);
-    if (existsSync(absolute)) candidates.add(absolute);
+    if (entries.exists(absolute)) candidates.add(absolute);
   }
   return [...candidates].filter((file) => isPathInside(root, file));
 }

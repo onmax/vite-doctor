@@ -18,8 +18,8 @@ import type {
   DoctorSeverity,
   FixEdit,
   ProjectInfo,
-  WorkspaceGraph,
 } from "../primitives.js";
+import type { GraphSummary } from "./cache-store.js";
 import { applyDiagnosticPolicy, settleDiagnosticIdentity } from "./diagnostic-policy.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { markSession, type ScanSession } from "./scan-session.js";
@@ -201,7 +201,7 @@ export function createResult(
   config: DoctorConfig,
   timings?: Record<string, number>,
   phases?: Record<string, number>,
-  graph?: WorkspaceGraph,
+  graph?: GraphSummary,
   scope: DoctorRunResult["scope"] = { mode: "all", files: 0 },
 ): DoctorRunResult {
   const scoring = scoreDiagnostics(diagnostics, config);
@@ -218,15 +218,7 @@ export function createResult(
     suppressedDiagnostics,
     timings,
     phases,
-    graph: graph
-      ? {
-          files: graph.files.size,
-          importEdges: graph.importEdges.length,
-          exportEdges: graph.exportEdges.length,
-          virtualRoots: graph.virtualRoots.length,
-          cycles: graph.sccs.filter((scc) => scc.length > 1).length,
-        }
-      : undefined,
+    graph,
     project,
   };
 }
@@ -244,6 +236,8 @@ export function createDiagnosticFingerprint(
 
 export function sourceTextFor(session: ScanSession, file: string): string | null {
   const path = resolve(session.root, file);
+  const handle = session.handlesByPath.get(path);
+  if (handle) return handle.text;
   const cached = session.sourceTexts.get(path);
   if (cached !== undefined) return cached;
   const text = readFileSyncIfExists(path);

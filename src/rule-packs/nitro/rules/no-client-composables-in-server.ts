@@ -1,4 +1,4 @@
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
 import { AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 
 const clientComposables = new Set([

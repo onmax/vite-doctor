@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdirSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { matchesGlob, resolve as resolveNative } from "node:path";
@@ -121,6 +122,7 @@ export async function selectProjectFiles(
   walk: ProjectFileWalk,
   include: readonly string[],
   exclude: string[],
+  memo?: WalkSelectionMemo,
 ): Promise<string[]> {
   const entries = walk.complete();
   const files = new Set<string>();
@@ -129,13 +131,19 @@ export async function selectProjectFiles(
     ? include.filter((pattern) => isWalkPattern(pattern, symlinkedDirectories))
     : [];
   if (walked.length) {
-    const matchers = walked.map((pattern) => createGlobMatcher(pattern));
-    const isExcluded = createExclusion(walk.root, exclude);
-    for (const entry of entries) {
-      if (entry.kind !== "file") continue;
-      if (!matchers.some((matches) => matches(entry.path))) continue;
-      if (isExcluded(entry.path)) continue;
-      files.add(resolve(walk.root, entry.path));
+    const key = memo && walkSelectionKey(walk.root, entries, walked, exclude);
+    const remembered = key ? memo!.selected(key) : undefined;
+    if (remembered) for (const file of remembered) files.add(file);
+    else {
+      const matchers = walked.map((pattern) => createGlobMatcher(pattern));
+      const isExcluded = createExclusion(walk.root, exclude);
+      for (const entry of entries) {
+        if (entry.kind !== "file") continue;
+        if (!matchers.some((matches) => matches(entry.path))) continue;
+        if (isExcluded(entry.path)) continue;
+        files.add(resolve(walk.root, entry.path));
+      }
+      if (key) memo!.rememberSelected(key, [...files]);
     }
   }
   for (const pattern of include) {
@@ -147,6 +155,23 @@ export async function selectProjectFiles(
     }
   }
   return [...files];
+}
+
+/** Glob matching is a pure function of the walk listing, so a run with the same listing reuses it. */
+export interface WalkSelectionMemo {
+  selected(key: string): readonly string[] | undefined;
+  rememberSelected(key: string, files: string[]): void;
+}
+
+function walkSelectionKey(
+  root: string,
+  entries: readonly ProjectEntry[],
+  include: readonly string[],
+  exclude: readonly string[],
+): string {
+  const hash = createHash("sha256").update(JSON.stringify([root, include, exclude]));
+  for (const entry of entries) hash.update(`\0${entry.kind}:${entry.path}`);
+  return hash.digest("hex");
 }
 
 // `fs.glob` never descends a symlinked directory through `**`, but steps into one when the

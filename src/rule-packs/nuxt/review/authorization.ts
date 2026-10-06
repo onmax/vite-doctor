@@ -1,5 +1,5 @@
 import { parseScriptSync } from "../../../core/internal/script.js";
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
 import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { dirname, extname, relative, resolve } from "pathe";
 import {

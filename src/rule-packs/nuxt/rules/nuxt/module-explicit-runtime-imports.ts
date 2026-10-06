@@ -1,4 +1,4 @@
-import { parseForESLint } from "@typescript-eslint/parser";
+import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
 import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
 import type { FixEdit } from "../../../../core/index.js";
 import { AnyNode, createRule, walkScriptLocal } from "./shared.js";

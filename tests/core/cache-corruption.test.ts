@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { runDoctor } from "../../src/core/index.ts";
+import { readStoreFile, writeStoreFile } from "./cache-store-file.ts";
 
 test.each([
   ["null", () => null],
@@ -72,16 +73,16 @@ test.each([
     };
     const initial = await runDoctor(options);
     const path = join(root, ".vite-doctor/cache/store.json");
-    const original = readFileSync(path, "utf8");
-    const store = JSON.parse(original);
-    const [key, facts] = Object.entries(store.entries)[0]!;
-    store.entries[key] = corrupt(facts as Record<string, unknown>);
-    writeFileSync(path, JSON.stringify(store));
+    const store = readStoreFile(path);
+    const original = structuredClone(store.facts);
+    const [key, facts] = Object.entries(store.facts)[0]!;
+    store.facts[key] = corrupt(facts) as Record<string, unknown>;
+    writeStoreFile(path, store);
 
     const recovered = await runDoctor(options);
     expect(recovered.graph).toEqual(initial.graph);
     expect(recovered.diagnostics).toEqual(initial.diagnostics);
-    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(readStoreFile(path).facts).toEqual(original);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -102,20 +103,25 @@ test.each([
     writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
     mkdirSync(join(root, "src"));
     writeFileSync(join(root, "src", file), source);
-    const options = { root, framework: "vue" as const, cache: true };
+    const options = { root, framework: "vue" as const, cache: true, analyses: "graph" };
     await runDoctor(options);
     const path = join(root, ".vite-doctor/cache/store.json");
-    const store = JSON.parse(readFileSync(path, "utf8"));
-    const facts = Object.values(store.entries)[0] as Record<string, unknown>;
+    const store = readStoreFile(path);
+    const facts = Object.values(store.facts)[0]!;
     facts.diagnosticsHints = ["cache-reuse-control"];
-    writeFileSync(path, JSON.stringify(store));
+    writeStoreFile(path, store);
+    const edited = join(root, "src", file === "app.ts" ? "other.ts" : "Other.vue");
+    // A second file makes the run rewrite the store, so it shows which facts it kept.
+    writeFileSync(
+      edited,
+      file === "app.ts" ? "export const value = 1;" : "<template><p /></template>",
+    );
 
     await runDoctor(options);
 
-    const reused = JSON.parse(readFileSync(path, "utf8"));
-    expect(Object.values(reused.entries)).toEqual([
+    expect(readStoreFile(path).facts[join(root, "src", file)]).toEqual(
       expect.objectContaining({ diagnosticsHints: ["cache-reuse-control"] }),
-    ]);
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

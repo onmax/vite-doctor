@@ -1,6 +1,7 @@
 import { basename, dirname, extname, join, relative, resolve } from "pathe";
-import ts from "typescript";
+import type ts from "typescript";
 import { createRule, type RuleContext } from "../../../core/index.js";
+import { loadTypeScript } from "../../../core/internal/lazy-parsers.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { diagnostics } from "../../../diagnostics.js";
 import type { AnyNode } from "./shared.js";
@@ -359,6 +360,7 @@ function tsconfigPaths(ctx: RuleContext): Array<[string, string[]]> {
   const cached = ctx.cache.get<Array<[string, string[]]>>(key);
   if (cached) return cached;
   const paths: Array<[string, string[]]> = [];
+  const ts = loadTypeScript();
   for (const name of ["tsconfig.json", "tsconfig.app.json"]) {
     const file = resolve(ctx.project.root, name);
     if (!ctx.fs.stat(file)?.isFile()) continue;

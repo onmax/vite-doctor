@@ -14,6 +14,8 @@ import { join } from "pathe";
 import { expect, test, vi } from "vite-plus/test";
 import { createScanSession } from "../../src/core/internal/scan-session.ts";
 import { cleanCache, runDoctor } from "../../src/core/index.ts";
+import { runViteDoctor } from "../../src/doctor.ts";
+import { readStoreFile, writeStoreFile } from "./cache-store-file.ts";
 
 const files = {
   "src/a.ts": "import { b } from './b'; export const a = b + 1;\n",
@@ -45,26 +47,20 @@ const options = (root: string) => ({
 });
 
 const storePath = (root: string) => join(root, ".vite-doctor/cache/store.json");
+const storedPaths = (root: string) =>
+  Object.keys(readStoreFile(storePath(root)).index.files).sort();
 
-type StoredFacts = { path: string } & Record<string, unknown>;
+// Signatures recorded within one timestamp tick of a write are not trusted, so tests that
+// exercise the signature precheck wait past that window first.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
 
-function storedFacts(root: string): Array<[string, StoredFacts]> {
-  const store = JSON.parse(readFileSync(storePath(root), "utf8"));
-  return Object.entries(store.entries) as Array<[string, StoredFacts]>;
-}
-
-function storedPaths(root: string): string[] {
-  return storedFacts(root)
-    .map(([, facts]) => facts.path)
-    .sort();
-}
-
-test("Doctor keeps File Facts for a run in one store file", async () => {
+test("Doctor keeps the cache for a run in one store file", async () => {
   await withProject(async (root) => {
     await runDoctor(options(root));
 
     expect(readdirSync(join(root, ".vite-doctor/cache"))).toEqual(["store.json"]);
     expect(storedPaths(root)).toEqual(Object.keys(files).map((path) => join(root, path)));
+    expect(Object.keys(readStoreFile(storePath(root)).facts).sort()).toEqual(storedPaths(root));
   });
 });
 
@@ -78,7 +74,7 @@ test("File Facts leave duplication and health facts to their analyses", async ()
     const analyses = { ...options(root), analyses: "dupes,health" };
     const uncached = await runDoctor({ ...analyses, cache: false });
     await runDoctor({ ...options(root), analyses: undefined });
-    for (const [, facts] of storedFacts(root)) {
+    for (const facts of Object.values(readStoreFile(storePath(root)).facts)) {
       expect(facts).not.toHaveProperty("tokens");
       expect(facts).not.toHaveProperty("complexity");
     }
@@ -96,63 +92,89 @@ test("File Facts leave duplication and health facts to their analyses", async ()
 });
 
 test.each([
-  ["truncated JSON", (original: string) => original.slice(0, original.length / 2)],
+  ["truncated index", (original: string) => original.slice(0, original.indexOf("\n") / 2)],
+  ["truncated facts", (original: string) => original.slice(0, original.length - 10)],
   ["empty file", () => ""],
   ["null", () => "null"],
   ["primitive", () => "42"],
-  ["missing entries", () => JSON.stringify({ version: 1 })],
+  ["v1 store", () => JSON.stringify({ version: 1, entries: {} })],
   [
     "unknown version",
-    (original: string) => JSON.stringify({ ...JSON.parse(original), version: 0 }),
+    (original: string) => {
+      const newline = original.indexOf("\n");
+      return `${JSON.stringify({ ...JSON.parse(original.slice(0, newline)), version: 0 })}${original.slice(newline)}`;
+    },
   ],
-  ["entries array", () => JSON.stringify({ version: 1, entries: [] })],
+  [
+    "files array",
+    (original: string) => {
+      const newline = original.indexOf("\n");
+      return `${JSON.stringify({ ...JSON.parse(original.slice(0, newline)), files: [] })}${original.slice(newline)}`;
+    },
+  ],
 ])("Doctor rebuilds a corrupt cache store: %s", async (_name, corrupt) => {
   await withProject(async (root) => {
     const initial = await runDoctor(options(root));
     const original = readFileSync(storePath(root), "utf8");
+    const { facts } = readStoreFile(storePath(root));
     writeFileSync(storePath(root), corrupt(original));
 
     const recovered = await runDoctor(options(root));
 
     expect(recovered.diagnostics).toEqual(initial.diagnostics);
     expect(recovered.graph).toEqual(initial.graph);
-    expect(readFileSync(storePath(root), "utf8")).toBe(original);
+    expect(storedPaths(root)).toEqual(Object.keys(files).map((path) => join(root, path)));
+    expect(readStoreFile(storePath(root)).facts).toEqual(facts);
   });
 });
 
-test("Doctor prunes File Facts for deleted and edited files", async () => {
+test("Doctor prunes deleted files and rehashes edited ones", async () => {
   await withProject(async (root) => {
     await runDoctor(options(root));
-    const before = new Map(storedFacts(root).map(([key, facts]) => [facts.path, key]));
+    const before = readStoreFile(storePath(root)).index.files;
     rmSync(join(root, "src/c.ts"));
     writeFileSync(join(root, "src/b.ts"), "export const b = 2;\n");
 
     await runDoctor(options(root));
 
-    expect(storedPaths(root)).toEqual([join(root, "src/a.ts"), join(root, "src/b.ts")]);
-    const after = new Map(storedFacts(root).map(([key, facts]) => [facts.path, key]));
-    expect(after.get(join(root, "src/a.ts"))).toBe(before.get(join(root, "src/a.ts")));
-    expect(after.get(join(root, "src/b.ts"))).not.toBe(before.get(join(root, "src/b.ts")));
+    const after = readStoreFile(storePath(root));
+    expect(Object.keys(after.index.files).sort()).toEqual([
+      join(root, "src/a.ts"),
+      join(root, "src/b.ts"),
+    ]);
+    expect(after.index.files[join(root, "src/a.ts")]!.hash).toBe(
+      before[join(root, "src/a.ts")]!.hash,
+    );
+    expect(after.index.files[join(root, "src/b.ts")]!.hash).not.toBe(
+      before[join(root, "src/b.ts")]!.hash,
+    );
+    expect(Object.keys(after.index.signatures)).not.toContain(join(root, "src/c.ts"));
+    expect(Object.keys(after.facts).sort()).toEqual(Object.keys(after.index.files).sort());
   });
 });
 
-test("Doctor invalidates File Facts when rule configuration changes", async () => {
-  await withProject(async (root) => {
-    await runDoctor(options(root));
-    const before = storedFacts(root).map(([key]) => key);
+test("a config change keeps File Facts but replaces every Rule result", async () => {
+  await withProject(
+    async (root) => {
+      const run = { root, framework: "vue" as const, cache: true };
+      await runViteDoctor(run);
+      const before = readStoreFile(storePath(root));
 
-    await runDoctor({
-      ...options(root),
-      config: { rules: { "workspace/duplication/exact-clone": "off" } },
-    });
+      await runViteDoctor({
+        ...run,
+        config: { rules: { "vue/template/html-button-has-type": "off" } },
+      });
 
-    const after = storedFacts(root).map(([key]) => key);
-    expect(after).toHaveLength(before.length);
-    expect(after.filter((key) => before.includes(key))).toEqual([]);
-  });
+      const after = readStoreFile(storePath(root));
+      expect(after.facts).toEqual(before.facts);
+      expect(after.index.ruleKeys.length).toBeGreaterThan(0);
+      expect(after.index.ruleKeys.filter((key) => before.index.ruleKeys.includes(key))).toEqual([]);
+    },
+    { "src/App.vue": "<template><button>Save</button></template>\n" },
+  );
 });
 
-test("Doctor keeps untouched File Facts during a changed-files run", async () => {
+test("Doctor keeps untouched entries during a changed-files run", async () => {
   await withProject(async (root) => {
     const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
     writeFileSync(join(root, ".gitignore"), ".vite-doctor\n");
@@ -164,11 +186,7 @@ test("Doctor keeps untouched File Facts during a changed-files run", async () =>
 
     await runDoctor({ ...options(root), changed: true });
 
-    const paths = storedPaths(root);
-    expect(paths).toEqual(
-      expect.arrayContaining(Object.keys(files).map((path) => join(root, path))),
-    );
-    expect(paths.filter((path) => path === join(root, "src/b.ts"))).toHaveLength(2);
+    expect(storedPaths(root)).toEqual(Object.keys(files).map((path) => join(root, path)));
   });
 });
 
@@ -183,46 +201,66 @@ test("cache clean removes the cache store", async () => {
   });
 });
 
-test.each([true, false])(
-  "overlapping full and partial runs preserve concurrent changes (full first: %s)",
-  async (fullFirst) => {
-    await withProject(async (root) => {
-      const seed = (await createScanSession(options(root))).cache;
-      seed.set("fileFacts:obsolete", { value: "old" });
-      seed.set("fileFacts:updated", { value: "old" });
-      seed.set("fileFacts:kept", { value: "kept" });
-      seed.persist({ prune: false });
-      const full = (await createScanSession(options(root))).cache;
-      const partial = (await createScanSession(options(root))).cache;
-      full.get("fileFacts:kept");
-      partial.set("fileFacts:new", { value: "new" });
-      partial.set("fileFacts:updated", { value: "new" });
-      if (fullFirst) {
-        full.persist({ prune: true });
-        partial.persist({ prune: false });
-      } else {
-        partial.persist({ prune: false });
-        full.persist({ prune: true });
-      }
-      expect(JSON.parse(readFileSync(storePath(root), "utf8")).entries).toEqual({
-        "fileFacts:kept": { value: "kept" },
-        "fileFacts:updated": { value: "new" },
-        "fileFacts:new": { value: "new" },
-      });
-    });
-  },
-);
-
-test("a warm run leaves the store untouched and an empty full run prunes it", async () => {
+test("an unchanged warm run reads no source file and leaves the store untouched", async () => {
   await withProject(async (root) => {
+    await settle();
     await runDoctor(options(root));
-    const before = statSync(storePath(root));
+    const before = statSync(storePath(root)).mtimeMs;
+    const warm = await createScanSession(options(root));
+    const { parseSourceFiles } = await import("../../src/core/internal/facts.ts");
+    await parseSourceFiles(warm);
+    expect(warm.cache.runStats()).toMatchObject({ filesRead: 0, filesParsed: 0 });
+
     await runDoctor(options(root));
-    expect(statSync(storePath(root)).mtimeMs).toBe(before.mtimeMs);
-    const session = await createScanSession(options(root));
-    session.cache.persist({ prune: true });
-    expect(JSON.parse(readFileSync(storePath(root), "utf8")).entries).toEqual({});
+
+    expect(statSync(storePath(root)).mtimeMs).toBe(before);
   });
+});
+
+test("an edit that keeps the file size is detected by its signature", async () => {
+  await withProject(async (root) => {
+    await settle();
+    const first = await runDoctor({ ...options(root), analyses: "graph" });
+    expect(first.graph?.importEdges).toBe(1);
+    writeFileSync(join(root, "src/a.ts"), "import { c } from './c'; export const a = c + 1;\n");
+
+    const second = await runDoctor({ ...options(root), analyses: "graph" });
+    const uncached = await runDoctor({ ...options(root), analyses: "graph", cache: false });
+
+    expect(second.graph).toEqual(uncached.graph);
+    expect(second.diagnostics).toEqual(uncached.diagnostics);
+  });
+});
+
+test("a store written from an older snapshot never yields stale Diagnostics", async () => {
+  await withProject(
+    async (root) => {
+      const run = { root, framework: "vue" as const, cache: true };
+      const app = join(root, "src/App.vue");
+      await settle();
+      await runViteDoctor(run);
+      // A slower run that started before the edit can finish after it and write last.
+      const older = readFileSync(storePath(root), "utf8");
+      writeFileSync(
+        app,
+        '<template><button>Save</button></template>\n<script setup lang="ts"></script>\n',
+      );
+      await runViteDoctor(run);
+      writeFileSync(storePath(root), older);
+
+      const next = await runViteDoctor(run);
+      const uncached = await runViteDoctor({ ...run, cache: false });
+
+      expect(next.diagnostics).toEqual(uncached.diagnostics);
+      expect(next.diagnostics.map((diagnostic) => diagnostic.ruleId)).toContain(
+        "vue/template/html-button-has-type",
+      );
+    },
+    {
+      "src/App.vue":
+        '<template><button type="button">Save</button></template>\n<script setup lang="ts"></script>\n',
+    },
+  );
 });
 
 test("a contended store write is best-effort and leaves the lock and store intact", async () => {
@@ -231,9 +269,10 @@ test("a contended store write is best-effort and leaves the lock and store intac
     const original = readFileSync(storePath(root), "utf8");
     const lock = join(root, `.vite-doctor/cache/.store-lock-${process.pid}-active`);
     writeFileSync(lock, "another writer");
-    const session = await createScanSession(options(root));
-    session.cache.set("fileFacts:new", { value: "new" });
-    expect(() => session.cache.persist({ prune: false })).not.toThrow();
+    writeFileSync(join(root, "src/b.ts"), "export const b = 2;\n");
+
+    await expect(runDoctor(options(root))).resolves.toBeDefined();
+
     expect(readFileSync(storePath(root), "utf8")).toBe(original);
     expect(readFileSync(lock, "utf8")).toBe("another writer");
     expect(readdirSync(join(root, ".vite-doctor/cache")).sort()).toEqual([
@@ -241,10 +280,8 @@ test("a contended store write is best-effort and leaves the lock and store intac
       "store.json",
     ]);
     rmSync(lock);
-    session.cache.persist({ prune: false });
-    expect(JSON.parse(readFileSync(storePath(root), "utf8")).entries["fileFacts:new"]).toEqual({
-      value: "new",
-    });
+    await runDoctor(options(root));
+    expect(readFileSync(storePath(root), "utf8")).not.toBe(original);
     expect(existsSync(lock)).toBe(false);
   });
 });
@@ -252,17 +289,15 @@ test("a contended store write is best-effort and leaves the lock and store intac
 test("an abandoned store lock is recovered", async () => {
   await withProject(async (root) => {
     await runDoctor(options(root));
+    const original = readFileSync(storePath(root), "utf8");
     const namespace = String(statSync("/proc/self/ns/pid").ino);
     const lock = join(root, `.vite-doctor/cache/.store-lock-999999999-${namespace}-abandoned`);
     writeFileSync(lock, "abandoned");
-    const session = await createScanSession(options(root));
-    session.cache.set("fileFacts:recovered", { value: "ok" });
-    session.cache.persist({ prune: false });
-    expect(
-      JSON.parse(readFileSync(storePath(root), "utf8")).entries["fileFacts:recovered"],
-    ).toEqual({
-      value: "ok",
-    });
+    writeFileSync(join(root, "src/b.ts"), "export const b = 2;\n");
+
+    await runDoctor(options(root));
+
+    expect(readFileSync(storePath(root), "utf8")).not.toBe(original);
     expect(existsSync(lock)).toBe(false);
   });
 });
@@ -270,15 +305,18 @@ test("an abandoned store lock is recovered", async () => {
 test("an unrecognized store lock is never reclaimed", async () => {
   await withProject(async (root) => {
     await runDoctor(options(root));
+    const original = readFileSync(storePath(root), "utf8");
     const lock = join(root, ".vite-doctor/cache/.store-lock-999999-legacy");
     writeFileSync(lock, "legacy");
-    const session = await createScanSession(options(root));
-    session.cache.set("fileFacts:blocked", { value: "no" });
-    session.cache.persist({ prune: false });
+    writeFileSync(join(root, "src/b.ts"), "export const b = 2;\n");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await runDoctor(options(root));
+    } finally {
+      warning.mockRestore();
+    }
     expect(existsSync(lock)).toBe(true);
-    expect(
-      JSON.parse(readFileSync(storePath(root), "utf8")).entries["fileFacts:blocked"],
-    ).toBeUndefined();
+    expect(readFileSync(storePath(root), "utf8")).toBe(original);
   });
 });
 
@@ -312,6 +350,8 @@ test.each([".store.lock", ".store-lock-999999-legacy", ".store-lock-999999-unkno
             .map((path) => join(root, path))
             .sort(),
         );
+        await settle();
+        await runDoctor(options(root));
         const modified = statSync(storePath(root)).mtimeMs;
         await runDoctor(options(root));
         expect(statSync(storePath(root)).mtimeMs).toBe(modified);
@@ -321,3 +361,17 @@ test.each([".store.lock", ".store-lock-999999-legacy", ".store-lock-999999-unkno
     });
   },
 );
+
+test("a store whose facts section is unreadable is rebuilt from source", async () => {
+  await withProject(async (root) => {
+    const initial = await runDoctor(options(root));
+    const store = readStoreFile(storePath(root));
+    writeStoreFile(storePath(root), { ...store, facts: { [join(root, "src/a.ts")]: { bad: 1 } } });
+
+    const recovered = await runDoctor(options(root));
+
+    expect(recovered.graph).toEqual(initial.graph);
+    expect(recovered.diagnostics).toEqual(initial.diagnostics);
+    expect(readStoreFile(storePath(root)).facts).toEqual(store.facts);
+  });
+});

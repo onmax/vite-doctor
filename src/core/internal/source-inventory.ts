@@ -11,7 +11,12 @@ import {
   type GitChangeInventory,
   type UnavailableGitChangeInventory,
 } from "./git-change-ranges.js";
-import { ProjectFileWalk, selectProjectFiles, takeProjectFileWalk } from "./project-files.js";
+import {
+  ProjectFileWalk,
+  selectProjectFiles,
+  takeProjectFileWalk,
+  type WalkSelectionMemo,
+} from "./project-files.js";
 import { projectNuxtInventories } from "./workspace-nuxt.js";
 
 const DEFAULT_INCLUDE = [
@@ -49,6 +54,12 @@ export interface ScanFileEntry {
   };
 }
 
+/** Remembers walk selections and generated-header checks between Doctor Runs. */
+export interface SourceInventoryMemo extends WalkSelectionMemo {
+  authored(path: string): boolean | undefined;
+  rememberAuthored(path: string, authored: boolean): void;
+}
+
 export interface SourceInventorySelection {
   files: ScanFileEntry[];
   git?: GitChangeInventory;
@@ -69,6 +80,7 @@ export async function selectSourceInventory(
   config: DoctorConfig,
   options: DoctorRunOptions,
   project: ProjectInfo,
+  memo?: SourceInventoryMemo,
 ): Promise<SourceInventorySelection> {
   if (options.changed || options.since) {
     const include = config.include ?? defaultIncludeForProject(project);
@@ -84,7 +96,7 @@ export async function selectSourceInventory(
     return { files: selectChangedFiles(root, config, project, git), git };
   }
 
-  return { files: await selectAllFiles(root, config, project) };
+  return { files: await selectAllFiles(root, config, project, memo) };
 }
 
 export async function selectScanFiles(
@@ -104,13 +116,21 @@ async function selectAllFiles(
   root: string,
   config: DoctorConfig,
   project: ProjectInfo,
+  memo?: SourceInventoryMemo,
 ): Promise<ScanFileEntry[]> {
+  const authored = (file: string) => {
+    const remembered = memo?.authored(file);
+    if (remembered !== undefined) return remembered;
+    const result = isAuthoredSource(file);
+    memo?.rememberAuthored(file, result);
+    return result;
+  };
   const files = new Map<string, ScanFileEntry>();
   const exclude = [...DEFAULT_EXCLUDE, ...(config.exclude ?? [])];
   const include = config.include ?? defaultIncludeForProject(project);
   const walk = takeProjectFileWalk(project, root) ?? new ProjectFileWalk(root);
-  for (const file of await selectProjectFiles(walk, include, exclude)) {
-    if (isAuthoredSource(file)) files.set(file, createAppFileEntry(root, file));
+  for (const file of await selectProjectFiles(walk, include, exclude, memo)) {
+    if (authored(file)) files.set(file, createAppFileEntry(root, file));
   }
 
   for (const source of projectNuxtInventories(project).flatMap(
@@ -119,8 +139,8 @@ async function selectAllFiles(
     const include = source.include?.length ? source.include : DEFAULT_INCLUDE;
     const moduleExclude = [...DEFAULT_EXCLUDE, ...(source.exclude ?? [])];
     const moduleWalk = new ProjectFileWalk(source.root);
-    for (const file of await selectProjectFiles(moduleWalk, include, moduleExclude)) {
-      if (!isAuthoredSource(file)) continue;
+    for (const file of await selectProjectFiles(moduleWalk, include, moduleExclude, memo)) {
+      if (!authored(file)) continue;
       files.set(file, {
         path: file,
         displayPath: `${source.module}:${relative(source.root, file)}`,

@@ -11,13 +11,14 @@ import {
 
 const tsParses = vi.hoisted(() => ({ count: 0 }));
 
-vi.mock("@typescript-eslint/parser", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@typescript-eslint/parser")>();
+vi.mock("../../../src/core/internal/lazy-parsers.ts", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("../../../src/core/internal/lazy-parsers.ts")>();
   const parseForESLint: typeof original.parseForESLint = (code, options) => {
     tsParses.count++;
     return original.parseForESLint(code, options);
   };
-  return { ...original, parseForESLint, default: { ...original, parseForESLint } };
+  return { ...original, parseForESLint };
 });
 
 afterEach(() => {

@@ -13,105 +13,175 @@ import { createVueScriptForParsing, parseSfcFile, parseVueScriptsResult } from "
 import { parseScriptResult } from "./script.js";
 import { parseTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
-import { createCacheKey, markSession, type ScanSession } from "./scan-session.js";
+import { markSession, type ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
+import type { EvidenceGap } from "./cache-store.js";
 import { isCachedFileFacts } from "./cached-file-facts.js";
 import { projectWorkspacePackages } from "./applicability.js";
 import { workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
 
-const FILE_FACTS_VERSION = 7;
+interface ParsedSource {
+  sfc: SourceFileHandle["sfc"];
+  scriptAst: Record<string, unknown> | null;
+  templateAst: Record<string, unknown> | null;
+  gaps: EvidenceGap[];
+}
+
+interface SourceState {
+  entry: ScanFileEntry;
+  text?: string;
+  parsed?: ParsedSource;
+  facts?: FileFacts;
+  cachedFacts?: () => Omit<FileFacts, "fileId"> | undefined;
+  shape: number;
+  fileId: number;
+}
+
+const sourceStates = new WeakMap<SourceFileHandle, SourceState>();
 
 export async function parseSourceFiles(session: ScanSession): Promise<void> {
   const started = performance.now();
   let fileId = 0;
   for (const file of session.files) {
-    const handle = await parseSourceFile(session, file, fileId++);
+    const handle = await prepareSourceFile(session, file, fileId++);
     session.handles.push(handle);
-    session.sourceTexts.set(handle.path, handle.text);
-    if (handle.facts) session.facts.push(handle.facts);
+    session.handlesByPath.set(handle.path, handle);
   }
   markSession(session, "parse", started);
 }
 
-async function parseSourceFile(
+/**
+ * A file whose content a previous run analyzed reuses its cached shape, parser evidence, and
+ * File Facts; its text and ASTs load only if a Rule has to run on it again.
+ */
+async function prepareSourceFile(
   session: ScanSession,
   file: ScanFileEntry,
   fileId: number,
 ): Promise<SourceFileHandle> {
   const absolute = file.path;
-  const text = readFileSync(absolute, "utf8");
-  const hash = sha256(text);
-  const cacheKey = createCacheKey(
-    session,
-    "fileFacts",
-    `${FILE_FACTS_VERSION}:${absolute}:${hash}`,
+  const content = session.cache.fileHash(absolute) ?? {
+    text: readFileSync(absolute, "utf8"),
+    hash: "",
+  };
+  content.hash ||= sha256(content.text!);
+  const cached = session.cache.file(absolute, content.hash);
+  if (cached) {
+    addEvidenceGaps(session, cached.gaps);
+    return createSourceHandle(session, file, content.hash, {
+      entry: file,
+      text: content.text,
+      shape: cached.shape,
+      cachedFacts: () => cached.facts(),
+      fileId,
+    });
+  }
+  const text = content.text ?? readFileSync(absolute, "utf8");
+  const parsed = await parseSource(file, text, content.hash);
+  addEvidenceGaps(session, parsed.gaps);
+  const state: SourceState = { entry: file, text, parsed, shape: shapeOf(parsed), fileId };
+  const handle = createSourceHandle(session, file, content.hash, state);
+  state.facts = createFileFacts(session, file, fileId, text, content.hash, parsed);
+  session.cache.recordFile(absolute, content.hash, state.shape, parsed.gaps, state.facts);
+  return handle;
+}
+
+/** Loads the ASTs of a file prepared from the cache. Its parser evidence was already reported. */
+export async function loadSourceFile(handle: SourceFileHandle): Promise<void> {
+  const state = sourceStates.get(handle);
+  if (!state || state.parsed) return;
+  state.parsed = await parseSource(state.entry, handle.text, handle.hash);
+}
+
+/** Bit 1: SFC, bit 2: script AST, bit 4: template AST, known without parsing cached files. */
+export function sourceShape(handle: SourceFileHandle): number {
+  return sourceStates.get(handle)?.shape ?? 0;
+}
+
+/** File Facts for every source file, computing the ones the cache could not provide. */
+export async function sourceFacts(session: ScanSession): Promise<FileFacts[]> {
+  const facts: FileFacts[] = [];
+  for (const handle of session.handles) {
+    const state = sourceStates.get(handle)!;
+    if (!handle.facts) {
+      await loadSourceFile(handle);
+      state.facts = createFileFacts(
+        session,
+        state.entry,
+        state.fileId,
+        handle.text,
+        handle.hash,
+        state.parsed!,
+      );
+      session.cache.recordFile(
+        handle.path,
+        handle.hash,
+        state.shape,
+        state.parsed!.gaps,
+        state.facts,
+      );
+    }
+    facts.push(handle.facts!);
+  }
+  return facts;
+}
+
+function reusableFacts(facts: unknown, file: ScanFileEntry, hash: string): facts is FileFacts {
+  return (
+    isCachedFileFacts(facts) &&
+    facts.fileHash === hash &&
+    facts.path === file.path &&
+    facts.relativePath === file.displayPath &&
+    facts.sourceKind === file.sourceKind &&
+    facts.moduleName === file.moduleName
   );
-  const cachedFacts = session.cache.get<unknown>(cacheKey);
-  const isVueSfc = absolute.endsWith(".vue");
-  const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
-  if (sfc?.errors.length) {
-    session.project.evidenceGaps = [
-      ...(session.project.evidenceGaps ?? []),
-      {
-        source: "vue-sfc-parser",
-        message: `Cannot fully parse ${file.displayPath}: ${sfc.errors.join("; ")}. Check the component syntax and parser support, then rerun Doctor.`,
-        files: [absolute],
-      },
-    ];
-  }
-  const parsedScript = isVueSfc
-    ? parseVueScriptsResult(absolute, sfc?.descriptor, text)
-    : text.trim()
-      ? parseScriptResult(absolute, text)
-      : undefined;
-  const scriptAst = parsedScript?.ast ?? null;
-  if (
-    parsedScript?.errors.length &&
-    parsedScript.incomplete &&
-    (isVueSfc || ["js", "jsx", "ts", "tsx"].includes(detectLang(absolute)))
-  ) {
-    session.project.evidenceGaps = [
-      ...(session.project.evidenceGaps ?? []),
-      {
-        source: "script-parser",
-        message: `Cannot parse ${file.displayPath}: ${parsedScript.errors.join("; ")}. Check the source syntax and parser support, then rerun Doctor.`,
-        files: [absolute],
-      },
-    ];
-  }
-  const scriptLang = isVueSfc ? createVueScriptForParsing(sfc?.descriptor, text).lang : undefined;
-  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text, scriptLang) : null;
-  const reusable =
-    isCachedFileFacts(cachedFacts) &&
-    cachedFacts.fileHash === hash &&
-    cachedFacts.path === absolute &&
-    cachedFacts.relativePath === file.displayPath &&
-    cachedFacts.sourceKind === file.sourceKind &&
-    cachedFacts.moduleName === file.moduleName;
-  const facts = reusable
-    ? { ...cachedFacts, fileId }
-    : createFileFacts(session, file, fileId, text, hash, scriptAst, templateAst, sfc);
-  if (!reusable) session.cache.set(cacheKey, facts);
+}
+
+function createSourceHandle(
+  session: ScanSession,
+  file: ScanFileEntry,
+  hash: string,
+  state: SourceState,
+): SourceFileHandle {
+  const absolute = file.path;
+  const parsed = () => {
+    if (!state.parsed) throw new Error(`Doctor read ${file.displayPath} before parsing it.`);
+    return state.parsed;
+  };
   const project = session.project.workspaceNuxt
     ? workspaceProjectView(
         session.project,
         owningWorkspacePackage(projectWorkspacePackages(session.project), file.displayPath),
       )
     : session.project;
-  return {
+  const handle: SourceFileHandle = {
     path: absolute,
     relativePath: file.displayPath,
     sourceKind: file.sourceKind,
     moduleName: file.moduleName,
-    text,
+    get text() {
+      return (state.text ??= readFileSync(absolute, "utf8"));
+    },
     hash,
-    isVueSfc,
-    scriptAst,
-    templateAst,
-    sfc,
-    facts,
+    isVueSfc: absolute.endsWith(".vue"),
+    get scriptAst() {
+      return parsed().scriptAst;
+    },
+    get templateAst() {
+      return parsed().templateAst;
+    },
+    get sfc() {
+      return parsed().sfc;
+    },
+    get facts() {
+      if (state.facts) return state.facts;
+      const cached = state.cachedFacts?.();
+      const facts = cached && { ...cached, fileId: state.fileId };
+      if (!facts || !reusableFacts(facts, file, hash)) return undefined;
+      return (state.facts = facts);
+    },
     project,
     matches(this: SourceFileHandle, pattern) {
       return nativeMatch(this.relativePath, pattern);
@@ -124,6 +194,50 @@ async function parseSourceFile(
       return this.sourceKind === "module";
     },
   };
+  sourceStates.set(handle, state);
+  return handle;
+}
+
+async function parseSource(file: ScanFileEntry, text: string, hash: string): Promise<ParsedSource> {
+  const absolute = file.path;
+  const gaps: EvidenceGap[] = [];
+  const isVueSfc = absolute.endsWith(".vue");
+  const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
+  if (sfc?.errors.length) {
+    gaps.push({
+      source: "vue-sfc-parser",
+      message: `Cannot fully parse ${file.displayPath}: ${sfc.errors.join("; ")}. Check the component syntax and parser support, then rerun Doctor.`,
+      files: [absolute],
+    });
+  }
+  const parsedScript = isVueSfc
+    ? parseVueScriptsResult(absolute, sfc?.descriptor, text)
+    : text.trim()
+      ? parseScriptResult(absolute, text)
+      : undefined;
+  if (
+    parsedScript?.errors.length &&
+    parsedScript.incomplete &&
+    (isVueSfc || ["js", "jsx", "ts", "tsx"].includes(detectLang(absolute)))
+  ) {
+    gaps.push({
+      source: "script-parser",
+      message: `Cannot parse ${file.displayPath}: ${parsedScript.errors.join("; ")}. Check the source syntax and parser support, then rerun Doctor.`,
+      files: [absolute],
+    });
+  }
+  const scriptLang = isVueSfc ? createVueScriptForParsing(sfc?.descriptor, text).lang : undefined;
+  const templateAst = isVueSfc && sfc ? await parseTemplate(absolute, text, scriptLang) : null;
+  return { sfc, scriptAst: parsedScript?.ast ?? null, templateAst, gaps };
+}
+
+function shapeOf(parsed: ParsedSource): number {
+  return (parsed.sfc ? 1 : 0) | (parsed.scriptAst ? 2 : 0) | (parsed.templateAst ? 4 : 0);
+}
+
+function addEvidenceGaps(session: ScanSession, gaps: readonly EvidenceGap[]): void {
+  if (gaps.length)
+    session.project.evidenceGaps = [...(session.project.evidenceGaps ?? []), ...gaps];
 }
 
 async function parseOptionalSfc(
@@ -153,9 +267,7 @@ function createFileFacts(
   fileId: number,
   text: string,
   hash: string,
-  scriptAst: Record<string, unknown> | null,
-  templateAst: Record<string, unknown> | null,
-  sfc: SourceFileHandle["sfc"],
+  { scriptAst, templateAst, sfc }: ParsedSource,
 ): FileFacts {
   const imports: ImportFact[] = [];
   const exports: ExportFact[] = [];

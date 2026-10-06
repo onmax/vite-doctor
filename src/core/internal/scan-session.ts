@@ -1,19 +1,4 @@
 import { randomUUID } from "node:crypto";
-import {
-  closeSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { isAbsolute, relative, sep } from "node:path";
 import { resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import {
@@ -28,7 +13,6 @@ import {
   type ProjectInventoryContributor,
   type ProjectInfo,
   type RuntimeEvidenceContributor,
-  type RuleCache,
   type RulePack,
   type SourceFileHandle,
   type WorkspaceGraph,
@@ -44,7 +28,14 @@ import {
 import type { AvailableGitChangeInventory } from "./git-change-ranges.js";
 import { createHelpers } from "./doctor-helpers.js";
 import { RuleInputs } from "./rule-inputs.js";
-import { VERSION, nativeMatch, sha256 } from "./utils.js";
+import {
+  cleanCacheDirectory,
+  DoctorCache,
+  readCacheStatus,
+  type CacheStatus,
+  type GraphSummary,
+} from "./cache-store.js";
+import { nativeMatch, sha256 } from "./utils.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import {
   activatingWorkspacePackages,
@@ -55,223 +46,6 @@ import {
 const DEFAULT_CONFIG: DoctorConfig = {
   cache: { dir: ".vite-doctor/cache" },
 };
-
-export interface ScanCache extends RuleCache {
-  persist(options: { prune: boolean }): void;
-}
-
-class MemoryRuleCache implements ScanCache {
-  private values = new Map<string, unknown>();
-  get<T = unknown>(key: string): T | undefined {
-    return this.values.get(key) as T | undefined;
-  }
-  set<T = unknown>(key: string, value: T): void {
-    this.values.set(key, value);
-  }
-  persist(_options: { prune: boolean }): void {}
-}
-
-const CACHE_STORE_FILE = "store.json";
-const CACHE_STORE_VERSION = 1;
-const PERSISTED_PREFIX = "fileFacts:";
-
-interface CacheStore {
-  version: number;
-  entries: Record<string, unknown>;
-}
-
-class PersistentRuleCache extends MemoryRuleCache {
-  private root: string;
-  private dir: string;
-  private stored: Map<string, unknown>;
-  private touched = new Set<string>();
-  private written = new Set<string>();
-
-  constructor(root: string, config: DoctorConfig) {
-    super();
-    this.root = resolve(root);
-    this.dir = resolve(root, config.cache?.dir ?? ".vite-doctor/cache");
-    assertCachePath(this.root, this.dir);
-    this.stored = this.load();
-  }
-
-  override get<T = unknown>(key: string): T | undefined {
-    const memory = super.get<T>(key);
-    if (memory !== undefined) return memory;
-    if (!key.startsWith(PERSISTED_PREFIX) || !this.stored.has(key)) return undefined;
-    this.touched.add(key);
-    return this.stored.get(key) as T;
-  }
-
-  override set<T = unknown>(key: string, value: T): void {
-    super.set(key, value);
-    if (!key.startsWith(PERSISTED_PREFIX)) return;
-    this.touched.add(key);
-    this.written.add(key);
-  }
-
-  /**
-   * Partial runs (`--changed`, `--since`) see only part of the inventory, so they keep untouched
-   * entries; full runs drop them to bound the store to the current project.
-   */
-  override persist({ prune }: { prune: boolean }): void {
-    const removed = prune ? [...this.stored.keys()].filter((key) => !this.touched.has(key)) : [];
-    if (!this.written.size && !removed.length) return;
-    let temporary: string | undefined;
-    let lock: { fd: number; path: string } | undefined;
-    try {
-      mkdirSync(this.dir, { recursive: true });
-      lock = acquireStoreLock(this.root, this.dir);
-      // A run may have started from an older snapshot. Re-read while holding the
-      // lock so concurrent runs never replace a newer store with stale entries.
-      const current = this.load();
-      const entries: Record<string, unknown> = {};
-      for (const [key, value] of current) {
-        if (
-          !prune ||
-          this.touched.has(key) ||
-          !this.stored.has(key) ||
-          JSON.stringify(value) !== JSON.stringify(this.stored.get(key))
-        ) {
-          entries[key] = value;
-        }
-      }
-      for (const key of this.written) entries[key] = super.get(key);
-      const target = this.storePath();
-      const store: CacheStore = { version: CACHE_STORE_VERSION, entries };
-      temporary = resolve(this.dir, `.doctor-${randomUUID()}.tmp`);
-      assertCachePath(this.root, temporary);
-      writeFileSync(temporary, JSON.stringify(store), { flag: "wx", mode: 0o600 });
-      renameSync(temporary, target);
-      temporary = undefined;
-    } catch (error) {
-      if (error instanceof LegacyStoreLockError) console.warn(error.message);
-      // Cache writes are best-effort and must not change diagnostics.
-    } finally {
-      if (temporary) {
-        try {
-          rmSync(temporary, { force: true });
-        } catch {}
-      }
-      if (lock) releaseStoreLock(lock);
-    }
-  }
-
-  private load(): Map<string, unknown> {
-    try {
-      const store: unknown = JSON.parse(readFileSync(this.storePath(), "utf8"));
-      if (
-        typeof store !== "object" ||
-        store === null ||
-        !("version" in store) ||
-        store.version !== CACHE_STORE_VERSION ||
-        !("entries" in store) ||
-        typeof store.entries !== "object" ||
-        store.entries === null ||
-        Array.isArray(store.entries)
-      ) {
-        return new Map();
-      }
-      return new Map(
-        Object.entries(store.entries).filter(([key]) => key.startsWith(PERSISTED_PREFIX)),
-      );
-    } catch {
-      return new Map();
-    }
-  }
-
-  private storePath(): string {
-    const path = resolve(this.dir, CACHE_STORE_FILE);
-    assertCachePath(this.root, path);
-    return path;
-  }
-}
-
-const STORE_LOCK_PREFIX = ".store-lock-";
-const LEGACY_STORE_LOCK_FILE = ".store.lock";
-
-class LegacyStoreLockError extends Error {
-  constructor() {
-    super(
-      "Doctor cache persistence is blocked by a legacy or unrecognized store lock; stop all Doctor processes sharing this cache, then run `vite-doctor cache clean` with the same cache configuration to rebuild it.",
-    );
-  }
-}
-
-function acquireStoreLock(root: string, dir: string): { fd: number; path: string } {
-  if (readdirSync(dir).includes(LEGACY_STORE_LOCK_FILE)) throw new LegacyStoreLockError();
-  const namespace = pidNamespaceIdentity();
-  const name = `${STORE_LOCK_PREFIX}${process.pid}-${namespace ?? "unknown"}-${randomUUID()}`;
-  const path = resolve(dir, name);
-  assertCachePath(root, path);
-  const lock = { fd: openSync(path, "wx", 0o600), path };
-  try {
-    writeFileSync(path, JSON.stringify({ pid: process.pid, namespace }), { flag: "w" });
-    // Publish ownership atomically in the name, then check for other writers.
-    // Unique claims let concurrent reclaimers remove only a dead owner's file.
-    for (const entry of readdirSync(dir)) {
-      if (entry === name || !entry.startsWith(STORE_LOCK_PREFIX)) continue;
-      const [ownerText, ownerNamespace] = entry.slice(STORE_LOCK_PREFIX.length).split("-");
-      const owner = Number(ownerText);
-      if (
-        !Number.isSafeInteger(owner) ||
-        owner <= 0 ||
-        namespace === undefined ||
-        ownerNamespace === undefined ||
-        !/^\d+$/.test(ownerNamespace) ||
-        ownerNamespace !== namespace ||
-        processIsAlive(owner)
-      ) {
-        if (
-          !Number.isSafeInteger(owner) ||
-          owner <= 0 ||
-          ownerNamespace === undefined ||
-          !/^\d+$/.test(ownerNamespace)
-        ) {
-          throw new LegacyStoreLockError();
-        }
-        throw new Error("Doctor cache store has an active writer.");
-      }
-      try {
-        unlinkSync(resolve(dir, entry));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
-    }
-    return lock;
-  } catch (error) {
-    releaseStoreLock(lock);
-    throw error;
-  }
-}
-
-function pidNamespaceIdentity(): string | undefined {
-  try {
-    return String(statSync("/proc/self/ns/pid").ino);
-  } catch {
-    return undefined;
-  }
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
-  }
-}
-
-function releaseStoreLock(lock: { fd: number; path: string }): void {
-  try {
-    closeSync(lock.fd);
-  } catch {
-  } finally {
-    try {
-      unlinkSync(lock.path);
-    } catch {}
-  }
-}
 
 interface RuleRegistry {
   packs: RulePack[];
@@ -289,12 +63,18 @@ export interface ScanSession {
   files: ScanFileEntry[];
   gitChanges?: AvailableGitChangeInventory;
   handles: SourceFileHandle[];
+  handlesByPath: Map<string, SourceFileHandle>;
   sourceTexts: Map<string, string | null>;
   facts: FileFacts[];
   graph?: WorkspaceGraph;
+  graphSummary?: GraphSummary;
   diagnostics: Diagnostic[];
   suppressedDiagnostics: Diagnostic[];
-  cache: ScanCache;
+  cache: DoctorCache;
+  /** Digest of the Project Inventory and Rule config every cached result depends on. */
+  contextKey: string;
+  /** Identifies a Rule implementation and the context it ran in. */
+  ruleKeys: Map<DoctorRule, string>;
   ruleInputs: RuleInputs;
   helpers: DoctorHelpers;
   enabledRules: DoctorRule[];
@@ -343,7 +123,8 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   markSession(sessionBase, "project", started);
 
   started = performance.now();
-  const sourceInventory = await selectSourceInventory(root, config, options, project);
+  const cache = new DoctorCache(root, cacheDirectory(root, config), options.cache !== false);
+  const sourceInventory = await selectSourceInventory(root, config, options, project, cache);
   if (sourceInventory.git?.status === "unavailable") {
     throw new GitChangeUnavailableError(sourceInventory.git);
   }
@@ -351,7 +132,14 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   markSession(sessionBase, "files", started);
 
   const helpers = createHelpers();
-  const sourceTexts = new Map<string, string | null>();
+  const handlesByPath = new Map<string, SourceFileHandle>();
+  const context = contextKey(project, config, options);
+  const ruleInputs = new RuleInputs(
+    root,
+    (path) => handlesByPath.get(path)?.text,
+    cacheDirectory(root, config),
+  );
+  cache.bindInputs(ruleInputs, (path) => handlesByPath.get(path)?.hash);
   return {
     ...sessionBase,
     registry,
@@ -359,12 +147,15 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     files,
     gitChanges: sourceInventory.git,
     handles: [],
-    sourceTexts,
+    handlesByPath,
+    sourceTexts: new Map(),
     facts: [],
     diagnostics: [],
     suppressedDiagnostics: [],
-    cache: options.cache === false ? new MemoryRuleCache() : new PersistentRuleCache(root, config),
-    ruleInputs: new RuleInputs(root, (path) => sourceTexts.get(path) ?? undefined),
+    cache,
+    contextKey: context,
+    ruleKeys: ruleKeys(registry, selection.rules, context),
+    ruleInputs,
     helpers,
     enabledRules: selection.rules,
     ruleScopes: selection.scopes,
@@ -406,77 +197,19 @@ export async function runPhase(
 }
 
 export function persistScanCache(session: ScanSession): void {
-  session.cache.persist({ prune: !session.gitChanges });
+  session.cache.persist({ prune: !session.gitChanges, files: session.files.length });
+}
+
+export function cacheDirectory(root: string, config?: DoctorConfig): string {
+  return resolve(root, config?.cache?.dir ?? ".vite-doctor/cache");
 }
 
 export function cleanCache(root = process.cwd(), config?: DoctorConfig): void {
-  const dir = resolve(root, config?.cache?.dir ?? ".vite-doctor/cache");
-  assertCacheDirectory(resolve(root), dir);
-  let stats;
-  try {
-    stats = lstatSync(dir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  if (stats.isSymbolicLink()) {
-    try {
-      assertCacheDirectory(realpathSync(root), realpathSync(dir));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        rmSync(dir, { force: true });
-        return;
-      }
-      throw error;
-    }
-  } else {
-    assertCacheDirectory(realpathSync(root), realpathSync(dir));
-    if (!stats.isDirectory()) {
-      throw new Error("Doctor cache directory must be a directory.");
-    }
-  }
-  rmSync(dir, { recursive: true, force: true });
+  cleanCacheDirectory(root, cacheDirectory(root, config));
 }
 
-function assertCacheDirectory(root: string, dir: string): void {
-  const relativeDir = relative(root, dir);
-  if (
-    !relativeDir ||
-    isAbsolute(relativeDir) ||
-    relativeDir === ".." ||
-    relativeDir.startsWith(`..${sep}`)
-  ) {
-    throw new Error("Doctor cache directory must be inside the project root.");
-  }
-}
-
-function assertCacheInside(root: string, path: string): void {
-  const relativePath = relative(root, path);
-  if (isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(`..${sep}`)) {
-    throw new Error("Doctor cache directory must be inside the project root.");
-  }
-}
-
-function assertCachePath(root: string, path: string): void {
-  assertCacheDirectory(root, path);
-  const canonicalRoot = realpathSync(root);
-  let current = path;
-  while (true) {
-    const stats = lstatSync(current, { throwIfNoEntry: false });
-    if (stats) {
-      let canonical: string;
-      try {
-        canonical = realpathSync(current);
-      } catch {
-        throw new Error("Doctor cache directory must be inside the project root.");
-      }
-      assertCacheInside(canonicalRoot, canonical);
-      return;
-    }
-    const parent = resolve(current, "..");
-    if (parent === current) return;
-    current = parent;
-  }
+export function cacheStatus(root = process.cwd(), config?: DoctorConfig): CacheStatus {
+  return readCacheStatus(resolve(root), cacheDirectory(root, config));
 }
 
 export function mergeDoctorConfig(defaults: DoctorConfig, config: DoctorConfig = {}): DoctorConfig {
@@ -799,16 +532,45 @@ function isSeverity(value: unknown): value is DoctorSeverity {
   return value === "blocker" || value === "error" || value === "warn" || value === "info";
 }
 
-export function createCacheKey(session: ScanSession, phase: string, input: string): string {
-  return `${phase}:${sha256(
-    JSON.stringify({
-      version: VERSION,
-      phase,
-      input,
-      config: session.config.rules ?? {},
-      extends: session.options.extends ?? session.config.extends,
-      manifest: session.project.nuxt?.manifestPath,
-      tsconfig: session.project.tsconfigPath,
+/** Rule results depend on the whole Project Inventory and Rule config, so either change invalidates them. */
+function contextKey(project: ProjectInfo, config: DoctorConfig, options: DoctorRunOptions): string {
+  try {
+    return sha256(
+      JSON.stringify(
+        { project, rules: config.rules ?? {}, extends: options.extends ?? config.extends },
+        (_key, value: unknown) =>
+          value instanceof Map ? [...value] : value instanceof Set ? [...value] : value,
+      ),
+    );
+  } catch {
+    // Inventory Doctor cannot serialize cannot prove a cached result still applies.
+    return randomUUID();
+  }
+}
+
+function ruleKeys(
+  registry: RuleRegistry,
+  rules: readonly DoctorRule[],
+  context: string,
+): Map<DoctorRule, string> {
+  const packs = new Map<DoctorRule, RulePack>();
+  for (const pack of registry.packs) for (const rule of pack.rules) packs.set(rule, pack);
+  return new Map(
+    rules.map((rule) => {
+      const pack = packs.get(rule);
+      return [
+        rule,
+        sha256(
+          [
+            context,
+            rule.meta.id,
+            rule.meta.version ?? "",
+            pack?.name ?? "",
+            pack?.version ?? "",
+            rule.create.toString(),
+          ].join("\0"),
+        ).slice(0, 32),
+      ];
     }),
-  )}`;
+  );
 }
