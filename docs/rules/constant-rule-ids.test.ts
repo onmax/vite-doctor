@@ -10,6 +10,7 @@ import { htmlButtonHasType } from "../../src/rule-packs/vue/rules/vue/html-butto
 import { preferSameNamePropShorthand } from "../../src/rule-packs/vue/rules/vue/prefer-same-name-prop-shorthand.js";
 import { preferTrueAttributeShorthand } from "../../src/rule-packs/vue/rules/vue/prefer-true-attribute-shorthand.js";
 import { preferUseEventListener } from "../../src/rule-packs/vue/rules/vue/prefer-use-event-listener.js";
+import { requireUsePrefix } from "../../src/rule-packs/vue/rules/vue/require-use-prefix.js";
 import { diagnostics } from "../../src/rule-packs/vue/diagnostics.js";
 import { parseSync, visitorKeys } from "oxc-parser";
 
@@ -30,6 +31,7 @@ test.each([
   [preferSameNamePropShorthand, "VUE0023"],
   [preferTrueAttributeShorthand, "VUE0024"],
   [preferUseEventListener, "VUE0025"],
+  [requireUsePrefix, "VUE0026"],
 ] as const)("documents the constant ID in $0.meta.id", async (rule, code) => {
   const document = getRuleDocuments().find((entry) => entry.id === rule.meta.id);
   expect(document).toMatchObject({

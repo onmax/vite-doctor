@@ -108,9 +108,12 @@ function createRuleContext(
     setFile(nextFile) {
       file = nextFile;
     },
-    report(diagnostic, metadata) {
+    report(diagnostic, metadata = {}) {
       const input = normalizeDiagnostic({
         ...metadata,
+        ruleId: metadata.ruleId ?? rule.meta.id,
+        severity: metadata.severity ?? currentSeverity,
+        category: metadata.category ?? rule.meta.category,
         diagnostic,
         file: metadata.file ?? file.path,
       });

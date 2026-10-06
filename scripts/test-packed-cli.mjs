@@ -180,7 +180,11 @@ function verifyExports() {
     `${typeImports.join("\n")}\n` +
       'import { doctor, defineDoctorConfig } from "vite-doctor";\n' +
       'import { defineDoctorExtension } from "vite-doctor/extension";\n' +
-      'doctor({ config: defineDoctorConfig({ extends: ["vite/recommended"] }), extensions: [defineDoctorExtension({ name: "consumer", setup() {} })] });\n',
+      'doctor({ config: defineDoctorConfig({ extends: ["vite/recommended"] }), extensions: [defineDoctorExtension({ name: "consumer", setup() {} })] });\n' +
+      'import type { NuxtHooks } from "nuxt/schema";\n' +
+      'import type { DoctorPluginApi } from "vite-doctor/extension";\n' +
+      'export const extendExtensions: NuxtHooks["doctor:extendExtensions"] = (entries) => { entries.push("/consumer/doctor.mjs"); };\n' +
+      'export const api = { doctor: { extensions: [async () => defineDoctorExtension({ name: "lazy" })] } satisfies DoctorPluginApi };\n',
   );
   for (const [module, moduleResolution] of [
     ["NodeNext", "NodeNext"],
