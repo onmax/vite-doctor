@@ -401,16 +401,19 @@ export class DoctorCache implements SourceInventoryMemo {
     const loaded = this.loaded;
     if (loaded && activeRuleKeys) this.keepInactiveResults(loaded, activeRuleKeys);
     if (!loaded) this.dirty = true;
-    else if (!prune) this.mergeUntouched(loaded);
-    else if (
-      Object.keys(loaded.files).some((path) => !this.files[path]) ||
-      Object.keys(loaded.signatures).some((path) => !this.signatures[path]) ||
-      Object.keys(loaded.runs).length !== Object.keys(this.runs).length ||
-      Boolean(loaded.graph) !== Boolean(this.graphEntry) ||
-      Object.keys(loaded.walks ?? {}).some((key) => !this.walks[key]) ||
-      Object.keys(loaded.generated ?? {}).some((path) => !this.generated[path])
-    )
-      this.dirty = true;
+    else {
+      if (!prune) this.mergeUntouched(loaded);
+      if (
+        prune &&
+        (Object.keys(loaded.files).some((path) => !this.files[path]) ||
+          Object.keys(loaded.signatures).some((path) => !this.signatures[path]) ||
+          Object.keys(loaded.runs).length !== Object.keys(this.runs).length ||
+          Boolean(loaded.graph) !== Boolean(this.graphEntry) ||
+          Object.keys(loaded.walks ?? {}).some((key) => !this.walks[key]) ||
+          Object.keys(loaded.generated ?? {}).some((path) => !this.generated[path]))
+      )
+        this.dirty = true;
+    }
     if (!this.dirty) return;
     let temporary: string | undefined;
     let lock: { fd: number; path: string } | undefined;
@@ -722,17 +725,165 @@ function readStore(path: string): { index: StoreIndex; factsText: string } | und
 }
 
 function isStoreIndex(value: unknown): value is StoreIndex {
+  if (
+    !isRecord(value) ||
+    value.version !== CACHE_STORE_VERSION ||
+    typeof value.engine !== "string" ||
+    !finite(value.writtenAt) ||
+    !Array.isArray(value.ruleKeys) ||
+    !value.ruleKeys.every((key) => typeof key === "string") ||
+    !Array.isArray(value.ruleSets) ||
+    !Array.isArray(value.inputs) ||
+    !value.inputs.every(
+      (input) =>
+        Array.isArray(input) &&
+        input.length === 2 &&
+        input.every((part) => typeof part === "string"),
+    ) ||
+    !isRecord(value.signatures) ||
+    !Object.values(value.signatures).every(isSignature) ||
+    !isRecord(value.files) ||
+    !isRecord(value.runs)
+  )
+    return false;
+
+  const ruleKeys = value.ruleKeys as string[];
+  const ruleSets = value.ruleSets as unknown[];
+  const inputs = value.inputs as unknown[];
+  const files = value.files as Record<string, unknown>;
+  const runs = value.runs as Record<string, unknown>;
+  const ruleCount = ruleKeys.length;
+  if (!ruleSets.every((set) => isIndexArray(set, ruleCount))) return false;
+  if (
+    !Object.values(files).every((file) =>
+      isStoredFile(file, ruleCount, ruleSets.length, inputs.length),
+    )
+  )
+    return false;
+  if (!Object.values(runs).every((result) => isStoredRuleResult(result, inputs.length)))
+    return false;
+  if (value.graph !== undefined && !isGraphEntry(value.graph, inputs.length)) return false;
+  if (
+    value.walks !== undefined &&
+    (!isRecord(value.walks) ||
+      !Object.values(value.walks).every(
+        (files) => Array.isArray(files) && files.every((file) => typeof file === "string"),
+      ))
+  )
+    return false;
+  if (
+    value.generated !== undefined &&
+    (!isRecord(value.generated) || !Object.values(value.generated).every(isSignature))
+  )
+    return false;
+  return value.lastWrite === undefined || isCacheRunStats(value.lastWrite);
+}
+
+function finite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isSignature(value: unknown): value is Signature {
+  return (
+    Array.isArray(value) &&
+    value.length === 6 &&
+    value.slice(0, 5).every(finite) &&
+    typeof value[5] === "string"
+  );
+}
+
+function isIndexArray(value: unknown, length: number): value is number[] {
+  return (
+    Array.isArray(value) &&
+    value.every((index) => Number.isInteger(index) && index >= 0 && index < length)
+  );
+}
+
+function isStoredDiagnostic(value: unknown): value is StoredDiagnostic {
+  if (!isRecord(value) || !isRecord(value.diagnostic)) return false;
+  const diagnostic = value.diagnostic;
+  return (
+    typeof diagnostic.code === "string" &&
+    typeof diagnostic.why === "string" &&
+    typeof value.code === "string" &&
+    typeof value.why === "string" &&
+    typeof value.ruleId === "string" &&
+    typeof value.severity === "string" &&
+    typeof value.category === "string" &&
+    typeof value.message === "string" &&
+    typeof value.file === "string" &&
+    (diagnostic.fix === undefined || typeof diagnostic.fix === "string") &&
+    (diagnostic.docs === undefined || typeof diagnostic.docs === "string") &&
+    (diagnostic.sources === undefined ||
+      (Array.isArray(diagnostic.sources) &&
+        diagnostic.sources.every((source) => typeof source === "string")))
+  );
+}
+
+function isStoredRuleResult(value: unknown, inputCount: number): value is StoredRuleResult {
   return (
     isRecord(value) &&
-    value.version === CACHE_STORE_VERSION &&
-    typeof value.engine === "string" &&
-    typeof value.writtenAt === "number" &&
-    Array.isArray(value.ruleKeys) &&
-    Array.isArray(value.ruleSets) &&
-    Array.isArray(value.inputs) &&
-    isRecord(value.signatures) &&
-    isRecord(value.files) &&
-    isRecord(value.runs)
+    (value.d === undefined || (Array.isArray(value.d) && value.d.every(isStoredDiagnostic))) &&
+    (value.i === undefined || isIndexArray(value.i, inputCount))
+  );
+}
+
+function isStoredFile(
+  value: unknown,
+  ruleCount: number,
+  ruleSetCount: number,
+  inputCount: number,
+): value is StoredFile {
+  return (
+    isRecord(value) &&
+    typeof value.hash === "string" &&
+    typeof value.entry === "string" &&
+    finite(value.shape) &&
+    (value.gaps === undefined || isEvidenceGaps(value.gaps)) &&
+    (value.rs === undefined ||
+      (typeof value.rs === "number" &&
+        Number.isInteger(value.rs) &&
+        value.rs >= 0 &&
+        value.rs < ruleSetCount)) &&
+    (value.r === undefined ||
+      (isRecord(value.r) &&
+        Object.entries(value.r).every(
+          ([index, result]) =>
+            Number.isInteger(Number(index)) &&
+            Number(index) >= 0 &&
+            Number(index) < ruleCount &&
+            isStoredRuleResult(result, inputCount),
+        )))
+  );
+}
+
+function isGraphEntry(value: unknown, inputCount: number): value is StoreIndex["graph"] {
+  if (
+    !isRecord(value) ||
+    typeof value.key !== "string" ||
+    !isIndexArray(value.i, inputCount) ||
+    !isRecord(value.summary)
+  )
+    return false;
+  const summary = value.summary;
+  return ["files", "importEdges", "exportEdges", "virtualRoots", "cycles"].every((key) =>
+    finite(summary[key]),
+  );
+}
+
+function isCacheRunStats(value: unknown): value is CacheRunStats {
+  return (
+    isRecord(value) &&
+    [
+      "at",
+      "files",
+      "filesRead",
+      "filesParsed",
+      "ruleResultsReused",
+      "ruleResultsComputed",
+      "ruleResultsUncacheable",
+    ].every((key) => finite(value[key])) &&
+    typeof value.graphReused === "boolean"
   );
 }
 

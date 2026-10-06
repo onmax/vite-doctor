@@ -190,6 +190,30 @@ test("Doctor keeps untouched entries during a changed-files run", async () => {
   });
 });
 
+test("a changed-files Rule subset retains untouched Rule results", async () => {
+  await withProject(async (root) => {
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
+    writeFileSync(join(root, ".gitignore"), ".vite-doctor\n");
+    git("init");
+    git("add", ".");
+    git("-c", "user.name=Doctor", "-c", "user.email=doctor@example.test", "commit", "-m", "init");
+    await runDoctor(options(root));
+    const resultCount = (path: string) => {
+      const { index } = readStoreFile(storePath(root));
+      const file = index.files[join(root, path)]!;
+      return (
+        Object.keys(file.r ?? {}).length +
+        (file.rs === undefined ? 0 : index.ruleSets[file.rs]!.length)
+      );
+    };
+    const before = resultCount("src/c.ts");
+    writeFileSync(join(root, "src/b.ts"), "export const b = 2;\n");
+
+    await runDoctor({ ...options(root), changed: true, analyses: "graph" });
+    expect(resultCount("src/c.ts")).toBe(before);
+  });
+});
+
 test("cache clean removes the cache store", async () => {
   await withProject(async (root) => {
     await runDoctor(options(root));
