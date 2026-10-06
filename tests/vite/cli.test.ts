@@ -8,7 +8,7 @@ import {
   defineDoctorExtension,
   defineRulePack,
 } from "../../src/core/index.ts";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
 import { viteDoctorExtensions, viteDoctorRulePacks } from "../../src/doctor.ts";
 import { formatMigrationReport } from "../../src/migration.ts";
@@ -119,6 +119,21 @@ test("CLI prints the public package version", async () => {
   }
 
   expect(writes.join("")).toBe(`${publicPackageVersion}\n`);
+});
+
+test("CLI help states that the analysis cache is on by default", async () => {
+  const info = vi.spyOn(console, "info").mockImplementation(() => {});
+  try {
+    await expect(main(["--help"], findRepoRoot())).resolves.toBe(0);
+    const help = info.mock.calls.flat().join("\n");
+    expect(help).toMatch(/^ {2}--cache +Use the persistent analysis cache \(default: on\)\.\s*$/m);
+    expect(help).toMatch(
+      /^ {2}--no-cache +Disable the persistent analysis cache for this run\.\s*$/m,
+    );
+    expect(help).not.toContain("(default: true)");
+  } finally {
+    info.mockRestore();
+  }
 });
 
 test("CLI prints Vite rule metadata", async () => {

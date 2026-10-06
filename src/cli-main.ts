@@ -192,7 +192,7 @@ function addDoctorRunCommand(
   surface: CliSurfaceOptions,
   setExitCode: (code: number) => void,
 ) {
-  cli
+  const command = cli
     .command("[path]", "Run Doctor diagnostics.")
     .option("--changed", "Report diagnostics on changed lines.")
     .option(
@@ -201,8 +201,8 @@ function addDoctorRunCommand(
     )
     .option("--profile", "Include timings.")
     .option("--new-only", "Only report diagnostics absent from the baseline.")
-    .option("--cache", "Use the analysis cache.")
-    .option("--no-cache", "Disable the analysis cache.")
+    .option("--cache", "Use the persistent analysis cache (default: on).")
+    .option("--no-cache", "Disable the persistent analysis cache for this run.")
     .option("--fix", "Apply safe edit plans and verify the result.")
     .option("--unsafe-fix", "Apply unsafe edit plans and verify the result.")
     .option("--max-warnings <count>", "Maximum warnings before failure.")
@@ -240,6 +240,9 @@ function addDoctorRunCommand(
         throw error;
       }
     });
+  // cac defaults negated flags to true, which renders as `(default: true)` on `--no-cache`
+  // and makes every run look like an explicit `--cache` in rerun commands.
+  for (const option of command.options) if (option.negated) option.config.default = undefined;
 }
 
 async function runDoctorCommand(
