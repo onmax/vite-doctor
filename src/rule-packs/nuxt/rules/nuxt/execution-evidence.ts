@@ -1,8 +1,17 @@
-import type { RuleContext } from "../../../../core/index.js";
+import type {
+  RuleContext,
+  TemplateElementNode,
+  TemplateExpressionNode,
+  TemplateParentNode,
+  TemplateRootNode,
+} from "../../../../core/index.js";
 import {
   findAncestor,
   nearestFunctionOrProgram,
   sourceForNode,
+  templateDirectiveBindings,
+  templateExpressionReferences,
+  TemplateNodeType,
   walkScriptLocal,
   type AnyNode,
 } from "../../../../core/rule-authoring.js";
@@ -523,12 +532,12 @@ function functionFlowsToTemplate(
     renderedReferences.some((reference) => {
       let callee = reference;
       while (
-        callee.parent?.type === "MemberExpression" &&
-        callee.parent.object === callee &&
+        templateParent(callee)?.type === "MemberExpression" &&
+        templateParent(callee).object === callee &&
         !(getter && matchesCallee(callee))
       )
-        callee = callee.parent;
-      const call = getter ? callee : callee.parent;
+        callee = templateParent(callee);
+      const call = getter ? callee : templateParent(callee);
       return (
         (getter ||
           (["CallExpression", "NewExpression"].includes(call?.type) && call.callee === callee)) &&
@@ -538,14 +547,14 @@ function functionFlowsToTemplate(
         (!fn.generator ||
           isConsumedIterator(
             call,
-            (node) => node.parent,
+            templateParent,
             () => !resolveLocalBinding(ctx.file.scriptAst, "Array", parents),
             () => reachesFirstYield(source, fn, parents),
           )) &&
         (!fn.async ||
           asyncResultIsConsumed(
             call,
-            (node) => node.parent,
+            templateParent,
             () => !resolveLocalBinding(ctx.file.scriptAst, "Promise", parents),
           ))
       );
@@ -1632,32 +1641,72 @@ function isConsumedIterator(
   );
 }
 
+const RENDERED_DIRECTIVES = new Set([
+  "bind",
+  "model",
+  "if",
+  "else-if",
+  "show",
+  "text",
+  "html",
+  "for",
+]);
+const renderedReferenceCache = new WeakMap<TemplateRootNode, AnyNode[]>();
+// The expression containers stand in for template positions that consume a value.
+const templateContainers = new WeakMap<AnyNode, AnyNode>();
+
+function templateParent(node: AnyNode): AnyNode {
+  return node.__doctorParent ?? templateContainers.get(node);
+}
+
+/** Identifiers that rendered template expressions read from script, skipping template locals. */
 function getRenderedReferences(ctx: RuleContext): AnyNode[] {
+  const root = ctx.file.templateAst;
+  if (!root) return [];
+  const cached = renderedReferenceCache.get(root);
+  if (cached) return cached;
   const references: AnyNode[] = [];
-  const visit = (node: AnyNode) => {
-    if (!node) return;
-    if (node.type === "VExpressionContainer") {
-      for (const reference of node.references ?? []) {
-        if (!reference.variable && reference.mode !== "w") references.push(reference.id);
-      }
-      return;
-    }
-    if (node.type === "VElement") {
-      for (const attribute of node.startTag.attributes) {
-        if (
-          attribute.directive &&
-          ["bind", "model", "if", "else-if", "show", "text", "html", "for"].includes(
-            attribute.key.name.name,
-          )
-        ) {
-          visit(attribute.value);
-          if (attribute.key.name.name === "bind") visit(attribute.key.argument);
-        }
-      }
-      for (const child of node.children) visit(child);
+  const collect = (
+    expression: TemplateExpressionNode | undefined,
+    locals: Set<string>,
+    container: (expression: AnyNode) => AnyNode,
+  ) => {
+    const ast = expression && ctx.helpers.parseTemplateExpression(expression);
+    if (!ast) return;
+    templateContainers.set(ast, container(ast));
+    for (const { id, mode } of templateExpressionReferences(ast))
+      if (mode !== "w" && !locals.has(id.name)) references.push(id);
+  };
+  const expressionContainer = (expression: AnyNode) => ({
+    type: "VExpressionContainer",
+    expression,
+  });
+  const visitChildren = (parent: TemplateParentNode, locals: Set<string>) => {
+    for (const child of parent.children) {
+      if (child.type === TemplateNodeType.INTERPOLATION)
+        collect(child.content, locals, expressionContainer);
+      else if (child.type === TemplateNodeType.ELEMENT) visitElement(child, locals);
     }
   };
-  visit(ctx.file.templateAst);
+  const visitElement = (element: TemplateElementNode, outer: Set<string>) => {
+    let locals = outer;
+    for (const prop of element.props) {
+      if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
+      const bindings = templateDirectiveBindings(prop);
+      if (bindings.length) locals = new Set([...locals, ...bindings]);
+    }
+    for (const prop of element.props) {
+      if (prop.type !== TemplateNodeType.DIRECTIVE || !RENDERED_DIRECTIVES.has(prop.name)) continue;
+      if (prop.name === "for")
+        collect(prop.forParseResult?.source, outer, (right) => ({ type: "VForExpression", right }));
+      else collect(prop.exp, locals, expressionContainer);
+      if (prop.name === "bind" && prop.arg && !prop.arg.isStatic)
+        collect(prop.arg, locals, expressionContainer);
+    }
+    visitChildren(element, locals);
+  };
+  visitChildren(root, new Set());
+  renderedReferenceCache.set(root, references);
   return references;
 }
 
@@ -1824,7 +1873,7 @@ function projectionIncludes(
   }
   let current = reference;
   for (const key of path) {
-    const member = parents.get(current) ?? current.parent;
+    const member = parents.get(current) ?? templateParent(current);
     if (member?.type !== "MemberExpression" || member.object !== current) return true;
     const accessed = member.computed ? member.property?.value : member.property?.name;
     if (accessed === undefined) return true;

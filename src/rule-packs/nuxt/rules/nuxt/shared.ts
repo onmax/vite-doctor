@@ -3,6 +3,7 @@ import {
   createRule,
   diagnosticForCode,
   type RuleContext,
+  type TemplateElementNode,
 } from "../../../../core/index.js";
 import { doctorInternalDiagnostics } from "../../../../core/internal-diagnostic-handles.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../../diagnostics.js";
@@ -212,59 +213,9 @@ export function replacementForBrowserGlobal(name: string) {
   return "Guard this with import.meta.client or move it to client-only code.";
 }
 
-export function templateExpressions(node: AnyNode, source: string): string[] {
-  const values: string[] = [];
-  for (const attr of node.startTag?.attributes ?? []) {
-    const expression = attr.value?.expression;
-    if (expression?.start != null && expression?.end != null)
-      values.push(String(expression.raw ?? source.slice(expression.start, expression.end)));
-  }
-  if (node.type === "VExpressionContainer" && node.expression)
-    values.push(
-      String(
-        node.expression.raw ??
-          (node.expression.start != null && node.expression.end != null
-            ? source.slice(node.expression.start, node.expression.end)
-            : ""),
-      ),
-    );
-  const nodeSource = sourceForNode(node, source);
-  if (nodeSource) values.push(nodeSource);
-  return values;
-}
-
-export function getElementName(node: AnyNode) {
-  return node.rawName ?? node.name;
-}
-
-export function getDirectiveExpression(
-  node: AnyNode,
-  name: string,
-  argument: string,
-  source: string,
-) {
-  const attr = (node.startTag?.attributes ?? []).find(
-    (item: AnyNode) =>
-      item.directive && item.key?.name?.name === name && item.key?.argument?.name === argument,
-  );
-  const expression = attr?.value?.expression;
-  if (!expression) return null;
-  const start = expression.start ?? expression.range?.[0];
-  const end = expression.end ?? expression.range?.[1];
-  return expression.raw ?? (start != null && end != null ? source.slice(start, end) : null);
-}
-
-export function getStaticAttr(node: AnyNode, name: string) {
-  const attr = (node.startTag?.attributes ?? []).find(
-    (item: AnyNode) => !item.directive && item.key?.name === name,
-  );
-  return attr?.value?.value ?? null;
-}
-
-export function simpleTagRenameFix(text: string, node: AnyNode, replacement: string) {
-  const start = node.start;
-  const end = node.end;
-  if (typeof start !== "number" || typeof end !== "number") return null;
+export function simpleTagRenameFix(text: string, node: TemplateElementNode, replacement: string) {
+  const start = node.loc.start.offset;
+  const end = node.loc.end.offset;
   const snippet = text.slice(start, end);
   const replaced = snippet
     .replaceAll("RouterView", replacement)

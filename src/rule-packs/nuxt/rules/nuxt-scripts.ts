@@ -15,25 +15,25 @@ export const noRawThirdPartyScriptTag = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || node.rawName !== "script") return;
-        const src = (node.startTag?.attributes ?? []).find(
-          (attr: AnyNode) => !attr.directive && attr.key?.name === "src",
-        )?.value?.value;
-        if (!src || String(src).startsWith("/") || String(src).startsWith("./")) return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0010({
-            why: "Raw third-party script tags bypass Nuxt Scripts loading, consent, and trigger controls.",
-            fix: "Load third-party scripts through Nuxt Scripts with an explicit trigger and consent policy.",
-          }),
-          {
-            ruleId: "nuxt-scripts/no-raw-third-party-script-tag",
-            severity: "warn",
-            category: "scripts",
-          },
-        );
+      template: {
+        element(node) {
+          if (node.tag !== "script") return;
+          const src = ctx.helpers.getStaticVueAttributeValue(node, "src");
+          if (!src || src.startsWith("/") || src.startsWith("./")) return;
+          ctx.helpers.report(
+            ctx,
+            node,
+            diagnostics.NUXT0010({
+              why: "Raw third-party script tags bypass Nuxt Scripts loading, consent, and trigger controls.",
+              fix: "Load third-party scripts through Nuxt Scripts with an explicit trigger and consent policy.",
+            }),
+            {
+              ruleId: "nuxt-scripts/no-raw-third-party-script-tag",
+              severity: "warn",
+              category: "scripts",
+            },
+          );
+        },
       },
     };
   },

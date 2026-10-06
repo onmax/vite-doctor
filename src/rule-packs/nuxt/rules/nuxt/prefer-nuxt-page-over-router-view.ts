@@ -1,4 +1,4 @@
-import { AnyNode, createRule, getElementName, simpleTagRenameFix } from "./shared.js";
+import { createRule, simpleTagRenameFix } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 export const preferNuxtPageOverRouterView = createRule({
@@ -13,22 +13,24 @@ export const preferNuxtPageOverRouterView = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || getElementName(node) !== "RouterView") return;
-        ctx.report(
-          diagnostics.NUXT0051({
-            why: "<RouterView> bypasses NuxtPage behavior. Use <NuxtPage> in Nuxt app shells.",
-            fix: "Replace <RouterView> with <NuxtPage>.",
-          }),
-          {
-            ruleId: "nuxt/routing/prefer-nuxtpage-over-routerview",
-            severity: "error",
-            category: "routing",
-            file: ctx.file.path,
-            range: ctx.range(node),
-            fix: simpleTagRenameFix(ctx.file.text, node, "NuxtPage"),
-          },
-        );
+      template: {
+        element(node) {
+          if (node.tag !== "RouterView") return;
+          ctx.report(
+            diagnostics.NUXT0051({
+              why: "<RouterView> bypasses NuxtPage behavior. Use <NuxtPage> in Nuxt app shells.",
+              fix: "Replace <RouterView> with <NuxtPage>.",
+            }),
+            {
+              ruleId: "nuxt/routing/prefer-nuxtpage-over-routerview",
+              severity: "error",
+              category: "routing",
+              file: ctx.file.path,
+              range: ctx.range(node),
+              fix: simpleTagRenameFix(ctx.file.text, node, "NuxtPage"),
+            },
+          );
+        },
       },
     };
   },

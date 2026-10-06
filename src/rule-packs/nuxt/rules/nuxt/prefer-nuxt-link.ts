@@ -1,4 +1,6 @@
-import { AnyNode, createRule, getElementName } from "./shared.js";
+import type { TemplateAttributeNode, TemplateElementNode } from "../../../../core/index.js";
+import { findTemplateAttribute } from "../../../../core/rule-authoring.js";
+import { createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "nuxt/routing/prefer-nuxtlink";
@@ -15,42 +17,35 @@ export const preferNuxtLink = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || getElementName(node) !== "a") return;
-        if (hasStaticAttr(node, "target") || hasStaticAttr(node, "download")) return;
+      template: {
+        element(node) {
+          if (node.tag !== "a") return;
+          if (findTemplateAttribute(node, "target") || findTemplateAttribute(node, "download"))
+            return;
 
-        const href = getStaticAttrNode(node, "href");
-        const hrefValue = href?.value?.value;
-        if (typeof hrefValue !== "string" || !isInternalNavigationHref(hrefValue)) return;
+          const href = findTemplateAttribute(node, "href");
+          const hrefValue = href?.value?.content;
+          if (!href || hrefValue === undefined || !isInternalNavigationHref(hrefValue)) return;
 
-        ctx.report(
-          diagnostics.NUXT0050({
-            why: "Raw <a> tags skip NuxtLink routing behavior for internal navigation.",
-            fix: "Use <NuxtLink> with a to prop for internal app links.",
-          }),
-          {
-            ruleId: RULE_ID,
-            severity: "warn",
-            category: "routing",
-            file: ctx.file.path,
-            range: ctx.range(node),
-            fix: staticNuxtLinkFix(ctx.file.text, node, href),
-          },
-        );
+          ctx.report(
+            diagnostics.NUXT0050({
+              why: "Raw <a> tags skip NuxtLink routing behavior for internal navigation.",
+              fix: "Use <NuxtLink> with a to prop for internal app links.",
+            }),
+            {
+              ruleId: RULE_ID,
+              severity: "warn",
+              category: "routing",
+              file: ctx.file.path,
+              range: ctx.range(node),
+              fix: staticNuxtLinkFix(ctx.file.text, node, href),
+            },
+          );
+        },
       },
     };
   },
 });
-
-function getStaticAttrNode(node: AnyNode, name: string) {
-  return (node.startTag?.attributes ?? []).find(
-    (attr: AnyNode) => !attr.directive && attr.key?.name === name,
-  );
-}
-
-function hasStaticAttr(node: AnyNode, name: string) {
-  return Boolean(getStaticAttrNode(node, name));
-}
 
 function isInternalNavigationHref(value: string) {
   return (
@@ -60,19 +55,11 @@ function isInternalNavigationHref(value: string) {
   );
 }
 
-function staticNuxtLinkFix(text: string, node: AnyNode, href: AnyNode) {
-  const start = node.start ?? node.range?.[0];
-  const end = node.end ?? node.range?.[1];
-  const hrefStart = href?.key?.start ?? href?.key?.range?.[0];
-  const hrefEnd = href?.key?.end ?? href?.key?.range?.[1];
-  if (
-    typeof start !== "number" ||
-    typeof end !== "number" ||
-    typeof hrefStart !== "number" ||
-    typeof hrefEnd !== "number"
-  )
-    return null;
-
+function staticNuxtLinkFix(text: string, node: TemplateElementNode, href: TemplateAttributeNode) {
+  const start = node.loc.start.offset;
+  const end = node.loc.end.offset;
+  const hrefStart = href.nameLoc.start.offset;
+  const hrefEnd = href.nameLoc.end.offset;
   const snippet = text.slice(start, end);
   const replacement = `${text.slice(start, hrefStart)}to${text.slice(hrefEnd, end)}`
     .replace(/^<a\b/, "<NuxtLink")
