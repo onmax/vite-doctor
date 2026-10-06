@@ -34,8 +34,8 @@ const doubled = count + 1
     },
   });
 
-  // One TypeScript parse for the core template parse and one for the bridge, both on <script>.
-  expect(tsParses.count).toBe(2);
+  // The bridge's <script> parse is the only one; the core template parse no longer uses TypeScript.
+  expect(tsParses.count).toBe(1);
   expect(
     result.diagnostics.map((diagnostic) => [diagnostic.ruleId, diagnostic.range?.line]),
   ).toEqual([["vue/reactivity/no-ref-as-operand", 4]]);
