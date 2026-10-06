@@ -64,6 +64,7 @@
     "test": "vp test --passWithNoTests",
     "test:pack": "node scripts/test-packed-cli.mjs",
     "perf": "node scripts/perf-lab/lab.mjs",
+    "perf:oxlint-host": "node experiments/oxlint-host/bench.mjs",
     "check": "vp check",
     "predoctor": "pnpm build",
     "doctor": "node dist/cli.mjs . --no-cache --max-warnings 0 --format text",
