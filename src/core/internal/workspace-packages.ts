@@ -156,8 +156,36 @@ function unquote(value: string): string {
 
 function readManifest(file: string): PackageManifest | null {
   try {
-    return JSON.parse(readFileSync(file, "utf8")) as PackageManifest;
+    const value: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (!isRecord(value)) return null;
+    const manifest: PackageManifest = {};
+    if (typeof value.name === "string") manifest.name = value.name;
+    if (
+      Array.isArray(value.workspaces) &&
+      value.workspaces.every((item) => typeof item === "string")
+    ) {
+      manifest.workspaces = value.workspaces;
+    } else if (isRecord(value.workspaces) && Array.isArray(value.workspaces.packages)) {
+      const packages = value.workspaces.packages;
+      if (packages.every((item) => typeof item === "string")) {
+        manifest.workspaces = { packages };
+      }
+    }
+    for (const key of ["dependencies", "devDependencies", "optionalDependencies"] as const) {
+      const dependencies = value[key];
+      if (
+        isRecord(dependencies) &&
+        Object.values(dependencies).every((item) => typeof item === "string")
+      ) {
+        manifest[key] = dependencies as Record<string, string>;
+      }
+    }
+    return manifest;
   } catch {
     return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
