@@ -32,7 +32,7 @@ export const requireDefaultHandler = createRule({
         if (node.type !== "Program") return;
         const { defaultExport, defaultLocal, runtimeExports } = moduleExports(node);
         if (!defaultExport) {
-          if (/\bmodule\.exports\b|\bexports\.default\b/.test(ctx.file.text)) return;
+          if (hasCommonJsDefault(node)) return;
           reportMissingHandler(ctx, route, runtimeExports);
           return;
         }
@@ -130,6 +130,27 @@ function moduleExports(program: AnyNode) {
     }
   }
   return { defaultExport, defaultLocal, runtimeExports };
+}
+
+function hasCommonJsDefault(program: AnyNode) {
+  return (program.body ?? []).some((statement: AnyNode) => {
+    const expression = statement.type === "ExpressionStatement" ? statement.expression : undefined;
+    if (expression?.type !== "AssignmentExpression") return false;
+    const left = expression.left;
+    if (left?.type !== "MemberExpression" || left.computed) return false;
+    const object = left.object;
+    const property = left.property;
+    return (
+      (object?.type === "Identifier" &&
+        object.name === "module" &&
+        property?.type === "Identifier" &&
+        property.name === "exports") ||
+      (object?.type === "Identifier" &&
+        object.name === "exports" &&
+        property?.type === "Identifier" &&
+        property.name === "default")
+    );
+  });
 }
 
 function isTypeOnlyDeclaration(declaration: AnyNode) {

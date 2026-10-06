@@ -235,7 +235,7 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/routes/require-default-handler": {
     description:
-      "Requires every file in a Nitro api/ or routes/ directory to default-export a handler and keep helpers out of the route tree.",
+      "Requires every file in a statically resolved Nitro api/ or routes/ directory to default-export a handler and keep helpers out of the route tree. The rule stays disabled for ambiguous configs or configured scanDirs, apiDir, or routesDir until resolved Runtime Evidence is available.",
     why: "Nitro registers every file under server/api and server/routes as a route. A helper module placed there becomes a public URL with no working handler, and other routes that import it pull in a route module.",
     recommendedReplacement:
       "Default-export a handler from each route file. Move shared helpers to server/utils/, where Nitro 2 and Nuxt auto-import them, and keep only type exports next to the handler.",

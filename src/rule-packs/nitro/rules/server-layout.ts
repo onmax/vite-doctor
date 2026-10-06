@@ -45,6 +45,13 @@ export function nitroServerFile(project: ProjectInfo, file: string): NitroServer
 }
 
 export function nitroRouteFile(project: ProjectInfo, file: string): NitroServerFile | null {
+  const options = readStaticConfigOptions(project, project.framework === "nuxt" ? "nuxt" : "nitro");
+  if (
+    options.some(
+      ({ path }) => path.length === 0 || ["scanDirs", "apiDir", "routesDir"].includes(path.at(-1)!),
+    )
+  )
+    return null;
   const serverFile = nitroServerFile(project, file);
   if (!serverFile || !ROUTE_DIRS.has(serverFile.dir) || !serverFile.path.includes("/")) return null;
   if (!SCANNED_SCRIPT.test(file) || DECLARATION_FILE.test(file)) return null;
@@ -93,6 +100,8 @@ export function runtimeMajor(project: ProjectInfo, runtime: "nitro" | "nuxt"): n
 }
 
 function resolveServerDirs(project: ProjectInfo): string[] {
+  const options = readStaticConfigOptions(project, project.framework === "nuxt" ? "nuxt" : "nitro");
+  if (options.some(({ path }) => path.length === 0)) return [];
   if (project.framework === "nuxt") return nuxtServerDirs(project);
   if (project.framework === "nitro") return standaloneNitroServerDirs(project);
   return [];
@@ -156,33 +165,70 @@ function configOptions(file: string): StaticConfigOption[] {
   }
   let program: unknown;
   try {
-    program = parseSync(file, text, { sourceType: "module", lang: "ts" }).program;
+    const parsed = parseSync(file, text, { sourceType: "module", lang: "ts" });
+    if (parsed.errors.length) return [{ path: [], value: null }];
+    program = parsed.program;
   } catch {
-    return [];
+    return [{ path: [], value: null }];
   }
   const options: StaticConfigOption[] = [];
-  collectOptions(program, [], options);
+  const expression = (program as any).body.find(
+    (statement: any) => statement.type === "ExportDefaultDeclaration",
+  )?.declaration;
+  const config = unwrapConfig(expression);
+  if (!config) return [{ path: [], value: null }];
+  collectOptions(config, [], options);
+  if (file.includes("vite.config.")) {
+    const plugins = config.properties.find(
+      (property: any) => propertyKey(property.key) === "plugins",
+    )?.value;
+    if (plugins) {
+      if (plugins.type !== "ArrayExpression") return [{ path: [], value: null }];
+      for (const plugin of plugins.elements) {
+        if (plugin?.type !== "CallExpression" || plugin.callee?.name !== "nitro") continue;
+        const config = plugin.arguments.length
+          ? unwrapConfig(plugin.arguments[0])
+          : { type: "ObjectExpression", properties: [] };
+        if (!config) return [{ path: [], value: null }];
+        collectOptions(config, ["nitro"], options);
+      }
+    }
+  }
   return options;
 }
 
+function unwrapConfig(node: any): any {
+  while (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
+    node = node.expression;
+  if (
+    node?.type === "CallExpression" &&
+    ["defineConfig", "defineNitroConfig", "defineNuxtConfig"].includes(node.callee?.name) &&
+    node.arguments.length === 1
+  )
+    return unwrapConfig(node.arguments[0]);
+  return node?.type === "ObjectExpression" ? node : undefined;
+}
+
 function collectOptions(node: any, path: string[], options: StaticConfigOption[]) {
-  if (!node || typeof node !== "object") return;
-  if (Array.isArray(node)) {
-    for (const child of node) collectOptions(child, path, options);
-    return;
-  }
-  if (node.type === "Property" && !node.computed) {
-    const key = propertyKey(node.key);
-    if (key) {
-      const next = [...path, key];
-      options.push({ path: next, value: literalValue(node.value) });
-      collectOptions(node.value, next, options);
-      return;
+  if (node?.type !== "ObjectExpression") return;
+  for (const property of node.properties) {
+    if (property.type !== "Property" || property.computed) {
+      options.push({ path: [], value: null });
+      continue;
     }
-  }
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "parent" || !value || typeof value !== "object") continue;
-    collectOptions(value, path, options);
+    const key = propertyKey(property.key);
+    if (!key) continue;
+    if (
+      !["srcDir", "serverDir", "scanDirs", "apiDir", "routesDir", "nitro", "imports"].includes(key)
+    )
+      continue;
+    const next = [...path, key];
+    options.push({ path: next, value: literalValue(property.value) });
+    if (key === "nitro") {
+      const nested = unwrapConfig(property.value);
+      if (nested) collectOptions(nested, next, options);
+      else options.push({ path: [], value: null });
+    }
   }
 }
 

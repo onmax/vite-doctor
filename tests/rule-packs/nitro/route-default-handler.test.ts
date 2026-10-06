@@ -235,3 +235,83 @@ describe("NITRO0020 route file with extra runtime exports", () => {
     ).toEqual([]);
   });
 });
+
+describe("route classification evidence", () => {
+  test.each([
+    "// module.exports = handler",
+    "/* exports.default = handler */",
+    "const text = 'module.exports'",
+    "const text = `exports.default`",
+    "module.exports.extra = 1",
+    "console.log(module.exports)",
+  ])("does not accept a textual CommonJS mention: %s", async (source) => {
+    expect(await codes({ "server/api/helper.ts": source })).toEqual(["NITRO0019"]);
+  });
+
+  test.each([
+    "const unrelated = { serverDir: 'fixtures' }; export default defineNuxtConfig({ serverDir: 'backend' })",
+    "export default defineNuxtConfig({ serverDir: 'backend' }); const unrelated = { serverDir: process.env.DIR }",
+    "export default defineNuxtConfig({ serverDir: 'backend', unrelated: { serverDir: 'fixtures' } })",
+  ])("only reads the exported config options: %s", async (config) => {
+    const result = await runRuleFixture({
+      rule: requireDefaultHandler,
+      framework: "nuxt",
+      files: {
+        "nuxt.config.ts": config,
+        "backend/api/helper.ts": helper,
+        "fixtures/api/helper.ts": helper,
+        "server/api/helper.ts": helper,
+      },
+    });
+    expect(result.diagnostics.map((item) => item.file)).toEqual([
+      expect.stringMatching(/backend\/api\/helper.ts$/),
+    ]);
+  });
+
+  test.each([
+    "export default defineNuxtConfig(() => ({ serverDir: 'backend' }))",
+    "export default makeConfig({ serverDir: 'backend' })",
+    "export default defineNuxtConfig({ ...dynamic })",
+    "export default defineNuxtConfig({ [key]: 'backend' })",
+    "export default defineNuxtConfig({ nitro: dynamic })",
+  ])("does not infer ambiguous config: %s", async (config) => {
+    expect(await codes({ "nuxt.config.ts": config, "server/api/helper.ts": helper })).toEqual([]);
+  });
+
+  test.each([
+    "scanDirs: ['extra']",
+    "apiDir: 'endpoints'",
+    "routesDir: 'handlers'",
+    "scanDirs: dynamic",
+  ])("disables partial coverage for %s", async (option) => {
+    expect(
+      await codes({
+        "nuxt.config.ts": `export default defineNuxtConfig({ nitro: { ${option} } })`,
+        "server/api/helper.ts": helper,
+      }),
+    ).toEqual([]);
+    expect(
+      await codes(
+        {
+          "nitro.config.ts": `export default defineNitroConfig({ ${option} })`,
+          "api/helper.ts": helper,
+        },
+        "nitro",
+      ),
+    ).toEqual([]);
+  });
+
+  test("reads the Nitro plugin config in Vite", async () => {
+    expect(
+      await codes(
+        {
+          "vite.config.ts":
+            "export default defineConfig({ plugins: [nitro({ serverDir: 'backend' })] })",
+          "backend/api/helper.ts": helper,
+        },
+        "nitro",
+        { nitro: "3.0.0-beta.1" },
+      ),
+    ).toEqual(["NITRO0019"]);
+  });
+});
