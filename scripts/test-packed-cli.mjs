@@ -45,6 +45,7 @@ try {
   });
   verifyExports();
   verifyLightweightEntries();
+  verifyServeRunWorker();
   writeFileSync(
     join(fixture, "package.json"),
     `${JSON.stringify({ private: true, dependencies: { nuxt: nuxt.version } }, null, 2)}\n`,
@@ -215,6 +216,87 @@ process.on("exit", () => writeFileSync(process.env.DOCTOR_LOADED_ANALYZERS, JSON
       expected,
       `${name} loaded unexpected analyzers before a Doctor Run.`,
     );
+  }
+}
+
+function verifyServeRunWorker() {
+  const project = join(temporary, "serve fixture");
+  mkdirSync(join(project, "src"), { recursive: true });
+  writeFileSync(
+    join(project, "package.json"),
+    JSON.stringify({ type: "module", dependencies: { vue: "^3.5.0" } }),
+  );
+  writeFileSync(
+    join(project, "src/App.vue"),
+    '<script setup lang="ts">\nconst count: number = 0;\n</script>\n<template><button>{{ count }}</button></template>\n',
+  );
+  const hooks = join(temporary, "record-main-thread-analyzers.mjs");
+  writeFileSync(
+    hooks,
+    `import { registerHooks } from "node:module";
+import { writeFileSync } from "node:fs";
+import { isMainThread } from "node:worker_threads";
+if (isMainThread) {
+  const loaded = new Set();
+  registerHooks({
+    resolve(specifier, context, next) {
+      const result = next(specifier, context);
+      for (const name of ["typescript", "oxc-parser", "eslint-plugin-vue", "vue-eslint-parser"])
+        if (result.url.includes(\`/node_modules/\${name}/\`)) loaded.add(name);
+      return result;
+    },
+  });
+  process.on("exit", () => writeFileSync(process.env.DOCTOR_LOADED_ANALYZERS, JSON.stringify([...loaded])));
+}
+`,
+  );
+  const script = join(temporary, "serve-run.mjs");
+  writeFileSync(
+    script,
+    `import { createServer } from ${JSON.stringify(import.meta.resolve("vite"))};
+import { doctor } from "vite-doctor/plugin";
+const [mode, root] = process.argv.slice(2);
+const { promise: reported, resolve } = Promise.withResolvers();
+const log = (message) => { if (message.includes("Summary")) resolve(message); };
+const server = await createServer({
+  root,
+  configFile: false,
+  customLogger: { info: log, warn: log, warnOnce: log, error: log, clearScreen() {}, hasErrorLogged: () => false, hasWarned: false },
+  server: { port: 0, ws: false, watch: null },
+  optimizeDeps: { noDiscovery: true },
+  plugins: [doctor({ run: "serve", mode: "warn", cache: false, extensions: mode === "main-thread" ? [{ name: "packed/main-thread", setup() {} }] : [] })],
+});
+await server.listen();
+process.stdout.write(await reported);
+await server.close();
+`,
+  );
+  for (const mode of ["worker", "main-thread"]) {
+    const record = join(temporary, `serve-${mode}-analyzers.json`);
+    const result = spawnSync(
+      process.execPath,
+      ["--import", pathToFileURL(hooks).href, script, mode, project],
+      {
+        cwd: temporary,
+        env: { ...env, DOCTOR_LOADED_ANALYZERS: record },
+        encoding: "utf8",
+        stdio: "pipe",
+        timeout: 60_000,
+      },
+    );
+    if (result.error) throw result.error;
+    assert.equal(result.status, 0, `serve ${mode}: ${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /VUE0022/, `serve ${mode} did not log the Doctor report.`);
+    const analyzers = JSON.parse(readFileSync(record, "utf8"));
+    if (mode === "worker") {
+      assert.deepEqual(
+        analyzers,
+        [],
+        "A serve-mode Doctor Run loaded analyzers on the main thread.",
+      );
+    } else {
+      assert.notDeepEqual(analyzers, [], "The main-thread control run loaded no analyzers.");
+    }
   }
 }
 
