@@ -1,5 +1,5 @@
 import { relative, resolve } from "pathe";
-import { AnyNode, bindingNames, createRule, report } from "./shared.js";
+import { AnyNode, bindingNames, createRule, namePattern, report } from "./shared.js";
 import type { RuleContext } from "../../../../core/index.js";
 
 const RULE_ID = "vue/lifecycle/prefer-use-event-listener";
@@ -16,24 +16,7 @@ const NUXT_CONFIG_FILES = [
   "nuxt.config.mjs",
   "nuxt.config.mts",
 ];
-// Reports start from a callee spelled addEventListener; escapes could spell it without the text.
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const hexDigit = (value: string) => `[${value.toLowerCase()}${value.toUpperCase()}]`;
-const escapedNamePattern = (name: string) => {
-  const continuation = `(?:\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029))`;
-  const character = (value: string) => {
-    const code = value.charCodeAt(0);
-    const hex = code.toString(16).padStart(2, "0");
-    const unicode = code.toString(16).padStart(4, "0");
-    const octal = code.toString(8);
-    const codePoint = code.toString(16);
-    return `(?:${escapeRegex(value)}|\\\\u${[...unicode].map(hexDigit).join("")}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${[...hex].map(hexDigit).join("")}|\\\\${octal}|\\\\(?![uUxX0-7])${escapeRegex(value)})`;
-  };
-  return `(?:${continuation}*${[...name]
-    .map((value) => `${character(value)}${continuation}*`)
-    .join("")})`;
-};
-const ADD_EVENT_LISTENER_TEXT_RE = new RegExp(escapedNamePattern("addEventListener"));
+const ADD_EVENT_LISTENER_TEXT_RE = namePattern(["addEventListener"]);
 
 export const preferUseEventListener = createRule({
   meta: {

@@ -1,7 +1,8 @@
-import { parseForESLint } from "@typescript-eslint/parser";
 import type { RuleContext } from "../../../../core/index.js";
-import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
-import { AnyNode, createRule, report } from "./shared.js";
+import { fileScriptScope, scriptMayName } from "./script-scope.js";
+import { AnyNode, createRule, namePattern, report } from "./shared.js";
+
+const SETUP_NAMES = namePattern(["setup", "defineComponent"]);
 
 export const noSetupPropsDestructure = createRule({
   meta: {
@@ -18,6 +19,7 @@ export const noSetupPropsDestructure = createRule({
     requires: { script: true, vue: true },
   },
   create(ctx) {
+    if (!scriptMayName(ctx, SETUP_NAMES)) return;
     let snapshots: Set<string> | undefined;
     return {
       ScriptNode(node: AnyNode) {
@@ -38,20 +40,10 @@ export const noSetupPropsDestructure = createRule({
 });
 
 function setupPropSnapshots(ctx: RuleContext): Set<string> {
-  const script = ctx.file.sfc
-    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
-    : { text: ctx.file.text, lang: /\.[jt]sx$/.test(ctx.file.relativePath) ? "tsx" : "ts" };
+  const scope = fileScriptScope(ctx);
+  if (!scope) return new Set();
   try {
-    const { ast, scopeManager, visitorKeys } = parseForESLint(script.text, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: ["jsx", "tsx"].includes(script.lang) },
-    });
-    const references = new Map(
-      scopeManager.scopes.flatMap((scope) =>
-        scope.references.map((reference) => [reference.identifier, reference] as const),
-      ),
-    );
+    const { ast, scopeManager, visitorKeys, references } = scope;
     const parents = new Map<AnyNode, AnyNode>();
     const owners = new Map<AnyNode, AnyNode>();
     const functions: AnyNode[] = [];

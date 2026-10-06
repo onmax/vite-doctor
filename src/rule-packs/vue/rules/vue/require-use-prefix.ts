@@ -1,7 +1,7 @@
 import { relative, resolve } from "pathe";
-import { parseForESLint } from "@typescript-eslint/parser";
 import type { RuleContext } from "../../../../core/index.js";
-import { AnyNode, createRule } from "./shared.js";
+import { fileScriptScope, type ScopeVariable } from "./script-scope.js";
+import { AnyNode, createRule, namePattern, walkScriptLocal } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/composables/require-use-prefix";
@@ -55,6 +55,7 @@ const EXEMPT_NAME =
   /^_*(use|on|tryOn|provide|inject|define|create|ref|computed|watch)[A-Z0-9_$]|^_*[A-Z]/;
 const EXEMPT_NAMES = new Set(["setup", "render", "install"]);
 const SCRIPT_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+const GET_CURRENT_INSTANCE = namePattern(["getCurrentInstance"]);
 
 interface ExportedFunction {
   name: string;
@@ -89,11 +90,14 @@ export const requireUsePrefix = createRule({
     return {
       ScriptNode(node: AnyNode) {
         if (node.type !== "Program") return;
+        const candidates = exportedFunctions(node).filter(
+          (exported) => !isExemptName(exported.name),
+        );
+        if (candidates.length === 0 || !maySignalSetupContext(ctx, node, candidates)) return;
         const bindings = resolveBindings(ctx);
         if (!bindings) return;
         const isNuxt = Boolean(ctx.project.nuxt);
-        for (const exported of exportedFunctions(node)) {
-          if (isExemptName(exported.name)) continue;
+        for (const exported of candidates) {
           const signal = setupContextSignal(exported.fn, bindings, isNuxt);
           if (!signal) continue;
           const suggestion = `use${exported.name.replace(/^_+/, "").replace(/^./, (c) => c.toUpperCase())}`;
@@ -115,6 +119,53 @@ export const requireUsePrefix = createRule({
     };
   },
 });
+
+// Every signal is a call whose callee is spelled, or imported, as a setup-bound API name, so
+// files without one skip scope analysis. Like the scan, this reads only syntax, but it also
+// enters nested functions, which keeps it a superset.
+function maySignalSetupContext(
+  ctx: RuleContext,
+  program: AnyNode,
+  candidates: ExportedFunction[],
+): boolean {
+  const imported = new Map<string, string[]>();
+  const namespaces = new Set<string>();
+  for (const statement of program.body ?? []) {
+    if (statement.type !== "ImportDeclaration") continue;
+    for (const specifier of statement.specifiers ?? []) {
+      const local = specifier.local?.name;
+      if (specifier.type === "ImportNamespaceSpecifier") namespaces.add(local);
+      else if (specifier.type === "ImportSpecifier")
+        imported.set(local, [
+          ...(imported.get(local) ?? []),
+          specifier.imported?.name ?? specifier.imported?.value,
+        ]);
+    }
+  }
+  const calleeNames = (call: AnyNode): unknown[] => {
+    const callee = unwrapExpression(call.callee);
+    if (callee?.type === "Identifier") return [callee.name, ...(imported.get(callee.name) ?? [])];
+    const object = callee?.type === "MemberExpression" ? unwrapExpression(callee.object) : null;
+    if (object?.type !== "Identifier" || !namespaces.has(object.name)) return [];
+    return [callee.property?.name, callee.property?.value];
+  };
+  const calls = (root: AnyNode, matches: (name: unknown) => boolean) => {
+    let found = false;
+    walkScriptLocal(root, (node) => {
+      if (!found && node.type === "CallExpression") found = calleeNames(node).some(matches);
+    });
+    return found;
+  };
+  if (
+    GET_CURRENT_INSTANCE.test(ctx.file.text) &&
+    calls(program, (name) => name === "getCurrentInstance")
+  )
+    return true;
+  const signalName = (name: unknown) =>
+    typeof name === "string" &&
+    (LIFECYCLE_HOOKS.has(name) || INJECTION_APIS.has(name) || /^use[A-Z0-9]/.test(name));
+  return candidates.some((exported) => calls(exported.fn.body, signalName));
+}
 
 function isExemptName(name: string) {
   return EXEMPT_NAMES.has(name) || EXEMPT_NAME.test(name);
@@ -185,30 +236,20 @@ function localNameNode(fn: AnyNode): AnyNode {
   return parent?.type === "VariableDeclarator" ? parent.id : null;
 }
 
-type Variable = ReturnType<
-  typeof parseForESLint
->["scopeManager"]["scopes"][number]["variables"][number];
-type Bindings = Map<number, Variable | null>;
+type Bindings = Map<number, ScopeVariable | null>;
 
 function offset(node: AnyNode): number {
   return node.range?.[0] ?? node.start;
 }
 
 function resolveBindings(ctx: RuleContext): Bindings | null {
-  try {
-    const { scopeManager } = parseForESLint(ctx.file.text, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: /\.[jt]sx$/.test(ctx.file.path) },
-    });
-    const bindings: Bindings = new Map();
-    for (const scope of scopeManager.scopes)
-      for (const reference of scope.references)
-        bindings.set(offset(reference.identifier), reference.resolved);
-    return bindings;
-  } catch {
-    return null;
-  }
+  const scope = fileScriptScope(ctx);
+  if (!scope) return null;
+  const bindings: Bindings = new Map();
+  for (const { references } of scope.scopeManager.scopes)
+    for (const reference of references)
+      bindings.set(offset(reference.identifier), reference.resolved);
+  return bindings;
 }
 
 interface ApiIdentity {

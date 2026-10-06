@@ -1,7 +1,8 @@
-import { parseForESLint } from "@typescript-eslint/parser";
 import type { RuleContext } from "../../../../core/index.js";
-import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
-import { AnyNode, createRule, report } from "./shared.js";
+import { fileScriptScope, scriptMayName } from "./script-scope.js";
+import { AnyNode, createRule, namePattern, report } from "./shared.js";
+
+const WATCH_EFFECT_NAMES = namePattern(["watchEffect"]);
 
 export const noAsyncWatchEffectAfterAwaitRead = createRule({
   meta: {
@@ -14,6 +15,7 @@ export const noAsyncWatchEffectAfterAwaitRead = createRule({
     requires: { script: true, vue: true },
   },
   create(ctx) {
+    if (!scriptMayName(ctx, WATCH_EFFECT_NAMES)) return;
     let effects: Set<number> | undefined;
     return {
       ScriptNode(node: AnyNode) {
@@ -34,20 +36,10 @@ export const noAsyncWatchEffectAfterAwaitRead = createRule({
 });
 
 function effectsWithUntrackedReads(ctx: RuleContext): Set<number> {
-  const script = ctx.file.sfc
-    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
-    : { text: ctx.file.text, lang: /\.[jt]sx$/.test(ctx.file.relativePath) ? "tsx" : "ts" };
+  const scope = fileScriptScope(ctx);
+  if (!scope) return new Set();
   try {
-    const { ast, scopeManager, visitorKeys } = parseForESLint(script.text, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: ["jsx", "tsx"].includes(script.lang) },
-    });
-    const references = new Map(
-      scopeManager.scopes.flatMap((scope) =>
-        scope.references.map((reference) => [reference.identifier, reference] as const),
-      ),
-    );
+    const { ast, visitorKeys, references } = scope;
     const vueFunction = (node: AnyNode, names: string[]): boolean => {
       const namespace = node?.type === "MemberExpression";
       const name = namespace
