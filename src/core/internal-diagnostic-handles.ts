@@ -81,5 +81,20 @@ export const doctorInternalDiagnostics = defineDiagnostics({
       fix: (params: { kind: string; name: string }) =>
         `Give each ${params.kind.toLowerCase()} contributor a unique name instead of registering "${params.name}" twice.`,
     },
+    DOC0027: {
+      why: (params: { code: string; owner: string }) =>
+        `${params.owner} declares Diagnostic Code "${params.code}", which is not an uppercase prefix followed by four digits.`,
+      fix: 'Use a package-owned uppercase Diagnostic Code Prefix followed by four digits, such as "ACME0001".',
+    },
+    DOC0028: {
+      why: (params: { code: string; owner: string; prefix: string }) =>
+        `${params.owner} uses Diagnostic Code "${params.code}" with the "${params.prefix}" prefix reserved for built-in Doctor Rule Packs.`,
+      fix: "Pick a Diagnostic Code Prefix owned by your package, such as an uppercase abbreviation of the package name, and declare its codes with defineDoctorDiagnostics.",
+    },
+    DOC0029: {
+      why: (params: { entry: string; reason: string }) =>
+        `Doctor could not load the Doctor Extension entry "${params.entry}" registered by the host: ${params.reason}`,
+      fix: "Make the entry module's default export a Doctor Extension, rebuild the package that registers it, and regenerate host inventory (for Nuxt, run nuxt prepare) before retrying the Doctor Run.",
+    },
   },
 });
