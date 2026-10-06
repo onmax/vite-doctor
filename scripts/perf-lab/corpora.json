@@ -1,0 +1,30 @@
+[
+  {
+    "name": "small",
+    "description": "Vite + Vue starter",
+    "repo": "https://github.com/antfu-collective/vitesse-lite",
+    "sha": "0b352977755e1f7f6399698e308777760409ca71",
+    "changeFile": "src/main.ts"
+  },
+  {
+    "name": "tailwind",
+    "description": "Nuxt UI + Tailwind app, activates the shadcn Rule Pack",
+    "repo": "https://github.com/nuxt-ui-templates/saas",
+    "sha": "66ee9866047cbe2050a08756d9e98316a3ed131e",
+    "changeFile": "app/utils/links.ts"
+  },
+  {
+    "name": "medium",
+    "description": "Nuxt app (npmx.dev)",
+    "repo": "https://github.com/npmx-dev/npmx.dev",
+    "sha": "9900bc745273e94482e0436f5d446f1ba17bbd90",
+    "changeFile": "app/composables/atproto/useAtproto.ts"
+  },
+  {
+    "name": "large",
+    "description": "Vite/Nitro/Vue monorepo (vitehub)",
+    "repo": "https://github.com/vite-hub/vitehub",
+    "sha": "27f0acfab5a9ddfeee46d2bf4dba9bd0ca959e9f",
+    "changeFile": "packages/kv/src/index.ts"
+  }
+]

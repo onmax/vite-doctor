@@ -654,6 +654,7 @@ export interface DoctorRunResult {
   };
   timings?: Record<string, number>;
   phases?: Record<string, number>;
+  ruleTimings?: Array<{ rule: string; ms: number; files: number }>;
   graph?: {
     files: number;
     importEdges: number;
