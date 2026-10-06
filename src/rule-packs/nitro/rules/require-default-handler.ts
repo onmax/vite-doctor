@@ -28,8 +28,7 @@ export const requireDefaultHandler = createRule({
     const route = nitroRouteFile(ctx.project, ctx.file.path);
     if (!route) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         const { defaultExport, defaultLocal, runtimeExports } = moduleExports(node);
         if (!defaultExport) {
           if (hasCommonJsDefault(node)) return;

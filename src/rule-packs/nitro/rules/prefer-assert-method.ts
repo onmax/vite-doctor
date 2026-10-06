@@ -21,8 +21,8 @@ export const preferAssertMethod = createRule({
     if (isNitroRouteFile(ctx)) return;
     const methodReferences = getMethodReferences(ctx.file.text, ctx.file.relativePath);
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "IfStatement" || !isUnconditionalGuard(node)) return;
+      IfStatement(node: AnyNode) {
+        if (!isUnconditionalGuard(node)) return;
         const check = singleMethodCheck(node.test, ctx.file.text, node);
         if (
           !check?.isNegative ||

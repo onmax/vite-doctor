@@ -30,8 +30,8 @@ export const noHttpErrorMasking = createRule({
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "TryStatement" || !node.handler) return;
+      TryStatement(node: AnyNode) {
+        if (!node.handler) return;
         let enclosing = node;
         while (enclosing.__doctorParent && !isFunction(enclosing.__doctorParent))
           enclosing = enclosing.__doctorParent;

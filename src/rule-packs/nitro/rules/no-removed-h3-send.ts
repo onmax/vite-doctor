@@ -37,8 +37,7 @@ export const noRemovedH3Send = createRule({
           : "Throw an HTTPError from the handler.",
       );
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "MemberExpression") return;
+      MemberExpression(node: AnyNode) {
         const imported = (namespaceReads ??= removedNamespaceReads(ctx)).get(node.start);
         if (imported) reportRemoved(node, imported);
       },

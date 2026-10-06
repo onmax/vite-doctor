@@ -30,8 +30,7 @@ export const storeNameMatchesId = createRule({
   create(ctx) {
     if (!ctx.file.text.includes("defineStore")) return;
     return {
-      ScriptNode(node: any) {
-        if (node.type !== "Program") return;
+      Program(node: any) {
         for (const definition of findStoreDefinitions(node, ctx.file.text)) {
           const binding = definition.binding;
           if (!binding || isConventionalStoreName(binding.name, definition.id)) continue;

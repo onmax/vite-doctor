@@ -19,28 +19,25 @@ export const noV2Imports = createRule({
     },
   },
   create(ctx) {
+    const visit = (node: AnyNode) => {
+      const source = node.source?.value;
+      if (typeof source !== "string") return;
+      const replacement = v3Replacement(source, node);
+      if (!replacement) return;
+      report(
+        ctx,
+        node.source ?? node,
+        "nitro/migration/no-v2-imports",
+        "error",
+        "migration",
+        `${source} is not a supported Nitro 3 public import.`,
+        replacement,
+      );
+    };
     return {
-      ScriptNode(node: AnyNode) {
-        if (
-          !["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration"].includes(
-            node.type,
-          )
-        )
-          return;
-        const source = node.source?.value;
-        if (typeof source !== "string") return;
-        const replacement = v3Replacement(source, node);
-        if (!replacement) return;
-        report(
-          ctx,
-          node.source ?? node,
-          "nitro/migration/no-v2-imports",
-          "error",
-          "migration",
-          `${source} is not a supported Nitro 3 public import.`,
-          replacement,
-        );
-      },
+      ImportDeclaration: visit,
+      ExportNamedDeclaration: visit,
+      ExportAllDeclaration: visit,
     };
   },
 });

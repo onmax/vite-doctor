@@ -37,7 +37,7 @@ export function createShadcnRule(options: {
     },
     async create(ctx: RuleContext) {
       if (ctx.file.path.endsWith(".vue") || ctx.file.scriptAst?.type !== "Program") return;
-      // Linting in create() instead of a ScriptNode visitor avoids a full Doctor AST walk per file.
+      // Linting in create() instead of node visitors avoids a full Doctor AST walk per file.
       const messages = await lintShadcnRule(ctx, ruleName(options.id));
       for (const message of messages) {
         const code = codeForRuleId(diagnosticCodesByRuleId, options.id);

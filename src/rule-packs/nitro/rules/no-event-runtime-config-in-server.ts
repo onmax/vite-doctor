@@ -12,6 +12,7 @@ export const noEventRuntimeConfigInServer = createRule({
     fixable: "suggestion",
     docsUrl: "https://nitro.build/docs/migration",
     requires: { script: true, nitro: true },
+    prefilter: { calls: ["useRuntimeConfig"] },
     applicability: {
       runtimes: { nitro: ">=3.0.0-0" },
       includePrerelease: true,
@@ -20,7 +21,7 @@ export const noEventRuntimeConfigInServer = createRule({
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useRuntimeConfig") || !node.arguments?.length) return;
         report(
           ctx,
