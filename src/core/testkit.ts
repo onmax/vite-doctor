@@ -100,14 +100,20 @@ export function createProjectFixture(options: CreateProjectFixtureOptions = {}):
   let queue: Promise<unknown> = Promise.resolve();
   const prepare = () =>
     (setup ??= (async () => {
-      const root = await createFixtureRoot(options);
-      writeFixtureFiles(root, options.files ?? {});
-      const project = await detectProject(
-        root,
-        options.framework ?? "vue",
-        options.runtimeTarget ?? fixtureRuntimeTarget(options),
-      );
-      return { root, project };
+      let root: string | undefined;
+      try {
+        root = await createFixtureRoot(options);
+        writeFixtureFiles(root, options.files ?? {});
+        const project = await detectProject(
+          root,
+          options.framework ?? "vue",
+          options.runtimeTarget ?? fixtureRuntimeTarget(options),
+        );
+        return { root, project };
+      } catch (error) {
+        if (root) await rm(root, { recursive: true, force: true });
+        throw error;
+      }
     })());
   return {
     run(runOptions) {
@@ -122,8 +128,9 @@ export function createProjectFixture(options: CreateProjectFixtureOptions = {}):
             throw new Error(`Run file ${file} replaces a project fixture file.`);
           }
         }
-        const created = writeFixtureFiles(root, runOptions.files ?? {}, runOptions.config);
+        let created: string[] = [];
         try {
+          created = writeFixtureFiles(root, runOptions.files ?? {}, runOptions.config);
           return await runFixtureDoctor(
             root,
             {
@@ -156,21 +163,26 @@ async function createFixtureRoot(
   options: Pick<ProjectFixtureOptions, "framework" | "dependencies">,
 ): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "vite-doctor-fixture-"));
-  writeFileSync(
-    join(root, "package.json"),
-    JSON.stringify({
-      type: "module",
-      dependencies:
-        options.framework === "nuxt"
-          ? { vue: "^3.5.0", nuxt: "^4.0.0", ...options.dependencies }
-          : options.framework === "vite"
-            ? { vite: "^8.0.0", ...options.dependencies }
-            : options.framework === "nitro"
-              ? { nitropack: "^2.0.0", ...options.dependencies }
-              : { vue: "^3.5.0", ...options.dependencies },
-    }),
-  );
-  return root;
+  try {
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        type: "module",
+        dependencies:
+          options.framework === "nuxt"
+            ? { vue: "^3.5.0", nuxt: "^4.0.0", ...options.dependencies }
+            : options.framework === "vite"
+              ? { vite: "^8.0.0", ...options.dependencies }
+              : options.framework === "nitro"
+                ? { nitropack: "^2.0.0", ...options.dependencies }
+                : { vue: "^3.5.0", ...options.dependencies },
+      }),
+    );
+    return root;
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /** Returns the paths it created, outermost first, so a run can remove exactly its own files. */
