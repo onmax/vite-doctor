@@ -24,8 +24,7 @@ export const moduleRequireMeta = createRule({
   create(ctx) {
     if (!packageModuleEntry(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         const found = findDefaultNuxtModuleDefinition(node);
         if (!found) return;
         const definition = unwrapExpression(found.definition);

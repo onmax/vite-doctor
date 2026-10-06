@@ -19,8 +19,7 @@ export const noIgnoredCompatibilityConfig = createRule({
   create(ctx) {
     if (!/(^|\/)nuxt\.config\.[cm]?[jt]s$/.test(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Property") return;
+      Property(node: AnyNode) {
         const key = propertyName(node);
         const parent = containingObjectProperty(node);
         if (!parent || !isExportedNuxtConfigObject(parent.__doctorParent)) return;

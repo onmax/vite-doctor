@@ -16,11 +16,12 @@ export const requireStableAsyncDataKey = createRule({
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-async-data#params",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["useAsyncData", "useFetch"] },
   },
   create(ctx) {
     const evidence = createNuxtRuntimeEvidence(ctx);
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useAsyncData") && !ctx.helpers.isCall(node, "useFetch"))
           return;
         const first = node.arguments?.[0];

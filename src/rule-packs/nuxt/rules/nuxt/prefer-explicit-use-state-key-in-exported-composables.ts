@@ -10,12 +10,13 @@ export const preferExplicitUseStateKeyInExportedComposables = createRule({
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-state#usage",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["useState"] },
   },
   create(ctx) {
     if (!/(^|\/)(composables|utils|shared)\//.test(ctx.file.relativePath)) return;
     let constantKeys: Set<number> | undefined;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useState")) return;
         if (typeof node.arguments?.[0]?.value === "string") return;
         if (

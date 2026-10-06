@@ -17,6 +17,7 @@ export const requireUAppRoot = createRule({
     fixable: "suggestion",
     docsUrl: "https://ui.nuxt.com/docs/components/app#usage",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["useToast", "useOverlay"] },
   },
   create(ctx) {
     const usesAppService = /\b(useToast|useOverlay)\s*\(/.test(ctx.file.text);
@@ -28,7 +29,7 @@ export const requireUAppRoot = createRule({
       return;
     let reported = false;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (
           reported ||
           (!ctx.helpers.isCall(node, "useToast") && !ctx.helpers.isCall(node, "useOverlay"))

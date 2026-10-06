@@ -60,8 +60,7 @@ export const moduleResolveRuntimePaths = createRule({
     const definition = moduleDefinitionScope(ctx);
     if (!definition) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         const { helpers, createResolverNames } = collectKitImports(node);
         if (!helpers.size) return;
         const parents = new Map<AnyNode, AnyNode>();

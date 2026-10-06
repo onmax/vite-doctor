@@ -1,4 +1,4 @@
-import { AnyNode, createRule, isExplicitlyScannedByNuxt, isGeneratedFile } from "./shared.js";
+import { createRule, isExplicitlyScannedByNuxt, isGeneratedFile } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 export const noNestedSharedAutoimportAssumption = createRule({
@@ -35,8 +35,8 @@ export const noNestedSharedAutoimportAssumption = createRule({
       );
     };
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type === "Program") reportOnce();
+      Program() {
+        reportOnce();
       },
     };
   },

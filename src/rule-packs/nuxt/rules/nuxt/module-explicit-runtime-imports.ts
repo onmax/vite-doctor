@@ -21,8 +21,7 @@ export const moduleExplicitRuntimeImports = createRule({
   create(ctx) {
     if (!packageModuleRuntime(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         const script = ctx.file.sfc
           ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
           : { text: ctx.file.text, lang: /\.[jt]sx$/.test(ctx.file.relativePath) ? "tsx" : "ts" };

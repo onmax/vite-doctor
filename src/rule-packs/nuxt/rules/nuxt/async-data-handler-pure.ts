@@ -23,7 +23,7 @@ export const asyncDataHandlerPure = createRule({
   create(ctx) {
     if (!fileMayCallAsyncData(ctx)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);
         if (!call?.handler) return;
         const options = asyncDataRuleOptions(ctx);

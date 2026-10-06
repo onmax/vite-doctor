@@ -10,10 +10,11 @@ export const noGlobalRefreshWithoutJustification = createRule({
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/utils/refresh-nuxt-data#refresh-all-data",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["refreshNuxtData"] },
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "refreshNuxtData")) return;
         if ((node.arguments?.length ?? 0) > 0) return;
         if (hasGlobalRefreshIntentionalMarker(ctx, node)) return;

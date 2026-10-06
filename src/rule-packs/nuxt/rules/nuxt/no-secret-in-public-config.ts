@@ -13,8 +13,7 @@ export const noSecretInPublicConfig = createRule({
   create(ctx) {
     if (!/nuxt\.config\.[cm]?[jt]s$/.test(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Property") return;
+      Property(node: AnyNode) {
         const key = staticKey(node);
         if (typeof key === "string" && /(secret|token|password|private|key)$/i.test(key)) {
           if (isInPublicRuntimeConfig(node)) {

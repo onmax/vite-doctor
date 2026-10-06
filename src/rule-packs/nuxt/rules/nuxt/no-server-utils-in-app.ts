@@ -100,11 +100,15 @@ function serverImportVisitor(
   const layer = layerFor(file, layers, ctx.project.root);
   const side = clientSide(file, layer);
   if (!side) return;
+  const visit = (node: AnyNode) => {
+    const found = serverImport(ctx, node, file, layer, layers);
+    if (found && found.typeOnly === typeOnly) onImport(found, side);
+  };
   return {
-    ScriptNode(node: AnyNode) {
-      const found = serverImport(ctx, node, file, layer, layers);
-      if (found && found.typeOnly === typeOnly) onImport(found, side);
-    },
+    ImportDeclaration: visit,
+    ExportAllDeclaration: visit,
+    ExportNamedDeclaration: visit,
+    ImportExpression: visit,
   };
 }
 

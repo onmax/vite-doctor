@@ -12,6 +12,19 @@ export const noVueOrNitroContextInShared = createRule({
   },
   create(ctx) {
     if (!ctx.file.relativePath.startsWith("shared/")) return;
+    const visitCall = (node: AnyNode) => {
+      const name = ctx.helpers.getCalleeName(node);
+      if (!name || !NUXT_AUTO_IMPORTS.has(name)) return;
+      report(
+        ctx,
+        node,
+        "nuxt/shared/no-vue-or-nitro-context-in-shared",
+        "error",
+        "architecture",
+        "shared/ code should not call Nuxt app composables or Nitro context helpers.",
+        "Move context-aware logic into app/ or server/ and keep shared/ utilities pure.",
+      );
+    };
     return {
       ImportDeclaration(node: AnyNode) {
         const source = String(node.source?.value ?? "");
@@ -30,19 +43,8 @@ export const noVueOrNitroContextInShared = createRule({
           "Move Vue composables to app/composables/, Nitro utilities to server/utils/, or keep shared/ pure.",
         );
       },
-      ScriptNode(node: AnyNode) {
-        const name = ctx.helpers.getCalleeName(node);
-        if (!name || !NUXT_AUTO_IMPORTS.has(name)) return;
-        report(
-          ctx,
-          node,
-          "nuxt/shared/no-vue-or-nitro-context-in-shared",
-          "error",
-          "architecture",
-          "shared/ code should not call Nuxt app composables or Nitro context helpers.",
-          "Move context-aware logic into app/ or server/ and keep shared/ utilities pure.",
-        );
-      },
+      CallExpression: visitCall,
+      NewExpression: visitCall,
     };
   },
 });

@@ -9,11 +9,12 @@ export const preferCreateUseFetch = createRule({
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/create-use-fetch#usage",
     requires: { script: true, nuxt: true },
+    prefilter: { calls: ["useFetch", "useAsyncData"] },
   },
   create(ctx) {
     if (!/(^|\/)(composables|utils)\//.test(ctx.file.relativePath)) return;
     return {
-      ScriptNode(node: AnyNode) {
+      CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useFetch") && !ctx.helpers.isCall(node, "useAsyncData"))
           return;
         if (!isInsideExportedFunction(ctx.file.text, node.start)) return;

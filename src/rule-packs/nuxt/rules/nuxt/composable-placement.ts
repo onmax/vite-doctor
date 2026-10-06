@@ -27,8 +27,7 @@ export const noComposableInUtils = createRule({
   create(ctx) {
     if (!isAnalyzableScript(ctx) || nuxtSourceDirectory(ctx) !== "utils") return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         const imports = importSources(node);
         for (const exported of exportedFunctions(node)) {
           const signal = setupContextSignal(exported.fn, imports, node);
@@ -67,8 +66,7 @@ export const noStatelessComposable = createRule({
   create(ctx) {
     if (!isAnalyzableScript(ctx) || nuxtSourceDirectory(ctx) !== "composables") return;
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         const scope = createModuleScope(ctx, node);
         for (const exported of exportedFunctions(node)) {
           if (exported.isDefault || !/^use[A-Z0-9]/.test(exported.name)) continue;

@@ -13,23 +13,22 @@ export const noBrowserSideEffectsInSetup = createRule({
   },
   create(ctx) {
     if (!isNuxtRuntimeFile(ctx) || ctx.file.relativePath.includes(".client.")) return;
-    return {
-      ScriptNode(node: AnyNode) {
-        const name = ctx.helpers.getCalleeName(node);
-        if (name && BROWSER_SIDE_EFFECTS.has(name)) {
-          if (ctx.helpers.isTypeOnlyContext(node)) return;
-          if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
-          report(
-            ctx,
-            node,
-            "nuxt/hydration/no-browser-side-effects-in-setup",
-            "error",
-            "hydration",
-            `${name} is a browser-only side effect in universal code. Move it to onMounted() or a client-only plugin.`,
-            `Move ${name} into onMounted(), a client-only plugin, or a client-only execution branch.`,
-          );
-        }
-      },
+    const visit = (node: AnyNode) => {
+      const name = ctx.helpers.getCalleeName(node);
+      if (name && BROWSER_SIDE_EFFECTS.has(name)) {
+        if (ctx.helpers.isTypeOnlyContext(node)) return;
+        if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
+        report(
+          ctx,
+          node,
+          "nuxt/hydration/no-browser-side-effects-in-setup",
+          "error",
+          "hydration",
+          `${name} is a browser-only side effect in universal code. Move it to onMounted() or a client-only plugin.`,
+          `Move ${name} into onMounted(), a client-only plugin, or a client-only execution branch.`,
+        );
+      }
     };
+    return { CallExpression: visit, NewExpression: visit };
   },
 });

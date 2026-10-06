@@ -27,24 +27,23 @@ export const noTimeDependentRenderWithoutNuxtTimeOrClientOnly = createRule({
       /<\s*(NuxtTime|ClientOnly)\b/.test(ctx.file.text)
     )
       return;
-    return {
-      ScriptNode(node: AnyNode) {
-        const name = ctx.helpers.getCalleeName(node);
-        if (name !== "Date.now" && name !== "Math.random" && !isNewDate(node)) return;
-        if (isInsideUseStateInitializer(ctx, node)) return;
-        if (ctx.helpers.isTypeOnlyContext(node)) return;
-        if (!isLikelyRenderedTimeExpression(ctx, node)) return;
-        report(
-          ctx,
-          node,
-          "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
-          "warn",
-          "hydration",
-          "Time-dependent values rendered during SSR can differ by the time the client hydrates.",
-          "Use <NuxtTime>, useState() with a stable value, or <ClientOnly> for client-only time output.",
-        );
-      },
+    const visit = (node: AnyNode) => {
+      const name = ctx.helpers.getCalleeName(node);
+      if (name !== "Date.now" && name !== "Math.random" && !isNewDate(node)) return;
+      if (isInsideUseStateInitializer(ctx, node)) return;
+      if (ctx.helpers.isTypeOnlyContext(node)) return;
+      if (!isLikelyRenderedTimeExpression(ctx, node)) return;
+      report(
+        ctx,
+        node,
+        "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly",
+        "warn",
+        "hydration",
+        "Time-dependent values rendered during SSR can differ by the time the client hydrates.",
+        "Use <NuxtTime>, useState() with a stable value, or <ClientOnly> for client-only time output.",
+      );
     };
+    return { CallExpression: visit, NewExpression: visit };
   },
 });
 

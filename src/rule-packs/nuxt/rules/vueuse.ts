@@ -44,27 +44,26 @@ export const preferUseWindowSize = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    return {
-      ScriptNode(node: AnyNode) {
-        const name = ctx.helpers.getNodeName(node);
-        if (name !== "window.innerWidth" && name !== "window.innerHeight") return;
-        if (ctx.helpers.isTypeOnlyContext(node)) return;
-        if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0072({
-            why: "Raw window size reads are not reactive and are browser-only.",
-            fix: "Use VueUse useWindowSize() when @vueuse/core is installed.",
-          }),
-          {
-            ruleId: "vueuse/prefer-usewindow-size",
-            severity: "info",
-            category: "hydration",
-          },
-        );
-      },
+    const visit = (node: AnyNode) => {
+      const name = ctx.helpers.getNodeName(node);
+      if (name !== "window.innerWidth" && name !== "window.innerHeight") return;
+      if (ctx.helpers.isTypeOnlyContext(node)) return;
+      if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
+      ctx.helpers.report(
+        ctx,
+        node,
+        diagnostics.NUXT0072({
+          why: "Raw window size reads are not reactive and are browser-only.",
+          fix: "Use VueUse useWindowSize() when @vueuse/core is installed.",
+        }),
+        {
+          ruleId: "vueuse/prefer-usewindow-size",
+          severity: "info",
+          category: "hydration",
+        },
+      );
     };
+    return { MemberExpression: visit, Literal: visit };
   },
 });
 
@@ -79,25 +78,24 @@ export const preferUseBreakpoints = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    return {
-      ScriptNode(node: AnyNode) {
-        const name = ctx.helpers.getNodeName(node);
-        if (name !== "window.matchMedia" && name !== "matchMedia") return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0069({
-            why: "Raw media query reads are browser-only and not semantic app state.",
-            fix: "Use VueUse useBreakpoints() for responsive state.",
-          }),
-          {
-            ruleId: "vueuse/prefer-usebreakpoints",
-            severity: "info",
-            category: "hydration",
-          },
-        );
-      },
+    const visit = (node: AnyNode) => {
+      const name = ctx.helpers.getNodeName(node);
+      if (name !== "window.matchMedia" && name !== "matchMedia") return;
+      ctx.helpers.report(
+        ctx,
+        node,
+        diagnostics.NUXT0069({
+          why: "Raw media query reads are browser-only and not semantic app state.",
+          fix: "Use VueUse useBreakpoints() for responsive state.",
+        }),
+        {
+          ruleId: "vueuse/prefer-usebreakpoints",
+          severity: "info",
+          category: "hydration",
+        },
+      );
     };
+    return { Identifier: visit, Literal: visit, MemberExpression: visit };
   },
 });
 
@@ -112,24 +110,23 @@ export const preferUseClipboard = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    return {
-      ScriptNode(node: AnyNode) {
-        if (ctx.helpers.getCalleeName(node) !== "navigator.clipboard.writeText") return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0070({
-            why: "Raw clipboard access is easier to model through a composable.",
-            fix: "Use VueUse useClipboard() in event-driven client code.",
-          }),
-          {
-            ruleId: "vueuse/prefer-useclipboard",
-            severity: "info",
-            category: "browser-api",
-          },
-        );
-      },
+    const visit = (node: AnyNode) => {
+      if (ctx.helpers.getCalleeName(node) !== "navigator.clipboard.writeText") return;
+      ctx.helpers.report(
+        ctx,
+        node,
+        diagnostics.NUXT0070({
+          why: "Raw clipboard access is easier to model through a composable.",
+          fix: "Use VueUse useClipboard() in event-driven client code.",
+        }),
+        {
+          ruleId: "vueuse/prefer-useclipboard",
+          severity: "info",
+          category: "browser-api",
+        },
+      );
     };
+    return { CallExpression: visit, NewExpression: visit };
   },
 });
 
@@ -144,33 +141,38 @@ export const preferUseEventListener = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
+    const visit = (node: AnyNode) => {
+      if (!shouldCheckVueUsePreference(ctx, node)) return;
+      const callee = getCalleeName(node);
+      const name = getNodeName(node);
+      if (
+        callee !== "addEventListener" &&
+        callee !== "window.addEventListener" &&
+        callee !== "document.addEventListener" &&
+        !isEventListenerCalleeNode(name, node)
+      )
+        return;
+      if (isWithinVueUseComposable(node)) return;
+      ctx.helpers.report(
+        ctx,
+        node,
+        diagnostics.NUXT0071({
+          why: `${callee || name} requires manual lifecycle cleanup.`,
+          fix: "Use VueUse useEventListener() to bind and clean up DOM events.",
+        }),
+        {
+          ruleId: "vueuse/prefer-useevent-listener",
+          severity: "info",
+          category: "browser-api",
+        },
+      );
+    };
     return {
-      ScriptNode(node: AnyNode) {
-        if (!shouldCheckVueUsePreference(ctx, node)) return;
-        const callee = getCalleeName(node);
-        const name = getNodeName(node);
-        if (
-          callee !== "addEventListener" &&
-          callee !== "window.addEventListener" &&
-          callee !== "document.addEventListener" &&
-          !isEventListenerCalleeNode(name, node)
-        )
-          return;
-        if (isWithinVueUseComposable(node)) return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0071({
-            why: `${callee || name} requires manual lifecycle cleanup.`,
-            fix: "Use VueUse useEventListener() to bind and clean up DOM events.",
-          }),
-          {
-            ruleId: "vueuse/prefer-useevent-listener",
-            severity: "info",
-            category: "browser-api",
-          },
-        );
-      },
+      Identifier: visit,
+      Literal: visit,
+      MemberExpression: visit,
+      CallExpression: visit,
+      NewExpression: visit,
     };
   },
 });
@@ -187,9 +189,8 @@ export const preferUseObservers = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
+      NewExpression(node: AnyNode) {
         if (!shouldCheckVueUsePreference(ctx, node)) return;
-        if (node.type !== "NewExpression") return;
         const observer = ctx.helpers.getNodeName(node.callee);
         const replacement = observer ? VUEUSE_OBSERVER_REPLACEMENTS[observer] : null;
         if (!replacement || isWithinVueUseComposable(node)) return;
@@ -222,30 +223,29 @@ export const preferUseTimers = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    return {
-      ScriptNode(node: AnyNode) {
-        if (!shouldCheckVueUsePreference(ctx, node)) return;
-        const callee = ctx.helpers.getCalleeName(node);
-        const replacement =
-          callee && Object.hasOwn(VUEUSE_TIMER_REPLACEMENTS, callee)
-            ? VUEUSE_TIMER_REPLACEMENTS[callee as keyof typeof VUEUSE_TIMER_REPLACEMENTS]
-            : null;
-        if (!replacement || isWithinVueUseComposable(node)) return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0068({
-            why: `${callee} is easier to clean up through a composable.`,
-            fix: `Use VueUse ${replacement}() for lifecycle-aware timing.`,
-          }),
-          {
-            ruleId: "vueuse/prefer-use-timers",
-            severity: "info",
-            category: "lifecycle",
-          },
-        );
-      },
+    const visit = (node: AnyNode) => {
+      if (!shouldCheckVueUsePreference(ctx, node)) return;
+      const callee = ctx.helpers.getCalleeName(node);
+      const replacement =
+        callee && Object.hasOwn(VUEUSE_TIMER_REPLACEMENTS, callee)
+          ? VUEUSE_TIMER_REPLACEMENTS[callee as keyof typeof VUEUSE_TIMER_REPLACEMENTS]
+          : null;
+      if (!replacement || isWithinVueUseComposable(node)) return;
+      ctx.helpers.report(
+        ctx,
+        node,
+        diagnostics.NUXT0068({
+          why: `${callee} is easier to clean up through a composable.`,
+          fix: `Use VueUse ${replacement}() for lifecycle-aware timing.`,
+        }),
+        {
+          ruleId: "vueuse/prefer-use-timers",
+          severity: "info",
+          category: "lifecycle",
+        },
+      );
     };
+    return { CallExpression: visit, NewExpression: visit };
   },
 });
 
@@ -260,28 +260,27 @@ export const preferUseStorage = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    return {
-      ScriptNode(node: AnyNode) {
-        if (!shouldCheckVueUsePreference(ctx, node)) return;
-        const name = ctx.helpers.getNodeName(node);
-        if (name !== "localStorage" && name !== "sessionStorage") return;
-        if (ctx.helpers.isTypeofOperand?.(node) || isWithinVueUseComposable(node)) return;
-        const replacement = name === "sessionStorage" ? "useSessionStorage" : "useStorage";
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0067({
-            why: `${name} is browser-only and imperative.`,
-            fix: `Use VueUse ${replacement}() for reactive client storage state.`,
-          }),
-          {
-            ruleId: "vueuse/prefer-use-storage",
-            severity: "info",
-            category: "browser-api",
-          },
-        );
-      },
+    const visit = (node: AnyNode) => {
+      if (!shouldCheckVueUsePreference(ctx, node)) return;
+      const name = ctx.helpers.getNodeName(node);
+      if (name !== "localStorage" && name !== "sessionStorage") return;
+      if (ctx.helpers.isTypeofOperand?.(node) || isWithinVueUseComposable(node)) return;
+      const replacement = name === "sessionStorage" ? "useSessionStorage" : "useStorage";
+      ctx.helpers.report(
+        ctx,
+        node,
+        diagnostics.NUXT0067({
+          why: `${name} is browser-only and imperative.`,
+          fix: `Use VueUse ${replacement}() for reactive client storage state.`,
+        }),
+        {
+          ruleId: "vueuse/prefer-use-storage",
+          severity: "info",
+          category: "browser-api",
+        },
+      );
     };
+    return { Identifier: visit, Literal: visit, MemberExpression: visit };
   },
 });
 
@@ -296,46 +295,45 @@ export const preferUseScrollAndElement = createRule({
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
-    return {
-      ScriptNode(node: AnyNode) {
-        if (!shouldCheckVueUsePreference(ctx, node)) return;
-        if (isWithinVueUseComposable(node)) return;
+    const visit = (node: AnyNode) => {
+      if (!shouldCheckVueUsePreference(ctx, node)) return;
+      if (isWithinVueUseComposable(node)) return;
 
-        const name = ctx.helpers.getNodeName(node);
-        const callee = ctx.helpers.getCalleeName(node);
-        let replacement: string | null = null;
+      const name = ctx.helpers.getNodeName(node);
+      const callee = ctx.helpers.getCalleeName(node);
+      let replacement: string | null = null;
 
-        if (name === "window.scrollX" || name === "window.scrollY") replacement = "useScroll";
-        if (
-          callee === "window.scrollTo" ||
-          callee === "window.scrollBy" ||
-          callee === "scrollTo" ||
-          callee === "scrollBy"
-        )
-          replacement = "useScroll";
-        if (
-          callee === "getBoundingClientRect" ||
-          callee === "Element.getBoundingClientRect" ||
-          callee?.endsWith(".getBoundingClientRect")
-        )
-          replacement = "useElementBounding";
-        if (!replacement) return;
+      if (name === "window.scrollX" || name === "window.scrollY") replacement = "useScroll";
+      if (
+        callee === "window.scrollTo" ||
+        callee === "window.scrollBy" ||
+        callee === "scrollTo" ||
+        callee === "scrollBy"
+      )
+        replacement = "useScroll";
+      if (
+        callee === "getBoundingClientRect" ||
+        callee === "Element.getBoundingClientRect" ||
+        callee?.endsWith(".getBoundingClientRect")
+      )
+        replacement = "useElementBounding";
+      if (!replacement) return;
 
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0066({
-            why: `${callee || name} is browser-only and imperative.`,
-            fix: `Use VueUse ${replacement}() for reactive browser state.`,
-          }),
-          {
-            ruleId: "vueuse/prefer-use-scroll-and-element",
-            severity: "info",
-            category: "browser-api",
-          },
-        );
-      },
+      ctx.helpers.report(
+        ctx,
+        node,
+        diagnostics.NUXT0066({
+          why: `${callee || name} is browser-only and imperative.`,
+          fix: `Use VueUse ${replacement}() for reactive browser state.`,
+        }),
+        {
+          ruleId: "vueuse/prefer-use-scroll-and-element",
+          severity: "info",
+          category: "browser-api",
+        },
+      );
     };
+    return { MemberExpression: visit, Literal: visit, CallExpression: visit, NewExpression: visit };
   },
 });
 

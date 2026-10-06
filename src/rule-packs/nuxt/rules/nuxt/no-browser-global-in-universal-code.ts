@@ -21,8 +21,8 @@ export const noBrowserGlobalInUniversalCode = createRule({
   create(ctx) {
     const evidence = createNuxtRuntimeEvidence(ctx);
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Identifier" || !BROWSER_GLOBALS.has(node.name)) return;
+      Identifier(node: AnyNode) {
+        if (!BROWSER_GLOBALS.has(node.name)) return;
         if (!evidence.isActionableUniversalBrowserGlobal(node)) return;
         report(
           ctx,
