@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
 
@@ -110,8 +109,6 @@ export function toPosixPath(path: string) {
   return path.replace(/\\/g, "/");
 }
 
-const appSourcesByProject = new WeakMap<object, NuxtAppSource[]>();
-
 function owningNuxtAppSource(ctx: RuleContext, file: string) {
   let owner: NuxtAppSource | undefined;
   for (const source of nuxtAppSources(ctx)) {
@@ -124,8 +121,8 @@ function owningNuxtAppSource(ctx: RuleContext, file: string) {
 // Nuxt roots come from manifest layers or every detected nuxt.config, so nested apps such as
 // docs/ each get their own srcDir instead of treating the whole app root as app code.
 function nuxtAppSources(ctx: RuleContext): NuxtAppSource[] {
-  const key = ctx.project.nuxt ?? ctx.project;
-  const cached = appSourcesByProject.get(key);
+  const key = "nuxt:app-sources";
+  const cached = ctx.cache.get<NuxtAppSource[]>(key);
   if (cached) return cached;
   const nuxt = ctx.project.nuxt;
   const layers = (nuxt?.layers ?? []).map((layer) => ({
@@ -145,7 +142,7 @@ function nuxtAppSources(ctx: RuleContext): NuxtAppSource[] {
       ? resolve(root, layer.srcDir)
       : root === primaryRoot && nuxt?.appDir
         ? resolve(ctx.project.root, nuxt.appDir)
-        : existsSync(join(root, "app"))
+        : ctx.fs.exists(join(root, "app"))
           ? join(root, "app")
           : root;
     return {
@@ -156,7 +153,7 @@ function nuxtAppSources(ctx: RuleContext): NuxtAppSource[] {
       ),
     };
   });
-  appSourcesByProject.set(key, sources);
+  ctx.cache.set(key, sources);
   return sources;
 }
 

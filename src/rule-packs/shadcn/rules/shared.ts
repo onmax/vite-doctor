@@ -4,7 +4,7 @@ import {
   createRule,
   diagnosticForCode,
   type DoctorRule,
-  type RuleCache,
+  type ProjectInfo,
   type RuleContext,
 } from "../../../core/index.js";
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
@@ -113,13 +113,14 @@ function loadShadcnLint(): Promise<ShadcnLint> {
   return shadcnLint;
 }
 
-// The rule cache lives exactly as long as one Doctor Run, so it scopes the shared lint results.
-const runs = new WeakMap<RuleCache, RunLint>();
+// Project Inventory lives exactly as long as one Doctor Run, so it scopes the shared lint results.
+const runs = new WeakMap<ProjectInfo, RunLint>();
 
 async function lintShadcnRule(ctx: RuleContext, name: string): Promise<Linter.LintMessage[]> {
   const lint = await loadShadcnLint();
-  let run = runs.get(ctx.cache);
-  if (!run) runs.set(ctx.cache, (run = { rules: new Map(), files: new Map(), retainedSource: 0 }));
+  let run = runs.get(ctx.project);
+  if (!run)
+    runs.set(ctx.project, (run = { rules: new Map(), files: new Map(), retainedSource: 0 }));
   const config = shadcnRuleConfig(name, ctx.options);
   run.rules.set(config.key, config);
 

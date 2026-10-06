@@ -1,9 +1,9 @@
 import { isBuiltin } from "node:module";
 import { basename } from "node:path";
-import { existsSync, globSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "pathe";
 import { parseSync } from "oxc-parser";
-import type { ProjectInfo, SourceRange } from "../../core/primitives.js";
+import type { RuleContext, RuleFileSystem, SourceRange } from "../../core/primitives.js";
+import { RuleInputs } from "../../core/internal/rule-inputs.js";
 
 export interface PackageManifest {
   name?: string;
@@ -52,7 +52,6 @@ interface ImportEdge {
   resolutionOnly?: boolean;
 }
 
-const runs = new WeakMap<ProjectInfo, PackageArtifacts | null>();
 const scriptExtension = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/;
 const declarationExtension = /\.d\.[cm]?ts$/;
 
@@ -107,10 +106,13 @@ function parsePackageManifest(value: unknown): PackageManifest {
   return value;
 }
 
-export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null {
-  if (runs.has(project)) return runs.get(project)!;
-  const inventory = readPackageArtifacts(project.root);
-  runs.set(project, inventory);
+export function packageArtifacts(ctx: RuleContext): PackageArtifacts | null {
+  const key = "package:artifacts";
+  const cached = ctx.cache.get<PackageArtifacts | null>(key);
+  if (cached !== undefined) return cached;
+  const project = ctx.project;
+  const inventory = readPackageArtifacts(project.root, ctx.fs);
+  ctx.cache.set(key, inventory);
   if (inventory) project.inventory = { ...project.inventory, packageArtifacts: inventory };
   if (inventory?.missing.length) {
     project.evidenceGaps = [
@@ -126,10 +128,13 @@ export function packageArtifacts(project: ProjectInfo): PackageArtifacts | null 
   return inventory;
 }
 
-export function readPackageArtifacts(root: string): PackageArtifacts | null {
-  const active = readPackageArtifactsForMode(root, true);
+export function readPackageArtifacts(
+  root: string,
+  fs: RuleFileSystem = new RuleInputs(root).frame().fs,
+): PackageArtifacts | null {
+  const active = readPackageArtifactsForMode(fs, root, true);
   if (!active) return null;
-  const inactive = readPackageArtifactsForMode(root, false)!;
+  const inactive = readPackageArtifactsForMode(fs, root, false)!;
   const requiredInActive = new Set(
     active.references
       .filter((reference) => reference.required)
@@ -158,18 +163,22 @@ export function readPackageArtifacts(root: string): PackageArtifacts | null {
   };
 }
 
-function readPackageArtifactsForMode(root: string, addons: boolean): PackageArtifacts | null {
-  root = realpathSync(root);
+function readPackageArtifactsForMode(
+  fs: RuleFileSystem,
+  root: string,
+  addons: boolean,
+): PackageArtifacts | null {
+  root = fs.realpath(root) ?? root;
   const manifestPath = resolve(root, "package.json");
-  if (!existsSync(manifestPath)) return null;
-  const manifestText = readFileSync(manifestPath, "utf8");
+  const manifestText = fs.readText(manifestPath);
+  if (manifestText === undefined) return null;
   const manifest = parsePackageManifest(JSON.parse(manifestText));
   if (manifest.private) return null;
   const references: PackageReference[] = [];
   const missing = new Set<string>();
   const visited = new Set<string>();
   const queue: Array<{ path: string; kind: "runtime" | "types"; required: boolean }> = [];
-  const rootPath = realpathSync(root);
+  const rootPath = fs.realpath(root) ?? root;
 
   function inside(path: string) {
     const rel = relative(rootPath, path);
@@ -186,8 +195,8 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
     if (/\.m(?:js|ts)$/.test(path)) return false;
     for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
       const manifestPath = resolve(directory, "package.json");
-      if (existsSync(manifestPath))
-        return JSON.parse(readFileSync(manifestPath, "utf8")).type !== "module";
+      if (fs.exists(manifestPath))
+        return JSON.parse(fs.readText(manifestPath) ?? "").type !== "module";
       if (directory === rootPath) break;
     }
     return true;
@@ -197,8 +206,8 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
     if (/\.c(?:js|ts)$/.test(path)) return true;
     for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
       const manifestPath = resolve(directory, "package.json");
-      if (existsSync(manifestPath))
-        return JSON.parse(readFileSync(manifestPath, "utf8")).type === "commonjs";
+      if (fs.exists(manifestPath))
+        return JSON.parse(fs.readText(manifestPath) ?? "").type === "commonjs";
       if (directory === rootPath) break;
     }
     return false;
@@ -207,13 +216,13 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
   function packageScope(path: string): { directory: string; manifest: PackageManifest } {
     for (let directory = dirname(path); inside(directory); directory = dirname(directory)) {
       const scopedManifest = resolve(directory, "package.json");
-      if (existsSync(scopedManifest))
+      if (fs.exists(scopedManifest))
         return {
           directory,
           manifest:
             directory === rootPath
               ? manifest
-              : parsePackageManifest(JSON.parse(readFileSync(scopedManifest, "utf8"))),
+              : parsePackageManifest(JSON.parse(fs.readText(scopedManifest) ?? "")),
         };
       if (directory === rootPath) break;
     }
@@ -222,14 +231,13 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
 
   function commonjsFile(path: string): string | undefined {
     const suffixes = ["", ".js", ".json", ".node"];
-    const findFile = (paths: string[]) =>
-      paths.find((candidate) => existsSync(candidate) && statSync(candidate).isFile());
+    const findFile = (paths: string[]) => paths.find((candidate) => fs.stat(candidate)?.isFile());
     const file = findFile(suffixes.map((suffix) => path + suffix));
     if (file) return file;
-    if (!existsSync(path) || !statSync(path).isDirectory() || !inside(realpathSync(path))) return;
+    if (!fs.stat(path)?.isDirectory() || !inside(fs.realpath(path) ?? path)) return;
     const manifestPath = resolve(path, "package.json");
-    if (existsSync(manifestPath)) {
-      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (fs.exists(manifestPath)) {
+      const manifest = JSON.parse(fs.readText(manifestPath) ?? "");
       if (isRecord(manifest) && typeof manifest.main === "string" && manifest.main) {
         const main = resolve(path, manifest.main);
         if (!inside(main)) return;
@@ -255,9 +263,9 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
     const path = resolve(from, target);
     if (!inside(path)) return;
     if (target.includes("*")) {
-      const matches = globSync(path.replace("*", "**/*")).filter((match) =>
-        statSync(match).isFile(),
-      );
+      const matches = fs
+        .glob(path.replace("*", "**/*"))
+        .filter((match) => fs.stat(match)?.isFile() === true);
       if (!matches.length) missing.add(relative(root, path));
       for (const match of matches) enqueue(match, kind, required);
       return;
@@ -289,14 +297,12 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
               ].map((ext) => path + ext),
             ]
       : [path];
-    const file = candidates.find(
-      (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
-    );
+    const file = candidates.find((candidate) => fs.stat(candidate)?.isFile());
     if (!file) {
       missing.add(relative(root, path));
       return;
     }
-    if (!inside(realpathSync(file)) || !scriptExtension.test(file)) return;
+    if (!inside(fs.realpath(file) ?? file) || !scriptExtension.test(file)) return;
     const resolvedKind = declarationExtension.test(file) ? "types" : kind;
     queue.push({
       path: file,
@@ -305,7 +311,7 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
     });
     if (resolvedKind === "runtime") {
       const declaration = typeCandidates(file).find(
-        (candidate) => declarationExtension.test(candidate) && existsSync(candidate),
+        (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
       );
       if (adjacentDeclaration && declaration)
         queue.push({ path: declaration, kind: "types", required: false });
@@ -379,7 +385,7 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
       addTargets(exports, true, "require");
     }
   } else if (!manifest.main && !manifest.module) {
-    if (existsSync(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
+    if (fs.exists(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
   }
   if (manifest.main) enqueue(manifest.main, "runtime", true, root, "main", true);
   if (manifest.module) enqueue(manifest.module, "runtime", true, root, true, true);
@@ -435,7 +441,7 @@ function readPackageArtifactsForMode(root: string, addons: boolean): PackageArti
         });
       }
     }
-    const text = readFileSync(current.path, "utf8");
+    const text = fs.readText(current.path) ?? "";
     const parsed = parseModule(current.path, text);
     const commonjs =
       commonjsModule(current.path) &&

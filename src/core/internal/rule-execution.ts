@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { resolve } from "pathe";
 import type {
   Diagnostic,
@@ -157,6 +156,7 @@ function createRuleContext(
   sink?: Diagnostic[],
 ): MutableRuleContext {
   let file = initialFile;
+  const frame = session.ruleInputs.frame();
   const currentRuleConfig = resolvedConfigFor(session, rule.meta.id);
   const currentSeverity = currentRuleConfig.severity ?? rule.meta.severity;
   return {
@@ -212,17 +212,8 @@ function createRuleContext(
       };
       (sink ?? session.diagnostics).push(next);
     },
-    getFileText(target) {
-      return readFileSync(resolve(session.root, target), "utf8");
-    },
-    getJson<T = unknown>(target: string): T | null {
-      try {
-        return JSON.parse(readFileSync(resolve(session.root, target), "utf8")) as T;
-      } catch {
-        return null;
-      }
-    },
-    cache: session.cache,
+    fs: frame.fs,
+    cache: frame.cache,
     helpers: session.helpers,
     range(nodeOrStart, end) {
       if (nodeOrStart === undefined || nodeOrStart === null) return undefined;

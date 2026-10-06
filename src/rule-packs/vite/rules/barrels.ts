@@ -1,4 +1,3 @@
-import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "pathe";
 import ts from "typescript";
 import { createRule, type RuleContext } from "../../../core/index.js";
@@ -109,12 +108,8 @@ function moduleInfo(ctx: RuleContext, file: string): ModuleInfo | null {
 
 function analyzeModule(ctx: RuleContext, file: string): ModuleInfo | null {
   if (!SCRIPT_EXTENSIONS.includes(extname(file))) return null;
-  let text: string;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch {
-    return null;
-  }
+  const text = ctx.fs.readText(file);
+  if (text === undefined) return null;
   const program = parseScript(file, text) as AnyNode;
   if (!program?.body) return null;
 
@@ -315,13 +310,13 @@ function resolveSpecifier(ctx: RuleContext, from: string, specifier: string): st
     ? [resolve(dirname(from), clean)]
     : aliasBases(ctx, clean);
   for (const base of bases) {
-    const file = resolveFile(base);
+    const file = resolveFile(ctx, base);
     if (file && !GENERATED_PATH_RE.test(relative(ctx.project.root, file))) return file;
   }
   return null;
 }
 
-function resolveFile(base: string): string | null {
+function resolveFile(ctx: RuleContext, base: string): string | null {
   const candidates = [base];
   const scriptExtension = /\.([cm]?)js(x?)$/.exec(base);
   if (scriptExtension)
@@ -332,7 +327,7 @@ function resolveFile(base: string): string | null {
   candidates.push(...RESOLVE_EXTENSIONS.map((extension) => `${base}/index${extension}`));
   for (const candidate of candidates) {
     if (!RESOLVE_EXTENSIONS.includes(extname(candidate))) continue;
-    if (statSync(candidate, { throwIfNoEntry: false })?.isFile()) return candidate;
+    if (ctx.fs.stat(candidate)?.isFile()) return candidate;
   }
   return null;
 }
@@ -366,10 +361,10 @@ function tsconfigPaths(ctx: RuleContext): Array<[string, string[]]> {
   const paths: Array<[string, string[]]> = [];
   for (const name of ["tsconfig.json", "tsconfig.app.json"]) {
     const file = resolve(ctx.project.root, name);
-    if (!statSync(file, { throwIfNoEntry: false })?.isFile()) continue;
-    const config = ts.readConfigFile(file, (path) => ts.sys.readFile(path));
+    if (!ctx.fs.stat(file)?.isFile()) continue;
+    const config = ts.readConfigFile(file, (path) => ctx.fs.readText(path));
     if (config.error) continue;
-    const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, ctx.project.root);
+    const parsed = ts.parseJsonConfigFileContent(config.config, configHost(ctx), ctx.project.root);
     const options = parsed.options as ts.CompilerOptions & { pathsBasePath?: string };
     const base = options.baseUrl ?? options.pathsBasePath ?? ctx.project.root;
     for (const [pattern, targets] of Object.entries(options.paths ?? {}))
@@ -379,18 +374,24 @@ function tsconfigPaths(ctx: RuleContext): Array<[string, string[]]> {
   return paths;
 }
 
+// Only compiler options are read, so the host never lists directories for `include` patterns.
+function configHost(ctx: RuleContext): ts.ParseConfigHost {
+  return {
+    useCaseSensitiveFileNames: true,
+    readDirectory: () => [],
+    fileExists: (path) => ctx.fs.stat(path)?.isFile() ?? false,
+    readFile: (path) => ctx.fs.readText(path),
+  };
+}
+
 function isPackageEntry(ctx: RuleContext, file: string): boolean {
   let dir = dirname(file);
   const root = resolve(ctx.project.root);
   while (dir.startsWith(root)) {
     const manifestPath = join(dir, "package.json");
-    if (statSync(manifestPath, { throwIfNoEntry: false })?.isFile()) {
-      let manifest: Record<string, unknown>;
-      try {
-        manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-      } catch {
-        return false;
-      }
+    if (ctx.fs.stat(manifestPath)?.isFile()) {
+      const manifest = ctx.fs.readJson<Record<string, unknown>>(manifestPath);
+      if (manifest === undefined) return false;
       const entries = packageEntryTargets(manifest);
       return entries.some((entry) => {
         if (!entry.target) return false;

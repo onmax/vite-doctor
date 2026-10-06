@@ -84,12 +84,12 @@ export const moduleResolveRuntimePaths = createRule({
             PATH_HELPERS[helper]!,
           )) {
             const value = staticStringValue(literal)!;
-            const existsNextToModule = pathExistsFrom(fileDir, value);
+            const existsNextToModule = pathExistsFrom(ctx.fs, fileDir, value);
             if (definition.kind === "local") {
               const appDir = ctx.project.nuxt?.appDir;
               const existsInProject =
-                pathExistsFrom(ctx.project.root, value) ||
-                (appDir !== undefined && pathExistsFrom(appDir, value));
+                pathExistsFrom(ctx.fs, ctx.project.root, value) ||
+                (appDir !== undefined && pathExistsFrom(ctx.fs, appDir, value));
               if (!existsNextToModule || existsInProject) continue;
             }
             const resolver = existsNextToModule

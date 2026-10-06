@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "pathe";
+import type { RuleFileSystem } from "../../../../core/index.js";
 import { AnyNode, createRule } from "./shared.js";
 import { parseScript } from "./script.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -45,9 +45,9 @@ export const noUnusedTranslations = createRule({
   create(ctx) {
     return {
       onProjectEnd() {
-        const inventory = collectI18nInventory(ctx.project.root);
+        const inventory = collectI18nInventory(ctx.fs, ctx.project.root);
         if (!inventory.hasI18n) return;
-        const usedKeys = collectUsedTranslationKeys(ctx.project.root);
+        const usedKeys = collectUsedTranslationKeys(ctx.fs, ctx.project.root);
         const baseLocale = selectBaseLocale(inventory.messages);
         for (const message of inventory.messages) {
           if (
@@ -91,7 +91,7 @@ export const noUntranslatedText = createRule({
     const cacheKey = `vue-i18n:project-has-i18n:${ctx.project.root}`;
     let hasI18n = ctx.cache.get<boolean>(cacheKey);
     if (hasI18n === undefined) {
-      hasI18n = projectHasI18n(ctx.project.root);
+      hasI18n = projectHasI18n(ctx.fs, ctx.project.root);
       ctx.cache.set(cacheKey, hasI18n);
     }
     if (!hasI18n) return;
@@ -140,25 +140,29 @@ export const noUntranslatedText = createRule({
   },
 });
 
-function collectI18nInventory(root: string): { hasI18n: boolean; messages: LocaleMessage[] } {
-  const messages = collectLocaleMessages(root);
-  return { hasI18n: messages.length > 0 || projectHasI18nPackage(root), messages };
+function collectI18nInventory(
+  fs: RuleFileSystem,
+  root: string,
+): { hasI18n: boolean; messages: LocaleMessage[] } {
+  const messages = collectLocaleMessages(fs, root);
+  return { hasI18n: messages.length > 0 || projectHasI18nPackage(fs, root), messages };
 }
 
-function projectHasI18n(root: string): boolean {
-  return collectLocaleFiles(root).length > 0 || projectHasI18nPackage(root);
+function projectHasI18n(fs: RuleFileSystem, root: string): boolean {
+  return collectLocaleFiles(fs, root).length > 0 || projectHasI18nPackage(fs, root);
 }
 
-function projectHasI18nPackage(root: string): boolean {
-  const pkg = readJson(resolve(root, "package.json")) as any;
+function projectHasI18nPackage(fs: RuleFileSystem, root: string): boolean {
+  const pkg = fs.readJson<any>(resolve(root, "package.json"));
   const deps = { ...pkg?.dependencies, ...pkg?.devDependencies, ...pkg?.peerDependencies };
   return Object.keys(deps).some((name) => I18N_PACKAGE_NAMES.has(name));
 }
 
-function collectLocaleMessages(root: string): LocaleMessage[] {
+function collectLocaleMessages(fs: RuleFileSystem, root: string): LocaleMessage[] {
   const messages: LocaleMessage[] = [];
-  for (const path of collectLocaleFiles(root)) {
-    const text = readFileSync(path, "utf8");
+  for (const path of collectLocaleFiles(fs, root)) {
+    const text = fs.readText(path);
+    if (text === undefined) continue;
     const object = path.endsWith(".json") ? parseJsonObject(text) : parseModuleMessages(path, text);
     if (!object) continue;
     const file: LocaleFile = { path, text };
@@ -170,31 +174,31 @@ function collectLocaleMessages(root: string): LocaleMessage[] {
   return messages;
 }
 
-function collectLocaleFiles(root: string): string[] {
+function collectLocaleFiles(fs: RuleFileSystem, root: string): string[] {
   const dirs = [
     "locales",
     "i18n/locales",
-    ...collectNuxtI18nLangDirs(root).map((dir) => dir.replace(/^\.\//, "")),
+    ...collectNuxtI18nLangDirs(fs, root).map((dir) => dir.replace(/^\.\//, "")),
   ];
   const files = new Set<string>();
   for (const dir of dirs) {
     const absoluteDir = resolve(root, dir);
-    if (!statSync(absoluteDir, { throwIfNoEntry: false })?.isDirectory()) continue;
-    for (const entry of readdirSync(absoluteDir)) {
+    if (!fs.stat(absoluteDir)?.isDirectory()) continue;
+    for (const { name: entry } of fs.readDir(absoluteDir) ?? []) {
       if (!LOCALE_EXTENSIONS.some((extension) => entry.endsWith(extension))) continue;
       const file = resolve(absoluteDir, entry);
-      if (statSync(file, { throwIfNoEntry: false })?.isFile()) files.add(file);
+      if (fs.stat(file)?.isFile()) files.add(file);
     }
   }
   return [...files].sort();
 }
 
-function collectNuxtI18nLangDirs(root: string): string[] {
+function collectNuxtI18nLangDirs(fs: RuleFileSystem, root: string): string[] {
   const dirs = new Set<string>();
   for (const configName of ["nuxt.config.ts", "nuxt.config.js", "nuxt.config.mjs"]) {
     const file = resolve(root, configName);
-    if (!existsSync(file)) continue;
-    const text = readFileSync(file, "utf8");
+    const text = fs.readText(file);
+    if (text === undefined) continue;
     for (const match of text.matchAll(/\blangDir\s*:\s*["'`]([^"'`]+)["'`]/g)) {
       dirs.add(match[1]!);
     }
@@ -279,10 +283,11 @@ function flattenMessages(
   return entries;
 }
 
-function collectUsedTranslationKeys(root: string): Set<string> {
+function collectUsedTranslationKeys(fs: RuleFileSystem, root: string): Set<string> {
   const used = new Set<string>();
-  for (const file of collectSourceFiles(root)) {
-    const text = readFileSync(file, "utf8");
+  for (const file of collectSourceFiles(fs, root)) {
+    const text = fs.readText(file);
+    if (text === undefined) continue;
     for (const match of text.matchAll(
       /(?<![\w$])(?:\$t|\$te|t|te)\s*\(\s*(['"`])([A-Za-z0-9_.:-]+)\1/g,
     )) {
@@ -297,10 +302,10 @@ function collectUsedTranslationKeys(root: string): Set<string> {
   return used;
 }
 
-function collectSourceFiles(root: string): string[] {
+function collectSourceFiles(fs: RuleFileSystem, root: string): string[] {
   const files: string[] = [];
   const visit = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    for (const entry of fs.readDir(dir) ?? []) {
       if (SOURCE_IGNORED_ENTRIES.has(entry.name)) continue;
       const absolute = resolve(dir, entry.name);
       if (entry.isDirectory()) visit(absolute);
@@ -393,14 +398,6 @@ function isLocaleMetadataKey(key: string): boolean {
 
 function truncate(value: string): string {
   return value.length > 60 ? `${value.slice(0, 57)}...` : value;
-}
-
-function readJson(file: string): unknown {
-  try {
-    return JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
 }
 
 function walkAny(node: unknown, visit: (node: AnyNode) => boolean): boolean {

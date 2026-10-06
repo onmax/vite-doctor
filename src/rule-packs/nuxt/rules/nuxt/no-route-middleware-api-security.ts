@@ -1,11 +1,11 @@
-import type { RuleContext } from "../../../../core/primitives.js";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import type { RuleContext, RuleFileSystem } from "../../../../core/primitives.js";
 import { dirname, extname, join, relative, resolve } from "pathe";
 import { parseScriptSync } from "../../../../core/internal/script.js";
 import { AnyNode, createRule, toPosixPath } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 import {
   autoRegisteredNuxtLayers,
+  // oxlint-disable-next-line no-restricted-imports -- compares config mtimes, so the Rule declares cacheScope "none".
   isNuxtManifestConfigurationCurrent,
 } from "../../../../core/internal/runtime-graph.js";
 
@@ -19,6 +19,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/directory-structure/app/middleware#when-middleware-runs",
     execution: "manifest",
+    cacheScope: "none",
     requires: { nuxt: true, crossFile: true },
   },
   create(ctx) {
@@ -33,7 +34,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
           : false;
         const rootConfig = configurationCurrent
           ? undefined
-          : rootMiddlewareConfiguration(ctx.project.root);
+          : rootMiddlewareConfiguration(ctx.fs, ctx.project.root);
         if (rootConfig === null) {
           ctx.project.evidenceGaps = [
             ...(ctx.project.evidenceGaps ?? []),
@@ -52,9 +53,9 @@ export const noRouteMiddlewareApiSecurity = createRule({
           : resolve(rootAppDir, rootConfig!.middleware);
         const layers = configurationCurrent
           ? nuxt.layers
-          : autoRegisteredNuxtLayers(ctx.project.root).map((name) => {
+          : autoRegisteredNuxtLayers(ctx.project.root, ctx.fs).map((name) => {
               const root = resolve(ctx.project.root, "layers", name);
-              const config = rootMiddlewareConfiguration(root);
+              const config = rootMiddlewareConfiguration(ctx.fs, root);
               return config === null
                 ? null
                 : {
@@ -93,24 +94,24 @@ export const noRouteMiddlewareApiSecurity = createRule({
             ctx.project.root,
             layer.appMiddlewareDir ?? resolve(ctx.project.root, appDir, "middleware"),
           );
-          if (!existsSync(directory)) continue;
-          for (const entry of readdirSync(directory, { recursive: true })) {
-            const file = resolve(directory, String(entry));
-            if (/\.[cm]?[jt]s$/.test(file) && statSync(file).isFile()) middlewareFiles.add(file);
+          for (const entry of ctx.fs.readDirRecursive(directory) ?? []) {
+            const file = resolve(directory, entry);
+            if (/\.[cm]?[jt]s$/.test(file) && ctx.fs.stat(file)?.isFile())
+              middlewareFiles.add(file);
           }
         }
         if (
           ![...middlewareFiles].some((file) =>
             isAuthLikeMiddleware(
               toPosixPath(relative(ctx.project.root, file)),
-              readFileSync(file, "utf8"),
+              ctx.fs.readText(file) ?? "",
             ),
           )
         )
           return;
         const unguarded = unguardedSensitiveHandlers(ctx, configurationCurrent);
         for (const file of unguarded) {
-          const text = readFileSync(file, "utf8");
+          const text = ctx.fs.readText(file) ?? "";
           ctx.report(
             diagnostics.NUXT0037({
               why: `Route middleware only protects app navigation. This auth-sensitive server handler has no visible server guard: ${toPosixPath(relative(ctx.project.root, file))}.`,
@@ -163,12 +164,13 @@ export function isPublicAuthOperation(path: string, method?: string): boolean {
 }
 
 export function rootMiddlewareConfiguration(
+  fs: RuleFileSystem,
   root: string,
 ): { srcDir: string; middleware: string; customServerRegistration: boolean } | null {
   const config = ["ts", "js", "mjs", "cjs", "mts", "cts"]
     .map((extension) => join(root, `nuxt.config.${extension}`))
-    .find(existsSync);
-  const parsed = config ? parseScriptSync(config, readFileSync(config, "utf8")) : undefined;
+    .find((file) => fs.exists(file));
+  const parsed = config ? parseScriptSync(config, fs.readText(config) ?? "") : undefined;
   if (parsed?.errors.length) return null;
   const exported: AnyNode = parsed?.program.body.find(
     (statement: AnyNode) => statement.type === "ExportDefaultDeclaration",
@@ -198,7 +200,7 @@ export function rootMiddlewareConfiguration(
   )
     return null;
   return {
-    srcDir: srcDir?.value ?? defaultSourceDirectory(root, middleware?.value ?? "middleware"),
+    srcDir: srcDir?.value ?? defaultSourceDirectory(fs, root, middleware?.value ?? "middleware"),
     middleware: middleware?.value ?? "middleware",
     customServerRegistration: Boolean(
       (nitro &&
@@ -215,16 +217,18 @@ export function rootMiddlewareConfiguration(
   };
 }
 
-function defaultSourceDirectory(root: string, middleware: string): string {
+function defaultSourceDirectory(fs: RuleFileSystem, root: string, middleware: string): string {
   const app = join(root, "app");
-  if (!existsSync(app)) return ".";
-  const contents = readdirSync(app).filter(
-    (entry) => entry !== "spa-loading-template.html" && !entry.startsWith("router.options"),
-  );
+  if (!fs.exists(app)) return ".";
+  const contents = (fs.readDir(app) ?? [])
+    .map((entry) => entry.name)
+    .filter(
+      (entry) => entry !== "spa-loading-template.html" && !entry.startsWith("router.options"),
+    );
   if (
     contents.length === 0 &&
     ["app.vue", "App.vue", "assets", "layouts", middleware, "pages", "plugins"].some((entry) =>
-      existsSync(join(root, entry)),
+      fs.exists(join(root, entry)),
     )
   )
     return ".";
@@ -240,7 +244,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
   if (!resolvedHandlers) {
     const layers = configurationCurrent
       ? (ctx.project.nuxt?.layers ?? [])
-      : autoRegisteredNuxtLayers(ctx.project.root).map((name) => ({
+      : autoRegisteredNuxtLayers(ctx.project.root, ctx.fs).map((name) => ({
           root: resolve(ctx.project.root, "layers", name),
           serverDir: undefined,
         }));
@@ -248,10 +252,9 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
       const serverDir = resolve(ctx.project.root, layer.serverDir ?? join(layer.root, "server"));
       for (const category of ["api", "routes", "middleware"] as const) {
         const directory = join(serverDir, category);
-        if (!existsSync(directory)) continue;
-        for (const entry of readdirSync(directory, { recursive: true })) {
-          const file = resolve(directory, String(entry));
-          if (/\.[cm]?[jt]s$/.test(file) && statSync(file).isFile()) {
+        for (const entry of ctx.fs.readDirRecursive(directory) ?? []) {
+          const file = resolve(directory, entry);
+          if (/\.[cm]?[jt]s$/.test(file) && ctx.fs.stat(file)?.isFile()) {
             layerFiles[category].push(file);
             if (category !== "middleware")
               layerPaths.set(
@@ -267,12 +270,14 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
     manifest?.isCurrent && configurationCurrent ? (manifest.serverHandlers ?? []) : [];
   const middleware = resolvedHandlers
     ? resolvedHandlers.filter(
-        (handler) => handler.middleware && hasUnconditionalAuthGuard(handler.file),
+        (handler) => handler.middleware && hasUnconditionalAuthGuard(ctx.fs, handler.file),
       )
     : [];
   if (
     !resolvedHandlers &&
-    [...(dirs?.middleware ?? []), ...layerFiles.middleware].some(hasUnconditionalAuthGuard)
+    [...(dirs?.middleware ?? []), ...layerFiles.middleware].some((file) =>
+      hasUnconditionalAuthGuard(ctx.fs, file),
+    )
   )
     return [];
   const candidates = resolvedHandlers
@@ -307,7 +312,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
       candidates
         .filter(
           (handler) =>
-            existsSync(handler.file) &&
+            ctx.fs.exists(handler.file) &&
             (isSensitive(
               resolvedHandlers
                 ? (handler.route ?? "")
@@ -319,7 +324,7 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
               isSensitive(handler.route ?? "", handler.method, handler.route)) &&
             !isAuthProviderHandler(ctx, handler.file, handler.route) &&
             !middleware.some((guard) => middlewareCoversHandler(guard, handler)) &&
-            !hasUnconditionalAuthGuard(handler.file),
+            !hasUnconditionalAuthGuard(ctx.fs, handler.file),
         )
         .map((handler) => handler.file),
     ),
@@ -346,7 +351,7 @@ function isAuthProviderHandler(ctx: RuleContext, file: string, route?: string): 
   )
     return false;
   try {
-    const parsed = parseScriptSync(file, readProjectFile(file));
+    const parsed = parseScriptSync(file, readProjectFile(ctx.fs, file));
     if (parsed.errors.length) return false;
     const declaration: AnyNode = parsed.program.body.find(
       (node) => node.type === "ExportDefaultDeclaration",
@@ -688,9 +693,9 @@ function isProviderBinding(
             resolve(base, `index.${extension}`),
           ),
         ];
-    const target = candidates.find((candidate) => existsSync(candidate));
+    const target = candidates.find((candidate) => ctx.fs.exists(candidate));
     if (!target) continue;
-    const parsed = parseScriptSync(target, readProjectFile(target));
+    const parsed = parseScriptSync(target, readProjectFile(ctx.fs, target));
     if (parsed.errors.length) continue;
     const targetName =
       node.type === "ExportAllDeclaration"
@@ -709,9 +714,9 @@ function isProviderBinding(
   return false;
 }
 
-function hasUnconditionalAuthGuard(file: string): boolean {
+function hasUnconditionalAuthGuard(fs: RuleFileSystem, file: string): boolean {
   try {
-    const parsed = parseScriptSync(file, readProjectFile(file));
+    const parsed = parseScriptSync(file, readProjectFile(fs, file));
     if (parsed.errors.length) return false;
     const declaration: AnyNode = parsed.program.body.find(
       (node) => node.type === "ExportDefaultDeclaration",
@@ -774,10 +779,6 @@ function hasUnconditionalAuthGuard(file: string): boolean {
   }
 }
 
-function readProjectFile(file: string): string {
-  try {
-    return readFileSync(file, "utf8");
-  } catch {
-    return "";
-  }
+function readProjectFile(fs: RuleFileSystem, file: string): string {
+  return fs.readText(file) ?? "";
 }

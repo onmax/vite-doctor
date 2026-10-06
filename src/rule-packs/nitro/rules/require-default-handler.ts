@@ -25,7 +25,7 @@ export const requireDefaultHandler = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    const route = nitroRouteFile(ctx.project, ctx.file.path);
+    const route = nitroRouteFile(ctx, ctx.file.path);
     if (!route) return;
     return {
       ScriptNode(node: AnyNode) {

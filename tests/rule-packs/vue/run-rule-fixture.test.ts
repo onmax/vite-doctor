@@ -534,8 +534,10 @@ test("event listener rule honors Nuxt runtime roots", async () => {
 test("event listener rule skips files without addEventListener before reading project files", () => {
   const ctx = {
     file: { text: `onMounted(() => window.removeEventListener('resize', onResize))` },
-    getJson() {
-      throw new Error("package.json should not be read");
+    fs: {
+      readJson() {
+        throw new Error("package.json should not be read");
+      },
     },
   } as any;
   expect(preferUseEventListener.create(ctx)).toBeUndefined();
@@ -551,8 +553,10 @@ test("event listener rule keeps unrelated escapes on the fast path", () => {
   ]) {
     const ctx = {
       file: { text },
-      getJson() {
-        throw new Error("package.json should not be read");
+      fs: {
+        readJson() {
+          throw new Error("package.json should not be read");
+        },
       },
     } as any;
     expect(preferUseEventListener.create(ctx)).toBeUndefined();

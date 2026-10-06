@@ -1,6 +1,5 @@
-import { existsSync, statSync } from "node:fs";
 import { resolve } from "pathe";
-import type { NuxtModuleDefinition, RuleContext } from "../../../../core/index.js";
+import type { NuxtModuleDefinition, RuleContext, RuleFileSystem } from "../../../../core/index.js";
 import { toPosixPath } from "./shared.js";
 
 export {
@@ -54,14 +53,12 @@ export function isRelativePath(value: string): boolean {
   return value === "." || value === ".." || value.startsWith("./") || value.startsWith("../");
 }
 
-export function pathExistsFrom(base: string, path: string): boolean {
+export function pathExistsFrom(fs: RuleFileSystem, base: string, path: string): boolean {
   const target = resolve(base, path);
-  if (existsSync(target)) return true;
-  if (RESOLVABLE_EXTENSIONS.some((extension) => existsSync(target + extension))) return true;
-  if (!statSync(target, { throwIfNoEntry: false })?.isDirectory()) return false;
-  return RESOLVABLE_EXTENSIONS.some((extension) =>
-    existsSync(resolve(target, `index${extension}`)),
-  );
+  if (fs.exists(target)) return true;
+  if (RESOLVABLE_EXTENSIONS.some((extension) => fs.exists(target + extension))) return true;
+  if (!fs.stat(target)?.isDirectory()) return false;
+  return RESOLVABLE_EXTENSIONS.some((extension) => fs.exists(resolve(target, `index${extension}`)));
 }
 
 export function staticStringValue(node: any): string | undefined {

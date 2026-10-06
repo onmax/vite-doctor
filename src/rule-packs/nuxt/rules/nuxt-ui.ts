@@ -1,7 +1,11 @@
 import { parse as parseVueSfc } from "@vue/compiler-sfc";
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "pathe";
-import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
+import {
+  createRule,
+  defineRulePack,
+  type DoctorRule,
+  type RuleFileSystem,
+} from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
@@ -22,7 +26,7 @@ export const requireUAppRoot = createRule({
     const usesAppService = /\b(useToast|useOverlay)\s*\(/.test(ctx.file.text);
     if (
       !usesAppService ||
-      projectHasUAppRoot(ctx.project.root) ||
+      projectHasUAppRoot(ctx.fs, ctx.project.root) ||
       (ctx.file.isVueSfc && hasUAppTemplate(ctx.file.text))
     )
       return;
@@ -132,11 +136,11 @@ export const nuxtUiRulePack = defineRulePack({
 
 export default nuxtUiRulePack;
 
-function projectHasUAppRoot(root: string): boolean {
+function projectHasUAppRoot(fs: RuleFileSystem, root: string): boolean {
   return ["app/app.vue", "app.vue", "app/layouts/default.vue", "layouts/default.vue"].some(
     (file) => {
-      const absolute = join(root, file);
-      return existsSync(absolute) && hasUAppTemplate(readFileSync(absolute, "utf8"));
+      const text = fs.readText(join(root, file));
+      return text !== undefined && hasUAppTemplate(text);
     },
   );
 }

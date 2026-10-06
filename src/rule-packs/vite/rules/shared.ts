@@ -1,5 +1,3 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { glob } from "node:fs/promises";
 import { resolve } from "pathe";
 import { parseSync } from "oxc-parser";
 import type { RuleContext, SourceRange } from "../../../core/index.js";
@@ -59,12 +57,10 @@ export async function readViteConfigFacts(ctx: RuleContext): Promise<ViteConfigF
     "vite.config.{ts,js,mjs,cjs,mts,cts}",
     "vitest.config.{ts,js,mjs,cjs,mts,cts}",
   ]) {
-    for await (const entry of glob(pattern, { cwd: ctx.project.root })) {
-      if (typeof entry === "string") files.add(resolve(ctx.project.root, entry));
-    }
+    for (const file of ctx.fs.glob(pattern)) files.add(file);
   }
   return [...files].sort().map((file) => {
-    const text = readFileSync(file, "utf8");
+    const text = ctx.fs.readText(file) ?? "";
     return {
       file,
       text,
@@ -78,11 +74,9 @@ export async function readProjectSources(
   ctx: RuleContext,
 ): Promise<Array<{ file: string; text: string }>> {
   const files: Array<{ file: string; text: string }> = [];
-  for await (const entry of glob(SOURCE_GLOB, { cwd: ctx.project.root, exclude: SOURCE_EXCLUDE })) {
-    if (typeof entry !== "string") continue;
-    const file = resolve(ctx.project.root, entry);
-    if (!statSync(file, { throwIfNoEntry: false })?.isFile()) continue;
-    files.push({ file, text: readFileSync(file, "utf8") });
+  for (const file of ctx.fs.glob(SOURCE_GLOB, { exclude: SOURCE_EXCLUDE })) {
+    if (!ctx.fs.stat(file)?.isFile()) continue;
+    files.push({ file, text: ctx.fs.readText(file) ?? "" });
   }
   return files;
 }
@@ -170,8 +164,8 @@ export function hasTypeDeclaration(ctx: RuleContext, name: string, env = false):
         ]);
     }
   };
-  for (const file of findDeclarationFiles(ctx.project.root)) {
-    const { program, errors } = parseSync(file, readFileSync(file, "utf8"), {
+  for (const file of findDeclarationFiles(ctx)) {
+    const { program, errors } = parseSync(file, ctx.fs.readText(file) ?? "", {
       lang: "dts",
       sourceType: "module",
       astType: "ts",
@@ -290,7 +284,9 @@ function isExternalModule(statements: AnyNode[]): boolean {
   );
 }
 
-function findDeclarationFiles(root: string): string[] {
+function findDeclarationFiles(ctx: RuleContext): string[] {
   const candidates = ["vite-env.d.ts", "env.d.ts", "src/vite-env.d.ts", "src/env.d.ts"];
-  return candidates.map((file) => resolve(root, file)).filter((file) => existsSync(file));
+  return candidates
+    .map((file) => resolve(ctx.project.root, file))
+    .filter((file) => ctx.fs.exists(file));
 }

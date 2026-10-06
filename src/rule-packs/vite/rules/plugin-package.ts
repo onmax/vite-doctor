@@ -1,7 +1,6 @@
-import { readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "pathe";
 import { parseForESLint } from "@typescript-eslint/parser";
-import { createRule, type RuleContext } from "../../../core/index.js";
+import { createRule, type RuleContext, type RuleFileSystem } from "../../../core/index.js";
 import { diagnostics } from "../../../diagnostics.js";
 import type { AnyNode } from "./shared.js";
 
@@ -80,10 +79,10 @@ export const pluginPackageNamingConventions = createRule({
     return {
       onProjectStart() {
         const manifestPath = resolve(ctx.project.root, "package.json");
-        let text: string;
+        const text = ctx.fs.readText(manifestPath);
+        if (text === undefined) return;
         let manifest: Manifest;
         try {
-          text = readFileSync(manifestPath, "utf8");
           manifest = JSON.parse(text);
         } catch {
           return;
@@ -91,7 +90,7 @@ export const pluginPackageNamingConventions = createRule({
         if (!isRecord(manifest) || typeof manifest.name !== "string") return;
         if (manifest.private === true || manifest.bin !== undefined) return;
         if (!requiredPeers(manifest).has("vite")) return;
-        const entry = pluginEntry(ctx.project.root, manifest);
+        const entry = pluginEntry(ctx.fs, ctx.project.root, manifest);
         if (!entry) return;
 
         const keywords = Array.isArray(manifest.keywords)
@@ -202,10 +201,10 @@ function baseName(name: string, framework: string | undefined): string {
   return tokens.join("-") || name;
 }
 
-function pluginEntry(root: string, manifest: Manifest): string | null {
+function pluginEntry(fs: RuleFileSystem, root: string, manifest: Manifest): string | null {
   for (const target of rootEntryTargets(manifest)) {
     for (const file of sourceCandidates(root, target)) {
-      if (isFile(file) && exportsPluginFactory(file, null, 0, new Set())) return file;
+      if (isFile(fs, file) && exportsPluginFactory(fs, file, null, 0, new Set())) return file;
     }
   }
   return null;
@@ -245,6 +244,7 @@ function sourceCandidates(root: string, target: string): string[] {
 }
 
 function exportsPluginFactory(
+  fs: RuleFileSystem,
   file: string,
   wanted: string | null,
   depth: number,
@@ -256,7 +256,9 @@ function exportsPluginFactory(
   let program: AnyNode;
   const pluginTypeReferences = new Map<AnyNode, boolean>();
   try {
-    const parsed = parseForESLint(readFileSync(file, "utf8"), {
+    const text = fs.readText(file);
+    if (text === undefined) return false;
+    const parsed = parseForESLint(text, {
       filePath: file,
       sourceType: "module",
     });
@@ -311,7 +313,7 @@ function exportsPluginFactory(
             ? exportName(item.imported)
             : null;
       if (!imported) continue;
-      const from = typeof source === "string" ? localModule(file, source) : null;
+      const from = typeof source === "string" ? localModule(fs, file, source) : null;
       if (from) imports.set(item.local.name, { from, name: imported });
     }
   }
@@ -320,7 +322,7 @@ function exportsPluginFactory(
     const fn = functions.get(local);
     if (fn) return isPluginFactory(fn, pluginTypeReferences);
     const binding = imports.get(local);
-    return binding ? exportsPluginFactory(binding.from, binding.name, depth + 1, seen) : false;
+    return binding ? exportsPluginFactory(fs, binding.from, binding.name, depth + 1, seen) : false;
   };
   const wants = (name: string | null) => wanted === null || wanted === name;
 
@@ -353,7 +355,7 @@ function exportsPluginFactory(
       }
       const from =
         typeof statement.source?.value === "string"
-          ? localModule(file, statement.source.value)
+          ? localModule(fs, file, statement.source.value)
           : undefined;
       for (const item of statement.specifiers ?? []) {
         if (statement.exportKind === "type" || item.exportKind === "type") continue;
@@ -363,7 +365,7 @@ function exportsPluginFactory(
         if (
           from === undefined
             ? isFactoryBinding(local)
-            : from && exportsPluginFactory(from, local, depth + 1, seen)
+            : from && exportsPluginFactory(fs, from, local, depth + 1, seen)
         )
           return true;
       }
@@ -371,10 +373,10 @@ function exportsPluginFactory(
     if (statement.type === "ExportAllDeclaration" && statement.exportKind !== "type") {
       const from =
         typeof statement.source?.value === "string"
-          ? localModule(file, statement.source.value)
+          ? localModule(fs, file, statement.source.value)
           : null;
       if (from && !statement.exported && wanted !== "default")
-        if (exportsPluginFactory(from, wanted, depth + 1, seen)) return true;
+        if (exportsPluginFactory(fs, from, wanted, depth + 1, seen)) return true;
     }
   }
   return false;
@@ -550,7 +552,7 @@ function fieldRange(ctx: RuleContext, file: string, text: string, field: "name" 
   return ctx.helpers.rangeFromOffsets(file, text, start, end);
 }
 
-function localModule(from: string, specifier: string): string | null {
+function localModule(fs: RuleFileSystem, from: string, specifier: string): string | null {
   if (!/^\.\.?(?:\/|$)/.test(specifier)) return null;
   const base = resolve(dirname(from), specifier);
   const candidates = [
@@ -562,7 +564,8 @@ function localModule(from: string, specifier: string): string | null {
   return (
     candidates.find(
       (candidate) =>
-        SCRIPT_EXTENSIONS.some((extension) => candidate.endsWith(extension)) && isFile(candidate),
+        SCRIPT_EXTENSIONS.some((extension) => candidate.endsWith(extension)) &&
+        isFile(fs, candidate),
     ) ?? null
   );
 }
@@ -595,8 +598,8 @@ function exportName(node: AnyNode): string | null {
   return typeof node.value === "string" ? node.value : null;
 }
 
-function isFile(path: string): boolean {
-  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+function isFile(fs: RuleFileSystem, path: string): boolean {
+  return fs.stat(path)?.isFile() ?? false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

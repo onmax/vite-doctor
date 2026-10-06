@@ -98,14 +98,14 @@ test("shadcn Rules share one ESLint verify per file when they run file by file",
     scriptAst: { type: "Program" },
   }));
   const lint = async (order: Array<[DoctorRule, (typeof files)[number]]>) => {
-    const cache = {};
+    const project = {};
     const reports: unknown[] = [];
     const report: RuleContext["report"] = (diagnostic, metadata) =>
       reports.push({ diagnostic, ...metadata });
     for (const [rule, file] of order)
       await rule.create({
         file,
-        cache,
+        project,
         options: undefined,
         severity: "warn",
         report,

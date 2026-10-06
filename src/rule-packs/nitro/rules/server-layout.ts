@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
 import { parseSync } from "oxc-parser";
 import { isAbsolute, relative, resolve } from "pathe";
-import type { ProjectInfo } from "../../../core/index.js";
+import type { ProjectInfo, RuleContext, RuleFileSystem } from "../../../core/index.js";
 
 export interface StaticConfigOption {
   path: string[];
@@ -21,21 +20,19 @@ const ROUTE_DIRS = new Set(["api", "routes"]);
 const SCANNED_SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const DECLARATION_FILE = /\.d\.[cm]?ts$/;
 
-const serverDirsCache = new WeakMap<ProjectInfo, string[]>();
-const configCache = new WeakMap<ProjectInfo, Map<string, StaticConfigOption[]>>();
-
-export function nitroServerDirs(project: ProjectInfo): string[] {
-  let dirs = serverDirsCache.get(project);
+export function nitroServerDirs(ctx: RuleContext): string[] {
+  const key = "nitro:server-dirs";
+  let dirs = ctx.cache.get<string[]>(key);
   if (!dirs) {
-    dirs = resolveServerDirs(project);
-    serverDirsCache.set(project, dirs);
+    dirs = resolveServerDirs(ctx);
+    ctx.cache.set(key, dirs);
   }
   return dirs;
 }
 
-export function nitroServerFile(project: ProjectInfo, file: string): NitroServerFile | null {
+export function nitroServerFile(ctx: RuleContext, file: string): NitroServerFile | null {
   let match: NitroServerFile | null = null;
-  for (const serverDir of nitroServerDirs(project)) {
+  for (const serverDir of nitroServerDirs(ctx)) {
     const path = relative(serverDir, file);
     if (!path || path.startsWith("../") || isAbsolute(path)) continue;
     if (match && match.serverDir.length >= serverDir.length) continue;
@@ -44,15 +41,16 @@ export function nitroServerFile(project: ProjectInfo, file: string): NitroServer
   return match;
 }
 
-export function nitroRouteFile(project: ProjectInfo, file: string): NitroServerFile | null {
-  const options = readStaticConfigOptions(project, project.framework === "nuxt" ? "nuxt" : "nitro");
+export function nitroRouteFile(ctx: RuleContext, file: string): NitroServerFile | null {
+  const project = ctx.project;
+  const options = readStaticConfigOptions(ctx, project.framework === "nuxt" ? "nuxt" : "nitro");
   if (
     options.some(
       ({ path }) => path.length === 0 || ["scanDirs", "apiDir", "routesDir"].includes(path.at(-1)!),
     )
   )
     return null;
-  const serverFile = nitroServerFile(project, file);
+  const serverFile = nitroServerFile(ctx, file);
   if (!serverFile || !ROUTE_DIRS.has(serverFile.dir) || !serverFile.path.includes("/")) return null;
   if (!SCANNED_SCRIPT.test(file) || DECLARATION_FILE.test(file)) return null;
   if (project.framework === "nuxt" && isIgnoredByNuxtDefaults(serverFile.path)) return null;
@@ -60,20 +58,16 @@ export function nitroRouteFile(project: ProjectInfo, file: string): NitroServerF
 }
 
 export function readStaticConfigOptions(
-  project: ProjectInfo,
+  ctx: RuleContext,
   kind: "nitro" | "nuxt",
 ): StaticConfigOption[] {
-  let cache = configCache.get(project);
-  if (!cache) {
-    cache = new Map();
-    configCache.set(project, cache);
-  }
-  let options = cache.get(kind);
+  const key = `nitro:static-config-options:${kind}`;
+  let options = ctx.cache.get<StaticConfigOption[]>(key);
   if (!options) {
     const files =
       kind === "nuxt" ? NUXT_CONFIG_FILES : [...NITRO_CONFIG_FILES, ...VITE_CONFIG_FILES];
-    options = files.flatMap((file) => configOptions(resolve(project.root, file)));
-    cache.set(kind, options);
+    options = files.flatMap((file) => configOptions(ctx.fs, resolve(ctx.project.root, file)));
+    ctx.cache.set(key, options);
   }
   return options;
 }
@@ -99,15 +93,17 @@ export function runtimeMajor(project: ProjectInfo, runtime: "nitro" | "nuxt"): n
   return undefined;
 }
 
-function resolveServerDirs(project: ProjectInfo): string[] {
-  const options = readStaticConfigOptions(project, project.framework === "nuxt" ? "nuxt" : "nitro");
+function resolveServerDirs(ctx: RuleContext): string[] {
+  const project = ctx.project;
+  const options = readStaticConfigOptions(ctx, project.framework === "nuxt" ? "nuxt" : "nitro");
   if (options.some(({ path }) => path.length === 0)) return [];
-  if (project.framework === "nuxt") return nuxtServerDirs(project);
-  if (project.framework === "nitro") return standaloneNitroServerDirs(project);
+  if (project.framework === "nuxt") return nuxtServerDirs(ctx);
+  if (project.framework === "nitro") return standaloneNitroServerDirs(ctx);
   return [];
 }
 
-function nuxtServerDirs(project: ProjectInfo): string[] {
+function nuxtServerDirs(ctx: RuleContext): string[] {
+  const project = ctx.project;
   const root = project.root;
   const nuxt = project.nuxt;
   const layerDirs =
@@ -115,7 +111,7 @@ function nuxtServerDirs(project: ProjectInfo): string[] {
       ? nuxt.layers.flatMap((layer) => (layer.serverDir ? [resolve(root, layer.serverDir)] : []))
       : [];
   if (layerDirs.length) return [...new Set(layerDirs)];
-  const options = readStaticConfigOptions(project, "nuxt");
+  const options = readStaticConfigOptions(ctx, "nuxt");
   const serverDir = staticOptionValue(options, (path) => path.join(".") === "serverDir");
   if (typeof serverDir === "string") return [resolve(root, serverDir)];
   if (serverDir === null) return [];
@@ -126,9 +122,10 @@ function nuxtServerDirs(project: ProjectInfo): string[] {
   return [resolve(root, "server"), resolve(root, "app/server")];
 }
 
-function standaloneNitroServerDirs(project: ProjectInfo): string[] {
+function standaloneNitroServerDirs(ctx: RuleContext): string[] {
+  const project = ctx.project;
   const root = project.root;
-  const options = readStaticConfigOptions(project, "nitro");
+  const options = readStaticConfigOptions(ctx, "nitro");
   const serverDir = staticOptionValue(
     options,
     (path) => path.at(-1) === "serverDir" && path.at(-2) !== "output",
@@ -157,13 +154,9 @@ function configFiles(base: string) {
   return ["ts", "mts", "cts", "js", "mjs", "cjs"].map((extension) => `${base}.${extension}`);
 }
 
-function configOptions(file: string): StaticConfigOption[] {
-  let text: string;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch {
-    return [];
-  }
+function configOptions(fs: RuleFileSystem, file: string): StaticConfigOption[] {
+  const text = fs.readText(file);
+  if (text === undefined) return [];
   let program: unknown;
   try {
     const parsed = parseSync(file, text, { sourceType: "module", lang: "ts" });

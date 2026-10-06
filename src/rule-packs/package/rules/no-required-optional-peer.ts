@@ -33,7 +33,7 @@ export const noRequiredOptionalPeer = createRule({
     return {
       async onProjectStart() {
         const { packageArtifacts } = await import("../artifacts.js");
-        const artifacts = packageArtifacts(ctx.project);
+        const artifacts = packageArtifacts(ctx);
         if (!artifacts) return;
         const manifest = artifacts.manifest;
         for (const reference of artifacts.references) {

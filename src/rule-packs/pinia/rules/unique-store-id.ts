@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseSfcFile, parseVueScripts } from "../../../core/internal/sfc.js";
+// oxlint-disable-next-line no-restricted-imports -- walks the project tree, so the Rule declares cacheScope "none".
 import { selectScanFiles } from "../../../core/internal/source-inventory.js";
 import { diagnostics } from "../diagnostics.js";
 import { findStoreDefinitions, type StoreDefinition } from "./shared.js";
@@ -36,6 +36,7 @@ export const uniqueStoreId = createRule({
     diagnosticCodes: ["PINIA0001"],
     docsUrl: "https://pinia.vuejs.org/core-concepts/#Defining-a-Store",
     execution: "workspace",
+    cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
     consumesEvidence: ["ast"],
@@ -106,8 +107,8 @@ async function collectProjectStoreDefinitions(ctx: RuleContext): Promise<Located
   const definitions: LocatedStoreDefinition[] = [];
   for (const entry of files) {
     if (entry.sourceKind === "module" || /\.mdc?$/.test(entry.path)) continue;
-    const text = readFileSync(entry.path, "utf8");
-    if (!text.includes("defineStore")) continue;
+    const text = ctx.fs.readText(entry.path);
+    if (!text?.includes("defineStore")) continue;
     const program = entry.path.endsWith(".vue")
       ? parseVueScripts(entry.path, (await parseSfcFile(entry.path, text)).descriptor, text)
       : parseScript(entry.path, text);
