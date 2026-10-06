@@ -25,5 +25,6 @@ export default defineConfig({
   test: {
     // Agent worktrees under .claude/ are full repo checkouts; collecting them duplicates and breaks the suite.
     exclude: [...configDefaults.exclude, "**/.claude/**"],
+    setupFiles: ["./tests/setup.ts"],
   },
 });
