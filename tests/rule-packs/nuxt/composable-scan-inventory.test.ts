@@ -38,6 +38,7 @@ test.each(
       "disabled/app/composables/wrong.ts": "export default function () {}",
     };
     let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
+    const cwd = process.cwd();
     try {
       symlinkSync(
         fileURLToPath(new URL("../../../node_modules", import.meta.url)),
@@ -142,6 +143,8 @@ test.each(
           });
         },
       });
+      // unimport resolves scan globs from process.cwd(); outside the fixture it crawls from `/`.
+      process.chdir(root);
       nuxt = await loadNuxt({
         cwd: root,
         overrides: {
@@ -192,6 +195,7 @@ test.each(
       );
     } finally {
       await nuxt?.close();
+      process.chdir(cwd);
       rmSync(root, { recursive: true, force: true });
     }
   },
