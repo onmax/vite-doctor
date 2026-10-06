@@ -75,21 +75,14 @@ const escapedCharacter = (character: string) => {
   const unicodePattern = [...unicode].map(hexDigit).join("");
   const hexPattern = [...hex].map(hexDigit).join("");
   const octal = code.toString(8);
-  return `(?:\\\\u${unicodePattern}|\\\\x${hexPattern}|\\\\${octal}|\\\\${escapeRegex(character)})`;
+  const codePoint = code.toString(16);
+  return `(?:${escapeRegex(character)}|\\\\u${unicodePattern}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${hexPattern}|\\\\${octal}|\\\\${escapeRegex(character)})`;
 };
 const escapedNamePattern = (name: string) => {
-  const variants = [escapeRegex(name)];
-  for (let index = 0; index < name.length; index++) {
-    variants.push(
-      `${escapeRegex(name.slice(0, index))}${escapedCharacter(name[index]!)}${escapeRegex(name.slice(index + 1))}`,
-    );
-  }
-  for (let index = 0; index <= name.length; index++) {
-    variants.push(
-      `${escapeRegex(name.slice(0, index))}\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029)${escapeRegex(name.slice(index))}`,
-    );
-  }
-  return `(?:${variants.join("|")})`;
+  const continuation = `(?:\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029))`;
+  return `(?:${continuation}*${[...name]
+    .map((character) => `${escapedCharacter(character)}${continuation}*`)
+    .join("")})`;
 };
 const ASYNC_DATA_TEXT_RE = new RegExp(
   ["useFetch", "useLazyFetch", "useAsyncData", "useLazyAsyncData"]

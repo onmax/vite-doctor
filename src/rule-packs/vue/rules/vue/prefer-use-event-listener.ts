@@ -20,23 +20,18 @@ const NUXT_CONFIG_FILES = [
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const hexDigit = (value: string) => `[${value.toLowerCase()}${value.toUpperCase()}]`;
 const escapedNamePattern = (name: string) => {
-  const variants = [escapeRegex(name)];
-  for (let index = 0; index < name.length; index++) {
-    const code = name.charCodeAt(index);
+  const continuation = `(?:\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029))`;
+  const character = (value: string) => {
+    const code = value.charCodeAt(0);
     const hex = code.toString(16).padStart(2, "0");
     const unicode = code.toString(16).padStart(4, "0");
     const octal = code.toString(8);
-    const encoded = `(?:\\\\u${[...unicode].map(hexDigit).join("")}|\\\\x${[...hex].map(hexDigit).join("")}|\\\\${octal}|\\\\${escapeRegex(name[index]!)})`;
-    variants.push(
-      `${escapeRegex(name.slice(0, index))}${encoded}${escapeRegex(name.slice(index + 1))}`,
-    );
-  }
-  for (let index = 0; index <= name.length; index++) {
-    variants.push(
-      `${escapeRegex(name.slice(0, index))}\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029)${escapeRegex(name.slice(index))}`,
-    );
-  }
-  return `(?:${variants.join("|")})`;
+    const codePoint = code.toString(16);
+    return `(?:${escapeRegex(value)}|\\\\u${[...unicode].map(hexDigit).join("")}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${[...hex].map(hexDigit).join("")}|\\\\${octal}|\\\\${escapeRegex(value)})`;
+  };
+  return `(?:${continuation}*${[...name]
+    .map((value) => `${character(value)}${continuation}*`)
+    .join("")})`;
 };
 const ADD_EVENT_LISTENER_TEXT_RE = new RegExp(escapedNamePattern("addEventListener"));
 
