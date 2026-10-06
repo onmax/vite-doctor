@@ -1,8 +1,6 @@
 import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 
-type AnyNode = any;
-
 const nuxtImageTags = new Set([
   "NuxtImg",
   "nuxt-img",
@@ -33,21 +31,23 @@ export const preferNuxtImg = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || node.rawName !== "img") return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0006({
-            why: "Raw <img> misses Nuxt Image optimization and responsive providers.",
-            fix: "Use <NuxtImg> for application images.",
-          }),
-          {
-            ruleId: "nuxt-image/prefer-nuxtimg",
-            severity: "info",
-            category: "images",
-          },
-        );
+      template: {
+        element(node) {
+          if (node.tag !== "img") return;
+          ctx.helpers.report(
+            ctx,
+            node,
+            diagnostics.NUXT0006({
+              why: "Raw <img> misses Nuxt Image optimization and responsive providers.",
+              fix: "Use <NuxtImg> for application images.",
+            }),
+            {
+              ruleId: "nuxt-image/prefer-nuxtimg",
+              severity: "info",
+              category: "images",
+            },
+          );
+        },
       },
     };
   },
@@ -65,27 +65,28 @@ export const requireImageAlt = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || (node.rawName !== "img" && !isNuxtImageTag(node.rawName)))
-          return;
-        if (
-          ctx.helpers.hasVueAttribute(node, "alt") ||
-          ctx.helpers.hasVueDirective(node, "bind", "alt")
-        )
-          return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0009({
-            why: "Images need alt text or an explicit empty alt for decorative images.",
-            fix: "Add alt text that describes the image.",
-          }),
-          {
-            ruleId: "nuxt-image/require-alt",
-            severity: "error",
-            category: "images",
-          },
-        );
+      template: {
+        element(node) {
+          if (node.tag !== "img" && !isNuxtImageTag(node.tag)) return;
+          if (
+            ctx.helpers.hasVueAttribute(node, "alt") ||
+            ctx.helpers.hasVueDirective(node, "bind", "alt")
+          )
+            return;
+          ctx.helpers.report(
+            ctx,
+            node,
+            diagnostics.NUXT0009({
+              why: "Images need alt text or an explicit empty alt for decorative images.",
+              fix: "Add alt text that describes the image.",
+            }),
+            {
+              ruleId: "nuxt-image/require-alt",
+              severity: "error",
+              category: "images",
+            },
+          );
+        },
       },
     };
   },
@@ -103,27 +104,29 @@ export const preferResponsiveDimensions = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || !isNuxtImageTag(node.rawName)) return;
-        const hasSizing = ["width", "height", "sizes"].some(
-          (name) =>
-            ctx.helpers.hasVueAttribute(node, name) ||
-            ctx.helpers.hasVueDirective(node, "bind", name),
-        );
-        if (hasSizing) return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0008({
-            why: "Nuxt images should declare dimensions or responsive sizes.",
-            fix: "Add width/height for fixed images or sizes for responsive images.",
-          }),
-          {
-            ruleId: "nuxt-image/prefer-responsive-dimensions",
-            severity: "warn",
-            category: "images",
-          },
-        );
+      template: {
+        element(node) {
+          if (!isNuxtImageTag(node.tag)) return;
+          const hasSizing = ["width", "height", "sizes"].some(
+            (name) =>
+              ctx.helpers.hasVueAttribute(node, name) ||
+              ctx.helpers.hasVueDirective(node, "bind", name),
+          );
+          if (hasSizing) return;
+          ctx.helpers.report(
+            ctx,
+            node,
+            diagnostics.NUXT0008({
+              why: "Nuxt images should declare dimensions or responsive sizes.",
+              fix: "Add width/height for fixed images or sizes for responsive images.",
+            }),
+            {
+              ruleId: "nuxt-image/prefer-responsive-dimensions",
+              severity: "warn",
+              category: "images",
+            },
+          );
+        },
       },
     };
   },
@@ -141,23 +144,25 @@ export const preferNuxtPictureForFormats = createRule({
   },
   create(ctx) {
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || !isNuxtImgTag(node.rawName)) return;
-        const format = ctx.helpers.getStaticVueAttributeValue(node, "format");
-        if (!format || !/(webp|avif)/i.test(format)) return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0007({
-            why: "Format negotiation is clearer with <NuxtPicture>.",
-            fix: "Use <NuxtPicture> when serving modern formats with fallbacks.",
-          }),
-          {
-            ruleId: "nuxt-image/prefer-nuxtpicture-for-formats",
-            severity: "info",
-            category: "images",
-          },
-        );
+      template: {
+        element(node) {
+          if (!isNuxtImgTag(node.tag)) return;
+          const format = ctx.helpers.getStaticVueAttributeValue(node, "format");
+          if (!format || !/(webp|avif)/i.test(format)) return;
+          ctx.helpers.report(
+            ctx,
+            node,
+            diagnostics.NUXT0007({
+              why: "Format negotiation is clearer with <NuxtPicture>.",
+              fix: "Use <NuxtPicture> when serving modern formats with fallbacks.",
+            }),
+            {
+              ruleId: "nuxt-image/prefer-nuxtpicture-for-formats",
+              severity: "info",
+              category: "images",
+            },
+          );
+        },
       },
     };
   },

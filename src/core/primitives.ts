@@ -174,9 +174,9 @@ export interface SfcHandle {
   hash: string;
   descriptor: unknown;
   blockHashes: SfcBlockHashes;
-  getTemplateAst(): Record<string, unknown> | null;
+  /** The inline HTML `<template>` as a compiler-dom AST, or `null` for `src` or non-HTML templates. */
+  getTemplateAst(): TemplateRootNode | null;
   getScriptAst(kind?: "script" | "scriptSetup" | "merged"): Record<string, unknown> | null;
-  getTemplateTokens(): unknown;
   offsetToPosition(offset: number): SourceRange;
   blockOffsetToFileOffset(block: "template" | "script" | "scriptSetup", offset: number): number;
 }
@@ -580,9 +580,18 @@ export interface DoctorHelpers {
       range?: SourceRange;
     },
   ): void;
-  hasVueDirective(node: unknown, name: string, argument?: string): boolean;
-  hasVueAttribute(node: unknown, name: string): boolean;
-  getStaticVueAttributeValue(node: unknown, name: string): string | null;
+  /** Whether the element has `v-<name>`, or `v-<name>:<argument>` with a static argument. */
+  hasVueDirective(element: TemplateElementNode, name: string, argument?: string): boolean;
+  /** Whether the element has a static attribute such as `alt` or `alt="..."`. */
+  hasVueAttribute(element: TemplateElementNode, name: string): boolean;
+  getStaticVueAttributeValue(element: TemplateElementNode, name: string): string | null;
+  /**
+   * Parses a template expression with oxc on first use. Node offsets are SFC offsets and the
+   * result is shared by every Rule. Returns `null` for static or invalid expressions and for
+   * values that are not one expression: a whole `v-for` (parse `forParseResult.source` instead),
+   * `v-slot` parameters, or a `v-on` handler with several statements.
+   */
+  parseTemplateExpression(expression: TemplateExpressionNode): ScriptAstNode | null;
   isNuxtServerFile(relativePath: string): boolean;
   isLikelyEventHandler(text: string, offset: number): boolean;
 }
@@ -618,7 +627,7 @@ export interface SourceFileHandle {
   hash: string;
   isVueSfc: boolean;
   scriptAst?: Record<string, unknown> | null;
-  templateAst?: Record<string, unknown> | null;
+  templateAst?: TemplateRootNode | null;
   sfc?: SfcHandle;
   project: ProjectInfo;
   facts?: FileFacts;
@@ -672,24 +681,168 @@ export type ScriptVisitor = {
   [T in ScriptAstNodeType as `${T}:exit`]?: (node: ScriptAstNodeOf<T>) => void;
 };
 
+/** A compiler-dom source position. `offset` is an SFC offset; `line` and `column` start at 1. */
+export interface TemplatePosition {
+  offset: number;
+  line: number;
+  column: number;
+}
+
+/** A compiler-dom source location. `source` is the raw SFC text it covers. */
+export interface TemplateSourceLocation {
+  start: TemplatePosition;
+  end: TemplatePosition;
+  source: string;
+}
+
+/**
+ * A compiler-dom expression: a directive value, a directive argument or modifier, or the
+ * content of an interpolation. `content` is the decoded text; parse it with
+ * `ctx.helpers.parseTemplateExpression`.
+ */
+export interface TemplateExpressionNode {
+  type: 4;
+  content: string;
+  /** `true` for static directive arguments and modifiers, such as `href` in `:href`. */
+  isStatic: boolean;
+  loc: TemplateSourceLocation;
+}
+
+export interface TemplateRootNode {
+  type: 0;
+  source: string;
+  children: TemplateChildNode[];
+  loc: TemplateSourceLocation;
+}
+
+export interface TemplateElementNode {
+  type: 1;
+  /** The tag as written, such as `button`, `NuxtLink`, or `router-view`. */
+  tag: string;
+  /** 0 element, 1 component, 2 `<slot>`, 3 `<template>` with a directive. */
+  tagType: 0 | 1 | 2 | 3;
+  ns: number;
+  props: Array<TemplateAttributeNode | TemplateDirectiveNode>;
+  children: TemplateChildNode[];
+  isSelfClosing?: boolean;
+  loc: TemplateSourceLocation;
+}
+
+export interface TemplateTextNode {
+  type: 2;
+  content: string;
+  loc: TemplateSourceLocation;
+}
+
+export interface TemplateCommentNode {
+  type: 3;
+  content: string;
+  loc: TemplateSourceLocation;
+}
+
+export interface TemplateInterpolationNode {
+  type: 5;
+  content: TemplateExpressionNode;
+  loc: TemplateSourceLocation;
+}
+
+/** A static attribute such as `alt="Logo"`. */
+export interface TemplateAttributeNode {
+  type: 6;
+  name: string;
+  nameLoc: TemplateSourceLocation;
+  value: TemplateTextNode | undefined;
+  loc: TemplateSourceLocation;
+}
+
+/** A directive. Shorthands are normalized: `:href`, `@click`, and `#default` are `bind`, `on`, and `slot`. */
+export interface TemplateDirectiveNode {
+  type: 7;
+  name: string;
+  /** The attribute name as written, such as `:href.camel` or `v-on:click`. */
+  rawName?: string;
+  exp: TemplateExpressionNode | undefined;
+  arg: TemplateExpressionNode | undefined;
+  modifiers: TemplateExpressionNode[];
+  forParseResult?: {
+    source: TemplateExpressionNode;
+    value: TemplateExpressionNode | undefined;
+    key: TemplateExpressionNode | undefined;
+    index: TemplateExpressionNode | undefined;
+  };
+  loc: TemplateSourceLocation;
+}
+
+export type TemplateChildNode =
+  | TemplateElementNode
+  | TemplateTextNode
+  | TemplateCommentNode
+  | TemplateInterpolationNode;
+export type TemplateParentNode = TemplateRootNode | TemplateElementNode;
+export type TemplateAstNode =
+  | TemplateRootNode
+  | TemplateChildNode
+  | TemplateAttributeNode
+  | TemplateDirectiveNode;
+
+/** Template visitor keys and the node each one receives. */
+export interface TemplateNodeKinds {
+  root: TemplateRootNode;
+  element: TemplateElementNode;
+  attribute: TemplateAttributeNode;
+  directive: TemplateDirectiveNode;
+  text: TemplateTextNode;
+  interpolation: TemplateInterpolationNode;
+  comment: TemplateCommentNode;
+}
+export type TemplateNodeKind = keyof TemplateNodeKinds;
+
+/** The second visitor argument: the owning element for props, the parent for children. */
+export interface TemplateNodeParents {
+  root: undefined;
+  element: TemplateParentNode;
+  attribute: TemplateElementNode;
+  directive: TemplateElementNode;
+  text: TemplateParentNode;
+  interpolation: TemplateParentNode;
+  comment: TemplateParentNode;
+}
+
+/**
+ * Template node visitors keyed by compiler-dom node kind. An element's attributes and
+ * directives are visited in source order before its children. `"<kind>:exit"` runs after the
+ * node's props and children.
+ */
+export type TemplateVisitor = {
+  [K in TemplateNodeKind]?: (node: TemplateNodeKinds[K], parent: TemplateNodeParents[K]) => void;
+} & {
+  [K in TemplateNodeKind as `${K}:exit`]?: (
+    node: TemplateNodeKinds[K],
+    parent: TemplateNodeParents[K],
+  ) => void;
+};
+
 /**
  * File rules share read-only ASTs. For each file, all create() calls finish in enabled-rule
  * order, then all SFC hooks finish in that order. Script nodes (DFS, enter then exit), then
- * template nodes, dispatch to visitors in rule order per node. Script parents are fully
- * linked before script dispatch. Script traversal is snapshotted; AST mutation is unsupported.
- * Cross-rule state must not depend on another rule completing its traversal first.
+ * template nodes (DFS, enter then exit), dispatch to visitors in rule order per node. Script
+ * parents are fully linked before script dispatch. Traversal is snapshotted; AST mutation is
+ * unsupported. Cross-rule state must not depend on another rule completing its traversal first.
  */
 export interface RuleLifecycleHooks {
   onWorkspaceStart?(): void | Promise<void>;
   onProjectStart?(project: ProjectInfo): void | Promise<void>;
   SFC?(sfc: SfcHandle): void | Promise<void>;
-  TemplateNode?(node: unknown): void;
   NuxtManifest?(manifest: NuxtProjectInfo): void;
   onProjectEnd?(project: ProjectInfo): void | Promise<void>;
   onWorkspaceEnd?(): void | Promise<void>;
 }
 
-export type RuleVisitor = RuleLifecycleHooks & ScriptVisitor;
+export type RuleVisitor = RuleLifecycleHooks &
+  ScriptVisitor & {
+    /** Visitors for the Vue SFC `<template>`, keyed by compiler-dom node kind. */
+    template?: TemplateVisitor;
+  };
 
 export interface DoctorRule {
   meta: RuleMeta;

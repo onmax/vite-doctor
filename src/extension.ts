@@ -28,6 +28,22 @@ export type {
   ScriptVisitor,
   SourceFileHandle,
   SourceRange,
+  TemplateAstNode,
+  TemplateAttributeNode,
+  TemplateChildNode,
+  TemplateCommentNode,
+  TemplateDirectiveNode,
+  TemplateElementNode,
+  TemplateExpressionNode,
+  TemplateInterpolationNode,
+  TemplateNodeKind,
+  TemplateNodeKinds,
+  TemplateNodeParents,
+  TemplateParentNode,
+  TemplateRootNode,
+  TemplateSourceLocation,
+  TemplateTextNode,
+  TemplateVisitor,
 } from "./core/primitives.js";
 export { defineExtensionDiagnostics as defineDoctorDiagnostics } from "./core/diagnostics.js";
 export type {

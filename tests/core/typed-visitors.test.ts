@@ -6,6 +6,8 @@ const acmeDiagnostics = defineDoctorDiagnostics(
   [
     { code: "ACME0001", ruleId: "acme/no-legacy-client" },
     { code: "ACME0002", ruleId: "acme/single-client" },
+    { code: "ACME0003", ruleId: "acme/image" },
+    { code: "ACME0004", ruleId: "acme/image" },
   ],
   { docsBase: "https://acme.dev/doctor" },
 );
@@ -63,6 +65,73 @@ const singleClient = createRule({
       },
     };
   },
+});
+
+const acmeImage = createRule({
+  meta: {
+    id: "acme/image",
+    title: "Use accessible, secure Acme images",
+    category: "a11y",
+    severity: "warn",
+  },
+  create(ctx) {
+    return {
+      template: {
+        element(node) {
+          if (node.tag !== "AcmeImage") return;
+          if (
+            ctx.helpers.hasVueAttribute(node, "alt") ||
+            ctx.helpers.hasVueDirective(node, "bind", "alt")
+          )
+            return;
+          ctx.report(
+            acmeDiagnostics.diagnostics.ACME0003({
+              why: "Screen readers announce an image without alt text by its file name.",
+              fix: 'Add alt text, or alt="" for a decorative image.',
+            }),
+            { range: ctx.range(node) },
+          );
+        },
+        directive(node, element) {
+          if (element.tag !== "AcmeImage" || node.name !== "bind" || node.arg?.content !== "src")
+            return;
+          const expression = node.exp && ctx.helpers.parseTemplateExpression(node.exp);
+          if (expression?.type !== "Literal" || !String(expression.value).startsWith("http:"))
+            return;
+          ctx.report(
+            acmeDiagnostics.diagnostics.ACME0004({
+              why: "An http: image on an https: page is mixed content that browsers upgrade or block.",
+              fix: "Serve the image over https:.",
+            }),
+            { range: ctx.range(expression) },
+          );
+        },
+      },
+    };
+  },
+});
+
+test("template visitors report the documented image problems", async () => {
+  const source = `<template>
+  <AcmeImage :src="'http://cdn.acme.dev/a.png'" alt="Logo" />
+  <AcmeImage src="/b.png" />
+  <AcmeImage :src="url" :alt="label" />
+</template>
+`;
+  const result = await runRuleFixture({
+    rule: acmeImage,
+    framework: "vue",
+    files: { "src/App.vue": source },
+  });
+
+  const literal = "'http://cdn.acme.dev/a.png'";
+  expect(
+    result.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.range?.start]),
+  ).toEqual([
+    ["ACME0004", source.indexOf(literal)],
+    ["ACME0003", source.indexOf('<AcmeImage src="/b.png" />')],
+  ]);
+  expect(result.diagnostics[0]!.range?.end).toBe(source.indexOf(literal) + literal.length);
 });
 
 test("import visitors report the documented legacy import", async () => {

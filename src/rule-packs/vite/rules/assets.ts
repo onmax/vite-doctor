@@ -1,5 +1,10 @@
 import { dirname, relative, resolve } from "pathe";
-import { createRule, type RuleContext } from "../../../core/index.js";
+import {
+  createRule,
+  type RuleContext,
+  type TemplateAttributeNode,
+  type TemplateDirectiveNode,
+} from "../../../core/index.js";
 import { staticString, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
@@ -44,35 +49,42 @@ export const noSrcAbsolutePublicUrl = createRule({
     docsUrl: "https://vite.dev/guide/assets.html#static-asset-handling",
   },
   create(ctx) {
+    const report = (node: TemplateAttributeNode | TemplateDirectiveNode, value: string) =>
+      ctx.report(
+        diagnostics.VITE0003({
+          why: `Source asset "${value}" is referenced by a URL attribute Vue does not transform by default.`,
+          fix: "Import the source asset and bind its generated URL, or move it to public and reference it from /.",
+        }),
+        {
+          ruleId: "vite/assets/no-src-absolute-public-url",
+          severity: ctx.severity,
+          category: "assets",
+          file: ctx.file.path,
+          range: ctx.range(node),
+        },
+      );
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VAttribute") return;
-        const element = node.parent?.parent;
-        const tag = element?.rawName;
-        const attribute = node.directive ? node.key.argument?.name : node.key.name;
-        if (!Object.hasOwn(assetAttributes, tag) || !assetAttributes[tag]!.includes(attribute))
-          return;
-        if (node.directive && node.key.name.name !== "bind") return;
-        if (!node.directive && transformedVueAssets[tag]?.includes(attribute)) return;
-        const value = node.directive ? staticString(node.value?.expression) : node.value?.value;
-        if (typeof value !== "string" || !value.startsWith("/src/")) return;
-        ctx.report(
-          diagnostics.VITE0003({
-            why: `Source asset "${value}" is referenced by a URL attribute Vue does not transform by default.`,
-            fix: "Import the source asset and bind its generated URL, or move it to public and reference it from /.",
-          }),
-          {
-            ruleId: "vite/assets/no-src-absolute-public-url",
-            severity: ctx.severity,
-            category: "assets",
-            file: ctx.file.path,
-            range: ctx.range(node),
-          },
-        );
+      template: {
+        attribute(node, element) {
+          if (!isAssetAttribute(element.tag, node.name)) return;
+          if (transformedVueAssets[element.tag]?.includes(node.name)) return;
+          const value = node.value?.content;
+          if (value?.startsWith("/src/")) report(node, value);
+        },
+        directive(node, element) {
+          if (node.name !== "bind" || !node.arg?.isStatic || !node.exp) return;
+          if (!isAssetAttribute(element.tag, node.arg.content)) return;
+          const value = staticString(ctx.helpers.parseTemplateExpression(node.exp));
+          if (value?.startsWith("/src/")) report(node, value);
+        },
       },
     };
   },
 });
+
+function isAssetAttribute(tag: string, attribute: string): boolean {
+  return Object.hasOwn(assetAttributes, tag) && assetAttributes[tag]!.includes(attribute);
+}
 
 const transformedVueAssets: Record<string, string[]> = {
   video: ["src", "poster"],

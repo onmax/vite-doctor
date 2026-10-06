@@ -10,16 +10,21 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
 import { dirname, isAbsolute, relative, resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import type { Diagnostic } from "../primitives.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import { lineColumnAt } from "./line-index.js";
+import { loadVueCompilerSfc } from "./lazy-parsers.js";
 import { parseScript } from "./script.js";
+import { parseVueScriptsResult } from "./sfc.js";
+import {
+  SFC_TEMPLATE_PARSE_OPTIONS,
+  TemplateNodeType,
+  templateAstFromDescriptor,
+  walkTemplate,
+} from "./template.js";
 import { sha256 } from "./utils.js";
-
-const require = createRequire(import.meta.url);
 
 export interface DiagnosticPolicyInput {
   root: string;
@@ -274,7 +279,7 @@ function collectInlineSuppressions(file: string, lines: string[]): Map<number, I
   if (!source.includes("doctor-disable")) return new Map();
   const directives = new Map<number, InlineSuppression>();
   const comments = file.endsWith(".vue")
-    ? collectVueComments(source)
+    ? collectVueComments(file, source)
     : collectScriptComments(file, source);
   for (const comment of comments) {
     addCommentSuppressions(directives, source, comment.start, comment.end);
@@ -296,40 +301,24 @@ function collectScriptComments(file: string, source: string): SourceComment[] {
   );
 }
 
-function collectVueComments(source: string): SourceComment[] {
+function collectVueComments(file: string, source: string): SourceComment[] {
   try {
-    const vueParser = require("vue-eslint-parser") as {
-      parseForESLint: (
-        text: string,
-        options: Record<string, unknown>,
-      ) => {
-        ast: {
-          comments?: Array<{ range?: [number, number] }>;
-          templateBody?: { comments?: Array<{ range?: [number, number] }> };
-        };
-      };
-    };
-    const tsParser = require("@typescript-eslint/parser") as { parseForESLint: unknown };
-    const { parse } = require("@vue/compiler-sfc") as typeof import("@vue/compiler-sfc");
-    const { descriptor } = parse(source, { sourceMap: false });
-    const jsx = [descriptor.script, descriptor.scriptSetup].some((block) =>
-      ["tsx", "jsx"].includes(block?.lang?.toLowerCase() ?? ""),
-    );
-    const parsed = vueParser.parseForESLint(source, {
-      comment: true,
-      ecmaFeatures: { jsx },
-      ecmaVersion: "latest",
-      loc: true,
-      parser: tsParser,
-      range: true,
-      sourceType: "module",
-      tokens: true,
+    const { descriptor } = loadVueCompilerSfc().parse(source, {
+      filename: file,
+      sourceMap: false,
+      templateParseOptions: SFC_TEMPLATE_PARSE_OPTIONS,
     });
-    const comments = [...(parsed.ast.comments ?? []), ...(parsed.ast.templateBody?.comments ?? [])];
-    return comments.flatMap((comment) => {
-      const range = comment.range;
-      return range ? [{ start: range[0], end: range[1] }] : [];
-    });
+    const script = parseVueScriptsResult(file, descriptor, source).ast;
+    const comments: SourceComment[] = [
+      ...((script?.comments as SourceComment[] | undefined) ?? []),
+    ];
+    const template = templateAstFromDescriptor(descriptor);
+    if (template)
+      walkTemplate(template, (node) => {
+        if (node.type === TemplateNodeType.COMMENT)
+          comments.push({ start: node.loc.start.offset, end: node.loc.end.offset });
+      });
+    return comments;
   } catch {
     return [];
   }

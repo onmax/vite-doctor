@@ -1,23 +1,29 @@
-import type { RuleLifecycleHooks, RuleVisitor, SourceFileHandle } from "../primitives.js";
-import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
+import type {
+  RuleLifecycleHooks,
+  RuleVisitor,
+  SourceFileHandle,
+  TemplateVisitor,
+} from "../primitives.js";
+import { dispatchTemplate } from "./template.js";
+import { getNodeVisitorKeys } from "./visitor-keys.js";
 
 type AstNode = Record<string, unknown> & { type: string };
 type NodeHandler = (node: AstNode) => void;
 type HandlerTable = Map<string, NodeHandler[]>;
 
-const LIFECYCLE_HOOKS = new Set<string>([
+const NON_SCRIPT_KEYS = new Set<string>([
   "onWorkspaceStart",
   "onProjectStart",
   "SFC",
-  "TemplateNode",
   "NuxtManifest",
   "onProjectEnd",
   "onWorkspaceEnd",
-] satisfies Array<keyof RuleLifecycleHooks>);
+  "template",
+] satisfies Array<keyof RuleLifecycleHooks | "template">);
 
 /** Whether `key` names a script node visitor such as `CallExpression` or `Program:exit`. */
 export function isScriptVisitorKey(key: string): boolean {
-  return !LIFECYCLE_HOOKS.has(key);
+  return !NON_SCRIPT_KEYS.has(key);
 }
 
 export function runVisitor(visitor: RuleVisitor, file: SourceFileHandle): Promise<void> {
@@ -36,7 +42,8 @@ export async function runVisitors(
     if (handlers) dispatchScript(file.scriptAst, handlers.enter, handlers.exit);
   }
   if (file.templateAst) {
-    const templateVisitors = visitors.filter((visitor) => visitor.TemplateNode !== undefined);
+    const templateVisitors: TemplateVisitor[] = [];
+    for (const visitor of visitors) if (visitor.template) templateVisitors.push(visitor.template);
     if (templateVisitors.length > 0) dispatchTemplate(file.templateAst, templateVisitors);
   }
 }
@@ -122,20 +129,5 @@ function setDoctorParent(node: AstNode, parent: AstNode) {
     });
   } catch {
     // Some parser nodes may be frozen by future parser versions.
-  }
-}
-
-function dispatchTemplate(node: unknown, visitors: readonly RuleVisitor[]) {
-  if (!node || typeof node !== "object") return;
-  const typed = node as AstNode;
-  if (!typed.type) return;
-  for (const visitor of visitors) visitor.TemplateNode!(typed);
-  for (const key of getTemplateVisitorKeys(typed)) {
-    const value = typed[key];
-    if (Array.isArray(value)) {
-      for (const child of value) dispatchTemplate(child, visitors);
-    } else if (value && typeof value === "object" && typeof (value as any).type === "string") {
-      dispatchTemplate(value, visitors);
-    }
   }
 }

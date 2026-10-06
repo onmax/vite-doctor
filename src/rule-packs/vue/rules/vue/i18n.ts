@@ -1,5 +1,10 @@
 import { resolve } from "pathe";
-import type { RuleFileSystem } from "../../../../core/index.js";
+import type {
+  RuleFileSystem,
+  TemplateAttributeNode,
+  TemplateElementNode,
+  TemplateTextNode,
+} from "../../../../core/index.js";
 import { AnyNode, createRule } from "./shared.js";
 import { parseScript } from "./script.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -95,46 +100,41 @@ export const noUntranslatedText = createRule({
       ctx.cache.set(cacheKey, hasI18n);
     }
     if (!hasI18n) return;
+    let translationDepth = 0;
+    const reportText = (node: TemplateTextNode | TemplateAttributeNode, why: string, fix: string) =>
+      ctx.helpers.report(ctx, node, diagnostics.VUE0001({ why, fix }), {
+        ruleId: "vue/i18n/no-untranslated-text",
+        severity: "warn",
+        category: "i18n",
+      });
     return {
-      TemplateNode(node: AnyNode) {
-        if (isInsideI18nTranslation(node)) return;
-
-        if (node.type === "VText") {
-          const value = normalizeVisibleText(node.value ?? "");
+      template: {
+        element(node) {
+          if (isI18nTranslation(node)) translationDepth++;
+        },
+        "element:exit"(node) {
+          if (isI18nTranslation(node)) translationDepth--;
+        },
+        text(node) {
+          if (translationDepth > 0) return;
+          const value = normalizeVisibleText(node.content);
           if (!isUserFacingText(value)) return;
-          ctx.helpers.report(
-            ctx,
+          reportText(
             node,
-            diagnostics.VUE0001({
-              why: `Visible text "${truncate(value)}" should come from Vue i18n.`,
-              fix: "Replace the hardcoded text with t(), $t(), or <i18n-t>.",
-            }),
-            {
-              ruleId: "vue/i18n/no-untranslated-text",
-              severity: "warn",
-              category: "i18n",
-            },
+            `Visible text "${truncate(value)}" should come from Vue i18n.`,
+            "Replace the hardcoded text with t(), $t(), or <i18n-t>.",
           );
-        }
-
-        if (node.type !== "VAttribute") return;
-        const name = String(node.key?.name ?? "");
-        if (!STATIC_TEXT_ATTRIBUTES.has(name)) return;
-        const value = normalizeVisibleText(node.value?.value ?? "");
-        if (!isUserFacingText(value)) return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.VUE0001({
-            why: `Attribute "${name}" contains untranslated text "${truncate(value)}".`,
-            fix: "Bind the attribute to t() or $t().",
-          }),
-          {
-            ruleId: "vue/i18n/no-untranslated-text",
-            severity: "warn",
-            category: "i18n",
-          },
-        );
+        },
+        attribute(node) {
+          if (translationDepth > 0 || !STATIC_TEXT_ATTRIBUTES.has(node.name)) return;
+          const value = normalizeVisibleText(node.value?.content ?? "");
+          if (!isUserFacingText(value)) return;
+          reportText(
+            node,
+            `Attribute "${node.name}" contains untranslated text "${truncate(value)}".`,
+            "Bind the attribute to t() or $t().",
+          );
+        },
       },
     };
   },
@@ -380,16 +380,8 @@ function isUserFacingText(value: string): boolean {
   return /[A-Za-zÀ-ÖØ-öø-ÿ]/.test(value);
 }
 
-function isInsideI18nTranslation(node: AnyNode): boolean {
-  let current = node.parent ?? node.__doctorParent;
-  while (current) {
-    if (current.type === "VElement") {
-      const name = String(current.rawName ?? current.name ?? "");
-      if (name === "i18n-t" || name === "I18nT") return true;
-    }
-    current = current.parent ?? current.__doctorParent;
-  }
-  return false;
+function isI18nTranslation(element: TemplateElementNode): boolean {
+  return element.tag === "i18n-t" || element.tag === "I18nT";
 }
 
 function isLocaleMetadataKey(key: string): boolean {

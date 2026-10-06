@@ -56,7 +56,9 @@ test.each(scripts)("keeps template diagnostics for %s", async (script) => {
     expect(parsed.errors).toEqual([]);
     expect(() => compileScript(parsed.descriptor, { id: "template-jsx-fixture" })).not.toThrow();
     const sfc = await parseSfcFile("app.vue", source);
-    expect(await sfc.getTemplateTokens()).toMatchObject({ type: "VElement", rawName: "template" });
+    expect(sfc.getTemplateAst()?.children).toEqual([
+      expect.objectContaining({ type: 1, tag: "div" }),
+    ]);
     const result = await runVueSfcRuleFixture(restrictVHtml, source);
     expect(result.diagnostics).toEqual([
       expect.objectContaining({

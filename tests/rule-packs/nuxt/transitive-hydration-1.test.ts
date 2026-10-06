@@ -729,3 +729,22 @@ test.each([
   );
   expect(result.diagnostics).toHaveLength(count);
 });
+
+test.each([
+  ['<li v-for="clock in items" v-if="clock()" />', 1],
+  ['<li v-if="clock()" v-for="clock in items" />', 1],
+  ['<li v-for="clock in clock()">{{ clock }}</li>', 1],
+  ['<li :title="clock()" v-for="clock in items">{{ clock() }}</li>', 0],
+  ['<li v-for="clock in items" :title="clock()">{{ clock() }}</li>', 0],
+  ['<Widget v-slot="{ clock }">{{ clock() }}</Widget>', 0],
+  ['<span :title="(() => { { const clock = () => 0; } return clock(); })()" />', 1],
+])("preserves rendered reference scopes: %s", async (template, count) => {
+  const result = await runNuxtAppRuleFixture(
+    noTimeDependentRenderWithoutNuxtTimeOrClientOnly,
+    `<script setup>
+function clock() { return Date.now() }
+const items = []
+</script><template>${template}</template>`,
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});

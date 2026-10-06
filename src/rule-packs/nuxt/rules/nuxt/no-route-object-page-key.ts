@@ -1,5 +1,6 @@
 import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
-import { AnyNode, createRule, getDirectiveExpression, getElementName, report } from "./shared.js";
+import { findTemplateDirective } from "../../../../core/rule-authoring.js";
+import { AnyNode, createRule, report } from "./shared.js";
 
 export const noRouteObjectPageKey = createRule({
   meta: {
@@ -11,22 +12,22 @@ export const noRouteObjectPageKey = createRule({
     requires: { template: true, nuxt: true },
   },
   create(ctx) {
-    const reportNode = (node: AnyNode) =>
-      report(
-        ctx,
-        node,
-        "nuxt/routing/no-route-object-page-key",
-        "warn",
-        "routing",
-        "Using the route object as a NuxtPage page key can diverge from Nuxt's Suspense-backed page lifecycle.",
-        "Use a stable string key derived from route params or explicit page metadata.",
-      );
     return {
-      TemplateNode(node: AnyNode) {
-        if (node.type !== "VElement" || getElementName(node) !== "NuxtPage") return;
-        const pageKey = getDirectiveExpression(node, "bind", "page-key", ctx.file.text);
-        if (!pageKey || !usesRouteObject(pageKey)) return;
-        reportNode(node);
+      template: {
+        element(node) {
+          if (node.tag !== "NuxtPage") return;
+          const pageKey = findTemplateDirective(node, "bind", "page-key")?.exp?.content.trim();
+          if (!pageKey || !usesRouteObject(pageKey)) return;
+          report(
+            ctx,
+            node,
+            "nuxt/routing/no-route-object-page-key",
+            "warn",
+            "routing",
+            "Using the route object as a NuxtPage page key can diverge from Nuxt's Suspense-backed page lifecycle.",
+            "Use a stable string key derived from route params or explicit page metadata.",
+          );
+        },
       },
     };
   },
