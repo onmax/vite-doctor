@@ -12,6 +12,7 @@ import {
   type UnavailableGitChangeInventory,
 } from "./git-change-ranges.js";
 import { ProjectFileWalk, selectProjectFiles, takeProjectFileWalk } from "./project-files.js";
+import { projectNuxtInventories } from "./workspace-nuxt.js";
 
 const DEFAULT_INCLUDE = [
   "**/*.{vue,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
@@ -112,7 +113,9 @@ async function selectAllFiles(
     if (isAuthoredSource(file)) files.set(file, createAppFileEntry(root, file));
   }
 
-  for (const source of project.nuxt?.moduleSources ?? []) {
+  for (const source of projectNuxtInventories(project).flatMap(
+    (nuxt) => nuxt.moduleSources ?? [],
+  )) {
     const include = source.include?.length ? source.include : DEFAULT_INCLUDE;
     const moduleExclude = [...DEFAULT_EXCLUDE, ...(source.exclude ?? [])];
     const moduleWalk = new ProjectFileWalk(source.root);
@@ -197,8 +200,11 @@ function defaultIncludeForProject(project: ProjectInfo): string[] {
 }
 
 function hasContentFiles(project: ProjectInfo): boolean {
-  const moduleNames = new Set((project.nuxt?.modules ?? []).map((module) => module.name));
-  return moduleNames.has("@nuxt/content") || moduleNames.has("docus");
+  return projectNuxtInventories(project).some((nuxt) =>
+    (nuxt.modules ?? []).some(
+      (module) => module.name === "@nuxt/content" || module.name === "docus",
+    ),
+  );
 }
 
 function createAppFileEntry(root: string, file: string): ScanFileEntry {

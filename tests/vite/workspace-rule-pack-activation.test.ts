@@ -4,6 +4,7 @@ import { dirname, join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
 import { createAgentReport, createJsonReport, detectProject } from "../../src/core/index.ts";
 import { hostDoctorExtensions, runViteDoctor, viteDoctorExtensions } from "../../src/doctor.ts";
+import { workspaceProjectView } from "../../src/core/internal/workspace-nuxt.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -241,18 +242,172 @@ test("nested Nuxt host extensions require explicit trust and use the inventory o
   ]);
 });
 
-test("multi-Nuxt runs fail before activation when multiple nested packages own Nuxt", async () => {
-  const root = nitroRootMonorepo({
-    "packages/first/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
-    "packages/site/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+const plainEnvRule = "nuxt/runtime/no-plain-env-in-app-code";
+const plainEnvPage = '<script setup lang="ts">const key = process.env.API_KEY</script>\n';
+
+function multiNuxtMonorepo(members: Record<string, string> = {}) {
+  return nitroRootMonorepo({
+    "packages/app-a/package.json": JSON.stringify({
+      name: "@workspace/app-a",
+      dependencies: { nuxt: "^4.0.0" },
+    }),
+    "packages/app-a/nuxt.config.ts": "export default defineNuxtConfig({})\n",
+    "packages/app-a/app/pages/index.vue": plainEnvPage,
+    "packages/app-b/package.json": JSON.stringify({
+      name: "@workspace/app-b",
+      dependencies: { nuxt: "^4.0.0" },
+    }),
+    "packages/app-b/nuxt.config.ts": "export default defineNuxtConfig({ srcDir: 'web' })\n",
+    "packages/app-b/web/pages/index.vue": plainEnvPage,
+    "packages/app-b/.nuxt/doctor.manifest.json": JSON.stringify({
+      nuxtVersion: "4.0.0",
+      appDir: "web",
+      modules: [{ name: "docus" }],
+    }),
+    ...members,
   });
-  await expect(detectProject(root)).rejects.toThrow(
-    "Run Doctor separately from each Nuxt package root",
+}
+
+test("a workspace with several Nuxt apps reads each app's own Nuxt Project Inventory", async () => {
+  const root = multiNuxtMonorepo();
+
+  const project = await detectProject(root);
+
+  expect(project.framework).toBe("nuxt");
+  expect(project.nuxt).toBeUndefined();
+  expect(project.workspaceNuxt?.map((item) => item.root)).toEqual([
+    "packages/app-a",
+    "packages/app-b",
+  ]);
+  const [appA, appB] = project.workspaceNuxt!;
+  expect(appA!.nuxt.appDir).toBe(join(root, "packages/app-a/app"));
+  expect(appB!.nuxt.appDir).toBe(join(root, "packages/app-b/web"));
+  expect(appB!.nuxt.manifestPath).toBe(join(root, "packages/app-b/.nuxt/doctor.manifest.json"));
+  expect((appA!.nuxt.modules ?? []).map((module) => module.name)).not.toContain("docus");
+  expect((appB!.nuxt.modules ?? []).map((module) => module.name)).toContain("docus");
+  const view = workspaceProjectView(project, "packages/app-b");
+  expect(view.nuxt).toBe(appB!.nuxt);
+  expect(view.root).toBe(project.root);
+});
+
+test("a workspace with several Nuxt apps runs Nuxt Rules on each app with its inventory", async () => {
+  const root = multiNuxtMonorepo();
+
+  const result = await runViteDoctor({ root, cache: false, runtimeTarget: { nuxt: "4.1.0" } });
+
+  expect(result.framework).toBe("nuxt");
+  expect(
+    result.diagnostics
+      .filter((diagnostic) => diagnostic.ruleId === plainEnvRule)
+      .map((diagnostic) => diagnostic.file.slice(root.length + 1)),
+  ).toEqual(["packages/app-a/app/pages/index.vue", "packages/app-b/web/pages/index.vue"]);
+  const activations = new Map(
+    result.workspacePackages?.map((item) => [item.root, item.rulePacks] as const),
   );
-  await expect(runViteDoctor({ root, cache: false })).rejects.toThrow(
-    "Multi-Nuxt workspace runs are not supported",
+  expect(activations.get(".")).not.toContain("vite-doctor/nuxt");
+  expect(activations.get("packages/app-a")).toContain("vite-doctor/nuxt");
+  expect(activations.get("packages/app-b")).toEqual(
+    expect.arrayContaining(["vite-doctor/nuxt", "vite-doctor/docus"]),
   );
-  expect((await detectProject(join(root, "packages/site"))).framework).toBe("nuxt");
+  expect(activations.get("packages/app-a")).not.toContain("vite-doctor/docus");
+  expect(activations.get("packages/app")).not.toContain("vite-doctor/nuxt");
+  expect(result.project.evidenceGaps ?? []).toEqual([]);
+  expect(JSON.parse(createJsonReport(result)).workspacePackages).toHaveLength(5);
+});
+
+test("Nuxt manifest Rules review each Nuxt app's inventory", async () => {
+  const root = multiNuxtMonorepo({
+    "packages/app-b/.nuxt/doctor.manifest.json": JSON.stringify({
+      nuxtVersion: "4.0.0",
+      appDir: "web",
+      autoImports: [
+        { name: "useFoo", from: "~/composables/a" },
+        { name: "useFoo", from: "~/composables/b" },
+      ],
+    }),
+  });
+
+  const result = await runViteDoctor({
+    root,
+    cache: false,
+    rules: "nuxt/imports/no-auto-import-collision",
+    runtimeTarget: { nuxt: "4.1.0" },
+  });
+
+  expect(
+    result.diagnostics
+      .filter((diagnostic) => diagnostic.ruleId === "nuxt/imports/no-auto-import-collision")
+      .map((diagnostic) => diagnostic.file.slice(root.length + 1)),
+  ).toEqual(["packages/app-b/nuxt.config.ts"]);
+  expect(
+    result.diagnostics
+      .filter((diagnostic) => diagnostic.ruleId === "doctor/inventory/unresolved-runtime")
+      .map((diagnostic) => diagnostic.file.slice(root.length + 1)),
+  ).toEqual(["packages/app-a/package.json", "packages/app-b/package.json"]);
+});
+
+test("Nuxt module Doctor options of a non-owning Nuxt app are reported as an evidence gap", async () => {
+  const root = multiNuxtMonorepo({
+    "packages/app-a/.nuxt/doctor.manifest.json": JSON.stringify({
+      nuxtVersion: "4.0.0",
+      doctorConfig: { rules: { [plainEnvRule]: "off" } },
+    }),
+  });
+
+  const result = await runViteDoctor({ root, cache: false, runtimeTarget: { nuxt: "4.1.0" } });
+
+  expect(result.project.evidenceGaps).toEqual([
+    {
+      source: "vite-doctor/workspace-nuxt",
+      message: expect.stringContaining("Run Doctor from packages/app-a"),
+      files: ["packages/app-a/.nuxt/doctor.manifest.json"],
+    },
+  ]);
+  expect(JSON.parse(createAgentReport(result, { runOptions: { root } })).status).toBe("incomplete");
+});
+
+test("an explicit Nuxt run with several Nuxt apps roots the run inventory at the workspace", async () => {
+  const root = multiNuxtMonorepo();
+
+  const project = await detectProject(root, "nuxt");
+
+  expect(project.nuxt?.appRoots).toEqual([
+    join(root, "packages/app-a"),
+    join(root, "packages/app-b"),
+  ]);
+  expect(project.workspaceNuxt?.map((item) => item.root)).toEqual([
+    "packages/app-a",
+    "packages/app-b",
+  ]);
+  const result = await runViteDoctor({
+    root,
+    framework: "nuxt",
+    cache: false,
+    runtimeTarget: { nuxt: "4.1.0" },
+  });
+  expect(
+    result.diagnostics
+      .filter((diagnostic) => diagnostic.ruleId === plainEnvRule)
+      .map((diagnostic) => diagnostic.file.slice(root.length + 1)),
+  ).toEqual(["packages/app-a/app/pages/index.vue", "packages/app-b/web/pages/index.vue"]);
+});
+
+test("host extensions load from every Nuxt app's manifest", async () => {
+  const root = multiNuxtMonorepo({
+    "packages/app-a/doctor.mjs": "export default { name: 'app-a-host' };",
+    "packages/app-b/doctor.mjs": "export default { name: 'app-b-host' };",
+  });
+  for (const app of ["app-a", "app-b"]) {
+    mkdirSync(join(root, `packages/${app}/.nuxt`), { recursive: true });
+    writeFileSync(
+      join(root, `packages/${app}/.nuxt/doctor.manifest.json`),
+      JSON.stringify({ extensions: [join(root, `packages/${app}/doctor.mjs`)] }),
+    );
+  }
+  expect(await hostDoctorExtensions({ root, hostExtensions: true })).toEqual([
+    { name: "app-a-host" },
+    { name: "app-b-host" },
+  ]);
 });
 
 test("a root Nuxt owner can include a nested Nuxt workspace package", async () => {

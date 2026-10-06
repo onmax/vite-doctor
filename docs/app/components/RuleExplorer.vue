@@ -15,26 +15,23 @@ import {
   type FrameworkFilter,
 } from "../utils/rule-metadata";
 
-const props = withDefaults(
-  defineProps<{
-    rules: RawRuleEntry[];
-    title: string;
-    description?: string;
-    currentFramework?: FrameworkFilter;
-    packLabel?: string;
-    frameworkTabsMode?: "filter" | "links" | "none";
-    headingTag?: "h1" | "h2";
-    showHeader?: boolean;
-  }>(),
-  {
-    description: "",
-    currentFramework: "all",
-    packLabel: "",
-    frameworkTabsMode: "filter",
-    headingTag: "h2",
-    showHeader: true,
-  },
-);
+const {
+  rules,
+  description = "",
+  currentFramework = "all",
+  frameworkTabsMode = "filter",
+  headingTag = "h2",
+  showHeader = true,
+} = defineProps<{
+  rules: RawRuleEntry[];
+  title: string;
+  description?: string;
+  currentFramework?: FrameworkFilter;
+  packLabel?: string;
+  frameworkTabsMode?: "filter" | "links" | "none";
+  headingTag?: "h1" | "h2";
+  showHeader?: boolean;
+}>();
 
 const runtimeConfig = useRuntimeConfig();
 const versionLabel = computed(() => `v${runtimeConfig.public.doctorVersion}`);
@@ -69,9 +66,9 @@ const {
   isRuleOpen,
   handleToggle,
 } = useRuleExplorer({
-  rules: () => props.rules,
-  currentFramework: () => props.currentFramework,
-  frameworkTabsMode: () => props.frameworkTabsMode,
+  rules: () => rules,
+  currentFramework: () => currentFramework,
+  frameworkTabsMode: () => frameworkTabsMode,
 });
 const frameworkItems = computed(() =>
   frameworkTabs.value.map((tab) => ({
@@ -154,9 +151,9 @@ const frameworkLinkTabs = computed(() =>
     }[framework],
   })),
 );
-const activeFrameworkLinkId = ref<FrameworkFilter>(props.currentFramework);
+const activeFrameworkLinkId = ref<FrameworkFilter>(currentFramework);
 watch(
-  () => props.currentFramework,
+  () => currentFramework,
   (framework) => {
     activeFrameworkLinkId.value = framework;
   },

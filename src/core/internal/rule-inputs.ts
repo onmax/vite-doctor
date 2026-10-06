@@ -30,9 +30,13 @@ export class RuleInputs {
     this.knownText = knownText;
   }
 
-  /** One Rule's view of the run: its reads are logged in the order they happen. */
-  frame(): RuleInputFrame {
-    return new RuleInputFrame(this);
+  /**
+   * One Rule's view of the run: its reads are logged in the order they happen. A `scope` keeps
+   * `ctx.cache` values apart for Rules that see a different Project Inventory, such as a Nuxt
+   * workspace package with its own inventory.
+   */
+  frame(scope?: string): RuleInputFrame {
+    return new RuleInputFrame(this, scope);
   }
 
   text(path: string): string | undefined {
@@ -133,10 +137,15 @@ export class RuleInputFrame {
   readonly cache: RuleCache;
   private readonly misses = new Map<string, number>();
 
-  constructor(private readonly inputs: RuleInputs) {
+  constructor(
+    private readonly inputs: RuleInputs,
+    scope?: string,
+  ) {
     this.fs = createRuleFileSystem(inputs, this.log);
+    const scoped = (key: string) => (scope === undefined ? key : `${scope}\0${key}`);
     this.cache = {
-      get: <T>(key: string): T | undefined => {
+      get: <T>(rawKey: string): T | undefined => {
+        const key = scoped(rawKey);
         const remembered = inputs.remembered(key);
         if (!remembered) {
           if (!this.misses.has(key)) this.misses.set(key, this.log.length);
@@ -147,7 +156,8 @@ export class RuleInputFrame {
       },
       // A value is attributed the inputs read since this frame missed its key, which is where a
       // Rule computes what it is about to remember.
-      set: <T>(key: string, value: T): void => {
+      set: <T>(rawKey: string, value: T): void => {
+        const key = scoped(rawKey);
         const from = this.misses.get(key);
         if (from === undefined) return;
         this.misses.delete(key);

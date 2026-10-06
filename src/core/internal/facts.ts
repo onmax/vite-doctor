@@ -17,6 +17,9 @@ import { createCacheKey, markSession, type ScanSession } from "./scan-session.js
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys, getTemplateVisitorKeys } from "./visitor-keys.js";
 import { isCachedFileFacts } from "./cached-file-facts.js";
+import { projectWorkspacePackages } from "./applicability.js";
+import { workspaceProjectView } from "./workspace-nuxt.js";
+import { owningWorkspacePackage } from "./workspace-packages.js";
 
 const FILE_FACTS_VERSION = 7;
 
@@ -91,6 +94,12 @@ async function parseSourceFile(
     ? { ...cachedFacts, fileId }
     : createFileFacts(session, file, fileId, text, hash, scriptAst, templateAst, sfc);
   if (!reusable) session.cache.set(cacheKey, facts);
+  const project = session.project.workspaceNuxt
+    ? workspaceProjectView(
+        session.project,
+        owningWorkspacePackage(projectWorkspacePackages(session.project), file.displayPath),
+      )
+    : session.project;
   return {
     path: absolute,
     relativePath: file.displayPath,
@@ -103,14 +112,12 @@ async function parseSourceFile(
     templateAst,
     sfc,
     facts,
-    project: session.project,
+    project,
     matches(this: SourceFileHandle, pattern) {
       return nativeMatch(this.relativePath, pattern);
     },
     inAppDir(this: SourceFileHandle, dir) {
-      const appDir = session.project.nuxt?.appDir
-        ? relative(session.root, session.project.nuxt.appDir)
-        : "app";
+      const appDir = project.nuxt?.appDir ? relative(session.root, project.nuxt.appDir) : "app";
       return this.relativePath.startsWith(`${appDir}/${dir}/`);
     },
     isModuleSource(this: SourceFileHandle) {

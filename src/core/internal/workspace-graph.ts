@@ -14,6 +14,7 @@ import { resolvedConfigFor, type ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { pushDiagnostic } from "./diagnostics.js";
 import { walkAstFacts } from "./facts.js";
+import { projectNuxtInventories } from "./workspace-nuxt.js";
 
 interface GraphIndex {
   resolveImport(from: FileFacts, specifier: string): number | undefined;
@@ -115,8 +116,6 @@ function createGraphIndex(session: ScanSession): GraphIndex {
   const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
   const resolved = new Map<string, number | undefined>();
   const directories = new Map<string, string>();
-  let aliasRoots: string[] | undefined;
-  let rootAliasRoots: string[] | undefined;
   let packageDeps: PackageDependencyFacts | undefined;
 
   const firstMatch = (bases: string[]): number | undefined => {
@@ -139,14 +138,15 @@ function createGraphIndex(session: ScanSession): GraphIndex {
   };
 
   const resolveUncached = (from: FileFacts, specifier: string): number | undefined => {
+    const packageRoot = packageRootForFile(session, from.path);
     if (specifier.startsWith("~~/")) {
-      rootAliasRoots ??= [...new Set(["", ...workspacePackageRoots(session)])];
-      return firstMatch(rootAliasImportBases(rootAliasRoots, specifier.slice(3)));
+      const roots = packageRoot ? [packageRoot] : ["", ...workspacePackageRoots(session)];
+      return firstMatch(rootAliasImportBases(roots, specifier.slice(3)));
     }
     if (specifier.startsWith("~/") || specifier.startsWith("@/")) {
-      aliasRoots ??= aliasImportRoots(session);
       const base = specifier.slice(2);
-      return firstMatch(aliasRoots.map((root) => (root ? `${root}/${base}` : base)));
+      const roots = aliasImportRoots(session, packageRoot);
+      return firstMatch(roots.map((root) => (root ? `${root}/${base}` : base)));
     }
     return firstMatch([relative(session.root, resolve(sourceDirectory(from), specifier))]);
   };
@@ -154,12 +154,10 @@ function createGraphIndex(session: ScanSession): GraphIndex {
   return {
     resolveImport(from, specifier) {
       if (!isLocalSpecifier(specifier)) return undefined;
-      // Alias imports resolve the same from every file; relative ones only per directory.
+      // Alias imports are scoped to the importing Nuxt package; relative ones are per directory.
       const key = specifier.startsWith(".")
         ? `${sourceDirectory(from)}\0${specifier}`
-        : specifier.startsWith("@/")
-          ? `~/${specifier.slice(2)}`
-          : specifier;
+        : `${packageRootForFile(session, from.path) ?? ""}\0${specifier}`;
       if (resolved.has(key)) return resolved.get(key);
       const target = resolveUncached(from, specifier);
       resolved.set(key, target);
@@ -227,28 +225,41 @@ function createVirtualRoots(
     }
   }
 
-  const manifest = session.project.nuxt?.manifest;
-  for (const page of manifest?.pages ?? []) addRoot("nuxt-page", page.file, "Nuxt manifest page");
-  for (const plugin of manifest?.pluginFiles ?? [])
-    addRoot("nuxt-plugin", plugin, "Nuxt manifest plugin");
-  for (const handler of [
-    ...(session.project.nuxt?.serverDirs.api ?? []),
-    ...(session.project.nuxt?.serverDirs.routes ?? []),
-    ...(session.project.nuxt?.serverDirs.middleware ?? []),
-    ...(session.project.nuxt?.serverDirs.plugins ?? []),
-  ])
-    addRoot("nuxt-server", handler, "Nuxt server handler");
-  for (const component of session.project.nuxt?.components.values() ?? [])
-    addRoot("nuxt-component", component.file, "Nuxt manifest component");
-  for (const source of session.project.nuxt?.moduleSources ?? [])
-    addRoot("nuxt-module", source.root, `Nuxt module source ${source.module}`);
+  for (const nuxt of projectNuxtInventories(session.project)) {
+    for (const page of nuxt.manifest?.pages ?? [])
+      addRoot("nuxt-page", page.file, "Nuxt manifest page");
+    for (const plugin of nuxt.manifest?.pluginFiles ?? [])
+      addRoot("nuxt-plugin", plugin, "Nuxt manifest plugin");
+    for (const handler of [
+      ...nuxt.serverDirs.api,
+      ...nuxt.serverDirs.routes,
+      ...nuxt.serverDirs.middleware,
+      ...nuxt.serverDirs.plugins,
+    ])
+      addRoot("nuxt-server", handler, "Nuxt server handler");
+    for (const component of nuxt.components.values())
+      addRoot("nuxt-component", component.file, "Nuxt manifest component");
+    for (const source of nuxt.moduleSources ?? [])
+      addRoot("nuxt-module", source.root, `Nuxt module source ${source.module}`);
+  }
   return roots;
 }
 
-function aliasImportRoots(session: ScanSession): string[] {
+function aliasImportRoots(session: ScanSession, packageRoot?: string): string[] {
+  if (packageRoot) {
+    const inventory = nuxtInventoryForRoot(session, packageRoot);
+    const roots = new Set<string>([
+      packageRoot === "." ? "" : packageRoot,
+      packageRoot === "." ? "app" : `${packageRoot}/app`,
+      packageRoot === "." ? "shared" : `${packageRoot}/shared`,
+    ]);
+    for (const root of inventory?.manifest?.appScanRoots ?? [])
+      roots.add(relative(session.root, root));
+    return [...roots];
+  }
   const roots = new Set(["", "app", "shared"]);
-  for (const root of session.project.nuxt?.manifest?.appScanRoots ?? []) {
-    roots.add(relative(session.root, root));
+  for (const nuxt of projectNuxtInventories(session.project)) {
+    for (const root of nuxt.manifest?.appScanRoots ?? []) roots.add(relative(session.root, root));
   }
   for (const fact of session.facts) {
     const appIndex = fact.relativePath.indexOf("/app/");
@@ -259,6 +270,32 @@ function aliasImportRoots(session: ScanSession): string[] {
     }
   }
   return [...roots];
+}
+
+function packageRootForFile(session: ScanSession, file: string): string | undefined {
+  const roots = [
+    ...(session.project.workspaceNuxt ?? []).map((item) => item.root),
+    ...(session.project.workspacePackages ?? [])
+      .filter((item) => item.framework === "nuxt")
+      .map((item) => item.root),
+  ];
+  const relativeFile = relative(session.root, file);
+  return roots
+    .filter((root) => root === "." || relativeFile === root || relativeFile.startsWith(`${root}/`))
+    .sort((a, b) => b.length - a.length)[0];
+}
+
+function nuxtInventoryForRoot(session: ScanSession, root: string) {
+  if (root === "." && session.project.nuxt) return session.project.nuxt;
+  return (
+    session.project.workspaceNuxt?.find((item) => item.root === root)?.nuxt ??
+    (session.project.nuxt &&
+    session.project.workspacePackages?.some(
+      (item) => item.root === root && item.framework === "nuxt",
+    )
+      ? session.project.nuxt
+      : undefined)
+  );
 }
 
 function rootAliasImportBases(roots: readonly string[], base: string): string[] {

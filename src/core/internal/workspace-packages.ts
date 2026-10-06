@@ -57,16 +57,26 @@ export function workspaceFramework(packages: readonly WorkspacePackage[]): Docto
   return FRAMEWORK_PRECEDENCE.find((framework) => frameworks.has(framework)) ?? "vite";
 }
 
-export function workspaceFrameworkPackage(
+/**
+ * The Nuxt workspace package that owns the run's `project.nuxt`: the root when it is a Nuxt app,
+ * otherwise the only Nuxt workspace package. Several nested Nuxt apps have no single owner, so
+ * each one keeps its own Nuxt Project Inventory.
+ */
+export function nuxtInventoryOwner(
+  packages: readonly WorkspacePackage[],
+): WorkspacePackage | undefined {
+  const nuxtPackages = packages.filter((item) => item.framework === "nuxt");
+  return (
+    nuxtPackages.find((item) => item.root === ".") ??
+    (nuxtPackages.length === 1 ? nuxtPackages[0] : undefined)
+  );
+}
+
+/** The package whose `package.json` resolves the run framework's runtime graph. */
+export function runtimeGraphPackage(
   packages: readonly WorkspacePackage[],
   framework: DoctorFramework,
 ): WorkspacePackage | undefined {
-  const nuxtPackages = packages.filter((item) => item.framework === "nuxt");
-  if (framework === "nuxt" && nuxtPackages.filter((item) => item.root !== ".").length > 1) {
-    throw new Error(
-      "Multi-Nuxt workspace runs are not supported. Run Doctor separately from each Nuxt package root.",
-    );
-  }
   return (
     packages.find((item) => item.root === "." && item.framework === framework) ??
     packages.find((item) => item.framework === framework)

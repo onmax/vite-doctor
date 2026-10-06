@@ -1,14 +1,8 @@
 <script setup lang="ts">
-const props = withDefaults(
-  defineProps<{
-    command?: string;
-    showControls?: boolean;
-  }>(),
-  {
-    command: undefined,
-    showControls: true,
-  },
-);
+const { command, showControls = true } = defineProps<{
+  command?: string;
+  showControls?: boolean;
+}>();
 
 const commandTabs = [
   {
@@ -66,7 +60,7 @@ const selectedPackageManager = computed(
 const skillsCommand = "npx skills add https://vite-doctor.onmax.me/";
 const activeCommand = computed(
   () =>
-    props.command ??
+    command ??
     (activeCommandTab.value === "humans"
       ? selectedPackageManager.value.doctorCommand
       : skillsCommand),

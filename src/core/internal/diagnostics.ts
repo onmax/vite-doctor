@@ -21,6 +21,7 @@ import type {
   WorkspaceGraph,
 } from "../primitives.js";
 import { applyDiagnosticPolicy, settleDiagnosticIdentity } from "./diagnostic-policy.js";
+import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256 } from "./utils.js";
@@ -344,26 +345,39 @@ export function pushDiagnostic(
 }
 
 export function reportRuntimeInventoryUnknown(session: ScanSession): void {
+  const nuxtRoots = workspaceNuxtRoots(session.project);
+  // Without a run owner, the run graph is borrowed from a Nuxt app that reports it below.
+  const ownerless =
+    session.project.framework === "nuxt" && !session.project.nuxt && nuxtRoots.length;
+  if (!ownerless) reportUnresolvedRuntime(session, session.project, ".");
+  for (const root of nuxtRoots) {
+    reportUnresolvedRuntime(session, workspaceProjectView(session.project, root), root);
+  }
+}
+
+function reportUnresolvedRuntime(
+  session: ScanSession,
+  project: ProjectInfo,
+  packageRoot: string,
+): void {
+  const packageJson = resolve(session.root, packageRoot, "package.json");
   const expected =
-    session.project.framework === "nuxt"
+    project.framework === "nuxt"
       ? ["nuxt", "nitro", "h3"]
-      : session.project.framework === "nitro"
+      : project.framework === "nitro"
         ? ["nitro", "h3"]
-        : session.project.framework === "vue"
+        : project.framework === "vue"
           ? ["vue"]
           : [];
   const unresolved = expected
-    .map(
-      (runtime) =>
-        session.project.runtimeGraph?.packages[runtime as "nuxt" | "nitro" | "h3" | "vue"],
-    )
+    .map((runtime) => project.runtimeGraph?.packages[runtime as "nuxt" | "nitro" | "h3" | "vue"])
     .filter((item) => item?.state === "unknown");
   const details = [
     ...unresolved.map(
       (item) => `${item?.owner} -> ${item?.runtime}: ${item?.reason ?? "unresolved"}`,
     ),
-    ...(session.project.nuxtCompatibility?.state === "unknown"
-      ? [`Nuxt compatibility: ${session.project.nuxtCompatibility.reason ?? "unresolved"}`]
+    ...(project.nuxtCompatibility?.state === "unknown"
+      ? [`Nuxt compatibility: ${project.nuxtCompatibility.reason ?? "unresolved"}`]
       : []),
   ];
   if (!details.length) return;
@@ -371,16 +385,16 @@ export function reportRuntimeInventoryUnknown(session: ScanSession): void {
     "Install project dependencies and run Doctor from the target project package. If the project uses Yarn PnP, run Doctor through Yarn so its loader is active.";
   const compatibilityFix =
     "Make the effective future.compatibilityVersion statically provable in nuxt.config, or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.";
-  const compatibilityUnknown = session.project.nuxtCompatibility?.state === "unknown";
+  const compatibilityUnknown = project.nuxtCompatibility?.state === "unknown";
   pushDiagnostic(session, {
     ruleId: "doctor/inventory/unresolved-runtime",
     severity: "warn",
     category: "inventory",
     file:
       unresolved.length || !compatibilityUnknown
-        ? resolve(session.root, "package.json")
-        : (session.project.nuxtCompatibility?.file ?? resolve(session.root, "package.json")),
-    why: `Doctor could not resolve the governing runtime graph: ${details.join("; ")}`,
+        ? packageJson
+        : (project.nuxtCompatibility?.file ?? packageJson),
+    why: `Doctor could not resolve the governing runtime graph${packageRoot === "." ? "" : ` of ${packageRoot}`}: ${details.join("; ")}`,
     suggestion: [
       unresolved.length ? runtimeFix : undefined,
       compatibilityUnknown ? compatibilityFix : undefined,
@@ -393,12 +407,12 @@ export function reportRuntimeInventoryUnknown(session: ScanSession): void {
         summary: `${item?.owner} -> ${item?.runtime} is unresolved.`,
         file: item?.packageJsonPath,
       })),
-      ...(session.project.nuxtCompatibility?.state === "unknown"
+      ...(project.nuxtCompatibility?.state === "unknown"
         ? [
             {
               kind: "manifest" as const,
               summary: "Nuxt compatibility behavior is unresolved.",
-              file: session.project.nuxtCompatibility?.file ?? session.project.nuxt?.manifestPath,
+              file: project.nuxtCompatibility?.file ?? project.nuxt?.manifestPath,
             },
           ]
         : []),
