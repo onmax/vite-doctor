@@ -6,7 +6,7 @@ import { runProjectFixture } from "../../src/core/testkit.ts";
 const fileRule = createRule({
   meta: { id: "test/file-rule", title: "File rule", category: "performance", severity: "info" },
   create() {
-    return { ScriptNode() {} };
+    return { Identifier() {} };
   },
 });
 

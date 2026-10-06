@@ -1,6 +1,7 @@
 import type { RuleContext } from "../../../../core/index.js";
 import {
   findAncestor,
+  namePattern,
   resolveLocalCalleeName,
   sourceForNode,
   walkScriptLocal,
@@ -66,29 +67,12 @@ export interface SideEffectMatch {
 
 // getAsyncDataCall only matches a callee, or a local alias initializer, spelled as one of these
 // names. Escapes could spell one without the literal text, so they keep the full check.
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const hexDigit = (value: string) => `[${value.toLowerCase()}${value.toUpperCase()}]`;
-const escapedCharacter = (character: string) => {
-  const code = character.charCodeAt(0);
-  const hex = code.toString(16).padStart(2, "0");
-  const unicode = code.toString(16).padStart(4, "0");
-  const unicodePattern = [...unicode].map(hexDigit).join("");
-  const hexPattern = [...hex].map(hexDigit).join("");
-  const octal = code.toString(8);
-  const codePoint = code.toString(16);
-  return `(?:${escapeRegex(character)}|\\\\u${unicodePattern}|\\\\u\\{0*${[...codePoint].map(hexDigit).join("")}\\}|\\\\x${hexPattern}|\\\\${octal}|\\\\(?![uUxX0-7])${escapeRegex(character)})`;
-};
-const escapedNamePattern = (name: string) => {
-  const continuation = `(?:\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029))`;
-  return `(?:${continuation}*${[...name]
-    .map((character) => `${escapedCharacter(character)}${continuation}*`)
-    .join("")})`;
-};
-const ASYNC_DATA_TEXT_RE = new RegExp(
-  ["useFetch", "useLazyFetch", "useAsyncData", "useLazyAsyncData"]
-    .map(escapedNamePattern)
-    .join("|"),
-);
+const ASYNC_DATA_TEXT_RE = namePattern([
+  "useFetch",
+  "useLazyFetch",
+  "useAsyncData",
+  "useLazyAsyncData",
+]);
 
 export function fileMayCallAsyncData(ctx: RuleContext): boolean {
   return ASYNC_DATA_TEXT_RE.test(ctx.file.text);

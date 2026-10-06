@@ -17,8 +17,7 @@ function invalidRangeRule(edit: unknown, includeValidEdit: boolean) {
     },
     create(ctx) {
       return {
-        ScriptNode(node: any) {
-          if (node.type !== "Program") return;
+        Program(node: any) {
           ctx.report(
             allDiagnostics.DOC9999({ why: "The fixture has an invalid edit.", fix: "Fix it." }),
             {

@@ -1,4 +1,5 @@
 import type { Diagnostic as NosticsDiagnostic } from "nostics";
+import type { Node as OxcNode } from "oxc-parser";
 import { assertExtensionDiagnosticCode, type DoctorDiagnosticRegistry } from "./diagnostics.js";
 import { doctorInternalDiagnostics } from "./internal-diagnostic-handles.js";
 export {
@@ -135,6 +136,11 @@ export interface RuleMeta {
     nuxt?: string;
     node?: string;
   };
+  /**
+   * Skips a file Rule, including `create()`, on files that cannot match. The Rule runs when the
+   * file has any listed signal, so list every entry point the Rule reports from.
+   */
+  prefilter?: RulePrefilter;
   sourceKinds?: Array<"app" | "layer" | "module">;
   execution?: ExecutionKind;
   cost?: RuleCost;
@@ -143,6 +149,15 @@ export interface RuleMeta {
   parallelSafe?: boolean;
   producesEvidence?: EvidenceKind[];
   consumesEvidence?: EvidenceKind[];
+}
+
+export interface RulePrefilter {
+  /** Callee names as in `FileFacts.calls`, such as `useFetch` or `Math.random`. */
+  calls?: readonly string[];
+  /** Import sources as in `FileFacts.imports`, such as `h3`. */
+  imports?: readonly string[];
+  /** Names the file text could spell, escape sequences included, for aliases and non-call uses. */
+  names?: readonly string[];
 }
 
 export interface SfcBlockHashes {
@@ -594,24 +609,40 @@ export interface RuleExample {
   valid?: string;
 }
 
+/** An ESTree script node as produced by oxc-parser, the parser behind every script AST. */
+export type ScriptAstNode = OxcNode;
+export type ScriptAstNodeType = ScriptAstNode["type"];
+/** The script node for one ESTree type, such as `ScriptAstNodeOf<"CallExpression">`. */
+export type ScriptAstNodeOf<T extends ScriptAstNodeType> = Extract<ScriptAstNode, { type: T }>;
+
+/**
+ * Script node visitors keyed by ESTree node type, the shape ESLint and oxlint use.
+ * `"<Type>:exit"` runs after the node's children.
+ */
+export type ScriptVisitor = {
+  [T in ScriptAstNodeType]?: (node: ScriptAstNodeOf<T>) => void;
+} & {
+  [T in ScriptAstNodeType as `${T}:exit`]?: (node: ScriptAstNodeOf<T>) => void;
+};
+
 /**
  * File rules share read-only ASTs. For each file, all create() calls finish in enabled-rule
- * order, then all SFC hooks finish in that order. Script nodes (DFS pre-order), then
+ * order, then all SFC hooks finish in that order. Script nodes (DFS, enter then exit), then
  * template nodes, dispatch to visitors in rule order per node. Script parents are fully
  * linked before script dispatch. Script traversal is snapshotted; AST mutation is unsupported.
  * Cross-rule state must not depend on another rule completing its traversal first.
  */
-export interface RuleVisitor {
+export interface RuleLifecycleHooks {
   onWorkspaceStart?(): void | Promise<void>;
   onProjectStart?(project: ProjectInfo): void | Promise<void>;
   SFC?(sfc: SfcHandle): void | Promise<void>;
   TemplateNode?(node: unknown): void;
-  ScriptNode?(node: unknown): void;
-  ImportDeclaration?(node: unknown): void;
   NuxtManifest?(manifest: NuxtProjectInfo): void;
   onProjectEnd?(project: ProjectInfo): void | Promise<void>;
   onWorkspaceEnd?(): void | Promise<void>;
 }
+
+export type RuleVisitor = RuleLifecycleHooks & ScriptVisitor;
 
 export interface DoctorRule {
   meta: RuleMeta;
