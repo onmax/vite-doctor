@@ -268,6 +268,27 @@ test("a changed-files Rule subset retains untouched Rule results", async () => {
   });
 });
 
+test("a changed run drops a stale graph when graph analysis is skipped", async () => {
+  await withProject(async (root) => {
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
+    writeFileSync(join(root, ".gitignore"), ".vite-doctor\n");
+    git("init");
+    git("add", ".");
+    git("-c", "user.name=Doctor", "-c", "user.email=doctor@example.test", "commit", "-m", "init");
+
+    await runDoctor(options(root));
+    const graph = readStoreFile(storePath(root)).index.graph;
+    expect(graph).toBeDefined();
+    await runDoctor({ ...options(root), changed: true, analyses: "health" });
+    expect(readStoreFile(storePath(root)).index.graph).toEqual(graph);
+
+    rmSync(join(root, "src/b.ts"));
+    await runDoctor({ ...options(root), changed: true, analyses: "health" });
+
+    expect(readStoreFile(storePath(root)).index.graph).toBeUndefined();
+  });
+});
+
 test("cache clean removes the cache store", async () => {
   await withProject(async (root) => {
     await runDoctor(options(root));

@@ -32,7 +32,7 @@ pnpm dlx vite-doctor . --rules nuxt/fetch/no-raw-fetch-in-setup
 pnpm dlx vite-doctor . --framework nitro
 ```
 
-`--changed` analyzes the whole project like a full run, then reports Diagnostics owned by staged, unstaged, or untracked lines. Diagnostics without a source range are included when the file they are anchored to changed. With the analysis cache, only changed files and the results that depend on them are recomputed:
+`--changed` reports Diagnostics owned by staged, unstaged, or untracked lines, exactly as a full run filtered to those lines would. Rules that report only into their own file run on changed files only; Rules that report across files keep whole-project context. Diagnostics without a source range are included when the file they are anchored to changed:
 
 ```bash
 pnpm dlx vite-doctor . --changed

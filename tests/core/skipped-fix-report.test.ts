@@ -15,6 +15,7 @@ test("text output exposes a fix run whose only edit was skipped", async () => {
           title: "Missing fix target",
           category: "correctness",
           severity: "warn",
+          reportScope: "project",
           requires: { script: true },
         },
         create(ctx) {

@@ -29,6 +29,7 @@ const missingFileFixRule = createRule({
     title: "Missing file fix",
     category: "correctness",
     severity: "warn",
+    reportScope: "project",
     requires: { script: true },
   },
   create(ctx) {
