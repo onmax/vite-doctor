@@ -88,7 +88,7 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
       ? {
           mode: "changed",
           base: session.gitChanges.base,
-          files: session.files.length,
+          files: session.files.filter((file) => file.reportEligibility).length,
           deletedFiles: session.gitChanges.files.filter((file) => file.kind === "deleted").length,
         }
       : { mode: "all", files: session.files.length },

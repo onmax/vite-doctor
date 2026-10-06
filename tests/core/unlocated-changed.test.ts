@@ -58,7 +58,7 @@ const runtimeTarget = {
 };
 
 test.each(["changed", "since"])(
-  "%s preserves a range-less manifest finding on a changed file",
+  "%s reports a range-less manifest finding when the file it is anchored to changed",
   async (mode) => {
     await withProject(async (root) => {
       const options = {
@@ -68,21 +68,27 @@ test.each(["changed", "since"])(
         cache: false,
         extensions: [extension(requireStandardAuthHandlerMount)],
       };
+      const changed = {
+        ...options,
+        ...(mode === "changed" ? { changed: true } : { since: "HEAD" }),
+      };
       const initial = await runDoctor(options);
       expect(initial.diagnostics.map((item) => item.code)).toEqual(["NUXT0003"]);
       expect(initial.diagnostics[0]?.range).toBeUndefined();
+      // Manifest Rules anchor project findings to the first source file, as in a full run.
+      const anchor = initial.diagnostics[0]!.file;
+      expect(anchor).toBe(join(root, "app/other.ts"));
       writeFileSync(
         join(root, "nuxt.config.ts"),
         "export default defineNuxtConfig({ devtools: { enabled: true } })\n",
       );
+      expect((await runDoctor(changed)).diagnostics).toEqual([]);
 
-      const result = await runDoctor({
-        ...options,
-        ...(mode === "changed" ? { changed: true } : { since: "HEAD" }),
-      });
+      writeFileSync(anchor, "export const value = false;\n");
+      const result = await runDoctor(changed);
 
       expect(result.diagnostics.map((item) => item.code)).toEqual(["NUXT0003"]);
-      expect(result.diagnostics[0]?.file).toBe(join(root, "nuxt.config.ts"));
+      expect(result.diagnostics[0]?.file).toBe(anchor);
       expect(result.diagnostics[0]?.range).toBeUndefined();
     });
   },

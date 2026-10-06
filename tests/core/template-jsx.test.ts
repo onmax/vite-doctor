@@ -32,7 +32,7 @@ test("ignores File Facts persisted by another Doctor build", async () => {
     expect(facts.templateRefs).toEqual([
       expect.objectContaining({ name: "ref", value: "element" }),
     ]);
-    initial.cache.persist({ prune: true, files: 1 });
+    initial.cache.persist({ files: 1 });
     const path = join(root, ".vite-doctor/cache/store.json");
     const store = readStoreFile(path);
     store.index.engine = "an-older-build";

@@ -63,7 +63,14 @@ export function applyReportEligibility(session: ScanSession): void {
   const eligibility = new Map(
     session.files.map((file) => [file.path, file.reportEligibility] as const),
   );
-  const sources = new Map(session.handles.map((handle) => [handle.path, handle.text] as const));
+  const sources = { get: (file: string) => session.handlesByPath.get(file)?.text };
+  // Parser evidence about files outside the change belongs to the full run, not this report.
+  if (session.project.evidenceGaps)
+    session.project.evidenceGaps = session.project.evidenceGaps.filter(
+      (gap) =>
+        (gap.source !== "script-parser" && gap.source !== "vue-sfc-parser") ||
+        gap.files.some((file) => eligibility.get(file)),
+    );
   session.diagnostics = session.diagnostics.filter((diagnostic) => {
     const locations = [diagnostic, ...(diagnostic.related ?? [])];
     return locations.some((location) => {

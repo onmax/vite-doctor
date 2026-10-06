@@ -383,15 +383,14 @@ export class DoctorCache implements SourceInventoryMemo {
   }
 
   /**
-   * Writes the store when the run changed it. Partial runs keep entries for files they did not
-   * see; runs of a Rule subset keep the results of every Rule outside `activeRuleKeys`.
+   * Writes the store when the run changed it. Every run sees the whole source inventory, so the
+   * store keeps only its files; a run of a Rule subset keeps the results of every Rule outside
+   * `activeRuleKeys`.
    */
   persist({
-    prune,
     files,
     activeRuleKeys,
   }: {
-    prune: boolean;
     files: number;
     activeRuleKeys?: ReadonlySet<string>;
   }): void {
@@ -401,19 +400,15 @@ export class DoctorCache implements SourceInventoryMemo {
     const loaded = this.loaded;
     if (loaded && activeRuleKeys) this.keepInactiveResults(loaded, activeRuleKeys);
     if (!loaded) this.dirty = true;
-    else {
-      if (!prune) this.mergeUntouched(loaded);
-      if (
-        prune &&
-        (Object.keys(loaded.files).some((path) => !this.files[path]) ||
-          Object.keys(loaded.signatures).some((path) => !this.signatures[path]) ||
-          Object.keys(loaded.runs).length !== Object.keys(this.runs).length ||
-          Boolean(loaded.graph) !== Boolean(this.graphEntry) ||
-          Object.keys(loaded.walks ?? {}).some((key) => !this.walks[key]) ||
-          Object.keys(loaded.generated ?? {}).some((path) => !this.generated[path]))
-      )
-        this.dirty = true;
-    }
+    else if (
+      Object.keys(loaded.files).some((path) => !this.files[path]) ||
+      Object.keys(loaded.signatures).some((path) => !this.signatures[path]) ||
+      Object.keys(loaded.runs).length !== Object.keys(this.runs).length ||
+      Boolean(loaded.graph) !== Boolean(this.graphEntry) ||
+      Object.keys(loaded.walks ?? {}).some((key) => !this.walks[key]) ||
+      Object.keys(loaded.generated ?? {}).some((path) => !this.generated[path])
+    )
+      this.dirty = true;
     if (!this.dirty) return;
     let temporary: string | undefined;
     let lock: { fd: number; path: string } | undefined;
@@ -454,44 +449,6 @@ export class DoctorCache implements SourceInventoryMemo {
     }
     for (const [index, result] of Object.entries(loaded.runs))
       keep(undefined, Number(index), result);
-  }
-
-  private mergeUntouched(loaded: StoreIndex): void {
-    for (const [key, files] of Object.entries(loaded.walks ?? {})) this.walks[key] ??= files;
-    for (const [path, signature] of Object.entries(loaded.generated ?? {}))
-      this.generated[path] ??= signature;
-    for (const [path, signature] of Object.entries(loaded.signatures))
-      this.signatures[path] ??= signature;
-    for (const [path, file] of Object.entries(loaded.files)) {
-      if (this.files[path]) continue;
-      this.files[path] = {
-        hash: file.hash,
-        entry: file.entry,
-        shape: file.shape,
-        ...(file.gaps ? { gaps: file.gaps } : {}),
-      };
-      for (const index of file.rs === undefined ? [] : (loaded.ruleSets[file.rs] ?? []))
-        this.storeResult(path, loaded.ruleKeys[index]!, undefined, []);
-      for (const [index, result] of Object.entries(file.r ?? {}))
-        this.storeResult(
-          path,
-          loaded.ruleKeys[Number(index)]!,
-          result.d,
-          this.loadedInputIds(result.i),
-        );
-      const facts = this.loadedFactsSection()[path];
-      if (facts) this.facts[path] = facts;
-    }
-    for (const [index, result] of Object.entries(loaded.runs)) {
-      const key = loaded.ruleKeys[Number(index)]!;
-      if (this.runs[this.internRuleKey(key)]) continue;
-      this.storeResult(undefined, key, result.d, this.loadedInputIds(result.i));
-    }
-    if (!this.graphEntry && loaded.graph)
-      this.graphEntry = {
-        ...loaded.graph,
-        i: this.loadedInputIds(loaded.graph.i).map((id) => this.internInput(id)),
-      };
   }
 
   private storeResult(

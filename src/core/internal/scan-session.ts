@@ -200,7 +200,6 @@ export function persistScanCache(session: ScanSession): void {
   const { options } = session;
   const subset = Boolean(options.rules) || Boolean(options.analyses);
   session.cache.persist({
-    prune: !session.gitChanges,
     files: session.files.length,
     activeRuleKeys: subset
       ? new Set(options.analyses && !options.rules ? [] : session.ruleKeys.values())
