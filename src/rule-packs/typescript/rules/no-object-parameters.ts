@@ -4,18 +4,6 @@ import { parameterType, report, type AnyNode } from "./shared.js";
 import { createTypeAliasResolver } from "./type-aliases.js";
 
 const ruleId = "typescript/evidence/no-object-parameters";
-const functionTypes = new Set([
-  "ArrowFunctionExpression",
-  "FunctionDeclaration",
-  "FunctionExpression",
-  "TSCallSignatureDeclaration",
-  "TSConstructSignatureDeclaration",
-  "TSConstructorType",
-  "TSDeclareFunction",
-  "TSEmptyBodyFunctionExpression",
-  "TSFunctionType",
-  "TSMethodSignature",
-]);
 
 export const noObjectParameters = createRule({
   meta: {
@@ -42,25 +30,33 @@ export const noObjectParameters = createRule({
   },
   create(ctx) {
     let resolver: ReturnType<typeof createTypeAliasResolver>;
+    const visitFunction = (node: AnyNode) => {
+      for (const parameter of node.params ?? []) {
+        const annotation = parameterType(parameter);
+        if (!resolver.resolvesToKeyword(annotation, "TSObjectKeyword")) continue;
+        report(
+          ctx,
+          annotation,
+          ruleId,
+          "This parameter accepts the broad object type without describing the properties the function owns.",
+          "Replace object with a named input type, or parse unknown input before this call.",
+        );
+      }
+    };
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type === "Program") {
-          resolver = createTypeAliasResolver(node);
-          return;
-        }
-        if (!functionTypes.has(node.type)) return;
-        for (const parameter of node.params ?? []) {
-          const annotation = parameterType(parameter);
-          if (!resolver.resolvesToKeyword(annotation, "TSObjectKeyword")) continue;
-          report(
-            ctx,
-            annotation,
-            ruleId,
-            "This parameter accepts the broad object type without describing the properties the function owns.",
-            "Replace object with a named input type, or parse unknown input before this call.",
-          );
-        }
+      Program(node: AnyNode) {
+        resolver = createTypeAliasResolver(node);
       },
+      ArrowFunctionExpression: visitFunction,
+      FunctionDeclaration: visitFunction,
+      FunctionExpression: visitFunction,
+      TSCallSignatureDeclaration: visitFunction,
+      TSConstructSignatureDeclaration: visitFunction,
+      TSConstructorType: visitFunction,
+      TSDeclareFunction: visitFunction,
+      TSEmptyBodyFunctionExpression: visitFunction,
+      TSFunctionType: visitFunction,
+      TSMethodSignature: visitFunction,
     };
   },
 });

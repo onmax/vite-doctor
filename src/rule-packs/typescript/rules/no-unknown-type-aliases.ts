@@ -30,8 +30,7 @@ export const noUnknownTypeAliases = createRule({
   },
   create(ctx) {
     return {
-      ScriptNode(node: AnyNode) {
-        if (node.type !== "Program") return;
+      Program(node: AnyNode) {
         const resolver = createTypeAliasResolver(node);
         for (const declaration of resolver.aliases) {
           if (!resolver.resolvesToKeyword(declaration.typeAnnotation, "TSUnknownKeyword")) continue;

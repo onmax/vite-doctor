@@ -41,31 +41,40 @@ export const noCallerChosenResultType = createRule({
     aiGeneratedCodeRisk: "high",
   },
   create(ctx) {
+    const visitFunction = (node: AnyNode) => {
+      if (node.type === "TSFunctionType" && isConditionalTypeOperand(node)) return;
+      const typeParameters = node.typeParameters?.params ?? [];
+      const returnType = node.returnType?.typeAnnotation;
+      if (!typeParameters.length || !returnType) return;
+      const inputTypes = new Set<string>();
+      for (const parameter of node.params ?? []) {
+        collectInputEvidenceIdentifiers(parameter, inputTypes);
+      }
+      expandInputEvidence(inputTypes, typeParameters);
+      const resultTypes = collectUnprovenResultTypeIdentifiers(returnType);
+      for (const parameter of typeParameters) {
+        const name = parameter.name?.name ?? parameter.name;
+        if (typeof name !== "string" || !resultTypes.has(name) || inputTypes.has(name)) continue;
+        report(
+          ctx,
+          parameter,
+          ruleId,
+          `Type parameter "${name}" affects the result but no input provides evidence for it.`,
+          "Accept a schema, parser, constructor, or typed value that determines the result type.",
+        );
+      }
+    };
     return {
-      ScriptNode(node: AnyNode) {
-        if (!functionTypes.has(node.type)) return;
-        if (node.type === "TSFunctionType" && isConditionalTypeOperand(node)) return;
-        const typeParameters = node.typeParameters?.params ?? [];
-        const returnType = node.returnType?.typeAnnotation;
-        if (!typeParameters.length || !returnType) return;
-        const inputTypes = new Set<string>();
-        for (const parameter of node.params ?? []) {
-          collectInputEvidenceIdentifiers(parameter, inputTypes);
-        }
-        expandInputEvidence(inputTypes, typeParameters);
-        const resultTypes = collectUnprovenResultTypeIdentifiers(returnType);
-        for (const parameter of typeParameters) {
-          const name = parameter.name?.name ?? parameter.name;
-          if (typeof name !== "string" || !resultTypes.has(name) || inputTypes.has(name)) continue;
-          report(
-            ctx,
-            parameter,
-            ruleId,
-            `Type parameter "${name}" affects the result but no input provides evidence for it.`,
-            "Accept a schema, parser, constructor, or typed value that determines the result type.",
-          );
-        }
-      },
+      ArrowFunctionExpression: visitFunction,
+      FunctionDeclaration: visitFunction,
+      FunctionExpression: visitFunction,
+      TSCallSignatureDeclaration: visitFunction,
+      TSConstructSignatureDeclaration: visitFunction,
+      TSConstructorType: visitFunction,
+      TSDeclareFunction: visitFunction,
+      TSEmptyBodyFunctionExpression: visitFunction,
+      TSFunctionType: visitFunction,
+      TSMethodSignature: visitFunction,
     };
   },
 });

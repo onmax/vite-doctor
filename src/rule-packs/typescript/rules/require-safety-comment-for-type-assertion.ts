@@ -28,24 +28,23 @@ export const requireSafetyCommentForTypeAssertion = createRule({
     aiGeneratedCodeRisk: "high",
   },
   create(ctx) {
-    return {
-      ScriptNode(node: AnyNode) {
-        if (
-          !isTypeAssertion(node) ||
-          isConstAssertion(node) ||
-          hasSafetyComment(ctx.file.text, (ctx.file.scriptAst?.comments as AnyNode[]) ?? [], node)
-        ) {
-          return;
-        }
-        report(
-          ctx,
-          node,
-          ruleId,
-          "This type assertion does not state the invariant that makes it safe.",
-          "Remove the assertion or add a specific SAFETY comment immediately before the statement.",
-        );
-      },
+    const visit = (node: AnyNode) => {
+      if (
+        !isTypeAssertion(node) ||
+        isConstAssertion(node) ||
+        hasSafetyComment(ctx.file.text, (ctx.file.scriptAst?.comments as AnyNode[]) ?? [], node)
+      ) {
+        return;
+      }
+      report(
+        ctx,
+        node,
+        ruleId,
+        "This type assertion does not state the invariant that makes it safe.",
+        "Remove the assertion or add a specific SAFETY comment immediately before the statement.",
+      );
     };
+    return { TSAsExpression: visit, TSTypeAssertion: visit };
   },
 });
 
