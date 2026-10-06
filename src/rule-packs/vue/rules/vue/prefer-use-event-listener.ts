@@ -17,18 +17,28 @@ const NUXT_CONFIG_FILES = [
   "nuxt.config.mts",
 ];
 // Reports start from a callee spelled addEventListener; escapes could spell it without the text.
-const JS_ESCAPE_TOKEN = String.raw`\\(?:u|x|[0-7]|\r\n?|\n|\u2028|\u2029)`;
-const identityEscape = (char: string) => String.raw`\\\\${char}`;
-const escapedNamePattern = (name: string) =>
-  [...name]
-    .map(
-      (_, index) =>
-        `${name.slice(0, index)}(?:${JS_ESCAPE_TOKEN}|${identityEscape(name[index]!)})${name.slice(index + 1)}`,
-    )
-    .join("|");
-const ADD_EVENT_LISTENER_TEXT_RE = new RegExp(
-  `addEventListener|${escapedNamePattern("addEventListener")}|addEventL\\\\istener|\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029)`,
-);
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const hexDigit = (value: string) => `[${value.toLowerCase()}${value.toUpperCase()}]`;
+const escapedNamePattern = (name: string) => {
+  const variants = [escapeRegex(name)];
+  for (let index = 0; index < name.length; index++) {
+    const code = name.charCodeAt(index);
+    const hex = code.toString(16).padStart(2, "0");
+    const unicode = code.toString(16).padStart(4, "0");
+    const octal = code.toString(8);
+    const encoded = `(?:\\\\u${[...unicode].map(hexDigit).join("")}|\\\\x${[...hex].map(hexDigit).join("")}|\\\\${octal}|\\\\${escapeRegex(name[index]!)})`;
+    variants.push(
+      `${escapeRegex(name.slice(0, index))}${encoded}${escapeRegex(name.slice(index + 1))}`,
+    );
+  }
+  for (let index = 0; index <= name.length; index++) {
+    variants.push(
+      `${escapeRegex(name.slice(0, index))}\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029)${escapeRegex(name.slice(index))}`,
+    );
+  }
+  return `(?:${variants.join("|")})`;
+};
+const ADD_EVENT_LISTENER_TEXT_RE = new RegExp(escapedNamePattern("addEventListener"));
 
 export const preferUseEventListener = createRule({
   meta: {

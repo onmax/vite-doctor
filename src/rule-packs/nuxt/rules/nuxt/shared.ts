@@ -62,9 +62,29 @@ export const NUXT_AUTO_IMPORTS = new Set([
   "defineNuxtRouteMiddleware",
   "useState",
 ]);
-const JS_ESCAPE_TOKEN = String.raw`\\(?:u|x|[0-7]|\r\n?|\n|\u2028|\u2029)`;
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const hexDigit = (value: string) => `[${value.toLowerCase()}${value.toUpperCase()}]`;
+const escapedNamePattern = (name: string) => {
+  const variants = [escapeRegex(name)];
+  for (let index = 0; index < name.length; index++) {
+    const code = name.charCodeAt(index);
+    const hex = code.toString(16).padStart(2, "0");
+    const unicode = code.toString(16).padStart(4, "0");
+    const octal = code.toString(8);
+    const encoded = `(?:\\\\u${[...unicode].map(hexDigit).join("")}|\\\\x${[...hex].map(hexDigit).join("")}|\\\\${octal}|\\\\${escapeRegex(name[index]!)})`;
+    variants.push(
+      `${escapeRegex(name.slice(0, index))}${encoded}${escapeRegex(name.slice(index + 1))}`,
+    );
+  }
+  for (let index = 0; index <= name.length; index++) {
+    variants.push(
+      `${escapeRegex(name.slice(0, index))}\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029)${escapeRegex(name.slice(index))}`,
+    );
+  }
+  return `(?:${variants.join("|")})`;
+};
 const NUXT_AUTO_IMPORT_TEXT_RE = new RegExp(
-  `${[...NUXT_AUTO_IMPORTS].join("|")}|${JS_ESCAPE_TOKEN}|use(?:Lazy)?F\\\\etch|use(?:Lazy)?A\\\\syncData`,
+  [...NUXT_AUTO_IMPORTS, "useLazyFetch", "useLazyAsyncData"].map(escapedNamePattern).join("|"),
 );
 export const BROWSER_SIDE_EFFECTS = new Set([
   "localStorage.setItem",

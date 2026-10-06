@@ -66,8 +66,36 @@ export interface SideEffectMatch {
 
 // getAsyncDataCall only matches a callee, or a local alias initializer, spelled as one of these
 // names. Escapes could spell one without the literal text, so they keep the full check.
-const ASYNC_DATA_TEXT_RE =
-  /use(?:Lazy)?(?:Fetch|AsyncData)|\\(?:u|x|[0-7]|\r\n?|\n|\u2028|\u2029)|use(?:Lazy)?F\\etch|use(?:Lazy)?A\\syncData/;
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const hexDigit = (value: string) => `[${value.toLowerCase()}${value.toUpperCase()}]`;
+const escapedCharacter = (character: string) => {
+  const code = character.charCodeAt(0);
+  const hex = code.toString(16).padStart(2, "0");
+  const unicode = code.toString(16).padStart(4, "0");
+  const unicodePattern = [...unicode].map(hexDigit).join("");
+  const hexPattern = [...hex].map(hexDigit).join("");
+  const octal = code.toString(8);
+  return `(?:\\\\u${unicodePattern}|\\\\x${hexPattern}|\\\\${octal}|\\\\${escapeRegex(character)})`;
+};
+const escapedNamePattern = (name: string) => {
+  const variants = [escapeRegex(name)];
+  for (let index = 0; index < name.length; index++) {
+    variants.push(
+      `${escapeRegex(name.slice(0, index))}${escapedCharacter(name[index]!)}${escapeRegex(name.slice(index + 1))}`,
+    );
+  }
+  for (let index = 0; index <= name.length; index++) {
+    variants.push(
+      `${escapeRegex(name.slice(0, index))}\\\\(?:\\r\\n?|\\n|\\u2028|\\u2029)${escapeRegex(name.slice(index))}`,
+    );
+  }
+  return `(?:${variants.join("|")})`;
+};
+const ASYNC_DATA_TEXT_RE = new RegExp(
+  ["useFetch", "useLazyFetch", "useAsyncData", "useLazyAsyncData"]
+    .map(escapedNamePattern)
+    .join("|"),
+);
 
 export function fileMayCallAsyncData(ctx: RuleContext): boolean {
   return ASYNC_DATA_TEXT_RE.test(ctx.file.text);
