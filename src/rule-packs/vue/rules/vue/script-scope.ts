@@ -23,13 +23,17 @@ interface FileMemo {
   values: Map<string, unknown>;
 }
 
-// File Rules run file by file, so one slot shares the analyses between Rules without keeping
-// every file's ESLint AST alive for the rest of the Doctor Run.
-let memo: FileMemo | undefined;
+// File Rules run file by file, so one slot per Doctor Run shares the analyses between Rules
+// without keeping every file's ESLint AST alive for the rest of the run. Keying the slot by the
+// run's Project Inventory lets a long-lived Doctor process release the run once it ends.
+const memos = new WeakMap<object, FileMemo>();
 
 function fileMemo(file: SourceFileHandle): FileMemo {
-  if (memo?.file !== file || memo.text !== file.text)
+  let memo = memos.get(file.project);
+  if (memo?.file !== file || memo.text !== file.text) {
     memo = { file, text: file.text, scopes: [new Map(), new Map()], values: new Map() };
+    memos.set(file.project, memo);
+  }
   return memo;
 }
 
