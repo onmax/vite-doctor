@@ -100,6 +100,23 @@ test("remembered values carry the inputs read to compute them", () => {
   ]);
 });
 
+test("cache sets without a pending miss do not replace remembered inputs", () => {
+  const inputs = new RuleInputs(root);
+  const writer = inputs.frame();
+  expect(writer.cache.get("value")).toBeUndefined();
+  writer.fs.readText("src/a.ts");
+  writer.cache.set("value", "first");
+
+  const reader = inputs.frame();
+  expect(reader.cache.get("value")).toBe("first");
+  reader.fs.readText("src/nested/b.ts");
+  reader.cache.set("value", "replacement");
+
+  const next = inputs.frame();
+  expect(next.cache.get("value")).toBe("first");
+  expect(next.readInputs()).toEqual([`t:${join(root, "src/a.ts")}`]);
+});
+
 test("Rules read other project files through ctx.fs", async () => {
   const rule = createRule({
     meta: {

@@ -148,7 +148,8 @@ export class RuleInputFrame {
       // A value is attributed the inputs read since this frame missed its key, which is where a
       // Rule computes what it is about to remember.
       set: <T>(key: string, value: T): void => {
-        const from = this.misses.get(key) ?? 0;
+        const from = this.misses.get(key);
+        if (from === undefined) return;
         this.misses.delete(key);
         inputs.remember(key, value, [...new Set(this.log.slice(from))]);
       },
