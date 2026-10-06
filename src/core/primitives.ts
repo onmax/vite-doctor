@@ -415,16 +415,6 @@ export interface TemplateFact {
   range?: SourceRange;
 }
 
-export interface ComplexityFact {
-  cyclomatic: number;
-  cognitive: number;
-  lines: number;
-}
-
-export interface TokenFingerprintFacts {
-  hashes: string[];
-}
-
 export interface FileFacts {
   fileId: number;
   path: string;
@@ -440,8 +430,6 @@ export interface FileFacts {
   calls: CallFact[];
   templateRefs: TemplateFact[];
   macros: MacroFact[];
-  complexity: ComplexityFact;
-  tokens: TokenFingerprintFacts;
   diagnosticsHints: string[];
 }
 

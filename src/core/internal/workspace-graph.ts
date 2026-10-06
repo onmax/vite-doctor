@@ -11,8 +11,9 @@ import type {
   WorkspaceGraph,
 } from "../primitives.js";
 import { resolvedConfigFor, type ScanSession } from "./scan-session.js";
-import { nativeMatch } from "./utils.js";
+import { nativeMatch, sha256 } from "./utils.js";
 import { pushDiagnostic } from "./diagnostics.js";
+import { walkAstFacts } from "./facts.js";
 
 interface GraphIndex {
   resolveImport(from: FileFacts, specifier: string): number | undefined;
@@ -485,16 +486,17 @@ function runCycleAndDuplicateExportRules(session: ScanSession, graph: WorkspaceG
 
 export function runDuplicationRules(session: ScanSession) {
   if (!selectedAnalyses(session).has("dupes")) return;
-  const byHash = new Map<string, FileFacts[]>();
-  for (const fact of session.facts) {
-    for (const hash of new Set(fact.tokens.hashes)) {
+  const byHash = new Map<string, string[]>();
+  for (const file of session.handles) {
+    if (!file.facts) continue;
+    for (const hash of new Set(tokenWindowHashes(file.text))) {
       const list = byHash.get(hash) ?? [];
-      list.push(fact);
+      list.push(file.path);
       byHash.set(hash, list);
     }
   }
-  for (const [hash, facts] of byHash) {
-    const files = [...new Set(facts.map((fact) => fact.path))];
+  for (const [hash, paths] of byHash) {
+    const files = [...new Set(paths)];
     if (files.length < 2) continue;
     reportWorkspaceDiagnostic(session, {
       ruleId: "workspace/duplication/exact-clone",
@@ -513,13 +515,16 @@ export function runDuplicationRules(session: ScanSession) {
 
 export function runHealthRules(session: ScanSession) {
   if (!selectedAnalyses(session).has("health")) return;
-  for (const fact of session.facts) {
-    if (fact.complexity.cyclomatic >= 15) {
+  for (const file of session.handles) {
+    const fact = file.facts;
+    if (!fact) continue;
+    const cyclomatic = cyclomaticComplexity(file.scriptAst);
+    if (cyclomatic >= 15) {
       reportWorkspaceDiagnostic(session, {
         ruleId: "workspace/health/high-cyclomatic-complexity",
         severity: "warn",
         category: "health",
-        message: `File has cyclomatic complexity ${fact.complexity.cyclomatic}.`,
+        message: `File has cyclomatic complexity ${cyclomatic}.`,
         suggestion: "Split complex branches into smaller rules, helpers, or modules.",
         file: fact.path,
         confidence: "heuristic-high",
@@ -541,6 +546,40 @@ export function runHealthRules(session: ScanSession) {
       });
     }
   }
+}
+
+const BRANCH_NODE_TYPES = new Set([
+  "IfStatement",
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
+  "WhileStatement",
+  "DoWhileStatement",
+  "CatchClause",
+  "ConditionalExpression",
+  "LogicalExpression",
+  "SwitchCase",
+]);
+
+function cyclomaticComplexity(ast: Record<string, unknown> | null | undefined): number {
+  let cyclomatic = 1;
+  if (ast)
+    walkAstFacts(ast, (node) => {
+      if (BRANCH_NODE_TYPES.has((node as { type: string }).type)) cyclomatic++;
+    });
+  return cyclomatic;
+}
+
+function tokenWindowHashes(text: string): string[] {
+  const tokens = (
+    text.match(/[A-Za-z_$][\w$]*|\d+|=>|===|!==|==|!=|[{}()[\].,;:+\-*/%<>]/g) ?? []
+  ).map((token) => (/^[A-Za-z_$]/.test(token) ? token : token.replace(/\d+/g, "0")));
+  const hashes: string[] = [];
+  const window = 30;
+  for (let index = 0; index + window <= tokens.length; index += 10) {
+    hashes.push(sha256(tokens.slice(index, index + window).join(" ")).slice(0, 16));
+  }
+  return hashes;
 }
 
 function selectedAnalyses(session: ScanSession): Set<string> {

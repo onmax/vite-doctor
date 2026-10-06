@@ -21,12 +21,16 @@ const files = {
   "src/c.ts": "export function c(value: number) { return value > 1 ? value : 0; }\n",
 };
 
-async function withProject(run: (root: string) => Promise<void>) {
+async function withProject(
+  run: (root: string) => Promise<void>,
+  extraFiles: Record<string, string> = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "doctor-cache-store-"));
   try {
     writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
     mkdirSync(join(root, "src"));
-    for (const [path, source] of Object.entries(files)) writeFileSync(join(root, path), source);
+    for (const [path, source] of Object.entries({ ...files, ...extraFiles }))
+      writeFileSync(join(root, path), source);
     await run(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -42,7 +46,7 @@ const options = (root: string) => ({
 
 const storePath = (root: string) => join(root, ".vite-doctor/cache/store.json");
 
-type StoredFacts = { path: string; tokens: Record<string, unknown> };
+type StoredFacts = { path: string } & Record<string, unknown>;
 
 function storedFacts(root: string): Array<[string, StoredFacts]> {
   const store = JSON.parse(readFileSync(storePath(root), "utf8"));
@@ -61,10 +65,34 @@ test("Doctor keeps File Facts for a run in one store file", async () => {
 
     expect(readdirSync(join(root, ".vite-doctor/cache"))).toEqual(["store.json"]);
     expect(storedPaths(root)).toEqual(Object.keys(files).map((path) => join(root, path)));
-    for (const [, facts] of storedFacts(root)) {
-      expect(Object.keys(facts.tokens)).toEqual(["hashes"]);
-    }
   });
+});
+
+test("File Facts leave duplication and health facts to their analyses", async () => {
+  const branches = "if (n) console.log(n);".repeat(20);
+  const clones = {
+    "src/first.ts": `export function first(n: number) { ${branches} }\n`,
+    "src/second.ts": `export function second(n: number) { ${branches} }\n`,
+  };
+  await withProject(async (root) => {
+    const analyses = { ...options(root), analyses: "dupes,health" };
+    const uncached = await runDoctor({ ...analyses, cache: false });
+    await runDoctor({ ...options(root), analyses: undefined });
+    for (const [, facts] of storedFacts(root)) {
+      expect(facts).not.toHaveProperty("tokens");
+      expect(facts).not.toHaveProperty("complexity");
+    }
+
+    const cached = await runDoctor(analyses);
+
+    expect(cached.diagnostics).toEqual(uncached.diagnostics);
+    expect(cached.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual(
+      expect.arrayContaining([
+        "workspace/duplication/exact-clone",
+        "workspace/health/high-cyclomatic-complexity",
+      ]),
+    );
+  }, clones);
 });
 
 test.each([

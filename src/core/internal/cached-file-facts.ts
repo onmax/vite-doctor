@@ -36,12 +36,6 @@ export function isCachedFileFacts(value: unknown): value is FileFacts {
     facts(value.calls, named) &&
     facts(value.macros, named) &&
     facts(value.templateRefs, (item) => named(item) && optionalString(item.value)) &&
-    record(value.complexity) &&
-    integer(value.complexity.cyclomatic) &&
-    integer(value.complexity.cognitive) &&
-    integer(value.complexity.lines, 1) &&
-    record(value.tokens) &&
-    strings(value.tokens.hashes) &&
     strings(value.diagnosticsHints)
   );
 }
