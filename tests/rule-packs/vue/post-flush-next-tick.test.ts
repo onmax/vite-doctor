@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runVueSfcRuleFixture } from "../../../src/core/testkit.ts";
+import { runVueSfcRuleFixture } from "../../rule-fixtures.ts";
 import { requirePostFlushForDomWatch } from "../../../src/rule-packs/vue/rules/vue/require-post-flush-for-dom-watch.ts";
 
 test.each([

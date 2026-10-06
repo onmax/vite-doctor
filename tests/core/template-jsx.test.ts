@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { compileScript, parse } from "@vue/compiler-sfc";
-import { runVueSfcRuleFixture } from "../../src/core/testkit.ts";
+import { runVueSfcRuleFixture } from "../rule-fixtures.ts";
 import { parseSfcFile } from "../../src/core/internal/sfc.ts";
 import { restrictVHtml } from "../../src/rule-packs/vue/rules/vue/restrict-v-html.ts";
 import { parseSourceFiles } from "../../src/core/internal/facts.ts";

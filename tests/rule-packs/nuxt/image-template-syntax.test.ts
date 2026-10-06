@@ -1,10 +1,13 @@
-import { expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { afterAll, expect, test } from "vite-plus/test";
+import { createProjectFixture } from "../../../src/core/testkit.ts";
 import {
   requireImageAlt,
   preferResponsiveDimensions,
   preferNuxtPictureForFormats,
 } from "../../../src/rule-packs/nuxt/rules/nuxt-image.ts";
+
+const nuxtProject = createProjectFixture({ framework: "nuxt", files: { "app/.gitkeep": "" } });
+afterAll(() => nuxtProject.dispose());
 
 for (const tag of [
   "NuxtImg",
@@ -26,9 +29,8 @@ for (const tag of [
     ['alt=""', 0],
     [':alt="description"', 0],
   ] as const)(`${tag} alt ownership: %s`, async (attributes, expected) => {
-    const result = await runRuleFixture({
+    const result = await nuxtProject.run({
       rule: requireImageAlt,
-      framework: "nuxt",
       files: { "app/app.vue": `<template><${tag} src="/image.png" ${attributes} /></template>` },
     });
     expect(result.diagnostics).toHaveLength(expected);
@@ -57,17 +59,15 @@ for (const tag of [
     'width="100"',
     ':sizes="sizes"',
   ])(`${tag} accepts supplied dimensions: %s`, async (attributes) => {
-    const result = await runRuleFixture({
+    const result = await nuxtProject.run({
       rule: preferResponsiveDimensions,
-      framework: "nuxt",
       files: { "app/app.vue": `<template><${tag} src="/image.png" ${attributes} /></template>` },
     });
     expect(result.diagnostics).toEqual([]);
   });
   test(`${tag} reports absent dimensions`, async () => {
-    const result = await runRuleFixture({
+    const result = await nuxtProject.run({
       rule: preferResponsiveDimensions,
-      framework: "nuxt",
       files: { "app/app.vue": `<template><${tag} src="/image.png" /></template>` },
     });
     expect(result.diagnostics.map((d) => d.ruleId)).toEqual([preferResponsiveDimensions.meta.id]);
@@ -77,9 +77,8 @@ for (const tag of [
 test.each(["NuxtImg", "nuxt-img", "nuxtImg", "Nuxt-Img", "nuxt-Img", "Nuxt-img"])(
   "format advice recognizes %s",
   async (tag) => {
-    const result = await runRuleFixture({
+    const result = await nuxtProject.run({
       rule: preferNuxtPictureForFormats,
-      framework: "nuxt",
       files: { "app/app.vue": `<template><${tag} src="/image.png" format="avif" /></template>` },
     });
     expect(result.diagnostics.map((d) => d.ruleId)).toEqual([preferNuxtPictureForFormats.meta.id]);
@@ -89,9 +88,8 @@ test.each(["NuxtImg", "nuxt-img", "nuxtImg", "Nuxt-Img", "nuxt-Img", "Nuxt-img"]
 test.each(["Nuxt_Img", "nuxt--img", "NUXT-IMG", "NuXt-ImG"])(
   "ignores unsupported component spelling %s",
   async (tag) => {
-    const result = await runRuleFixture({
+    const result = await nuxtProject.run({
       rule: requireImageAlt,
-      framework: "nuxt",
       files: { "app/app.vue": `<template><${tag} src="/image.png" /></template>` },
     });
     expect(result.diagnostics).toEqual([]);

@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runVueSfcRuleFixture } from "../../../src/core/testkit.ts";
+import { runVueSfcRuleFixture } from "../../rule-fixtures.ts";
 import { noAsyncWatchEffectAfterAwaitRead } from "../../../src/rule-packs/vue/rules/vue/no-async-watch-effect-after-await-read.ts";
 
 test.each([

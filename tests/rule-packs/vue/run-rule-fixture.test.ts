@@ -31,12 +31,11 @@ import {
   runDoctor,
 } from "../../../src/core/index.ts";
 import {
-  runNuxtAppRuleFixture,
   runNuxtManifestRuleFixture,
   runProjectFixture,
   runRuleFixture,
-  runVueSfcRuleFixture,
 } from "../../../src/core/testkit.ts";
+import { runNuxtAppRuleFixture, runVueSfcRuleFixture } from "../../rule-fixtures.ts";
 
 test("runs a Vue rule fixture", async () => {
   const result = await runVueSfcRuleFixture(

@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runNuxtAppRuleFixture } from "../../../src/core/testkit.ts";
+import { runNuxtAppRuleFixture } from "../../rule-fixtures.ts";
 import { noRouteObjectPageKey } from "../../../src/rule-packs/nuxt/rules/nuxt/no-route-object-page-key.ts";
 
 test.each([

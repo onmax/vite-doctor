@@ -1,6 +1,9 @@
-import { expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../src/core/testkit.ts";
+import { afterAll, expect, test } from "vite-plus/test";
+import { createProjectFixture } from "../../src/core/testkit.ts";
 import { requireDisposeForSideEffects } from "../../src/rule-packs/vite/rules/plugin-hmr.ts";
+
+const viteProject = createProjectFixture({ framework: "vite" });
+afterAll(() => viteProject.dispose());
 
 for (const [name, source, leaks] of [
   ["unassigned interval", "setInterval(refresh); import.meta.hot.dispose(() => {})", true],
@@ -52,8 +55,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -94,8 +96,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -157,8 +158,7 @@ for (const [name, setup, cleanup] of [
 ] as const) {
   for (const leaks of [false, true]) {
     test(`${name} ${leaks ? "preserves unmatched resources" : "disposes matching resources"}`, async () => {
-      const result = await runRuleFixture({
-        framework: "vite",
+      const result = await viteProject.run({
         rule: requireDisposeForSideEffects,
         files: {
           "src/main.ts": `import.meta.hot.accept(); const timer = setInterval(refresh); ${leaks ? setup.replace(/clearInterval\([^)]*\)/g, "clearInterval(other)") : setup}; ${cleanup}`,
@@ -192,8 +192,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: {
         "src/main.ts": `import.meta.hot.accept(); const timer = setInterval(refresh); ${source}`,
@@ -276,8 +275,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -343,8 +341,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -425,8 +422,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -942,8 +938,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -1019,8 +1014,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -1113,8 +1107,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -1195,8 +1188,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `import.meta.hot.accept(); ${source}` },
     });
@@ -1247,8 +1239,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
     });
@@ -1342,8 +1333,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
     });
@@ -1469,8 +1459,7 @@ for (const [name, source, leaks] of [
   ],
 ] as const) {
   test(name, async () => {
-    const result = await runRuleFixture({
-      framework: "vite",
+    const result = await viteProject.run({
       rule: requireDisposeForSideEffects,
       files: { "src/main.ts": `${source}\nimport.meta.hot.accept()` },
     });

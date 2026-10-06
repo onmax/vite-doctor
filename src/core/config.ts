@@ -4,6 +4,7 @@ import type {
   DoctorExtensionInput,
   DoctorFramework,
   DoctorSerializableConfig,
+  ProjectInfo,
   RuntimeTarget,
 } from "./primitives.js";
 export type { DoctorRuleConfig, DoctorSerializableConfig } from "./primitives.js";
@@ -42,6 +43,12 @@ export interface DoctorRunOptions {
    */
   hostExtensions?: boolean;
   runtimeTarget?: RuntimeTarget;
+  /**
+   * Project Inventory from `detectProject` for this root. The run reuses it instead of detecting
+   * the project, so `framework` and `runtimeTarget` no longer apply. Doctor Extension inventory
+   * and Runtime Evidence contributors still run.
+   */
+  project?: ProjectInfo;
 }
 
 export function defineDoctorConfig(config: DoctorConfig): DoctorConfig {
