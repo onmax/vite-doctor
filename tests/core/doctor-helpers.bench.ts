@@ -8,8 +8,9 @@ let file: SourceFileHandle;
 let calls: unknown[];
 
 beforeAll(async () => {
-  let source = "leaf();";
-  for (let index = 0; index < 100; index++) source = `function f${index}(){${source}} f${index}();`;
+  let source = Array.from({ length: 100 }, (_, index) => `window.alert(${index});`).join("\n");
+  for (let index = 0; index < 25; index++) source = `if (flag${index}) { ${source} }`;
+  source = `onMounted(() => { ${source} });`;
   file = {
     path: "/fixture.ts",
     relativePath: "fixture.ts",
