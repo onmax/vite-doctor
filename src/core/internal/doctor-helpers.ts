@@ -145,17 +145,29 @@ function isClientOnlyExecutionContext(
   });
 }
 
-function getDoctorParents(node: unknown): any[] {
-  const parents = [];
+function getDoctorParents(node: unknown): DoctorParent[] {
+  if (!node || typeof node !== "object") return [];
+  const object = node as { __doctorParent?: unknown };
+  const parent = object.__doctorParent;
+  const cached = doctorParentChains.get(object);
+  if (cached && cached.parent === parent) return cached.parents;
+
+  const parents: DoctorParent[] = [];
   const seen = new Set<unknown>();
-  let current = (node as any)?.__doctorParent;
+  let current = parent;
   while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current);
-    parents.push(current);
-    current = current.__doctorParent;
+    const typed = current as DoctorParent;
+    parents.push(typed);
+    current = typed.__doctorParent;
   }
+  doctorParentChains.set(object, { parent, parents });
   return parents;
 }
+
+type DoctorParent = { type?: string; __doctorParent?: unknown };
+
+const doctorParentChains = new WeakMap<object, { parent: unknown; parents: DoctorParent[] }>();
 
 function isClientGuardAncestor(parent: unknown, node: unknown, source: string): boolean {
   const value = parent as any;
