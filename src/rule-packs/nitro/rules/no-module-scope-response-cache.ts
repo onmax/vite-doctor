@@ -23,6 +23,7 @@ const BLOCK_TYPES = new Set([
   "StaticBlock",
 ]);
 const WRAPPERS = new Set([
+  "ChainExpression",
   "TSAsExpression",
   "TSSatisfiesExpression",
   "TSNonNullExpression",
@@ -53,7 +54,7 @@ export const noModuleScopeResponseCache = createRule({
     requires: { script: true, nitro: true },
   },
   create(ctx) {
-    if (!/\b(?:Date|performance)\.now\b/.test(ctx.file.text)) return;
+    if (!/\b(?:Date|performance)\.now\b|\.getTime\b/.test(ctx.file.text)) return;
     if (!isServerRuntimeFile(ctx)) return;
     return {
       Program(program: AnyNode) {
@@ -83,8 +84,8 @@ export const noModuleScopeResponseCache = createRule({
             RULE_ID,
             "warn",
             "cache",
-            `${binding.name} is a hand-rolled TTL cache at module scope. It lives in one server instance or isolate, grows with every new key, cannot be invalidated through Nitro's cache storage, and serves one caller's response to every later caller with the same key, even when a request-scoped (user-authorized) client filled it.`,
-            "Wrap the upstream call in defineCachedFunction() with a maxAge and a getKey that covers every input that changes the response, including the user or tenant when the upstream client is authorized per request.",
+            `${binding.name} is a hand-rolled TTL cache at module scope. It lives in one server instance or isolate, grows with every new key, cannot be invalidated through Nitro's cache storage, and hands the stored value to every later caller with the same key, including values that a request-scoped (user-authorized) client fetched.`,
+            "Wrap the upstream call in defineCachedFunction() with a maxAge and a getKey that covers every input that changes the response, including the user or tenant when the upstream client is authorized per request. If the cached value cannot be serialized to cache storage, such as compiled validators, keep it in memory and suppress this diagnostic with the reason.",
           );
         }
       },
@@ -107,8 +108,11 @@ function moduleBindings(program: AnyNode) {
     if (declaration?.type !== "VariableDeclaration") continue;
     for (const declarator of declaration.declarations) {
       if (declarator.id?.type !== "Identifier") continue;
-      const kind =
-        declaration.kind === "const" ? (isNew(declarator.init, "Map") ? "map" : null) : "variable";
+      const kind = isNew(declarator.init, "Map")
+        ? "map"
+        : declaration.kind === "const"
+          ? null
+          : "variable";
       if (!kind) continue;
       bindings.set(declarator.id.name, {
         name: declarator.id.name,
@@ -241,11 +245,10 @@ function readsEntryField(node: AnyNode) {
   while (current.__doctorParent && WRAPPERS.has(current.__doctorParent.type))
     current = current.__doctorParent;
   const member = current.__doctorParent;
-  return (
-    member?.type === "MemberExpression" &&
-    member.object === current &&
-    !["get", "has", "size"].includes(member.property?.name)
-  );
+  if (member?.type !== "MemberExpression" || member.object !== current) return false;
+  if (member.property?.name === "get" && member.__doctorParent?.callee === member)
+    return readsEntryField(member.__doctorParent);
+  return !["get", "has", "size"].includes(member.property?.name);
 }
 
 const comparisonsByFunction = new WeakMap<object, AnyNode[]>();

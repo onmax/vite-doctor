@@ -96,6 +96,38 @@ export async function loadPlanningGroups(key: string) {
   return groups
 }`,
   ],
+  [
+    "a Map declared with let",
+    `let cache = new Map<string, { value: unknown, expiresAt: number }>()
+export async function load(key: string) {
+  const hit = cache.get(key)
+  if (hit && hit.expiresAt > Date.now()) return hit.value
+  const value = await $fetch('/value')
+  cache.set(key, { value, expiresAt: Date.now() + 1000 })
+  return value
+}`,
+  ],
+  [
+    "an expiry read with new Date().getTime()",
+    `const cache = new Map<string, { value: unknown, expiresAt: number }>()
+export async function load(key: string) {
+  const hit = cache.get(key)
+  if (hit && hit.expiresAt > new Date().getTime()) return hit.value
+  const value = await $fetch('/value')
+  cache.set(key, { value, expiresAt: new Date().getTime() + 1000 })
+  return value
+}`,
+  ],
+  [
+    "an expiry read straight from Map#get",
+    `const cache = new Map<string, { value: unknown, expiresAt: number }>()
+export async function load(key: string) {
+  if ((cache.get(key)?.expiresAt ?? 0) > Date.now()) return cache.get(key)!.value
+  const value = await $fetch('/value')
+  cache.set(key, { value, expiresAt: Date.now() + 1000 })
+  return value
+}`,
+  ],
 ])("reports %s", async (_, source) => {
   const diagnostics = await run({ "server/utils/cache.ts": source });
   expect(diagnostics).toMatchObject([{ code: "NITRO0023", file: "server/utils/cache.ts" }]);
