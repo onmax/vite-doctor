@@ -9,12 +9,13 @@ import { withFixture } from "./nuxt-modern-rules-fixture.ts";
 
 const ruleId = "nuxt/fetch/keyed-composable-registration-required";
 
-function manifest(keyedComposables: unknown[]) {
+function manifest(keyedComposables: unknown[], layers?: unknown[]) {
   return JSON.stringify({
     generatedAt: new Date().toISOString(),
     nuxtVersion: "4",
     vueVersion: "3.5",
     appDir: "app",
+    ...(layers ? { layers } : {}),
     keyedComposables,
   });
 }
@@ -107,4 +108,25 @@ test.each([
   ],
 ])("reports an unregistered factory: %s", async (_, file, source) => {
   expect(await diagnose({ [file]: source })).toEqual([ruleId]);
+});
+
+test("reports an exported factory when global compiler scanning is disabled", async () => {
+  expect(
+    await diagnose({
+      "app/composables/useOrders.ts": "export const useOrders = createUseFetch('/api/orders')",
+      ".nuxt/doctor.manifest.json": manifest([], [{ root: ".", srcDir: "app", compilerScan: false, priority: 0 }]),
+    }),
+  ).toEqual([ruleId]);
+});
+
+test("reports an exported factory when its layer disables compiler scanning", async () => {
+  expect(
+    await diagnose({
+      "layers/admin/composables/useOrders.ts": "export const useOrders = createUseFetch('/api/orders')",
+      ".nuxt/doctor.manifest.json": manifest([], [
+        { root: ".", srcDir: "app", compilerScan: true, priority: 0 },
+        { root: "layers/admin", srcDir: "layers/admin", compilerScan: false, priority: 1 },
+      ]),
+    }),
+  ).toEqual([ruleId]);
 });

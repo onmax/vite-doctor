@@ -54,8 +54,14 @@ function isExported(declarator: AnyNode): boolean {
 // Nuxt's compiler scan registers factories exported from every layer's `composables/` tree.
 function inScannedComposablesDir(ctx: RuleContext): boolean {
   const nuxt = ctx.project.nuxt;
-  if (ctx.file.inAppDir("composables")) return true;
+  if (ctx.file.inAppDir("composables")) {
+    const appLayer = nuxt?.layers?.find((layer) => layer.root === nuxt.appDir || layer.srcDir === nuxt.appDir);
+    return appLayer ? appLayer.compilerScan !== false : true;
+  }
   return (nuxt?.layers ?? []).some(
-    (layer) => layer.srcDir && ctx.file.path.startsWith(`${join(layer.srcDir, "composables")}/`),
+    (layer) =>
+      layer.compilerScan !== false &&
+      layer.srcDir &&
+      ctx.file.path.startsWith(`${join(layer.srcDir, "composables")}/`),
   );
 }

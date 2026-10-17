@@ -345,6 +345,7 @@ export async function writeManifest(
         aliases: Object.fromEntries(
           Object.entries(layer.config?.alias ?? {}).map(([key, value]) => [key, String(value)]),
         ),
+        compilerScan: layer.config?.compiler?.scan !== false,
         name: layer.config?.name,
         priority: index,
       }),
