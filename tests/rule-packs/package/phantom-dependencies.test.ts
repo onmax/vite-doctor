@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
-import { diagnose } from "./fixture.js";
+import { runViteDoctor } from "../../../src/doctor.js";
+import { diagnose, withPackage } from "./fixture.js";
 
 test("reports runtime and declaration phantoms with distinct codes and artifact locations", async () => {
   const diagnostics = await diagnose(
@@ -102,6 +103,49 @@ test("accepts an @types provider for an external declaration import", async () =
       { "index.d.ts": 'export type { Foo } from "foo";' },
     ),
   ).toEqual([]);
+});
+
+test("ignores JSDoc imports in JavaScript shadowed by published declarations", async () => {
+  const files = {
+    "dist/index.js": 'export { walk } from "./chunk.js";',
+    "dist/chunk.js": [
+      '/** @typedef { import("estree").BaseNode } BaseNode */',
+      '/** @param {import("./walker.js").Walker} walker */',
+      "export function walk(walker) { return walker; }",
+    ].join("\n"),
+  };
+  const declared = await withPackage(
+    { main: "dist/index.js", types: "dist/index.d.ts" },
+    { ...files, "dist/index.d.ts": "export declare function walk(walker: unknown): unknown;" },
+    (root) =>
+      runViteDoctor({ root, framework: "vite", cache: false, extends: ["package/recommended"] }),
+  );
+  expect(declared.diagnostics.filter((d) => d.ruleId.startsWith("package/"))).toEqual([]);
+  expect(declared.project.evidenceGaps ?? []).toEqual([]);
+  const javascriptOnly = await diagnose({ main: "dist/index.js" }, files);
+  expect(javascriptOnly.map((d) => [d.code, d.message.match(/"([^"]+)"/)?.[1]])).toEqual([
+    ["PKG0002", "estree"],
+  ]);
+});
+
+test("reads JSDoc only from comments and skips runtime-provided specifiers", async () => {
+  const diagnostics = await diagnose(
+    { main: "index.js" },
+    {
+      "index.js": [
+        'export const glob = (pattern) => pattern.endsWith("/**");',
+        "export async function load() {",
+        '  const [{ rm }] = await Promise.all([import("node:fs/promises")]);',
+        '  return `const env = (await import("cloudflare:workers")).env`;',
+        "}",
+        '/** @param {import("node:fs").Stats} stats @param {import("phantom-types/sub").Value} value */',
+        "export function inspect(stats, value) { return [stats, value]; }",
+      ].join("\n"),
+    },
+  );
+  expect(diagnostics.map((d) => [d.code, d.message.match(/"([^"]+)"/)?.[1]])).toEqual([
+    ["PKG0002", "phantom-types/sub"],
+  ]);
 });
 
 test.each([

@@ -407,6 +407,9 @@ function readPackageArtifactsForMode(
     for (const entries of Object.values(version))
       for (const entry of entries) enqueue(entry, "types", false, root, false);
 
+  // TypeScript reads JSDoc types only from JavaScript, and only when no declaration file covers
+  // the import, so JSDoc in bundled chunks of a package with declarations never reaches consumers.
+  const javascriptTypes = !queue.some((entry) => declarationExtension.test(entry.path));
   for (let i = 0; i < queue.length; i++) {
     const current = queue[i]!;
     const key = `${current.path}:${current.kind}:${current.required}`;
@@ -452,6 +455,7 @@ function readPackageArtifactsForMode(
       current.kind,
       commonjs,
       explicitCommonjsModule(current.path),
+      javascriptTypes && !/\.(?:[cm]?ts|tsx)$/.test(current.path),
     )) {
       const required = current.required && edge.required;
       const executionRequired = required && !edge.resolutionOnly;
@@ -1034,6 +1038,7 @@ function importEdges(
   kind: "runtime" | "types",
   commonjs: boolean,
   explicitCommonjs: boolean,
+  jsdocTypes: boolean,
 ): ImportEdge[] {
   const edges: ImportEdge[] = [];
   const supportsStaticImports = !explicitCommonjs;
@@ -1119,18 +1124,18 @@ function importEdges(
     }
   });
   edges.sort((left, right) => left.start - right.start);
-  const jsdoc = /\/\*\*[\s\S]*?\*\//g;
-  for (let comment; (comment = jsdoc.exec(parsed.text));) {
+  for (const comment of jsdocTypes ? parsed.comments : []) {
+    const text = parsed.text.slice(comment.start, comment.end);
+    if (comment.type !== "Block" || !text.startsWith("/**")) continue;
     const imports = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
-    for (let match; (match = imports.exec(comment[0]));) {
-      const start = comment.index + match.index + match[0].indexOf(match[1]!);
+    for (let match; (match = imports.exec(text));) {
+      const start = comment.start + match.index + match[0].indexOf(match[1]!);
       edges.push({
         specifier: match[1]!,
         start,
         end: start + match[1]!.length,
         kind: "types",
         required: false,
-        typeReference: true,
       });
     }
   }
