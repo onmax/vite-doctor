@@ -1688,7 +1688,7 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
     }
   };
   const visitElement = (element: TemplateElementNode, outer: Set<string>) => {
-    if (NUXT_TIME_TAGS.has(element.tag)) return;
+    const nuxtTime = NUXT_TIME_TAGS.has(element.tag);
     let locals = outer;
     for (const prop of element.props) {
       if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
@@ -1697,6 +1697,8 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
     }
     for (const prop of element.props) {
       if (prop.type !== TemplateNodeType.DIRECTIVE || !RENDERED_DIRECTIVES.has(prop.name)) continue;
+      // NuxtTime renders its own values without a mismatch, but its conditions still shape SSR markup.
+      if (nuxtTime && !CONTROL_DIRECTIVES.has(prop.name)) continue;
       if (prop.name === "for")
         collect(prop.forParseResult?.source, outer, (right) => ({ type: "VForExpression", right }));
       // Vue evaluates conditionals before introducing same-element loop aliases.
@@ -1709,6 +1711,7 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
       if (prop.name === "bind" && prop.arg && !prop.arg.isStatic)
         collect(prop.arg, locals, expressionContainer);
     }
+    if (nuxtTime) return;
     // SSR renders ClientOnly's own bindings and fallback slots, but not its default content.
     if (CLIENT_ONLY_TAGS.has(element.tag)) {
       for (const child of element.children)
@@ -2543,6 +2546,7 @@ function getTemplateBlock(ctx: RuleContext) {
 
 const CLIENT_ONLY_TAGS = new Set(["ClientOnly", "client-only"]);
 const NUXT_TIME_TAGS = new Set(["NuxtTime", "nuxt-time"]);
+const CONTROL_DIRECTIVES = new Set(["if", "else-if", "show", "for"]);
 
 function isServerFallbackSlot(element: TemplateElementNode) {
   return element.props.some(

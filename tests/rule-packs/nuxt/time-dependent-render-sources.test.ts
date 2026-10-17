@@ -88,3 +88,23 @@ const label = String(Date.now())
 <template>${template}</template>`);
   expect(lines).toEqual([2]);
 });
+
+test.each([
+  ['<NuxtTime v-if="show" :datetime="stable" />'],
+  ['<NuxtTime v-show="show" :datetime="stable" />'],
+])("reports a time-dependent control directive on NuxtTime: %s", async (template) => {
+  const lines = await reportedLines(`<script setup lang="ts">
+const stable = "2026-01-01"
+const show = new Date().getSeconds() < 30
+</script>
+<template>${template}</template>`);
+  expect(lines).toEqual([3]);
+});
+
+test("ignores the time value NuxtTime formats", async () => {
+  const lines = await reportedLines(`<script setup lang="ts">
+const now = Date.now()
+</script>
+<template><NuxtTime v-if="true" :datetime="now" /></template>`);
+  expect(lines).toEqual([]);
+});
