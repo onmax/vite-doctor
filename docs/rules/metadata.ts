@@ -1679,6 +1679,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/plugin/no-lossy-set-cookie-bridge": {
+    description:
+      "Reports loops that copy Fetch Response headers onto a Node ServerResponse with setHeader, which keeps only the last Set-Cookie.",
+    why: "Dev middleware and plugin servers often bridge a Fetch Response to Node's ServerResponse by iterating response.headers. The Headers iterator combines repeated headers into one comma-separated value, except Set-Cookie: each cookie is yielded as its own entry. res.setHeader replaces any value already set for that name, so every Set-Cookie but the last one is dropped and sessions or CSRF cookies silently go missing. Doctor reports a setHeader call that receives the header name from a for...of or forEach loop over a headers property. It skips loops whose function already mentions set-cookie or getSetCookie.",
+    recommendedReplacement:
+      'Skip "set-cookie" in the loop and copy the cookies once with res.setHeader("set-cookie", response.headers.getSetCookie()), or append each value with res.appendHeader.',
+    examples: [
+      {
+        title: "Copy Set-Cookie values as a list",
+        language: "ts",
+        invalid:
+          "async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) res.setHeader(name, value)\n  res.end(await response.text())\n}",
+        valid:
+          'async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) {\n    if (name !== "set-cookie") res.setHeader(name, value)\n  }\n  const cookies = response.headers.getSetCookie()\n  if (cookies.length > 0) res.setHeader("set-cookie", cookies)\n  res.end(await response.text())\n}',
+      },
+    ],
+  },
   "vite/plugin/prefer-transform-filter": {
     description:
       "Finds Vite plugin code that should use the supported transform filter pattern instead.",
