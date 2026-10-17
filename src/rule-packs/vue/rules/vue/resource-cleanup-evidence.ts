@@ -390,11 +390,7 @@ function createResourceEvidence(ctx: RuleContext) {
     if (resource?.handle && identity(node) === resource.handle) return true;
     if (resource?.handle && node?.type === "BinaryExpression") {
       const sides = [node.left, node.right];
-      const nullish = sides.some(
-        (side) =>
-          (side?.type === "Literal" && side.value === null) ||
-          (side?.type === "Identifier" && side.name === "undefined" && !bindings.get(side)),
-      );
+      const nullish = sides.some(isNullish);
       if (nullish && sides.some((side) => identity(side) === resource.handle)) {
         if (node.operator === "!==" || node.operator === "!=") return true;
         if (node.operator === "===" || node.operator === "==") return false;
@@ -433,7 +429,11 @@ function createResourceEvidence(ctx: RuleContext) {
       if (run(node.test)) return true;
       const value = conditionValue(node.test, resource);
       if (value !== undefined) return run(value ? node.consequent : node.alternate);
-      return run(node.consequent) && run(node.alternate);
+      // When only paths that always exit stop the search, a branch that always exits never
+      // reaches what follows, so it holds vacuously.
+      const holds = (branch: AnyNode) =>
+        run(branch) || (exits === alwaysExits && !!branch && alwaysExits(branch, resource));
+      return holds(node.consequent) && holds(node.alternate);
     }
     if (node.type === "TryStatement") {
       return run(node.finalizer) || (!!node.handler && run(node.block) && run(node.handler.body));
@@ -593,31 +593,39 @@ function createResourceEvidence(ctx: RuleContext) {
   // releasing it before every reassignment plus on teardown is the cleanup onWatcherCleanup would do.
   function releasesBeforeReuse(resource: Resource): boolean {
     if (!resource.handle || resource.kind === "listener") return false;
-    // An earlier write on the same path replaces the handle again, so only a later release counts.
-    const after = Math.max(
-      resource.owner.start,
-      ...nodes
-        .filter(
-          (node) =>
-            node.type === "AssignmentExpression" &&
-            node.start > resource.owner.start &&
-            node.start < resource.node.start &&
-            unwrap(node.right) !== resource.node &&
-            !isNullish(node.right) &&
-            identity(node.left) === resource.handle &&
-            !exclusiveBranches(node, resource.node),
-        )
-        .map((node) => node.end),
-    );
     // A path that returns early never reaches the acquisition, so only paths that always exit
     // stop the search.
     const walk = (body: AnyNode, predicate: (node: AnyNode) => boolean) =>
       executes(body, predicate, resource, alwaysExits);
-    return walk(
-      resource.owner.body,
+    return (
+      !overwrittenInRun(resource, walk) &&
+      walk(
+        resource.owner.body,
+        (node) => node.start < resource.node.start && releasesThrough(node, resource, walk),
+      )
+    );
+  }
+
+  // Writing the handle again later in the same run, without releasing it first, loses this
+  // acquisition: neither the next run nor teardown can release it any more.
+  function overwrittenInRun(
+    resource: Resource,
+    walk: (body: AnyNode, predicate: (node: AnyNode) => boolean) => boolean,
+  ): boolean {
+    const overwrite = nodes.find(
       (node) =>
-        node.start > after &&
-        node.start < resource.node.start &&
+        node.type === "AssignmentExpression" &&
+        node.start > resource.node.end &&
+        owner(node, false) === resource.owner &&
+        identity(node.left) === resource.handle &&
+        !exclusiveBranches(node, resource.node),
+    );
+    if (!overwrite) return false;
+    return !nodes.some(
+      (node) =>
+        node.start > resource.node.end &&
+        node.end < overwrite.start &&
+        owner(node, false) === resource.owner &&
         releasesThrough(node, resource, walk),
     );
   }
@@ -666,12 +674,18 @@ function createResourceEvidence(ctx: RuleContext) {
     const walk = (body: AnyNode, predicate: (node: AnyNode) => boolean) =>
       executes(body, predicate, resource);
     return nodes.some((node) => {
-      if (node.type !== "CallExpression" || !LIFECYCLE_CLEANUP.has(vueApi(node.callee) ?? ""))
+      if (!isCleanupRegistration(node)) return false;
+      const registeredIn = owner(node);
+      if (!executes(isFunction(registeredIn) ? registeredIn.body : registeredIn, (n) => n === node))
         return false;
       const teardown = callback(node.arguments[0]);
       if (!teardown) return false;
       return walk(withoutRunOnceGuard(teardown), (call) => releasesThrough(call, resource, walk));
     });
+  }
+
+  function isCleanupRegistration(node: AnyNode): boolean {
+    return node?.type === "CallExpression" && LIFECYCLE_CLEANUP.has(vueApi(node.callee) ?? "");
   }
 
   // `if (stopped) return; stopped = true; ...` only exits early when this teardown already ran
@@ -690,6 +704,7 @@ function createResourceEvidence(ctx: RuleContext) {
     )
       return body;
     const flag = bindings.get(guard.test);
+    if (!onlyRunsOnTeardown(teardown)) return body;
     const onlySetHere = flag?.references.every((reference) => {
       if (!reference.isWrite()) return true;
       const value = unwrap(reference.writeExpr);
@@ -703,6 +718,24 @@ function createResourceEvidence(ctx: RuleContext) {
       );
     });
     return onlySetHere ? { ...body, body: rest } : body;
+  }
+
+  // A teardown that also runs earlier, e.g. a `stop()` called before teardown, may find its
+  // run-once flag already set.
+  function onlyRunsOnTeardown(teardown: AnyNode): boolean {
+    const declarator = parents.get(teardown);
+    const id =
+      teardown.id ?? (declarator?.type === "VariableDeclarator" ? declarator.id : undefined);
+    if (!id) return isCleanupRegistration(declarator);
+    const variable = bindings.get(id);
+    return (
+      !!variable &&
+      variable.references.every((reference) => {
+        if (reference.init) return true;
+        const call = parents.get(reference.identifier);
+        return isCleanupRegistration(call) && call.arguments[0] === reference.identifier;
+      })
+    );
   }
 
   return {

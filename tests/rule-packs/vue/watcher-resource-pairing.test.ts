@@ -160,6 +160,8 @@ test.each([
   `let stopped = false; let timer; function clearTimer() { if (timer !== undefined) clearTimeout(timer); timer = undefined }; function schedule() { clearTimer(); if (stopped) return; timer = setTimeout(() => {}, 1000) }; watch(() => interval.value, schedule); function stop() { if (stopped) return; stopped = true; clearTimer() }; onScopeDispose(stop, true)`,
   `let timer; watch(status, (value) => { clearTimeout(timer); if (value) timer = setTimeout(() => {}, 1); else timer = setTimeout(() => {}, 2) }); onBeforeUnmount(() => clearTimeout(timer))`,
   `let stopped = false; let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onScopeDispose(() => { if (stopped) return; stopped = true; clearTimeout(timer) })`,
+  `let timer; watch(status, (value) => { if (value) clearTimeout(timer); else return; timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
+  `let timer; watch(status, () => { if (timer !== void 0) clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => { if (timer !== void 0) clearTimeout(timer) })`,
 ])(
   "watcher accepts a reassigned outer handle cleared before reuse and on teardown: %s",
   async (source) => {
@@ -175,7 +177,9 @@ test.each([
   `let timer; let other; watch(status, () => { clearTimeout(other); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
   `let timer; watch(status, (value) => { if (value) clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
   `let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onMounted(() => clearTimeout(timer))`,
-  `let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1); timer = setTimeout(() => {}, 2) }); onBeforeUnmount(() => clearTimeout(timer))`,
+  `let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500); timer = undefined }); onBeforeUnmount(() => clearTimeout(timer))`,
+  `let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); if (false) onBeforeUnmount(() => clearTimeout(timer))`,
+  `let stopped = false; let timer; function stop() { if (stopped) return; stopped = true; clearTimeout(timer) }; stop(); watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onScopeDispose(stop)`,
   `let timer; function stop() { if (shouldCleanup) clearTimeout(timer) }; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(stop)`,
   `let timer; watch(status, (value) => { value && clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
   `let timer; watch(status, (values) => { for (const value of values) clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
@@ -212,4 +216,12 @@ test("Vue clears a reassigned watcher handle before reuse and on scope dispose",
   expect(vi.getTimerCount()).toBe(1);
   scope.stop();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+test("watcher reports the acquisition that a later write in the same run overwrites", async () => {
+  const source = `let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1); timer = setTimeout(() => {}, 2) }); onBeforeUnmount(() => clearTimeout(timer))`;
+  const result = await diagnose(source);
+  expect(result.diagnostics).toHaveLength(1);
+  const offset = '<script setup lang="ts">'.length + source.indexOf("setTimeout(() => {}, 1)");
+  expect(result.diagnostics[0]?.range?.start).toBe(offset);
 });
