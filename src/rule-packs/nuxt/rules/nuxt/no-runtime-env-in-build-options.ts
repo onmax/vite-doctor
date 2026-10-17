@@ -39,7 +39,7 @@ export const noRuntimeEnvInBuildOptions = createRule({
       Program(program: AnyNode) {
         const bindings = topLevelBindings(program);
         // A local `process` is not Node's global, so its `env` reads prove nothing.
-        if (bindings.has("process")) return;
+        if (bindings.has("process") || importsLocalProcess(program)) return;
         const config = exportedConfigObject(program, bindings);
         if (!config) return;
         const runtimeEnvKeys = new Map<string, string>();
@@ -91,6 +91,15 @@ function topLevelBindings(program: AnyNode): Map<string, AnyNode> {
     }
   }
   return bindings;
+}
+
+function importsLocalProcess(program: AnyNode): boolean {
+  return (program.body ?? []).some(
+    (statement: AnyNode) =>
+      statement.type === "ImportDeclaration" &&
+      !["process", "node:process"].includes(statement.source?.value) &&
+      statement.specifiers?.some((specifier: AnyNode) => specifier.local?.name === "process"),
+  );
 }
 
 function exportedConfigObject(program: AnyNode, bindings: Map<string, AnyNode>): AnyNode {
@@ -354,17 +363,45 @@ function stripRuntimePrefix(name: string): string {
   return name.slice(prefix.length);
 }
 
-// Mirrors how Nuxt maps runtimeConfig paths to NUXT_ variables: snakeCase(path).toUpperCase().
+// Nitro maps runtimeConfig paths to env names with scule: snakeCase(path.join("_")).toUpperCase().
 function envKey(path: string[]): string {
-  return path
-    .map((segment) =>
-      segment
-        .replace(/([a-z\d])([A-Z])/g, "$1_$2")
-        .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
-        .replace(/[-\s]+/g, "_"),
-    )
-    .join("_")
-    .toUpperCase();
+  return splitByCase(path.join("_")).join("_").toUpperCase();
+}
+
+// A port of scule's splitByCase, so acronym and digit boundaries match Nitro exactly.
+function splitByCase(value: string): string[] {
+  const parts: string[] = [];
+  let buffer = "";
+  let previousUpper: boolean | undefined;
+  let previousSplitter: boolean | undefined;
+  for (const char of value) {
+    if (["-", "_", "/", "."].includes(char)) {
+      parts.push(buffer);
+      buffer = "";
+      previousUpper = undefined;
+      continue;
+    }
+    const isUpper = /\d/.test(char) ? undefined : char !== char.toLowerCase();
+    if (previousSplitter === false) {
+      if (previousUpper === false && isUpper === true) {
+        parts.push(buffer);
+        buffer = char;
+        previousUpper = isUpper;
+        continue;
+      }
+      if (previousUpper === true && isUpper === false && buffer.length > 1) {
+        parts.push(buffer.slice(0, -1));
+        buffer = buffer.at(-1) + char;
+        previousUpper = isUpper;
+        continue;
+      }
+    }
+    buffer += char;
+    previousUpper = isUpper;
+    previousSplitter = false;
+  }
+  parts.push(buffer);
+  return parts;
 }
 
 function propertyName(property: AnyNode): string | null {

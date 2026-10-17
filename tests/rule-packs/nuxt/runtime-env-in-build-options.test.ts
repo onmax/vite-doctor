@@ -273,3 +273,31 @@ export default defineNuxtConfig({
 
   expect(result.diagnostics).toHaveLength(1);
 });
+
+test.each([
+  ["a module shim", `import process from './process-shim'`, 0],
+  ["node:process", `import process from 'node:process'`, 1],
+])("handles process imported from %s", async (_name, importLine, count) => {
+  const result = await run(`${importLine}
+
+export default defineNuxtConfig({
+  runtimeConfig: { public: { apiBase: '' } },
+  myModule: { endpoint: process.env.NUXT_PUBLIC_API_BASE },
+})
+`);
+
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["version2URL", "NUXT_VERSION2URL"],
+  ["siteURL", "NUXT_SITE_URL"],
+  ["oauth2ClientId", "NUXT_OAUTH2_CLIENT_ID"],
+])("maps runtimeConfig.%s to %s like Nitro", async (key, name) => {
+  const result = await run(`export default defineNuxtConfig({
+  runtimeConfig: { ${key}: '' },
+  myModule: { value: process.env.${name} },
+})`);
+
+  expect(result.diagnostics).toHaveLength(1);
+});
