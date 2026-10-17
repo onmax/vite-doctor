@@ -29,7 +29,7 @@ export const noUnvalidatedDeserialization = createRule({
       },
     ],
     category: "boundaries",
-    severity: "error",
+    severity: "warn",
     fixable: "structural-review",
     docsUrl: "https://www.typescriptlang.org/docs/handbook/2/narrowing.html",
     requires: { script: true },
