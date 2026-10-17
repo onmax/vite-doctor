@@ -316,7 +316,8 @@ function linesWithCode(source: string, comments: SourceComment[]): boolean[] {
     offset = comment.end;
   }
   masked += source.slice(offset);
-  return masked.split("\n").map((line) => line.trim().length > 0);
+  // JSX comments keep their `{}` container outside the parsed comment span.
+  return masked.split("\n").map((line) => line.replace(/\{\s*\}/g, "").trim().length > 0);
 }
 
 interface SourceComment {

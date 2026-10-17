@@ -476,3 +476,29 @@ test("next-line suppression skips Vue template comments before its target line",
   expect(result.diagnostics).toEqual([]);
   expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "html next line" }]);
 });
+
+test("next-line suppression skips stacked JSX comments before its target line", () => {
+  const { root, file } = fixture(
+    [
+      "export const view = (",
+      "  <section>",
+      "    {/* doctor-disable-next-line test/example -- jsx next line */}",
+      "    {/* explains the element */}",
+      "    <div />",
+      "    <span />",
+      "  </section>",
+      ");",
+    ].join("\n"),
+    "view.tsx",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 5), finding(file, 6)],
+  });
+  expect(result.diagnostics).toMatchObject([{ range: { line: 6 } }]);
+  expect(result.suppressedDiagnostics).toMatchObject([
+    { range: { line: 5 }, suppressionReason: "jsx next line" },
+  ]);
+});
