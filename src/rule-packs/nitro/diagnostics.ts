@@ -23,6 +23,7 @@ export const nitroDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0020", ruleId: "nitro/routes/require-default-handler" },
   { code: "NITRO0021", ruleId: "nitro/structure/prefer-server-utils" },
   { code: "NITRO0022", ruleId: "nitro/structure/prefer-server-utils" },
+  { code: "NITRO0025", ruleId: "nitro/config/require-absolute-generated-paths" },
 ]);
 
 export const diagnostics = nitroDiagnosticRegistry.diagnostics;
