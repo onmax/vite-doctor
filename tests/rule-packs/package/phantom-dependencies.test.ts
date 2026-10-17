@@ -167,6 +167,26 @@ test.each<{ name: string; manifest: object; files: Record<string, string>; entry
     entry: "index.js",
   },
   {
+    name: "typesVersions",
+    manifest: { main: "dist/index.js", typesVersions: { "*": { "*": ["types/index.d.ts"] } } },
+    files: { "types/index.d.ts": "export declare const value: number;" },
+  },
+  {
+    name: "a typed export subpath reached through a self-reference",
+    manifest: {
+      exports: {
+        ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
+        "./adapter": { types: "./dist/adapter.d.ts", import: "./dist/adapter.js" },
+      },
+    },
+    files: {
+      "dist/index.js": 'export { use } from "example-library/adapter";',
+      "dist/index.d.ts": "export declare const value: number;",
+      "dist/adapter.d.ts": "export declare function use(value: unknown): unknown;",
+    },
+    entry: "dist/adapter.js",
+  },
+  {
     name: "an export types condition outside the JavaScript directory",
     manifest: {
       exports: { ".": { types: "./types/index.d.ts", import: "./dist/index.js" } },

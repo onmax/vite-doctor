@@ -398,7 +398,10 @@ function readPackageArtifactsForMode(
       (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
     );
   const rootTyped = Boolean(
-    manifest.types || manifest.typings || (manifest.main && typed(manifest.main)),
+    manifest.types ||
+    manifest.typings ||
+    Object.keys(manifest.typesVersions ?? {}).length ||
+    (manifest.main && typed(manifest.main)),
   );
 
   if (manifest.exports != null) {
@@ -560,6 +563,7 @@ function readPackageArtifactsForMode(
                   target.kind === "runtime",
                 scope.directory,
                 exports === undefined ? "main" : false,
+                true,
                 false,
                 current.declarationBacked,
               );
