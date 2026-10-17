@@ -283,6 +283,7 @@ function clockLocals(fn: AnyNode) {
     if (
       node.type === "VariableDeclarator" &&
       node.id?.type === "Identifier" &&
+      nearestFunctionOrProgram(node) === fn &&
       readsClock(node.init, names)
     )
       names.add(node.id.name);

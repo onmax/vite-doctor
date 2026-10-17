@@ -244,6 +244,22 @@ export async function load(key: string) {
   return value
 }`,
   ],
+  [
+    "a clock local declared in a nested function",
+    `let now = 0
+const cache = new Map<string, { value: unknown, expiresAt: number }>()
+export async function load(key: string) {
+  const metrics = () => {
+    const now = Date.now()
+    return now
+  }
+  const hit = cache.get(key)
+  if (hit && hit.expiresAt > now) return hit.value
+  const value = await $fetch('/value')
+  cache.set(key, { value, expiresAt: metrics() + 1000 })
+  return value
+}`,
+  ],
 ])("does not report %s", async (_, source) => {
   expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
 });
