@@ -1225,7 +1225,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/runtime/no-secret-in-public-config": {
     description:
       "Flags secret in public config in Nuxt runtime code before it leaks into runtime behavior.",
-    why: "Secrets that reach public runtime config or client bundles can be exposed to every visitor and crawler.",
+    why: "Secrets that reach public runtime config or client bundles can be exposed to every visitor and crawler. Keys that are public by design, such as publishable, site, widget, project, or bare `key` values, are not reported; generic `apiKey` names are reported as a low-confidence warning because browser keys like Firebase or Algolia search keys belong in public config.",
     recommendedReplacement:
       "Move secrets to private runtimeConfig and read them only on the server.",
     examples: [
