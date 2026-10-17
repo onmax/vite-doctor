@@ -201,6 +201,10 @@ export default <Plugin>{ resolveId(id) { return id } }`,
         "packages/kit/src/extended.ts": `import type { Plugin } from 'vite'
 interface EnvPlugin extends Plugin { api: string }
 export function env(): EnvPlugin { return { api: '', load(id) { return id } } }`,
+        "packages/kit/src/metadata.ts": `import { loadEnv } from 'vite'
+const metadata = { plugins: [{ transform(code) { return code } }] }
+console.log(loadEnv('', ''), metadata)
+`,
         "packages/kit/src/lifecycle.ts": `import type { UserConfig } from 'vite'
 export function lifecycle(config: UserConfig) {
   const transform = config.root

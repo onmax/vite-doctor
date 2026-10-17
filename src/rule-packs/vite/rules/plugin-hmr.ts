@@ -3641,12 +3641,16 @@ function isPluginPosition(node: AnyNode, program: AnyNode): boolean {
       return isPluginType(enclosingFunction(parent)?.returnType);
     if (parent.type === "ArrowFunctionExpression")
       return parent.body === current && isPluginType(parent.returnType);
-    if (parent.type === "Property" || parent.type === "ObjectProperty")
-      return (
-        current.type === "ArrayExpression" &&
-        parent.value === current &&
-        (parent.key?.name ?? parent.key?.value) === "plugins"
-      );
+    if (parent.type === "Property" || parent.type === "ObjectProperty") {
+      if (
+        current.type !== "ArrayExpression" ||
+        parent.value !== current ||
+        (parent.key?.name ?? parent.key?.value) !== "plugins"
+      )
+        return false;
+      const configObject = parent.__doctorParent;
+      return configObject?.type === "ObjectExpression" && isViteConfigPosition(configObject, program);
+    }
     const passesValue =
       ["ArrayExpression", "ParenthesizedExpression", "TSNonNullExpression"].includes(parent.type) ||
       (parent.type === "ConditionalExpression" && parent.test !== current) ||
@@ -3656,6 +3660,47 @@ function isPluginPosition(node: AnyNode, program: AnyNode): boolean {
     parent = parent.__doctorParent;
   }
   return false;
+}
+
+function isViteConfigPosition(node: AnyNode, program: AnyNode): boolean {
+  let current = node;
+  let parent = node.__doctorParent;
+  while (parent) {
+    if (parent.type === "TSAsExpression" || parent.type === "TSSatisfiesExpression")
+      return isViteConfigType(parent.typeAnnotation, program);
+    if (parent.type === "TSTypeAssertion") return isViteConfigType(parent.typeAnnotation, program);
+    if (parent.type === "VariableDeclarator")
+      return parent.init === current && isViteConfigType(parent.id?.typeAnnotation, program);
+    if (parent.type === "ReturnStatement")
+      return isViteConfigType(enclosingFunction(parent)?.returnType, program);
+    if (parent.type === "ArrowFunctionExpression")
+      return parent.body === current && isViteConfigType(parent.returnType, program);
+    if (parent.type === "CallExpression") {
+      const callee = parent.callee;
+      if (callee?.type === "Identifier" && callee.name === "defineConfig") return true;
+    }
+    const passesValue =
+      ["ParenthesizedExpression", "TSNonNullExpression"].includes(parent.type) ||
+      (parent.type === "ConditionalExpression" && parent.test !== current) ||
+      parent.type === "LogicalExpression";
+    if (!passesValue) return false;
+    current = parent;
+    parent = parent.__doctorParent;
+  }
+  return false;
+}
+
+function isViteConfigType(node: AnyNode, program: AnyNode, seen = new Set<AnyNode>()): boolean {
+  if (!node || seen.has(node)) return false;
+  seen.add(node);
+  if (node.type === "TSTypeAnnotation") return isViteConfigType(node.typeAnnotation, program, seen);
+  if (node.type === "TSImportType")
+    return node.source?.value === "vite" && node.qualifier?.name === "UserConfig";
+  if (node.type !== "TSTypeReference") return false;
+  const name = node.typeName?.name;
+  if (name === "UserConfig") return true;
+  const binding = typeBindings(program).get(node.typeName?.name);
+  return binding?.type === "TSTypeAliasDeclaration" && isViteConfigType(binding.typeAnnotation, program, seen);
 }
 
 function enclosingFunction(node: AnyNode): AnyNode {
