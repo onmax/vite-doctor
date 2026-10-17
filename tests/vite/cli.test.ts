@@ -10,7 +10,7 @@ import {
 } from "../../src/core/index.ts";
 import { expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
-import { runViteDoctor, viteDoctorExtensions, viteDoctorRulePacks } from "../../src/doctor.ts";
+import { viteDoctorExtensions, viteDoctorRulePacks } from "../../src/doctor.ts";
 import { formatMigrationReport } from "../../src/migration.ts";
 import { doctor } from "../../src/plugin.ts";
 
@@ -649,22 +649,23 @@ test("CLI and Vite plugin report the Rule Packs an explicit extends left out", a
         [".", "--extends", "vite-doctor/typescript/strict", "--no-cache", "--format", "json"],
         root,
       );
-      const plugin = await runViteDoctor({
+      const logs = await runVitePlugin(
+        doctor({ extends: ["vite-doctor/typescript/strict"], format: "json", cache: false }),
         root,
-        extends: ["vite-doctor/typescript/strict"],
-        cache: false,
-      });
+        "build",
+      );
       expect(JSON.parse(cli.output).rulePacks).toEqual({
         activated: ["vite-doctor/vite", "vite-doctor/typescript"],
         selected: ["vite-doctor/typescript"],
       });
-      expect(plugin.rulePacks).toEqual(JSON.parse(cli.output).rulePacks);
+      expect(logs).toHaveLength(1);
+      expect(JSON.parse(logs[0]!).rulePacks).toEqual(JSON.parse(cli.output).rulePacks);
       const text = await runCli(
         [".", "--extends", "vite-doctor/typescript/strict", "--no-cache"],
         root,
       );
       expect(text.output).toContain(
-        'Rule Packs not selected by extends: vite-doctor/vite (add "auto" to extends to run them)',
+        'Rule Packs not selected by extends: vite-doctor/vite (add "auto" to extends to select their recommended presets)',
       );
     },
   );

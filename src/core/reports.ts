@@ -61,7 +61,7 @@ export function createTextReport(result: DoctorRunResult): string {
   );
   if (unselected?.length) {
     lines.push(
-      `Rule Packs not selected by extends: ${unselected.join(", ")} (add "auto" to extends to run them)`,
+      `Rule Packs not selected by extends: ${unselected.join(", ")} (add "auto" to extends to select their recommended presets)`,
     );
   }
   const confidence = confidenceMix(result);
