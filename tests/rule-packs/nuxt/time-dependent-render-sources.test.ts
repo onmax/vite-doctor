@@ -92,6 +92,8 @@ const label = String(Date.now())
 test.each([
   ['<NuxtTime v-if="show" :datetime="stable" />'],
   ['<NuxtTime v-show="show" :datetime="stable" />'],
+  ['<span v-if="!stable" /><NuxtTime v-else-if="show" :datetime="stable" />'],
+  ['<NuxtTime v-for="item in (show ? [stable] : [])" :key="item" :datetime="item" />'],
 ])("reports a time-dependent control directive on NuxtTime: %s", async (template) => {
   const lines = await reportedLines(`<script setup lang="ts">
 const stable = "2026-01-01"
