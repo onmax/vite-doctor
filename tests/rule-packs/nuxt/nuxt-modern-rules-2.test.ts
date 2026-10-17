@@ -182,6 +182,8 @@ test("Nuxt UI form controls rule ignores ambiguous native inputs and layout elem
     <input type="file">
     <input type="hidden">
     <input :type="dynamicType">
+    <input ref="input" v-bind="attachments.inputProps.value" class="sr-only">
+    <input type="text" v-bind="inputAttrs">
   </form>
 </div>
 </template>`,

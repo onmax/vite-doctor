@@ -184,8 +184,15 @@ function formControlReplacement(ctx: RuleContext, node: TemplateElementNode): st
     return "Use <USelect> for simple option lists, or <USelectMenu> for richer option data.";
   if (node.tag !== "input") return null;
 
-  if (ctx.helpers.hasVueDirective(node, "bind", "type")) return null;
+  if (ctx.helpers.hasVueDirective(node, "bind", "type") || hasSpreadBinding(node)) return null;
   const inputType = ctx.helpers.getStaticVueAttributeValue(node, "type")?.toLowerCase() ?? "text";
   if (!TEXT_INPUT_TYPES.has(inputType)) return null;
   return "Use <UInput> for text-like inputs. Use specialized Nuxt UI controls for checkbox, radio, switch, file, range, or other non-text inputs.";
+}
+
+// An object v-bind can set or override type, so the rendered control is unknown statically.
+function hasSpreadBinding(node: TemplateElementNode): boolean {
+  return node.props.some(
+    (prop) => prop.type === TemplateNodeType.DIRECTIVE && prop.name === "bind" && !prop.arg,
+  );
 }
