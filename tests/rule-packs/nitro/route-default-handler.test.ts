@@ -136,6 +136,8 @@ describe("NITRO0019 route file whose default export is not a handler", () => {
       "export default function (a, b) {\n  return a + b\n}",
     ],
     ["object", "export default { pageSize: 20 }"],
+    ["handler object with a non-callable handler", "export default { handler: 42 }"],
+    ["fetch object with a non-callable fetch", "export default { fetch: 'not a function' }"],
     ["array", "export default ['a', 'b']"],
     ["constant", "export default 42"],
     ["class", "export default class Repo {}"],

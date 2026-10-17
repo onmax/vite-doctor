@@ -213,7 +213,7 @@ function nonHandlerDescription(
     return { label: name ? `the class ${name}` : "a class", name };
   }
   if (value?.type === "ObjectExpression") {
-    return isHandlerObject(value) ? undefined : { label: "a plain object" };
+    return isHandlerObject(value, program) ? undefined : { label: "a plain object" };
   }
   if (value?.type === "ArrayExpression") return { label: "an array" };
   if (value?.type === "Literal" || value?.type === "TemplateLiteral")
@@ -273,12 +273,50 @@ function isRequiredParameter(param: AnyNode) {
   return param.optional !== true;
 }
 
-function isHandlerObject(node: AnyNode) {
-  return (node.properties ?? []).some((property: AnyNode) => {
-    if (property.type !== "Property") return true;
+function isHandlerObject(node: AnyNode, program?: AnyNode) {
+  let hasUnknown = false;
+  let hasCallable = false;
+  let hasNonCallable = false;
+  for (const property of node.properties ?? []) {
+    if (property.type !== "Property") {
+      hasUnknown = true;
+      continue;
+    }
     const key = property.computed ? undefined : moduleExportName(property.key);
-    return key === undefined || key === "handler" || key === "fetch";
-  });
+    if (key === undefined) {
+      hasUnknown = true;
+      continue;
+    }
+    if (key !== "handler" && key !== "fetch") continue;
+    if (isPlausiblyCallable(property.value, program)) hasCallable = true;
+    else hasNonCallable = true;
+  }
+  return hasCallable || (hasUnknown && !hasNonCallable);
+}
+
+function isPlausiblyCallable(node: AnyNode, program?: AnyNode): boolean {
+  const value = unwrapExpression(node);
+  if (!value) return true;
+  if (
+    value.type === "FunctionExpression" ||
+    value.type === "ArrowFunctionExpression" ||
+    value.type === "FunctionDeclaration"
+  )
+    return true;
+  if (value.type === "Identifier" && program) {
+    const binding = localBinding(program, value.name);
+    return binding ? isPlausiblyCallable(binding, undefined) : true;
+  }
+  if (
+    value.type === "Literal" ||
+    value.type === "TemplateLiteral" ||
+    value.type === "ArrayExpression" ||
+    value.type === "ObjectExpression" ||
+    value.type === "ClassExpression" ||
+    value.type === "ClassDeclaration"
+  )
+    return false;
+  return true;
 }
 
 function hasCommonJsDefault(program: AnyNode) {
