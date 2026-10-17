@@ -133,6 +133,28 @@ export default {}`,
 }
 export default { base: new URL("/app/", import.meta.url).pathname }`,
     ],
+    [
+      "a default-exported local URL class",
+      "src/plugin.ts",
+      `import type { Plugin } from "vite"
+export default class URL {
+  constructor(public pathname: string, base: string) {}
+}
+export const path = new URL("./x", import.meta.url).pathname`,
+    ],
+    [
+      "a URL declared in an earlier switch case",
+      "vite.config.ts",
+      `import { CustomURL } from "./url"
+export function resolve(mode: string) {
+  switch (mode) {
+    case "a":
+      const URL = CustomURL
+    case "b":
+      return new URL("./x", import.meta.url).pathname
+  }
+}`,
+    ],
   ])("accepts %s", async (_label, file, source) => {
     const result = await run(file, source);
     expect(result.diagnostics).toEqual([]);
@@ -146,6 +168,15 @@ export default { base: new URL("/app/", import.meta.url).pathname }`,
 }
 const base = new URL("./runtime", import.meta.url)
 export default { resolve: { alias: { "#runtime": base.pathname } } }`,
+    );
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  test("reports URL imported from node:url under another name", async () => {
+    const result = await run(
+      "vite.config.ts",
+      `import { URL as NodeURL } from "node:url"
+export default { resolve: { alias: { "#a": new NodeURL("./src/a.ts", import.meta.url).pathname } } }`,
     );
     expect(result.diagnostics).toHaveLength(1);
   });

@@ -57,16 +57,24 @@ export const noUrlPathnameAsFsPath = createRule({
 function isModuleFileUrl(input: AnyNode): boolean {
   const node = unwrap(input);
   if (node?.type !== "NewExpression" || node.callee.type !== "Identifier") return false;
-  if (node.callee.name !== "URL" || !isWhatwgUrl(node)) return false;
+  if (!isWhatwgUrl(node, node.callee.name)) return false;
   const base = node.arguments.length === 1 ? node.arguments[0] : node.arguments[1];
   return node.arguments.length <= 2 && memberPath(base) === "import.meta.url";
 }
 
-function isWhatwgUrl(node: AnyNode): boolean {
-  const binding = findBinding(node, "URL");
+// The global URL, or URL imported from node:url under any local name.
+function isWhatwgUrl(node: AnyNode, name: string): boolean {
+  const binding = findBinding(node, name);
+  if (!binding) return name === "URL";
   return (
-    !binding ||
-    (binding.type === "ImportDeclaration" && nodeUrlModules.has(String(binding.source.value)))
+    binding.type === "ImportDeclaration" &&
+    nodeUrlModules.has(String(binding.source.value)) &&
+    binding.specifiers.some(
+      (specifier: AnyNode) =>
+        specifier.local?.name === name &&
+        specifier.type === "ImportSpecifier" &&
+        (specifier.imported?.name ?? specifier.imported?.value) === "URL",
+    )
   );
 }
 
@@ -91,7 +99,10 @@ function findBinding(from: AnyNode, name: string): AnyNode {
     if (current.type === "CatchClause" && bindsName(current.param, name)) return current;
     for (const statement of scopeStatements(current)) {
       const declaration =
-        statement?.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+        statement?.type === "ExportNamedDeclaration" ||
+        statement?.type === "ExportDefaultDeclaration"
+          ? statement.declaration
+          : statement;
       if (declaration?.type === "VariableDeclaration") {
         const declarator = declaration.declarations.find((item: AnyNode) =>
           bindsName(item.id, name),
@@ -116,7 +127,8 @@ function findBinding(from: AnyNode, name: string): AnyNode {
 function scopeStatements(node: AnyNode): AnyNode[] {
   if (node.type === "Program" || node.type === "BlockStatement" || node.type === "StaticBlock")
     return node.body;
-  if (node.type === "SwitchCase") return node.consequent;
+  if (node.type === "SwitchStatement")
+    return node.cases.flatMap((item: AnyNode) => item.consequent);
   if (node.type === "ForStatement") return [node.init];
   if (node.type === "ForInStatement" || node.type === "ForOfStatement") return [node.left];
   return [];
