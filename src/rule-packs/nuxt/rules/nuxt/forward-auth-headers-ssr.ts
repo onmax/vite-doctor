@@ -66,6 +66,8 @@ const DEFERRING_CALLS = new Set([
   "nextTick",
 ]);
 const ASYNC_DATA_ENTRIES = new Set(["useAsyncData", "useLazyAsyncData", "callOnce"]);
+const BROWSER_CALLBACKS = new Set(["requestAnimationFrame", "requestIdleCallback"]);
+const SETUP_OWNERS = new Set(["defineComponent", "defineNuxtComponent", "defineNuxtPlugin"]);
 const SSR_CALLBACK_ENTRIES = new Set([
   "defineNuxtPlugin",
   "defineNuxtRouteMiddleware",
@@ -87,16 +89,27 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
   if (parent?.type === "CallExpression" || parent?.type === "NewExpression") {
     if (parent.callee === scope) return runsDuringSsr(ctx, parent, seen);
     const callee = ctx.helpers.getCalleeName(parent) ?? "";
+    if (BROWSER_CALLBACKS.has(callee.replace(/^window\./, ""))) return false;
     if (ASYNC_DATA_ENTRIES.has(callee) && !asyncDataRunsOnServer(parent, scope)) return false;
     return runsDuringSsr(ctx, parent, seen);
   }
   if (
-    (parent?.type === "Property" || parent?.type === "MethodDefinition") &&
+    parent?.type === "Property" &&
     parent.value === scope &&
     !parent.computed &&
     (parent.key?.name ?? parent.key?.value) === "setup"
-  )
-    return true;
+  ) {
+    const options = parent.__doctorParent;
+    const owner = options?.__doctorParent;
+    if (owner?.type === "ExportDefaultDeclaration") return true;
+    if (
+      owner?.type !== "CallExpression" ||
+      owner.arguments?.[0] !== options ||
+      !SETUP_OWNERS.has(ctx.helpers.getCalleeName(owner) ?? "")
+    )
+      return false;
+    return runsDuringSsr(ctx, owner, seen);
+  }
   const name = functionName(scope);
   if (!name) return false;
   if (/^use[A-Z]/.test(name)) return true;

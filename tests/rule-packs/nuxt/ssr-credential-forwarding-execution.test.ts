@@ -192,3 +192,33 @@ test.each([
 ])("reports %s", async (_, file, source) => {
   expect(await diagnose(source, file)).toEqual([ruleId]);
 });
+
+test.each([
+  [
+    "a requestAnimationFrame callback",
+    "app/composables/useAccount.ts",
+    `export function useAccount() {\n  requestAnimationFrame(() => $fetch('/api/account'))\n}`,
+  ],
+  [
+    "a setup method on an unregistered object",
+    "app/utils/account.ts",
+    `export const config = {\n  setup() {\n    return $fetch('/api/account')\n  },\n}`,
+  ],
+])("ignores %s", async (_, file, source) => {
+  expect(await diagnose(source, file)).toEqual([]);
+});
+
+test.each([
+  [
+    "an object plugin setup",
+    "app/plugins/account.ts",
+    `export default defineNuxtPlugin({\n  async setup() {\n    await $fetch('/api/account')\n  },\n})`,
+  ],
+  [
+    "a default-exported component setup",
+    "app/components/Account.vue",
+    `<script lang="ts">\nexport default {\n  async setup() {\n    await $fetch('/api/account')\n  },\n}\n</script>`,
+  ],
+])("reports %s", async (_, file, source) => {
+  expect(await diagnose(source, file)).toEqual([ruleId]);
+});
