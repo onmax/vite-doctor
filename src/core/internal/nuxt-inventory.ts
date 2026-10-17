@@ -74,7 +74,7 @@ export function createNuxtProjectInventory(
   };
 }
 
-const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/;
+const IDENTIFIER_RE = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*$/u;
 
 // Manifests written before keyed composables were serialized by name hold "[object Object]".
 function keyedComposableNames(entries: unknown[] = []): string[] {

@@ -52,9 +52,9 @@ test("Nuxt manifest serializes keyed composables by name", async () => {
 
 test("Nuxt inventory ignores keyed composables that older manifests stringified", () => {
   const inventory = createNuxtProjectInventory("/project", {
-    keyedComposables: ["[object Object]", "useOrders", { name: "useCart" }, 1],
+    keyedComposables: ["[object Object]", "useOrders", { name: "useCart" }, 1, "useÜber"],
   } as never);
-  expect(inventory.keyedComposables).toEqual(["useOrders", "useCart"]);
+  expect(inventory.keyedComposables).toEqual(["useOrders", "useCart", "useÜber"]);
 });
 
 test("accepts a factory registered by name in the Nuxt manifest", async () => {
@@ -175,6 +175,30 @@ test("accepts an exported factory in a layer that keeps compiler scanning on", a
           { root: "layers/admin", srcDir: "layers/admin", compilerScan: true, priority: 1 },
         ],
       ),
+    }),
+  ).toEqual([]);
+});
+
+test.each([
+  [
+    "a Vue file",
+    "app/composables/useOrders.vue",
+    "<script lang=\"ts\">\nexport const useOrders = createUseFetch('/api/orders')\n</script>",
+  ],
+  [
+    "a string-literal export name",
+    "app/composables/useOrders.ts",
+    "const useOrders = createUseFetch('/api/orders')\nexport { useOrders as \"orders\" }",
+  ],
+])("reports a factory Nuxt's scan skips: %s", async (_, file, source) => {
+  expect(await diagnose({ [file]: source })).toEqual([ruleId]);
+});
+
+test("accepts a default-exported factory registered as default", async () => {
+  expect(
+    await diagnose({
+      "app/utils/api.ts": "export default createUseFetch('/api/orders')",
+      ".nuxt/doctor.manifest.json": manifest(["default"]),
     }),
   ).toEqual([]);
 });

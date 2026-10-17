@@ -24,14 +24,18 @@ export const keyedComposableRegistrationRequired = createRule({
         declarator.id?.type === "Identifier"
           ? declarator.id.name
           : undefined;
+      const defaultExport = node.__doctorParent?.type === "ExportDefaultDeclaration";
       const composable =
         declared ??
-        ctx.file.text.slice(Math.max(0, node.start - 120), node.start).match(/use[A-Z]\w+/)?.[0];
+        (defaultExport
+          ? "default"
+          : ctx.file.text
+              .slice(Math.max(0, node.start - 120), node.start)
+              .match(/use[A-Z]\w+/)?.[0]);
       if (composable && ctx.project.nuxt?.manifest?.keyedComposables.includes(composable)) return;
-      const exported = declared
-        ? isExported(declarator, declared)
-        : node.__doctorParent?.type === "ExportDefaultDeclaration";
-      if (exported && inScannedComposablesDir(ctx)) return;
+      const exported = declared ? isExported(declarator, declared) : defaultExport;
+      if (exported && SCANNED_EXTENSION_RE.test(ctx.file.path) && inScannedComposablesDir(ctx))
+        return;
       report(
         ctx,
         node,
@@ -45,6 +49,8 @@ export const keyedComposableRegistrationRequired = createRule({
     return { CallExpression: visit, NewExpression: visit };
   },
 });
+
+const SCANNED_EXTENSION_RE = /\.(?:[jt]sx?|[cm][jt]s)$/;
 
 // Mirrors the export shapes Nuxt's keyed-function-factories scan accepts.
 function isExported(declarator: AnyNode, name: string): boolean {
@@ -62,6 +68,7 @@ function isExported(declarator: AnyNode, name: string): boolean {
         (specifier: AnyNode) =>
           specifier.type === "ExportSpecifier" &&
           specifier.exportKind !== "type" &&
+          specifier.exported?.type === "Identifier" &&
           specifier.local?.type === "Identifier" &&
           specifier.local.name === name,
       ),
