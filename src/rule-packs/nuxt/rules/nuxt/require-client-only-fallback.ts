@@ -67,8 +67,9 @@ function hasFallback(helpers: RuleContext["helpers"], node: TemplateElementNode)
     (child) =>
       child.type === TemplateNodeType.ELEMENT &&
       child.tag === "template" &&
-      (FALLBACK_SLOTS.some((name) => helpers.hasVueDirective(child, "slot", name)) ||
-        hasUnknownArgument(child, "slot")),
+      (hasUnknownArgument(child, "slot") ||
+        (hasContent(child) &&
+          FALLBACK_SLOTS.some((name) => helpers.hasVueDirective(child, "slot", name)))),
   );
 }
 

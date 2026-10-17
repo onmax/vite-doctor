@@ -35,6 +35,8 @@ test.each([
   ["<ClientOnly><Modal v-if='open' /><Chart /></ClientOnly>"],
   ["<ClientOnly fallback><Chart /></ClientOnly>"],
   ["<ClientOnly placeholder=''><Chart /></ClientOnly>"],
+  ["<ClientOnly><Chart /><template #fallback /></ClientOnly>"],
+  ["<ClientOnly><Chart /><template #placeholder>\n  <!-- todo -->\n</template></ClientOnly>"],
 ])("reports ClientOnly without a fallback: %s", async (template) => {
   const diagnostics = await reported(template);
   expect(diagnostics).toHaveLength(1);
