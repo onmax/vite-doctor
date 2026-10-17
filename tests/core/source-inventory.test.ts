@@ -301,6 +301,21 @@ test("source inventory keeps every file when Doctor targets a Git-ignored direct
   });
 });
 
+test("source inventory honors Git ignores when Git lists more than 1 MiB of ignored paths", async () => {
+  await withGitFixture(
+    { ".gitignore": "*.ignored.ts\n", "src/app.ts": "export const app = true\n" },
+    async (root) => {
+      const stem = "a".repeat(240);
+      for (let index = 0; index < 4500; index++)
+        writeFileSync(join(root, "src", `${stem}${index}.ignored.ts`), "");
+
+      const files = await selectScanFiles(root, {}, {}, { ...vueProject, root });
+
+      expect(files.map((file) => file.displayPath)).toEqual(["src/app.ts"]);
+    },
+  );
+});
+
 test("outside Git, source inventory skips Playwright output by default", async () => {
   await withFixture(
     {

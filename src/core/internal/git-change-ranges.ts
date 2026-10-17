@@ -425,7 +425,9 @@ export async function listGitIgnoredPaths(root: string): Promise<string[] | unde
 
 function runGit(root: string, args: string[]): Promise<CommandResult> {
   return new Promise((resolvePromise) => {
-    execFile("git", args, { cwd: root, encoding: "utf8" }, (error, stdout, stderr) => {
+    // Path listings of large repositories exceed execFile's 1 MiB default.
+    const options = { cwd: root, encoding: "utf8", maxBuffer: Infinity } as const;
+    execFile("git", args, options, (error, stdout, stderr) => {
       resolvePromise({
         ok: !error,
         stdout,
