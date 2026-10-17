@@ -601,22 +601,69 @@ function createResourceEvidence(ctx: RuleContext) {
   function releasesBeforeReuse(resource: Resource): boolean {
     if (!resource.handle || resource.kind === "listener") return false;
     const walk = (body: AnyNode, predicate: (node: AnyNode) => boolean) =>
-      executes(body, predicate, resource);
+      executesTeardown(body, predicate, resource);
     return walk(
       resource.owner.body,
       (node) => node.start < resource.node.start && releasesThrough(node, resource, walk),
     );
   }
 
+  function executesTeardown(
+    node: AnyNode,
+    predicate: (node: AnyNode) => boolean,
+    resource?: Resource,
+  ): boolean {
+    if (!node || isFunction(node)) return false;
+    if (predicate(node)) return true;
+    if (node.type === "BlockStatement" || node.type === "Program") {
+      for (const statement of node.body) {
+        if (executesTeardown(statement, predicate, resource)) return true;
+        if (teardownMayExit(statement, resource)) break;
+      }
+      return false;
+    }
+    if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
+      if (executesTeardown(node.test, predicate, resource)) return true;
+      const value = conditionValue(node.test, resource);
+      if (value !== undefined)
+        return executesTeardown(value ? node.consequent : node.alternate, predicate, resource);
+      return (
+        executesTeardown(node.consequent, predicate, resource) &&
+        executesTeardown(node.alternate, predicate, resource)
+      );
+    }
+    return children(node).some((child) => executesTeardown(child, predicate, resource));
+  }
+
+  function teardownMayExit(node: AnyNode, resource?: Resource): boolean {
+    if (!node || isFunction(node)) return false;
+    if (node.type === "ReturnStatement" || node.type === "ThrowStatement") return true;
+    if (node.type === "IfStatement") {
+      const value = conditionValue(node.test, resource);
+      if (value !== undefined) return teardownMayExit(value ? node.consequent : node.alternate, resource);
+      return teardownMayExit(node.consequent, resource) && teardownMayExit(node.alternate, resource);
+    }
+    if (node.type === "BlockStatement")
+      return node.body.length > 0 && teardownMayExit(node.body[node.body.length - 1], resource);
+    return false;
+  }
+
   function releasedOnTeardown(resource: Resource): boolean {
     // Teardown guards such as `if (stopped) return` make once-only disposal paths conditional,
-    // so any reachable release in the teardown hook counts.
-    const walk = (body: AnyNode, predicate: (node: AnyNode) => boolean) => reaches(body, predicate);
+    // but every path that can finish teardown must still release the handle. Reuse the
+    // control-flow-aware traversal used for ordinary cleanup evidence.
+    const walk = (body: AnyNode, predicate: (node: AnyNode) => boolean) =>
+      executes(body, predicate, resource);
     return nodes.some((node) => {
       if (node.type !== "CallExpression" || !LIFECYCLE_CLEANUP.has(vueApi(node.callee) ?? ""))
         return false;
       const teardown = callback(node.arguments[0]);
-      return !!teardown && walk(teardown.body, (call) => releasesThrough(call, resource, walk));
+      if (!teardown) return false;
+      const predicate = (call: AnyNode) => releasesThrough(call, resource, walk);
+      return (
+        walk(teardown.body, predicate) ||
+        (node.arguments[0]?.type === "Identifier" && reaches(teardown.body, predicate))
+      );
     });
   }
 
