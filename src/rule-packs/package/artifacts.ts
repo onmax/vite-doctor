@@ -364,7 +364,7 @@ function readPackageArtifactsForMode(
           if (condition === "types" || condition.startsWith("types@")) {
             const declarations = targets(item, "types", mode, addons);
             if (Array.isArray(declarations)) {
-              typedTargets ||= declarations.length > 0;
+              typedTargets ||= declarations.some((declaration) => typed(declaration));
               for (const declaration of declarations)
                 enqueue(declaration, "types", false, root, false, true);
             }
@@ -398,9 +398,11 @@ function readPackageArtifactsForMode(
       (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
     );
   const rootTyped = Boolean(
-    manifest.types ||
-    manifest.typings ||
-    Object.keys(manifest.typesVersions ?? {}).length ||
+    (manifest.types && typed(manifest.types)) ||
+    (manifest.typings && typed(manifest.typings)) ||
+    Object.values(manifest.typesVersions ?? {}).some((version) =>
+      Object.values(version).some((entries) => entries.some((entry) => typed(entry))),
+    ) ||
     (manifest.main && typed(manifest.main)),
   );
 

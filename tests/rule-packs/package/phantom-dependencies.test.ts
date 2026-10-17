@@ -148,6 +148,34 @@ test("keeps JSDoc for JavaScript-only export subpaths", async () => {
   ]);
 });
 
+test.each([
+  {
+    name: "a missing manifest types target",
+    manifest: { main: "dist/index.js", types: "types/index.d.ts" },
+    entry: "dist/index.js",
+  },
+  {
+    name: "a missing export types target",
+    manifest: {
+      exports: { ".": { import: "./dist/index.js", types: "./dist/index.d.ts" } },
+    },
+    entry: "dist/index.js",
+  },
+])("keeps JSDoc when $name", async ({ manifest, entry }) => {
+  const files = {
+    [entry]:
+      '/** @param {import("phantom-types").Value} value */\nexport function use(value) { return value; }',
+  };
+  const result = await withPackage(manifest, files, (root) =>
+    runViteDoctor({ root, framework: "vite", cache: false, extends: ["package/recommended"] }),
+  );
+  const diagnostics = result.diagnostics.filter((d) => d.ruleId.startsWith("package/"));
+  expect(diagnostics.map((d) => [d.code, d.message.match(/"([^"]+)"/)?.[1]])).toEqual([
+    ["PKG0002", "phantom-types"],
+  ]);
+  expect(result.project.evidenceGaps?.[0]?.files.length).toBeGreaterThan(0);
+});
+
 test.each<{ name: string; manifest: object; files: Record<string, string>; entry?: string }>([
   {
     name: "a types field outside the JavaScript directory",
