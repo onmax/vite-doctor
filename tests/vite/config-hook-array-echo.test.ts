@@ -235,9 +235,51 @@ export default (): Plugin => ({
   },
 })`,
     ],
+    [
+      "a reassigned alias",
+      `import type { Plugin } from "vite"
+export default (): Plugin => ({
+  name: "fixture",
+  config(config) {
+    let entries = config.resolve?.dedupe
+    entries = ["vue"]
+    return { resolve: { dedupe: [...entries, "x"] } }
+  },
+})`,
+    ],
+    [
+      "a helper name that is declared twice",
+      `import type { Plugin } from "vite"
+function outer() {
+  function merge(current: string[]) {
+    return [...current, "x"]
+  }
+  return merge
+}
+function merge(current: string[]) {
+  return current.includes("x") ? undefined : ["x"]
+}
+export default (): Plugin => ({
+  name: "fixture",
+  config(config) {
+    return { resolve: { dedupe: merge(config.resolve.dedupe) } }
+  },
+})`,
+    ],
   ])("accepts %s", async (_label, source) => {
     const result = await run(source);
     expect(result.diagnostics).toEqual([]);
+  });
+
+  test("reports CommonJS plugins that require Vite tooling", async () => {
+    const result = await run(`const { mergeConfig } = require("vite")
+module.exports = () => ({
+  name: "fixture",
+  config(config) {
+    return { resolve: { dedupe: [...config.resolve.dedupe, "x"] } }
+  },
+})`);
+    expect(result.diagnostics).toHaveLength(1);
   });
 
   test("is Recommended and documents VITE0026", async () => {

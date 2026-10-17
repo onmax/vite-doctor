@@ -5,6 +5,8 @@ import { isViteConfigFile, propertyName, staticString, type AnyNode } from "./sh
 const configParamIndex: Record<string, number> = { config: 0, configEnvironment: 1 };
 const viteModules =
   /^(?:vite|vite-plus|vitest|rollup|rolldown|unplugin|@nuxt\/kit)(?:\/|$)|^@vitejs\//;
+const viteRequire =
+  /\brequire\s*\(\s*["'`](?:(?:vite|vite-plus|vitest|rollup|rolldown|unplugin|@nuxt\/kit)(?:\/[^"'`]*)?|@vitejs\/[^"'`]+)["'`]/;
 // `name`, `apply`, `load`, and `transform` also appear on unrelated objects, so they only mark a
 // plugin in files that import Vite tooling.
 const genericPluginKeys = new Set(["name", "apply", "load", "transform"]);
@@ -43,6 +45,7 @@ export const noConfigHookArrayEcho = createRule({
             statement.type === "ImportDeclaration" &&
             viteModules.test(String(statement.source.value)),
         );
+        viteCode ||= viteRequire.test(ctx.file.text);
       },
       Property(node: AnyNode) {
         const hook = keyName(node);
@@ -74,8 +77,9 @@ function report(ctx: RuleContext, hook: string, echo: Echo) {
 
 function findEchoes(fn: AnyNode, param: string): Echo[] {
   const locals = new Map<string, AnyNode>();
-  // A name declared twice, as in a shadowing block, is not traced.
+  // A name declared twice, as in a shadowing block, or reassigned is not traced.
   const declared = new Set<string>();
+  const reassigned = new Set<string>();
   const assignments: Array<{ target: string; path: string[]; value: AnyNode }> = [];
   const returns: AnyNode[] = [];
   if (fn.body.type !== "BlockStatement") returns.push(fn.body);
@@ -87,12 +91,15 @@ function findEchoes(fn: AnyNode, param: string): Echo[] {
         else if (node.init) locals.set(node.id.name, node.init);
         declared.add(node.id.name);
       }
+      if (node.type === "AssignmentExpression" && node.left.type === "Identifier")
+        reassigned.add(node.left.name);
       if (node.type === "AssignmentExpression" && node.operator === "=") {
         const target = memberKeys(node.left);
         if (target && target.keys.length > 0)
           assignments.push({ target: target.root, path: target.keys, value: node.right });
       }
     });
+  for (const name of reassigned) locals.delete(name);
 
   const echoes: Echo[] = [];
   const seen = new Set<AnyNode>();
@@ -222,22 +229,25 @@ function helperEchoesParam(helper: AnyNode, index: number): boolean {
   return returns.some(spreadsParam);
 }
 
+// The only same-file function with this name; an ambiguous name is not followed.
 function localFunction(from: AnyNode, name: string): AnyNode {
   let program = from;
   while (program.__doctorParent) program = program.__doctorParent;
-  let found: AnyNode;
+  const found: AnyNode[] = [];
   walkOwnBody(program, (node) => {
-    if (found) return;
-    if (node.type === "FunctionDeclaration" && node.id?.name === name) found = node;
+    if (node.type === "FunctionDeclaration" && node.id?.name === name) found.push(node);
     if (
       node.type === "VariableDeclarator" &&
       node.id.type === "Identifier" &&
-      node.id.name === name &&
-      ["ArrowFunctionExpression", "FunctionExpression"].includes(unwrap(node.init)?.type)
+      node.id.name === name
     )
-      found = unwrap(node.init);
+      found.push(unwrap(node.init));
   });
-  return found;
+  const [helper] = found;
+  return found.length === 1 &&
+    ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(helper?.type)
+    ? helper
+    : undefined;
 }
 
 function isPluginObject(node: AnyNode, viteCode: boolean): boolean {
