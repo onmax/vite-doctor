@@ -1,4 +1,15 @@
-import { AnyNode, createRule, isClientOnlyPath, isNuxtRuntimeFile, report } from "./shared.js";
+import type { RuleContext } from "../../../../core/index.js";
+import { getObjectPropertyValue, isFalseLiteral } from "./async-data.js";
+import {
+  AnyNode,
+  classifyExecutionEvidence,
+  createRule,
+  isClientOnlyPath,
+  isNuxtRuntimeFile,
+  nearestFunctionOrProgram,
+  report,
+  walkScriptLocal,
+} from "./shared.js";
 
 export const forwardAuthHeadersSsr = createRule({
   meta: {
@@ -23,6 +34,7 @@ export const forwardAuthHeadersSsr = createRule({
         if (!String(url).startsWith("/api/")) return;
         if (!isAuthSensitiveInternalApi(String(url))) return;
         if (forwardsRequestCredentials(node)) return;
+        if (!runsDuringSsr(ctx, node, new Set())) return;
         report(
           ctx,
           node,
@@ -36,6 +48,72 @@ export const forwardAuthHeadersSsr = createRule({
     };
   },
 });
+
+const DEFERRED_EXECUTION = new Set([
+  "client-only",
+  "lifecycle-only",
+  "event-handler",
+  "server-only",
+]);
+const ASYNC_DATA_ENTRIES = new Set(["useAsyncData", "useLazyAsyncData", "callOnce"]);
+const UNIVERSAL_ENTRIES = new Set(["defineNuxtPlugin", "defineNuxtRouteMiddleware"]);
+const localCallSites = new WeakMap<object, Map<string, AnyNode[]>>();
+
+// Only requests with evidence of running during SSR miss the browser's cookies.
+function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boolean {
+  if (DEFERRED_EXECUTION.has(classifyExecutionEvidence(ctx, node))) return false;
+  const scope = nearestFunctionOrProgram(node);
+  if (!scope || seen.has(scope)) return false;
+  if (scope.type === "Program") return true;
+  seen.add(scope);
+  const parent = scope.__doctorParent;
+  if (parent?.type === "CallExpression" || parent?.type === "NewExpression") {
+    if (parent.callee === scope) return runsDuringSsr(ctx, parent, seen);
+    const callee = ctx.helpers.getCalleeName(parent) ?? "";
+    if (UNIVERSAL_ENTRIES.has(callee)) return true;
+    if (
+      ASYNC_DATA_ENTRIES.has(callee) &&
+      isFalseLiteral(getObjectPropertyValue(parent.arguments.at(-1), "server"))
+    )
+      return false;
+    return runsDuringSsr(ctx, parent, seen);
+  }
+  if (
+    (parent?.type === "Property" || parent?.type === "MethodDefinition") &&
+    parent.value === scope &&
+    !parent.computed &&
+    (parent.key?.name ?? parent.key?.value) === "setup"
+  )
+    return true;
+  const name = functionName(scope);
+  if (!name) return false;
+  if (/^use[A-Z]/.test(name)) return true;
+  return (callSites(ctx).get(name) ?? []).some((call) => runsDuringSsr(ctx, call, seen));
+}
+
+function functionName(fn: AnyNode): string | undefined {
+  if (fn.type === "FunctionDeclaration") return fn.id?.name;
+  const parent = fn.__doctorParent;
+  if (
+    parent?.type === "VariableDeclarator" &&
+    parent.init === fn &&
+    parent.id?.type === "Identifier"
+  )
+    return parent.id.name;
+}
+
+function callSites(ctx: RuleContext): Map<string, AnyNode[]> {
+  const program = ctx.file.scriptAst ?? {};
+  let sites = localCallSites.get(program);
+  if (sites) return sites;
+  const collected = new Map<string, AnyNode[]>();
+  walkScriptLocal(program, (node) => {
+    if (node.type !== "CallExpression" || node.callee?.type !== "Identifier") return;
+    collected.set(node.callee.name, [...(collected.get(node.callee.name) ?? []), node]);
+  });
+  localCallSites.set(program, collected);
+  return collected;
+}
 
 function isAuthSensitiveInternalApi(url: string): boolean {
   return /\/api\/(?:auth|admin|account|user|users|me|profile|session|feedback|agent|private|billing|settings)(?:\/|$)/i.test(

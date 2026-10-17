@@ -112,13 +112,13 @@ const user = await $fetch('/api/user', { headers })
 });
 
 test.each([
-  "const headers = useRequestHeaders(['cookie']); const load = function headers() { return $fetch('/api/user', { headers }) }",
-  "const headers = useRequestHeaders(['cookie']); const load = class headers { load() { return $fetch('/api/user', { headers }) } }",
+  "const headers = useRequestHeaders(['cookie']); const load = function headers() { return $fetch('/api/user', { headers }) }; await load()",
+  "const headers = useRequestHeaders(['cookie']); const load = class headers { static user = $fetch('/api/user', { headers }) }",
   "await $fetch('/api/user', { headers }); var headers = useRequestHeaders(['cookie'])",
   "await $fetch('/api/user', { headers }); const headers = useRequestHeaders(['cookie'])",
   "const headers = useRequestHeaders(['cookie']); try {} catch (headers) { await $fetch('/api/user', { headers }) }",
   "const headers = useRequestHeaders(['cookie']); try {} catch ({ headers }) { await $fetch('/api/user', { headers }) }",
-  "const headers = useRequestHeaders(['cookie']); async function load({ headers }) { await $fetch('/api/user', { headers }) }",
+  "const headers = useRequestHeaders(['cookie']); async function load({ headers }) { await $fetch('/api/user', { headers }) }; await load(unrelated)",
   "const headers = useRequestHeaders(['cookie']); { const { headers } = unrelated; await $fetch('/api/user', { headers }) }",
   "const headers = useRequestHeaders(['cookie']); { await $fetch('/api/user', { headers }); const headers = unrelated }",
   "const headers = useRequestHeaders(['cookie']); for (const headers of unrelated) { await $fetch('/api/user', { headers }) }",
@@ -152,7 +152,7 @@ test.each([
 ])("nested var bindings shadow outer credentials: %s", async (body) => {
   const result = await runNuxtAppRuleFixture(
     forwardAuthHeadersSsr,
-    `<script setup lang="ts">const headers = useRequestHeaders(['cookie']); function load() { ${body} }</script>`,
+    `<script setup lang="ts">const headers = useRequestHeaders(['cookie']); function load() { ${body} }; load()</script>`,
   );
   expect(result.diagnostics.map((item) => item.ruleId)).toContain(forwardAuthHeadersSsr.meta.id);
 });
