@@ -29,7 +29,7 @@ import {
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
-import { VERSION, sha256 } from "./utils.js";
+import { VERSION, sha256, shellArgument } from "./utils.js";
 import { allDiagnosticCodesByRuleId, allDiagnostics } from "../diagnostic-code-map.js";
 import { codeForRuleId, diagnosticForCode } from "../diagnostics.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
@@ -64,7 +64,8 @@ export function applyPolicyFilters(session: ScanSession): void {
   if (result.staleBaseline) reportStaleBaseline(session, result.staleBaseline);
 }
 
-// The baseline is not a source file, so this runs after scope filtering instead of through it.
+// The baseline is not a source file, so this skips scope filtering but still honors the
+// severity threshold and the same suppression policy as every other Diagnostic.
 function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): void {
   if (session.options.severity === "error") return;
   const path = relative(session.root, baseline.file) || baseline.file;
@@ -72,16 +73,29 @@ function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): voi
     baseline.fingerprintScheme === undefined
       ? "does not record the fingerprint scheme it was written with"
       : `was written with fingerprint scheme ${baseline.fingerprintScheme}`;
-  pushDiagnostic(session, {
+  const warning = normalizeDiagnosticFromRuleCode({
     ruleId: "doctor/baseline/stale-fingerprint-scheme",
     severity: "warn",
     category: "baseline",
     file: baseline.file,
     why: `Baseline "${path}"${baseline.doctorVersion ? ` (Doctor ${baseline.doctorVersion})` : ""} ${writer}, but this Doctor uses fingerprint scheme ${FINGERPRINT_SCHEME}. Recorded findings whose fingerprints changed are reported as new by --new-only.`,
-    suggestion: `Regenerate the baseline with a full Doctor Run, without --changed, --since, or --rules: vite-doctor . --baseline ${path} --update-baseline. Then commit the updated baseline.`,
+    suggestion: `Regenerate the baseline with a full Doctor Run, without --changed, --since, or --rules: vite-doctor . --baseline ${shellArgument(path)} --update-baseline. Then commit the updated baseline.`,
     confidence: "proven",
     analysisPhase: "manifest",
   });
+  warning.fingerprint ??= createDiagnosticFingerprint(
+    session.root,
+    warning,
+    sourceTextFor(session, warning.file),
+  );
+  const result = applyDiagnosticPolicy({
+    root: session.root,
+    config: session.config,
+    options: { ...session.options, updateBaseline: false },
+    diagnostics: [warning],
+  });
+  session.diagnostics.push(...result.diagnostics);
+  session.suppressedDiagnostics.push(...result.suppressedDiagnostics);
 }
 
 export function applyReportEligibility(session: ScanSession): void {

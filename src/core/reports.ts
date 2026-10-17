@@ -19,6 +19,7 @@ import {
   workspaceDiagnosticMetadataByRuleId,
 } from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
+import { shellArgument } from "./internal/utils.js";
 
 export interface DoctorReportContext {
   runOptions?: Readonly<DoctorRunOptions>;
@@ -586,10 +587,6 @@ function agentFramework(result: DoctorRunResult, context: DoctorReportContext): 
   const requested = context.runOptions?.framework;
   if (requested && requested !== "auto") return requested;
   return (result.workspacePackages?.length ?? 0) > 1 ? "auto" : result.framework;
-}
-
-function shellArgument(value: string): string {
-  return /^[a-zA-Z0-9_./:@,+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function diagnosticReferenceUrl(code: string) {

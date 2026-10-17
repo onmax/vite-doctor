@@ -13,6 +13,7 @@ import { main } from "../../src/cli.ts";
 import { runProjectFixture } from "../../src/core/testkit.ts";
 import { noClientSecretPattern } from "../../src/rules.ts";
 import { viteDoctorVersion } from "../../src/version.ts";
+import type { DoctorConfig, DoctorRunOptions } from "../../src/core/config.ts";
 
 const roots: string[] = [];
 
@@ -274,7 +275,14 @@ test("updating a stale baseline does not report it as stale", () => {
   expect(result.staleBaseline).toBeUndefined();
 });
 
-test("a Doctor Run reports a stale baseline as DOC0032", async () => {
+async function runWithStaleBaseline(
+  options: {
+    baseline?: string;
+    config?: DoctorConfig;
+    severity?: DoctorRunOptions["severity"];
+  } = {},
+) {
+  const baseline = options.baseline ?? "baseline.json";
   const files = { "src/main.ts": "console.log(import.meta.env.VITE_SECRET)\n" };
   const initial = await runProjectFixture({
     framework: "vite",
@@ -287,13 +295,19 @@ test("a Doctor Run reports a stale baseline as DOC0032", async () => {
     rules: [noClientSecretPattern],
     files: {
       ...files,
-      "baseline.json": JSON.stringify({
+      [baseline]: JSON.stringify({
         version: 1,
         diagnostics: [{ fingerprint: finding!.fingerprint }],
       }),
     },
-    run: { baseline: "baseline.json", newOnly: true },
+    config: options.config,
+    run: { baseline, newOnly: true, severity: options.severity },
   });
+  return { finding, result };
+}
+
+test("a Doctor Run reports a stale baseline as DOC0032", async () => {
+  const { finding, result } = await runWithStaleBaseline();
   expect(result.suppressedDiagnostics).toMatchObject([{ fingerprint: finding!.fingerprint }]);
   expect(result.diagnostics).toMatchObject([
     {
@@ -304,4 +318,30 @@ test("a Doctor Run reports a stale baseline as DOC0032", async () => {
     },
   ]);
   expect(result.diagnostics[0]!.suggestion).toContain("--update-baseline");
+});
+
+test("a config suppression hides DOC0032", async () => {
+  const { result } = await runWithStaleBaseline({
+    config: {
+      suppressions: [
+        { ruleId: "doctor/baseline/stale-fingerprint-scheme", reason: "Migrating next sprint." },
+      ],
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toContainEqual(
+    expect.objectContaining({ code: "DOC0032", suppressionReason: "Migrating next sprint." }),
+  );
+});
+
+test("an error severity threshold hides DOC0032", async () => {
+  const { result } = await runWithStaleBaseline({ severity: "error" });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("the DOC0032 command quotes baseline paths for the shell", async () => {
+  const { result } = await runWithStaleBaseline({ baseline: "base line $HOME's.json" });
+  expect(result.diagnostics[0]!.suggestion).toContain(
+    `--baseline 'base line $HOME'\\''s.json' --update-baseline`,
+  );
 });
