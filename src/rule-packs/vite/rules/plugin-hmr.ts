@@ -18,7 +18,7 @@ export const requirePluginName = createRule({
       ObjectExpression(node: AnyNode) {
         if (!isPluginObject(node, origin, ctx.file.scriptAst) || isSpreadFragment(node)) return;
         const hasName = (node.properties ?? []).some(
-          (property: AnyNode) => property.key?.name === "name",
+          (property: AnyNode) => (property.key?.name ?? property.key?.value) === "name",
         );
         if (hasName) return;
         ctx.report(
@@ -60,7 +60,7 @@ export const preferTransformFilter = createRule({
             !isPluginObject(node.__doctorParent, origin, ctx.file.scriptAst))
         )
           return;
-        const value = node.value;
+        const value = hookFunction(node.value, ctx.file.scriptAst) ?? node.value;
         const source = ctx.file.text.slice(node.start ?? 0, node.end ?? 0);
         if (value?.params?.length >= 2 || /\bfilter\s*:/.test(source)) return;
         ctx.report(
@@ -3615,7 +3615,7 @@ function isPluginObject(node: AnyNode, origin: "path" | "import", program?: AnyN
   return (
     properties.some(
       (property: AnyNode) => (property.key?.name ?? property.key?.value) === "name",
-    ) || isPluginPosition(node)
+    ) || isPluginPosition(node, program)
   );
 }
 
@@ -3628,7 +3628,8 @@ const PLUGIN_HOOKS = new Set([
   "writeBundle",
 ]);
 
-function isPluginPosition(node: AnyNode): boolean {
+function isPluginPosition(node: AnyNode, program: AnyNode): boolean {
+  const isPluginType = (type: AnyNode) => isVitePluginType(type, program);
   let current = node;
   let parent = node.__doctorParent;
   while (parent) {
@@ -3669,17 +3670,76 @@ const FUNCTION_TYPES = new Set([
   "ArrowFunctionExpression",
 ]);
 
-function isPluginType(node: AnyNode): boolean {
-  if (!node) return false;
-  if (node.type === "TSTypeAnnotation") return isPluginType(node.typeAnnotation);
-  if (node.type === "TSArrayType") return isPluginType(node.elementType);
+const PLUGIN_TYPE_SOURCES = /^(?:vite|rollup|rolldown)$/;
+const PLUGIN_TYPE_NAMES = new Set(["Plugin", "PluginOption"]);
+const typeBindingCache = new WeakMap<object, Map<string, AnyNode>>();
+
+// Plugin types come from Vite or Rollup, directly, through an alias such as
+// `type EnvPlugin = Plugin & { api: Api }`, or through an interface that extends one.
+function isVitePluginType(node: AnyNode, program: AnyNode, seen = new Set<AnyNode>()): boolean {
+  if (!node || seen.has(node)) return false;
+  seen.add(node);
+  const recurse = (child: AnyNode) => isVitePluginType(child, program, seen);
+  if (node.type === "TSTypeAnnotation") return recurse(node.typeAnnotation);
+  if (node.type === "TSArrayType") return recurse(node.elementType);
   if (node.type === "TSUnionType" || node.type === "TSIntersectionType")
-    return (node.types ?? []).some(isPluginType);
-  if (node.type !== "TSTypeReference") return false;
-  const name = node.typeName?.type === "TSQualifiedName" ? node.typeName.right : node.typeName;
-  if (["Promise", "Array", "ReadonlyArray"].includes(name?.name))
-    return (node.typeArguments?.params ?? node.typeParameters?.params ?? []).some(isPluginType);
-  return /Plugin(?:Option)?$/.test(name?.name ?? "");
+    return (node.types ?? []).some(recurse);
+  if (node.type === "TSImportType")
+    return (
+      PLUGIN_TYPE_SOURCES.test(node.source?.value ?? node.argument?.literal?.value ?? "") &&
+      PLUGIN_TYPE_NAMES.has(node.qualifier?.name)
+    );
+  const reference =
+    node.type === "TSTypeReference"
+      ? node.typeName
+      : node.type === "TSInterfaceHeritage"
+        ? node.expression
+        : undefined;
+  if (!reference) return false;
+  if (["Promise", "Array", "ReadonlyArray"].includes(reference.name))
+    return (node.typeArguments?.params ?? node.typeParameters?.params ?? []).some(recurse);
+  const qualified = reference.type === "TSQualifiedName" || reference.type === "MemberExpression";
+  const local = qualified ? (reference.left ?? reference.object) : reference;
+  const binding = typeBindings(program).get(local?.name);
+  if (binding?.type === "ImportBinding")
+    return (
+      PLUGIN_TYPE_SOURCES.test(binding.source) &&
+      PLUGIN_TYPE_NAMES.has(
+        qualified && binding.imported === "*"
+          ? (reference.right ?? reference.property)?.name
+          : binding.imported,
+      )
+    );
+  if (qualified || !binding) return false;
+  if (binding.type === "TSTypeAliasDeclaration") return recurse(binding.typeAnnotation);
+  return (binding.extends ?? []).some(recurse);
+}
+
+function typeBindings(program: AnyNode): Map<string, AnyNode> {
+  let bindings = typeBindingCache.get(program);
+  if (bindings) return bindings;
+  bindings = new Map();
+  for (const statement of program?.body ?? []) {
+    if (statement.type === "ImportDeclaration") {
+      for (const specifier of statement.specifiers ?? [])
+        bindings.set(specifier.local?.name, {
+          type: "ImportBinding",
+          source: statement.source?.value,
+          imported:
+            specifier.type === "ImportNamespaceSpecifier"
+              ? "*"
+              : specifier.type === "ImportDefaultSpecifier"
+                ? "default"
+                : (specifier.imported?.name ?? specifier.imported?.value),
+        });
+      continue;
+    }
+    const declaration = statement.declaration ?? statement;
+    if (["TSTypeAliasDeclaration", "TSInterfaceDeclaration"].includes(declaration?.type))
+      bindings.set(declaration.id?.name, declaration);
+  }
+  typeBindingCache.set(program, bindings);
+  return bindings;
 }
 
 // `{ name, ...(load ? { load() {} } : {}) }` builds one plugin from hook fragments.
@@ -3699,9 +3759,8 @@ function isSpreadFragment(node: AnyNode): boolean {
 }
 
 function isHook(node: AnyNode, program?: AnyNode): boolean {
+  if (hookFunction(node, program)) return true;
   const value = unwrapTypeScript(node);
-  if (FUNCTION_TYPES.has(value?.type)) return true;
-  if (value?.type === "Identifier") return isLocalFunction(value, program);
   return (
     value?.type === "ObjectExpression" &&
     (value.properties ?? []).some(
@@ -3710,6 +3769,13 @@ function isHook(node: AnyNode, program?: AnyNode): boolean {
         isHook(property.value, program),
     )
   );
+}
+
+function hookFunction(node: AnyNode, program?: AnyNode): AnyNode {
+  const value = unwrapTypeScript(node);
+  if (FUNCTION_TYPES.has(value?.type)) return value;
+  if (value?.type === "Identifier") return localFunction(value, program);
+  return undefined;
 }
 
 function unwrapTypeScript(node: AnyNode): AnyNode {
@@ -3730,19 +3796,22 @@ function unwrapTypeScript(node: AnyNode): AnyNode {
 const bindingResolvers = new WeakMap<object, (node: AnyNode) => AnyNode>();
 
 // Shorthand hooks such as `{ name, transform }` count when the binding is a local function.
-function isLocalFunction(identifier: AnyNode, program: AnyNode): boolean {
-  if (!program) return false;
+function localFunction(identifier: AnyNode, program: AnyNode): AnyNode {
+  if (!program) return undefined;
   let resolve = bindingResolvers.get(program);
   if (!resolve) bindingResolvers.set(program, (resolve = resourceBindings(program)));
   const binding = resolve(identifier);
   const parent = binding?.__doctorParent;
-  if (parent?.type === "FunctionDeclaration") return parent.id === binding;
-  return (
+  if (parent?.type === "FunctionDeclaration" && parent.id === binding) return parent;
+  if (
     parent?.type === "VariableDeclarator" &&
     parent.id === binding &&
-    parent.__doctorParent?.kind === "const" &&
-    FUNCTION_TYPES.has(unwrapTypeScript(parent.init)?.type)
-  );
+    parent.__doctorParent?.kind === "const"
+  ) {
+    const init = unwrapTypeScript(parent.init);
+    if (FUNCTION_TYPES.has(init?.type)) return init;
+  }
+  return undefined;
 }
 
 function isTransformProperty(node: AnyNode): boolean {

@@ -182,6 +182,20 @@ export const plugin: Plugin = { load: load as Plugin['load'] }`,
 export function plugins(): PluginOption[] {
   return [{ resolveId(id) { return id } }]
 }`,
+        "packages/kit/src/filtered.ts": `import type { Plugin } from 'vite'
+const transform = ((code: string, id: string) => (id ? code : code)) as Plugin['transform']
+export default { "name": 'filtered', transform }`,
+        "packages/kit/src/local-type.ts": `import type { UserConfig } from 'vite'
+type Plugin = { transform(code: string): string }
+export const lifecycle: Plugin = { transform(code) { return code } }
+export const config: UserConfig = {}`,
+        "packages/kit/src/aliased.ts": `import type { PluginOption as Option } from 'vite'
+export const plugin: Option = { load(id) { return id } }`,
+        "packages/kit/src/inline.ts": `import { loadEnv } from 'vite'
+export const plugin: import('vite').Plugin = { load(id) { return loadEnv(id, '') } }`,
+        "packages/kit/src/extended.ts": `import type { Plugin } from 'vite'
+interface EnvPlugin extends Plugin { api: string }
+export function env(): EnvPlugin { return { api: '', load(id) { return id } } }`,
         "packages/kit/src/lifecycle.ts": `import type { UserConfig } from 'vite'
 export function lifecycle(config: UserConfig) {
   const transform = config.root
@@ -199,8 +213,11 @@ export function lifecycle(config: UserConfig) {
       result.diagnostics.map((item) => `${item.ruleId} ${item.file.split("/").pop()}`).sort(),
     ).toEqual([
       "vite/plugin/prefer-transform-filter shorthand.ts",
+      "vite/plugin/require-name aliased.ts",
       "vite/plugin/require-name annotated.ts",
       "vite/plugin/require-name array.ts",
+      "vite/plugin/require-name extended.ts",
+      "vite/plugin/require-name inline.ts",
     ]);
   });
 
