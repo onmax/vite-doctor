@@ -252,6 +252,43 @@ export default defineNuxtConfig(config)
   );
 });
 
+test("names a dangling runtime symlink and where it points", async () => {
+  await withRuntimeGraph(
+    { "package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }) },
+    async (root) => {
+      const target = join(root, "deleted-store/node_modules/nuxt");
+      mkdirSync(join(root, "node_modules"), { recursive: true });
+      symlinkSync("../deleted-store/node_modules/nuxt", join(root, "node_modules/nuxt"), "dir");
+
+      const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+      const diagnostic = result.diagnostics.find((item) => item.code === "DOC0022");
+      const link = join(root, "node_modules/nuxt");
+
+      expect(result.project.runtimeGraph?.packages.nuxt).toMatchObject({
+        state: "unknown",
+        reason: `${link} is a dangling symlink to ${target}, which does not exist.`,
+      });
+      expect(diagnostic?.why).toContain(`${link} is a dangling symlink to ${target}`);
+      expect(diagnostic?.suggestion).toContain("Reinstall dependencies");
+      expect(diagnostic?.evidence).toContainEqual(
+        expect.objectContaining({ file: link, summary: expect.stringContaining(target) }),
+      );
+    },
+  );
+});
+
+test("does not blame a dangling symlink for a package the owner does not declare", async () => {
+  await withRuntimeGraph({ "package.json": JSON.stringify({}) }, async (root) => {
+    mkdirSync(join(root, "node_modules"), { recursive: true });
+    symlinkSync("../deleted-store/node_modules/nuxt", join(root, "node_modules/nuxt"), "dir");
+
+    const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+
+    expect(result.project.runtimeGraph?.packages.nuxt?.danglingLink).toBeUndefined();
+    expect(result.project.runtimeGraph?.packages.nuxt?.reason).toContain("Cannot find module");
+  });
+});
+
 test("explains when a later config spread can override Nuxt compatibility", async () => {
   await withRuntimeGraph(
     {

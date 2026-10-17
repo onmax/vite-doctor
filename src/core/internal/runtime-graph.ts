@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "pathe";
 import { valid } from "semver";
@@ -316,6 +316,7 @@ function resolveRuntimePackage(
   const ownerPackage = readPackageManifest(ownerManifest);
   const require = createRequire(ownerManifest);
   let lastReason = `No ${runtime} package is resolvable from ${ownerManifest}.`;
+  let danglingLink: RuntimePackageInstance["danglingLink"];
   const declaredCandidates = packageCandidates[runtime].filter(
     (name) => packageDeclaration(ownerPackage, name) !== undefined,
   );
@@ -359,7 +360,13 @@ function resolveRuntimePackage(
         identity,
       };
     } catch (error) {
-      lastReason = error instanceof Error ? error.message : String(error);
+      danglingLink =
+        declaration === undefined ? undefined : findDanglingLink(ownerManifest, requestedName);
+      lastReason = danglingLink
+        ? `${danglingLink.path} is a dangling symlink to ${danglingLink.target}, which does not exist.`
+        : error instanceof Error
+          ? error.message
+          : String(error);
     }
   }
 
@@ -371,6 +378,7 @@ function resolveRuntimePackage(
     packageDeclaration(ownerPackage, requestedName),
     {
       reason: lastReason,
+      danglingLink,
     },
   );
 }
@@ -387,6 +395,23 @@ function nuxtNitroOwnerManifest(nuxtManifest: string): string {
     return resolvePackageJson(createRequire(nuxtManifest), "@nuxt/nitro-server");
   } catch {
     return nuxtManifest;
+  }
+}
+
+/** Node skips a broken node_modules link silently, so a deleted install target reads as a missing package. */
+function findDanglingLink(
+  ownerManifest: string,
+  name: string,
+): RuntimePackageInstance["danglingLink"] {
+  let directory = dirname(resolve(ownerManifest));
+  while (true) {
+    const path = join(directory, "node_modules", name);
+    try {
+      if (lstatSync(path).isSymbolicLink() && !existsSync(path))
+        return { path, target: resolve(dirname(path), readlinkSync(path)) };
+    } catch {}
+    if (directory === dirname(directory)) return undefined;
+    directory = dirname(directory);
   }
 }
 
