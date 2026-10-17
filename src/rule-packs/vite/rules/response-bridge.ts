@@ -140,18 +140,29 @@ function walkBinding(node: AnyNode, name: string, visit: (node: AnyNode) => void
   }
   if (typeof node.type !== "string") return;
   if (isFunction(node) && node.params.some((param: AnyNode) => bindsName(param, name))) return;
-  if (node.type === "BlockStatement" && node.body.some((item: AnyNode) => declares(item, name)))
-    return;
+  if (rebinds(node, name)) return;
   visit(node);
   for (const [key, child] of Object.entries(node)) {
     if (key !== "__doctorParent") walkBinding(child, name, visit);
   }
 }
 
+function rebinds(node: AnyNode, name: string): boolean {
+  if (node.type === "BlockStatement")
+    return node.body.some((statement: AnyNode) => declares(statement, name));
+  if (node.type === "ForOfStatement" || node.type === "ForInStatement")
+    return declares(node.left, name);
+  if (node.type === "ForStatement") return declares(node.init, name);
+  if (node.type === "CatchClause") return bindsName(node.param, name);
+  return false;
+}
+
 function declares(statement: AnyNode, name: string): boolean {
+  if (statement?.type === "VariableDeclaration")
+    return statement.declarations.some((declarator: AnyNode) => bindsName(declarator.id, name));
   return (
-    statement.type === "VariableDeclaration" &&
-    statement.declarations.some((declarator: AnyNode) => bindsName(declarator.id, name))
+    (statement?.type === "FunctionDeclaration" || statement?.type === "ClassDeclaration") &&
+    statement.id?.name === name
   );
 }
 

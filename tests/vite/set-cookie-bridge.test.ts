@@ -172,6 +172,26 @@ function copy(res, response) {
   }
 }`,
     ],
+    [
+      "an inner loop that rebinds the header name",
+      `function copy(res, response, names) {
+  for (const [name, value] of response.headers) {
+    for (const name of names) res.setHeader(name, value)
+  }
+}`,
+    ],
+    [
+      "a catch parameter that rebinds the header name",
+      `function copy(res, response) {
+  for (const [name, value] of response.headers) {
+    try {
+      validate(value)
+    } catch (name) {
+      res.setHeader(name, "invalid")
+    }
+  }
+}`,
+    ],
   ])("accepts %s", async (_label, source) => {
     const result = await run(source);
     expect(result.diagnostics).toEqual([]);
