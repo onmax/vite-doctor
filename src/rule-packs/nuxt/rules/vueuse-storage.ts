@@ -126,11 +126,14 @@ function autoImportedComposable(ctx: RuleContext, name: string): string | undefi
 }
 
 function hasVueUseNuxt(ctx: RuleContext) {
-  return (
-    ctx.project.nuxt?.modules?.some((module) => module.name === "@vueuse/nuxt") ||
-    ctx.project.workspacePackages?.some((pkg) => "@vueuse/nuxt" in pkg.packages) ||
-    false
-  );
+  if (ctx.project.nuxt?.modules?.some((module) => module.name === "@vueuse/nuxt")) return true;
+  const path = ctx.file.relativePath.replace(/\\/g, "/");
+  let owner: { root: string; packages: Record<string, string> } | undefined;
+  for (const item of ctx.project.workspacePackages ?? []) {
+    const inside = item.root === "." || path.startsWith(`${item.root}/`);
+    if (inside && (!owner || item.root.length > owner.root.length)) owner = item;
+  }
+  return Boolean(owner && "@vueuse/nuxt" in owner.packages);
 }
 
 function readsBrowserStorageOnSetup(ctx: RuleContext, call: AnyNode, composable: string) {
@@ -163,7 +166,7 @@ function reachesRender(
   depth = 0,
 ): boolean {
   const binding = boundIdentifier(call);
-  if (!binding) return true;
+  if (!binding) return !isDiscarded(call);
   if (depth > 4) return false;
   const owner = ownerFunction(binding);
   if (owner?.type === "Program" && !ctx.file.relativePath.endsWith(".vue")) return true;
@@ -209,6 +212,12 @@ function isInsideDeferredFunction(node: AnyNode, calls: AnyNode[]) {
     );
   }
   return false;
+}
+
+function isDiscarded(call: AnyNode) {
+  let current = call;
+  while (WRAPPERS.has(current.__doctorParent?.type)) current = current.__doctorParent;
+  return current.__doctorParent?.type === "ExpressionStatement";
 }
 
 function boundIdentifier(call: AnyNode): AnyNode {
@@ -295,10 +304,17 @@ function isRenderCallback(fn: AnyNode) {
   );
 }
 
+// Writes to `state.value` or `store.field` can feed the render; writes to plain locals cannot.
 function assignsState(fn: AnyNode) {
   let assigns = false;
   walkScriptLocal(fn.body, (node) => {
-    if (node.type === "AssignmentExpression" || node.type === "UpdateExpression") assigns = true;
+    const target =
+      node.type === "AssignmentExpression"
+        ? node.left
+        : node.type === "UpdateExpression"
+          ? node.argument
+          : undefined;
+    if (unwrap(target)?.type === "MemberExpression") assigns = true;
   });
   return assigns;
 }

@@ -579,7 +579,7 @@ export function readNuxtConfigSsr(root: string, configs: NuxtConfigCache): boole
 }
 
 function readExportedNuxtSsr(file: string, text: string): boolean | undefined {
-  if (!/\bssr\s*:/.test(text)) return undefined;
+  if (!/\bssr["'`]?\s*:/.test(text)) return undefined;
   const program = parseScript(file, text) as { body?: AnyRuntimeNode[] } | null;
   const exported = program?.body?.find((node) => node.type === "ExportDefaultDeclaration");
   let config = unwrapExpression(exported?.declaration);

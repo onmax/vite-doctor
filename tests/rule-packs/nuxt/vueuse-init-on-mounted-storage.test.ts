@@ -312,3 +312,47 @@ test("only counts rendered template expressions and effects that assign state", 
     }),
   ).toEqual(["Label.vue:2"]);
 });
+
+test("handles quoted ssr keys, discarded calls and effects that only write locals", async () => {
+  const spa = await runRuleFixture({
+    rule: requireInitOnMountedStorage,
+    framework: "nuxt",
+    dependencies: vueUseNuxt,
+    files: {
+      "nuxt.config.ts": `export default defineNuxtConfig({ "ssr": false })`,
+      "app/components/Kpi.vue": component(
+        `const target = useLocalStorage('target', 1)`,
+        "{{ target }}",
+      ),
+    },
+  });
+  expect(spa.diagnostics).toEqual([]);
+  expect(
+    await lines({
+      "app/components/Consent.vue": component(`useLocalStorage('analytics-consent', false)`),
+      "app/components/Trim.vue": component(
+        `const stored = useLocalStorage('name', '')\nwatchEffect(() => { let value = stored.value; value = value.trim() })`,
+      ),
+    }),
+  ).toEqual([]);
+});
+
+test("only skips default useStorage() when the owning package has @vueuse/nuxt", async () => {
+  const result = await runRuleFixture({
+    rule: requireInitOnMountedStorage,
+    framework: "nuxt",
+    dependencies: { "@vueuse/core": "^14.0.0" },
+    files: {
+      "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+      "packages/other/package.json": JSON.stringify({
+        name: "other",
+        dependencies: { "@vueuse/nuxt": "^14.0.0" },
+      }),
+      "app/components/Theme.vue": component(
+        `import { useStorage } from '@vueuse/core'\nconst theme = useStorage('theme', 'light')`,
+        "{{ theme }}",
+      ),
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.range?.line)).toEqual([3]);
+});
