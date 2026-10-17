@@ -16,7 +16,7 @@ export const requirePluginName = createRule({
     if (!origin) return;
     return {
       ObjectExpression(node: AnyNode) {
-        if (!isPluginObject(node, origin === "import") || isSpreadFragment(node)) return;
+        if (!isPluginObject(node, origin, ctx.file.scriptAst) || isSpreadFragment(node)) return;
         const hasName = (node.properties ?? []).some(
           (property: AnyNode) => property.key?.name === "name",
         );
@@ -54,7 +54,12 @@ export const preferTransformFilter = createRule({
     return {
       Property(node: AnyNode) {
         if (!isTransformProperty(node)) return;
-        if (origin === "import" && !isHook(node.value)) return;
+        if (
+          origin === "import" &&
+          (!isHook(node.value, ctx.file.scriptAst) ||
+            !isPluginObject(node.__doctorParent, origin, ctx.file.scriptAst))
+        )
+          return;
         const value = node.value;
         const source = ctx.file.text.slice(node.start ?? 0, node.end ?? 0);
         if (value?.params?.length >= 2 || /\bfilter\s*:/.test(source)) return;
@@ -3596,15 +3601,85 @@ function pluginSource(path: string, program: AnyNode): "path" | "import" | null 
   return importsVite ? "import" : null;
 }
 
-function isPluginObject(node: AnyNode, requireHookFunctions = false): boolean {
+// Modules that import Vite also hold plain objects with hook-shaped methods, so an object only
+// counts as a plugin there when its hooks are functions and it is named or used as a plugin.
+function isPluginObject(node: AnyNode, origin: "path" | "import", program?: AnyNode): boolean {
   if (node?.type !== "ObjectExpression") return false;
-  return (node.properties ?? []).some(
+  const properties = node.properties ?? [];
+  const hasHook = properties.some(
     (property: AnyNode) =>
-      ["config", "resolveId", "load", "transform", "generateBundle", "writeBundle"].includes(
-        property.key?.name ?? property.key?.value,
-      ) &&
-      (!requireHookFunctions || isHook(property.value)),
+      PLUGIN_HOOKS.has(property.key?.name ?? property.key?.value) &&
+      (origin === "path" || isHook(property.value, program)),
   );
+  if (!hasHook || origin === "path") return hasHook;
+  return (
+    properties.some(
+      (property: AnyNode) => (property.key?.name ?? property.key?.value) === "name",
+    ) || isPluginPosition(node)
+  );
+}
+
+const PLUGIN_HOOKS = new Set([
+  "config",
+  "resolveId",
+  "load",
+  "transform",
+  "generateBundle",
+  "writeBundle",
+]);
+
+function isPluginPosition(node: AnyNode): boolean {
+  let current = node;
+  let parent = node.__doctorParent;
+  while (parent) {
+    if (["TSAsExpression", "TSSatisfiesExpression"].includes(parent.type))
+      return isPluginType(parent.typeAnnotation);
+    if (parent.type === "VariableDeclarator")
+      return parent.init === current && isPluginType(parent.id?.typeAnnotation);
+    if (parent.type === "ReturnStatement")
+      return isPluginType(enclosingFunction(parent)?.returnType);
+    if (parent.type === "ArrowFunctionExpression")
+      return parent.body === current && isPluginType(parent.returnType);
+    if (parent.type === "Property" || parent.type === "ObjectProperty")
+      return (
+        current.type === "ArrayExpression" &&
+        parent.value === current &&
+        (parent.key?.name ?? parent.key?.value) === "plugins"
+      );
+    const passesValue =
+      ["ArrayExpression", "ParenthesizedExpression", "TSNonNullExpression"].includes(parent.type) ||
+      (parent.type === "ConditionalExpression" && parent.test !== current) ||
+      parent.type === "LogicalExpression";
+    if (!passesValue) return false;
+    current = parent;
+    parent = parent.__doctorParent;
+  }
+  return false;
+}
+
+function enclosingFunction(node: AnyNode): AnyNode {
+  let current = node.__doctorParent;
+  while (current && !FUNCTION_TYPES.has(current.type)) current = current.__doctorParent;
+  return current;
+}
+
+const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
+
+function isPluginType(node: AnyNode): boolean {
+  if (!node) return false;
+  if (node.type === "TSTypeAnnotation") return isPluginType(node.typeAnnotation);
+  if (node.type === "TSArrayType") return isPluginType(node.elementType);
+  if (node.type === "TSUnionType" || node.type === "TSIntersectionType")
+    return (node.types ?? []).some(isPluginType);
+  if (node.type !== "TSTypeReference") return false;
+  const name = node.typeName?.type === "TSQualifiedName" ? node.typeName.right : node.typeName;
+  if (["Promise", "Array", "ReadonlyArray"].includes(name?.name))
+    return (node.typeArguments?.params ?? node.typeParameters?.params ?? []).some(isPluginType);
+  return /Plugin(?:Option)?$/.test(name?.name ?? "");
 }
 
 // `{ name, ...(load ? { load() {} } : {}) }` builds one plugin from hook fragments.
@@ -3623,13 +3698,50 @@ function isSpreadFragment(node: AnyNode): boolean {
   return parent?.type === "SpreadElement";
 }
 
-function isHook(node: AnyNode): boolean {
-  if (["ArrowFunctionExpression", "FunctionExpression"].includes(node?.type)) return true;
+function isHook(node: AnyNode, program?: AnyNode): boolean {
+  const value = unwrapTypeScript(node);
+  if (FUNCTION_TYPES.has(value?.type)) return true;
+  if (value?.type === "Identifier") return isLocalFunction(value, program);
   return (
-    node?.type === "ObjectExpression" &&
-    (node.properties ?? []).some(
-      (property: AnyNode) => (property.key?.name ?? property.key?.value) === "handler",
+    value?.type === "ObjectExpression" &&
+    (value.properties ?? []).some(
+      (property: AnyNode) =>
+        (property.key?.name ?? property.key?.value) === "handler" &&
+        isHook(property.value, program),
     )
+  );
+}
+
+function unwrapTypeScript(node: AnyNode): AnyNode {
+  let current = node;
+  while (
+    [
+      "TSAsExpression",
+      "TSSatisfiesExpression",
+      "TSNonNullExpression",
+      "TSTypeAssertion",
+      "ParenthesizedExpression",
+    ].includes(current?.type)
+  )
+    current = current.expression;
+  return current;
+}
+
+const bindingResolvers = new WeakMap<object, (node: AnyNode) => AnyNode>();
+
+// Shorthand hooks such as `{ name, transform }` count when the binding is a local function.
+function isLocalFunction(identifier: AnyNode, program: AnyNode): boolean {
+  if (!program) return false;
+  let resolve = bindingResolvers.get(program);
+  if (!resolve) bindingResolvers.set(program, (resolve = resourceBindings(program)));
+  const binding = resolve(identifier);
+  const parent = binding?.__doctorParent;
+  if (parent?.type === "FunctionDeclaration") return parent.id === binding;
+  return (
+    parent?.type === "VariableDeclarator" &&
+    parent.id === binding &&
+    parent.__doctorParent?.kind === "const" &&
+    FUNCTION_TYPES.has(unwrapTypeScript(parent.init)?.type)
   );
 }
 

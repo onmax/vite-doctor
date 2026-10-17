@@ -167,6 +167,43 @@ export function shared(config: UserConfig, transform?: (code: string) => string)
     ).toEqual(["vite/plugin/prefer-transform-filter vite.ts", "vite/plugin/require-name vite.ts"]);
   });
 
+  test("needs plugin evidence for hook-shaped objects in modules that import Vite", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [preferTransformFilter, requirePluginName],
+      files: {
+        "packages/kit/src/shorthand.ts": `import type { Plugin } from 'vite'
+const transform = (code: string) => code
+export default { name: 'shorthand', transform } satisfies Plugin`,
+        "packages/kit/src/annotated.ts": `import type { Plugin } from 'vite'
+function load(id: string) { return id }
+export const plugin: Plugin = { load: load as Plugin['load'] }`,
+        "packages/kit/src/array.ts": `import type { PluginOption } from 'vite'
+export function plugins(): PluginOption[] {
+  return [{ resolveId(id) { return id } }]
+}`,
+        "packages/kit/src/lifecycle.ts": `import type { UserConfig } from 'vite'
+export function lifecycle(config: UserConfig) {
+  const transform = config.root
+  return {
+    load() { return config },
+    transform(code: string) { return code },
+    resolveId: { handler: transform },
+    generateBundle: transform,
+  }
+}`,
+      },
+    });
+
+    expect(
+      result.diagnostics.map((item) => `${item.ruleId} ${item.file.split("/").pop()}`).sort(),
+    ).toEqual([
+      "vite/plugin/prefer-transform-filter shorthand.ts",
+      "vite/plugin/require-name annotated.ts",
+      "vite/plugin/require-name array.ts",
+    ]);
+  });
+
   test("narrows noisy Vite recommended heuristics", async () => {
     const result = await runProjectFixture({
       framework: "vite",
