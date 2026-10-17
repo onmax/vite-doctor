@@ -118,9 +118,36 @@ export default {}`,
 target = new URL("https://example.com/a")
 export default { base: target.pathname }`,
     ],
+    [
+      "a destructured parameter that shadows a URL const",
+      "vite.config.ts",
+      `const base = new URL("./runtime", import.meta.url)
+export const route = ({ base }) => base.pathname
+export default {}`,
+    ],
+    [
+      "a local URL class",
+      "vite.config.ts",
+      `class URL {
+  constructor(public pathname: string, base: string) {}
+}
+export default { base: new URL("/app/", import.meta.url).pathname }`,
+    ],
   ])("accepts %s", async (_label, file, source) => {
     const result = await run(file, source);
     expect(result.diagnostics).toEqual([]);
+  });
+
+  test("reports a URL const after an unrelated function shadowed its name", async () => {
+    const result = await run(
+      "vite.config.ts",
+      `function use(base) {
+  return base
+}
+const base = new URL("./runtime", import.meta.url)
+export default { resolve: { alias: { "#runtime": base.pathname } } }`,
+    );
+    expect(result.diagnostics).toHaveLength(1);
   });
 
   test("is Recommended and documents VITE0027", async () => {

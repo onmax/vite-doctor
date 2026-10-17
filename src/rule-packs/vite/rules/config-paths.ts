@@ -9,6 +9,12 @@ import {
 } from "./shared.js";
 
 const nodeSideImports = new Set(["vite", "vite-plus", "vitest/config"]);
+const nodeUrlModules = new Set(["node:url", "url"]);
+const functionTypes = new Set([
+  "ArrowFunctionExpression",
+  "FunctionExpression",
+  "FunctionDeclaration",
+]);
 
 export const noUrlPathnameAsFsPath = createRule({
   meta: {
@@ -22,11 +28,6 @@ export const noUrlPathnameAsFsPath = createRule({
   },
   create(ctx) {
     let inScope = isViteConfigFile(ctx.file.relativePath);
-    const urlBindings = new Map<string, AnyNode>();
-    const shadowParams = (node: AnyNode) => {
-      for (const param of node.params)
-        if (param.type === "Identifier") urlBindings.set(param.name, null);
-    };
     return {
       Program(node: AnyNode) {
         inScope ||= node.body.some(
@@ -35,28 +36,12 @@ export const noUrlPathnameAsFsPath = createRule({
             nodeSideImports.has(String(statement.source.value)),
         );
       },
-      VariableDeclarator(node: AnyNode) {
-        if (!inScope || node.id.type !== "Identifier") return;
-        const name = node.id.name;
-        const isConst = node.__doctorParent?.kind === "const";
-        urlBindings.set(
-          name,
-          urlBindings.has(name) || !isConst || !isModuleFileUrl(node.init) ? null : node.init,
-        );
-      },
-      ArrowFunctionExpression: shadowParams,
-      FunctionExpression: shadowParams,
-      FunctionDeclaration: shadowParams,
       "MemberExpression:exit"(node: AnyNode) {
         if (!inScope) return;
         const property = node.computed ? staticString(node.property) : propertyName(node.property);
         if (property !== "pathname") return;
         const object = unwrap(node.object);
-        if (
-          !isModuleFileUrl(object) &&
-          !(object?.type === "Identifier" && urlBindings.get(object.name))
-        )
-          return;
+        if (!isModuleFileUrl(object) && !isModuleFileUrlConst(object)) return;
         ctx.report(
           diagnostics.VITE0027({
             why: "URL.pathname keeps percent-encoding, such as %20 for spaces, and on Windows it returns /C:/... instead of a drive path, so the resolved file or alias target does not exist.",
@@ -72,9 +57,81 @@ export const noUrlPathnameAsFsPath = createRule({
 function isModuleFileUrl(input: AnyNode): boolean {
   const node = unwrap(input);
   if (node?.type !== "NewExpression" || node.callee.type !== "Identifier") return false;
-  if (node.callee.name !== "URL") return false;
+  if (node.callee.name !== "URL" || !isWhatwgUrl(node)) return false;
   const base = node.arguments.length === 1 ? node.arguments[0] : node.arguments[1];
   return node.arguments.length <= 2 && memberPath(base) === "import.meta.url";
+}
+
+function isWhatwgUrl(node: AnyNode): boolean {
+  const binding = findBinding(node, "URL");
+  return (
+    !binding ||
+    (binding.type === "ImportDeclaration" && nodeUrlModules.has(String(binding.source.value)))
+  );
+}
+
+function isModuleFileUrlConst(node: AnyNode): boolean {
+  if (node?.type !== "Identifier") return false;
+  const binding = findBinding(node, node.name);
+  return (
+    binding?.type === "VariableDeclarator" &&
+    binding.__doctorParent?.kind === "const" &&
+    binding.id.type === "Identifier" &&
+    isModuleFileUrl(binding.init)
+  );
+}
+
+// The nearest declaration of `name` visible from `from`, or null for a global.
+function findBinding(from: AnyNode, name: string): AnyNode {
+  for (let current = from.__doctorParent; current; current = current.__doctorParent) {
+    if (functionTypes.has(current.type)) {
+      if (current.params.some((param: AnyNode) => bindsName(param, name))) return current;
+      if (current.type === "FunctionExpression" && current.id?.name === name) return current;
+    }
+    if (current.type === "CatchClause" && bindsName(current.param, name)) return current;
+    for (const statement of scopeStatements(current)) {
+      const declaration =
+        statement?.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+      if (declaration?.type === "VariableDeclaration") {
+        const declarator = declaration.declarations.find((item: AnyNode) =>
+          bindsName(item.id, name),
+        );
+        if (declarator) return declarator;
+      }
+      if (
+        (declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") &&
+        declaration.id?.name === name
+      )
+        return declaration;
+      if (
+        declaration?.type === "ImportDeclaration" &&
+        declaration.specifiers.some((specifier: AnyNode) => specifier.local?.name === name)
+      )
+        return declaration;
+    }
+  }
+  return null;
+}
+
+function scopeStatements(node: AnyNode): AnyNode[] {
+  if (node.type === "Program" || node.type === "BlockStatement" || node.type === "StaticBlock")
+    return node.body;
+  if (node.type === "SwitchCase") return node.consequent;
+  if (node.type === "ForStatement") return [node.init];
+  if (node.type === "ForInStatement" || node.type === "ForOfStatement") return [node.left];
+  return [];
+}
+
+function bindsName(pattern: AnyNode, name: string): boolean {
+  if (pattern?.type === "Identifier") return pattern.name === name;
+  if (pattern?.type === "AssignmentPattern") return bindsName(pattern.left, name);
+  if (pattern?.type === "RestElement") return bindsName(pattern.argument, name);
+  if (pattern?.type === "TSParameterProperty") return bindsName(pattern.parameter, name);
+  if (pattern?.type === "ArrayPattern")
+    return pattern.elements.some((item: AnyNode) => bindsName(item, name));
+  if (pattern?.type === "ObjectPattern")
+    return pattern.properties.some((item: AnyNode) => bindsName(item.value ?? item.argument, name));
+  return false;
 }
 
 function unwrap(node: AnyNode): AnyNode {
