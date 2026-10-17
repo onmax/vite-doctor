@@ -431,13 +431,15 @@ function findDanglingLink(
     try {
       entry = lstatSync(path);
     } catch {}
+    // The nearest entry is what the package manager installed, so an ancestor link is never blamed.
     if (entry) {
-      // Node walks past only entries it cannot stat, so an existing nearer one is the culprit.
-      if (!entry.isSymbolicLink() || existsSync(path)) return undefined;
+      if (!entry.isSymbolicLink()) return undefined;
       try {
         const target = missingLinkTarget(path);
-        if (target) return { path, target };
-      } catch {}
+        return target ? { path, target } : undefined;
+      } catch {
+        return undefined;
+      }
     }
     if (directory === dirname(directory)) return undefined;
     directory = dirname(directory);

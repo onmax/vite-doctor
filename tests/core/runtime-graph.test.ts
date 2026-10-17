@@ -435,6 +435,24 @@ test("does not blame an ancestor dangling link when a nearer package shadows it"
   );
 });
 
+test("does not blame an ancestor dangling link behind a nearer symlink loop", async () => {
+  await withRuntimeGraph(
+    { "packages/app/package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }) },
+    async (repo) => {
+      const app = join(repo, "packages/app");
+      mkdirSync(join(app, "node_modules"), { recursive: true });
+      mkdirSync(join(repo, "node_modules"), { recursive: true });
+      symlinkSync("nuxt", join(app, "node_modules/nuxt"), "dir");
+      symlinkSync("../deleted/nuxt", join(repo, "node_modules/nuxt"), "dir");
+
+      const project = await detectProject(app);
+
+      expect(project.runtimeGraph?.packages.nuxt?.state).toBe("unknown");
+      expect(project.runtimeGraph?.packages.nuxt?.danglingLink).toBeUndefined();
+    },
+  );
+});
+
 test("does not blame a dangling symlink for a package the owner does not declare", async () => {
   await withRuntimeGraph({ "package.json": JSON.stringify({}) }, async (root) => {
     mkdirSync(join(root, "node_modules"), { recursive: true });
