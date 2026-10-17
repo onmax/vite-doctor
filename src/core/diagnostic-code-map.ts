@@ -93,6 +93,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0022", ruleId: "vite/imports/require-static-glob-pattern" },
   { code: "VITE0023", ruleId: "vite/imports/no-barrel-files" },
   { code: "VITE0024", ruleId: "vite/plugin-package/naming-conventions" },
+  { code: "VITE0027", ruleId: "vite/config/no-url-pathname-as-fs-path" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
   { code: "TS0003", ruleId: "typescript/evidence/no-unknown-type-aliases" },

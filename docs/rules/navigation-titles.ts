@@ -136,6 +136,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/assets/no-dynamic-new-url": "Dynamic new URL",
   "vite/assets/no-public-src-import": "Public asset imports",
   "vite/assets/no-src-absolute-public-url": "Source public URLs",
+  "vite/config/no-url-pathname-as-fs-path": "URL pathnames as paths",
   "vite/define/no-runtime-object-define": "Object defines",
   "vite/define/no-secret-define": "Secrets in define",
   "vite/define/no-untyped-define": "Typed define",
