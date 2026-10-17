@@ -51,8 +51,7 @@ const NUXT_APP_CONTEXT_ACCESSORS = new Set(["useRouter", "useState", "useNuxtDat
 const VUE_API_SOURCES =
   /^(vue|vue-demi|vue-router|@vue\/(runtime-core|runtime-dom|composition-api)|#imports|#app(\/.*)?|nuxt\/app)$/;
 const NON_COMPOSABLE_SOURCES = /^(@nuxt\/kit|nuxt\/kit|h3|nitropack|nitro|unstorage)(\/|$)/;
-const VUE_COMPOSABLE_SOURCES =
-  /^(?:@vueuse\/|@pinia\/|pinia(?:\/|$)|vue-demi(?:\/|$))/;
+const VUE_COMPOSABLE_SOURCES = /^(?:@vueuse\/|@pinia\/|pinia(?:\/|$)|vue-demi(?:\/|$))/;
 const MODULE_SOURCE = /(?:\bfrom|\bimport)\s*["']([^"']+)["']/g;
 const RE_EXPORT = /\bexport\s*(?:\*|\{([^}]*)\})\s*from\s*["']([^"']+)["']/g;
 const UNBOUND_VUE_API =
@@ -251,11 +250,14 @@ function providesComposable(
     if (!clause || !source.startsWith(".")) continue;
     const target = resolveLocalModule(ctx, dirname(file), source);
     if (!target) continue;
-    const names = [...clause.matchAll(/\b(?:use[A-Z0-9_$][\w$]*|[\w$]+\s+as\s+use[A-Z0-9_$][\w$]*)\b/g)]
+    const names = [
+      ...clause.matchAll(/\b(?:use[A-Z0-9_$][\w$]*|[\w$]+\s+as\s+use[A-Z0-9_$][\w$]*)\b/g),
+    ]
       .map((binding) => binding[0]!.split(/\s+as\s+/).pop()!)
       .filter((local) => new RegExp(`\\b${local}\\s*\\(`).test(text));
     for (const local of names) {
-      const importedName = clause.match(new RegExp(`\\b(use[A-Z0-9_$][\\w$]*)\\s+as\\s+${local}\\b`))?.[1] ?? local;
+      const importedName =
+        clause.match(new RegExp(`\\b(use[A-Z0-9_$][\\w$]*)\\s+as\\s+${local}\\b`))?.[1] ?? local;
       if (providesComposable(ctx, target, importedName, seen)) return true;
     }
   }
