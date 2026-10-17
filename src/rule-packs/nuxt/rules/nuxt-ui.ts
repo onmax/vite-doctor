@@ -1,3 +1,4 @@
+import { parseSync } from "oxc-parser";
 import { dirname, isAbsolute, join, resolve } from "pathe";
 import {
   createRule,
@@ -143,13 +144,20 @@ const SHELL_FILES = ["app.vue", "layouts/default.vue"];
 const NUXT_CONFIG_FILES = ["ts", "mts", "cts", "js", "mjs", "cjs"].map(
   (extension) => `nuxt.config.${extension}`,
 );
+const EXTENDS_ALIASES = ["~~", "@@", "~", "@"];
 
-/** Source directories of one Nuxt layer, highest priority first, or a layer Doctor cannot read. */
-type ShellLayer = string[] | "unresolved";
+/** One Nuxt layer and its source directories, or a layer Doctor cannot read. */
+type ShellLayer = { root: string; dirs: string[] } | "unresolved";
+
+/** Statically readable layer options; `null` marks a value Doctor cannot evaluate. */
+interface LayerConfig {
+  srcDir: string | undefined | null;
+  extends: string[] | null;
+}
 
 /**
  * True when the app shell Nuxt resolves across the project's layers renders UApp, or when a layer
- * that could supply the shell cannot be read, because a provider there would be invisible.
+ * or shell file that could supply it cannot be read, because a provider there would be invisible.
  */
 function projectHasUAppRoot(ctx: RuleContext): boolean {
   const layers = shellLayers(ctx);
@@ -157,10 +165,12 @@ function projectHasUAppRoot(ctx: RuleContext): boolean {
   return SHELL_FILES.some((file) => {
     for (const layer of layers) {
       if (layer === "unresolved") return true;
-      const path = layer
+      const path = layer.dirs
         .map((dir) => join(dir, file))
         .find((candidate) => ctx.fs.exists(candidate));
-      if (path) return hasUAppTemplate(ctx.fs.readText(path));
+      if (!path) continue;
+      const source = ctx.fs.readText(path);
+      return source === undefined || hasUAppTemplate(source);
     }
     return false;
   });
@@ -172,82 +182,162 @@ function shellLayers(ctx: RuleContext): ShellLayer[] {
   if (resolved.some((layer) => layer.srcDir))
     return [...resolved]
       .sort((a, b) => a.priority - b.priority)
-      .map((layer) =>
-        ctx.fs.exists(resolve(ctx.project.root, layer.root))
-          ? [resolve(ctx.project.root, layer.srcDir ?? layer.root)]
-          : "unresolved",
-      );
+      .map((layer) => {
+        const root = resolve(ctx.project.root, layer.root);
+        if (!ctx.fs.exists(root)) return "unresolved";
+        return { root, dirs: [resolve(ctx.project.root, layer.srcDir ?? layer.root)] };
+      });
+  return staticLayers(ctx.fs, resolve(ctx.project.root, resolved[0]?.root ?? "."));
+}
+
+/**
+ * Nuxt's layer order without a manifest: the project, its `layers/*` (Z before A, but those named
+ * in `extends` first and in that order), then the remaining `extends`. Each layer is followed by
+ * the layers it extends.
+ */
+function staticLayers(fs: RuleFileSystem, projectRoot: string): ShellLayer[] {
   const layers: ShellLayer[] = [];
-  collectStaticLayers(
-    ctx.fs,
-    resolve(ctx.project.root, resolved[0]?.root ?? "."),
-    layers,
-    new Set(),
+  const seen = new Set<string>();
+  const visit = (root: string, config = readLayerConfig(fs, root)) => {
+    if (seen.has(root)) return;
+    seen.add(root);
+    layers.push(shellLayer(root, config));
+    for (const layer of extendedLayers(fs, projectRoot, root, config)) {
+      if (layer) visit(layer);
+      else layers.push("unresolved");
+    }
+  };
+  const config = readLayerConfig(fs, projectRoot);
+  seen.add(projectRoot);
+  layers.push(shellLayer(projectRoot, config));
+  const local = (fs.readDir(join(projectRoot, "layers")) ?? [])
+    .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+    .map((entry) => join(projectRoot, "layers", entry.name))
+    .sort((a, b) => b.localeCompare(a));
+  for (const layer of local) visit(layer);
+  const extended = extendedLayers(fs, projectRoot, projectRoot, config);
+  for (const layer of extended) {
+    if (layer) visit(layer);
+    else layers.push("unresolved");
+  }
+  const listed = extended.filter((layer) => layer !== undefined);
+  const slots = layers.flatMap((layer, index) =>
+    layer !== "unresolved" && local.includes(layer.root) ? [index] : [],
   );
+  const rank = (layer: ShellLayer) => {
+    const index = layer === "unresolved" ? -1 : listed.indexOf(layer.root);
+    return index === -1 ? Number.POSITIVE_INFINITY : index;
+  };
+  const ordered = slots.map((slot) => layers[slot]!).sort((a, b) => rank(a) - rank(b));
+  slots.forEach((slot, index) => {
+    layers[slot] = ordered[index]!;
+  });
   return layers;
 }
 
-/** Nuxt's layer order: the layer, its auto-registered `layers/*` (Z before A), then `extends`. */
-function collectStaticLayers(
-  fs: RuleFileSystem,
-  root: string,
-  layers: ShellLayer[],
-  seen: Set<string>,
-) {
-  if (seen.has(root)) return;
-  seen.add(root);
-  const config = NUXT_CONFIG_FILES.map((file) => fs.readText(join(root, file))).find(
-    (text) => text !== undefined,
-  );
-  const srcDir = configuredSrcDir(config);
-  if (srcDir === null) layers.push("unresolved");
-  else layers.push(srcDir ? [resolve(root, srcDir)] : [join(root, "app"), root]);
-  const autoRegistered = (fs.readDir(join(root, "layers")) ?? [])
-    .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-    .map((entry) => entry.name)
-    .sort()
-    .reverse();
-  for (const name of autoRegistered)
-    collectStaticLayers(fs, join(root, "layers", name), layers, seen);
-  const extended = extendedLayers(fs, root, config);
-  if (!extended) {
-    layers.push("unresolved");
-    return;
-  }
-  for (const layer of extended) collectStaticLayers(fs, layer, layers, seen);
+function shellLayer(root: string, config: LayerConfig | null): ShellLayer {
+  if (!config || config.srcDir === null) return "unresolved";
+  return { root, dirs: config.srcDir ? [resolve(root, config.srcDir)] : [join(root, "app"), root] };
 }
 
-/** A literal srcDir, `undefined` when none is set, or `null` when it is computed. */
-function configuredSrcDir(config: string | undefined): string | null | undefined {
-  if (!config || !/\bsrcDir\s*:/.test(config)) return undefined;
-  return config.match(/\bsrcDir\s*:\s*(["'`])([^"'`]+)\1/)?.[2] ?? null;
-}
-
-/** Local roots of the layers a Nuxt config extends, or `undefined` when one cannot be resolved. */
+/** Roots of the layers a config extends; an entry Doctor cannot resolve is `undefined`. */
 function extendedLayers(
   fs: RuleFileSystem,
+  projectRoot: string,
   root: string,
-  config: string | undefined,
-): string[] | undefined {
-  if (!config || !/\bextends\s*:/.test(config)) return [];
-  const value = config.match(/\bextends\s*:\s*(\[[^\]]*\]|["'][^"']*["'])/)?.[1];
-  if (!value) return undefined;
-  const entries = [...value.matchAll(/["']([^"']*)["']/g)].map((match) => match[1]!);
-  if (value.replace(/["'][^"']*["']|[\s,[\]]/g, "")) return undefined;
-  const layers: string[] = [];
-  for (const entry of entries) {
-    const layer = resolveLayer(fs, root, entry);
-    if (!layer) return undefined;
-    layers.push(layer);
-  }
-  return layers;
+  config: LayerConfig | null,
+): Array<string | undefined> {
+  if (!config || !config.extends) return [undefined];
+  return config.extends.map((entry) => resolveLayer(fs, projectRoot, root, entry));
 }
 
-function resolveLayer(fs: RuleFileSystem, root: string, entry: string): string | undefined {
-  if (entry.startsWith(".") || isAbsolute(entry)) {
-    const layer = resolve(root, entry);
-    return fs.exists(layer) ? layer : undefined;
+function readLayerConfig(fs: RuleFileSystem, root: string): LayerConfig | null {
+  for (const name of NUXT_CONFIG_FILES) {
+    const file = join(root, name);
+    const text = fs.readText(file);
+    if (text === undefined) continue;
+    const config = configObject(file, text);
+    if (!config) return null;
+    const srcDir = configOption(config, "srcDir");
+    const extended = configOption(config, "extends");
+    const entries: Array<string | null> =
+      extended === undefined
+        ? []
+        : extended?.type === "ArrayExpression"
+          ? extended.elements.map(stringValue)
+          : [stringValue(extended)];
+    return {
+      srcDir: srcDir === undefined ? undefined : stringValue(srcDir),
+      extends: entries.every((entry) => entry !== null) ? (entries as string[]) : null,
+    };
   }
+  return { srcDir: undefined, extends: [] };
+}
+
+/** The object passed to `defineNuxtConfig()` or exported directly. */
+function configObject(file: string, text: string): AnyNode {
+  let program: AnyNode;
+  try {
+    const parsed = parseSync(file, text, { sourceType: "module", lang: "ts" });
+    if (parsed.errors.length) return null;
+    program = parsed.program;
+  } catch {
+    return null;
+  }
+  for (const statement of program.body) {
+    let node =
+      statement.type === "ExportDefaultDeclaration"
+        ? statement.declaration
+        : statement.type === "ExpressionStatement" &&
+            statement.expression.type === "AssignmentExpression" &&
+            statement.expression.left.type === "MemberExpression" &&
+            statement.expression.left.object?.name === "module" &&
+            statement.expression.left.property?.name === "exports"
+          ? statement.expression.right
+          : undefined;
+    if (!node) continue;
+    while (
+      ["TSAsExpression", "TSSatisfiesExpression", "ParenthesizedExpression"].includes(node.type)
+    )
+      node = node.expression;
+    if (node.type === "CallExpression" && node.arguments.length === 1) node = node.arguments[0];
+    return node.type === "ObjectExpression" ? node : null;
+  }
+  return null;
+}
+
+/** A top-level option value, `undefined` when absent, or `null` when a spread could set it. */
+function configOption(config: AnyNode, key: string): AnyNode {
+  let value: AnyNode;
+  let dynamic = false;
+  for (const property of config.properties) {
+    if (property.type !== "Property" || property.computed) dynamic = true;
+    else if ((property.key.name ?? property.key.value) === key) value = property.value;
+  }
+  return value ?? (dynamic ? null : undefined);
+}
+
+function stringValue(node: AnyNode): string | null {
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && !node.expressions.length)
+    return node.quasis[0]?.value.cooked ?? null;
+  return null;
+}
+
+function resolveLayer(
+  fs: RuleFileSystem,
+  projectRoot: string,
+  root: string,
+  entry: string,
+): string | undefined {
+  // Nuxt resolves these aliases in `extends` against the project root.
+  const alias = EXTENDS_ALIASES.find((name) => entry === name || entry.startsWith(`${name}/`));
+  const local = alias
+    ? join(projectRoot, entry.slice(alias.length + 1))
+    : entry.startsWith(".") || isAbsolute(entry)
+      ? resolve(root, entry)
+      : undefined;
+  if (local) return fs.exists(local) ? local : undefined;
   if (/^[a-z][\w+.-]*:/i.test(entry)) return undefined;
   for (let dir = root; ; dir = dirname(dir)) {
     const layer = join(dir, "node_modules", entry);

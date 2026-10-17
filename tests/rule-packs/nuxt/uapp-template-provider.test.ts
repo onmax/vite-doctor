@@ -250,3 +250,58 @@ test.each([
   });
   expect(result.diagnostics.map((d) => d.ruleId)).toEqual([requireUAppRoot.meta.id]);
 });
+
+test.each([
+  [
+    "a srcDir built from a template expression",
+    {
+      "nuxt.config.ts": "export default defineNuxtConfig({ srcDir: `${process.cwd()}/src` })",
+      "src/app.vue": uappShell,
+    },
+  ],
+  [
+    "a commented-out srcDir",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({\n  // srcDir: "src",\n})`,
+      "app/app.vue": uappShell,
+    },
+  ],
+  [
+    "a local layer that extends lists ahead of other local layers",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["./layers/a"] })`,
+      "layers/a/app/app.vue": uappShell,
+      "layers/z/app/app.vue": "<template><NuxtPage /></template>",
+    },
+  ],
+])("accepts a UApp provider from %s", async (_name, files) => {
+  const result = await runRuleFixture({
+    rule: requireUAppRoot,
+    framework: "nuxt",
+    files: { ...files, "app/pages/index.vue": toastPage },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  [
+    "a commented-out extends entry",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({\n  // extends: ["./missing"],\n})`,
+    },
+  ],
+  [
+    "an aliased extends entry",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["~~/base"] })`,
+      "base/app/app.vue": "<template><NuxtPage /></template>",
+    },
+  ],
+])("reports when %s provides no UApp", async (_name, files) => {
+  const result = await runRuleFixture({
+    rule: requireUAppRoot,
+    framework: "nuxt",
+    files: { ...files, "app/pages/index.vue": toastPage },
+  });
+  expect(result.diagnostics.map((d) => d.ruleId)).toEqual([requireUAppRoot.meta.id]);
+});
