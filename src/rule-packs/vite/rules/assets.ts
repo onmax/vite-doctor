@@ -119,7 +119,11 @@ export const noDynamicNewUrl = createRule({
     return {
       NewExpression(node: AnyNode) {
         if (node.callee?.name !== "URL") return;
-        if (isToolingOrServerPath(ctx.file.relativePath) || isFixturePath(ctx.file.relativePath))
+        if (
+          isToolingOrServerPath(ctx.file.relativePath) ||
+          isFixturePath(ctx.file.relativePath) ||
+          isNodeSideModule(ctx.file.scriptAst)
+        )
           return;
         const [first, second] = node.arguments ?? [];
         if (!second || !ctx.file.text.slice(second.start, second.end).endsWith("import.meta.url"))
@@ -233,6 +237,16 @@ function isAssetUrlContext(node: AnyNode): boolean {
 
 function isToolingOrServerPath(path: string): boolean {
   return /(?:^|\/)(?:src\/node|server|node|packages\/vite\/src\/node)\//.test(path);
+}
+
+// Vite only rewrites new URL(..., import.meta.url) in client bundles. Modules that import the
+// Vite API or Node builtins are plugin or server code that Vite never bundles for the browser.
+function isNodeSideModule(program: AnyNode): boolean {
+  return (program?.body ?? []).some(
+    (statement: AnyNode) =>
+      statement.type === "ImportDeclaration" &&
+      (statement.source?.value === "vite" || statement.source?.value?.startsWith("node:")),
+  );
 }
 
 function isFixturePath(path: string): boolean {

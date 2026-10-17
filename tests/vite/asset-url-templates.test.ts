@@ -82,6 +82,33 @@ describe("Vite asset URL templates", () => {
     },
   );
 
+  const conditionalUrl = `const ERRORS_ID = new URL(import.meta.url.endsWith(".ts") ? "./errors.ts" : "./errors.js", import.meta.url).href`;
+
+  test.each([
+    `import type { Plugin } from "vite"\n${conditionalUrl}\nexport function kv(): Plugin { return { name: "kv", load: () => ERRORS_ID } }`,
+    `import { createServer } from "vite"\n${conditionalUrl}`,
+    `import { writeFile } from "node:fs/promises"\n${conditionalUrl}`,
+  ])("skips Node-side modules that Vite never bundles for the client: %s", async (source) => {
+    const result = await runRuleFixture({
+      rule: noDynamicNewUrl,
+      framework: "vite",
+      files: { "packages/kv/src/vite.ts": source },
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test.each([
+    `import { createApp } from "vue"\n${conditionalUrl}`,
+    `import type { ViteHotContext } from "vite/types/hot.d.ts"\n${conditionalUrl}`,
+  ])("reports conditional URL paths in client modules: %s", async (source) => {
+    const result = await runRuleFixture({
+      rule: noDynamicNewUrl,
+      framework: "vite",
+      files: { "src/main.ts": source },
+    });
+    expect(result.diagnostics.map(({ code }) => code)).toEqual(["VITE0001"]);
+  });
+
   test("allows Vite to emit assets selected by a constrained URL template", async () => {
     const root = await mkdtemp(join(tmpdir(), "doctor-asset-url-"));
     try {
