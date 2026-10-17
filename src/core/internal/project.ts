@@ -23,6 +23,7 @@ import { ProjectFileWalk, rememberProjectFileWalk, type ProjectEntry } from "./p
 import {
   applyRuntimeTarget,
   isNuxtManifestCurrent,
+  readExportedNuxtSsr,
   resolveNuxtCompatibility,
   resolveRuntimeGraph,
   type NuxtConfigCache,
@@ -96,7 +97,7 @@ export async function detectProject(
   const project: ProjectInfo = {
     root: resolve(root),
     framework,
-    ssr,
+    ssr: ssr && owner?.nuxt?.ssr !== false,
     vueVersion: runtime.graph.packages.vue?.version ?? cleanVersion(vueVersion),
     nuxtVersion: owner?.nuxtVersion,
     isMonorepo,
@@ -392,6 +393,7 @@ async function detectNuxt(
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
     routeRules: manifest?.routeRules ?? readRouteRules(config.primary),
+    ssr: manifest?.ssr ?? readExportedNuxtSsr(join(root, "nuxt.config.ts"), config.primary),
     runtimeConfig: manifest?.runtimeConfig,
     serverDirs: await serverDirs(root),
     doctorConfig: manifest?.doctorConfig,
