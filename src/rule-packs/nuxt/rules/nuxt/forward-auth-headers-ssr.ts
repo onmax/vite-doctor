@@ -1,5 +1,6 @@
 import type { RuleContext } from "../../../../core/index.js";
 import { getObjectPropertyValue, isFalseLiteral } from "./async-data.js";
+import { findStatementBinding, patternNames } from "./script-index.js";
 import {
   AnyNode,
   classifyExecutionEvidence,
@@ -55,13 +56,24 @@ const DEFERRED_EXECUTION = new Set([
   "event-handler",
   "server-only",
 ]);
+const DEFERRING_CALLS = new Set([
+  "onMounted",
+  "onBeforeMount",
+  "onBeforeUnmount",
+  "onUnmounted",
+  "watch",
+  "watchPostEffect",
+  "nextTick",
+]);
 const ASYNC_DATA_ENTRIES = new Set(["useAsyncData", "useLazyAsyncData", "callOnce"]);
 const UNIVERSAL_ENTRIES = new Set(["defineNuxtPlugin", "defineNuxtRouteMiddleware"]);
 const localCallSites = new WeakMap<object, Map<string, AnyNode[]>>();
 
 // Only requests with evidence of running during SSR miss the browser's cookies.
 function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boolean {
-  if (DEFERRED_EXECUTION.has(classifyExecutionEvidence(ctx, node))) return false;
+  const evidence = classifyExecutionEvidence(ctx, node);
+  if (evidence === "lifecycle-only" ? !onlyInSsrWatchers(node) : DEFERRED_EXECUTION.has(evidence))
+    return false;
   const scope = nearestFunctionOrProgram(node);
   if (!scope || seen.has(scope)) return false;
   if (scope.type === "Program") return true;
@@ -71,11 +83,7 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
     if (parent.callee === scope) return runsDuringSsr(ctx, parent, seen);
     const callee = ctx.helpers.getCalleeName(parent) ?? "";
     if (UNIVERSAL_ENTRIES.has(callee)) return true;
-    if (
-      ASYNC_DATA_ENTRIES.has(callee) &&
-      isFalseLiteral(getObjectPropertyValue(parent.arguments.at(-1), "server"))
-    )
-      return false;
+    if (ASYNC_DATA_ENTRIES.has(callee) && !asyncDataRunsOnServer(parent, scope)) return false;
     return runsDuringSsr(ctx, parent, seen);
   }
   if (
@@ -89,6 +97,47 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
   if (!name) return false;
   if (/^use[A-Z]/.test(name)) return true;
   return (callSites(ctx).get(name) ?? []).some((call) => runsDuringSsr(ctx, call, seen));
+}
+
+// Vue runs `watchEffect()` callbacks once during SSR setup. `watch()` callbacks count as
+// deferred in the shared classifier, so immediate watchers stay unreported.
+function onlyInSsrWatchers(node: AnyNode): boolean {
+  for (let current = node.__doctorParent; current; current = current.__doctorParent) {
+    if (current.type !== "CallExpression") continue;
+    const name = current.callee?.name ?? current.callee?.property?.name ?? "";
+    if (DEFERRING_CALLS.has(name)) return false;
+  }
+  return true;
+}
+
+function asyncDataRunsOnServer(call: AnyNode, handler: AnyNode): boolean {
+  const last = call.arguments?.at(-1);
+  if (!last || last === handler) return true;
+  const options = resolveLocalObject(last);
+  if (!options) return false;
+  const server = getObjectPropertyValue(options, "server");
+  if (server) return !isFalseLiteral(server);
+  return !options.properties?.some(
+    (property: AnyNode) => property.type === "SpreadElement" || property.type === "SpreadProperty",
+  );
+}
+
+function resolveLocalObject(node: AnyNode): AnyNode {
+  const value = unwrapExpression(node);
+  if (value?.type === "ObjectExpression") return value;
+  if (value?.type !== "Identifier") return null;
+  for (let scope = value.__doctorParent; scope; scope = scope.__doctorParent) {
+    if (scope.params?.some((param: AnyNode) => patternNames(param).includes(value.name)))
+      return null;
+    const binding = findStatementBinding(scope, value.name);
+    if (!binding) continue;
+    const declaration = binding.__doctorParent;
+    if (binding.type !== "VariableDeclarator" || declaration?.kind !== "const") return null;
+    if (binding.id?.type !== "Identifier") return null;
+    const init = unwrapExpression(binding.init);
+    return init?.type === "ObjectExpression" ? init : null;
+  }
+  return null;
 }
 
 function functionName(fn: AnyNode): string | undefined {

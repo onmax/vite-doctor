@@ -100,3 +100,42 @@ test.each([
 ])("reports SSR-executed requests: %s", async (_, file, source) => {
   expect(await diagnose(source, file)).toEqual([ruleId]);
 });
+
+test.each([
+  [
+    "async-data options in a local const",
+    `export function useAccount() {\n  const options = { server: false }\n  return useAsyncData('account', () => $fetch('/api/account'), options)\n}`,
+  ],
+  [
+    "async-data options built from a spread",
+    `const base = { server: false }\nexport function useAccount() {\n  return useAsyncData('account', () => $fetch('/api/account'), { ...base })\n}`,
+  ],
+  [
+    "async-data options from a parameter",
+    `const options = { lazy: true }\nexport function useAccount(options) {\n  return useAsyncData('account', () => $fetch('/api/account'), options)\n}`,
+  ],
+  [
+    "a deferred watcher",
+    `export function useAccount(id) {\n  watch(id, () => $fetch('/api/account'))\n}`,
+  ],
+  [
+    "watchEffect inside onMounted",
+    `export function useAccount() {\n  onMounted(() => {\n    watchEffect(() => $fetch('/api/account'))\n  })\n}`,
+  ],
+  [
+    "watchPostEffect",
+    `export function useAccount() {\n  watchPostEffect(() => $fetch('/api/account'))\n}`,
+  ],
+])("ignores requests whose SSR execution is not proven: %s", async (_, source) => {
+  expect(await diagnose(source, "app/composables/useAccount.ts")).toEqual([]);
+});
+
+test.each([
+  [
+    "async-data options in a local const without server: false",
+    `export function useAccount() {\n  const options = { lazy: true }\n  return useAsyncData('account', () => $fetch('/api/account'), options)\n}`,
+  ],
+  ["watchEffect", `export function useAccount() {\n  watchEffect(() => $fetch('/api/account'))\n}`],
+])("reports requests that run during SSR: %s", async (_, source) => {
+  expect(await diagnose(source, "app/composables/useAccount.ts")).toEqual([ruleId]);
+});
