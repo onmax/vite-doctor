@@ -49,10 +49,15 @@ interface InlineSuppression {
   reason: string;
 }
 
+interface InlineSuppressions {
+  nearby: Map<number, InlineSuppression>;
+  byTargetLine: Map<number, InlineSuppression[]>;
+}
+
 export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticPolicyResult {
   const suppressed: Diagnostic[] = [];
   const sourceLines = new Map<string, string[]>();
-  const sourceSuppressions = new Map<string, Map<number, InlineSuppression>>();
+  const sourceSuppressions = new Map<string, InlineSuppressions>();
   const baseline = readBaseline(input.root, input.options.baseline);
   const nextDiagnostics: Diagnostic[] = [];
   for (const diagnostic of input.diagnostics) {
@@ -237,7 +242,7 @@ function findSuppression(
   config: DoctorConfig,
   diagnostic: Diagnostic,
   sourceLines: Map<string, string[]>,
-  sourceSuppressions: Map<string, Map<number, InlineSuppression>>,
+  sourceSuppressions: Map<string, InlineSuppressions>,
 ): string | null {
   const configured = config.suppressions?.find((suppression) => {
     if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
@@ -263,20 +268,21 @@ function findSuppression(
     sourceSuppressions.set(diagnostic.file, directives);
   }
   const line = diagnostic.range.line;
+  const applies = (inline: InlineSuppression) =>
+    inline.rules.includes(diagnostic.ruleId) || inline.rules.includes("*");
   const start = Math.max(0, line - 3);
   const end = Math.min(lines.length, line + 1);
   for (let index = start; index < end; index++) {
-    const inline = directives.get(index);
-    if (!inline || (inline.nextLine && line !== index + 2)) continue;
-    if (!inline.rules.includes(diagnostic.ruleId) && !inline.rules.includes("*")) continue;
-    return inline.reason;
+    const inline = directives.nearby.get(index);
+    if (inline && applies(inline)) return inline.reason;
   }
-  return null;
+  return directives.byTargetLine.get(line - 1)?.find(applies)?.reason ?? null;
 }
 
-function collectInlineSuppressions(file: string, lines: string[]): Map<number, InlineSuppression> {
+function collectInlineSuppressions(file: string, lines: string[]): InlineSuppressions {
+  const suppressions: InlineSuppressions = { nearby: new Map(), byTargetLine: new Map() };
   const source = lines.join("\n");
-  if (!source.includes("doctor-disable")) return new Map();
+  if (!source.includes("doctor-disable")) return suppressions;
   const directives = new Map<number, InlineSuppression>();
   const comments = file.endsWith(".vue")
     ? collectVueComments(file, source)
@@ -284,7 +290,33 @@ function collectInlineSuppressions(file: string, lines: string[]): Map<number, I
   for (const comment of comments) {
     addCommentSuppressions(directives, source, comment.start, comment.end);
   }
-  return directives;
+  const code = linesWithCode(source, comments);
+  for (const [line, directive] of directives) {
+    if (!directive.nextLine) {
+      suppressions.nearby.set(line, directive);
+      continue;
+    }
+    // Comments such as SAFETY notes often sit between a directive and the code it covers.
+    let target = line + 1;
+    while (target < code.length && !code[target]) target++;
+    const targeted = suppressions.byTargetLine.get(target);
+    if (targeted) targeted.push(directive);
+    else suppressions.byTargetLine.set(target, [directive]);
+  }
+  return suppressions;
+}
+
+function linesWithCode(source: string, comments: SourceComment[]): boolean[] {
+  let masked = "";
+  let offset = 0;
+  for (const comment of [...comments].sort((a, b) => a.start - b.start)) {
+    if (comment.start < offset) continue;
+    masked += source.slice(offset, comment.start);
+    masked += source.slice(comment.start, comment.end).replace(/[^\n]/g, " ");
+    offset = comment.end;
+  }
+  masked += source.slice(offset);
+  return masked.split("\n").map((line) => line.trim().length > 0);
 }
 
 interface SourceComment {

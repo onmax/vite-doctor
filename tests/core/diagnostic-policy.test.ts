@@ -410,3 +410,69 @@ test("removing a suppression is reflected in the next Doctor policy pass", () =>
   writeFileSync(file, "// suppression removed\nconst ignored = 2;");
   expect(applyDiagnosticPolicy(input).diagnostics).toEqual([diagnostic]);
 });
+
+test.each([
+  ["a line comment", ["// SAFETY: the adapter installs every member."]],
+  ["a blank line", [""]],
+  ["a multiline block comment", ["/*", " * SAFETY: the adapter installs every member.", " */"]],
+  ["stacked comments", ["// SAFETY: first.", "", "/* second */ // third"]],
+])("next-line suppression skips %s before its target line", (_, between) => {
+  const { root, file } = fixture(
+    [
+      "// doctor-disable-next-line test/example -- intentional fixture",
+      ...between,
+      "const ignored = value as unknown as string;",
+      "const after = 3;",
+    ].join("\n"),
+  );
+  const target = between.length + 2;
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, target), finding(file, target + 1)],
+  });
+  expect(result.diagnostics).toMatchObject([{ range: { line: target + 1 } }]);
+  expect(result.suppressedDiagnostics).toMatchObject([
+    { range: { line: target }, suppressionReason: "intentional fixture" },
+  ]);
+});
+
+test("next-line suppression does not hide a diagnostic on a skipped comment line", () => {
+  const { root, file } = fixture(
+    [
+      "// doctor-disable-next-line test/example -- intentional fixture",
+      "// SAFETY: the adapter installs every member.",
+      "const ignored = 2;",
+    ].join("\n"),
+  );
+  const diagnostic = finding(file, 2);
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [diagnostic],
+  });
+  expect(result.diagnostics).toEqual([diagnostic]);
+});
+
+test("next-line suppression skips Vue template comments before its target line", () => {
+  const { root, file } = fixture(
+    [
+      "<template>",
+      "  <!-- doctor-disable-next-line test/example -- html next line -->",
+      "  <!-- explains the element -->",
+      "  <div />",
+      "</template>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 4)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "html next line" }]);
+});
