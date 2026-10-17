@@ -119,6 +119,18 @@ test.each([
     "a query-like path with a dynamic method",
     `const { refresh } = useAsyncData('search', () => $fetch('/api/search', { method: verb }), { immediate: false })`,
   ],
+  [
+    "handler fetch options from a variable",
+    `const { refresh } = useAsyncData('search', () => $fetch('/api/search', requestOptions), { immediate: false })`,
+  ],
+  [
+    "handler fetch options with a spread",
+    `const { refresh } = useAsyncData('search', () => $fetch('/api/search', { ...requestOptions, body }), { immediate: false })`,
+  ],
+  [
+    "fetch entry options with a spread",
+    `const { execute } = useLazyFetch('/api/search', { ...requestDefaults, immediate: false })`,
+  ],
 ])(
   "keeps reporting handler requests that read-only evidence cannot cover: %s",
   async (_, script) => {

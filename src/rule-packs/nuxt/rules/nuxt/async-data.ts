@@ -204,7 +204,7 @@ export function hasReadonlyEvidence(
   options: AsyncDataRuleOptions,
 ): boolean {
   const requests = FETCH_ASYNC_DATA_COMPOSABLES.has(call.name)
-    ? [readonlyRequest(call.path, call.options)]
+    ? [readonlyRequest(call.path, call.node.arguments?.[1])]
     : handlerFetchRequests(ctx, call.handler);
   if (requests.some(({ method }) => method && MUTATING_METHODS.has(method))) return false;
   if (call.readonlyMarked) return true;
@@ -219,16 +219,25 @@ function handlerFetchRequests(ctx: RuleContext, handler: AnyNode) {
   walkScriptLocal(handler, (node) => {
     if (ctx.helpers.isCall(node) && ctx.helpers.getCalleeName(node) === "$fetch")
       requests.push(
-        readonlyRequest(getStaticRequestPath(node.arguments?.[0]), getFetchOptions(node)),
+        readonlyRequest(getStaticRequestPath(node.arguments?.[0]), node.arguments?.[1]),
       );
   });
   return requests;
 }
 
-// A method that is present but not static is unknown (null), not GET.
-function readonlyRequest(path: string | null, fetchOptions: AnyNode) {
-  const methodNode = getObjectPropertyValue(fetchOptions, "method");
-  return { path, method: methodNode ? resolveHttpMethod(methodNode) : "GET" };
+// GET only when the options provably omit `method`; otherwise a missing static method is unknown (null).
+function readonlyRequest(path: string | null, optionsArgument: AnyNode) {
+  if (!optionsArgument) return { path, method: "GET" };
+  const options = objectExpression(optionsArgument);
+  const methodNode = getObjectPropertyValue(options, "method");
+  if (methodNode) return { path, method: resolveHttpMethod(methodNode) };
+  const overridable =
+    !options ||
+    options.properties?.some(
+      (property: AnyNode) =>
+        property.type === "SpreadElement" || property.type === "SpreadProperty",
+    );
+  return { path, method: overridable ? null : "GET" };
 }
 
 export function isWriteLikePath(path: string | null, options: AsyncDataRuleOptions): boolean {
