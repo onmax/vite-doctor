@@ -254,15 +254,15 @@ test("an invalid since ref reports the ref and a stable reason", async () => {
 test("source inventory skips files Git ignores but keeps tracked ones", async () => {
   await withGitFixture(
     {
-      ".gitignore": "test-results/\nscratch.ts\nkept.ts\n",
+      ".gitignore": "cache-out/\nscratch.ts\nkept.ts\n",
       "src/app.ts": "export const app = true\n",
     },
     async (root) => {
       write(root, "kept.ts", "export const kept = true\n");
       git(root, "add", "-f", "kept.ts");
-      write(root, "test-results/run/trace/index.ts", "export const trace = true\n");
+      write(root, "cache-out/run/trace/index.ts", "export const trace = true\n");
       write(root, "scratch.ts", "export const scratch = true\n");
-      write(root, "packages/web/test-results/report.vue", "<template><div /></template>\n");
+      write(root, "packages/web/cache-out/report.vue", "<template><div /></template>\n");
       write(root, "src/untracked.ts", "export const untracked = true\n");
 
       const files = await selectScanFiles(root, {}, {}, { ...vueProject, root });
