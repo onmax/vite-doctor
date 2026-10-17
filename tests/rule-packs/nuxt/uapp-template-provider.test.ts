@@ -152,3 +152,101 @@ test("reports when every extended layer is resolved and none provides UApp", asy
   });
   expect(result.diagnostics.map((d) => d.ruleId)).toEqual([requireUAppRoot.meta.id]);
 });
+
+test.each([
+  [
+    "a layer with a configured srcDir",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["./base"] })`,
+      "base/nuxt.config.ts": `export default defineNuxtConfig({ srcDir: "src" })`,
+      "base/src/app.vue": uappShell,
+    },
+  ],
+  [
+    "a CommonJS Nuxt config",
+    {
+      "nuxt.config.cjs": `module.exports = defineNuxtConfig({ extends: ["./base"] })`,
+      "base/app/app.vue": uappShell,
+    },
+  ],
+  [
+    "a layer whose srcDir the manifest resolved",
+    {
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        nuxtVersion: "4",
+        vueVersion: "3.5",
+        rootDir: ".",
+        srcDir: "app",
+        appDir: "app",
+        buildDir: ".nuxt",
+        autoImports: [],
+        components: [],
+        layers: [
+          { root: ".", srcDir: "app", priority: 0 },
+          { root: "theme", srcDir: "theme/source", priority: 1 },
+        ],
+        aliases: {},
+        routeRules: {},
+        serverHandlers: [],
+        modules: [],
+      }),
+      "theme/source/app.vue": uappShell,
+    },
+  ],
+  [
+    "a manifest layer missing on disk",
+    {
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        nuxtVersion: "4",
+        vueVersion: "3.5",
+        rootDir: ".",
+        srcDir: "app",
+        appDir: "app",
+        buildDir: ".nuxt",
+        autoImports: [],
+        components: [],
+        layers: [
+          { root: ".", srcDir: "app", priority: 0 },
+          { root: "node_modules/docus", srcDir: "node_modules/docus/app", priority: 1 },
+        ],
+        aliases: {},
+        routeRules: {},
+        serverHandlers: [],
+        modules: [],
+      }),
+    },
+  ],
+])("accepts a UApp provider from %s", async (_name, files) => {
+  const result = await runRuleFixture({
+    rule: requireUAppRoot,
+    framework: "nuxt",
+    files: { ...files, "app/pages/index.vue": toastPage },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  [
+    "the project app.vue",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["./base"] })`,
+      "app/app.vue": "<template><NuxtPage /></template>",
+      "base/app/app.vue": uappShell,
+    },
+  ],
+  [
+    "a higher-priority layer",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["./first", "./second"] })`,
+      "first/app/layouts/default.vue": "<template><slot /></template>",
+      "second/app/layouts/default.vue": "<template><UApp><slot /></UApp></template>",
+    },
+  ],
+])("reports when %s overrides a layer shell that renders UApp", async (_name, files) => {
+  const result = await runRuleFixture({
+    rule: requireUAppRoot,
+    framework: "nuxt",
+    files: { ...files, "app/pages/index.vue": toastPage },
+  });
+  expect(result.diagnostics.map((d) => d.ruleId)).toEqual([requireUAppRoot.meta.id]);
+});

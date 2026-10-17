@@ -139,45 +139,96 @@ export const nuxtUiRulePack = defineRulePack({
 
 export default nuxtUiRulePack;
 
-const SHELL_FILES = ["app/app.vue", "app.vue", "app/layouts/default.vue", "layouts/default.vue"];
-const NUXT_CONFIG_FILES = [
-  "nuxt.config.ts",
-  "nuxt.config.js",
-  "nuxt.config.mjs",
-  "nuxt.config.mts",
-];
+const SHELL_FILES = ["app.vue", "layouts/default.vue"];
+const NUXT_CONFIG_FILES = ["ts", "mts", "cts", "js", "mjs", "cjs"].map(
+  (extension) => `nuxt.config.${extension}`,
+);
+
+/** Source directories of one Nuxt layer, highest priority first, or a layer Doctor cannot read. */
+type ShellLayer = string[] | "unresolved";
 
 /**
- * True when the app shell of the project or any Nuxt layer it extends renders UApp, or when an
- * extended layer cannot be read, because a provider there would be invisible to this check.
+ * True when the app shell Nuxt resolves across the project's layers renders UApp, or when a layer
+ * that could supply the shell cannot be read, because a provider there would be invisible.
  */
 function projectHasUAppRoot(ctx: RuleContext): boolean {
-  const projectRoot = resolve(ctx.project.root, ctx.project.nuxt?.layers?.[0]?.root ?? ".");
-  const roots = new Set([
-    projectRoot,
-    ...(ctx.project.nuxt?.layers ?? []).map((layer) => resolve(ctx.project.root, layer.root)),
-  ]);
-  for (const root of roots) if (layerHasUAppRoot(ctx.fs, root, new Set())) return true;
-  return false;
+  const layers = shellLayers(ctx);
+  // Nuxt takes each shell file from the highest-priority layer that has it.
+  return SHELL_FILES.some((file) => {
+    for (const layer of layers) {
+      if (layer === "unresolved") return true;
+      const path = layer
+        .map((dir) => join(dir, file))
+        .find((candidate) => ctx.fs.exists(candidate));
+      if (path) return hasUAppTemplate(ctx.fs.readText(path));
+    }
+    return false;
+  });
 }
 
-function layerHasUAppRoot(fs: RuleFileSystem, root: string, seen: Set<string>): boolean {
-  if (seen.has(root)) return false;
+function shellLayers(ctx: RuleContext): ShellLayer[] {
+  const resolved = ctx.project.nuxt?.layers ?? [];
+  // Manifest layers come from Nuxt's own resolution, in priority order with their srcDir.
+  if (resolved.some((layer) => layer.srcDir))
+    return [...resolved]
+      .sort((a, b) => a.priority - b.priority)
+      .map((layer) =>
+        ctx.fs.exists(resolve(ctx.project.root, layer.root))
+          ? [resolve(ctx.project.root, layer.srcDir ?? layer.root)]
+          : "unresolved",
+      );
+  const layers: ShellLayer[] = [];
+  collectStaticLayers(
+    ctx.fs,
+    resolve(ctx.project.root, resolved[0]?.root ?? "."),
+    layers,
+    new Set(),
+  );
+  return layers;
+}
+
+/** Nuxt's layer order: the layer, its auto-registered `layers/*` (Z before A), then `extends`. */
+function collectStaticLayers(
+  fs: RuleFileSystem,
+  root: string,
+  layers: ShellLayer[],
+  seen: Set<string>,
+) {
+  if (seen.has(root)) return;
   seen.add(root);
-  if (SHELL_FILES.some((file) => hasUAppTemplate(fs.readText(join(root, file))))) return true;
-  const extended = extendedLayers(fs, root);
-  if (!extended) return true;
-  const autoRegistered = (fs.readDir(join(root, "layers")) ?? [])
-    .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-    .map((entry) => join(root, "layers", entry.name));
-  return [...extended, ...autoRegistered].some((layer) => layerHasUAppRoot(fs, layer, seen));
-}
-
-/** Local roots of the layers a Nuxt config extends, or `undefined` when one cannot be resolved. */
-function extendedLayers(fs: RuleFileSystem, root: string): string[] | undefined {
   const config = NUXT_CONFIG_FILES.map((file) => fs.readText(join(root, file))).find(
     (text) => text !== undefined,
   );
+  const srcDir = configuredSrcDir(config);
+  if (srcDir === null) layers.push("unresolved");
+  else layers.push(srcDir ? [resolve(root, srcDir)] : [join(root, "app"), root]);
+  const autoRegistered = (fs.readDir(join(root, "layers")) ?? [])
+    .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+  for (const name of autoRegistered)
+    collectStaticLayers(fs, join(root, "layers", name), layers, seen);
+  const extended = extendedLayers(fs, root, config);
+  if (!extended) {
+    layers.push("unresolved");
+    return;
+  }
+  for (const layer of extended) collectStaticLayers(fs, layer, layers, seen);
+}
+
+/** A literal srcDir, `undefined` when none is set, or `null` when it is computed. */
+function configuredSrcDir(config: string | undefined): string | null | undefined {
+  if (!config || !/\bsrcDir\s*:/.test(config)) return undefined;
+  return config.match(/\bsrcDir\s*:\s*(["'`])([^"'`]+)\1/)?.[2] ?? null;
+}
+
+/** Local roots of the layers a Nuxt config extends, or `undefined` when one cannot be resolved. */
+function extendedLayers(
+  fs: RuleFileSystem,
+  root: string,
+  config: string | undefined,
+): string[] | undefined {
   if (!config || !/\bextends\s*:/.test(config)) return [];
   const value = config.match(/\bextends\s*:\s*(\[[^\]]*\]|["'][^"']*["'])/)?.[1];
   if (!value) return undefined;
