@@ -235,6 +235,8 @@ function isRequestScopedValue(value: AnyNode, setup: Range | null, depth: number
   let scoped = false;
   const visit = (node: AnyNode) => {
     if (scoped || !node || typeof node !== "object") return;
+    if (isModuleImport(node) || (node.type === "AwaitExpression" && isModuleImport(node.argument)))
+      return;
     if (node.type === "ThisExpression" || node.type === "AwaitExpression") {
       scoped = true;
       return;
@@ -265,6 +267,19 @@ function isRequestScopedValue(value: AnyNode, setup: Range | null, depth: number
   };
   visit(value);
   return scoped;
+}
+
+// `import()` resolves to the same module instance for every request.
+function isModuleImport(input: AnyNode): boolean {
+  const node = unwrap(input);
+  if (node?.type === "ImportExpression") return true;
+  if (node?.type !== "CallExpression") return false;
+  const callee = unwrap(node.callee);
+  return (
+    callee?.type === "MemberExpression" &&
+    PROMISE_METHODS.has(callee.property?.name) &&
+    isModuleImport(callee.object)
+  );
 }
 
 function isRequestScopedCall(node: AnyNode) {

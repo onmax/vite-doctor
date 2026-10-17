@@ -270,6 +270,16 @@ export function useLabel() {
   title = $t('title')
 }`,
   ],
+  [
+    "lazily imported modules",
+    "app/composables/useDefaults.ts",
+    `let defaults: unknown
+let messages: unknown
+export async function useDefaults() {
+  defaults = await import('./defaults')
+  messages = await import('./messages').then((module) => module.default)
+}`,
+  ],
 ])("does not report %s", async (_, file, source) => {
   expect(await run({ [file]: source })).toEqual([]);
 });
