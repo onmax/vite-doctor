@@ -234,3 +234,42 @@ test("reports a module option that is itself named runtimeConfig", async () => {
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.why).toContain("myModule.runtimeConfig.endpoint");
 });
+
+test("does not report reads from a local process binding", async () => {
+  const result = await run(`
+const process = { env: { NUXT_PUBLIC_API_BASE: 'fixed' } }
+
+export default defineNuxtConfig({
+  runtimeConfig: { public: { apiBase: '' } },
+  myModule: { endpoint: process.env.NUXT_PUBLIC_API_BASE },
+})
+`);
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("reads runtime config keys introduced through a spread", async () => {
+  const result = await run(`
+const defaults = { public: { apiBase: '' } }
+
+export default defineNuxtConfig({
+  runtimeConfig: { ...defaults },
+  myModule: { endpoint: process.env.NUXT_PUBLIC_API_BASE },
+})
+`);
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("reports a read inside an array spread into a build option", async () => {
+  const result = await run(`
+const extra = [['some-module', { url: process.env.NUXT_PUBLIC_SITE_URL }]]
+
+export default defineNuxtConfig({
+  runtimeConfig: { public: { siteUrl: '' } },
+  modules: ['other', ...extra],
+})
+`);
+
+  expect(result.diagnostics).toHaveLength(1);
+});

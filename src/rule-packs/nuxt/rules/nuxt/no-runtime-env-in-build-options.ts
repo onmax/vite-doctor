@@ -38,6 +38,8 @@ export const noRuntimeEnvInBuildOptions = createRule({
     return {
       Program(program: AnyNode) {
         const bindings = topLevelBindings(program);
+        // A local `process` is not Node's global, so its `env` reads prove nothing.
+        if (bindings.has("process")) return;
         const config = exportedConfigObject(program, bindings);
         if (!config) return;
         const runtimeEnvKeys = new Map<string, string>();
@@ -150,6 +152,11 @@ function collectDeclaredKeys(
   keys: Map<string, string>,
 ) {
   for (const property of node.properties ?? []) {
+    if (property.type === "SpreadElement") {
+      const spread = objectExpression(property.argument, bindings);
+      if (spread) collectDeclaredKeys(spread, parents, bindings, keys);
+      continue;
+    }
     if (property.type !== "Property") continue;
     const key = propertyName(property);
     if (!key) continue;
@@ -196,8 +203,10 @@ function* buildOptionValue(
     yield* buildOptionValues(value, bindings, path);
   } else if (value.type === "ArrayExpression") {
     for (const element of value.elements ?? []) {
-      if (element && element.type !== "SpreadElement") {
-        yield* buildOptionValue(element, bindings, path);
+      if (element?.type !== "SpreadElement") yield* buildOptionValue(element, bindings, path);
+      else if (element.argument?.type === "Identifier") {
+        const spread = unwrap(bindings.get(element.argument.name));
+        if (spread?.type === "ArrayExpression") yield* buildOptionValue(spread, bindings, path);
       }
     }
   } else {
