@@ -35,6 +35,7 @@ test.each([
   ["<ClientOnly><Modal v-if='open' /><Chart /></ClientOnly>"],
   ["<ClientOnly fallback><Chart /></ClientOnly>"],
   ["<ClientOnly placeholder=''><Chart /></ClientOnly>"],
+  ["<ClientOnly><template v-if='ready'><Chart /></template></ClientOnly>"],
   ["<ClientOnly><Chart /><template #fallback /></ClientOnly>"],
   ["<ClientOnly><Chart /><template #placeholder>\n  <!-- todo -->\n</template></ClientOnly>"],
 ])("reports ClientOnly without a fallback: %s", async (template) => {
@@ -61,6 +62,9 @@ test.each([
   ["<ClientOnly>\n  <!-- modal -->\n  <NPIFormDistributorModal v-if='open' />\n</ClientOnly>"],
   ["<ClientOnly><Teleport to='body'><Menu /></Teleport></ClientOnly>"],
   ["<ClientOnly><UNotifications /><app-toaster /></ClientOnly>"],
+  [
+    "<ClientOnly><template v-if='open'><Teleport to='body'><Menu /></Teleport></template></ClientOnly>",
+  ],
 ])("accepts ClientOnly with a fallback or only overlays: %s", async (template) => {
   expect(await reported(template)).toEqual([]);
 });

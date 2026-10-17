@@ -88,15 +88,18 @@ function hasContent(node: TemplateElementNode) {
   );
 }
 
-function rendersOnlyOverlays(node: TemplateElementNode) {
-  const elements = node.children.filter((child) => child.type === TemplateNodeType.ELEMENT);
+function rendersOnlyOverlays(node: TemplateElementNode): boolean {
+  const rendered = node.children.filter(
+    (child) => child.type !== TemplateNodeType.COMMENT && !isWhitespace(child),
+  );
   return (
-    elements.length > 0 &&
-    elements.length ===
-      node.children.filter(
-        (child) => child.type !== TemplateNodeType.COMMENT && !isWhitespace(child),
-      ).length &&
-    elements.every((child) => OVERLAY_TAG_RE.test((child as TemplateElementNode).tag))
+    rendered.length > 0 &&
+    rendered.every((child) => {
+      if (child.type !== TemplateNodeType.ELEMENT) return false;
+      // A plain <template v-if> or v-for only groups its children.
+      if (child.tag === "template") return rendersOnlyOverlays(child);
+      return OVERLAY_TAG_RE.test(child.tag);
+    })
   );
 }
 
