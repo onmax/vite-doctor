@@ -141,6 +141,10 @@ test.each([
     "async function f(plugin: { import(id: string): Promise<any> }) { const data = await plugin.import('x'); return data.body instanceof Blob }",
   ],
   [
+    "async-iterable alternative for streams (vitehub agent progress-summary.ts:361)",
+    "function f(value: unknown) { return isAsyncIterable(value) || value instanceof ReadableStream }",
+  ],
+  [
     "duck-typed alternative (vitehub agent chat-approvals.ts:412)",
     "function f(result: unknown) { if (result instanceof Response || isResponseLike(result)) return result }",
   ],

@@ -20,6 +20,10 @@ const WEB_CLASSES = new Set([
   "ReadableStream",
 ]);
 
+// Structural guards that also accept the class from any realm, such as isAsyncIterable() for
+// streams in server runtimes.
+const GUARD_ALIASES: Record<string, string[]> = { ReadableStream: ["AsyncIterable"] };
+
 const REPLACEMENTS: Record<string, string> = {
   Date: "Object.prototype.toString.call(value) === '[object Date]'",
   ArrayBuffer: "Object.prototype.toString.call(value) === '[object ArrayBuffer]'",
@@ -112,7 +116,7 @@ function hasDuckTypedAlternative(node: AnyNode, className: string): boolean {
     const callee = expression(operand.callee, true);
     return (
       callee?.type === "Identifier" &&
-      new RegExp(`^is(?!Not[A-Z])(?:[A-Z]\\w*)?${className}(?:Like)?$`).test(callee.name) &&
+      guardPattern(className).test(callee.name) &&
       operand.arguments?.some(
         (argument: AnyNode) =>
           expression(argument, true)?.type === "Identifier" &&
@@ -120,6 +124,11 @@ function hasDuckTypedAlternative(node: AnyNode, className: string): boolean {
       )
     );
   });
+}
+
+function guardPattern(className: string) {
+  const names = [className, ...(GUARD_ALIASES[className] ?? [])].join("|");
+  return new RegExp(`^is(?!Not[A-Z])(?:[A-Z]\\w*)?(?:${names})(?:Like)?$`);
 }
 
 function crossRealmOrigin(
