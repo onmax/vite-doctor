@@ -255,7 +255,10 @@ function readLayerConfig(fs: RuleFileSystem, root: string): LayerConfig | null {
   for (const name of NUXT_CONFIG_FILES) {
     const file = join(root, name);
     const text = fs.readText(file);
-    if (text === undefined) continue;
+    if (text === undefined) {
+      if (fs.exists(file)) return null;
+      continue;
+    }
     const config = configObject(file, text);
     if (!config) return null;
     const srcDir = configOption(config, "srcDir");
@@ -300,7 +303,13 @@ function configObject(file: string, text: string): AnyNode {
       ["TSAsExpression", "TSSatisfiesExpression", "ParenthesizedExpression"].includes(node.type)
     )
       node = node.expression;
-    if (node.type === "CallExpression" && node.arguments.length === 1) node = node.arguments[0];
+    if (
+      node.type === "CallExpression" &&
+      node.callee.type === "Identifier" &&
+      node.callee.name === "defineNuxtConfig" &&
+      node.arguments.length === 1
+    )
+      node = node.arguments[0];
     return node.type === "ObjectExpression" ? node : null;
   }
   return null;

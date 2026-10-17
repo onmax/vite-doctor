@@ -319,3 +319,35 @@ test.each([
   });
   expect(result.diagnostics.map((d) => d.ruleId)).toEqual([requireUAppRoot.meta.id]);
 });
+
+test.each([
+  [
+    "a spread that can override extends",
+    `const overrides = {}\nexport default defineNuxtConfig({ extends: ["./base"], ...overrides })`,
+  ],
+  ["an unknown config wrapper", `export default withConfig({ extends: ["./base"] })`],
+])("does not report when %s hides the layers", async (_name, config) => {
+  const result = await runRuleFixture({
+    rule: requireUAppRoot,
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts": config,
+      "base/app/app.vue": "<template><NuxtPage /></template>",
+      "app/pages/index.vue": toastPage,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("still reads options written after a spread", async () => {
+  const result = await runRuleFixture({
+    rule: requireUAppRoot,
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts": `const shared = {}\nexport default defineNuxtConfig({ ...shared, srcDir: "app", extends: ["./base"] })`,
+      "base/app/app.vue": "<template><NuxtPage /></template>",
+      "app/pages/index.vue": toastPage,
+    },
+  });
+  expect(result.diagnostics.map((d) => d.ruleId)).toEqual([requireUAppRoot.meta.id]);
+});
