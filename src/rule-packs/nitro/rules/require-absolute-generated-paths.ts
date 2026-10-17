@@ -38,7 +38,8 @@ export const requireAbsoluteGeneratedPaths = createRule({
     const strings = new Map<string, AnyNode>();
     const declarations = new Map<string, number>();
     const declare = (name: string) => declarations.set(name, (declarations.get(name) ?? 0) + 1);
-    const declareParameters = (node: AnyNode) => {
+    const declareFunction = (node: AnyNode) => {
+      if (node.id?.name) declare(node.id.name);
       for (const parameter of node.params ?? [])
         for (const name of patternNames(parameter)) declare(name);
     };
@@ -60,9 +61,15 @@ export const requireAbsoluteGeneratedPaths = createRule({
         const value = unwrapExpression(node.init);
         if (staticStringValue(value) !== undefined) strings.set(node.id.name, value);
       },
-      FunctionDeclaration: declareParameters,
-      FunctionExpression: declareParameters,
-      ArrowFunctionExpression: declareParameters,
+      FunctionDeclaration: declareFunction,
+      FunctionExpression: declareFunction,
+      ArrowFunctionExpression: declareFunction,
+      ClassDeclaration(node: AnyNode) {
+        if (node.id?.name) declare(node.id.name);
+      },
+      CatchClause(node: AnyNode) {
+        for (const name of patternNames(node.param)) declare(name);
+      },
       ObjectExpression(node: AnyNode) {
         const handler = node.properties?.find(
           (property: AnyNode) => propertyKeyName(property) === "handler",

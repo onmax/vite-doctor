@@ -186,6 +186,12 @@ export function routes(root: string, handler: string) {
   return [{ handler: path, route: "/x" }, { handler, route: "/y" }]
 }
 const handler = "./generated/other.ts"`,
+      "modules/function.ts": `import type { Plugin } from "vite"
+const handler = "./generated/function.ts"
+export function routes() {
+  function handler() {}
+  return [{ handler, route: "/x" }]
+}`,
       "modules/destructured.ts": `import type { Plugin } from "vite"
 const middleware = "./generated/middleware.ts"
 export function register({ middleware }: { middleware: string }) {
