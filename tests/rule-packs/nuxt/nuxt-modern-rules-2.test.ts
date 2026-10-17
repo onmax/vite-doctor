@@ -184,13 +184,15 @@ test("Nuxt UI form controls rule ignores ambiguous native inputs and layout elem
     <input :type="dynamicType">
     <input ref="input" v-bind="attachments.inputProps.value" class="sr-only">
     <input type="text" v-bind="inputAttrs">
+    <input v-bind="inputAttrs" type="text">
   </form>
 </div>
 </template>`,
     },
   });
 
-  expect(result.diagnostics).toHaveLength(0);
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.suggestion).toContain("<UInput>");
 });
 
 test("browser globals inside client-only callbacks are not reported", async () => {
