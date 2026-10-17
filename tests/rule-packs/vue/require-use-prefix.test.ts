@@ -432,6 +432,16 @@ test.each([
     `const composables = { useWorkspace() { onMounted(() => {}) } }\nexport const { useWorkspace } = composables`,
   ],
   [
+    "an imported binding",
+    `import { useWorkspace } from './core/use'\nexport function run() { return useWorkspace() }`,
+    `import { useMounted } from '@vueuse/core'\nexport { useMounted as useWorkspace }`,
+  ],
+  [
+    "an imported default binding",
+    `import useWorkspace from './core/use'\nexport function run() { return useWorkspace() }`,
+    `import useImpl from './impl-default'\nexport default useImpl`,
+  ],
+  [
     "a star re-export",
     `import { useWorkspace } from './core/use'\nexport function run() { return useWorkspace() }`,
     `export * from './impl'`,
@@ -444,9 +454,33 @@ test.each([
       "src/runner.ts": runner,
       "src/core/use.ts": module,
       "src/core/impl.ts": `import { inject } from 'vue'\nexport function useWorkspace() { return inject('workspace') }`,
+      "src/core/impl-default.ts": `import { inject } from 'vue'\nexport default function () { return inject('workspace') }`,
     },
   });
   expect(result.diagnostics).toHaveLength(1);
+});
+
+test("does not treat helpers that only read app context as composables", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "nuxt",
+    files: {
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date(Date.now() + 10000).toISOString(),
+        nuxtVersion: "4.5.2",
+        appDir: "app",
+        autoImportEnabled: true,
+        autoImports: [
+          { name: "useRuntimeConfig", as: "useRuntimeConfig", from: "#app" },
+          { name: "useCartStore", as: "useCartStore", from: "app/stores/cart.ts" },
+        ],
+        components: [],
+        layers: [],
+      }),
+      "lib/config.ts": `function useConfig() { return useRuntimeConfig().public }\nfunction useCart() { return useCartStore() }\nexport function readConfig() { return useConfig().apiBase }\nexport function readCart() { return useCart().items }`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
 });
 
 test("traces same-file use* helpers for Vue evidence", async () => {

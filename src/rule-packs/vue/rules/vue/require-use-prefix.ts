@@ -271,11 +271,13 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
       const fn = callee?.type === "Identifier" && localFunction(callee, module.bindings);
       return Boolean(fn) && usesVue(fn, module);
     }
+    if (isContextAccessor(api.name, api.source, Boolean(nuxt))) return false;
     if (api.fn) return usesVue(api.fn, module);
     if (!api.source)
       return (
         VUE_RUNTIME_APIS.has(api.name) ||
-        Boolean(nuxt?.autoImportsAuthoritative && nuxt.autoImports.has(api.name))
+        (/^use[A-Z0-9]/.test(api.name) &&
+          Boolean(nuxt?.autoImportsAuthoritative && nuxt.autoImports.has(api.name)))
       );
     return sourceUsesVue(api.source, api.exportName ?? api.name, module);
   }
@@ -298,6 +300,8 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
     const module = analyzeModule(file);
     if (!module) return false;
     const definition = exportedDefinition(module.program, name);
+    if (definition?.type === "ImportBinding")
+      return sourceUsesVue(definition.source, definition.imported, module);
     if (definition) return usesVue(definition, module);
     for (const statement of module.program.body ?? []) {
       if (!statement.source || statement.exportKind === "type") continue;
@@ -338,6 +342,20 @@ function exportedDefinition(program: AnyNode, name: string): AnyNode {
       if (name === "default") definition = statement.declaration;
       continue;
     }
+    if (statement.type === "ImportDeclaration" && statement.importKind !== "type")
+      for (const specifier of statement.specifiers ?? []) {
+        if (specifier.type === "ImportNamespaceSpecifier" || specifier.importKind === "type")
+          continue;
+        const imported =
+          specifier.type === "ImportDefaultSpecifier"
+            ? "default"
+            : moduleExportName(specifier.imported);
+        declarations.set(specifier.local.name, {
+          type: "ImportBinding",
+          source: statement.source.value,
+          imported,
+        });
+      }
     const declaration =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
     if (declaration?.type === "FunctionDeclaration" && declaration.id)
@@ -641,14 +659,7 @@ function setupContextSignal(
             signal = { name };
           if (
             /^use[A-Z0-9]/.test(name) &&
-            !APP_CONTEXT_ACCESSORS.has(name) &&
-            !/^use\w*Store$/.test(name) &&
-            !(
-              isNuxt &&
-              NUXT_APP_CONTEXT_ACCESSORS.has(name) &&
-              isVueSource(source) &&
-              source !== "vue-router"
-            ) &&
+            !isContextAccessor(name, source, isNuxt) &&
             !(source && NON_COMPOSABLE_SOURCES.test(source)) &&
             composable(api)
           )
@@ -677,6 +688,18 @@ function setupContextSignal(
   }
   scan(fn.body, false);
   return signal;
+}
+
+// App-level accessors and stores also work outside component setup.
+function isContextAccessor(name: string, source: string | undefined, isNuxt: boolean) {
+  return (
+    APP_CONTEXT_ACCESSORS.has(name) ||
+    /^use\w*Store$/.test(name) ||
+    (isNuxt &&
+      NUXT_APP_CONTEXT_ACCESSORS.has(name) &&
+      isVueSource(source) &&
+      source !== "vue-router")
+  );
 }
 
 function isVueSource(source: string | undefined) {
