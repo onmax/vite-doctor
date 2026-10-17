@@ -180,8 +180,18 @@ function writtenValue(node: AnyNode, binding: ModuleBinding): AnyNode {
 
 function isRequestTimeWrite(ctx: RuleContext, node: AnyNode, setup: Range | null) {
   if (nearestFunctionOrProgram(node)?.type === "Program" && !inRange(node, setup)) return false;
-  if (hasPriorServerReturnGuard(ctx.file.text, node.start)) return false;
+  const guardText = ctx.file.text.slice(outermostFunction(node)?.start ?? 0, node.start);
+  if (hasPriorServerReturnGuard(guardText, guardText.length)) return false;
   return !ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text);
+}
+
+// A server early return only guards code in the same top-level function, including callbacks
+// that function registers.
+function outermostFunction(node: AnyNode) {
+  let outermost: AnyNode = null;
+  for (let current = node.__doctorParent; current; current = current.__doctorParent)
+    if (FUNCTION_TYPES.has(current.type)) outermost = current;
+  return outermost;
 }
 
 function resolvesToModuleBinding(node: AnyNode, name: string) {

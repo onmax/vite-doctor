@@ -96,6 +96,18 @@ export function useTenant() {
   app = useNuxtApp()
 }`,
   ],
+  [
+    "a write after a server early return in another function",
+    "app/composables/useUser.ts",
+    `let currentUser: unknown
+function trackClientView() {
+  if (import.meta.server) return
+  console.info('view')
+}
+export async function useUser() {
+  currentUser = await $fetch('/api/me')
+}`,
+  ],
 ])("reports %s", async (_, file, source) => {
   const diagnostics = await run({ [file]: source });
   expect(diagnostics).toMatchObject([{ code: "NUXT0084", file }]);
@@ -158,6 +170,17 @@ export async function useUser() {
 export async function useUser() {
   if (import.meta.server) return
   currentUser = await $fetch('/api/me')
+}`,
+  ],
+  [
+    "callbacks registered after a server early return",
+    "app/composables/useUser.ts",
+    `let currentUser: unknown
+export function useUser() {
+  if (import.meta.server) return
+  watchEffect(async () => {
+    currentUser = await $fetch('/api/me')
+  })
 }`,
   ],
   [
