@@ -666,6 +666,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/config/no-runtime-env-in-build-options": {
+    description:
+      "Finds nuxt.config options outside runtimeConfig whose value comes from a NUXT_ or NITRO_ environment variable that also overrides a declared runtimeConfig key.",
+    why: "nuxt.config runs once, when the app is built, so every option outside runtimeConfig keeps the value the variable had at build time. Nuxt applies NUXT_ variables to runtimeConfig again when the server starts, which is why they are the usual way to configure one build per environment or tenant. An option that reads the same variable gets the build-time value instead, often empty in a Docker build that sets the variable only on the running container. Doctor only reports values whose environment reads are all NUXT_ or NITRO_ variables and at least one of them matches a key declared in runtimeConfig. A fallback to another variable, or passing process.env as a whole, is treated as an intentional build-time source.",
+    recommendedReplacement:
+      "Read the value from useRuntimeConfig() where it is used, or set the variable in the build environment when the option has to be fixed at build time.",
+    examples: [
+      {
+        title: "Read tenant config at runtime",
+        language: "ts",
+        invalid:
+          "const organization = process.env.NUXT_PUBLIC_ORGANIZATION_CODE\n\nexport default defineNuxtConfig({\n  runtimeConfig: { public: { organizationCode: organization } },\n  piniaPluginPersistedstate: { key: `${organization}:%id` },\n})",
+        valid:
+          "export default defineNuxtConfig({\n  runtimeConfig: { public: { organizationCode: '' } },\n})\n\n// app/plugins/persisted-state.ts\nexport default defineNuxtPlugin(({ $pinia }) => {\n  const { organizationCode } = useRuntimeConfig().public\n  $pinia.use(createPersistedState({ key: id => `${organizationCode}:${id}` }))\n})",
+      },
+    ],
+  },
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",
