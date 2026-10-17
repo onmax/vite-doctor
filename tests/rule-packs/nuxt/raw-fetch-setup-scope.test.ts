@@ -28,6 +28,7 @@ test.each([
 });
 
 test.each([
+  ["normal script top level", `<script lang="ts">const user = await $fetch('/api/user')</script>`],
   [
     "named handler",
     `<script setup lang="ts">\nasync function save() {\n  await $fetch('/api/user', { method: 'PATCH' })\n}\n</script>\n<template><button type="button" @click="save">Save</button></template>`,

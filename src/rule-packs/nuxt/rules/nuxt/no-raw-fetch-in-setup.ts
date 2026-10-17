@@ -23,7 +23,7 @@ export const noRawFetchInSetup = createRule({
         const call = node.argument;
         const name = ctx.helpers.getCalleeName(call);
         if (name !== "$fetch" && name !== "fetch" && name !== "axios.get") return;
-        if (!isSetupScope(nearestFunctionOrProgram(node))) return;
+        if (!isSetupScope(nearestFunctionOrProgram(node), node, ctx.file.sfc)) return;
         report(
           ctx,
           call,
@@ -38,9 +38,21 @@ export const noRawFetchInSetup = createRule({
   },
 });
 
-function isSetupScope(scope: AnyNode): boolean {
+function isSetupScope(scope: AnyNode, node: AnyNode, sfc: AnyNode): boolean {
   if (!scope) return false;
-  if (scope.type === "Program") return true;
+  if (scope.type === "Program") {
+    const setup = sfc?.descriptor?.scriptSetup;
+    const start = node?.start;
+    const end = node?.end ?? start;
+    return (
+      typeof start === "number" &&
+      typeof end === "number" &&
+      typeof setup?.loc?.start?.offset === "number" &&
+      typeof setup?.loc?.end?.offset === "number" &&
+      start >= setup.loc.start.offset &&
+      end <= setup.loc.end.offset
+    );
+  }
   const owner = scope.__doctorParent;
   if (owner?.type !== "Property" && owner?.type !== "MethodDefinition") return false;
   if (owner.value !== scope || owner.computed) return false;
