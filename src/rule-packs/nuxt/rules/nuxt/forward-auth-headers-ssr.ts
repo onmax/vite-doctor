@@ -66,8 +66,7 @@ const DEFERRING_CALLS = new Set([
   "nextTick",
 ]);
 const ASYNC_DATA_ENTRIES = new Set(["useAsyncData", "useLazyAsyncData", "callOnce"]);
-const UNIVERSAL_ENTRIES = new Set(["defineNuxtPlugin", "defineNuxtRouteMiddleware"]);
-const localCallSites = new WeakMap<object, Map<string, AnyNode[]>>();
+const localReferences = new WeakMap<object, Map<string, AnyNode[]>>();
 
 // Only requests with evidence of running during SSR miss the browser's cookies.
 function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boolean {
@@ -82,7 +81,6 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
   if (parent?.type === "CallExpression" || parent?.type === "NewExpression") {
     if (parent.callee === scope) return runsDuringSsr(ctx, parent, seen);
     const callee = ctx.helpers.getCalleeName(parent) ?? "";
-    if (UNIVERSAL_ENTRIES.has(callee)) return true;
     if (ASYNC_DATA_ENTRIES.has(callee) && !asyncDataRunsOnServer(parent, scope)) return false;
     return runsDuringSsr(ctx, parent, seen);
   }
@@ -96,7 +94,13 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
   const name = functionName(scope);
   if (!name) return false;
   if (/^use[A-Z]/.test(name)) return true;
-  return (callSites(ctx).get(name) ?? []).some((call) => runsDuringSsr(ctx, call, seen));
+  const declaration = scope.type === "FunctionDeclaration" ? scope : scope.__doctorParent;
+  return (references(ctx).get(name) ?? []).some((reference) => {
+    if (resolveBinding(reference) !== declaration) return false;
+    const call = reference.__doctorParent;
+    if (call.callee !== reference && !asyncDataRunsOnServer(call, reference)) return false;
+    return runsDuringSsr(ctx, call, seen);
+  });
 }
 
 // Vue runs `watchEffect()` callbacks once during SSR setup. `watch()` callbacks count as
@@ -126,16 +130,20 @@ function resolveLocalObject(node: AnyNode): AnyNode {
   const value = unwrapExpression(node);
   if (value?.type === "ObjectExpression") return value;
   if (value?.type !== "Identifier") return null;
-  for (let scope = value.__doctorParent; scope; scope = scope.__doctorParent) {
-    if (scope.params?.some((param: AnyNode) => patternNames(param).includes(value.name)))
+  const binding = resolveBinding(value);
+  if (binding?.type !== "VariableDeclarator" || binding.__doctorParent?.kind !== "const")
+    return null;
+  if (binding.id?.type !== "Identifier") return null;
+  const init = unwrapExpression(binding.init);
+  return init?.type === "ObjectExpression" ? init : null;
+}
+
+function resolveBinding(identifier: AnyNode): AnyNode {
+  for (let scope = identifier.__doctorParent; scope; scope = scope.__doctorParent) {
+    if (scope.params?.some((param: AnyNode) => patternNames(param).includes(identifier.name)))
       return null;
-    const binding = findStatementBinding(scope, value.name);
-    if (!binding) continue;
-    const declaration = binding.__doctorParent;
-    if (binding.type !== "VariableDeclarator" || declaration?.kind !== "const") return null;
-    if (binding.id?.type !== "Identifier") return null;
-    const init = unwrapExpression(binding.init);
-    return init?.type === "ObjectExpression" ? init : null;
+    const binding = findStatementBinding(scope, identifier.name);
+    if (binding) return binding;
   }
   return null;
 }
@@ -151,17 +159,22 @@ function functionName(fn: AnyNode): string | undefined {
     return parent.id.name;
 }
 
-function callSites(ctx: RuleContext): Map<string, AnyNode[]> {
+// Calls by name, plus names passed as async-data handlers.
+function references(ctx: RuleContext): Map<string, AnyNode[]> {
   const program = ctx.file.scriptAst ?? {};
-  let sites = localCallSites.get(program);
-  if (sites) return sites;
-  const collected = new Map<string, AnyNode[]>();
+  let collected = localReferences.get(program);
+  if (collected) return collected;
+  const found = new Map<string, AnyNode[]>();
+  localReferences.set(program, found);
+  const add = (identifier: AnyNode) =>
+    found.set(identifier.name, [...(found.get(identifier.name) ?? []), identifier]);
   walkScriptLocal(program, (node) => {
-    if (node.type !== "CallExpression" || node.callee?.type !== "Identifier") return;
-    collected.set(node.callee.name, [...(collected.get(node.callee.name) ?? []), node]);
+    if (node.type !== "CallExpression") return;
+    if (node.callee?.type === "Identifier") add(node.callee);
+    if (!ASYNC_DATA_ENTRIES.has(ctx.helpers.getCalleeName(node) ?? "")) return;
+    for (const argument of node.arguments ?? []) if (argument?.type === "Identifier") add(argument);
   });
-  localCallSites.set(program, collected);
-  return collected;
+  return found;
 }
 
 function isAuthSensitiveInternalApi(url: string): boolean {

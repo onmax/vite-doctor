@@ -139,3 +139,32 @@ test.each([
 ])("reports requests that run during SSR: %s", async (_, source) => {
   expect(await diagnose(source, "app/composables/useAccount.ts")).toEqual([ruleId]);
 });
+
+test.each([
+  [
+    "a plugin defined inside an uncalled factory",
+    `export function makePlugin() {\n  return defineNuxtPlugin(() => $fetch('/api/user'))\n}`,
+  ],
+  [
+    "a call that only reaches a shadowing binding",
+    `function load() {\n  return $fetch('/api/account')\n}\n{\n  const load = () => {}\n  load()\n}`,
+  ],
+  [
+    "a named async-data handler with server: false",
+    `export function useAccount() {\n  const load = () => $fetch('/api/account')\n  return useAsyncData('account', load, { server: false })\n}`,
+  ],
+])(
+  "ignores requests without SSR execution evidence through local bindings: %s",
+  async (_, source) => {
+    expect(await diagnose(source, "app/utils/account.ts")).toEqual([]);
+  },
+);
+
+test("reports a named async-data handler", async () => {
+  expect(
+    await diagnose(
+      `export function useAccount() {\n  const load = () => $fetch('/api/account')\n  return useAsyncData('account', load)\n}`,
+      "app/composables/useAccount.ts",
+    ),
+  ).toEqual([ruleId]);
+});
