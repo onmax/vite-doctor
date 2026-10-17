@@ -640,8 +640,11 @@ function createResourceEvidence(ctx: RuleContext) {
     if (node.type === "ReturnStatement" || node.type === "ThrowStatement") return true;
     if (node.type === "IfStatement") {
       const value = conditionValue(node.test, resource);
-      if (value !== undefined) return teardownMayExit(value ? node.consequent : node.alternate, resource);
-      return teardownMayExit(node.consequent, resource) && teardownMayExit(node.alternate, resource);
+      if (value !== undefined)
+        return teardownMayExit(value ? node.consequent : node.alternate, resource);
+      return (
+        teardownMayExit(node.consequent, resource) && teardownMayExit(node.alternate, resource)
+      );
     }
     if (node.type === "BlockStatement")
       return node.body.length > 0 && teardownMayExit(node.body[node.body.length - 1], resource);
