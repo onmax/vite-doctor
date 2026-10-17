@@ -112,7 +112,7 @@ function hasDuckTypedAlternative(node: AnyNode, className: string): boolean {
     const callee = expression(operand.callee, true);
     return (
       callee?.type === "Identifier" &&
-      /^is[A-Z]/.test(callee.name) &&
+      /^is(?!Not[A-Z])[A-Z]/.test(callee.name) &&
       callee.name.toLowerCase().includes(className.toLowerCase()) &&
       operand.arguments?.some(
         (argument: AnyNode) =>
@@ -126,6 +126,7 @@ function hasDuckTypedAlternative(node: AnyNode, className: string): boolean {
 function crossRealmOrigin(
   evidence: ReturnType<typeof createLocalEvidence>,
   node: AnyNode,
+  depth = 0,
 ): Origin | undefined {
   const value = expression(node, true);
   const direct = valueOrigin(evidence, value);
@@ -144,6 +145,9 @@ function crossRealmOrigin(
   if (binding.init) {
     const origin = valueOrigin(evidence, expression(init, true));
     if (origin) return origin;
+    // `const alias = value` keeps the origin of the value it copies.
+    if (expression(init, true)?.type === "Identifier" && depth < 4)
+      return crossRealmOrigin(evidence, init, depth + 1);
   }
   const root = memberRoot(init);
   return root && moduleOrigin(evidence, root) ? "loaded module" : undefined;

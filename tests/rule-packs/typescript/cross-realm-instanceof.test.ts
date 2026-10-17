@@ -68,6 +68,14 @@ test.each([
     "export const f = (value: unknown | undefined) => value instanceof Date",
   ],
   [
+    "const alias of an unknown parameter",
+    "function f(value: unknown) { const alias = value; return alias instanceof Date }",
+  ],
+  [
+    "negative guard",
+    "function f(value: unknown) { return value instanceof Response || isNotResponse(value) }",
+  ],
+  [
     "guard that does not check the class",
     "function f(value: unknown) { return value instanceof Date || isReady(value) }",
   ],
