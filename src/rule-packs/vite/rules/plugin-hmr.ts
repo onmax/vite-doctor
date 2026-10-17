@@ -12,10 +12,11 @@ export const requirePluginName = createRule({
     requires: { script: true },
   },
   create(ctx) {
-    if (!isPluginSource(ctx.file.relativePath)) return;
+    const origin = pluginSource(ctx.file.relativePath, ctx.file.scriptAst);
+    if (!origin) return;
     return {
       ObjectExpression(node: AnyNode) {
-        if (!isPluginObject(node)) return;
+        if (!isPluginObject(node, origin === "import") || isSpreadFragment(node)) return;
         const hasName = (node.properties ?? []).some(
           (property: AnyNode) => property.key?.name === "name",
         );
@@ -48,10 +49,12 @@ export const preferTransformFilter = createRule({
     requires: { script: true },
   },
   create(ctx) {
-    if (!isPluginSource(ctx.file.relativePath)) return;
+    const origin = pluginSource(ctx.file.relativePath, ctx.file.scriptAst);
+    if (!origin) return;
     return {
       Property(node: AnyNode) {
         if (!isTransformProperty(node)) return;
+        if (origin === "import" && !isHook(node.value)) return;
         const value = node.value;
         const source = ctx.file.text.slice(node.start ?? 0, node.end ?? 0);
         if (value?.params?.length >= 2 || /\bfilter\s*:/.test(source)) return;
@@ -3581,16 +3584,52 @@ function walkEvaluation(node: AnyNode, visit: (node: AnyNode) => void): void {
   }
 }
 
-function isPluginSource(path: string): boolean {
-  return isViteConfigFile(path) || /(?:^|\/)plugins?\/.*\.[cm]?[jt]s$/.test(path);
+// Plugins live wherever their package puts them, so a module that imports Vite counts too. Those
+// modules also hold plain config objects, so their hooks must be functions to count as plugins.
+function pluginSource(path: string, program: AnyNode): "path" | "import" | null {
+  if (isViteConfigFile(path) || /(?:^|\/)plugins?\/.*\.[cm]?[jt]s$/.test(path)) return "path";
+  if (isFixturePath(path) || /\.d\.[cm]?ts$/.test(path)) return null;
+  const importsVite = (program?.body ?? []).some(
+    (statement: AnyNode) =>
+      statement.type === "ImportDeclaration" && statement.source?.value === "vite",
+  );
+  return importsVite ? "import" : null;
 }
 
-function isPluginObject(node: AnyNode): boolean {
+function isPluginObject(node: AnyNode, requireHookFunctions = false): boolean {
   if (node?.type !== "ObjectExpression") return false;
-  return (node.properties ?? []).some((property: AnyNode) =>
-    ["config", "resolveId", "load", "transform", "generateBundle", "writeBundle"].includes(
-      property.key?.name ?? property.key?.value,
-    ),
+  return (node.properties ?? []).some(
+    (property: AnyNode) =>
+      ["config", "resolveId", "load", "transform", "generateBundle", "writeBundle"].includes(
+        property.key?.name ?? property.key?.value,
+      ) &&
+      (!requireHookFunctions || isHook(property.value)),
+  );
+}
+
+// `{ name, ...(load ? { load() {} } : {}) }` builds one plugin from hook fragments.
+function isSpreadFragment(node: AnyNode): boolean {
+  let current = node;
+  let parent = node.__doctorParent;
+  while (
+    ["ConditionalExpression", "LogicalExpression", "ParenthesizedExpression"].includes(
+      parent?.type,
+    ) &&
+    parent.test !== current
+  ) {
+    current = parent;
+    parent = parent.__doctorParent;
+  }
+  return parent?.type === "SpreadElement";
+}
+
+function isHook(node: AnyNode): boolean {
+  if (["ArrowFunctionExpression", "FunctionExpression"].includes(node?.type)) return true;
+  return (
+    node?.type === "ObjectExpression" &&
+    (node.properties ?? []).some(
+      (property: AnyNode) => (property.key?.name ?? property.key?.value) === "handler",
+    )
   );
 }
 

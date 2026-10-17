@@ -126,6 +126,47 @@ console.log('/src/assets/logo.svg', logo, asset, worker, other, VITE_API_URL)`,
     ]);
   });
 
+  test("treats modules that import Vite as plugin sources", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [preferTransformFilter, requirePluginName],
+      files: {
+        "packages/env/src/vite.ts": `import { loadEnv } from 'vite'
+import type { Plugin } from 'vite'
+export function env(): Plugin {
+  return {
+    name: 'env',
+    transform(code) {
+      return code.includes('@env') ? code.replace('@env', JSON.stringify(loadEnv('', ''))) : undefined
+    },
+  }
+}
+export function unnamed(): Plugin {
+  return { load(id) { return id === 'virtual:x' ? '' : undefined } }
+}
+export function wrap(plugin: Plugin, load?: Function): Plugin {
+  return {
+    name: 'wrap:' + plugin.name,
+    ...(load ? { load(...args) { return load.call(this, ...args) } } : {}),
+    ...{ resolveId(id) { return id } },
+  }
+}`,
+        "packages/env/src/options.ts": `import type { UserConfig } from 'vite'
+export function shared(config: UserConfig, transform?: (code: string) => string) {
+  return { config, transform, load: config.root }
+}`,
+        "packages/env/src/runtime.ts": `export const hooks = {
+  transform(code) { return code },
+  load() {},
+}`,
+      },
+    });
+
+    expect(
+      result.diagnostics.map((item) => `${item.ruleId} ${item.file.split("/").pop()}`).sort(),
+    ).toEqual(["vite/plugin/prefer-transform-filter vite.ts", "vite/plugin/require-name vite.ts"]);
+  });
+
   test("narrows noisy Vite recommended heuristics", async () => {
     const result = await runProjectFixture({
       framework: "vite",
