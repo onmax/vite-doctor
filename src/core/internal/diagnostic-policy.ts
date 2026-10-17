@@ -232,6 +232,31 @@ function baselineTarget(file: string): { path: string; mode?: number } {
   }
 }
 
+type ConfigSuppression = NonNullable<DoctorConfig["suppressions"]>[number];
+
+export function unusedConfigSuppressions(
+  root: string,
+  config: DoctorConfig,
+  diagnostics: Diagnostic[],
+): ConfigSuppression[] {
+  return (config.suppressions ?? []).filter(
+    (suppression) =>
+      !diagnostics.some((diagnostic) => matchesConfigSuppression(root, suppression, diagnostic)),
+  );
+}
+
+function matchesConfigSuppression(
+  root: string,
+  suppression: ConfigSuppression,
+  diagnostic: Diagnostic,
+): boolean {
+  if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
+  if (suppression.fingerprint && suppression.fingerprint !== diagnostic.fingerprint) return false;
+  if (suppression.file && !nativeMatch(relative(root, diagnostic.file), suppression.file))
+    return false;
+  return true;
+}
+
 function findSuppression(
   root: string,
   config: DoctorConfig,
@@ -239,13 +264,9 @@ function findSuppression(
   sourceLines: Map<string, string[]>,
   sourceSuppressions: Map<string, Map<number, InlineSuppression>>,
 ): string | null {
-  const configured = config.suppressions?.find((suppression) => {
-    if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
-    if (suppression.fingerprint && suppression.fingerprint !== diagnostic.fingerprint) return false;
-    if (suppression.file && !nativeMatch(relative(root, diagnostic.file), suppression.file))
-      return false;
-    return true;
-  });
+  const configured = config.suppressions?.find((suppression) =>
+    matchesConfigSuppression(root, suppression, diagnostic),
+  );
   if (configured) return configured.reason;
   if (!diagnostic.range) return null;
   let lines = sourceLines.get(diagnostic.file);

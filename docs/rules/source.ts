@@ -233,6 +233,26 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       path: "/diagnostics/DOC0022",
       key: "diagnostics/DOC0022.md",
     },
+    {
+      code: "DOC0031",
+      title: "DOC0031: Remove unused config suppressions",
+      description:
+        "A `suppressions` entry in the Doctor config matched no Diagnostic during a full Doctor Run.",
+      why: "A suppression that matches nothing no longer hides a finding, but it still hides any future Diagnostic that matches its Rule, file, or fingerprint. Doctor reports it only for full runs of the suppressed Rule: changed-file runs, Rule selections, analyses-only runs, and disabled or inactive Rules never report this Diagnostic.",
+      fix: "Delete the reported entry from `suppressions` in `doctor.config.*`, `nuxt.config.ts`, or the Vite plugin options.",
+      docsUrl: "https://vite-doctor.onmax.me/cli",
+      ruleId: "doctor/config/unused-suppression",
+      pack: "vite-doctor/core",
+      severity: "info",
+      category: "config",
+      source: "src/core/internal/diagnostics.ts",
+      sourceUrl: githubSourceUrl("src/core/internal/diagnostics.ts"),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0031",
+      key: "diagnostics/DOC0031.md",
+    },
   ];
 }
 

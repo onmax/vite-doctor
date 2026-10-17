@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -20,7 +21,12 @@ import type {
   ProjectInfo,
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
-import { applyDiagnosticPolicy, settleDiagnosticIdentity } from "./diagnostic-policy.js";
+import {
+  applyDiagnosticPolicy,
+  settleDiagnosticIdentity,
+  unusedConfigSuppressions,
+} from "./diagnostic-policy.js";
+import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
@@ -51,11 +57,83 @@ export function applyRequestedFixes(session: ScanSession): AppliedFixes | undefi
 
 export function applyPolicyFilters(session: ScanSession): void {
   session.diagnostics = settleDiagnosticIdentity(session.diagnostics);
+  reportUnusedConfigSuppressions(session);
   applyReportEligibility(session);
   applySeverityFilter(session);
   const result = applyDiagnosticPolicy(session);
   session.diagnostics = result.diagnostics;
   session.suppressedDiagnostics = result.suppressedDiagnostics;
+}
+
+// Scoped runs skip Rules or files, so a suppression can match nothing without being stale.
+function reportUnusedConfigSuppressions(session: ScanSession): void {
+  const { options } = session;
+  if (options.changed || options.since || options.rules || options.analyses) return;
+  const ran = new Set(session.enabledRules.map((rule) => rule.meta.id));
+  const unscoped = options.extends === undefined || options.extends === "auto";
+  const unused = unusedConfigSuppressions(session.root, session.config, session.diagnostics).filter(
+    (suppression) => (suppression.ruleId ? ran.has(suppression.ruleId) : unscoped),
+  );
+  if (!unused.length) return;
+  const configFiles = doctorConfigFiles(session.root);
+  for (const suppression of unused) {
+    const entry = Object.entries(suppression)
+      .filter(([key, value]) => key !== "reason" && typeof value === "string")
+      .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+      .join(", ");
+    const location = locateSuppression(configFiles, suppression);
+    pushDiagnostic(session, {
+      ruleId: "doctor/config/unused-suppression",
+      severity: "info",
+      category: "config",
+      file: location?.file ?? resolve(session.root, "package.json"),
+      range: location?.range,
+      why: `The Doctor config suppression { ${entry} } matched no Diagnostic in this Doctor Run. Its reason was: ${suppression.reason}`,
+      suggestion:
+        "Delete this entry from the Doctor config suppressions. It no longer hides anything, and leaving it in place would silently hide a future Diagnostic that matches it.",
+      confidence: "proven",
+      analysisPhase: "manifest",
+    });
+  }
+}
+
+function doctorConfigFiles(root: string): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const order = ["doctor", "nuxt", "vite"];
+  return entries
+    .map((name) => ({
+      name,
+      match: /^(doctor|nuxt|vite)\.config\.(?:json|[cm]?[jt]s)$/.exec(name),
+    }))
+    .filter((entry) => entry.match)
+    .sort((a, b) => order.indexOf(a.match![1]!) - order.indexOf(b.match![1]!))
+    .map((entry) => resolve(root, entry.name));
+}
+
+function locateSuppression(
+  files: string[],
+  suppression: NonNullable<DoctorConfig["suppressions"]>[number],
+): { file: string; range?: Diagnostic["range"] } | undefined {
+  let fallback: string | undefined;
+  for (const file of files) {
+    const source = readFileSyncIfExists(file);
+    const section = source?.indexOf("suppressions") ?? -1;
+    if (!source || section < 0) continue;
+    fallback ??= file;
+    for (const needle of [suppression.reason, suppression.fingerprint, suppression.file]) {
+      const found = needle ? source.indexOf(needle, section) : -1;
+      if (found < 0) continue;
+      const opening = source.lastIndexOf("{", found);
+      const start = opening > section ? opening : found;
+      return { file, range: { start, end: start + 1, ...lineColumnAt(source, start) } };
+    }
+  }
+  return fallback ? { file: fallback } : undefined;
 }
 
 export function applyReportEligibility(session: ScanSession): void {

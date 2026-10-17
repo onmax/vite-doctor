@@ -32,6 +32,7 @@ export const coreDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0028", ruleId: "doctor/extension/reserved-diagnostic-prefix", docs: false },
   { code: "DOC0029", ruleId: "doctor/extension/unloadable-host-entry", docs: false },
   { code: "DOC0030", ruleId: "doctor/rule/undeclared-cross-file-report", docs: false },
+  { code: "DOC0031", ruleId: "doctor/config/unused-suppression" },
 ]);
 
 export const diagnostics = coreDiagnosticRegistry.diagnostics;
