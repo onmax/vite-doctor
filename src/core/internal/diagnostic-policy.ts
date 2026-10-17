@@ -372,11 +372,7 @@ function collectVueComments(
         if (node.type === TemplateNodeType.COMMENT)
           comments.push({ start: node.loc.start.offset, end: node.loc.end.offset });
       });
-    const jsx = descriptor.scriptSetup?.lang ?? descriptor.script?.lang;
-    return {
-      comments,
-      codeFree: script && /^[jt]sx$/.test(jsx ?? "") ? jsxCommentContainers(script) : [],
-    };
+    return { comments, codeFree: script ? jsxCommentContainers(script) : [] };
   } catch {
     return { comments: [], codeFree: [] };
   }
