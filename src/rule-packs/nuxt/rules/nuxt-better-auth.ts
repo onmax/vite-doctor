@@ -15,8 +15,6 @@ type AnyNode = any;
 // through its nitro-better-auth Nitro module.
 const HANDLER_MODULES = new Set(["@nuxtjs/better-auth", "nuxt-better-auth"]);
 const HANDLER_MODULE_TEXT = /["'](?:@nuxtjs\/better-auth|nuxt-better-auth)["']/;
-const BETTER_AUTH_IMPORT =
-  /\bimport\s*(?:\{([^}]*)\}|\*\s*as\s+([\w$]+))\s*from\s*["']better-auth["']/g;
 const SCRIPT = "{ts,js,mts,mjs,cts,cjs}";
 // Where Better Auth's CLI looks for the auth instance, plus the Nitro server directory.
 const INSTANCE_GLOBS = [
@@ -98,14 +96,14 @@ function registersHandlerModule(file: string, ctx: RuleContext): boolean {
 
 /** Statically named entries of `modules`, or `undefined` when they cannot be read. */
 function configModules(file: string, text: string): string[] | undefined {
-  let program: AnyNode;
-  try {
-    const parsed = parseSync(file, text, { sourceType: "module", lang: "ts" });
-    if (parsed.errors.length) return undefined;
-    program = parsed.program;
-  } catch {
-    return undefined;
-  }
+  const program = parseProgram(file, text);
+  if (!program) return undefined;
+  const imports = new Map<string, string>();
+  for (const statement of program.body)
+    if (statement.type === "ImportDeclaration")
+      for (const specifier of statement.specifiers)
+        if (specifier.type === "ImportDefaultSpecifier")
+          imports.set(specifier.local.name, statement.source.value);
   let config = program.body.find(
     (statement: AnyNode) => statement.type === "ExportDefaultDeclaration",
   )?.declaration;
@@ -127,23 +125,69 @@ function configModules(file: string, text: string): string[] | undefined {
   for (const entry of modules.elements) {
     const name = entry?.type === "ArrayExpression" ? entry.elements[0] : entry;
     if (name?.type === "Literal" && typeof name.value === "string") names.push(name.value);
-    else if (name?.type !== "Identifier" && name?.type !== "CallExpression") return undefined;
+    else if (name?.type === "Identifier") {
+      const source = imports.get(name.name);
+      if (source === undefined) return undefined;
+      names.push(source);
+    } else if (name?.type !== "CallExpression") return undefined;
   }
   return names;
 }
 
-/** A call to `betterAuth` imported from better-auth, under any local name. */
-function betterAuthCall(text: string): RegExpMatchArray | undefined {
-  const callees: string[] = [];
-  for (const [, named, namespace] of text.matchAll(BETTER_AUTH_IMPORT)) {
-    if (namespace) callees.push(`${namespace.replace(/\$/g, "\\$")}\\s*\\.\\s*betterAuth`);
-    for (const specifier of named?.split(",") ?? []) {
-      const [imported, local = imported] = specifier.trim().split(/\s+as\s+/);
-      if (imported === "betterAuth" && local) callees.push(local.replace(/\$/g, "\\$"));
+function parseProgram(file: string, text: string): AnyNode {
+  try {
+    const parsed = parseSync(file, text, { sourceType: "module", lang: "ts" });
+    return parsed.errors.length ? undefined : parsed.program;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The first call to `betterAuth` imported from better-auth, under any local name. */
+function betterAuthCall(file: string, text: string): { start: number; end: number } | undefined {
+  if (!text.includes("better-auth")) return undefined;
+  const program = parseProgram(file, text);
+  if (!program) return undefined;
+  const callees = new Set<string>();
+  const namespaces = new Set<string>();
+  for (const statement of program.body) {
+    if (statement.type !== "ImportDeclaration" || statement.source.value !== "better-auth")
+      continue;
+    if (statement.importKind === "type") continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === "ImportNamespaceSpecifier") namespaces.add(specifier.local.name);
+      else if (
+        specifier.type === "ImportSpecifier" &&
+        specifier.importKind !== "type" &&
+        (specifier.imported.name ?? specifier.imported.value) === "betterAuth"
+      )
+        callees.add(specifier.local.name);
     }
   }
-  if (!callees.length) return undefined;
-  return text.match(new RegExp(`(?<![\\w$.])(?:${callees.join("|")})\\s*\\(`)) ?? undefined;
+  if (!callees.size && !namespaces.size) return undefined;
+  let found: AnyNode;
+  const visit = (node: AnyNode) => {
+    if (found || !node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    const callee = node.type === "CallExpression" ? node.callee : undefined;
+    if (
+      (callee?.type === "Identifier" && callees.has(callee.name)) ||
+      (callee?.type === "MemberExpression" &&
+        !callee.computed &&
+        callee.object.type === "Identifier" &&
+        namespaces.has(callee.object.name) &&
+        callee.property.name === "betterAuth")
+    ) {
+      found = callee;
+      return;
+    }
+    for (const key in node) visit(node[key]);
+  };
+  visit(program.body);
+  return found && { start: found.start, end: found.end };
 }
 
 /** The first `betterAuth()` call, the server instance whose handler must be mounted. */
@@ -151,12 +195,9 @@ function findAuthInstance(ctx: RuleContext, root: string) {
   for (const pattern of INSTANCE_GLOBS) {
     for (const file of ctx.fs.glob(pattern, { cwd: root, exclude: ["**/node_modules/**"] })) {
       const text = ctx.fs.readText(file);
-      const call = text === undefined ? undefined : betterAuthCall(text);
-      if (text !== undefined && call?.index !== undefined)
-        return {
-          file,
-          range: ctx.helpers.rangeFromOffsets(file, text, call.index, call.index + call[0].length),
-        };
+      const call = text === undefined ? undefined : betterAuthCall(file, text);
+      if (text !== undefined && call)
+        return { file, range: ctx.helpers.rangeFromOffsets(file, text, call.start, call.end) };
     }
   }
   return undefined;

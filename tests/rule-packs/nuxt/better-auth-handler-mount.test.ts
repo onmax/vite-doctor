@@ -203,3 +203,31 @@ test("ignores a local function named betterAuth", async () => {
   });
   expect(result.diagnostics).toEqual([]);
 });
+
+test.each([
+  ["an imported module", "betterAuthModule"],
+  ["an imported module with options", "[betterAuthModule, {}]"],
+])("accepts a handler module registered as %s", async (_name, entry) => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireStandardAuthHandlerMount],
+    files: {
+      ...authInstance,
+      "nuxt.config.ts": `import betterAuthModule from "nuxt-better-auth"\nexport default defineNuxtConfig({ modules: [${entry}] })\n`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("ignores a better-auth import that is commented out", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireStandardAuthHandlerMount],
+    files: {
+      "nuxt.config.ts": "export default defineNuxtConfig({})\n",
+      "server/utils/auth.ts":
+        "/* import { betterAuth } from 'better-auth' */\nfunction betterAuth() {}\n\nexport const auth = betterAuth()\n",
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
