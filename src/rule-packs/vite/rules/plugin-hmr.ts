@@ -3606,16 +3606,16 @@ function pluginSource(path: string, program: AnyNode): "path" | "import" | null 
 function isPluginObject(node: AnyNode, origin: "path" | "import", program?: AnyNode): boolean {
   if (node?.type !== "ObjectExpression") return false;
   const properties = node.properties ?? [];
-  const hasHook = properties.some(
-    (property: AnyNode) =>
-      PLUGIN_HOOKS.has(property.key?.name ?? property.key?.value) &&
-      (origin === "path" || isHook(property.value, program)),
+  const hooks = properties.filter((property: AnyNode) =>
+    PLUGIN_HOOKS.has(property.key?.name ?? property.key?.value),
   );
-  if (!hasHook || origin === "path") return hasHook;
+  if (hooks.length === 0) return false;
+  if (origin === "path") return true;
+  // A plugin-typed position is enough evidence even when a hook comes from another module.
+  if (isPluginPosition(node, program)) return true;
   return (
-    properties.some(
-      (property: AnyNode) => (property.key?.name ?? property.key?.value) === "name",
-    ) || isPluginPosition(node, program)
+    hooks.some((property: AnyNode) => isHook(property.value, program)) &&
+    properties.some((property: AnyNode) => (property.key?.name ?? property.key?.value) === "name")
   );
 }
 
@@ -3633,7 +3633,7 @@ function isPluginPosition(node: AnyNode, program: AnyNode): boolean {
   let current = node;
   let parent = node.__doctorParent;
   while (parent) {
-    if (["TSAsExpression", "TSSatisfiesExpression"].includes(parent.type))
+    if (["TSAsExpression", "TSSatisfiesExpression", "TSTypeAssertion"].includes(parent.type))
       return isPluginType(parent.typeAnnotation);
     if (parent.type === "VariableDeclarator")
       return parent.init === current && isPluginType(parent.id?.typeAnnotation);

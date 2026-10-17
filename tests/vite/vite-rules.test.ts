@@ -193,6 +193,11 @@ export const config: UserConfig = {}`,
 export const plugin: Option = { load(id) { return id } }`,
         "packages/kit/src/inline.ts": `import { loadEnv } from 'vite'
 export const plugin: import('vite').Plugin = { load(id) { return loadEnv(id, '') } }`,
+        "packages/kit/src/imported.ts": `import type { Plugin } from 'vite'
+import { load } from './load'
+export const plugin: Plugin = { load }`,
+        "packages/kit/src/asserted.ts": `import type { Plugin } from 'vite'
+export default <Plugin>{ resolveId(id) { return id } }`,
         "packages/kit/src/extended.ts": `import type { Plugin } from 'vite'
 interface EnvPlugin extends Plugin { api: string }
 export function env(): EnvPlugin { return { api: '', load(id) { return id } } }`,
@@ -216,7 +221,9 @@ export function lifecycle(config: UserConfig) {
       "vite/plugin/require-name aliased.ts",
       "vite/plugin/require-name annotated.ts",
       "vite/plugin/require-name array.ts",
+      "vite/plugin/require-name asserted.ts",
       "vite/plugin/require-name extended.ts",
+      "vite/plugin/require-name imported.ts",
       "vite/plugin/require-name inline.ts",
     ]);
   });
