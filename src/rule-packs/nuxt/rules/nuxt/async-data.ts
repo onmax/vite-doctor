@@ -225,19 +225,18 @@ function handlerFetchRequests(ctx: RuleContext, handler: AnyNode) {
   return requests;
 }
 
-// GET only when the options provably omit `method`; otherwise a missing static method is unknown (null).
+// The method is the last static `method` after any spread or computed key; otherwise unknown (null).
 function readonlyRequest(path: string | null, optionsArgument: AnyNode) {
   if (!optionsArgument) return { path, method: "GET" };
   const options = objectExpression(optionsArgument);
-  const methodNode = getObjectPropertyValue(options, "method");
-  if (methodNode) return { path, method: resolveHttpMethod(methodNode) };
-  const overridable =
-    !options ||
-    options.properties?.some(
-      (property: AnyNode) =>
-        property.type === "SpreadElement" || property.type === "SpreadProperty",
-    );
-  return { path, method: overridable ? null : "GET" };
+  if (!options) return { path, method: null };
+  let method: string | null = "GET";
+  for (const property of options.properties ?? []) {
+    const name = property.computed ? null : propertyKeyName(property);
+    if (name === "method") method = resolveHttpMethod(property.value);
+    else if (!name) method = null;
+  }
+  return { path, method };
 }
 
 export function isWriteLikePath(path: string | null, options: AsyncDataRuleOptions): boolean {

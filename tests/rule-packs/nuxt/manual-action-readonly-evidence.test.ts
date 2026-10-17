@@ -128,6 +128,14 @@ test.each([
     `const { refresh } = useAsyncData('search', () => $fetch('/api/search', { ...requestOptions, body }), { immediate: false })`,
   ],
   [
+    "an explicit method before a spread",
+    `const { execute } = useLazyFetch('/api/search', { method: 'GET', ...requestDefaults, immediate: false })`,
+  ],
+  [
+    "a computed option key",
+    `const { refresh } = useAsyncData('search', () => $fetch('/api/search', { [methodKey]: 'DELETE' }), { immediate: false })`,
+  ],
+  [
     "fetch entry options with a spread",
     `const { execute } = useLazyFetch('/api/search', { ...requestDefaults, immediate: false })`,
   ],
@@ -137,3 +145,11 @@ test.each([
     expect(await diagnose(script, ["/api/kpis"])).toEqual(["read"]);
   },
 );
+
+test("accepts a query-like path whose method follows a spread", async () => {
+  expect(
+    await diagnose(
+      `const { execute } = useLazyFetch('/api/search', { ...requestDefaults, method: 'POST', immediate: false })`,
+    ),
+  ).toEqual([]);
+});
