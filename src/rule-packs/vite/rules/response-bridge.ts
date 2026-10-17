@@ -63,7 +63,8 @@ function reportSetHeaderCalls(ctx: RuleContext, loop: AnyNode, body: AnyNode, ke
 // The header name passed as the first argument of `target.setHeader(name, value)`.
 function isSetHeaderName(node: AnyNode, key?: string): boolean {
   if (node?.type !== "Identifier" || (key !== undefined && node.name !== key)) return false;
-  const call = node.__doctorParent;
+  let call = node.__doctorParent;
+  while (call && WRAPPERS.includes(call.type)) call = call.__doctorParent;
   if (call?.type !== "CallExpression" || unwrap(call.arguments[0]) !== node) return false;
   const callee = unwrap(call.callee);
   return callee?.type === "MemberExpression" && memberName(callee) === "setHeader";
@@ -116,19 +117,17 @@ function isFunction(node: AnyNode): boolean {
   );
 }
 
+const WRAPPERS = [
+  "TSAsExpression",
+  "TSTypeAssertion",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "ParenthesizedExpression",
+  "ChainExpression",
+];
+
 function unwrap(node: AnyNode): AnyNode {
-  while (
-    node &&
-    [
-      "TSAsExpression",
-      "TSTypeAssertion",
-      "TSSatisfiesExpression",
-      "TSNonNullExpression",
-      "ParenthesizedExpression",
-      "ChainExpression",
-    ].includes(node.type)
-  )
-    node = node.expression;
+  while (node && WRAPPERS.includes(node.type)) node = node.expression;
   return node;
 }
 
@@ -141,10 +140,19 @@ function walkBinding(node: AnyNode, name: string, visit: (node: AnyNode) => void
   }
   if (typeof node.type !== "string") return;
   if (isFunction(node) && node.params.some((param: AnyNode) => bindsName(param, name))) return;
+  if (node.type === "BlockStatement" && node.body.some((item: AnyNode) => declares(item, name)))
+    return;
   visit(node);
   for (const [key, child] of Object.entries(node)) {
     if (key !== "__doctorParent") walkBinding(child, name, visit);
   }
+}
+
+function declares(statement: AnyNode, name: string): boolean {
+  return (
+    statement.type === "VariableDeclaration" &&
+    statement.declarations.some((declarator: AnyNode) => bindsName(declarator.id, name))
+  );
 }
 
 function bindsName(pattern: AnyNode, name: string): boolean {

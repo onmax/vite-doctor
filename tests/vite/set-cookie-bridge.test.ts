@@ -47,6 +47,12 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
   response.headers.forEach((value, key) => res.setHeader(key, value))
 }`,
     ],
+    [
+      "a header name wrapped in a type assertion",
+      `function copy(res, response) {
+  for (const [name, value] of response.headers) res.setHeader(name as string, value)
+}`,
+    ],
   ])("reports %s", async (_label, source) => {
     const result = await run(source);
     expect(result.diagnostics).toHaveLength(1);
@@ -153,6 +159,17 @@ function copy(res, response) {
       "copying Fetch request headers onto an outgoing request",
       `function forward(proxyReq, request) {
   request.headers.forEach((value, key) => proxyReq.setHeader(key, value))
+}`,
+    ],
+    [
+      "a block that shadows the header name",
+      `function copy(res, response) {
+  for (const [name, value] of response.headers) {
+    {
+      const name = "x-copied"
+      res.setHeader(name, value)
+    }
+  }
 }`,
     ],
   ])("accepts %s", async (_label, source) => {
