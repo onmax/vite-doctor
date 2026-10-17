@@ -22,10 +22,11 @@ const CLOUDFLARE_PACKAGES = [
 const CLOUDFLARE_KEYWORDS = new Set(["cloudflare", "cloudflare-workers", "workerd"]);
 const WRANGLER_CONFIGS = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
 const HOST_CONFIGS = ["nitro", "nuxt", "vite"].flatMap((name) =>
-  ["ts", "mts", "js", "mjs"].map((extension) => `${name}.config.${extension}`),
+  ["ts", "mts", "cts", "js", "mjs", "cjs"].map((extension) => `${name}.config.${extension}`),
 );
 const CLOUDFLARE_PRESET = /\bpreset\s*:\s*["'`]cloudflare/i;
 const CLOUDFLARE_PRESET_ENV = /\bNITRO_PRESET=["']?cloudflare/i;
+const ASYNC_LOCAL_STORAGE = /\bAsyncLocalStorage\b|\basync_hooks\b/;
 const TEST_FILE = /(?:^|\/)(?:tests?|__tests__|e2e)\/|\.(?:spec|test)\.[cm]?[jt]sx?$/;
 
 export const noUnguardedAlsEnterWith = createRule({
@@ -36,11 +37,12 @@ export const noUnguardedAlsEnterWith = createRule({
     severity: "error",
     fixable: "suggestion",
     docsUrl: "https://developers.cloudflare.com/workers/runtime-apis/nodejs/asynclocalstorage/",
-    requires: { script: true },
+    requires: { script: true, nitro: true },
     prefilter: { names: ["enterWith"] },
   },
   create(ctx) {
     if (TEST_FILE.test(ctx.file.relativePath.replace(/\\/g, "/"))) return;
+    if (!ASYNC_LOCAL_STORAGE.test(ctx.file.text)) return;
     return {
       CallExpression(node: AnyNode) {
         const callee = node.callee;
@@ -69,20 +71,16 @@ function isInsideTry(node: AnyNode) {
   for (let child = node, current = node.__doctorParent; current;) {
     if (FUNCTION_TYPES.has(current.type)) return false;
     if (current.type === "TryStatement" && current.block === child && current.handler)
-      return !onlyRethrows(current.handler);
+      return !alwaysThrows(current.handler);
     child = current;
     current = current.__doctorParent;
   }
   return false;
 }
 
-function onlyRethrows(handler: AnyNode) {
-  const [statement, ...rest] = handler.body?.body ?? [];
-  return (
-    !rest.length &&
-    statement?.type === "ThrowStatement" &&
-    statement.argument?.type === "Identifier" &&
-    statement.argument.name === handler.param?.name
+function alwaysThrows(handler: AnyNode) {
+  return (handler.body?.body ?? []).some(
+    (statement: AnyNode) => statement.type === "ThrowStatement",
   );
 }
 

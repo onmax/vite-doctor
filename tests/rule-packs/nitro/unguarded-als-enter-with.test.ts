@@ -65,6 +65,11 @@ test.each([
     "nitro",
   ],
   [
+    "a cloudflare preset in a CommonJS Nitro config",
+    { "nitro.config.cjs": "module.exports = { preset: 'cloudflare-pages' }" },
+    "nitro",
+  ],
+  [
     "a cloudflare Nuxt preset",
     {
       "nuxt.config.ts":
@@ -112,6 +117,10 @@ test.each([
     "try {\n    queueMicrotask(() => storage.enterWith(event))\n  }\n  catch {}",
   ],
   ["a try/finally", "try {\n    storage.enterWith(event)\n  }\n  finally {}"],
+  [
+    "a catch that logs and rethrows",
+    "try {\n    storage.enterWith(event)\n  }\n  catch (error) {\n    console.error(error)\n    throw new Error('enter failed', { cause: error })\n  }",
+  ],
 ])("reports %s", async (_, body) => {
   const source = `import { AsyncLocalStorage } from "node:async_hooks"
 const storage = new AsyncLocalStorage<unknown>()
@@ -127,6 +136,15 @@ test.each([
   ["guarded calls", { "src/runtime/state.ts": guarded }, { wrangler: "^4.0.0" }],
   ["projects without a Cloudflare target", { "src/runtime/state.ts": unguarded }, undefined],
   ["test files", { "test/runtime.test.ts": unguarded }, { wrangler: "^4.0.0" }],
+  [
+    "enterWith() on objects that are not AsyncLocalStorage",
+    {
+      "src/runtime/router.ts": `export function enterSection(router: { enterWith(value: string): void }) {
+  router.enterWith("settings")
+}`,
+    },
+    { wrangler: "^4.0.0" },
+  ],
   [
     "run()",
     {
