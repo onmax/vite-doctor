@@ -19,6 +19,10 @@ test.each([
     `<script lang="ts">\nexport default defineComponent({\n  setup: async () => {\n    const user = await fetch('/api/user')\n    return { user }\n  },\n})\n</script>`,
   ],
   [
+    "default-exported options object",
+    `<script lang="ts">\nexport default {\n  async setup() {\n    const user = await $fetch('/api/user')\n    return { user }\n  },\n}\n</script>`,
+  ],
+  [
     "setup block inside if",
     `<script setup lang="ts">\nif (true) {\n  const user = await $fetch('/api/user')\n}\n</script>`,
   ],
@@ -29,6 +33,18 @@ test.each([
 
 test.each([
   ["normal script top level", `<script lang="ts">const user = await $fetch('/api/user')</script>`],
+  [
+    "normal script beside script setup",
+    `<script lang="ts">\nconst user = await $fetch('/api/user')\n</script>\n<script setup lang="ts">\nconst title = 'Profile'\n</script>`,
+  ],
+  [
+    "setup property on a non-component object",
+    `<script setup lang="ts">\nconst service = {\n  setup: async () => await $fetch('/api/user'),\n}\n</script>`,
+  ],
+  [
+    "setup method under component methods",
+    `<script lang="ts">\nexport default defineComponent({\n  methods: {\n    async setup() {\n      await $fetch('/api/user')\n    },\n  },\n})\n</script>`,
+  ],
   [
     "named handler",
     `<script setup lang="ts">\nasync function save() {\n  await $fetch('/api/user', { method: 'PATCH' })\n}\n</script>\n<template><button type="button" @click="save">Save</button></template>`,

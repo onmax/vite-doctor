@@ -57,5 +57,20 @@ function isSetupScope(scope: AnyNode, node: AnyNode, sfc: AnyNode): boolean {
   if (owner?.type !== "Property" && owner?.type !== "MethodDefinition") return false;
   if (owner.value !== scope || owner.computed) return false;
   const key = owner.key;
-  return (key?.type === "Identifier" ? key.name : key?.value) === "setup";
+  if ((key?.type === "Identifier" ? key.name : key?.value) !== "setup") return false;
+  return isComponentOptions(owner.__doctorParent);
+}
+
+const COMPONENT_DEFINERS = new Set(["defineComponent", "defineNuxtComponent"]);
+
+function isComponentOptions(object: AnyNode): boolean {
+  if (object?.type !== "ObjectExpression") return false;
+  const parent = object.__doctorParent;
+  if (parent?.type === "ExportDefaultDeclaration") return true;
+  return (
+    parent?.type === "CallExpression" &&
+    parent.arguments?.[0] === object &&
+    parent.callee?.type === "Identifier" &&
+    COMPONENT_DEFINERS.has(parent.callee.name)
+  );
 }
