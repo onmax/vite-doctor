@@ -1,4 +1,4 @@
-import { type AnyNode, createRule, walkScriptLocal } from "./shared.js";
+import { type AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "nuxt/config/no-runtime-env-in-build-options";
@@ -173,9 +173,16 @@ function* buildOptionValues(
     }
     if (property.type !== "Property") continue;
     const key = propertyName(property);
-    if (!key || key === "runtimeConfig") continue;
+    if (!key || (key === "runtimeConfig" && isRuntimeConfigOwner(parents))) continue;
     yield* buildOptionValue(property.value, bindings, [...parents, key]);
   }
+}
+
+function isRuntimeConfigOwner(path: string[]): boolean {
+  let rest = path;
+  if (rest[0] && ENVIRONMENT_OVERRIDE_KEYS.has(rest[0])) rest = rest.slice(1);
+  else if (rest[0] === "$env" && rest.length >= 2) rest = rest.slice(2);
+  return rest.length === 0 || (rest.length === 1 && rest[0] === "nitro");
 }
 
 function* buildOptionValue(
@@ -204,7 +211,8 @@ function envReadsResolver(bindings: Map<string, AnyNode>) {
 
   const readsFor = (root: AnyNode): EnvReads => {
     const reads: EnvReads = { names: new Set(), opaque: false };
-    walkScriptLocal(root, (node) => {
+    const shadowed = FUNCTION_TYPES.has(root?.type) ? declaredNames(root) : new Set<string>();
+    walkWhileLoading(root, (node) => {
       if (isProcessEnv(node)) {
         const name = envMemberName(node.__doctorParent, node);
         if (name) reads.names.add(name);
@@ -212,6 +220,7 @@ function envReadsResolver(bindings: Map<string, AnyNode>) {
         return;
       }
       if (node.type !== "Identifier" || !bindings.has(node.name) || isNonReference(node)) return;
+      if (shadowed.has(node.name)) return;
       // A function passed as a value reads the environment when it runs, not when config loads.
       if (FUNCTION_TYPES.has(unwrap(bindings.get(node.name))?.type) && !isCallee(node)) return;
       const bound = bindingReads(node.name);
@@ -233,6 +242,61 @@ function envReadsResolver(bindings: Map<string, AnyNode>) {
   };
 
   return readsFor;
+}
+
+// Visits what runs while nuxt.config loads: nested functions are visited but not entered, because
+// their bodies run only when something calls them later.
+function walkWhileLoading(root: AnyNode, visit: (node: AnyNode) => void) {
+  const step = (node: AnyNode, nested: boolean) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) step(child, true);
+      return;
+    }
+    if (typeof node.type === "string") {
+      visit(node);
+      if (nested && FUNCTION_TYPES.has(node.type)) return;
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key !== "__doctorParent") step(value, true);
+    }
+  };
+  step(root, false);
+}
+
+function declaredNames(fn: AnyNode): Set<string> {
+  const names = new Set<string>();
+  for (const param of fn.params ?? []) patternNames(param, names);
+  walkWhileLoading(fn.body, (node) => {
+    if (node.type === "VariableDeclarator") patternNames(node.id, names);
+    else if (node.type === "FunctionDeclaration" && node.id?.name) names.add(node.id.name);
+  });
+  return names;
+}
+
+function patternNames(pattern: AnyNode, names: Set<string>) {
+  switch (pattern?.type) {
+    case "Identifier":
+      names.add(pattern.name);
+      break;
+    case "AssignmentPattern":
+      patternNames(pattern.left, names);
+      break;
+    case "RestElement":
+      patternNames(pattern.argument, names);
+      break;
+    case "TSParameterProperty":
+      patternNames(pattern.parameter, names);
+      break;
+    case "ArrayPattern":
+      for (const element of pattern.elements ?? []) patternNames(element, names);
+      break;
+    case "ObjectPattern":
+      for (const property of pattern.properties ?? []) {
+        patternNames(property.type === "RestElement" ? property : property.value, names);
+      }
+      break;
+  }
 }
 
 function isProcessEnv(node: AnyNode): boolean {

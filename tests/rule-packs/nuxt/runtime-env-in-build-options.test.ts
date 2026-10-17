@@ -200,3 +200,37 @@ export default defineNuxtConfig({
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.why).toContain("apollo.endpoint");
 });
+
+test.each([
+  [
+    "a shadowing declaration inside an inline function",
+    `endpoint: (() => { const apiBase = 'fixed'; return apiBase })(),`,
+  ],
+  ["a callback returned from a called function", `endpoint: deferred(),`],
+  ["a parameter that shadows a top-level binding", `endpoint: withBase('fixed'),`],
+  ["a callback nested in a bound object", `hooks: handlers,`],
+])("does not report %s", async (_name, option) => {
+  const result = await run(`
+const apiBase = process.env.NUXT_PUBLIC_API_BASE
+function deferred() { return () => process.env.NUXT_PUBLIC_API_BASE }
+function withBase(apiBase) { return apiBase + '/graphql' }
+const handlers = { ready: () => process.env.NUXT_PUBLIC_API_BASE }
+
+export default defineNuxtConfig({
+  runtimeConfig: { public: { apiBase: '' } },
+  myModule: { ${option} },
+})
+`);
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("reports a module option that is itself named runtimeConfig", async () => {
+  const result = await run(`export default defineNuxtConfig({
+  runtimeConfig: { foo: '' },
+  myModule: { runtimeConfig: { endpoint: process.env.NUXT_FOO } },
+})`);
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.why).toContain("myModule.runtimeConfig.endpoint");
+});
