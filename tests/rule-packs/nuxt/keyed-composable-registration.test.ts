@@ -137,3 +137,44 @@ test("reports an exported factory when its layer disables compiler scanning", as
     }),
   ).toEqual([ruleId]);
 });
+
+test.each([
+  ["an export specifier", "const useOrders = createUseFetch('/api/orders')\nexport { useOrders }"],
+  [
+    "a renamed export specifier",
+    "const useOrdersFactory = createUseFetch('/api/orders')\nexport { useOrdersFactory as useOrders }",
+  ],
+  ["a default export", "export default createUseFetch('/api/orders')"],
+])("accepts a factory Nuxt scans through %s", async (_, source) => {
+  expect(
+    await diagnose({
+      "app/composables/useOrders.ts": source,
+      ".nuxt/doctor.manifest.json": manifest(["[object Object]"]),
+    }),
+  ).toEqual([]);
+});
+
+test("reports a type-only export specifier", async () => {
+  expect(
+    await diagnose({
+      "app/composables/useOrders.ts":
+        "const useOrders = createUseFetch('/api/orders')\nexport type { useOrders }",
+    }),
+  ).toEqual([ruleId]);
+});
+
+test("accepts an exported factory in a layer that keeps compiler scanning on", async () => {
+  expect(
+    await diagnose({
+      "layers/admin/composables/useOrders.ts":
+        "export const useOrders = createUseFetch('/api/orders')",
+      ".nuxt/doctor.manifest.json": manifest(
+        [],
+        [
+          { root: ".", srcDir: "app", compilerScan: true, priority: 0 },
+          { root: "layers/admin", srcDir: "layers/admin", compilerScan: true, priority: 1 },
+        ],
+      ),
+    }),
+  ).toEqual([]);
+});
