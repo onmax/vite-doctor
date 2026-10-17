@@ -72,6 +72,14 @@ test.each([
     "function f(value: unknown) { const alias = value; return alias instanceof Date }",
   ],
   [
+    "guard for a different type",
+    "function f(value: unknown) { return value instanceof ArrayBuffer || isArrayBufferView(value) }",
+  ],
+  [
+    "awaited export of a loaded module",
+    "async function load(id: string) { const mod = await import(id); return (await mod.default) instanceof Response }",
+  ],
+  [
     "negative guard",
     "function f(value: unknown) { return value instanceof Response || isNotResponse(value) }",
   ],
@@ -114,6 +122,10 @@ test.each([
   [
     "method on a typed web value",
     "function f(request: Request) { return request.clone() instanceof Request }",
+  ],
+  [
+    "method on an optional typed web value",
+    "function f(request: Request | undefined) { if (request) return request.clone() instanceof Request }",
   ],
   [
     "imported function result",

@@ -112,8 +112,7 @@ function hasDuckTypedAlternative(node: AnyNode, className: string): boolean {
     const callee = expression(operand.callee, true);
     return (
       callee?.type === "Identifier" &&
-      /^is(?!Not[A-Z])[A-Z]/.test(callee.name) &&
-      callee.name.toLowerCase().includes(className.toLowerCase()) &&
+      new RegExp(`^is(?!Not[A-Z])(?:[A-Z]\\w*)?${className}(?:Like)?$`).test(callee.name) &&
       operand.arguments?.some(
         (argument: AnyNode) =>
           expression(argument, true)?.type === "Identifier" &&
@@ -132,7 +131,7 @@ function crossRealmOrigin(
   const direct = valueOrigin(evidence, value);
   if (direct) return direct;
   if (value?.type !== "Identifier") {
-    const root = memberRoot(value);
+    const root = memberRoot(awaited(value));
     return root && root !== value && moduleOrigin(evidence, root) ? "loaded module" : undefined;
   }
   const binding = evidence.binding(value);
@@ -225,8 +224,8 @@ function awaited(node: AnyNode): AnyNode {
 }
 
 function memberRoot(node: AnyNode): AnyNode {
-  let current = expression(node, true);
-  while (current?.type === "MemberExpression") current = expression(current.object, true);
+  let current = awaited(node);
+  while (current?.type === "MemberExpression") current = awaited(current.object);
   return current;
 }
 
@@ -239,6 +238,13 @@ function isUnknownOrAny(annotation: AnyNode): boolean {
 // Methods on a typed web value (`request.clone()`, `date.getTime()`) return values from the
 // value's own realm, not from a caller-supplied callback.
 function isWebTyped(annotation: AnyNode): boolean {
+  if (annotation?.type === "TSParenthesizedType") return isWebTyped(annotation.typeAnnotation);
+  if (annotation?.type === "TSUnionType") {
+    const types = (annotation.types ?? []).filter(
+      (type: AnyNode) => type.type !== "TSUndefinedKeyword" && type.type !== "TSNullKeyword",
+    );
+    return types.length > 0 && types.every(isWebTyped);
+  }
   return (
     annotation?.type === "TSTypeReference" &&
     annotation.typeName?.type === "Identifier" &&
