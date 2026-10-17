@@ -1,0 +1,199 @@
+import { describe, expect, test } from "vite-plus/test";
+import { runProjectFixture } from "../../src/core/testkit.ts";
+import { noConfigHookArrayEcho, viteRulePack } from "../../src/rules.ts";
+import { diagnosticsCollectionSource, getDiagnosticDocuments } from "../../docs/rules/source.ts";
+
+function run(source: string) {
+  return runProjectFixture({
+    framework: "vite",
+    rules: [noConfigHookArrayEcho],
+    files: { "src/vite.ts": source },
+  });
+}
+
+const prelude = `import type { Plugin } from "vite"
+import { createNoExternalMerger, isServerEnvironment } from "@vite-hub/internal/build/vite"
+const WORKSPACE_PACKAGE_NAME = "@vite-hub/workspace"
+const mergeNoExternal = createNoExternalMerger(WORKSPACE_PACKAGE_NAME)
+`;
+
+describe("vite/plugin/no-config-hook-array-echo", () => {
+  test("reports a same-file helper that returns the incoming array (vitehub 9ad7b6825^ workspace plugin)", async () => {
+    const result = await run(`${prelude}
+function mergeDedupe(current: string[] | undefined): string[] {
+  if (!current) return [WORKSPACE_PACKAGE_NAME]
+  return current.includes(WORKSPACE_PACKAGE_NAME) ? current : [...current, WORKSPACE_PACKAGE_NAME]
+}
+
+export function hubWorkspace(): Plugin {
+  return {
+    name: "@vite-hub/workspace/vite",
+    configEnvironment(name, config) {
+      if (!isServerEnvironment(name, config)) return
+      return {
+        resolve: {
+          dedupe: mergeDedupe(config.resolve?.dedupe),
+          noExternal: mergeNoExternal(config.resolve?.noExternal),
+        },
+      }
+    },
+  }
+}`);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      code: "VITE0026",
+      ruleId: "vite/plugin/no-config-hook-array-echo",
+      severity: "warn",
+      range: { line: 18 },
+    });
+    expect(result.diagnostics[0]?.message).toContain("resolve.dedupe");
+  });
+
+  test.each([
+    [
+      "a direct spread",
+      `config(config) {
+      return { ssr: { noExternal: [...config.ssr.noExternal, "my-lib"] } }
+    }`,
+      "ssr.noExternal",
+    ],
+    [
+      "a spread with an empty fallback",
+      `config(config) {
+      return { resolve: { dedupe: [...(config.resolve?.dedupe ?? []), "vue"] } }
+    }`,
+      "resolve.dedupe",
+    ],
+    [
+      "a Set-deduplicated spread",
+      `async config(config, environment) {
+      return { resolve: { dedupe: [...new Set([...(config.resolve?.dedupe || []), "yjs"])] } }
+    }`,
+      "resolve.dedupe",
+    ],
+    [
+      "concat on the incoming array",
+      `config: (config) => ({ optimizeDeps: { include: config.optimizeDeps.include.concat(["a"]) } })`,
+      "optimizeDeps.include",
+    ],
+    [
+      "a local alias in a handler-object hook",
+      `config: {
+      order: "pre",
+      handler(config) {
+        const ignored = config.server?.watch?.ignored ?? []
+        return { server: { watch: { ignored: [...ignored, "**/.cache/**"] } } }
+      },
+    }`,
+      "server.watch.ignored",
+    ],
+    [
+      "a returned variable extended by assignment",
+      `config(config) {
+      const result = { define: { A: "1" } }
+      if (config.ssr) result.ssr = { noExternal: [...config.ssr.noExternal, "x"] }
+      return result
+    }`,
+      "ssr.noExternal",
+    ],
+  ])("reports %s", async (_label, hook, path) => {
+    const result = await run(`export default function plugin() {
+  return {
+    name: "fixture",
+    ${hook},
+  }
+}`);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.code).toBe("VITE0026");
+    expect(result.diagnostics[0]?.message).toContain(path);
+  });
+
+  test.each([
+    [
+      "only additions from a helper (vitehub 9ad7b6825 fix)",
+      `function dedupeAddition(current: string[] | undefined): string[] | undefined {
+  return current?.includes("vue") ? undefined : ["vue"]
+}
+export default () => ({
+  name: "fixture",
+  configEnvironment(name, config) {
+    return { resolve: { dedupe: dedupeAddition(config.resolve?.dedupe) } }
+  },
+})`,
+    ],
+    [
+      "in-place mutation of the incoming config",
+      `export default () => ({
+  name: "fixture",
+  async config(config) {
+    config.resolve = {
+      ...config.resolve,
+      dedupe: [...new Set([...(config.resolve?.dedupe || []), "yjs"])],
+    }
+  },
+})`,
+    ],
+    [
+      "helpers imported from another file",
+      `${prelude}
+export default () => ({
+  name: "fixture",
+  config(config) {
+    return { ssr: { noExternal: mergeNoExternal(config.ssr?.noExternal) } }
+  },
+})`,
+    ],
+    [
+      "copying an array to a different config path",
+      `export default () => ({
+  name: "fixture",
+  config(config) {
+    return { optimizeDeps: { include: [...(config.ssr?.noExternal ?? [])] } }
+  },
+})`,
+    ],
+    [
+      "spreading object-valued config",
+      `export default () => ({
+  name: "fixture",
+  config(config) {
+    return { define: { __APP__: "1", ...config.define } }
+  },
+})`,
+    ],
+    [
+      "config methods on objects that are not plugins",
+      `export const store = {
+  config(config) {
+    return { items: [...config.items, "x"] }
+  },
+}`,
+    ],
+    [
+      "spreads inside nested callbacks",
+      `export default () => ({
+  name: "fixture",
+  config(config) {
+    const later = () => ({ resolve: { dedupe: [...config.resolve.dedupe] } })
+    return { resolve: { conditions: ["worker"] } }
+  },
+})`,
+    ],
+  ])("accepts %s", async (_label, source) => {
+    const result = await run(source);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("is Recommended and documents VITE0026", async () => {
+    expect(viteRulePack.presets?.recommended).toContain(noConfigHookArrayEcho.meta.id);
+    expect(getDiagnosticDocuments()).toContainEqual(
+      expect.objectContaining({
+        code: "VITE0026",
+        ruleId: noConfigHookArrayEcho.meta.id,
+        path: "/diagnostics/VITE0026",
+      }),
+    );
+    const page = await diagnosticsCollectionSource.getItem("diagnostics/VITE0026.md");
+    expect(page).toContain("mergeConfig");
+  });
+});

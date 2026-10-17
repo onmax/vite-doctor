@@ -1679,6 +1679,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/plugin/no-config-hook-array-echo": {
+    description:
+      "Reports Vite config and configEnvironment hooks that return arrays containing the incoming config's entries.",
+    why: "Vite merges each config and configEnvironment hook result into the current config with mergeConfig, which concatenates arrays instead of replacing them. A hook that returns [...config.ssr.noExternal, 'my-package'] therefore adds every existing entry a second time, and each plugin that does this doubles the entries of the plugins before it. Doctor reports a returned array at a config path that spreads or concatenates the incoming value at the same path, directly or through a helper function defined in the same file. It does not follow helpers imported from other files, and it ignores hooks that assign to the incoming config in place.",
+    recommendedReplacement:
+      "Return only the entries the plugin adds, skipping entries that are already present, or assign to the incoming config in place and leave that field out of the returned object.",
+    examples: [
+      {
+        title: "Return only the added entries",
+        language: "ts",
+        invalid:
+          "export function dedupePlugin(): Plugin {\n  return {\n    name: 'dedupe-vue',\n    config(config) {\n      return {\n        resolve: { dedupe: [...(config.resolve?.dedupe ?? []), 'vue'] },\n      }\n    },\n  }\n}",
+        valid:
+          "export function dedupePlugin(): Plugin {\n  return {\n    name: 'dedupe-vue',\n    config(config) {\n      if (config.resolve?.dedupe?.includes('vue')) return\n      return { resolve: { dedupe: ['vue'] } }\n    },\n  }\n}",
+      },
+    ],
+  },
   "vite/plugin/prefer-transform-filter": {
     description:
       "Finds Vite plugin code that should use the supported transform filter pattern instead.",
