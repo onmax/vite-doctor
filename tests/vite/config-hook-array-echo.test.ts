@@ -96,8 +96,25 @@ export function hubWorkspace(): Plugin {
     }`,
       "ssr.noExternal",
     ],
+    [
+      "an alias with a non-empty fallback",
+      `config(config) {
+      const entries = config.resolve?.dedupe ?? ["vue"]
+      return { resolve: { dedupe: [...entries, "x"] } }
+    }`,
+      "resolve.dedupe",
+    ],
+    [
+      "an object alias returned through a spread",
+      `config(config) {
+      const result = { resolve: { dedupe: [...config.resolve.dedupe, "x"] } }
+      return { ...result }
+    }`,
+      "resolve.dedupe",
+    ],
   ])("reports %s", async (_label, hook, path) => {
-    const result = await run(`export default function plugin() {
+    const result = await run(`import type { Plugin } from "vite"
+export default function plugin(): Plugin {
   return {
     name: "fixture",
     ${hook},
@@ -111,10 +128,11 @@ export function hubWorkspace(): Plugin {
   test.each([
     [
       "only additions from a helper (vitehub 9ad7b6825 fix)",
-      `function dedupeAddition(current: string[] | undefined): string[] | undefined {
+      `import type { Plugin } from "vite"
+function dedupeAddition(current: string[] | undefined): string[] | undefined {
   return current?.includes("vue") ? undefined : ["vue"]
 }
-export default () => ({
+export default (): Plugin => ({
   name: "fixture",
   configEnvironment(name, config) {
     return { resolve: { dedupe: dedupeAddition(config.resolve?.dedupe) } }
@@ -123,7 +141,8 @@ export default () => ({
     ],
     [
       "in-place mutation of the incoming config",
-      `export default () => ({
+      `import type { Plugin } from "vite"
+export default (): Plugin => ({
   name: "fixture",
   async config(config) {
     config.resolve = {
@@ -145,7 +164,8 @@ export default () => ({
     ],
     [
       "copying an array to a different config path",
-      `export default () => ({
+      `import type { Plugin } from "vite"
+export default (): Plugin => ({
   name: "fixture",
   config(config) {
     return { optimizeDeps: { include: [...(config.ssr?.noExternal ?? [])] } }
@@ -154,7 +174,8 @@ export default () => ({
     ],
     [
       "spreading object-valued config",
-      `export default () => ({
+      `import type { Plugin } from "vite"
+export default (): Plugin => ({
   name: "fixture",
   config(config) {
     return { define: { __APP__: "1", ...config.define } }
@@ -171,11 +192,46 @@ export default () => ({
     ],
     [
       "spreads inside nested callbacks",
-      `export default () => ({
+      `import type { Plugin } from "vite"
+export default (): Plugin => ({
   name: "fixture",
   config(config) {
     const later = () => ({ resolve: { dedupe: [...config.resolve.dedupe] } })
     return { resolve: { conditions: ["worker"] } }
+  },
+})`,
+    ],
+    [
+      "named objects with a config method outside Vite code",
+      `export const store = {
+  name: "store",
+  config(config) {
+    return { items: [...config.items, "x"] }
+  },
+}`,
+    ],
+    [
+      "a shadowed alias",
+      `import type { Plugin } from "vite"
+export default (): Plugin => ({
+  name: "fixture",
+  config(config) {
+    const current = config.resolve?.dedupe
+    {
+      const current = ["known"]
+      return { resolve: { dedupe: [...current, "new"] } }
+    }
+  },
+})`,
+    ],
+    [
+      "returning the mutated incoming config",
+      `import type { Plugin } from "vite"
+export default (): Plugin => ({
+  name: "fixture",
+  config(config) {
+    config.resolve.dedupe = [...config.resolve.dedupe, "x"]
+    return config
   },
 })`,
     ],

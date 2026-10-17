@@ -1,12 +1,15 @@
 import { createRule, type RuleContext } from "../../../core/index.js";
 import { diagnostics } from "../../../diagnostics.js";
-import { propertyName, staticString, type AnyNode } from "./shared.js";
+import { isViteConfigFile, propertyName, staticString, type AnyNode } from "./shared.js";
 
 const configParamIndex: Record<string, number> = { config: 0, configEnvironment: 1 };
+const viteModules =
+  /^(?:vite|vite-plus|vitest|rollup|rolldown|unplugin|@nuxt\/kit)(?:\/|$)|^@vitejs\//;
+// `name`, `apply`, `load`, and `transform` also appear on unrelated objects, so they only mark a
+// plugin in files that import Vite tooling.
+const genericPluginKeys = new Set(["name", "apply", "load", "transform"]);
 const pluginKeys = new Set([
-  "name",
   "enforce",
-  "apply",
   "configResolved",
   "configureServer",
   "configurePreviewServer",
@@ -14,8 +17,6 @@ const pluginKeys = new Set([
   "handleHotUpdate",
   "hotUpdate",
   "resolveId",
-  "load",
-  "transform",
   "buildStart",
   "buildEnd",
   "generateBundle",
@@ -34,11 +35,19 @@ export const noConfigHookArrayEcho = createRule({
     prefilter: { names: ["config", "configEnvironment"] },
   },
   create(ctx) {
+    let viteCode = isViteConfigFile(ctx.file.relativePath);
     return {
+      Program(program: AnyNode) {
+        viteCode ||= program.body.some(
+          (statement: AnyNode) =>
+            statement.type === "ImportDeclaration" &&
+            viteModules.test(String(statement.source.value)),
+        );
+      },
       Property(node: AnyNode) {
         const hook = keyName(node);
         if (hook === null || !(hook in configParamIndex) || node.computed) return;
-        if (!isPluginObject(node.__doctorParent)) return;
+        if (!isPluginObject(node.__doctorParent, viteCode)) return;
         const fn = hookFunction(node.value);
         const param = fn?.params[configParamIndex[hook]!];
         if (param?.type !== "Identifier") return;
@@ -65,19 +74,19 @@ function report(ctx: RuleContext, hook: string, echo: Echo) {
 
 function findEchoes(fn: AnyNode, param: string): Echo[] {
   const locals = new Map<string, AnyNode>();
+  // A name declared twice, as in a shadowing block, is not traced.
+  const declared = new Set<string>();
   const assignments: Array<{ target: string; path: string[]; value: AnyNode }> = [];
   const returns: AnyNode[] = [];
   if (fn.body.type !== "BlockStatement") returns.push(fn.body);
   else
     walkOwnBody(fn.body, (node) => {
       if (node.type === "ReturnStatement" && node.argument) returns.push(node.argument);
-      if (
-        node.type === "VariableDeclarator" &&
-        node.id.type === "Identifier" &&
-        node.init &&
-        !locals.has(node.id.name)
-      )
-        locals.set(node.id.name, node.init);
+      if (node.type === "VariableDeclarator" && node.id.type === "Identifier") {
+        if (declared.has(node.id.name)) locals.delete(node.id.name);
+        else if (node.init) locals.set(node.id.name, node.init);
+        declared.add(node.id.name);
+      }
       if (node.type === "AssignmentExpression" && node.operator === "=") {
         const target = memberKeys(node.left);
         if (target && target.keys.length > 0)
@@ -138,6 +147,8 @@ function findEchoes(fn: AnyNode, param: string): Echo[] {
     if (!node || seen.has(node)) return;
     seen.add(node);
     if (node.type === "Identifier") {
+      // Vite only merges a result that is not the incoming config object itself.
+      if (node.name === param) return;
       const local = locals.get(node.name);
       if (local) visitValue(local, path);
       for (const assignment of assignments)
@@ -154,7 +165,9 @@ function findEchoes(fn: AnyNode, param: string): Echo[] {
       for (const property of node.properties) {
         if (property.type === "SpreadElement") {
           if (
-            ["ObjectExpression", "ConditionalExpression"].includes(unwrap(property.argument)?.type)
+            ["ObjectExpression", "ConditionalExpression", "Identifier"].includes(
+              unwrap(property.argument)?.type,
+            )
           )
             visitValue(property.argument, path);
           continue;
@@ -227,12 +240,13 @@ function localFunction(from: AnyNode, name: string): AnyNode {
   return found;
 }
 
-function isPluginObject(node: AnyNode): boolean {
+function isPluginObject(node: AnyNode, viteCode: boolean): boolean {
   return (
     node?.type === "ObjectExpression" &&
-    node.properties.some(
-      (property: AnyNode) => property.type === "Property" && pluginKeys.has(keyName(property)!),
-    )
+    node.properties.some((property: AnyNode) => {
+      const key = keyName(property);
+      return key !== null && (pluginKeys.has(key) || (viteCode && genericPluginKeys.has(key)));
+    })
   );
 }
 
@@ -272,22 +286,9 @@ function memberName(node: AnyNode): string | null {
 
 function unwrapFallback(input: AnyNode): AnyNode {
   let node = unwrap(input);
-  while (
-    node?.type === "LogicalExpression" &&
-    (node.operator === "??" || node.operator === "||") &&
-    isEmptyFallback(node.right)
-  )
+  while (node?.type === "LogicalExpression" && (node.operator === "??" || node.operator === "||"))
     node = unwrap(node.left);
   return node;
-}
-
-function isEmptyFallback(input: AnyNode): boolean {
-  const node = unwrap(input);
-  return (
-    (node?.type === "ArrayExpression" && node.elements.length === 0) ||
-    (node?.type === "Identifier" && node.name === "undefined") ||
-    (node?.type === "Literal" && node.value === null)
-  );
 }
 
 function unwrap(node: AnyNode): AnyNode {
