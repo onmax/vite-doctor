@@ -349,6 +349,19 @@ const stored = useLocalStorage('theme', 'light')`,
   ).toEqual(["Scope.vue:3"]);
 });
 
+test("keeps explicit VueUse imports separate from nested shadowing", async () => {
+  expect(
+    await lines({
+      "app/components/ExplicitScope.vue": component(
+        `import { useLocalStorage } from '@vueuse/core'
+function helper() { const useLocalStorage = () => ref('local'); return useLocalStorage() }
+const stored = useLocalStorage('theme', 'light')`,
+        "{{ stored }}",
+      ),
+    }),
+  ).toEqual(["ExplicitScope.vue:4"]);
+});
+
 test("follows helpers invoked through deferred wrapper callbacks", async () => {
   expect(
     await lines({

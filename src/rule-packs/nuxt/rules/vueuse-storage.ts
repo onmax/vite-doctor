@@ -90,10 +90,9 @@ export const requireInitOnMountedStorage = createRule({
         for (const call of calls) {
           const name = call.callee.name;
           const composable =
-            imported.get(name) ??
-            (isShadowedAtCall(name, call, shadowed)
+            isShadowedAtCall(name, call, shadowed)
               ? undefined
-              : autoImportedComposable(ctx, name));
+              : imported.get(name) ?? autoImportedComposable(ctx, name);
           if (!composable || !readsBrowserStorageOnSetup(ctx, call, composable)) continue;
           if (isInsideCallback(call, DEFERRED_CALLBACKS)) continue;
           if (isInsideDeferredFunction(call, calls)) continue;
