@@ -235,7 +235,7 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/routes/require-default-handler": {
     description:
-      "Requires every file in a statically resolved Nitro api/ or routes/ directory to default-export a handler and keep helpers out of the route tree. The rule stays disabled for ambiguous configs or configured scanDirs, apiDir, or routesDir until resolved Runtime Evidence is available.",
+      "Requires every file in a statically resolved Nitro api/ or routes/ directory to default-export an event handler and keep helpers out of the route tree. Default exports that can never serve an event, such as plain objects, constants, classes, or functions that take data instead of an event, count as missing handlers. List exports a build step reads on purpose, such as route metadata, in the allowedExports option. The rule stays disabled for ambiguous configs or configured scanDirs, apiDir, or routesDir until resolved Runtime Evidence is available.",
     why: "Nitro registers every file under server/api and server/routes as a route. A helper module placed there becomes a public URL with no working handler, and other routes that import it pull in a route module.",
     recommendedReplacement:
       "Default-export a handler from each route file. Move shared helpers to server/utils/, where Nitro 2 and Nuxt auto-import them, and keep only type exports next to the handler.",
@@ -1225,7 +1225,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/runtime/no-secret-in-public-config": {
     description:
       "Flags secret in public config in Nuxt runtime code before it leaks into runtime behavior.",
-    why: "Secrets that reach public runtime config or client bundles can be exposed to every visitor and crawler.",
+    why: "Secrets that reach public runtime config or client bundles can be exposed to every visitor and crawler. Keys that are public by design, such as publishable, site, widget, project, or bare `key` values, are not reported; generic `apiKey` names are reported as a low-confidence warning because browser keys like Firebase or Algolia search keys belong in public config.",
     recommendedReplacement:
       "Move secrets to private runtimeConfig and read them only on the server.",
     examples: [

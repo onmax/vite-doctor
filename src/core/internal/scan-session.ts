@@ -441,6 +441,20 @@ function resolveExtends(
 ): { ruleIds: Set<string>; scopes: Map<string, Set<string>> } {
   const ruleIds = new Set<string>();
   const scopes = new Map<string, Set<string>>();
+  const matchingPacks = (key: string) => {
+    const exactMatches = packs.filter((item) => item.name === key);
+    return exactMatches.length ? exactMatches : packs.filter((item) => rulePackKey(item) === key);
+  };
+  // An entry that is itself a Rule Pack name most likely meant that pack's Recommended Preset.
+  const namedPack = (entry: string) => {
+    const matches = matchingPacks(entry);
+    if (matches.length !== 1) return {};
+    const presets = Object.entries(matches[0]!.presets)
+      .filter(([, value]) => value !== undefined)
+      .map(([name]) => name)
+      .join(", ");
+    return { rulePack: matches[0]!.name, presets };
+  };
   const select = (ruleId: string, scope?: readonly string[]) => {
     const unscoped = ruleIds.has(ruleId) && !scopes.has(ruleId);
     ruleIds.add(ruleId);
@@ -471,13 +485,10 @@ function resolveExtends(
       continue;
     }
     const slash = entry.lastIndexOf("/");
-    if (slash === -1) throw doctorInternalDiagnostics.DOC0016({ entry });
+    if (slash === -1) throw doctorInternalDiagnostics.DOC0016({ entry, ...namedPack(entry) });
     const packKey = entry.slice(0, slash);
     const presetName = entry.slice(slash + 1);
-    const exactMatches = packs.filter((item) => item.name === packKey);
-    const aliasMatches = exactMatches.length
-      ? exactMatches
-      : packs.filter((item) => rulePackKey(item) === packKey);
+    const aliasMatches = matchingPacks(packKey);
     if (aliasMatches.length > 1) {
       throw doctorInternalDiagnostics.DOC0024({
         entry,
@@ -489,7 +500,14 @@ function resolveExtends(
       });
     }
     const pack = aliasMatches[0];
-    if (!pack) throw doctorInternalDiagnostics.DOC0017({ entry, pack: packKey });
+    if (!pack) {
+      throw doctorInternalDiagnostics.DOC0017({
+        entry,
+        pack: packKey,
+        installed: packs.map((item) => item.name).join(", "),
+        ...namedPack(entry),
+      });
+    }
     const preset = pack.presets[presetName];
     if (!preset)
       throw doctorInternalDiagnostics.DOC0018({
