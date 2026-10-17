@@ -416,6 +416,7 @@ test.each([
   ["a blank line", [""]],
   ["a multiline block comment", ["/*", " * SAFETY: the adapter installs every member.", " */"]],
   ["stacked comments", ["// SAFETY: first.", "", "/* second */ // third"]],
+  ["comments after astral characters", ["// SAFETY: 🔒🔒🔒🔒🔒🔒🔒🔒🔒🔒", "// 🔒🔒🔒🔒🔒🔒🔒🔒"]],
 ])("next-line suppression skips %s before its target line", (_, between) => {
   const { root, file } = fixture(
     [

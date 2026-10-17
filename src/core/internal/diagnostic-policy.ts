@@ -307,7 +307,7 @@ function collectInlineSuppressions(file: string, lines: string[]): InlineSuppres
 }
 
 function linesWithCode(source: string, comments: SourceComment[]): boolean[] {
-  const masked = [...source];
+  const masked = source.split("");
   for (const comment of comments) {
     for (let index = comment.start; index < comment.end; index++) {
       if (masked[index] !== "\n") masked[index] = " ";
