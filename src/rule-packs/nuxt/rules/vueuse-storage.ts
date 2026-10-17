@@ -56,13 +56,15 @@ export const requireInitOnMountedStorage = createRule({
     if (!ctx.project.ssr) return;
     if (!isRuntimeAppFile(ctx) || isClientOnlyPath(ctx.file.relativePath)) return;
     const imported = new Map<string, string>();
-    const shadowed = new Set<string>();
+    const shadowed: Array<{ name: string; scope: AnyNode }> = [];
     const calls: AnyNode[] = [];
     const identifiers: AnyNode[] = [];
     return {
       ImportDeclaration(node: AnyNode) {
         if (node.source?.value !== "@vueuse/core" || node.importKind === "type") {
-          for (const specifier of node.specifiers ?? []) shadowed.add(specifier.local?.name);
+          for (const specifier of node.specifiers ?? [])
+            if (specifier.local?.name)
+              shadowed.push({ name: specifier.local.name, scope: ownerFunction(node) });
           return;
         }
         for (const specifier of node.specifiers ?? []) {
@@ -75,10 +77,11 @@ export const requireInitOnMountedStorage = createRule({
         if (node.callee?.type === "Identifier") calls.push(node);
       },
       FunctionDeclaration(node: AnyNode) {
-        if (node.id?.name) shadowed.add(node.id.name);
+        if (node.id?.name) shadowed.push({ name: node.id.name, scope: ownerFunction(node) });
       },
       VariableDeclarator(node: AnyNode) {
-        if (node.id?.type === "Identifier") shadowed.add(node.id.name);
+        if (node.id?.type === "Identifier")
+          shadowed.push({ name: node.id.name, scope: ownerFunction(node) });
       },
       Identifier(node: AnyNode) {
         identifiers.push(node);
@@ -88,7 +91,9 @@ export const requireInitOnMountedStorage = createRule({
           const name = call.callee.name;
           const composable =
             imported.get(name) ??
-            (shadowed.has(name) ? undefined : autoImportedComposable(ctx, name));
+            (isShadowedAtCall(name, call, shadowed)
+              ? undefined
+              : autoImportedComposable(ctx, name));
           if (!composable || !readsBrowserStorageOnSetup(ctx, call, composable)) continue;
           if (isInsideCallback(call, DEFERRED_CALLBACKS)) continue;
           if (isInsideDeferredFunction(call, calls)) continue;
@@ -190,7 +195,11 @@ function explicitBrowserStorage(ctx: RuleContext, call: AnyNode, composable: str
 
 // A function such as `const init = () => useLocalStorage(...)` that the file only hands to
 // onMounted() or another deferred callback runs after hydration.
-function isInsideDeferredFunction(node: AnyNode, calls: AnyNode[]) {
+function isInsideDeferredFunction(
+  node: AnyNode,
+  calls: AnyNode[],
+  seen = new Set<string>(),
+): boolean {
   for (let current = node.__doctorParent; current; current = current.__doctorParent) {
     if (!isFunction(current)) continue;
     const name =
@@ -201,15 +210,29 @@ function isInsideDeferredFunction(node: AnyNode, calls: AnyNode[]) {
           ? current.__doctorParent.id?.name
           : undefined;
     if (!name) return false;
-    const uses = calls.filter((call) =>
-      call.arguments?.some(
-        (argument: AnyNode) => argument.type === "Identifier" && argument.name === name,
-      ),
+    if (seen.has(name)) return false;
+    seen.add(name);
+    const uses = calls.filter(
+      (call) =>
+        (call.callee?.type === "Identifier" && call.callee.name === name) ||
+        call.arguments?.some(
+          (argument: AnyNode) => argument.type === "Identifier" && argument.name === name,
+        ),
     );
-    const direct = calls.some((call) => call.callee?.name === name);
-    return (
-      !direct && uses.length > 0 && uses.every((call) => DEFERRED_CALLBACKS.has(calleeName(call)))
-    );
+    if (!uses.length) return false;
+    return uses.every((call) => {
+      if (
+        DEFERRED_CALLBACKS.has(calleeName(call)) &&
+        call.arguments?.some(
+          (argument: AnyNode) => argument.type === "Identifier" && argument.name === name,
+        )
+      )
+        return true;
+      if (isInsideCallback(call, DEFERRED_CALLBACKS)) return true;
+      const caller = ownerFunction(call);
+      if (!caller || caller.type === "Program") return false;
+      return isInsideDeferredFunction(caller, calls, seen);
+    });
   }
   return false;
 }
@@ -261,7 +284,7 @@ function isRenderReference(
       const computed = computedCall(current);
       // A computed() is lazy, so its storage read only matters when the computed is rendered.
       if (computed) return reachesRender(ctx, computed, identifiers, depth + 1);
-      if (!isRenderCallback(current)) return false;
+      if (!isRenderCallback(current, ctx, identifiers)) return false;
     }
     child = current;
   }
@@ -294,18 +317,18 @@ function computedCall(fn: AnyNode): AnyNode {
   return undefined;
 }
 
-function isRenderCallback(fn: AnyNode) {
+function isRenderCallback(fn: AnyNode, ctx?: RuleContext, identifiers?: AnyNode[]) {
   const parent = fn.__doctorParent;
   return (
     parent?.type === "CallExpression" &&
     parent.arguments?.[0] === fn &&
     EFFECT_CALLBACKS.has(calleeName(parent)) &&
-    assignsState(fn)
+    assignsState(fn, ctx, identifiers)
   );
 }
 
 // Writes to `state.value` or `store.field` can feed the render; writes to plain locals cannot.
-function assignsState(fn: AnyNode) {
+function assignsState(fn: AnyNode, ctx?: RuleContext, identifiers: AnyNode[] = []) {
   let assigns = false;
   walkScriptLocal(fn.body, (node) => {
     const target =
@@ -314,9 +337,31 @@ function assignsState(fn: AnyNode) {
         : node.type === "UpdateExpression"
           ? node.argument
           : undefined;
-    if (unwrap(target)?.type === "MemberExpression") assigns = true;
+    const unwrapped = unwrap(target);
+    if (unwrapped?.type === "MemberExpression") assigns = true;
+    if (unwrapped?.type === "Identifier" && ctx && isRenderedTemplateName(ctx, unwrapped.name)) {
+      const declaration = identifiers.find(
+        (identifier) =>
+          identifier.name === unwrapped.name &&
+          identifier.__doctorParent?.type === "VariableDeclarator" &&
+          identifier.__doctorParent.id === identifier,
+      );
+      if (declaration && !isWithin(declaration, fn)) assigns = true;
+    }
   });
   return assigns;
+}
+
+function isShadowedAtCall(
+  name: string,
+  call: AnyNode,
+  declarations: Array<{ name: string; scope: AnyNode }>,
+) {
+  return declarations.some(({ name: declared, scope }) => {
+    if (declared !== name) return false;
+    if (scope.type === "Program") return true;
+    return isWithin(call, scope);
+  });
 }
 
 function isInsideCallback(node: AnyNode, names: Set<string>) {

@@ -337,6 +337,42 @@ test("handles quoted ssr keys, discarded calls and effects that only write local
   ).toEqual([]);
 });
 
+test("keeps lexical auto-imports separate from nested shadowing", async () => {
+  expect(
+    await lines({
+      "app/components/Scope.vue": component(
+        `function helper() { const useLocalStorage = () => ref('local'); return useLocalStorage() }
+const stored = useLocalStorage('theme', 'light')`,
+        "{{ stored }}",
+      ),
+    }),
+  ).toEqual(["Scope.vue:3"]);
+});
+
+test("follows helpers invoked through deferred wrapper callbacks", async () => {
+  expect(
+    await lines({
+      "app/components/DeferredHelper.vue": component(
+        `const init = () => useLocalStorage('draft', '')
+onMounted(() => init())`,
+      ),
+    }),
+  ).toEqual([]);
+});
+
+test("reports effects that assign a rendered plain local", async () => {
+  expect(
+    await lines({
+      "app/components/PlainEffect.vue": component(
+        `let label = ''
+const stored = useLocalStorage('label', '')
+watchEffect(() => { label = stored.value })`,
+        "{{ label }}",
+      ),
+    }),
+  ).toEqual(["PlainEffect.vue:3"]);
+});
+
 test("only skips default useStorage() when the owning package has @vueuse/nuxt", async () => {
   const result = await runRuleFixture({
     rule: requireInitOnMountedStorage,
