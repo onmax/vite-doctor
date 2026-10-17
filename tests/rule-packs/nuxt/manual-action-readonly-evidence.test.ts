@@ -101,3 +101,27 @@ test("write-like POST guidance names the rule option that holds readonlyPaths", 
   expect(fix).toContain("readonlyPaths");
   expect(fix).toContain("nuxt-doctor: async-data-readonly");
 });
+
+test.each([
+  [
+    "a query-like path with a mutating handler method",
+    `const { refresh } = useAsyncData('search', () => $fetch('/api/search', { method: 'DELETE' }), { immediate: false })`,
+  ],
+  [
+    "a read-only marker on a mutating handler method",
+    `const { refresh } = useAsyncData('user', () => $fetch('/api/user', { method: 'PATCH' }), { immediate: false, meta: { readonly: true } })`,
+  ],
+  [
+    "a handler path in readonlyPaths with a mutating method",
+    `const { refresh } = useAsyncData('kpis', () => $fetch('/api/kpis', { method: 'PUT' }), { immediate: false })`,
+  ],
+  [
+    "a query-like path with a dynamic method",
+    `const { refresh } = useAsyncData('search', () => $fetch('/api/search', { method: verb }), { immediate: false })`,
+  ],
+])(
+  "keeps reporting handler requests that read-only evidence cannot cover: %s",
+  async (_, script) => {
+    expect(await diagnose(script, ["/api/kpis"])).toEqual(["read"]);
+  },
+);

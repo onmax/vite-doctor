@@ -203,20 +203,32 @@ export function hasReadonlyEvidence(
   call: AsyncDataCall,
   options: AsyncDataRuleOptions,
 ): boolean {
+  const requests = FETCH_ASYNC_DATA_COMPOSABLES.has(call.name)
+    ? [readonlyRequest(call.path, call.options)]
+    : handlerFetchRequests(ctx, call.handler);
+  if (requests.some(({ method }) => method && MUTATING_METHODS.has(method))) return false;
   if (call.readonlyMarked) return true;
-  const paths = FETCH_ASYNC_DATA_COMPOSABLES.has(call.name)
-    ? [call.path]
-    : handlerFetchPaths(ctx, call.handler);
-  return paths.length > 0 && paths.every((path) => isReadonlyRequestPath(path, options));
+  return (
+    requests.length > 0 &&
+    requests.every(({ path, method }) => method && isReadonlyRequestPath(path, options))
+  );
 }
 
-function handlerFetchPaths(ctx: RuleContext, handler: AnyNode): Array<string | null> {
-  const paths: Array<string | null> = [];
+function handlerFetchRequests(ctx: RuleContext, handler: AnyNode) {
+  const requests: Array<ReturnType<typeof readonlyRequest>> = [];
   walkScriptLocal(handler, (node) => {
     if (ctx.helpers.isCall(node) && ctx.helpers.getCalleeName(node) === "$fetch")
-      paths.push(getStaticRequestPath(node.arguments?.[0]));
+      requests.push(
+        readonlyRequest(getStaticRequestPath(node.arguments?.[0]), getFetchOptions(node)),
+      );
   });
-  return paths;
+  return requests;
+}
+
+// A method that is present but not static is unknown (null), not GET.
+function readonlyRequest(path: string | null, fetchOptions: AnyNode) {
+  const methodNode = getObjectPropertyValue(fetchOptions, "method");
+  return { path, method: methodNode ? resolveHttpMethod(methodNode) : "GET" };
 }
 
 export function isWriteLikePath(path: string | null, options: AsyncDataRuleOptions): boolean {
