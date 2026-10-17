@@ -29,7 +29,7 @@ test("is in the Nitro Recommended Preset with documentation", { timeout: 30_000 
 });
 
 test(
-  "runs on Vite library packages of a Nitro workspace under auto",
+  "runs on Vite library packages of a Nitro workspace under auto, outside their runtime directories",
   { timeout: 30_000 },
   async () => {
     const root = mkdtempSync(join(tmpdir(), "doctor-nitro-generated-paths-"));
@@ -48,6 +48,12 @@ test(
 export function hubDatabase(): Plugin {
   return { name: "hub-database", config: () => ({ nitro: { handlers: [{ handler: ".hub/db.ts", route: "/_db" }] } }) }
 }
+`,
+      "packages/database/server/plugins/register.ts": `import type { NitroApp } from "nitro"
+export const routes = [{ handler: "./generated.ts", route: "/x" }]
+`,
+      "packages/database/app/composables/useRoutes.ts": `import type { Plugin } from "vite"
+export const routes = [{ handler: "./generated.ts", route: "/x" }]
 `,
     };
     try {
@@ -119,6 +125,7 @@ export default defineNuxtModule({
     nuxt.options.nitro.plugins.push(".nuxt/generated/plugin.ts")
     nuxt.hook("nitro:config", (config) => { config.plugins.push("./generated/plugin.ts") })
     nuxt.hook("nitro:init", (nitro) => { nitro.options.handlers.push({ handler: ".nuxt/generated/route.ts", route: "/api/x" }) })
+    nuxt.hook("nitro:init", (nitro) => { nitro.options.plugins = [".nuxt/generated/assigned.ts"] })
   },
 })`,
     }),
@@ -126,6 +133,7 @@ export default defineNuxtModule({
     "modules/generated.ts:5",
     "modules/generated.ts:6",
     "modules/generated.ts:7",
+    "modules/generated.ts:8",
     "src/vite.ts:9",
     "src/vite.ts:10",
     "src/vite.ts:15",

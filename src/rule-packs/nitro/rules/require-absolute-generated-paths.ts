@@ -20,7 +20,9 @@ const INTEGRATION_SOURCES = new Set([
 const HANDLER_SHAPE_KEYS = new Set(["route", "middleware", "method", "lazy"]);
 const CONFIG_FILE_RE = /(?:^|\/)(?:nuxt|nitro|vite|vitest|app)\.config\.[cm]?[jt]s$/;
 const TEST_FILE_RE = /(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/;
-const APP_RUNTIME_RE = /^(?:app\/)?(?:components|composables|layouts|middleware|pages|plugins)\//;
+// App and server runtime directories, relative to the workspace package that owns the file.
+const RUNTIME_DIR_RE =
+  /^(?:app\/)?(?:api|components|composables|layouts|middleware|pages|plugins|routes|server)\//;
 
 export const requireAbsoluteGeneratedPaths = createRule({
   meta: {
@@ -36,8 +38,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
   create(ctx) {
     const path = ctx.file.relativePath.replace(/\\/g, "/");
     if (CONFIG_FILE_RE.test(path) || TEST_FILE_RE.test(path)) return;
-    if (APP_RUNTIME_RE.test(path) || ctx.helpers.isNuxtServerFile(path) || isNitroServerFile(ctx))
-      return;
+    if (RUNTIME_DIR_RE.test(packageRelativePath(ctx, path)) || isNitroServerFile(ctx)) return;
     let integration = false;
     const kitFunctions = new Set<string>();
     const strings = new Map<string, AnyNode>();
@@ -78,6 +79,15 @@ export const requireAbsoluteGeneratedPaths = createRule({
         if (!isNitroOptions(target.object)) return;
         for (const argument of node.arguments ?? [])
           candidates.push({ node: argument, kind: "plugin" });
+      },
+      AssignmentExpression(node: AnyNode) {
+        const target = unwrapExpression(node.left);
+        const value = unwrapExpression(node.right);
+        if (target?.type !== "MemberExpression" || target.computed) return;
+        if (target.property?.name !== "plugins" || value?.type !== "ArrayExpression") return;
+        if (!isNitroOptions(target.object)) return;
+        for (const element of value.elements ?? [])
+          candidates.push({ node: element, kind: "plugin" });
       },
       Property(node: AnyNode) {
         if (
@@ -124,6 +134,15 @@ function reportPath(ctx: RuleContext, node: AnyNode, text: string, kind: "handle
     `This Nitro ${kind} is registered with the relative path ${JSON.stringify(text)}. ${base}, not against this file or the directory the file was written to, so the path breaks when those differ.`,
     `Register an absolute path: resolve it from the same root you write the file to, such as resolve(root, ${raw}), or from this package with createResolver(import.meta.url).resolve(${raw}).`,
   );
+}
+
+function packageRelativePath(ctx: RuleContext, path: string) {
+  let owner = "";
+  for (const item of ctx.project.workspacePackages ?? []) {
+    const root = item.root === "." ? "" : `${item.root.replace(/\\/g, "/")}/`;
+    if (root.length > owner.length && path.startsWith(root)) owner = root;
+  }
+  return path.slice(owner.length);
 }
 
 function isRelativeFilePath(value: string) {
