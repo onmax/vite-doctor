@@ -97,7 +97,6 @@ export function isTopLevelVueScriptSetupCall(ctx: RuleContext, node: AnyNode) {
 
 export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) {
   const text = ctx.file.text;
-  if (/<\s*(NuxtTime|ClientOnly)\b/.test(text)) return false;
   // Event bindings do not exclude SSR calls to the same helper. Preserve source offsets for guards.
   const templateBlock = getTemplateBlock(ctx);
   const start = templateBlock?.loc.start.offset;
@@ -110,7 +109,7 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
   if (ctx.helpers.isClientOnlyExecutionContext(node, executionSource)) return false;
   const source = sourceForNode(node, text);
   if (!source) return false;
-  const template = getTemplateSource(ctx);
+  const template = getServerRenderedTemplateSource(ctx);
   if (template.includes(source)) return true;
 
   const declarator = nearestVariableDeclarator(node);
@@ -1689,6 +1688,13 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
     }
   };
   const visitElement = (element: TemplateElementNode, outer: Set<string>) => {
+    if (NUXT_TIME_TAGS.has(element.tag)) return;
+    if (CLIENT_ONLY_TAGS.has(element.tag)) {
+      for (const child of element.children)
+        if (child.type === TemplateNodeType.ELEMENT && isServerFallbackSlot(child))
+          visitElement(child, outer);
+      return;
+    }
     let locals = outer;
     for (const prop of element.props) {
       if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
@@ -2534,6 +2540,50 @@ function getTemplateBlock(ctx: RuleContext) {
       | { template?: { content: string; loc: { start: { offset: number } } } }
       | undefined
   )?.template;
+}
+
+const CLIENT_ONLY_TAGS = new Set(["ClientOnly", "client-only"]);
+const NUXT_TIME_TAGS = new Set(["NuxtTime", "nuxt-time"]);
+
+function isServerFallbackSlot(element: TemplateElementNode) {
+  return element.props.some(
+    (prop) =>
+      prop.type === TemplateNodeType.DIRECTIVE &&
+      prop.name === "slot" &&
+      ["fallback", "placeholder"].includes(prop.arg?.isStatic ? prop.arg.content : ""),
+  );
+}
+
+/** Template text with subtrees that SSR does not hydrate from script values blanked out. */
+function getServerRenderedTemplateSource(ctx: RuleContext): string {
+  const key = `nuxt:server-template:${ctx.file.hash}`;
+  const cached = ctx.cache.get<string>(key);
+  if (cached !== undefined) return cached;
+  let value = getTemplateSource(ctx);
+  const block = getTemplateBlock(ctx);
+  const root = ctx.file.templateAst;
+  if (block && root && /<\s*(ClientOnly|client-only|NuxtTime|nuxt-time)\b/.test(value)) {
+    const offset = block.loc.start.offset;
+    const blank = (node: { loc: { start: { offset: number }; end: { offset: number } } }) => {
+      const start = node.loc.start.offset - offset;
+      const end = node.loc.end.offset - offset;
+      value = value.slice(0, start) + " ".repeat(end - start) + value.slice(end);
+    };
+    const visit = (parent: TemplateParentNode) => {
+      for (const child of parent.children) {
+        if (child.type !== TemplateNodeType.ELEMENT) continue;
+        if (NUXT_TIME_TAGS.has(child.tag)) blank(child);
+        else if (CLIENT_ONLY_TAGS.has(child.tag))
+          for (const slot of child.children)
+            if (slot.type !== TemplateNodeType.ELEMENT || !isServerFallbackSlot(slot)) blank(slot);
+            else visit(slot);
+        else visit(child);
+      }
+    };
+    visit(root);
+  }
+  ctx.cache.set(key, value);
+  return value;
 }
 
 function getTemplateSource(ctx: RuleContext): string {
