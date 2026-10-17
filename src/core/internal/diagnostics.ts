@@ -24,10 +24,11 @@ import type { GraphSummary } from "./cache-store.js";
 import {
   applyDiagnosticPolicy,
   settleDiagnosticIdentity,
-  unusedConfigSuppressions,
+  unusedConfigSuppressionEntries,
 } from "./diagnostic-policy.js";
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
+import { owningWorkspacePackage } from "./workspace-packages.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256 } from "./utils.js";
@@ -70,18 +71,26 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
   const { options } = session;
   if (options.changed || options.since || options.rules || options.analyses) return;
   const ran = new Set(session.enabledRules.map((rule) => rule.meta.id));
-  const unscoped = options.extends === undefined || options.extends === "auto";
-  const unused = unusedConfigSuppressions(session.root, session.config, session.diagnostics).filter(
-    (suppression) => (suppression.ruleId ? ran.has(suppression.ruleId) : unscoped),
+  const effectiveExtends = options.extends ?? session.config.extends;
+  const unscoped = effectiveExtends === undefined || effectiveExtends === "auto";
+  const unused = unusedConfigSuppressionEntries(session.root, session.config, session.diagnostics).filter(
+    ({ suppression }) => {
+      if (!suppression.ruleId) return unscoped;
+      if (!ran.has(suppression.ruleId)) return false;
+      const scope = session.ruleScopes.get(suppression.ruleId);
+      if (!scope || !suppression.file) return true;
+      const target = relative(session.root, resolve(session.root, suppression.file));
+      return scope.has(owningWorkspacePackage(session.project.workspacePackages ?? [], target));
+    },
   );
   if (!unused.length) return;
   const configFiles = doctorConfigFiles(session.root);
-  for (const suppression of unused) {
+  for (const { suppression, index } of unused) {
     const entry = Object.entries(suppression)
       .filter(([key, value]) => key !== "reason" && typeof value === "string")
       .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
       .join(", ");
-    const location = locateSuppression(configFiles, suppression);
+    const location = locateSuppression(configFiles, suppression, index);
     pushDiagnostic(session, {
       ruleId: "doctor/config/unused-suppression",
       severity: "info",
@@ -118,6 +127,7 @@ function doctorConfigFiles(root: string): string[] {
 function locateSuppression(
   files: string[],
   suppression: NonNullable<DoctorConfig["suppressions"]>[number],
+  index: number,
 ): { file: string; range?: Diagnostic["range"] } | undefined {
   let fallback: string | undefined;
   for (const file of files) {
@@ -125,15 +135,42 @@ function locateSuppression(
     const section = source?.indexOf("suppressions") ?? -1;
     if (!source || section < 0) continue;
     fallback ??= file;
-    for (const needle of [suppression.reason, suppression.fingerprint, suppression.file]) {
-      const found = needle ? source.indexOf(needle, section) : -1;
-      if (found < 0) continue;
-      const opening = source.lastIndexOf("{", found);
-      const start = opening > section ? opening : found;
-      return { file, range: { start, end: start + 1, ...lineColumnAt(source, start) } };
-    }
+    const opening = suppressionEntryOpening(source, section, index);
+    const marker = suppression.reason || suppression.fingerprint || suppression.file;
+    if (opening !== undefined && (!marker || source.indexOf(marker, opening) >= 0))
+      return { file, range: { start: opening, end: opening + 1, ...lineColumnAt(source, opening) } };
   }
   return fallback ? { file: fallback } : undefined;
+}
+
+function suppressionEntryOpening(source: string, section: number, index: number): number | undefined {
+  const array = source.indexOf("[", section);
+  if (array < 0) return undefined;
+  let depth = 0;
+  let quote = "";
+  let escaped = false;
+  let found = 0;
+  for (let position = array + 1; position < source.length; position++) {
+    const char = source[position]!;
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = "";
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) {
+        if (found++ === index) return position;
+      }
+      depth++;
+    } else if (char === "}") depth = Math.max(0, depth - 1);
+    else if (char === "]" && depth === 0) break;
+  }
+  return undefined;
 }
 
 export function applyReportEligibility(session: ScanSession): void {

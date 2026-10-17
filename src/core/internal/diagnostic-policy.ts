@@ -239,10 +239,20 @@ export function unusedConfigSuppressions(
   config: DoctorConfig,
   diagnostics: Diagnostic[],
 ): ConfigSuppression[] {
-  return (config.suppressions ?? []).filter(
-    (suppression) =>
-      !diagnostics.some((diagnostic) => matchesConfigSuppression(root, suppression, diagnostic)),
-  );
+  return unusedConfigSuppressionEntries(root, config, diagnostics).map((entry) => entry.suppression);
+}
+
+export function unusedConfigSuppressionEntries(
+  root: string,
+  config: DoctorConfig,
+  diagnostics: Diagnostic[],
+): Array<{ suppression: ConfigSuppression; index: number }> {
+  return (config.suppressions ?? [])
+    .map((suppression, index) => ({ suppression, index }))
+    .filter(
+      ({ suppression }) =>
+        !diagnostics.some((diagnostic) => matchesConfigSuppression(root, suppression, diagnostic)),
+    );
 }
 
 function matchesConfigSuppression(
