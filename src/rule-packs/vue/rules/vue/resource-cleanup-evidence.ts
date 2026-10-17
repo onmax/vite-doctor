@@ -575,18 +575,31 @@ function createResourceEvidence(ctx: RuleContext) {
     );
   }
 
-  function releasesThrough(
-    node: AnyNode,
-    resource: Resource,
-    walk: (body: AnyNode, predicate: (node: AnyNode) => boolean) => boolean,
-    seen = new Set<AnyNode>(),
-  ): boolean {
+  // Helpers must release on every path through their own body: a `return` inside a helper
+  // returns to the caller, which still goes on to reuse the handle.
+  function releasesThrough(node: AnyNode, resource: Resource, seen = new Set<AnyNode>()): boolean {
     if (node.type !== "CallExpression") return false;
-    if (releases(node, resource)) return true;
+    if (releases(node, resource)) return !emptiedBefore(node, resource);
     const helper = callback(node.callee);
     if (!helper || seen.has(helper)) return false;
     seen.add(helper);
-    return walk(helper.body, (call) => releasesThrough(call, resource, walk, seen));
+    return executes(helper.body, (call) => releasesThrough(call, resource, seen), resource);
+  }
+
+  // `timer = undefined; clearInterval(timer)` releases nothing.
+  function emptiedBefore(release: AnyNode, resource: Resource): boolean {
+    const scope = owner(release, false);
+    const previous = nodes
+      .filter(
+        (node) =>
+          node.type === "AssignmentExpression" &&
+          node.end <= release.start &&
+          node.start > scope.start &&
+          owner(node, false) === scope &&
+          identity(node.left) === resource.handle,
+      )
+      .at(-1);
+    return !!previous && isNullish(previous.right);
   }
 
   // A watcher that reuses one outer handle owns the previous run's resource through that handle:
@@ -601,7 +614,7 @@ function createResourceEvidence(ctx: RuleContext) {
       !overwrittenInRun(resource, walk) &&
       walk(
         resource.owner.body,
-        (node) => node.start < resource.node.start && releasesThrough(node, resource, walk),
+        (node) => node.start < resource.node.start && releasesThrough(node, resource),
       )
     );
   }
@@ -621,12 +634,15 @@ function createResourceEvidence(ctx: RuleContext) {
         !exclusiveBranches(node, resource.node),
     );
     if (!overwrite) return false;
-    return !nodes.some(
+    let region = parents.get(resource.node);
+    while (region && !(region.start <= overwrite.start && region.end >= overwrite.end))
+      region = parents.get(region);
+    return !walk(
+      region,
       (node) =>
         node.start > resource.node.end &&
         node.end < overwrite.start &&
-        owner(node, false) === resource.owner &&
-        releasesThrough(node, resource, walk),
+        releasesThrough(node, resource),
     );
   }
 
@@ -674,14 +690,21 @@ function createResourceEvidence(ctx: RuleContext) {
     const walk = (body: AnyNode, predicate: (node: AnyNode) => boolean) =>
       executes(body, predicate, resource);
     return nodes.some((node) => {
-      if (!isCleanupRegistration(node)) return false;
+      if (!isCleanupRegistration(node) || insideWatcher(node)) return false;
       const registeredIn = owner(node);
       if (!executes(isFunction(registeredIn) ? registeredIn.body : registeredIn, (n) => n === node))
         return false;
       const teardown = callback(node.arguments[0]);
       if (!teardown) return false;
-      return walk(withoutRunOnceGuard(teardown), (call) => releasesThrough(call, resource, walk));
+      return walk(withoutRunOnceGuard(teardown), (call) => releasesThrough(call, resource));
     });
+  }
+
+  // Watcher callbacks run outside setup, where lifecycle hooks do not register.
+  function insideWatcher(node: AnyNode): boolean {
+    for (let current = parents.get(node); current; current = parents.get(current))
+      if (watchers.has(current)) return true;
+    return false;
   }
 
   function isCleanupRegistration(node: AnyNode): boolean {
