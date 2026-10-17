@@ -77,3 +77,14 @@ const label = String(Date.now())
 <template><ClientOnly><span>live</span><template #fallback>{{ label }}</template></ClientOnly></template>`);
   expect(lines).toEqual([2]);
 });
+
+test.each([
+  ['<ClientOnly :fallback="label"><span>live</span></ClientOnly>'],
+  ['<ClientOnly :title="label"><span>live</span></ClientOnly>'],
+])("reports time output bound on ClientOnly, which SSR renders: %s", async (template) => {
+  const lines = await reportedLines(`<script setup lang="ts">
+const label = String(Date.now())
+</script>
+<template>${template}</template>`);
+  expect(lines).toEqual([2]);
+});

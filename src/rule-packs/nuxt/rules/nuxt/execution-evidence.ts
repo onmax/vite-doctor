@@ -1689,12 +1689,6 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
   };
   const visitElement = (element: TemplateElementNode, outer: Set<string>) => {
     if (NUXT_TIME_TAGS.has(element.tag)) return;
-    if (CLIENT_ONLY_TAGS.has(element.tag)) {
-      for (const child of element.children)
-        if (child.type === TemplateNodeType.ELEMENT && isServerFallbackSlot(child))
-          visitElement(child, outer);
-      return;
-    }
     let locals = outer;
     for (const prop of element.props) {
       if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
@@ -1715,7 +1709,12 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
       if (prop.name === "bind" && prop.arg && !prop.arg.isStatic)
         collect(prop.arg, locals, expressionContainer);
     }
-    visitChildren(element, locals);
+    // SSR renders ClientOnly's own bindings and fallback slots, but not its default content.
+    if (CLIENT_ONLY_TAGS.has(element.tag)) {
+      for (const child of element.children)
+        if (child.type === TemplateNodeType.ELEMENT && isServerFallbackSlot(child))
+          visitElement(child, locals);
+    } else visitChildren(element, locals);
   };
   visitChildren(root, new Set());
   renderedReferenceCache.set(root, references);
