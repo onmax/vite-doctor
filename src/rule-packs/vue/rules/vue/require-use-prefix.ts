@@ -52,7 +52,7 @@ const VUE_API_SOURCES =
   /^(vue|vue-demi|vue-router|@vue\/(runtime-core|runtime-dom|composition-api)|#imports|#app(\/.*)?|nuxt\/app)$/;
 const NON_COMPOSABLE_SOURCES = /^(@nuxt\/kit|nuxt\/kit|h3|nitropack|nitro|unstorage)(\/|$)/;
 const VUE_COMPOSABLE_SOURCES =
-  /^(?:@vueuse\/|@pinia\/|pinia(?:\/|$)|(?:@[\w.-]+\/)?[\w.-]*vue[\w.-]*(?:\/|$))/;
+  /^(?:@vueuse\/|@pinia\/|pinia(?:\/|$)|vue-demi(?:\/|$))/;
 const MODULE_SOURCE = /(?:\bfrom|\bimport)\s*["']([^"']+)["']/g;
 const RE_EXPORT = /\bexport\s*(?:\*|\{([^}]*)\})\s*from\s*["']([^"']+)["']/g;
 const UNBOUND_VUE_API =
@@ -221,7 +221,9 @@ function providesComposable(
 ): boolean {
   if (seen.has(file)) return false;
   seen.add(file);
-  if (nuxtAppPaths(ctx, file).some((path) => !path.startsWith("server/"))) return true;
+  // Nuxt's composables directory is auto-imported. Other app directories (plugins,
+  // utils, pages, and so on) are not composable evidence by location alone.
+  if (nuxtAppPaths(ctx, file).some((path) => path.startsWith("composables/"))) return true;
   const text = ctx.fs.readText(file) ?? "";
   const sources = [...text.matchAll(MODULE_SOURCE)].map((match) => match[1]!);
   if (sources.some((source) => VUE_API_SOURCES.test(source) || VUE_COMPOSABLE_SOURCES.test(source)))
@@ -238,6 +240,24 @@ function providesComposable(
     if (names && !new RegExp(`\\b${name}\\b`).test(names)) continue;
     const target = resolveLocalModule(ctx, dirname(file), source!);
     if (target && providesComposable(ctx, target, name, seen)) return true;
+  }
+  // Follow local composable dependencies used by the module implementation. A
+  // wrapper that calls an imported use* function inherits its setup semantics even
+  // when the dependency does not re-export the wrapper name.
+  const imports = /\bimport\s+(?:type\s+)?(?:([^;\n]+?)\s+from\s+)?["']([^"']+)["']/g;
+  for (const match of text.matchAll(imports)) {
+    const clause = match[1];
+    const source = match[2]!;
+    if (!clause || !source.startsWith(".")) continue;
+    const target = resolveLocalModule(ctx, dirname(file), source);
+    if (!target) continue;
+    const names = [...clause.matchAll(/\b(?:use[A-Z0-9_$][\w$]*|[\w$]+\s+as\s+use[A-Z0-9_$][\w$]*)\b/g)]
+      .map((binding) => binding[0]!.split(/\s+as\s+/).pop()!)
+      .filter((local) => new RegExp(`\\b${local}\\s*\\(`).test(text));
+    for (const local of names) {
+      const importedName = clause.match(new RegExp(`\\b(use[A-Z0-9_$][\\w$]*)\\s+as\\s+${local}\\b`))?.[1] ?? local;
+      if (providesComposable(ctx, target, importedName, seen)) return true;
+    }
   }
   return false;
 }

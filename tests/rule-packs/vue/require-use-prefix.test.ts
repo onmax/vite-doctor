@@ -367,3 +367,35 @@ test("treats Nuxt app modules as composables and skips use* names Nuxt does not 
     expect.stringContaining("cartTotal()"),
   ]);
 });
+
+test("does not treat ordinary vue-named packages as composable evidence", async () => {
+  const result = await runVue(
+    `import { useLoader } from 'vue-loader'; export function load() { return useLoader() }`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("does not treat arbitrary Nuxt app modules as composables by location", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "nuxt",
+    files: {
+      "app/plugins/workspace.ts": `export function useWorkspace() { return { ready: true } }`,
+      "src/runner.ts": `import { useWorkspace } from '~/plugins/workspace'; export function run() { return useWorkspace() }`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("follows imported local composable dependencies", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/runner.ts": `import { useWorkspaceState } from './state'; export function workspace() { return useWorkspaceState() }`,
+      "src/state.ts": `import { ref } from 'vue'; export function useWorkspaceState() { return ref(0) }`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.why).toContain("workspace()");
+});
