@@ -192,6 +192,33 @@ export function isReadonlyPath(path: string | null, options: AsyncDataRuleOption
   );
 }
 
+export function isReadonlyRequestPath(path: string | null, options: AsyncDataRuleOptions): boolean {
+  return (
+    isReadonlyPath(path, options) || (isQueryLikePath(path) && !isWriteLikePath(path, options))
+  );
+}
+
+export function hasReadonlyEvidence(
+  ctx: RuleContext,
+  call: AsyncDataCall,
+  options: AsyncDataRuleOptions,
+): boolean {
+  if (call.readonlyMarked) return true;
+  const paths = FETCH_ASYNC_DATA_COMPOSABLES.has(call.name)
+    ? [call.path]
+    : handlerFetchPaths(ctx, call.handler);
+  return paths.length > 0 && paths.every((path) => isReadonlyRequestPath(path, options));
+}
+
+function handlerFetchPaths(ctx: RuleContext, handler: AnyNode): Array<string | null> {
+  const paths: Array<string | null> = [];
+  walkScriptLocal(handler, (node) => {
+    if (ctx.helpers.isCall(node) && ctx.helpers.getCalleeName(node) === "$fetch")
+      paths.push(getStaticRequestPath(node.arguments?.[0]));
+  });
+  return paths;
+}
+
 export function isWriteLikePath(path: string | null, options: AsyncDataRuleOptions): boolean {
   if (!path) return false;
   const segments = options.writeLikePathSegments ?? DEFAULT_WRITE_LIKE_PATH_SEGMENTS;
