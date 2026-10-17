@@ -149,11 +149,15 @@ function isFetchBody(evidence: LocalEvidence, receiver: AnyNode): boolean {
 }
 
 function isGlobalFetchCall(evidence: LocalEvidence, node: AnyNode): boolean {
+  if (node?.type !== "CallExpression") return false;
+  const callee = unwrapExpression(node.callee);
+  if (callee?.type === "Identifier") return callee.name === "fetch" && !evidence.binding(callee);
   return (
-    node?.type === "CallExpression" &&
-    node.callee?.type === "Identifier" &&
-    node.callee.name === "fetch" &&
-    !evidence.binding(node.callee)
+    (callee?.type === "MemberExpression" || callee?.type === "StaticMemberExpression") &&
+    memberPropertyName(callee) === "fetch" &&
+    callee.object?.type === "Identifier" &&
+    globalObjectNames.has(callee.object.name) &&
+    !evidence.binding(callee.object)
   );
 }
 

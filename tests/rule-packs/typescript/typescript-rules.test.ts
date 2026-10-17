@@ -281,6 +281,11 @@ export async function loadAccount(url: string) {
 }
 export function readBody(response: Response): Promise<Session> {
   return response.json()
+}
+export async function loadGlobal(url: string) {
+  const response = await globalThis.fetch(url)
+  const windowed = await window.fetch(url)
+  return [await response.json() as User, await windowed.json() as User]
 }`,
       },
     });
@@ -290,7 +295,32 @@ export function readBody(response: Response): Promise<Session> {
       ["typescript/boundaries/no-unvalidated-deserialization", 6],
       ["typescript/boundaries/no-unvalidated-deserialization", 9],
       ["typescript/boundaries/no-unvalidated-deserialization", 13],
+      ["typescript/boundaries/no-unvalidated-deserialization", 18],
+      ["typescript/boundaries/no-unvalidated-deserialization", 18],
     ]);
+  });
+
+  test("ignores json() on imported Request and Response types", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import { Response } from "./api"
+import Request from "./request"
+export function read(response: Response): Promise<User> {
+  return response.json()
+}
+export function readRequest(request: Request): Promise<User> {
+  return request.json()
+}
+export async function readShadowed(url: string, globalThis: { fetch(url: string): Promise<Store> }) {
+  const store = await globalThis.fetch(url)
+  return await store.json() as User
+}`,
+      },
+    });
+
+    expect(result.diagnostics).toEqual([]);
   });
 
   test("reports unknown-property shapes that exclude null", async () => {

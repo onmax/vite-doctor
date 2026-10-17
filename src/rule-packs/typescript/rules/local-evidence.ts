@@ -121,8 +121,10 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
       bind(node.id, outer, { kind: "other" });
     if (
       ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
-    )
+    ) {
+      outer.types.add(node.local.name);
       bind(node.local, outer, { kind: "other" });
+    }
     if (
       node.type === "TSModuleDeclaration" &&
       node.id?.name &&
