@@ -177,7 +177,12 @@ function readPackageArtifactsForMode(
   const references: PackageReference[] = [];
   const missing = new Set<string>();
   const visited = new Set<string>();
-  const queue: Array<{ path: string; kind: "runtime" | "types"; required: boolean }> = [];
+  const queue: Array<{
+    path: string;
+    kind: "runtime" | "types";
+    required: boolean;
+    declarationBacked?: boolean;
+  }> = [];
   const rootPath = fs.realpath(root) ?? root;
 
   function inside(path: string) {
@@ -259,6 +264,7 @@ function readPackageArtifactsForMode(
     probe: boolean | "main" | "commonjs" = true,
     adjacentDeclaration = false,
     sourceResolution = false,
+    declarationBacked = false,
   ) {
     const path = resolve(from, target);
     if (!inside(path)) return;
@@ -304,18 +310,22 @@ function readPackageArtifactsForMode(
     }
     if (!inside(fs.realpath(file) ?? file) || !scriptExtension.test(file)) return;
     const resolvedKind = declarationExtension.test(file) ? "types" : kind;
+    const declaration = resolvedKind === "runtime"
+      ? typeCandidates(file).find(
+        (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
+      )
+      : undefined;
     queue.push({
       path: file,
       kind: resolvedKind,
       required: required && resolvedKind === "runtime",
+      declarationBacked:
+        resolvedKind === "runtime" &&
+        (declarationBacked ||
+          Boolean(adjacentDeclaration && declaration)),
     });
-    if (resolvedKind === "runtime") {
-      const declaration = typeCandidates(file).find(
-        (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
-      );
-      if (adjacentDeclaration && declaration)
-        queue.push({ path: declaration, kind: "types", required: false });
-    }
+    if (resolvedKind === "runtime" && adjacentDeclaration && declaration)
+      queue.push({ path: declaration, kind: "types", required: false });
   }
 
   function targets(
@@ -407,12 +417,9 @@ function readPackageArtifactsForMode(
     for (const entries of Object.values(version))
       for (const entry of entries) enqueue(entry, "types", false, root, false);
 
-  // TypeScript reads JSDoc types only from JavaScript, and only when no declaration file covers
-  // the import, so JSDoc in bundled chunks of a package with declarations never reaches consumers.
-  const javascriptTypes = !queue.some((entry) => declarationExtension.test(entry.path));
   for (let i = 0; i < queue.length; i++) {
     const current = queue[i]!;
-    const key = `${current.path}:${current.kind}:${current.required}`;
+    const key = `${current.path}:${current.kind}:${current.required}:${current.declarationBacked ?? false}`;
     if (visited.has(key)) continue;
     visited.add(key);
     if (current.required && manifest.browser && typeof manifest.browser === "object") {
@@ -455,7 +462,7 @@ function readPackageArtifactsForMode(
       current.kind,
       commonjs,
       explicitCommonjsModule(current.path),
-      javascriptTypes && !/\.(?:[cm]?ts|tsx)$/.test(current.path),
+      !current.declarationBacked && !/\.(?:[cm]?ts|tsx)$/.test(current.path),
     )) {
       const required = current.required && edge.required;
       const executionRequired = required && !edge.resolutionOnly;
@@ -480,6 +487,7 @@ function readPackageArtifactsForMode(
               : edge.probe || kind === "types" || /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
             false,
             /\.(?:[cm]?ts|tsx)$/.test(current.path),
+            current.declarationBacked,
           );
           continue;
         }
@@ -517,6 +525,8 @@ function readPackageArtifactsForMode(
                   target.kind === "runtime",
                 scope.directory,
                 exports === undefined ? "main" : false,
+                false,
+                current.declarationBacked,
               );
           }
           continue;
