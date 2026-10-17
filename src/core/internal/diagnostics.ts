@@ -72,17 +72,22 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
   if (options.changed || options.since || options.rules || options.analyses) return;
   const ran = new Set(session.enabledRules.map((rule) => rule.meta.id));
   const effectiveExtends = options.extends ?? session.config.extends;
-  const unscoped = effectiveExtends === undefined || effectiveExtends === "auto";
-  const unused = unusedConfigSuppressionEntries(session.root, session.config, session.diagnostics).filter(
-    ({ suppression }) => {
-      if (!suppression.ruleId) return unscoped;
-      if (!ran.has(suppression.ruleId)) return false;
-      const scope = session.ruleScopes.get(suppression.ruleId);
-      if (!scope || !suppression.file) return true;
-      const target = relative(session.root, resolve(session.root, suppression.file));
-      return scope.has(owningWorkspacePackage(session.project.workspacePackages ?? [], target));
-    },
-  );
+  // An entry without a Rule may belong to a Rule turned off in config, which cannot prove it stale.
+  const unscoped =
+    (effectiveExtends === undefined || effectiveExtends === "auto") &&
+    !Object.values(session.config.rules ?? {}).includes("off");
+  const unused = unusedConfigSuppressionEntries(
+    session.root,
+    session.config,
+    session.diagnostics,
+  ).filter(({ suppression }) => {
+    if (!suppression.ruleId) return unscoped;
+    if (!ran.has(suppression.ruleId)) return false;
+    const scope = session.ruleScopes.get(suppression.ruleId);
+    if (!scope || !suppression.file) return true;
+    const target = relative(session.root, resolve(session.root, suppression.file));
+    return scope.has(owningWorkspacePackage(session.project.workspacePackages ?? [], target));
+  });
   if (!unused.length) return;
   const configFiles = doctorConfigFiles(session.root);
   for (const { suppression, index } of unused) {
@@ -138,12 +143,19 @@ function locateSuppression(
     const opening = suppressionEntryOpening(source, section, index);
     const marker = suppression.reason || suppression.fingerprint || suppression.file;
     if (opening !== undefined && (!marker || source.indexOf(marker, opening) >= 0))
-      return { file, range: { start: opening, end: opening + 1, ...lineColumnAt(source, opening) } };
+      return {
+        file,
+        range: { start: opening, end: opening + 1, ...lineColumnAt(source, opening) },
+      };
   }
   return fallback ? { file: fallback } : undefined;
 }
 
-function suppressionEntryOpening(source: string, section: number, index: number): number | undefined {
+function suppressionEntryOpening(
+  source: string,
+  section: number,
+  index: number,
+): number | undefined {
   const array = source.indexOf("[", section);
   if (array < 0) return undefined;
   let depth = 0;

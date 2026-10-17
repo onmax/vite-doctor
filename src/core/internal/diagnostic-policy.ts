@@ -239,7 +239,9 @@ export function unusedConfigSuppressions(
   config: DoctorConfig,
   diagnostics: Diagnostic[],
 ): ConfigSuppression[] {
-  return unusedConfigSuppressionEntries(root, config, diagnostics).map((entry) => entry.suppression);
+  return unusedConfigSuppressionEntries(root, config, diagnostics).map(
+    (entry) => entry.suppression,
+  );
 }
 
 export function unusedConfigSuppressionEntries(
@@ -261,6 +263,8 @@ function matchesConfigSuppression(
   diagnostic: Diagnostic,
 ): boolean {
   if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
+  // Broad entries must not hide the warning that reports them as unused.
+  if (!suppression.ruleId && diagnostic.ruleId === "doctor/config/unused-suppression") return false;
   if (suppression.fingerprint && suppression.fingerprint !== diagnostic.fingerprint) return false;
   if (suppression.file && !nativeMatch(relative(root, diagnostic.file), suppression.file))
     return false;
