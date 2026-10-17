@@ -145,6 +145,7 @@ test.each([
     "const useOrdersFactory = createUseFetch('/api/orders')\nexport { useOrdersFactory as useOrders }",
   ],
   ["a default export", "export default createUseFetch('/api/orders')"],
+  ["an optional call", "export const useOrders = createUseFetch?.('/api/orders')"],
 ])("accepts a factory Nuxt scans through %s", async (_, source) => {
   expect(
     await diagnose({
@@ -184,6 +185,11 @@ test.each([
     "a Vue file",
     "app/composables/useOrders.vue",
     "<script lang=\"ts\">\nexport const useOrders = createUseFetch('/api/orders')\n</script>",
+  ],
+  [
+    "a constructor call",
+    "app/composables/useOrders.ts",
+    "export const useOrders = new createUseFetch('/api/orders')",
   ],
   [
     "a string-literal export name",

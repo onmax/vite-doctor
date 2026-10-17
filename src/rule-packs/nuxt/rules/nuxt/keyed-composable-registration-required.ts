@@ -17,14 +17,16 @@ export const keyedComposableRegistrationRequired = createRule({
     const visit = (node: AnyNode) => {
       const name = ctx.helpers.getCalleeName(node);
       if (name !== "createUseFetch" && name !== "createUseAsyncData") return;
-      const declarator = node.__doctorParent;
+      const expression =
+        node.__doctorParent?.type === "ChainExpression" ? node.__doctorParent : node;
+      const declarator = expression.__doctorParent;
       const declared =
         declarator?.type === "VariableDeclarator" &&
-        declarator.init === node &&
+        declarator.init === expression &&
         declarator.id?.type === "Identifier"
           ? declarator.id.name
           : undefined;
-      const defaultExport = node.__doctorParent?.type === "ExportDefaultDeclaration";
+      const defaultExport = expression.__doctorParent?.type === "ExportDefaultDeclaration";
       const composable =
         declared ??
         (defaultExport
@@ -33,7 +35,9 @@ export const keyedComposableRegistrationRequired = createRule({
               .slice(Math.max(0, node.start - 120), node.start)
               .match(/use[A-Z]\w+/)?.[0]);
       if (composable && ctx.project.nuxt?.manifest?.keyedComposables.includes(composable)) return;
-      const exported = declared ? isExported(declarator, declared) : defaultExport;
+      const exported =
+        node.type === "CallExpression" &&
+        (declared ? isExported(declarator, declared) : defaultExport);
       if (exported && SCANNED_EXTENSION_RE.test(ctx.file.path) && inScannedComposablesDir(ctx))
         return;
       report(
