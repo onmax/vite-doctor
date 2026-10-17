@@ -41,12 +41,13 @@ export const preferRouteMethodSuffix = createRule({
 
     return {
       IfStatement(node: AnyNode) {
+        if (!branchExits(node.consequent) && !branchExits(node.alternate)) return;
         const checks = methodChecks(node.test, ctx.file.text, node);
         if (!checks.length) return;
         reportMethodCheck(node.test ?? node, checks, wholeHandlerAllowed(node, checks));
       },
       BinaryExpression(node: AnyNode) {
-        if (isInIfStatementTest(node)) return;
+        if (isInIfStatementTest(node) || !selectsResponse(node)) return;
         const check = singleMethodCheck(node, ctx.file.text, node);
         if (!check) return;
         reportMethodCheck(node, [check], false);
@@ -105,6 +106,34 @@ function methodsFromChecks(checks: MethodCheck[]) {
 
 function wholeHandlerAllowed(node: AnyNode, checks: MethodCheck[]) {
   return checks.every((check) => check.isNegative) && branchExits(node.consequent);
+}
+
+function selectsResponse(node: AnyNode) {
+  let current = node;
+  let parent = current.__doctorParent;
+  while (parent && isConditionWrapper(parent)) {
+    current = parent;
+    parent = current.__doctorParent;
+  }
+  if (parent?.type !== "ConditionalExpression" || parent.test !== current) return false;
+  return isReturnedValue(parent);
+}
+
+function isConditionWrapper(node: AnyNode) {
+  return (
+    node.type === "LogicalExpression" ||
+    node.type === "ParenthesizedExpression" ||
+    (node.type === "UnaryExpression" && node.operator === "!")
+  );
+}
+
+function isReturnedValue(node: AnyNode): boolean {
+  const parent = node.__doctorParent;
+  if (!parent) return false;
+  if (parent.type === "ParenthesizedExpression" || parent.type === "AwaitExpression")
+    return isReturnedValue(parent);
+  if (parent.type === "ReturnStatement") return true;
+  return parent.type === "ArrowFunctionExpression" && parent.body === node;
 }
 
 function branchExits(node: AnyNode) {

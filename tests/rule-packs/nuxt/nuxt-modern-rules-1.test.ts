@@ -1347,6 +1347,46 @@ test("Nitro route method suffix rule reports non-if method gates in file-routed 
   expect(result.diagnostics[0]?.suggestion).toContain("POST-specific branch");
 });
 
+test("Nitro route method suffix rule ignores method checks that do not end the request", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/routes/_proxy/[...path].ts": `export default defineEventHandler(async (event) => {
+  const rawBody = event.method !== 'GET' && event.method !== 'HEAD'
+    ? await readRawBody(event, false)
+    : undefined
+  let mode = 'read'
+  if (event.method === 'POST') {
+    mode = 'write'
+  }
+  return proxyRequest(event, upstream, { body: rawBody, mode })
+})`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("Nitro route method suffix rule reports method gates that end the request in the else branch", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  if (event.req.method === 'POST') {
+    audit(event)
+  } else {
+    throw createError({ statusCode: 405 })
+  }
+  return updateUser(event)
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
+});
+
 test("Nitro route method suffix rule ignores request aliases from unrelated nested scopes", async () => {
   const result = await runRuleFixture({
     rule: preferRouteMethodSuffix,
