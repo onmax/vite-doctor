@@ -32,18 +32,23 @@ export const noLossySetCookieBridge = createRule({
   },
 });
 
+const SET_COOKIE = /set-cookie|getSetCookie/i;
+
 function reportSetHeaderCalls(ctx: RuleContext, loop: AnyNode, body: AnyNode, key: string) {
   const calls: AnyNode[] = [];
-  walk(body, (node) => {
-    if (node.type !== "CallExpression") return;
-    const callee = unwrap(node.callee);
-    if (callee?.type !== "MemberExpression" || memberName(callee) !== "setHeader") return;
-    const name = unwrap(node.arguments[0]);
-    if (name?.type === "Identifier" && name.name === key) calls.push(node);
+  let filtersKey = false;
+  walkBinding(body, key, (node) => {
+    if (node.type === "Identifier" && node.name === key && !isSetHeaderName(node))
+      filtersKey = true;
+    if (node.type === "CallExpression" && isSetHeaderName(unwrap(node.arguments[0]), key))
+      calls.push(node);
   });
   if (calls.length === 0) return;
-  const owner = enclosingFunction(loop);
-  if (/set-cookie|getSetCookie/i.test(ctx.file.text.slice(owner.start, owner.end))) return;
+  const text = ctx.file.text;
+  // Set-Cookie survives when the loop body skips it, or when the function writes it after the loop.
+  if (SET_COOKIE.test(text.slice(body.start, body.end))) return;
+  if (filtersKey && SET_COOKIE.test(text)) return;
+  if (SET_COOKIE.test(text.slice(loop.end, enclosingFunction(loop).end))) return;
   for (const call of calls) {
     ctx.report(
       diagnostics.VITE0025({
@@ -53,6 +58,15 @@ function reportSetHeaderCalls(ctx: RuleContext, loop: AnyNode, body: AnyNode, ke
       { file: ctx.file.path, range: ctx.range(call) },
     );
   }
+}
+
+// The header name passed as the first argument of `target.setHeader(name, value)`.
+function isSetHeaderName(node: AnyNode, key?: string): boolean {
+  if (node?.type !== "Identifier" || (key !== undefined && node.name !== key)) return false;
+  const call = node.__doctorParent;
+  if (call?.type !== "CallExpression" || unwrap(call.arguments[0]) !== node) return false;
+  const callee = unwrap(call.callee);
+  return callee?.type === "MemberExpression" && memberName(callee) === "setHeader";
 }
 
 function isHeadersIterable(input: AnyNode): boolean {
@@ -67,9 +81,13 @@ function isHeadersIterable(input: AnyNode): boolean {
   );
 }
 
+// Request headers carry Cookie, never Set-Cookie, so copying them loses nothing.
 function isHeadersMember(input: AnyNode): boolean {
   const node = unwrap(input);
-  return node?.type === "MemberExpression" && memberName(node) === "headers";
+  if (node?.type !== "MemberExpression" || memberName(node) !== "headers") return false;
+  const owner = unwrap(node.object);
+  const name = owner?.type === "MemberExpression" ? memberName(owner) : owner?.name;
+  return !(typeof name === "string" && /(?:^|[a-z_])req(?:uest)?$/i.test(name));
 }
 
 function forOfKeyName(left: AnyNode): string | null {
@@ -114,15 +132,28 @@ function unwrap(node: AnyNode): AnyNode {
   return node;
 }
 
-function walk(node: AnyNode, visit: (node: AnyNode) => void): void {
+// Walks `node` without entering nested functions that rebind `name`.
+function walkBinding(node: AnyNode, name: string, visit: (node: AnyNode) => void): void {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
-    for (const child of node) walk(child, visit);
+    for (const child of node) walkBinding(child, name, visit);
     return;
   }
   if (typeof node.type !== "string") return;
+  if (isFunction(node) && node.params.some((param: AnyNode) => bindsName(param, name))) return;
   visit(node);
   for (const [key, child] of Object.entries(node)) {
-    if (key !== "__doctorParent") walk(child, visit);
+    if (key !== "__doctorParent") walkBinding(child, name, visit);
   }
+}
+
+function bindsName(pattern: AnyNode, name: string): boolean {
+  if (pattern?.type === "Identifier") return pattern.name === name;
+  if (pattern?.type === "AssignmentPattern") return bindsName(pattern.left, name);
+  if (pattern?.type === "RestElement") return bindsName(pattern.argument, name);
+  if (pattern?.type === "ArrayPattern")
+    return pattern.elements.some((item: AnyNode) => bindsName(item, name));
+  if (pattern?.type === "ObjectPattern")
+    return pattern.properties.some((item: AnyNode) => bindsName(item.value ?? item.argument, name));
+  return false;
 }

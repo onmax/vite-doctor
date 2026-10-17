@@ -40,6 +40,13 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
   }
 }`,
     ],
+    [
+      "a loop after Set-Cookie was already copied",
+      `function copy(res, response) {
+  res.setHeader("set-cookie", response.headers.getSetCookie())
+  response.headers.forEach((value, key) => res.setHeader(key, value))
+}`,
+    ],
   ])("reports %s", async (_label, source) => {
     const result = await run(source);
     expect(result.diagnostics).toHaveLength(1);
@@ -49,6 +56,15 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
       severity: "warn",
     });
     expect(result.diagnostics[0]?.message ?? result.diagnostics[0]?.why).toBeTruthy();
+  });
+
+  test("reports a setHeader call once inside nested header loops", async () => {
+    const result = await run(`function copy(res, a, b) {
+  for (const [name] of a.headers) {
+    for (const [name, value] of b.headers) res.setHeader(name, value)
+  }
+}`);
+    expect(result.diagnostics).toHaveLength(1);
   });
 
   test("reports the setHeader call line", async () => {
@@ -113,6 +129,30 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
       "copying onto Fetch Headers",
       `function copy(request, response) {
   response.headers.forEach((value, key) => request.headers.set(key, value))
+}`,
+    ],
+    [
+      "a loop that skips a Set-Cookie constant",
+      `const SET_COOKIE = "set-cookie"
+function copy(res, response) {
+  for (const [name, value] of response.headers) {
+    if (name.toLowerCase() === SET_COOKIE) continue
+    res.setHeader(name, value)
+  }
+}`,
+    ],
+    [
+      "a nested callback that rebinds the header name",
+      `function copy(res, response, names) {
+  for (const [name] of response.headers) {
+    names.forEach((name) => res.setHeader(name, "1"))
+  }
+}`,
+    ],
+    [
+      "copying Fetch request headers onto an outgoing request",
+      `function forward(proxyReq, request) {
+  request.headers.forEach((value, key) => proxyReq.setHeader(key, value))
 }`,
     ],
   ])("accepts %s", async (_label, source) => {
