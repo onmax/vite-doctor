@@ -561,3 +561,27 @@ test("next-line suppression skips a JSX comment container that spans lines", () 
   });
   expect(result.diagnostics).toEqual([]);
 });
+
+test("next-line suppression skips JSX comments in a Vue TSX script", () => {
+  const { root, file } = fixture(
+    [
+      '<script setup lang="tsx">',
+      "const view = (",
+      "  <section>",
+      "    {/* doctor-disable-next-line test/example -- vue tsx */}",
+      "    {/* explains the element */}",
+      "    <div />",
+      "  </section>",
+      ");",
+      "</script>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 6)],
+  });
+  expect(result.diagnostics).toEqual([]);
+});

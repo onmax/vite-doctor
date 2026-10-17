@@ -286,7 +286,7 @@ function collectInlineSuppressions(file: string, lines: string[]): InlineSuppres
   if (!source.includes("doctor-disable")) return suppressions;
   const directives = new Map<number, InlineSuppression>();
   const { comments, codeFree } = file.endsWith(".vue")
-    ? { comments: collectVueComments(file, source), codeFree: [] }
+    ? collectVueComments(file, source)
     : collectScriptComments(file, source);
   for (const comment of comments) {
     addCommentSuppressions(directives, source, comment.start, comment.end);
@@ -335,21 +335,27 @@ function collectScriptComments(
     (comment): comment is { start: number; end: number } =>
       typeof comment.start === "number" && typeof comment.end === "number",
   );
-  // A JSX comment's `{}` container holds no code, but it sits outside the parsed comment span.
-  const codeFree: SourceComment[] = [];
-  if (/\.[cm]?[jt]sx$/.test(file))
-    walkAstFacts(parsed, (node) => {
-      const container = node as { type?: string; expression?: { type?: string } } & SourceComment;
-      if (
-        container.type === "JSXExpressionContainer" &&
-        container.expression?.type === "JSXEmptyExpression"
-      )
-        codeFree.push({ start: container.start, end: container.end });
-    });
-  return { comments, codeFree };
+  return { comments, codeFree: /\.[cm]?[jt]sx$/.test(file) ? jsxCommentContainers(parsed) : [] };
 }
 
-function collectVueComments(file: string, source: string): SourceComment[] {
+// A JSX comment's `{}` container holds no code, but it sits outside the parsed comment span.
+function jsxCommentContainers(ast: unknown): SourceComment[] {
+  const containers: SourceComment[] = [];
+  walkAstFacts(ast, (node) => {
+    const container = node as { type?: string; expression?: { type?: string } } & SourceComment;
+    if (
+      container.type === "JSXExpressionContainer" &&
+      container.expression?.type === "JSXEmptyExpression"
+    )
+      containers.push({ start: container.start, end: container.end });
+  });
+  return containers;
+}
+
+function collectVueComments(
+  file: string,
+  source: string,
+): { comments: SourceComment[]; codeFree: SourceComment[] } {
   try {
     const { descriptor } = loadVueCompilerSfc().parse(source, {
       filename: file,
@@ -366,9 +372,13 @@ function collectVueComments(file: string, source: string): SourceComment[] {
         if (node.type === TemplateNodeType.COMMENT)
           comments.push({ start: node.loc.start.offset, end: node.loc.end.offset });
       });
-    return comments;
+    const jsx = descriptor.scriptSetup?.lang ?? descriptor.script?.lang;
+    return {
+      comments,
+      codeFree: script && /^[jt]sx$/.test(jsx ?? "") ? jsxCommentContainers(script) : [],
+    };
   } catch {
-    return [];
+    return { comments: [], codeFree: [] };
   }
 }
 
