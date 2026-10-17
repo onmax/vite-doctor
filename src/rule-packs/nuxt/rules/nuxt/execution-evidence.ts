@@ -2608,8 +2608,7 @@ function getServerRenderedTemplateSource(ctx: RuleContext): string {
           for (const slot of child.children)
             if (slot !== fallback) blank(slot);
             else visit(slot);
-        }
-        else visit(child);
+        } else visit(child);
       }
     };
     visit(root);
