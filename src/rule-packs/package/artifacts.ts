@@ -310,19 +310,19 @@ function readPackageArtifactsForMode(
     }
     if (!inside(fs.realpath(file) ?? file) || !scriptExtension.test(file)) return;
     const resolvedKind = declarationExtension.test(file) ? "types" : kind;
-    const declaration = resolvedKind === "runtime"
-      ? typeCandidates(file).find(
-        (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
-      )
-      : undefined;
+    const declaration =
+      resolvedKind === "runtime"
+        ? typeCandidates(file).find(
+            (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
+          )
+        : undefined;
     queue.push({
       path: file,
       kind: resolvedKind,
       required: required && resolvedKind === "runtime",
       declarationBacked:
         resolvedKind === "runtime" &&
-        (declarationBacked ||
-          Boolean(adjacentDeclaration && declaration)),
+        (declarationBacked || Boolean(adjacentDeclaration && declaration)),
     });
     if (resolvedKind === "runtime" && adjacentDeclaration && declaration)
       queue.push({ path: declaration, kind: "types", required: false });

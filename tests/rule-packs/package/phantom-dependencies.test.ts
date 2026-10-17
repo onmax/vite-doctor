@@ -139,7 +139,8 @@ test("keeps JSDoc for JavaScript-only export subpaths", async () => {
     {
       "dist/index.js": "export const value = 1;",
       "dist/index.d.ts": "export declare const value: number;",
-      "dist/js-only.js": '/** @param {import("phantom-types").Value} value */\nexport function use(value) { return value; }',
+      "dist/js-only.js":
+        '/** @param {import("phantom-types").Value} value */\nexport function use(value) { return value; }',
     },
   );
   expect(diagnostics.map((d) => [d.code, d.message.match(/"([^"]+)"/)?.[1]])).toEqual([
