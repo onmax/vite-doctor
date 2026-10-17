@@ -123,14 +123,28 @@ function isConditionWrapper(node: AnyNode) {
   return (
     node.type === "LogicalExpression" ||
     node.type === "ParenthesizedExpression" ||
-    (node.type === "UnaryExpression" && node.operator === "!")
+    (node.type === "UnaryExpression" && node.operator === "!") ||
+    isTypeExpressionWrapper(node)
+  );
+}
+
+function isTypeExpressionWrapper(node: AnyNode) {
+  return (
+    node.type === "TSAsExpression" ||
+    node.type === "TSSatisfiesExpression" ||
+    node.type === "TSNonNullExpression" ||
+    node.type === "TSTypeAssertion"
   );
 }
 
 function isReturnedValue(node: AnyNode): boolean {
   const parent = node.__doctorParent;
   if (!parent) return false;
-  if (parent.type === "ParenthesizedExpression" || parent.type === "AwaitExpression")
+  if (
+    parent.type === "ParenthesizedExpression" ||
+    parent.type === "AwaitExpression" ||
+    isTypeExpressionWrapper(parent)
+  )
     return isReturnedValue(parent);
   if (parent.type === "ReturnStatement") return true;
   return parent.type === "ArrowFunctionExpression" && parent.body === node;

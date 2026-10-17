@@ -1347,6 +1347,25 @@ test("Nitro route method suffix rule reports non-if method gates in file-routed 
   expect(result.diagnostics[0]?.suggestion).toContain("POST-specific branch");
 });
 
+test.each([
+  "return (event.req.method === 'POST' ? createUser(event) : reject()) as Response",
+  "return (event.req.method === 'POST' ? createUser(event) : reject()) satisfies Response",
+  "return (event.req.method === 'POST' ? createUser(event) : reject())!",
+  "return <Response>(event.req.method === 'POST' ? createUser(event) : reject())",
+])("Nitro route method suffix rule preserves returned conditionals through TypeScript wrappers: %s", async (statement) => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  ${statement}
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
+});
+
 test("Nitro route method suffix rule ignores method checks that do not end the request", async () => {
   const result = await runRuleFixture({
     rule: preferRouteMethodSuffix,
