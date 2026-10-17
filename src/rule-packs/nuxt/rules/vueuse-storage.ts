@@ -62,11 +62,15 @@ export const requireInitOnMountedStorage = createRule({
     if (!ctx.project.ssr) return;
     if (!isRuntimeAppFile(ctx) || isClientOnlyPath(ctx.file.relativePath)) return;
     const imported = new Map<string, string>();
+    const shadowed = new Set<string>();
     const calls: AnyNode[] = [];
     const identifiers: AnyNode[] = [];
     return {
       ImportDeclaration(node: AnyNode) {
-        if (node.source?.value !== "@vueuse/core" || node.importKind === "type") return;
+        if (node.source?.value !== "@vueuse/core" || node.importKind === "type") {
+          for (const specifier of node.specifiers ?? []) shadowed.add(specifier.local?.name);
+          return;
+        }
         for (const specifier of node.specifiers ?? []) {
           if (specifier.type !== "ImportSpecifier" || specifier.importKind === "type") continue;
           const name = String(specifier.imported?.name ?? specifier.imported?.value);
@@ -76,23 +80,40 @@ export const requireInitOnMountedStorage = createRule({
       CallExpression(node: AnyNode) {
         if (node.callee?.type === "Identifier") calls.push(node);
       },
+      FunctionDeclaration(node: AnyNode) {
+        if (node.id?.name) shadowed.add(node.id.name);
+      },
+      VariableDeclarator(node: AnyNode) {
+        if (node.id?.type === "Identifier") shadowed.add(node.id.name);
+      },
       Identifier(node: AnyNode) {
         identifiers.push(node);
       },
       "Program:exit"() {
         for (const call of calls) {
+          const name = call.callee.name;
           const composable =
-            imported.get(call.callee.name) ?? autoImportedComposable(ctx, call.callee.name);
+            imported.get(name) ??
+            (shadowed.has(name) ? undefined : autoImportedComposable(ctx, name));
           if (!composable || !readsBrowserStorageOnSetup(ctx, call, composable)) continue;
           if (isInsideCallback(call, DEFERRED_CALLBACKS)) continue;
+          if (isInsideDeferredFunction(call, calls)) continue;
           if (!reachesRender(ctx, call, identifiers)) continue;
+          const storage = explicitBrowserStorage(ctx, call, composable);
           ctx.helpers.report(
             ctx,
             call,
-            diagnostics.NUXT0085({
-              why: `${composable}() reads browser storage while the component hydrates, but the server rendered the default value, so the stored value causes a hydration mismatch.`,
-              fix: `Pass { initOnMounted: true } to ${composable}() so it reads storage after mount, or use useCookie() for state the server must render.`,
-            }),
+            diagnostics.NUXT0085(
+              storage
+                ? {
+                    why: `${composable}() receives ${storage}, which does not exist on the server, so server rendering throws before initOnMounted can defer the read.`,
+                    fix: `Use ${storage === "sessionStorage" || storage === "window.sessionStorage" ? "useSessionStorage" : "useLocalStorage"}(key, value, { initOnMounted: true }), which only touches browser storage on the client, or use useCookie() for state the server must render.`,
+                  }
+                : {
+                    why: `${composable}() reads browser storage while the component hydrates, but the server rendered the default value, so the stored value causes a hydration mismatch.`,
+                    fix: `Pass { initOnMounted: true } to ${composable}() so it reads storage after mount, or use useCookie() for state the server must render.`,
+                  },
+            ),
             { ruleId: RULE_ID, severity: ctx.severity, category: "hydration" },
           );
         }
@@ -122,7 +143,8 @@ function readsBrowserStorageOnSetup(ctx: RuleContext, call: AnyNode, composable:
   const shape = STORAGE_COMPOSABLES[composable]!;
   if (shape.storage !== undefined) {
     const storage = call.arguments?.[shape.storage];
-    // @vueuse/nuxt replaces the default storage of useStorage() with cookies, which the server reads.
+    // With ssrHandlers enabled, @vueuse/nuxt backs the default storage of useStorage() with
+    // cookies. Doctor cannot see that module option, so it skips the default storage there.
     if (!storage || isUndefined(storage)) {
       if (hasVueUseNuxt(ctx)) return false;
     } else if (!BROWSER_STORAGES.has(ctx.helpers.getNodeName(storage) ?? "")) return false;
@@ -148,7 +170,7 @@ function reachesRender(ctx: RuleContext, call: AnyNode, identifiers: AnyNode[]) 
   if (ctx.file.relativePath.endsWith(".vue") && owner?.type === "Program") {
     const descriptor = ctx.file.sfc?.descriptor as { template?: { content: string } } | undefined;
     const template = (descriptor?.template?.content ?? "").replace(TEMPLATE_EVENT_RE_G, "");
-    if (namePattern([binding.name]).test(template)) return true;
+    if (templateReferences(template, binding.name)) return true;
   }
   return identifiers.some(
     (identifier) =>
@@ -158,6 +180,43 @@ function reachesRender(ctx: RuleContext, call: AnyNode, identifiers: AnyNode[]) 
       isWithin(identifier, owner) &&
       isRenderReference(identifier, owner),
   );
+}
+
+function templateReferences(template: string, name: string) {
+  return new RegExp(`(?<![\\w$.])(?:${namePattern([name]).source})(?![\\w$])`).test(template);
+}
+
+function explicitBrowserStorage(ctx: RuleContext, call: AnyNode, composable: string) {
+  const index = STORAGE_COMPOSABLES[composable]!.storage;
+  if (index === undefined) return undefined;
+  const name = ctx.helpers.getNodeName(call.arguments?.[index]) ?? "";
+  return BROWSER_STORAGES.has(name) ? name : undefined;
+}
+
+// A function such as `const init = () => useLocalStorage(...)` that the file only hands to
+// onMounted() or another deferred callback runs after hydration.
+function isInsideDeferredFunction(node: AnyNode, calls: AnyNode[]) {
+  for (let current = node.__doctorParent; current; current = current.__doctorParent) {
+    if (!isFunction(current)) continue;
+    const name =
+      current.type === "FunctionDeclaration"
+        ? current.id?.name
+        : current.__doctorParent?.type === "VariableDeclarator" &&
+            current.__doctorParent.init === current
+          ? current.__doctorParent.id?.name
+          : undefined;
+    if (!name) return false;
+    const uses = calls.filter((call) =>
+      call.arguments?.some(
+        (argument: AnyNode) => argument.type === "Identifier" && argument.name === name,
+      ),
+    );
+    const direct = calls.some((call) => call.callee?.name === name);
+    return (
+      !direct && uses.length > 0 && uses.every((call) => DEFERRED_CALLBACKS.has(calleeName(call)))
+    );
+  }
+  return false;
 }
 
 function boundIdentifier(call: AnyNode): AnyNode {

@@ -572,9 +572,14 @@ function readExportedCompatibilityVersion(file: string, text: string): Compatibi
       };
 }
 
-/** Returns `false` only when the exported Nuxt config statically sets `ssr: false`. */
-export function readExportedNuxtSsr(file: string, text: string | null): boolean | undefined {
-  if (!text || !/\bssr\s*:/.test(text)) return undefined;
+/** Returns the boolean `ssr` option that the root's exported Nuxt config sets statically. */
+export function readNuxtConfigSsr(root: string, configs: NuxtConfigCache): boolean | undefined {
+  const config = readNuxtConfig(root, configs);
+  return config ? readExportedNuxtSsr(config.file, config.text) : undefined;
+}
+
+function readExportedNuxtSsr(file: string, text: string): boolean | undefined {
+  if (!/\bssr\s*:/.test(text)) return undefined;
   const program = parseScript(file, text) as { body?: AnyRuntimeNode[] } | null;
   const exported = program?.body?.find((node) => node.type === "ExportDefaultDeclaration");
   let config = unwrapExpression(exported?.declaration);

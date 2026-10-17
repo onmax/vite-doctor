@@ -187,3 +187,95 @@ test("prefer-use-storage recommends initOnMounted only in SSR apps", async () =>
     "Use VueUse useLocalStorage() for reactive client storage state.",
   );
 });
+
+test("reads ssr: false from any nuxt.config format and ignores a stale manifest", async () => {
+  const kpi = component(`const target = useLocalStorage('target', 1)`, "{{ target }}");
+  const run = (files: Record<string, string>) =>
+    runRuleFixture({
+      rule: requireInitOnMountedStorage,
+      framework: "nuxt",
+      dependencies: vueUseNuxt,
+      files: { "app/components/Kpi.vue": kpi, ...files },
+    });
+  expect(
+    (await run({ "nuxt.config.mjs": "export default defineNuxtConfig({ ssr: false })" }))
+      .diagnostics,
+  ).toEqual([]);
+  expect(
+    (
+      await run({
+        "nuxt.config.ts": "export default defineNuxtConfig({ ssr: false })",
+        ".nuxt/doctor.manifest.json": JSON.stringify({ ssr: true }),
+      })
+    ).diagnostics,
+  ).toEqual([]);
+});
+
+test("follows ssr: false of the workspace Nuxt app that owns the file", async () => {
+  const kpi = component(`const target = useLocalStorage('target', 1)`, "{{ target }}");
+  const result = await runRuleFixture({
+    rule: requireInitOnMountedStorage,
+    framework: "nuxt",
+    dependencies: vueUseNuxt,
+    files: {
+      "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+      "app/components/Kpi.vue": kpi,
+      "packages/spa/package.json": JSON.stringify({
+        name: "spa",
+        dependencies: { nuxt: "^4.0.0", ...vueUseNuxt },
+      }),
+      "packages/spa/nuxt.config.ts": "export default defineNuxtConfig({ ssr: false })",
+      "packages/spa/app/components/Kpi.vue": kpi,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.file)).toEqual([
+    expect.stringMatching(/(?<!packages\/spa\/)app\/components\/Kpi\.vue$/),
+  ]);
+});
+
+test("matches template references by whole identifier", async () => {
+  expect(
+    await lines({
+      "app/components/Mode.vue": component(
+        `const theme = useLocalStorage('theme', 'light')\nconst themeMode = ref('auto')`,
+        "{{ themeMode }} {{ settings.theme }}",
+      ),
+    }),
+  ).toEqual([]);
+});
+
+test("explains that explicit browser storage throws during server rendering", async () => {
+  const result = await ssrProject.run({
+    rule: requireInitOnMountedStorage,
+    files: {
+      "app/components/Tab.vue": component(
+        `import { useStorage } from '@vueuse/core'\nconst tab = useStorage('tab', 'one', sessionStorage)`,
+        "{{ tab }}",
+      ),
+    },
+  });
+  expect(result.diagnostics[0]!.why).toContain(
+    "sessionStorage, which does not exist on the server",
+  );
+  expect(result.diagnostics[0]!.suggestion).toContain(
+    "useSessionStorage(key, value, { initOnMounted: true })",
+  );
+});
+
+test("skips local or other-package bindings and functions only run on mount", async () => {
+  expect(
+    await lines({
+      "app/components/Local.vue": component(
+        `function useLocalStorage(key: string, value: string) { return ref(value) }\nconst draft = useLocalStorage('draft', '')`,
+        "{{ draft }}",
+      ),
+      "app/components/Imported.vue": component(
+        `import { useLocalStorage } from '~/utils/storage'\nconst draft = useLocalStorage('draft', '')`,
+        "{{ draft }}",
+      ),
+      "app/components/Init.vue": component(
+        `const init = () => useLocalStorage('key', '')\nonMounted(init)`,
+      ),
+    }),
+  ).toEqual([]);
+});

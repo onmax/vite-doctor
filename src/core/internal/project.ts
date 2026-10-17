@@ -23,7 +23,7 @@ import { ProjectFileWalk, rememberProjectFileWalk, type ProjectEntry } from "./p
 import {
   applyRuntimeTarget,
   isNuxtManifestCurrent,
-  readExportedNuxtSsr,
+  readNuxtConfigSsr,
   resolveNuxtCompatibility,
   resolveRuntimeGraph,
   type NuxtConfigCache,
@@ -370,7 +370,7 @@ async function detectNuxt(
   root: string,
   version: string,
   deps: Record<string, string | undefined>,
-  { manifest, manifestPath, manifestCurrent }: NuxtRunFacts,
+  { manifest, manifestPath, manifestCurrent, configs }: NuxtRunFacts,
 ): Promise<NuxtProjectInfo> {
   const config = readNuxtConfigText(root);
   const autoImportEntries = (manifest?.autoImports ?? coreAutoImports()) as AutoImportEntry[];
@@ -393,7 +393,7 @@ async function detectNuxt(
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
     routeRules: manifest?.routeRules ?? readRouteRules(config.primary),
-    ssr: manifest?.ssr ?? readExportedNuxtSsr(join(root, "nuxt.config.ts"), config.primary),
+    ssr: (manifestCurrent ? manifest?.ssr : undefined) ?? readNuxtConfigSsr(root, configs),
     runtimeConfig: manifest?.runtimeConfig,
     serverDirs: await serverDirs(root),
     doctorConfig: manifest?.doctorConfig,
