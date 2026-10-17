@@ -332,10 +332,10 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
 
 function exportedDefinition(program: AnyNode, name: string): AnyNode {
   const declarations = new Map<string, AnyNode>();
-  let exported: string | undefined;
+  let definition: AnyNode;
   for (const statement of program.body ?? []) {
     if (statement.type === "ExportDefaultDeclaration") {
-      if (name === "default") return statement.declaration;
+      if (name === "default") definition = statement.declaration;
       continue;
     }
     const declaration =
@@ -347,13 +347,21 @@ function exportedDefinition(program: AnyNode, name: string): AnyNode {
         for (const declared of patternNames(declarator.id))
           if (declarator.init) declarations.set(declared, declarator.init);
     if (statement.type === "ExportNamedDeclaration" && !statement.source) {
-      if (declaredNames(statement.declaration).includes(name)) exported = name;
+      if (declaredNames(statement.declaration).includes(name))
+        definition = { type: "Identifier", name };
       for (const specifier of statement.specifiers ?? [])
         if (moduleExportName(specifier.exported) === name)
-          exported = moduleExportName(specifier.local);
+          definition = { type: "Identifier", name: moduleExportName(specifier.local) };
     }
   }
-  return exported ? declarations.get(exported) : undefined;
+  // `export default useWorkspace` and `export const { useWorkspace } = composables` name a
+  // local binding, so follow it to the code that defines it.
+  const followed = new Set<string>();
+  while (definition?.type === "Identifier" && !followed.has(definition.name)) {
+    followed.add(definition.name);
+    definition = declarations.get(definition.name);
+  }
+  return definition;
 }
 
 function declaredNames(declaration: AnyNode): string[] {

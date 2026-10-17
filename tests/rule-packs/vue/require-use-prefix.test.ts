@@ -422,6 +422,16 @@ test.each([
     `import { createInjectionState } from '@vueuse/core'\nexport const [provideWorkspace, useWorkspace] = createInjectionState(() => ({}))`,
   ],
   [
+    "a default export alias",
+    `import useWorkspace from './core/use'\nexport function run() { return useWorkspace() }`,
+    `export default useWorkspace\nfunction useWorkspace() { onMounted(() => {}) }`,
+  ],
+  [
+    "a destructured local object",
+    `import { useWorkspace } from './core/use'\nexport function run() { return useWorkspace() }`,
+    `const composables = { useWorkspace() { onMounted(() => {}) } }\nexport const { useWorkspace } = composables`,
+  ],
+  [
     "a star re-export",
     `import { useWorkspace } from './core/use'\nexport function run() { return useWorkspace() }`,
     `export * from './impl'`,
