@@ -307,17 +307,22 @@ function collectInlineSuppressions(file: string, lines: string[]): InlineSuppres
 }
 
 function linesWithCode(source: string, comments: SourceComment[]): boolean[] {
-  let masked = "";
-  let offset = 0;
-  for (const comment of [...comments].sort((a, b) => a.start - b.start)) {
-    if (comment.start < offset) continue;
-    masked += source.slice(offset, comment.start);
-    masked += source.slice(comment.start, comment.end).replace(/[^\n]/g, " ");
-    offset = comment.end;
+  const masked = [...source];
+  for (const comment of comments) {
+    for (let index = comment.start; index < comment.end; index++) {
+      if (masked[index] !== "\n") masked[index] = " ";
+    }
+    // JSX comments keep their `{}` container outside the parsed comment span.
+    let open = comment.start - 1;
+    while (open >= 0 && /[ \t]/.test(masked[open]!)) open--;
+    let close = comment.end;
+    while (close < masked.length && /[ \t]/.test(masked[close]!)) close++;
+    if (masked[open] === "{" && masked[close] === "}") masked[open] = masked[close] = " ";
   }
-  masked += source.slice(offset);
-  // JSX comments keep their `{}` container outside the parsed comment span.
-  return masked.split("\n").map((line) => line.replace(/\{\s*\}/g, "").trim().length > 0);
+  return masked
+    .join("")
+    .split("\n")
+    .map((line) => line.trim().length > 0);
 }
 
 interface SourceComment {

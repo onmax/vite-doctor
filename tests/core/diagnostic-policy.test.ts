@@ -502,3 +502,21 @@ test("next-line suppression skips stacked JSX comments before its target line", 
     { range: { line: 5 }, suppressionReason: "jsx next line" },
   ]);
 });
+
+test("next-line suppression targets a line that holds only an empty object", () => {
+  const { root, file } = fixture(
+    [
+      "configure(",
+      "  // doctor-disable-next-line test/example -- intentional fixture",
+      "  {}",
+      ")",
+    ].join("\n"),
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 3)],
+  });
+  expect(result.diagnostics).toEqual([]);
+});
