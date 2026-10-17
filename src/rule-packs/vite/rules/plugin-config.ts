@@ -12,6 +12,7 @@ const viteRequire =
 const genericPluginKeys = new Set(["name", "apply", "load", "transform"]);
 const pluginKeys = new Set([
   "enforce",
+  "configEnvironment",
   "configResolved",
   "configureServer",
   "configurePreviewServer",
@@ -45,7 +46,7 @@ export const noConfigHookArrayEcho = createRule({
             statement.type === "ImportDeclaration" &&
             viteModules.test(String(statement.source.value)),
         );
-        viteCode ||= viteRequire.test(ctx.file.text);
+        viteCode ||= viteRequire.test(stripComments(ctx.file.text));
       },
       Property(node: AnyNode) {
         const hook = keyName(node);
@@ -204,11 +205,18 @@ function helperEchoesParam(helper: AnyNode, index: number): boolean {
   const param = helper.params[index];
   if (param?.type !== "Identifier") return false;
   const returns: AnyNode[] = [];
+  let reassigned = false;
   if (helper.body.type !== "BlockStatement") returns.push(helper.body);
   else
     walkOwnBody(helper.body, (node) => {
       if (node.type === "ReturnStatement" && node.argument) returns.push(node.argument);
+      if (
+        (node.type === "AssignmentExpression" && node.left.type === "Identifier") ||
+        node.type === "VariableDeclarator"
+      )
+        reassigned ||= (node.left ?? node.id)?.name === param.name;
     });
+  if (reassigned) return false;
   const spreadsParam = (input: AnyNode): boolean => {
     const node = unwrap(input);
     if (node?.type === "ConditionalExpression")
@@ -243,6 +251,11 @@ function localFunction(from: AnyNode, name: string): AnyNode {
   const found: AnyNode[] = [];
   walkOwnBody(program, (node) => {
     if (node.type === "FunctionDeclaration" && node.id?.name === name) found.push(node);
+    if (
+      node.type === "ImportDeclaration" &&
+      node.specifiers.some((specifier: AnyNode) => specifier.local?.name === name)
+    )
+      found.push(node);
     if (
       node.type === "VariableDeclarator" &&
       node.id.type === "Identifier" &&
@@ -342,4 +355,8 @@ function walkOwnBody(node: AnyNode, visit: (node: AnyNode) => void, root = node)
   for (const [key, child] of Object.entries(node)) {
     if (key !== "__doctorParent") walkOwnBody(child, visit, root);
   }
+}
+
+function stripComments(source: string) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 }

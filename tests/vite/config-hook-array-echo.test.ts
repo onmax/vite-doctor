@@ -296,9 +296,60 @@ export default (): Plugin => ({
   },
 })`,
     ],
+    [
+      "a helper that reassigns its parameter",
+      `import type { Plugin } from "vite"
+function merge(current: string[]) {
+  current = ["x"]
+  return [...current, "y"]
+}
+export default (): Plugin => ({
+  name: "fixture",
+  config(config) {
+    return { resolve: { dedupe: merge(config.resolve.dedupe) } }
+  },
+})`,
+    ],
+    [
+      "a Vite require that only appears in a comment",
+      `// const vite = require("vite")
+export const store = {
+  name: "store",
+  config(config) {
+    return { items: [...config.items, "x"] }
+  },
+}`,
+    ],
+    [
+      "an imported helper that shares a name with a nested function",
+      `import type { Plugin } from "vite"
+import { merge } from "./merge"
+function other() {
+  function merge(current: string[]) {
+    return [...current, "x"]
+  }
+  return merge
+}
+export default (): Plugin => ({
+  name: "fixture",
+  config(config) {
+    return { resolve: { dedupe: merge(config.resolve.dedupe) } }
+  },
+})`,
+    ],
   ])("accepts %s", async (_label, source) => {
     const result = await run(source);
     expect(result.diagnostics).toEqual([]);
+  });
+
+  test("reports configEnvironment plugins without a Vite import", async () => {
+    const result = await run(`export default () => ({
+  name: "fixture",
+  configEnvironment(name, config) {
+    return { resolve: { dedupe: [...config.resolve.dedupe, "x"] } }
+  },
+})`);
+    expect(result.diagnostics).toHaveLength(1);
   });
 
   test("reports CommonJS plugins that require Vite tooling", async () => {
