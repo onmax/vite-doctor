@@ -2,7 +2,6 @@ import type { RuleContext } from "../../../../core/index.js";
 import {
   type AnyNode,
   createRule,
-  hasPriorServerReturnGuard,
   isClientOnlyPath,
   isRuntimeAppFile,
   nearestFunctionOrProgram,
@@ -126,18 +125,12 @@ function moduleBindings(ctx: RuleContext, program: AnyNode) {
     if (statement.start < moduleScript.start || statement.end > moduleScript.end) continue;
     for (const declarator of declaration.declarations) {
       if (declarator.id?.type !== "Identifier") continue;
-      if (declaration.kind === "let" || declaration.kind === "var")
-        bindings.set(declarator.id.name, {
-          name: declarator.id.name,
-          kind: "variable",
-          declarator,
-        });
-      else if (isCollectionConstruction(declarator.init))
-        bindings.set(declarator.id.name, {
-          name: declarator.id.name,
-          kind: "collection",
-          declarator,
-        });
+      const kind = isCollectionConstruction(declarator.init)
+        ? "collection"
+        : declaration.kind === "const"
+          ? null
+          : "variable";
+      if (kind) bindings.set(declarator.id.name, { name: declarator.id.name, kind, declarator });
     }
   }
   return bindings;
@@ -165,10 +158,8 @@ function isCollectionConstruction(init: AnyNode) {
 
 function writtenValue(node: AnyNode, binding: ModuleBinding): AnyNode {
   const parent = node.__doctorParent;
-  if (binding.kind === "variable") {
-    if (parent?.type === "AssignmentExpression" && parent.left === node) return parent.right;
-    return null;
-  }
+  if (parent?.type === "AssignmentExpression" && parent.left === node) return parent.right;
+  if (binding.kind === "variable") return null;
   if (parent?.type !== "MemberExpression" || parent.object !== node || parent.computed) return null;
   const call = parent.__doctorParent;
   if (call?.type !== "CallExpression" || call.callee !== parent) return null;
@@ -180,18 +171,45 @@ function writtenValue(node: AnyNode, binding: ModuleBinding): AnyNode {
 
 function isRequestTimeWrite(ctx: RuleContext, node: AnyNode, setup: Range | null) {
   if (nearestFunctionOrProgram(node)?.type === "Program" && !inRange(node, setup)) return false;
-  const guardText = ctx.file.text.slice(outermostFunction(node)?.start ?? 0, node.start);
-  if (hasPriorServerReturnGuard(guardText, guardText.length)) return false;
+  if (followsServerReturn(ctx, node)) return false;
   return !ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text);
 }
 
-// A server early return only guards code in the same top-level function, including callbacks
-// that function registers.
-function outermostFunction(node: AnyNode) {
-  let outermost: AnyNode = null;
-  for (let current = node.__doctorParent; current; current = current.__doctorParent)
-    if (FUNCTION_TYPES.has(current.type)) outermost = current;
-  return outermost;
+// An `if (import.meta.server) return` earlier in an enclosing block, including the blocks of
+// functions that register the callback holding the write.
+function followsServerReturn(ctx: RuleContext, node: AnyNode) {
+  for (let child = node, current = node.__doctorParent; current;) {
+    if (current.type === "BlockStatement" || current.type === "Program") {
+      for (const statement of current.body) {
+        if (statement === child) break;
+        if (isServerReturnGuard(ctx, statement)) return true;
+      }
+    }
+    child = current;
+    current = current.__doctorParent;
+  }
+  return false;
+}
+
+function isServerReturnGuard(ctx: RuleContext, statement: AnyNode) {
+  if (statement.type !== "IfStatement") return false;
+  const exit =
+    statement.consequent.type === "BlockStatement"
+      ? statement.consequent.body[0]
+      : statement.consequent;
+  return exit?.type === "ReturnStatement" && isServerTest(ctx, unwrap(statement.test));
+}
+
+function isServerTest(ctx: RuleContext, test: AnyNode): boolean {
+  if (test?.type === "LogicalExpression" && test.operator === "||")
+    return isServerTest(ctx, unwrap(test.left)) || isServerTest(ctx, unwrap(test.right));
+  const text = ctx.file.text.slice(test.start, test.end);
+  return (
+    text === "import.meta.server" ||
+    /^typeof\s+(?:window|document|localStorage|sessionStorage|navigator)\s*={2,3}\s*["']undefined["']$/.test(
+      text,
+    )
+  );
 }
 
 function resolvesToModuleBinding(node: AnyNode, name: string) {
@@ -256,9 +274,35 @@ function isRequestScopedCall(node: AnyNode) {
   if (!name) return false;
   if (REQUEST_CALLS.has(name) || PROMISE_COMBINATORS.has(name)) return true;
   if (/^use[A-Z]\w*Store$/.test(name)) return true;
-  if (name.startsWith("$") || name.includes(".$")) return true;
+  if (name.startsWith("$") && !moduleNames(node).has(name)) return true;
+  if (name.includes(".$")) return true;
   const method = name.split(".").at(-1)!;
   return name.includes(".") && PROMISE_METHODS.has(method);
+}
+
+const moduleNamesByProgram = new WeakMap<object, Set<string>>();
+
+// Imports and top-level declarations: a `$helper()` declared there is not a Nuxt app injection.
+function moduleNames(node: AnyNode) {
+  let program = node;
+  while (program.__doctorParent) program = program.__doctorParent;
+  let names = moduleNamesByProgram.get(program);
+  if (names) return names;
+  names = new Set<string>();
+  for (const statement of program.body ?? []) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (statement.type === "ImportDeclaration")
+      for (const specifier of statement.specifiers ?? []) names.add(specifier.local.name);
+    else if (declaration?.type === "FunctionDeclaration" && declaration.id)
+      names.add(declaration.id.name);
+    else if (declaration?.type === "VariableDeclaration")
+      for (const declarator of declaration.declarations) {
+        for (const name of patternNames(declarator.id)) names.add(name);
+      }
+  }
+  moduleNamesByProgram.set(program, names);
+  return names;
 }
 
 function isRequestScopedLocal(node: AnyNode, setup: Range | null, depth: number) {

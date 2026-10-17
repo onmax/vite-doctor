@@ -108,6 +108,25 @@ export async function useUser() {
   currentUser = await $fetch('/api/me')
 }`,
   ],
+  [
+    "a Map declared with let",
+    "app/composables/useProduct.ts",
+    `let products = new Map<string, unknown>()
+export async function useProduct(id: string) {
+  products.set(id, await $fetch(\`/api/products/\${id}\`))
+}`,
+  ],
+  [
+    "a write after a nested callback's server return",
+    "app/composables/useUser.ts",
+    `let currentUser: unknown
+export async function useUser() {
+  onMounted(() => {
+    if (import.meta.server) return
+  })
+  currentUser = await $fetch('/api/me')
+}`,
+  ],
 ])("reports %s", async (_, file, source) => {
   const diagnostics = await run({ [file]: source });
   expect(diagnostics).toMatchObject([{ code: "NUXT0084", file }]);
@@ -235,6 +254,20 @@ export const getConfig = () => config`,
     `let currentUser: unknown
 export async function getUser() {
   currentUser = await $fetch('/api/me')
+}`,
+  ],
+  [
+    "module-level $-prefixed helpers",
+    "app/composables/useLabel.ts",
+    `import { $t } from './i18n'
+let label: string | undefined
+let title: string | undefined
+function $format(value: string) {
+  return value.toUpperCase()
+}
+export function useLabel() {
+  label = $format('hello')
+  title = $t('title')
 }`,
   ],
 ])("does not report %s", async (_, file, source) => {
