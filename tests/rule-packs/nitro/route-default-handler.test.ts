@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { runProjectFixture, runRuleFixture } from "../../../src/core/testkit.ts";
 import { requireDefaultHandler } from "../../../src/rule-packs/nitro/rules/index.ts";
 
 const helper = "export function getDb() {\n  return createDb()\n}\n";
@@ -121,6 +121,68 @@ describe("NITRO0019 route file without a default handler", () => {
   });
 });
 
+describe("NITRO0019 route file whose default export is not a handler", () => {
+  test.each([
+    [
+      "function with data parameters",
+      "export default function forecast(data: Array<number>, m: number) {\n  return data.slice(m)\n}",
+    ],
+    [
+      "arrow with a typed non-event parameter",
+      "export default (values: number[]) => values.length",
+    ],
+    [
+      "function with two required parameters",
+      "export default function (a, b) {\n  return a + b\n}",
+    ],
+    ["object", "export default { pageSize: 20 }"],
+    ["array", "export default ['a', 'b']"],
+    ["constant", "export default 42"],
+    ["class", "export default class Repo {}"],
+    [
+      "local helper function",
+      "function helper(rows: string[]) {\n  return rows\n}\nexport default helper",
+    ],
+    ["local constant", "const config = { pageSize: 20 }\nexport { config as default }"],
+  ])("reports a default-exported %s", async (_name, source) => {
+    expect(await codes({ "server/api/utils/helper.ts": source })).toEqual(["NITRO0019"]);
+  });
+
+  test("names the plain function and suggests a handler", async () => {
+    const result = await runRuleFixture({
+      rule: requireDefaultHandler,
+      framework: "nuxt",
+      files: {
+        "server/api/utils/holtwinters.ts":
+          "export default function getAugumentedDataset(data: Array<number>, m: number) {\n  return data\n}\nexport const PERIOD = 4",
+      },
+    });
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["NITRO0019"]);
+    expect(result.diagnostics[0]?.message).toContain("/api/utils/holtwinters route");
+    expect(result.diagnostics[0]?.message).toContain("getAugumentedDataset");
+    expect(result.diagnostics[0]?.suggestion).toContain("server/utils/");
+    expect(result.diagnostics[0]?.suggestion).toContain("defineEventHandler()");
+  });
+
+  test.each([
+    ["event handler", "export default defineEventHandler((event) => 1)"],
+    ["legacy event handler", "export default eventHandler(() => 1)"],
+    ["cached handler", "export default defineCachedEventHandler(() => 1, { maxAge: 60 })"],
+    ["unknown wrapper", "export default withAuth(async (event) => 1)"],
+    ["imported handler", "import handler from '../../handlers/users'\nexport default handler"],
+    ["plain event function", "export default (event) => getQuery(event)"],
+    ["typed event function", "export default async (event: H3Event) => 1"],
+    ["parameterless function", "export default function () {\n  return 'ok'\n}"],
+    ["function with optional second parameter", "export default (event, options = {}) => options"],
+    ["handler object", "export default { handler: (event) => 1 }"],
+    ["fetch object", "export default { fetch: (request) => new Response('ok') }"],
+    ["app instance", "export default new H3().get('/', () => 'ok')"],
+    ["local handler", "const handler = defineEventHandler(() => 1)\nexport default handler"],
+  ])("accepts a default-exported %s", async (_name, source) => {
+    expect(await codes({ "server/api/users.ts": source })).toEqual([]);
+  });
+});
+
 describe("NITRO0019 in standalone Nitro", () => {
   test("uses the Nitro 2 root as the default server directory", async () => {
     expect(
@@ -224,6 +286,36 @@ describe("NITRO0020 route file with extra runtime exports", () => {
           "export const handler = defineEventHandler(() => 1)\nexport default handler",
       }),
     ).toEqual([]);
+  });
+
+  test("does not claim the route module has importers", async () => {
+    const result = await runRuleFixture({
+      rule: requireDefaultHandler,
+      framework: "nuxt",
+      files: { "server/api/users.get.ts": `export const PAGE_SIZE = 20\n${handler}` },
+    });
+    expect(result.diagnostics[0]?.message).not.toContain("every module that imports");
+  });
+
+  test("allows configured intentional exports", async () => {
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      rules: [requireDefaultHandler],
+      config: {
+        rules: {
+          "nitro/routes/require-default-handler": [
+            "warn",
+            { allowedExports: ["portalOpenApiMeta"] },
+          ],
+        },
+      },
+      files: {
+        "server/api/search.post.ts": `export const portalOpenApiMeta = { operationId: 'search' }\n${helper}${handler}`,
+      },
+    });
+    expect(result.diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+      expect.stringContaining("also exports getDb."),
+    ]);
   });
 
   test("ignores named exports outside route directories", async () => {
