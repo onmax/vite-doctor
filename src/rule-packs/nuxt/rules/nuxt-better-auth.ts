@@ -14,7 +14,6 @@ type AnyNode = any;
 // Modules that mount the Better Auth handler at /api/auth/** themselves; nuxt-better-auth does it
 // through its nitro-better-auth Nitro module.
 const HANDLER_MODULES = new Set(["@nuxtjs/better-auth", "nuxt-better-auth"]);
-const HANDLER_MODULE_TEXT = /["'](?:@nuxtjs\/better-auth|nuxt-better-auth)["']/;
 const SCRIPT = "{ts,js,mts,mjs,cts,cjs}";
 // Where Better Auth's CLI looks for the auth instance, plus the Nitro server directory.
 const INSTANCE_GLOBS = [
@@ -88,7 +87,7 @@ function hasAuthHandler(ctx: RuleContext, nuxt: NuxtProjectInfo, root: string): 
 /** Whether a Nuxt config's `modules` names a handler module; unreadable `modules` counts. */
 function registersHandlerModule(file: string, ctx: RuleContext): boolean {
   const text = ctx.fs.readText(file);
-  if (text === undefined || !HANDLER_MODULE_TEXT.test(text)) return false;
+  if (text === undefined) return false;
   const modules = configModules(file, text);
   if (!modules) return true;
   return modules.some((name) => HANDLER_MODULES.has(name));
@@ -116,7 +115,8 @@ function configModules(file: string, text: string): string[] | undefined {
   if (config?.type !== "ObjectExpression") return undefined;
   let modules: AnyNode;
   for (const property of config.properties) {
-    if (property.type !== "Property" || property.computed) return undefined;
+    // Dynamic unrelated properties do not prevent us from reading a static modules entry.
+    if (property.type !== "Property" || property.computed) continue;
     if ((property.key.name ?? property.key.value) === "modules") modules = property.value;
   }
   if (!modules) return [];
@@ -166,7 +166,7 @@ function betterAuthCall(file: string, text: string): { start: number; end: numbe
   }
   if (!callees.size && !namespaces.size) return undefined;
   let found: AnyNode;
-  const visit = (node: AnyNode) => {
+  const visit = (node: AnyNode, shadowed = new Set<string>()) => {
     if (found || !node || typeof node !== "object") return;
     if (Array.isArray(node)) {
       node.forEach(visit);
@@ -174,20 +174,60 @@ function betterAuthCall(file: string, text: string): { start: number; end: numbe
     }
     const callee = node.type === "CallExpression" ? node.callee : undefined;
     if (
-      (callee?.type === "Identifier" && callees.has(callee.name)) ||
+      (callee?.type === "Identifier" && callees.has(callee.name) && !shadowed.has(callee.name)) ||
       (callee?.type === "MemberExpression" &&
         !callee.computed &&
         callee.object.type === "Identifier" &&
         namespaces.has(callee.object.name) &&
+        !shadowed.has(callee.object.name) &&
         callee.property.name === "betterAuth")
     ) {
       found = callee;
       return;
     }
-    for (const key in node) visit(node[key]);
+    if (isFunction(node)) {
+      const nestedShadowed = new Set(shadowed);
+      for (const name of functionBindings(node)) nestedShadowed.add(name);
+      for (const key in node) visit(node[key], nestedShadowed);
+      return;
+    }
+    for (const key in node) visit(node[key], shadowed);
   };
   visit(program.body);
   return found && { start: found.start, end: found.end };
+}
+
+function isFunction(node: AnyNode): boolean {
+  return ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+    node?.type,
+  );
+}
+
+function functionBindings(node: AnyNode): string[] {
+  const names: string[] = [];
+  const addPattern = (pattern: AnyNode) => {
+    if (!pattern) return;
+    if (pattern.type === "Identifier") names.push(pattern.name);
+    else if (pattern.type === "AssignmentPattern") addPattern(pattern.left);
+    else if (pattern.type === "RestElement") addPattern(pattern.argument);
+    else if (pattern.type === "ArrayPattern") pattern.elements.forEach(addPattern);
+    else if (pattern.type === "ObjectPattern")
+      pattern.properties.forEach((property: AnyNode) =>
+        addPattern(property.type === "RestElement" ? property.argument : property.value),
+      );
+  };
+  (node.params ?? []).forEach(addPattern);
+  const scan = (value: AnyNode) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) return value.forEach(scan);
+    if (value !== node && isFunction(value)) return;
+    if (value.type === "VariableDeclarator") addPattern(value.id);
+    if (value.type === "FunctionDeclaration" || value.type === "ClassDeclaration")
+      addPattern(value.id);
+    for (const key in value) scan(value[key]);
+  };
+  scan(node.body);
+  return names;
 }
 
 /** The first `betterAuth()` call, the server instance whose handler must be mounted. */

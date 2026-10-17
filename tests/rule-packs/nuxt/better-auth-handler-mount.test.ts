@@ -204,6 +204,32 @@ test("ignores a local function named betterAuth", async () => {
   expect(result.diagnostics).toEqual([]);
 });
 
+test("ignores a shadowed imported betterAuth binding", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireStandardAuthHandlerMount],
+    files: {
+      "nuxt.config.ts": "export default defineNuxtConfig({})\n",
+      "server/utils/auth.ts":
+        "import { betterAuth } from 'better-auth'\n\nfunction f(betterAuth: () => void) { betterAuth() }\n",
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("reads modules when an unrelated config property is dynamic", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireStandardAuthHandlerMount],
+    files: {
+      ...authInstance,
+      "nuxt.config.ts":
+        "const key = 'title'\nexport default defineNuxtConfig({ [key]: 'x', modules: ['nuxt-better-auth'] })\n",
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
 test.each([
   ["an imported module", "betterAuthModule"],
   ["an imported module with options", "[betterAuthModule, {}]"],
