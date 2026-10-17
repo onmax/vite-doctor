@@ -1,4 +1,4 @@
-import { join } from "pathe";
+import { dirname, isAbsolute, join, resolve } from "pathe";
 import {
   createRule,
   defineRulePack,
@@ -29,12 +29,7 @@ export const requireUAppRoot = createRule({
   },
   create(ctx) {
     const usesAppService = /\b(useToast|useOverlay)\s*\(/.test(ctx.file.text);
-    if (
-      !usesAppService ||
-      projectHasUAppRoot(ctx.fs, ctx.project.root) ||
-      hasUAppProvider(ctx.file.templateAst)
-    )
-      return;
+    if (!usesAppService || projectHasUAppRoot(ctx) || hasUAppProvider(ctx.file.templateAst)) return;
     let reported = false;
     return {
       CallExpression(node: AnyNode) {
@@ -144,16 +139,74 @@ export const nuxtUiRulePack = defineRulePack({
 
 export default nuxtUiRulePack;
 
-function projectHasUAppRoot(fs: RuleFileSystem, root: string): boolean {
-  return ["app/app.vue", "app.vue", "app/layouts/default.vue", "layouts/default.vue"].some(
-    (file) => {
-      const text = fs.readText(join(root, file));
-      return text !== undefined && hasUAppTemplate(text);
-    },
-  );
+const SHELL_FILES = ["app/app.vue", "app.vue", "app/layouts/default.vue", "layouts/default.vue"];
+const NUXT_CONFIG_FILES = [
+  "nuxt.config.ts",
+  "nuxt.config.js",
+  "nuxt.config.mjs",
+  "nuxt.config.mts",
+];
+
+/**
+ * True when the app shell of the project or any Nuxt layer it extends renders UApp, or when an
+ * extended layer cannot be read, because a provider there would be invisible to this check.
+ */
+function projectHasUAppRoot(ctx: RuleContext): boolean {
+  const projectRoot = resolve(ctx.project.root, ctx.project.nuxt?.layers?.[0]?.root ?? ".");
+  const roots = new Set([
+    projectRoot,
+    ...(ctx.project.nuxt?.layers ?? []).map((layer) => resolve(ctx.project.root, layer.root)),
+  ]);
+  for (const root of roots) if (layerHasUAppRoot(ctx.fs, root, new Set())) return true;
+  return false;
 }
 
-function hasUAppTemplate(source: string): boolean {
+function layerHasUAppRoot(fs: RuleFileSystem, root: string, seen: Set<string>): boolean {
+  if (seen.has(root)) return false;
+  seen.add(root);
+  if (SHELL_FILES.some((file) => hasUAppTemplate(fs.readText(join(root, file))))) return true;
+  const extended = extendedLayers(fs, root);
+  if (!extended) return true;
+  const autoRegistered = (fs.readDir(join(root, "layers")) ?? [])
+    .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+    .map((entry) => join(root, "layers", entry.name));
+  return [...extended, ...autoRegistered].some((layer) => layerHasUAppRoot(fs, layer, seen));
+}
+
+/** Local roots of the layers a Nuxt config extends, or `undefined` when one cannot be resolved. */
+function extendedLayers(fs: RuleFileSystem, root: string): string[] | undefined {
+  const config = NUXT_CONFIG_FILES.map((file) => fs.readText(join(root, file))).find(
+    (text) => text !== undefined,
+  );
+  if (!config || !/\bextends\s*:/.test(config)) return [];
+  const value = config.match(/\bextends\s*:\s*(\[[^\]]*\]|["'][^"']*["'])/)?.[1];
+  if (!value) return undefined;
+  const entries = [...value.matchAll(/["']([^"']*)["']/g)].map((match) => match[1]!);
+  if (value.replace(/["'][^"']*["']|[\s,[\]]/g, "")) return undefined;
+  const layers: string[] = [];
+  for (const entry of entries) {
+    const layer = resolveLayer(fs, root, entry);
+    if (!layer) return undefined;
+    layers.push(layer);
+  }
+  return layers;
+}
+
+function resolveLayer(fs: RuleFileSystem, root: string, entry: string): string | undefined {
+  if (entry.startsWith(".") || isAbsolute(entry)) {
+    const layer = resolve(root, entry);
+    return fs.exists(layer) ? layer : undefined;
+  }
+  if (/^[a-z][\w+.-]*:/i.test(entry)) return undefined;
+  for (let dir = root; ; dir = dirname(dir)) {
+    const layer = join(dir, "node_modules", entry);
+    if (fs.exists(join(layer, "package.json"))) return layer;
+    if (dirname(dir) === dir) return undefined;
+  }
+}
+
+function hasUAppTemplate(source: string | undefined): boolean {
+  if (source === undefined) return false;
   return hasUAppProvider(
     loadVueCompilerSfc().parse(source).descriptor.template?.ast as TemplateRootNode | undefined,
   );

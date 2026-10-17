@@ -86,3 +86,69 @@ test.each(["useToast", "useOverlay"])(
     expect(result.diagnostics.map((d) => d.ruleId)).toEqual([requireUAppRoot.meta.id]);
   },
 );
+
+const toastPage = "<script setup>const toast = useToast()</script><template><p>Home</p></template>";
+const uappShell = "<template><UApp><NuxtPage /></UApp></template>";
+
+test.each([
+  [
+    "a relative layer",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["./base"] })`,
+      "base/app/app.vue": uappShell,
+    },
+  ],
+  [
+    "a package layer",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: "docs-theme" })`,
+      "node_modules/docs-theme/package.json": `{ "name": "docs-theme" }`,
+      "node_modules/docs-theme/app/app.vue": uappShell,
+    },
+  ],
+  [
+    "a nested layer",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["./base"] })`,
+      "base/nuxt.config.ts": `export default defineNuxtConfig({ extends: ["../theme"] })`,
+      "theme/layouts/default.vue": uappShell,
+    },
+  ],
+  ["an auto-registered layer", { "layers/theme/app/app.vue": uappShell }],
+  [
+    "a layer that cannot be resolved",
+    { "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["docus"] })` },
+  ],
+  [
+    "a remote layer",
+    { "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["github:org/theme"] })` },
+  ],
+  [
+    "a computed extends value",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: process.env.THEME ? [process.env.THEME] : [] })`,
+    },
+  ],
+])("accepts a UApp provider from %s", async (_name, files) => {
+  const result = await runRuleFixture({
+    rule: requireUAppRoot,
+    framework: "nuxt",
+    files: { ...files, "app/pages/index.vue": toastPage },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("reports when every extended layer is resolved and none provides UApp", async () => {
+  const result = await runRuleFixture({
+    rule: requireUAppRoot,
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["./base", "docs-theme"] })`,
+      "base/app/app.vue": "<template><NuxtPage /></template>",
+      "node_modules/docs-theme/package.json": `{ "name": "docs-theme" }`,
+      "node_modules/docs-theme/app/app.vue": "<template><NuxtPage /></template>",
+      "app/pages/index.vue": toastPage,
+    },
+  });
+  expect(result.diagnostics.map((d) => d.ruleId)).toEqual([requireUAppRoot.meta.id]);
+});
