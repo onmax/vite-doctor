@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import { afterAll, expect, test } from "vite-plus/test";
-import { createProjectFixture } from "../../../src/core/testkit.ts";
+import { createProjectFixture, runProjectFixture } from "../../../src/core/testkit.ts";
 import { runViteDoctor } from "../../../src/doctor.ts";
 import {
   nitroRulePack,
@@ -175,6 +175,39 @@ test("leaves config files, tests, app code and files without integration imports
   ).toEqual([]);
 });
 
+test("does not resolve names declared in more than one scope", async () => {
+  expect(
+    await lines({
+      "modules/shadow.ts": `import { resolve } from "pathe"
+import type { Plugin } from "vite"
+const path = "./generated/route.ts"
+export function routes(root: string, handler: string) {
+  const path = resolve(root, "generated/route.ts")
+  return [{ handler: path, route: "/x" }, { handler, route: "/y" }]
+}
+const handler = "./generated/other.ts"`,
+    }),
+  ).toEqual([]);
+});
+
+test("skips runtime code under configured Nuxt server and app directories", async () => {
+  const registration = `import type { Plugin } from "vite"
+export const routes = [{ handler: "./generated.ts", route: "/x" }]
+`;
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireAbsoluteGeneratedPaths],
+    files: {
+      "nuxt.config.ts": 'export default defineNuxtConfig({ serverDir: "backend" })',
+      "backend/plugins/register.ts": registration,
+      "modules/register.ts": registration,
+    },
+  });
+  expect(
+    result.diagnostics.map((diagnostic) => diagnostic.file.split("/").slice(-2).join("/")),
+  ).toEqual(["modules/register.ts"]);
+});
+
 test("leaves @nuxt/kit helper arguments to nuxt/module/resolve-runtime-paths", async () => {
   expect(
     await lines({
@@ -183,6 +216,13 @@ export default defineNuxtModule({
   setup() {
     addServerHandler({ handler: "./runtime/server/handler", route: "/api/x" })
     addServerPlugin("./runtime/server/plugin")
+    addServerHandler(({ handler: "./runtime/server/typed", route: "/api/y" }) as NitroEventHandler)
+  },
+})`,
+      "modules/namespace.ts": `import * as kit from "@nuxt/kit"
+export default kit.defineNuxtModule({
+  setup() {
+    kit.addServerHandler({ handler: "./runtime/server/handler", route: "/api/x" })
   },
 })`,
     }),

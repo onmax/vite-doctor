@@ -1,4 +1,6 @@
+import { isAbsolute, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../core/index.js";
+import { nitroServerFile } from "./server-layout.js";
 import { createRule, isNitroServerFile, report, sourceForNode, type AnyNode } from "./shared.js";
 
 const RULE_ID = "nitro/config/require-absolute-generated-paths";
@@ -38,24 +40,39 @@ export const requireAbsoluteGeneratedPaths = createRule({
   create(ctx) {
     const path = ctx.file.relativePath.replace(/\\/g, "/");
     if (CONFIG_FILE_RE.test(path) || TEST_FILE_RE.test(path)) return;
-    if (RUNTIME_DIR_RE.test(packageRelativePath(ctx, path)) || isNitroServerFile(ctx)) return;
+    if (isRuntimeFile(ctx, path)) return;
     let integration = false;
     const kitFunctions = new Set<string>();
+    const kitNamespaces = new Set<string>();
     const strings = new Map<string, AnyNode>();
+    const declarations = new Map<string, number>();
+    const declare = (name: string) => declarations.set(name, (declarations.get(name) ?? 0) + 1);
+    const declareParameters = (node: AnyNode) => {
+      for (const parameter of node.params ?? [])
+        if (parameter.type === "Identifier") declare(parameter.name);
+    };
     const candidates: Array<{ node: AnyNode; kind: "handler" | "plugin" }> = [];
     return {
       ImportDeclaration(node: AnyNode) {
         const source = String(node.source?.value);
         if (INTEGRATION_SOURCES.has(source)) integration = true;
         if (!NUXT_KIT_SOURCES.has(source)) return;
-        for (const specifier of node.specifiers ?? [])
+        for (const specifier of node.specifiers ?? []) {
           if (specifier.type === "ImportSpecifier") kitFunctions.add(specifier.local.name);
+          if (specifier.type === "ImportNamespaceSpecifier")
+            kitNamespaces.add(specifier.local.name);
+        }
       },
       VariableDeclarator(node: AnyNode) {
-        if (node.id?.type !== "Identifier" || node.__doctorParent?.kind !== "const") return;
+        if (node.id?.type !== "Identifier") return;
+        declare(node.id.name);
+        if (node.__doctorParent?.kind !== "const") return;
         const value = unwrapExpression(node.init);
         if (staticStringValue(value) !== undefined) strings.set(node.id.name, value);
       },
+      FunctionDeclaration: declareParameters,
+      FunctionExpression: declareParameters,
+      ArrowFunctionExpression: declareParameters,
       ObjectExpression(node: AnyNode) {
         const handler = node.properties?.find(
           (property: AnyNode) => propertyKeyName(property) === "handler",
@@ -67,7 +84,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
           )
         )
           return;
-        if (isKitHelperArgument(node, kitFunctions)) return;
+        if (isKitHelperArgument(node, kitFunctions, kitNamespaces)) return;
         candidates.push({ node: handler.value, kind: "handler" });
       },
       CallExpression(node: AnyNode) {
@@ -104,9 +121,12 @@ export const requireAbsoluteGeneratedPaths = createRule({
         if (!integration) return;
         for (const { node, kind } of candidates) {
           const value = unwrapExpression(node);
+          // A name declared more than once may resolve to another scope's value, so skip it.
           const literal =
             value?.type === "Identifier"
-              ? strings.get(value.name)
+              ? declarations.get(value.name) === 1
+                ? strings.get(value.name)
+                : undefined
               : staticStringValue(value) !== undefined
                 ? value
                 : undefined;
@@ -136,6 +156,21 @@ function reportPath(ctx: RuleContext, node: AnyNode, text: string, kind: "handle
   );
 }
 
+function isRuntimeFile(ctx: RuleContext, path: string) {
+  if (RUNTIME_DIR_RE.test(packageRelativePath(ctx, path)) || isNitroServerFile(ctx)) return true;
+  if (ctx.project.framework !== "nuxt") return false;
+  // Configured Nuxt serverDir, srcDir and appDir move runtime code away from the default paths.
+  const file = resolve(ctx.project.root, ctx.file.path);
+  if (nitroServerFile(ctx, file)) return true;
+  const appDir = ctx.project.nuxt?.appDir;
+  return Boolean(appDir && appDir !== ctx.project.root && isInside(appDir, file));
+}
+
+function isInside(directory: string, file: string) {
+  const path = relative(directory, file);
+  return Boolean(path) && !path.startsWith("../") && !isAbsolute(path);
+}
+
 function packageRelativePath(ctx: RuleContext, path: string) {
   let owner = "";
   for (const item of ctx.project.workspacePackages ?? []) {
@@ -149,16 +184,17 @@ function isRelativeFilePath(value: string) {
   return value.startsWith("./") || value.startsWith("../") || /^\.[\w-]+[\\/]/.test(value);
 }
 
+const EXPRESSION_WRAPPERS = new Set([
+  "ParenthesizedExpression",
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "TSTypeAssertion",
+]);
+
 function unwrapExpression(node: AnyNode): AnyNode {
   let current = node;
-  while (
-    current?.type === "ParenthesizedExpression" ||
-    current?.type === "TSAsExpression" ||
-    current?.type === "TSSatisfiesExpression" ||
-    current?.type === "TSNonNullExpression" ||
-    current?.type === "TSTypeAssertion"
-  )
-    current = current.expression;
+  while (EXPRESSION_WRAPPERS.has(current?.type)) current = current.expression;
   return current;
 }
 
@@ -175,14 +211,23 @@ function propertyKeyName(property: AnyNode): string | undefined {
   return staticStringValue(property.key);
 }
 
-function isKitHelperArgument(node: AnyNode, kitFunctions: Set<string>) {
-  const parent = node.__doctorParent;
-  const call = parent?.type === "ArrayExpression" ? parent.__doctorParent : parent;
+function isKitHelperArgument(node: AnyNode, kitFunctions: Set<string>, kitNamespaces: Set<string>) {
+  let parent = outerExpression(node).__doctorParent;
+  if (parent?.type === "ArrayExpression") parent = outerExpression(parent).__doctorParent;
+  if (parent?.type !== "CallExpression") return false;
+  const callee = unwrapExpression(parent.callee);
+  if (callee?.type === "Identifier") return kitFunctions.has(callee.name);
   return (
-    call?.type === "CallExpression" &&
-    call.callee?.type === "Identifier" &&
-    kitFunctions.has(call.callee.name)
+    callee?.type === "MemberExpression" &&
+    callee.object?.type === "Identifier" &&
+    kitNamespaces.has(callee.object.name)
   );
+}
+
+function outerExpression(node: AnyNode): AnyNode {
+  let current = node;
+  while (EXPRESSION_WRAPPERS.has(current.__doctorParent?.type)) current = current.__doctorParent;
+  return current;
 }
 
 function isNitroOptions(node: AnyNode): boolean {
