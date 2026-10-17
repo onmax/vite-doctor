@@ -127,6 +127,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0020", ruleId: "nitro/routes/require-default-handler" },
   { code: "NITRO0021", ruleId: "nitro/structure/prefer-server-utils" },
   { code: "NITRO0022", ruleId: "nitro/structure/prefer-server-utils" },
+  { code: "NITRO0024", ruleId: "nitro/cloudflare/no-unguarded-als-enterwith" },
   { code: "NUXT0001", ruleId: "docus/appconfig/no-unknown-key" },
   { code: "NUXT0002", ruleId: "docus/layers/no-empty-app-vue-shadow" },
   { code: "NUXT0003", ruleId: "nuxt-better-auth/require-standard-auth-handler-mount" },

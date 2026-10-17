@@ -18,6 +18,7 @@ import { preferGetRequestIp } from "./prefer-get-request-ip.js";
 import { noHttpErrorMasking } from "./no-http-error-masking.js";
 import { requireDefaultHandler } from "./require-default-handler.js";
 import { preferServerUtils } from "./prefer-server-utils.js";
+import { noUnguardedAlsEnterWith } from "./no-unguarded-als-enter-with.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -39,6 +40,7 @@ export {
   noHttpErrorMasking,
   requireDefaultHandler,
   preferServerUtils,
+  noUnguardedAlsEnterWith,
 };
 
 const rules = [
@@ -60,6 +62,7 @@ const rules = [
   preferGetRequestIp,
   noHttpErrorMasking,
   requireDefaultHandler,
+  noUnguardedAlsEnterWith,
 ];
 
 const strictOnlyRules = [preferServerUtils];

@@ -23,6 +23,7 @@ export const nitroDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0020", ruleId: "nitro/routes/require-default-handler" },
   { code: "NITRO0021", ruleId: "nitro/structure/prefer-server-utils" },
   { code: "NITRO0022", ruleId: "nitro/structure/prefer-server-utils" },
+  { code: "NITRO0024", ruleId: "nitro/cloudflare/no-unguarded-als-enterwith" },
 ]);
 
 export const diagnostics = nitroDiagnosticRegistry.diagnostics;

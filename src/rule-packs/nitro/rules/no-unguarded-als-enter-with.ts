@@ -1,0 +1,127 @@
+import { join } from "pathe";
+import type { RuleContext } from "../../../core/index.js";
+import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
+import { owningWorkspacePackage } from "../../../core/internal/workspace-packages.js";
+import { type AnyNode, createRule, report } from "./shared.js";
+
+const RULE_ID = "nitro/cloudflare/no-unguarded-als-enterwith";
+const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
+const CLOUDFLARE_PACKAGES = [
+  "wrangler",
+  "miniflare",
+  "@cloudflare/workers-types",
+  "@cloudflare/vite-plugin",
+  "@cloudflare/vitest-pool-workers",
+  "@cloudflare/vitest-plugin",
+  "nitro-cloudflare-dev",
+];
+const CLOUDFLARE_KEYWORDS = new Set(["cloudflare", "cloudflare-workers", "workerd"]);
+const WRANGLER_CONFIGS = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
+const HOST_CONFIGS = ["nitro", "nuxt", "vite"].flatMap((name) =>
+  ["ts", "mts", "js", "mjs"].map((extension) => `${name}.config.${extension}`),
+);
+const CLOUDFLARE_PRESET = /\bpreset\s*:\s*["'`]cloudflare/i;
+const CLOUDFLARE_PRESET_ENV = /\bNITRO_PRESET=["']?cloudflare/i;
+const TEST_FILE = /(?:^|\/)(?:tests?|__tests__|e2e)\/|\.(?:spec|test)\.[cm]?[jt]sx?$/;
+
+export const noUnguardedAlsEnterWith = createRule({
+  meta: {
+    id: RULE_ID,
+    title: "Guard AsyncLocalStorage#enterWith on Cloudflare",
+    category: "runtime",
+    severity: "error",
+    fixable: "suggestion",
+    docsUrl: "https://developers.cloudflare.com/workers/runtime-apis/nodejs/asynclocalstorage/",
+    requires: { script: true },
+    prefilter: { names: ["enterWith"] },
+  },
+  create(ctx) {
+    if (TEST_FILE.test(ctx.file.relativePath.replace(/\\/g, "/"))) return;
+    return {
+      CallExpression(node: AnyNode) {
+        const callee = node.callee;
+        if (
+          callee?.type !== "MemberExpression" ||
+          callee.computed ||
+          callee.property?.name !== "enterWith"
+        )
+          return;
+        if (isInsideTry(node) || !targetsCloudflare(ctx)) return;
+        report(
+          ctx,
+          callee.property,
+          RULE_ID,
+          "error",
+          "runtime",
+          "AsyncLocalStorage#enterWith() is not implemented in workerd: Cloudflare Workers throw `asyncLocalStorage.enterWith() is not implemented` on this call, even with nodejs_compat.",
+          "Run the work inside als.run(store, callback). If the call must stay, wrap it in try/catch and fall back to state that does not depend on enterWith().",
+        );
+      },
+    };
+  },
+});
+
+function isInsideTry(node: AnyNode) {
+  for (let child = node, current = node.__doctorParent; current;) {
+    if (FUNCTION_TYPES.has(current.type)) return false;
+    if (current.type === "TryStatement" && current.block === child && current.handler)
+      return !onlyRethrows(current.handler);
+    child = current;
+    current = current.__doctorParent;
+  }
+  return false;
+}
+
+function onlyRethrows(handler: AnyNode) {
+  const [statement, ...rest] = handler.body?.body ?? [];
+  return (
+    !rest.length &&
+    statement?.type === "ThrowStatement" &&
+    statement.argument?.type === "Identifier" &&
+    statement.argument.name === handler.param?.name
+  );
+}
+
+// Project Inventory evidence that the code owned by this workspace package runs in workerd.
+function targetsCloudflare(ctx: RuleContext) {
+  if (/\bfrom\s+["']cloudflare:/.test(ctx.file.text)) return true;
+  const packages = projectWorkspacePackages(ctx.project);
+  const root = owningWorkspacePackage(packages, ctx.file.relativePath.replace(/\\/g, "/"));
+  const key = `nitro:cloudflare-target:${root}`;
+  let target = ctx.cache.get<boolean>(key);
+  if (target === undefined) {
+    target = hasCloudflareEvidence(
+      ctx,
+      root,
+      packages.find((item) => item.root === root)?.packages ?? {},
+    );
+    ctx.cache.set(key, target);
+  }
+  return target;
+}
+
+function hasCloudflareEvidence(ctx: RuleContext, root: string, packages: Record<string, string>) {
+  if (CLOUDFLARE_PACKAGES.some((name) => name in packages)) return true;
+  const directory = join(ctx.project.root, root);
+  if (WRANGLER_CONFIGS.some((file) => ctx.fs.exists(join(directory, file)))) return true;
+  const manifest = ctx.fs.readJson(join(directory, "package.json")) as {
+    keywords?: unknown;
+  } | null;
+  if (
+    Array.isArray(manifest?.keywords) &&
+    manifest.keywords.some(
+      (keyword) => typeof keyword === "string" && CLOUDFLARE_KEYWORDS.has(keyword.toLowerCase()),
+    )
+  )
+    return true;
+  const scripts = Object.values((manifest as { scripts?: unknown } | null)?.scripts ?? {});
+  if (scripts.some((script) => typeof script === "string" && CLOUDFLARE_PRESET_ENV.test(script)))
+    return true;
+  return HOST_CONFIGS.some((file) =>
+    CLOUDFLARE_PRESET.test(ctx.fs.readText(join(directory, file)) ?? ""),
+  );
+}
