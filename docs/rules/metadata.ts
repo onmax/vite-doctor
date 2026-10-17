@@ -127,6 +127,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/cache/no-module-scope-response-cache": {
+    description:
+      "Report module-scope Maps and variables that server code uses as hand-rolled TTL caches for upstream responses.",
+    why: "A module-scope cache with an expiry check lives in one server instance or worker isolate. Each instance warms its own copy, entries for keys nobody asks for again are never evicted, and Nitro's cache storage, invalidation, and stale-while-revalidate cannot see it. The key is whatever the author remembered to include: when a request-scoped client, such as one authorized as the current user, fills the cache, the next caller with the same key gets that user's response.",
+    recommendedReplacement:
+      "Wrap the upstream call in defineCachedFunction() with a maxAge and a getKey that covers every input that changes the response, including the user or tenant when the client is authorized per request. Values that cannot be serialized to cache storage, such as compiled validators, can stay in memory; suppress the diagnostic with a comment that says why.",
+    examples: [
+      {
+        title: "Cache upstream responses with defineCachedFunction",
+        language: "ts",
+        invalid:
+          "const labelCache = new Map<string, { labels: string[]; expiry: number }>()\n\nexport async function getLabels(group: string) {\n  const cached = labelCache.get(group)\n  if (cached && cached.expiry > Date.now()) return cached.labels\n  const labels = await $fetch<string[]>(`/labels/${group}`)\n  labelCache.set(group, { labels, expiry: Date.now() + 60_000 })\n  return labels\n}",
+        valid:
+          "export const getLabels = defineCachedFunction(\n  (group: string) => $fetch<string[]>(`/labels/${group}`),\n  { name: 'labels', maxAge: 60, getKey: (group: string) => group },\n)",
+      },
+    ],
+  },
   "nitro/context/no-navigateto-in-nitro": {
     description: "Flags the Nuxt-only navigateTo() helper in Nitro server handlers.",
     why: "navigateTo() belongs to the Nuxt app runtime and is unavailable in Nitro handlers, so the redirect must use the installed H3 generation's response API.",

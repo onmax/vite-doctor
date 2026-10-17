@@ -18,6 +18,7 @@ import { preferGetRequestIp } from "./prefer-get-request-ip.js";
 import { noHttpErrorMasking } from "./no-http-error-masking.js";
 import { requireDefaultHandler } from "./require-default-handler.js";
 import { preferServerUtils } from "./prefer-server-utils.js";
+import { noModuleScopeResponseCache } from "./no-module-scope-response-cache.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -39,6 +40,7 @@ export {
   noHttpErrorMasking,
   requireDefaultHandler,
   preferServerUtils,
+  noModuleScopeResponseCache,
 };
 
 const rules = [
@@ -62,7 +64,7 @@ const rules = [
   requireDefaultHandler,
 ];
 
-const strictOnlyRules = [preferServerUtils];
+const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache];
 
 const nitroRulePack = defineRulePack({
   name: "vite-doctor/nitro",
