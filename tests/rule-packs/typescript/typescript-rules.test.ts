@@ -45,6 +45,24 @@ describe("TypeScript rule pack", () => {
     );
   });
 
+  test("reports recommended syntax-only evidence as warnings", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: recommendedRules,
+      files: {
+        "src/index.ts": `const driver = (await import("driver")) as unknown as Driver
+const user = JSON.parse(text) as User
+console.log(driver, user)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => [item.ruleId, item.severity])).toEqual([
+      ["typescript/evidence/no-chained-type-assertions", "warn"],
+      ["typescript/boundaries/no-unvalidated-deserialization", "warn"],
+    ]);
+    expect(result.diagnostics[0]?.message).not.toContain("known type");
+  });
+
   test("reports missing type evidence and unvalidated boundaries", async () => {
     const result = await runProjectFixture({
       framework: "vite",
