@@ -1714,9 +1714,8 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
     if (nuxtTime) return;
     // SSR renders ClientOnly's own bindings and fallback slots, but not its default content.
     if (CLIENT_ONLY_TAGS.has(element.tag)) {
-      for (const child of element.children)
-        if (child.type === TemplateNodeType.ELEMENT && isServerFallbackSlot(child))
-          visitElement(child, locals);
+      const fallback = getServerFallbackSlot(element);
+      if (fallback) visitElement(fallback, locals);
     } else visitChildren(element, locals);
   };
   visitChildren(root, new Set());
@@ -2557,6 +2556,34 @@ function isServerFallbackSlot(element: TemplateElementNode) {
   );
 }
 
+/** Nuxt renders the fallback slot when present, otherwise the placeholder slot. */
+function getServerFallbackSlot(element: TemplateElementNode) {
+  const slots = element.children.filter(
+    (child): child is TemplateElementNode =>
+      child.type === TemplateNodeType.ELEMENT && isServerFallbackSlot(child),
+  );
+  return (
+    slots.find((slot) =>
+      slot.props.some(
+        (prop) =>
+          prop.type === TemplateNodeType.DIRECTIVE &&
+          prop.name === "slot" &&
+          prop.arg?.isStatic &&
+          prop.arg.content === "fallback",
+      ),
+    ) ??
+    slots.find((slot) =>
+      slot.props.some(
+        (prop) =>
+          prop.type === TemplateNodeType.DIRECTIVE &&
+          prop.name === "slot" &&
+          prop.arg?.isStatic &&
+          prop.arg.content === "placeholder",
+      ),
+    )
+  );
+}
+
 /** Template text with subtrees that SSR does not hydrate from script values blanked out. */
 function getServerRenderedTemplateSource(ctx: RuleContext): string {
   const key = `nuxt:server-template:${ctx.file.hash}`;
@@ -2576,10 +2603,12 @@ function getServerRenderedTemplateSource(ctx: RuleContext): string {
       for (const child of parent.children) {
         if (child.type !== TemplateNodeType.ELEMENT) continue;
         if (NUXT_TIME_TAGS.has(child.tag)) blank(child);
-        else if (CLIENT_ONLY_TAGS.has(child.tag))
+        else if (CLIENT_ONLY_TAGS.has(child.tag)) {
+          const fallback = getServerFallbackSlot(child);
           for (const slot of child.children)
-            if (slot.type !== TemplateNodeType.ELEMENT || !isServerFallbackSlot(slot)) blank(slot);
+            if (slot !== fallback) blank(slot);
             else visit(slot);
+        }
         else visit(child);
       }
     };

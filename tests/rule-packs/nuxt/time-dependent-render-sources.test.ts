@@ -78,6 +78,22 @@ const label = String(Date.now())
   expect(lines).toEqual([2]);
 });
 
+test("ignores an unused ClientOnly placeholder when fallback is present", async () => {
+  const lines = await reportedLines(`<script setup lang="ts">
+const label = String(Date.now())
+</script>
+<template><ClientOnly><span>live</span><template #fallback>stable</template><template #placeholder>{{ label }}</template></ClientOnly></template>`);
+  expect(lines).toEqual([]);
+});
+
+test("reports the ClientOnly placeholder when fallback is absent", async () => {
+  const lines = await reportedLines(`<script setup lang="ts">
+const label = String(Date.now())
+</script>
+<template><ClientOnly><span>live</span><template #placeholder>{{ label }}</template></ClientOnly></template>`);
+  expect(lines).toEqual([2]);
+});
+
 test.each([
   ['<ClientOnly :fallback="label"><span>live</span></ClientOnly>'],
   ['<ClientOnly :title="label"><span>live</span></ClientOnly>'],
