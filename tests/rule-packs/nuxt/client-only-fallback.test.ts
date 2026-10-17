@@ -33,6 +33,8 @@ test.each([
   ["<ClientOnly class='h-80'>\n  <Chart />\n</ClientOnly>"],
   ["<ClientOnly><h3>Forecast</h3><ForecastChart /></ClientOnly>"],
   ["<ClientOnly><Modal v-if='open' /><Chart /></ClientOnly>"],
+  ["<ClientOnly fallback><Chart /></ClientOnly>"],
+  ["<ClientOnly placeholder=''><Chart /></ClientOnly>"],
 ])("reports ClientOnly without a fallback: %s", async (template) => {
   const diagnostics = await reported(template);
   expect(diagnostics).toHaveLength(1);
@@ -48,6 +50,8 @@ test.each([
   ["<ClientOnly fallback-tag='div' class='h-80'><Chart /></ClientOnly>"],
   ["<ClientOnly placeholderTag='section'><Chart /></ClientOnly>"],
   ["<ClientOnly v-bind='fallbackProps'><Chart /></ClientOnly>"],
+  ["<ClientOnly v-slot:fallback><USkeleton class='h-80' /></ClientOnly>"],
+  ["<ClientOnly #placeholder>Loading</ClientOnly>"],
   ["<ClientOnly>\n  <!-- modal -->\n  <NPIFormDistributorModal v-if='open' />\n</ClientOnly>"],
   ["<ClientOnly><Teleport to='body'><Menu /></Teleport></ClientOnly>"],
   ["<ClientOnly><UNotifications /><app-toaster /></ClientOnly>"],

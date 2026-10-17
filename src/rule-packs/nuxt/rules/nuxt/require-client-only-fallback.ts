@@ -5,14 +5,9 @@ import { createRule, isClientOnlyPath, isNuxtRuntimeFile } from "./shared.js";
 
 const RULE_ID = "nuxt/hydration/require-clientonly-fallback";
 
-const FALLBACK_PROPS = [
-  "fallback",
-  "placeholder",
-  "fallback-tag",
-  "fallbackTag",
-  "placeholder-tag",
-  "placeholderTag",
-];
+const FALLBACK_TEXT_PROPS = ["fallback", "placeholder"];
+const FALLBACK_TAG_PROPS = ["fallback-tag", "fallbackTag", "placeholder-tag", "placeholderTag"];
+const FALLBACK_SLOTS = ["fallback", "placeholder"];
 
 // Overlays render outside the layout, so an empty server placeholder does not move content.
 const OVERLAY_TAG_RE =
@@ -56,10 +51,15 @@ export const requireClientOnlyFallback = createRule({
 });
 
 function hasFallback(helpers: RuleContext["helpers"], node: TemplateElementNode) {
-  for (const name of FALLBACK_PROPS) {
+  for (const name of FALLBACK_TEXT_PROPS) {
+    if (helpers.getStaticVueAttributeValue(node, name)?.trim()) return true;
+    if (helpers.hasVueDirective(node, "bind", name)) return true;
+  }
+  for (const name of FALLBACK_TAG_PROPS) {
     if (helpers.hasVueAttribute(node, name) || helpers.hasVueDirective(node, "bind", name))
       return true;
   }
+  if (FALLBACK_SLOTS.some((name) => helpers.hasVueDirective(node, "slot", name))) return true;
   if (
     node.props.some(
       (prop) => prop.type === TemplateNodeType.DIRECTIVE && prop.name === "bind" && !prop.arg,
@@ -70,8 +70,7 @@ function hasFallback(helpers: RuleContext["helpers"], node: TemplateElementNode)
     (child) =>
       child.type === TemplateNodeType.ELEMENT &&
       child.tag === "template" &&
-      (helpers.hasVueDirective(child, "slot", "fallback") ||
-        helpers.hasVueDirective(child, "slot", "placeholder")),
+      FALLBACK_SLOTS.some((name) => helpers.hasVueDirective(child, "slot", name)),
   );
 }
 
