@@ -112,6 +112,13 @@ export function hubWorkspace(): Plugin {
     }`,
       "resolve.dedupe",
     ],
+    [
+      "concat with the incoming array as an argument",
+      `config(config) {
+      return { resolve: { dedupe: ["vue"].concat(config.resolve.dedupe) } }
+    }`,
+      "resolve.dedupe",
+    ],
   ])("reports %s", async (_label, hook, path) => {
     const result = await run(`import type { Plugin } from "vite"
 export default function plugin(): Plugin {
@@ -263,6 +270,29 @@ export default (): Plugin => ({
   name: "fixture",
   config(config) {
     return { resolve: { dedupe: merge(config.resolve.dedupe) } }
+  },
+})`,
+    ],
+    [
+      "a reassigned hook parameter",
+      `import type { Plugin } from "vite"
+export default (): Plugin => ({
+  name: "fixture",
+  config(config) {
+    config = { resolve: { dedupe: ["vue"] } }
+    return { resolve: { dedupe: [...config.resolve.dedupe, "x"] } }
+  },
+})`,
+    ],
+    [
+      "cyclic aliases",
+      `import type { Plugin } from "vite"
+export default (): Plugin => ({
+  name: "fixture",
+  config(config) {
+    const a = b
+    const b = a
+    return { resolve: { dedupe: [...a, "x"] } }
   },
 })`,
     ],

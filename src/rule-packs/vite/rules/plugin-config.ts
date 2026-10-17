@@ -99,15 +99,18 @@ function findEchoes(fn: AnyNode, param: string): Echo[] {
           assignments.push({ target: target.root, path: target.keys, value: node.right });
       }
     });
+  if (reassigned.has(param)) return [];
   for (const name of reassigned) locals.delete(name);
 
   const echoes: Echo[] = [];
   const seen = new Set<AnyNode>();
-  const incomingPath = (input: AnyNode): string[] | null => {
+  const incomingPath = (input: AnyNode, resolving = new Set<string>()): string[] | null => {
     const node = unwrapFallback(input);
     if (node?.type === "Identifier" && node.name !== param) {
       const local = locals.get(node.name);
-      return local && local !== input ? incomingPath(local) : null;
+      if (!local || resolving.has(node.name)) return null;
+      resolving.add(node.name);
+      return incomingPath(local, resolving);
     }
     const member = memberKeys(node);
     return member?.root === param && member.keys.length > 0 ? member.keys : null;
@@ -134,7 +137,11 @@ function findEchoes(fn: AnyNode, param: string): Echo[] {
     const method = memberName(callee);
     if (method === "from" && unwrap(callee.object)?.name === "Array")
       return arrayEchoes(node.arguments[0], path);
-    if (method === "concat" && isPath(callee.object, path)) return [node];
+    if (
+      method === "concat" &&
+      [callee.object, ...node.arguments].some((item: AnyNode) => isPath(item, path))
+    )
+      return [node];
     return [];
   };
   const helperEchoes = (input: AnyNode, path: string[]): AnyNode[] => {
@@ -213,7 +220,7 @@ function helperEchoesParam(helper: AnyNode, index: number): boolean {
       if (callee?.type !== "MemberExpression") return false;
       if (memberName(callee) === "from" && unwrap(callee.object)?.name === "Array")
         return spreadsParam(node.arguments[0]);
-      return memberName(callee) === "concat" && isParam(callee.object);
+      return memberName(callee) === "concat" && [callee.object, ...node.arguments].some(isParam);
     }
     if (node?.type !== "ArrayExpression") return false;
     return node.elements.some(
