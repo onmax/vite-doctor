@@ -128,6 +128,17 @@ export async function load(key: string) {
   return value
 }`,
   ],
+  [
+    "a Map filled in a synchronous callback of an async function",
+    `const cache = new Map<string, { value: unknown, expiresAt: number }>()
+export async function load(key: string) {
+  const hit = cache.get(key)
+  if (hit && hit.expiresAt > Date.now()) return hit.value
+  const rows = await $fetch<unknown[]>('/rows')
+  rows.forEach((row) => cache.set(key, { value: row, expiresAt: Date.now() + 1000 }))
+  return rows
+}`,
+  ],
 ])("reports %s", async (_, source) => {
   const diagnostics = await run({ "server/utils/cache.ts": source });
   expect(diagnostics).toMatchObject([{ code: "NITRO0023", file: "server/utils/cache.ts" }]);
@@ -217,6 +228,18 @@ export async function load(owner: object) {
   ],
 ])("does not report %s", async (_, source) => {
   expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
+});
+
+test("does not report Nuxt 4 app/server files, which Nitro does not scan", async () => {
+  const source = `const cache = new Map<string, { value: unknown, expiresAt: number }>()
+export async function load(key: string) {
+  const hit = cache.get(key)
+  if (hit && hit.expiresAt > Date.now()) return hit.value
+  const value = await $fetch('/value')
+  cache.set(key, { value, expiresAt: Date.now() + 1000 })
+  return value
+}`;
+  expect(await run({ "app/server/utils/cache.ts": source })).toEqual([]);
 });
 
 test("does not report app code or server tests", async () => {

@@ -96,7 +96,6 @@ export const noModuleScopeResponseCache = createRule({
 function isServerRuntimeFile(ctx: RuleContext) {
   const path = ctx.file.relativePath.replace(/\\/g, "/");
   if (TEST_FILE.test(path) || /\.d\.[cm]?ts$/.test(path)) return false;
-  if (ctx.project.framework === "nuxt" && ctx.helpers.isNuxtServerFile(path)) return true;
   return Boolean(nitroServerFile(ctx, ctx.file.path)) && !/\.config\.[cm]?[jt]s$/.test(path);
 }
 
@@ -196,15 +195,21 @@ function bindingAccess(node: AnyNode, binding: CacheBinding, helpers: Map<string
   return access;
 }
 
+// The function, or a function it is nested in, is async or a promise continuation.
 function isAsyncCode(fn: AnyNode) {
-  if (fn.async) return true;
-  const call = fn.__doctorParent;
-  const callee = call?.type === "CallExpression" ? unwrap(call.callee) : null;
-  return (
-    callee?.type === "MemberExpression" &&
-    call.arguments.includes(fn) &&
-    ["then", "catch", "finally"].includes(callee.property?.name)
-  );
+  for (let current = fn; current; current = current.__doctorParent) {
+    if (!FUNCTION_TYPES.has(current.type)) continue;
+    if (current.async) return true;
+    const call = current.__doctorParent;
+    const callee = call?.type === "CallExpression" ? unwrap(call.callee) : null;
+    if (
+      callee?.type === "MemberExpression" &&
+      call.arguments.includes(current) &&
+      ["then", "catch", "finally"].includes(callee.property?.name)
+    )
+      return true;
+  }
+  return false;
 }
 
 function mapMethod(node: AnyNode) {

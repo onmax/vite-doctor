@@ -129,7 +129,7 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/cache/no-module-scope-response-cache": {
     description:
-      "Report module-scope Maps and variables that server code uses as hand-rolled TTL caches for upstream responses.",
+      "Report module-scope Maps and reassigned variables that server code uses as hand-rolled TTL caches for upstream responses.",
     why: "A module-scope cache with an expiry check lives in one server instance or worker isolate. Each instance warms its own copy, entries for keys nobody asks for again are never evicted, and Nitro's cache storage, invalidation, and stale-while-revalidate cannot see it. The key is whatever the author remembered to include: when a request-scoped client, such as one authorized as the current user, fills the cache, the next caller with the same key gets that user's response.",
     recommendedReplacement:
       "Wrap the upstream call in defineCachedFunction() with a maxAge and a getKey that covers every input that changes the response, including the user or tenant when the client is authorized per request. Values that cannot be serialized to cache storage, such as compiled validators, can stay in memory; suppress the diagnostic with a comment that says why.",
