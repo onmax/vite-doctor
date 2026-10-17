@@ -127,6 +127,8 @@ test.each([
     "try {\n    queueMicrotask(() => storage.enterWith(event))\n  }\n  catch {}",
   ],
   ["a try/finally", "try {\n    storage.enterWith(event)\n  }\n  finally {}"],
+  ["optional chaining", "storage?.enterWith(event)"],
+  ["a computed member", 'storage["enterWith"](event)'],
   [
     "a catch that logs and rethrows",
     "try {\n    storage.enterWith(event)\n  }\n  catch (error) {\n    console.error(error)\n    throw new Error('enter failed', { cause: error })\n  }",
@@ -147,7 +149,20 @@ test.each([
   ["projects without a Cloudflare target", { "src/runtime/state.ts": unguarded }, undefined],
   ["test files", { "test/runtime.test.ts": unguarded }, { wrangler: "^4.0.0" }],
   [
-    "enterWith() on objects that are not AsyncLocalStorage",
+    "a call inside a function invoked synchronously within try",
+    {
+      "src/runtime/state.ts": `import { AsyncLocalStorage } from "node:async_hooks"
+const storage = new AsyncLocalStorage<unknown>()
+export function enter(event: unknown) {
+  try {
+    ;(() => storage.enterWith(event))()
+  } catch {}
+}`,
+    },
+    { wrangler: "^4.0.0" },
+  ],
+  [
+    "enterWith() in files that never reference AsyncLocalStorage",
     {
       "src/runtime/router.ts": `export function enterSection(router: { enterWith(value: string): void }) {
   router.enterWith("settings")

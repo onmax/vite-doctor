@@ -47,12 +47,9 @@ export const noUnguardedAlsEnterWith = createRule({
     return {
       CallExpression(node: AnyNode) {
         const callee = node.callee;
-        if (
-          callee?.type !== "MemberExpression" ||
-          callee.computed ||
-          callee.property?.name !== "enterWith"
-        )
-          return;
+        if (callee?.type !== "MemberExpression") return;
+        const property = callee.computed ? callee.property?.value : callee.property?.name;
+        if (property !== "enterWith") return;
         if (isInsideTry(node) || !targetsCloudflare(ctx)) return;
         report(
           ctx,
@@ -70,13 +67,25 @@ export const noUnguardedAlsEnterWith = createRule({
 
 function isInsideTry(node: AnyNode) {
   for (let child = node, current = node.__doctorParent; current;) {
-    if (FUNCTION_TYPES.has(current.type)) return false;
+    if (FUNCTION_TYPES.has(current.type) && !isInvokedInPlace(current)) return false;
     if (current.type === "TryStatement" && current.block === child && current.handler)
       return !alwaysThrows(current.handler);
     child = current;
     current = current.__doctorParent;
   }
   return false;
+}
+
+// `(() => storage.enterWith(event))()` runs inside the surrounding try.
+function isInvokedInPlace(fn: AnyNode) {
+  if (fn.async || fn.generator) return false;
+  let node = fn;
+  let parent = fn.__doctorParent;
+  while (parent?.type === "ParenthesizedExpression") {
+    node = parent;
+    parent = parent.__doctorParent;
+  }
+  return parent?.type === "CallExpression" && parent.callee === node;
 }
 
 function alwaysThrows(handler: AnyNode) {
