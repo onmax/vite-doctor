@@ -273,7 +273,17 @@ function readPackageArtifactsForMode(
         .glob(path.replace("*", "**/*"))
         .filter((match) => fs.stat(match)?.isFile() === true);
       if (!matches.length) missing.add(relative(root, path));
-      for (const match of matches) enqueue(match, kind, required);
+      for (const match of matches)
+        enqueue(
+          match,
+          kind,
+          required,
+          from,
+          false,
+          adjacentDeclaration,
+          sourceResolution,
+          declarationBacked,
+        );
       return;
     }
     const candidates = probe
@@ -353,9 +363,11 @@ function readPackageArtifactsForMode(
         for (const [condition, item] of Object.entries(value))
           if (condition === "types" || condition.startsWith("types@")) {
             const declarations = targets(item, "types", mode, addons);
-            if (Array.isArray(declarations))
+            if (Array.isArray(declarations)) {
+              typedTargets ||= declarations.length > 0;
               for (const declaration of declarations)
                 enqueue(declaration, "types", false, root, false, true);
+            }
           }
       for (const [condition, item] of Object.entries(value)) {
         if (
@@ -372,11 +384,22 @@ function readPackageArtifactsForMode(
     return undefined;
   }
 
+  let typedTargets = false;
   function addTargets(value: unknown, required: boolean, mode: "import" | "require") {
+    typedTargets = false;
     const selected = targets(value, "runtime", mode, addons);
     if (Array.isArray(selected))
-      for (const target of selected) enqueue(target, "runtime", required, root, false, true);
+      for (const target of selected)
+        enqueue(target, "runtime", required, root, false, true, false, typedTargets);
   }
+
+  const typed = (path: string) =>
+    typeCandidates(resolve(root, path)).some(
+      (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
+    );
+  const rootTyped = Boolean(
+    manifest.types || manifest.typings || (manifest.main && typed(manifest.main)),
+  );
 
   if (manifest.exports != null) {
     const exports = manifest.exports;
@@ -397,13 +420,15 @@ function readPackageArtifactsForMode(
   } else if (!manifest.main && !manifest.module) {
     if (fs.exists(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
   }
-  if (manifest.main) enqueue(manifest.main, "runtime", true, root, "main", true);
-  if (manifest.module) enqueue(manifest.module, "runtime", true, root, true, true);
+  if (manifest.main) enqueue(manifest.main, "runtime", true, root, "main", true, false, rootTyped);
+  if (manifest.module)
+    enqueue(manifest.module, "runtime", true, root, true, true, false, rootTyped);
   if (typeof manifest.browser === "string")
-    enqueue(manifest.browser, "runtime", true, root, false, true);
+    enqueue(manifest.browser, "runtime", true, root, false, true, false, rootTyped);
   else if (manifest.browser) {
-    for (const entry of Object.values(manifest.browser))
-      if (entry && entry.startsWith(".")) enqueue(entry, "runtime", false, root, false, true);
+    for (const [original, entry] of Object.entries(manifest.browser))
+      if (entry && entry.startsWith("."))
+        enqueue(entry, "runtime", false, root, false, true, false, rootTyped || typed(original));
   }
   for (const entry of [manifest.types, manifest.typings])
     if (entry) enqueue(entry, "types", false, root, false);
@@ -426,7 +451,16 @@ function readPackageArtifactsForMode(
       for (const [original, replacement] of Object.entries(manifest.browser)) {
         if (!replacement || resolve(root, original) !== current.path) continue;
         if (replacement.startsWith(".")) {
-          enqueue(replacement, "runtime", true, root, false, true);
+          enqueue(
+            replacement,
+            "runtime",
+            true,
+            root,
+            false,
+            true,
+            false,
+            current.declarationBacked,
+          );
           continue;
         }
         const packageName = externalPackageName(replacement);

@@ -148,6 +148,50 @@ test("keeps JSDoc for JavaScript-only export subpaths", async () => {
   ]);
 });
 
+test.each<{ name: string; manifest: object; files: Record<string, string>; entry?: string }>([
+  {
+    name: "a types field outside the JavaScript directory",
+    manifest: { main: "dist/index.js", types: "types/index.d.ts" },
+    files: { "types/index.d.ts": "export declare const value: number;" },
+  },
+  {
+    name: "an export types condition outside the JavaScript directory",
+    manifest: {
+      exports: { ".": { types: "./types/index.d.ts", import: "./dist/index.js" } },
+    },
+    files: { "types/index.d.ts": "export declare const value: number;" },
+  },
+  {
+    name: "a browser entrypoint of a typed package",
+    manifest: { main: "dist/index.js", types: "dist/index.d.ts", browser: "dist/browser.js" },
+    files: { "dist/index.d.ts": "export declare const value: number;" },
+    entry: "dist/browser.js",
+  },
+  {
+    name: "a browser replacement of a typed entrypoint",
+    manifest: {
+      main: "dist/index.js",
+      browser: { "./dist/index.js": "./dist/browser.js" },
+    },
+    files: { "dist/index.d.ts": "export declare const value: number;" },
+    entry: "dist/browser.js",
+  },
+  {
+    name: "a wildcard export with sibling declarations",
+    manifest: { exports: { "./features/*": "./dist/features/*.js" } },
+    files: { "dist/features/foo.d.ts": "export declare const value: number;" },
+    entry: "dist/features/foo.js",
+  },
+])("ignores JSDoc imports covered by $name", async ({ manifest, files, entry }) => {
+  const diagnostics = await diagnose(manifest, {
+    "dist/index.js": "export const value = 1;",
+    [entry ?? "dist/index.js"]:
+      '/** @param {import("phantom-types").Value} value */\nexport function use(value) { return value; }',
+    ...files,
+  });
+  expect(diagnostics.map((d) => [d.code, d.message.match(/"([^"]+)"/)?.[1]])).toEqual([]);
+});
+
 test("reads JSDoc only from comments and skips runtime-provided specifiers", async () => {
   const diagnostics = await diagnose(
     { main: "index.js" },
