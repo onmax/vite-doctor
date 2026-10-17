@@ -226,6 +226,24 @@ export async function load(owner: object) {
   return value
 }`,
   ],
+  [
+    "a helper whose cache parameter is shadowed",
+    `const moduleCache = new Map<string, { value: unknown, expiresAt: number }>()
+function inspect(cache: Map<string, { value: unknown, expiresAt: number }>, key: string) {
+  {
+    const cache = new Map<string, { value: unknown, expiresAt: number }>()
+    const entry = cache.get(key)
+    if (entry && entry.expiresAt > Date.now()) return entry.value
+  }
+  return null
+}
+export async function load(key: string) {
+  inspect(moduleCache, key)
+  const value = await $fetch('/value')
+  moduleCache.set(key, { value, expiresAt: 0 })
+  return value
+}`,
+  ],
 ])("does not report %s", async (_, source) => {
   expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
 });

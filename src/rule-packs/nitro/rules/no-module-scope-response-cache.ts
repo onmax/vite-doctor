@@ -156,7 +156,12 @@ function cacheHelpers(program: AnyNode) {
       if (param.type !== "Identifier") return;
       const references: AnyNode[] = [];
       walkScriptLocal(fn.body, (node) => {
-        if (node.type === "Identifier" && node.name === param.name && isValueReference(node))
+        if (
+          node.type === "Identifier" &&
+          node.name === param.name &&
+          isValueReference(node) &&
+          resolvesToBinding(node, param.name, fn)
+        )
           references.push(node);
       });
       for (const reference of references) {
@@ -304,8 +309,14 @@ function mentions(node: AnyNode, predicate: (node: AnyNode) => boolean) {
 }
 
 function resolvesToModuleBinding(node: AnyNode, name: string) {
+  return resolvesToBinding(node, name, null);
+}
+
+// `node` refers to the `name` bound by `owner` (a function's parameter), or by the module when
+// `owner` is null, rather than to a nearer declaration.
+function resolvesToBinding(node: AnyNode, name: string, owner: AnyNode) {
   for (let current = node.__doctorParent; current; current = current.__doctorParent) {
-    if (current.type === "Program") return true;
+    if (current === owner || current.type === "Program") return true;
     if (FUNCTION_TYPES.has(current.type)) {
       if (current.id?.name === name && current.type === "FunctionExpression") return false;
       if (current.params?.some((param: AnyNode) => bindsName(param, name))) return false;
