@@ -114,7 +114,10 @@ test("reports an exported factory when global compiler scanning is disabled", as
   expect(
     await diagnose({
       "app/composables/useOrders.ts": "export const useOrders = createUseFetch('/api/orders')",
-      ".nuxt/doctor.manifest.json": manifest([], [{ root: ".", srcDir: "app", compilerScan: false, priority: 0 }]),
+      ".nuxt/doctor.manifest.json": manifest(
+        [],
+        [{ root: ".", srcDir: "app", compilerScan: false, priority: 0 }],
+      ),
     }),
   ).toEqual([ruleId]);
 });
@@ -122,11 +125,15 @@ test("reports an exported factory when global compiler scanning is disabled", as
 test("reports an exported factory when its layer disables compiler scanning", async () => {
   expect(
     await diagnose({
-      "layers/admin/composables/useOrders.ts": "export const useOrders = createUseFetch('/api/orders')",
-      ".nuxt/doctor.manifest.json": manifest([], [
-        { root: ".", srcDir: "app", compilerScan: true, priority: 0 },
-        { root: "layers/admin", srcDir: "layers/admin", compilerScan: false, priority: 1 },
-      ]),
+      "layers/admin/composables/useOrders.ts":
+        "export const useOrders = createUseFetch('/api/orders')",
+      ".nuxt/doctor.manifest.json": manifest(
+        [],
+        [
+          { root: ".", srcDir: "app", compilerScan: true, priority: 0 },
+          { root: "layers/admin", srcDir: "layers/admin", compilerScan: false, priority: 1 },
+        ],
+      ),
     }),
   ).toEqual([ruleId]);
 });

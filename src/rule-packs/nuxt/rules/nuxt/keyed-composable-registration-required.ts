@@ -55,7 +55,9 @@ function isExported(declarator: AnyNode): boolean {
 function inScannedComposablesDir(ctx: RuleContext): boolean {
   const nuxt = ctx.project.nuxt;
   if (ctx.file.inAppDir("composables")) {
-    const appLayer = nuxt?.layers?.find((layer) => layer.root === nuxt.appDir || layer.srcDir === nuxt.appDir);
+    const appLayer = nuxt?.layers?.find(
+      (layer) => layer.root === nuxt.appDir || layer.srcDir === nuxt.appDir,
+    );
     return appLayer ? appLayer.compilerScan !== false : true;
   }
   return (nuxt?.layers ?? []).some(
