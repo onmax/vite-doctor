@@ -158,6 +158,8 @@ test.each([
   `let timer; function clearTimer() { if (!timer) return; clearTimeout(timer); timer = null }; watch(status, (value) => { clearTimer(); if (value) { timer = setTimeout(() => { timer = null }, 1500) } }, { immediate: true }); onBeforeUnmount(clearTimer)`,
   `let clock; watch(live, (isLive) => { if (clock) clearInterval(clock); clock = undefined; if (isLive) clock = setInterval(() => {}, 1000) }, { immediate: true }); onBeforeUnmount(() => { if (clock) clearInterval(clock) })`,
   `let stopped = false; let timer; function clearTimer() { if (timer !== undefined) clearTimeout(timer); timer = undefined }; function schedule() { clearTimer(); if (stopped) return; timer = setTimeout(() => {}, 1000) }; watch(() => interval.value, schedule); function stop() { if (stopped) return; stopped = true; clearTimer() }; onScopeDispose(stop, true)`,
+  `let timer; watch(status, (value) => { clearTimeout(timer); if (value) timer = setTimeout(() => {}, 1); else timer = setTimeout(() => {}, 2) }); onBeforeUnmount(() => clearTimeout(timer))`,
+  `let stopped = false; let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onScopeDispose(() => { if (stopped) return; stopped = true; clearTimeout(timer) })`,
 ])(
   "watcher accepts a reassigned outer handle cleared before reuse and on teardown: %s",
   async (source) => {
@@ -173,6 +175,11 @@ test.each([
   `let timer; let other; watch(status, () => { clearTimeout(other); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
   `let timer; watch(status, (value) => { if (value) clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
   `let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onMounted(() => clearTimeout(timer))`,
+  `let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1); timer = setTimeout(() => {}, 2) }); onBeforeUnmount(() => clearTimeout(timer))`,
+  `let timer; function stop() { if (shouldCleanup) clearTimeout(timer) }; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(stop)`,
+  `let timer; watch(status, (value) => { value && clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
+  `let timer; watch(status, (values) => { for (const value of values) clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
+  `let stopped = false; let timer; function stop() { if (stopped) return; stopped = true; clearTimeout(timer) }; function pause() { stopped = true }; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onScopeDispose(stop)`,
 ])(
   "watcher still reports a reassigned outer handle without reuse and teardown cleanup: %s",
   async (source) => {
