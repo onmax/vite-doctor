@@ -368,7 +368,7 @@ function resolveRuntimePackage(
         identity,
       };
     } catch (error) {
-      danglingLink =
+      danglingLink ??=
         declaration === undefined ? undefined : findDanglingLink(ownerManifest, requestedName);
       lastReason = danglingLink
         ? `${danglingLink.path} is a dangling symlink to ${danglingLink.target}, which does not exist.`
@@ -415,28 +415,30 @@ function findDanglingLink(
   while (true) {
     const path = join(directory, "node_modules", name);
     try {
-      if (lstatSync(path).isSymbolicLink() && !existsSync(path))
-        return { path, target: missingLinkTarget(path) };
+      const target = lstatSync(path).isSymbolicLink() ? missingLinkTarget(path) : undefined;
+      if (target) return { path, target };
     } catch {}
     if (directory === dirname(directory)) return undefined;
     directory = dirname(directory);
   }
 }
 
-function missingLinkTarget(link: string): string {
+/** A loop or an unreadable target is not a deleted install, so only ENOENT and ENOTDIR count. */
+function missingLinkTarget(link: string): string | undefined {
   const seen = new Set<string>();
   let current = link;
   while (!seen.has(current)) {
     seen.add(current);
     const target = resolve(realpathSync(dirname(current)), readlinkSync(current));
     try {
-      if (!lstatSync(target).isSymbolicLink()) return target;
-    } catch {
-      return target;
+      if (!lstatSync(target).isSymbolicLink()) return undefined;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === "ENOENT" || code === "ENOTDIR" ? target : undefined;
     }
     current = target;
   }
-  return current;
+  return undefined;
 }
 
 function resolvePackageJson(require: NodeRequire, name: string): string {

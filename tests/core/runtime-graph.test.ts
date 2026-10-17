@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   mkdirSync,
   realpathSync,
   rmSync,
@@ -321,6 +322,69 @@ test("resolves a dangling runtime symlink inside a symlinked node_modules", asyn
     },
   );
 });
+
+test("does not call a runtime symlink loop a missing target", async () => {
+  await withRuntimeGraph(
+    { "package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }) },
+    async (root) => {
+      mkdirSync(join(root, "node_modules"), { recursive: true });
+      mkdirSync(join(root, "store"), { recursive: true });
+      symlinkSync("../node_modules/nuxt", join(root, "store/nuxt"), "dir");
+      symlinkSync("../store/nuxt", join(root, "node_modules/nuxt"), "dir");
+
+      const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+
+      expect(result.project.runtimeGraph?.packages.nuxt?.state).toBe("unknown");
+      expect(result.project.runtimeGraph?.packages.nuxt?.danglingLink).toBeUndefined();
+    },
+  );
+});
+
+test("keeps the first dangling symlink when a later runtime candidate also fails", async () => {
+  await withRuntimeGraph(
+    {
+      "package.json": JSON.stringify({ dependencies: { nitro: "3.0.0", nitropack: "2.13.4" } }),
+      // Unresolvable without falling through to the NODE_PATH that pnpm sets for the test runner.
+      "node_modules/nitropack/package.json": JSON.stringify({ name: "nitropack", exports: {} }),
+    },
+    async (root) => {
+      mkdirSync(join(root, "node_modules"), { recursive: true });
+      symlinkSync("../deleted/nitro", join(root, "node_modules/nitro"), "dir");
+
+      const result = await runViteDoctor({ root, framework: "nitro", cache: false });
+
+      expect(result.project.runtimeGraph?.packages.nitro).toMatchObject({
+        state: "unknown",
+        danglingLink: { path: join(root, "node_modules/nitro") },
+        reason: expect.stringContaining("is a dangling symlink"),
+      });
+    },
+  );
+});
+
+test.skipIf(process.getuid?.() === 0)(
+  "does not call an unreadable runtime symlink target missing",
+  async () => {
+    await withRuntimeGraph(
+      { "package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }) },
+      async (root) => {
+        const locked = join(root, "locked");
+        mkdirSync(join(locked, "nuxt"), { recursive: true });
+        mkdirSync(join(root, "node_modules"), { recursive: true });
+        symlinkSync("../locked/nuxt", join(root, "node_modules/nuxt"), "dir");
+        chmodSync(locked, 0o000);
+        try {
+          const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+
+          expect(result.project.runtimeGraph?.packages.nuxt?.state).toBe("unknown");
+          expect(result.project.runtimeGraph?.packages.nuxt?.danglingLink).toBeUndefined();
+        } finally {
+          chmodSync(locked, 0o755);
+        }
+      },
+    );
+  },
+);
 
 test("does not blame a dangling symlink for a package the owner does not declare", async () => {
   await withRuntimeGraph({ "package.json": JSON.stringify({}) }, async (root) => {
