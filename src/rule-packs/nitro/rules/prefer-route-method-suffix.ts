@@ -114,15 +114,18 @@ function wholeHandlerAllowed(node: AnyNode, checks: MethodCheck[]) {
   return checks.every((check) => check.isNegative) && branchExits(node.consequent);
 }
 
-function selectsResponse(node: AnyNode) {
-  let current = node;
-  let parent = current.__doctorParent;
-  while (parent && isConditionWrapper(parent)) {
-    current = parent;
-    parent = current.__doctorParent;
-  }
-  if (parent?.type !== "ConditionalExpression" || parent.test !== current) return false;
-  return isReturnedValue(parent);
+function selectsResponse(node: AnyNode, seen = new Set<AnyNode>()): boolean {
+  let condition = node;
+  while (condition.__doctorParent && isConditionWrapper(condition.__doctorParent))
+    condition = condition.__doctorParent;
+  const parent = condition.__doctorParent;
+  if (parent?.type === "ConditionalExpression" && parent.test === condition)
+    return isReturnedValue(parent, seen);
+  if (parent?.type === "IfStatement" && parent.test === condition)
+    return branchExits(parent.consequent) || branchExits(parent.alternate);
+  if (parent?.type === "VariableDeclarator" && parent.init === condition)
+    return someReference(parent, seen, (reference) => selectsResponse(reference, seen));
+  return false;
 }
 
 function isConditionWrapper(node: AnyNode) {
@@ -143,22 +146,24 @@ function isTypeExpressionWrapper(node: AnyNode) {
   );
 }
 
-function isReturnedValue(node: AnyNode): boolean {
+function isReturnedValue(node: AnyNode, seen: Set<AnyNode>): boolean {
   const parent = node.__doctorParent;
   if (!parent) return false;
   if (
     parent.type === "ParenthesizedExpression" ||
     parent.type === "AwaitExpression" ||
+    parent.type === "ChainExpression" ||
     isTypeExpressionWrapper(parent)
   )
-    return isReturnedValue(parent);
+    return isReturnedValue(parent, seen);
   if (parent.type === "ConditionalExpression" && parent.test !== node)
-    return isReturnedValue(parent);
-  if (parent.type === "CallExpression" && parent.callee === node) return isReturnedValue(parent);
-  if (isFunctionInvocationMember(parent, node)) return isReturnedValue(parent.__doctorParent);
+    return isReturnedValue(parent, seen);
+  if (parent.type === "CallExpression" && parent.callee === node)
+    return isReturnedValue(parent, seen);
+  if (isFunctionInvocationMember(parent, node)) return isReturnedValue(parent.__doctorParent, seen);
   if (parent.type === "ReturnStatement") return true;
   if (parent.type === "VariableDeclarator" && parent.init === node)
-    return isReturnedBinding(parent);
+    return someReference(parent, seen, (reference) => isReturnedValue(reference, seen));
   return parent.type === "ArrowFunctionExpression" && parent.body === node;
 }
 
@@ -173,46 +178,102 @@ function isFunctionInvocationMember(member: AnyNode, object: AnyNode) {
   );
 }
 
-function isReturnedBinding(declarator: AnyNode): boolean {
+function someReference(
+  declarator: AnyNode,
+  seen: Set<AnyNode>,
+  predicate: (reference: AnyNode) => boolean,
+): boolean {
   const declaration = declarator.__doctorParent;
   if (declarator.id?.type !== "Identifier" || declaration?.kind !== "const") return false;
+  if (seen.has(declarator)) return false;
+  seen.add(declarator);
   const name = declarator.id.name;
   const scope = nearestFunctionOrProgram(declarator);
-  let returned = false;
+  let found = false;
   walkScriptLocal(scope, (node) => {
     if (
-      !returned &&
+      !found &&
       node.type === "Identifier" &&
       node.name === name &&
-      node !== declarator.id &&
+      (node.start < declarator.start || node.start >= declarator.end) &&
+      isValueReference(node) &&
       nearestFunctionOrProgram(node) === scope &&
       resolvesTo(node, declaration) &&
-      isReturnedValue(node)
+      predicate(node)
     )
-      returned = true;
+      found = true;
   });
-  return returned;
+  return found;
+}
+
+function isValueReference(node: AnyNode) {
+  const parent = node.__doctorParent;
+  if (
+    (parent?.type === "MemberExpression" || parent?.type === "StaticMemberExpression") &&
+    parent.property === node &&
+    !parent.computed
+  )
+    return false;
+  return !(parent?.type === "Property" && parent.key === node && !parent.shorthand);
 }
 
 function resolvesTo(reference: AnyNode, declaration: AnyNode) {
   const home = declaration.__doctorParent;
-  for (let block = reference.__doctorParent; block; block = block.__doctorParent) {
-    if (block === home) return true;
-    if (block.type === "BlockStatement" && declaresName(block, reference.name)) return false;
+  for (let scope = reference.__doctorParent; scope; scope = scope.__doctorParent) {
+    if (scope === home) return true;
+    if (scopeDeclares(scope, reference.name)) return false;
   }
   return false;
 }
 
-function declaresName(block: AnyNode, name: string) {
-  return block.body?.some(
-    (statement: AnyNode) =>
-      (statement.type === "VariableDeclaration" &&
-        statement.declarations?.some(
-          (item: AnyNode) => item.id?.type === "Identifier" && item.id.name === name,
-        )) ||
-      ((statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") &&
-        statement.id?.name === name),
+function scopeDeclares(scope: AnyNode, name: string): boolean {
+  switch (scope.type) {
+    case "BlockStatement":
+    case "StaticBlock":
+      return scope.body?.some((statement: AnyNode) => statementDeclares(statement, name));
+    case "SwitchStatement":
+      return scope.cases?.some((item: AnyNode) =>
+        item.consequent?.some((statement: AnyNode) => statementDeclares(statement, name)),
+      );
+    case "ForStatement":
+      return statementDeclares(scope.init, name);
+    case "ForInStatement":
+    case "ForOfStatement":
+      return statementDeclares(scope.left, name);
+    case "CatchClause":
+      return patternDeclares(scope.param, name);
+    default:
+      return false;
+  }
+}
+
+function statementDeclares(statement: AnyNode, name: string): boolean {
+  if (statement?.type === "VariableDeclaration")
+    return statement.declarations?.some((item: AnyNode) => patternDeclares(item.id, name));
+  return (
+    (statement?.type === "FunctionDeclaration" || statement?.type === "ClassDeclaration") &&
+    statement.id?.name === name
   );
+}
+
+function patternDeclares(pattern: AnyNode, name: string): boolean {
+  if (!pattern) return false;
+  switch (pattern.type) {
+    case "Identifier":
+      return pattern.name === name;
+    case "AssignmentPattern":
+      return patternDeclares(pattern.left, name);
+    case "RestElement":
+      return patternDeclares(pattern.argument, name);
+    case "ArrayPattern":
+      return pattern.elements?.some((item: AnyNode) => patternDeclares(item, name));
+    case "ObjectPattern":
+      return pattern.properties?.some((item: AnyNode) =>
+        patternDeclares(item.type === "RestElement" ? item : item.value, name),
+      );
+    default:
+      return false;
+  }
 }
 
 function branchExits(node: AnyNode): boolean {

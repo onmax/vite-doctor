@@ -1430,6 +1430,18 @@ test.each([
     "an asserted returned binding",
     "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  return response as Response",
   ],
+  [
+    "an optional returned call",
+    "return (event.req.method === 'POST' ? createUser : listUsers)?.(event)",
+  ],
+  [
+    "a boolean alias tested by the returned conditional",
+    "const isPost = event.req.method === 'POST'\n  return isPost ? createUser(event) : reject()",
+  ],
+  [
+    "a boolean alias tested by an exiting if",
+    "const isPost = event.req.method === 'POST'\n  if (!isPost) throw createError({ statusCode: 405 })\n  return createUser(event)",
+  ],
 ])(
   "Nitro route method suffix rule reports conditionals that select the response via %s",
   async (_, body) => {
@@ -1457,6 +1469,30 @@ test.each([
   [
     "an overwritten let binding",
     "let response = event.req.method === 'POST' ? createUser(event) : reject()\n  response = cachedResponse\n  return response",
+  ],
+  [
+    "a for-of binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  for (const response of cached) return response",
+  ],
+  [
+    "a catch parameter",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  try { load() } catch (response) { return response }",
+  ],
+  [
+    "a destructured block binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  {\n    const { response } = cached\n    return response\n  }",
+  ],
+  [
+    "a switch case binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  switch (mode) {\n    case 'cached':\n      const response = cachedResponse\n      return response\n  }",
+  ],
+  [
+    "a self-referencing initializer",
+    "const response = event.req.method === 'POST' ? response : reject()",
+  ],
+  [
+    "a boolean alias that only selects a request option",
+    "const isWrite = event.req.method !== 'GET'\n  const body = isWrite ? await readRawBody(event) : undefined\n  if (isWrite) audit(event)\n  return proxyRequest(event, upstream, { body })",
   ],
 ])(
   "Nitro route method suffix rule ignores conditionals whose binding is not the returned value: %s",
