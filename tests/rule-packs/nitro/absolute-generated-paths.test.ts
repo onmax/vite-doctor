@@ -186,8 +186,56 @@ export function routes(root: string, handler: string) {
   return [{ handler: path, route: "/x" }, { handler, route: "/y" }]
 }
 const handler = "./generated/other.ts"`,
+      "modules/destructured.ts": `import type { Plugin } from "vite"
+const middleware = "./generated/middleware.ts"
+export function register({ middleware }: { middleware: string }) {
+  return [{ handler: middleware, middleware: true }]
+}`,
     }),
   ).toEqual([]);
+});
+
+test("checks Nitro Vite entrypoints and wrapped Nitro config objects", async () => {
+  expect(
+    await lines({
+      "src/nitro-vite.ts": `import { nitro } from "nitro/vite"
+export const plugin = () => ({ config: () => ({ nitro: ({ plugins: ["./generated/plugin.ts"] }) satisfies object }) })`,
+    }),
+  ).toEqual(["src/nitro-vite.ts:2"]);
+});
+
+test("does not treat a workspace package root or a configured srcDir as app code", async () => {
+  const registration = `import { defineNuxtModule } from "@nuxt/kit"
+export default defineNuxtModule({ setup(_o, nuxt) { nuxt.options.nitro.plugins.push("./generated/plugin.ts") } })
+`;
+  const nested = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireAbsoluteGeneratedPaths],
+    files: {
+      "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+      "packages/site/package.json": JSON.stringify({
+        name: "site",
+        dependencies: { nuxt: "^3.0.0" },
+      }),
+      "packages/site/nuxt.config.ts": "export default defineNuxtConfig({})",
+      "packages/site/modules/register.ts": registration,
+    },
+  });
+  expect(
+    nested.diagnostics.map((diagnostic) => diagnostic.file.split("/").slice(-3).join("/")),
+  ).toEqual(["site/modules/register.ts"]);
+  const src = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireAbsoluteGeneratedPaths],
+    files: {
+      "nuxt.config.ts": 'export default defineNuxtConfig({ srcDir: "src" })',
+      "src/plugins/register.ts": registration,
+      "modules/register.ts": registration,
+    },
+  });
+  expect(
+    src.diagnostics.map((diagnostic) => diagnostic.file.split("/").slice(-2).join("/")),
+  ).toEqual(["modules/register.ts"]);
 });
 
 test("skips runtime code under configured Nuxt server and app directories", async () => {

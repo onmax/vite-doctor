@@ -1,23 +1,14 @@
 import { isAbsolute, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../core/index.js";
-import { nitroServerFile } from "./server-layout.js";
+import { nitroServerFile, readStaticConfigOptions, staticOptionValue } from "./server-layout.js";
 import { createRule, isNitroServerFile, report, sourceForNode, type AnyNode } from "./shared.js";
 
 const RULE_ID = "nitro/config/require-absolute-generated-paths";
 const NUXT_KIT_SOURCES = new Set(["@nuxt/kit", "nuxt/kit"]);
 
 // Files that register Nitro handlers for someone else: Vite plugins, Nuxt modules, Nitro modules.
-const INTEGRATION_SOURCES = new Set([
-  "vite",
-  "nitro",
-  "nitropack",
-  "nitro/kit",
-  "nitropack/kit",
-  "nitro/types",
-  "nitropack/types",
-  ...NUXT_KIT_SOURCES,
-  "@nuxt/schema",
-]);
+const INTEGRATION_SOURCE_RE =
+  /^(?:vite|nitro|nitropack|@nuxt\/kit|nuxt\/kit|@nuxt\/schema)(?:\/|$)/;
 
 const HANDLER_SHAPE_KEYS = new Set(["route", "middleware", "method", "lazy"]);
 const CONFIG_FILE_RE = /(?:^|\/)(?:nuxt|nitro|vite|vitest|app)\.config\.[cm]?[jt]s$/;
@@ -49,13 +40,13 @@ export const requireAbsoluteGeneratedPaths = createRule({
     const declare = (name: string) => declarations.set(name, (declarations.get(name) ?? 0) + 1);
     const declareParameters = (node: AnyNode) => {
       for (const parameter of node.params ?? [])
-        if (parameter.type === "Identifier") declare(parameter.name);
+        for (const name of patternNames(parameter)) declare(name);
     };
     const candidates: Array<{ node: AnyNode; kind: "handler" | "plugin" }> = [];
     return {
       ImportDeclaration(node: AnyNode) {
         const source = String(node.source?.value);
-        if (INTEGRATION_SOURCES.has(source)) integration = true;
+        if (INTEGRATION_SOURCE_RE.test(source)) integration = true;
         if (!NUXT_KIT_SOURCES.has(source)) return;
         for (const specifier of node.specifiers ?? []) {
           if (specifier.type === "ImportSpecifier") kitFunctions.add(specifier.local.name);
@@ -64,9 +55,8 @@ export const requireAbsoluteGeneratedPaths = createRule({
         }
       },
       VariableDeclarator(node: AnyNode) {
-        if (node.id?.type !== "Identifier") return;
-        declare(node.id.name);
-        if (node.__doctorParent?.kind !== "const") return;
+        for (const name of patternNames(node.id)) declare(name);
+        if (node.id?.type !== "Identifier" || node.__doctorParent?.kind !== "const") return;
         const value = unwrapExpression(node.init);
         if (staticStringValue(value) !== undefined) strings.set(node.id.name, value);
       },
@@ -112,7 +102,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
           unwrapExpression(node.value)?.type !== "ArrayExpression"
         )
           return;
-        const owner = node.__doctorParent?.__doctorParent;
+        const owner = outerExpression(node.__doctorParent).__doctorParent;
         if (owner?.type !== "Property" || propertyKeyName(owner) !== "nitro") return;
         for (const element of unwrapExpression(node.value).elements ?? [])
           candidates.push({ node: element, kind: "plugin" });
@@ -162,8 +152,33 @@ function isRuntimeFile(ctx: RuleContext, path: string) {
   // Configured Nuxt serverDir, srcDir and appDir move runtime code away from the default paths.
   const file = resolve(ctx.project.root, ctx.file.path);
   if (nitroServerFile(ctx, file)) return true;
-  const appDir = ctx.project.nuxt?.appDir;
-  return Boolean(appDir && appDir !== ctx.project.root && isInside(appDir, file));
+  const packageRoot = resolve(ctx.project.root, owningPackagePrefix(ctx, path));
+  const srcDir = staticOptionValue(
+    readStaticConfigOptions(ctx, "nuxt"),
+    (option) => option.join(".") === "srcDir",
+  );
+  const appDirs = [
+    ctx.project.nuxt?.appDir,
+    typeof srcDir === "string" ? resolve(ctx.project.root, srcDir) : undefined,
+  ];
+  // An app directory that is the project or package root itself says nothing about the file.
+  return appDirs.some(
+    (dir) => dir && dir !== ctx.project.root && dir !== packageRoot && isInside(dir, file),
+  );
+}
+
+function patternNames(pattern: AnyNode): string[] {
+  if (!pattern) return [];
+  if (pattern.type === "Identifier") return [pattern.name];
+  if (pattern.type === "AssignmentPattern") return patternNames(pattern.left);
+  if (pattern.type === "RestElement") return patternNames(pattern.argument);
+  if (pattern.type === "TSParameterProperty") return patternNames(pattern.parameter);
+  if (pattern.type === "ArrayPattern") return (pattern.elements ?? []).flatMap(patternNames);
+  if (pattern.type === "ObjectPattern")
+    return (pattern.properties ?? []).flatMap((property: AnyNode) =>
+      patternNames(property.type === "RestElement" ? property : property.value),
+    );
+  return [];
 }
 
 function isInside(directory: string, file: string) {
@@ -172,12 +187,16 @@ function isInside(directory: string, file: string) {
 }
 
 function packageRelativePath(ctx: RuleContext, path: string) {
+  return path.slice(owningPackagePrefix(ctx, path).length);
+}
+
+function owningPackagePrefix(ctx: RuleContext, path: string) {
   let owner = "";
   for (const item of ctx.project.workspacePackages ?? []) {
     const root = item.root === "." ? "" : `${item.root.replace(/\\/g, "/")}/`;
     if (root.length > owner.length && path.startsWith(root)) owner = root;
   }
-  return path.slice(owner.length);
+  return owner;
 }
 
 function isRelativeFilePath(value: string) {
