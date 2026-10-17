@@ -66,6 +66,12 @@ const DEFERRING_CALLS = new Set([
   "nextTick",
 ]);
 const ASYNC_DATA_ENTRIES = new Set(["useAsyncData", "useLazyAsyncData", "callOnce"]);
+const SSR_CALLBACK_ENTRIES = new Set([
+  "defineNuxtPlugin",
+  "defineNuxtRouteMiddleware",
+  "watchEffect",
+  "watchSyncEffect",
+]);
 const localReferences = new WeakMap<object, Map<string, AnyNode[]>>();
 
 // Only requests with evidence of running during SSR miss the browser's cookies.
@@ -98,7 +104,13 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
   return (references(ctx).get(name) ?? []).some((reference) => {
     if (resolveBinding(reference) !== declaration) return false;
     const call = reference.__doctorParent;
-    if (call.callee !== reference && !asyncDataRunsOnServer(call, reference)) return false;
+    if (call.callee !== reference) {
+      const callee = ctx.helpers.getCalleeName(call) ?? "";
+      const runs = ASYNC_DATA_ENTRIES.has(callee)
+        ? asyncDataRunsOnServer(call, reference)
+        : SSR_CALLBACK_ENTRIES.has(callee);
+      if (!runs) return false;
+    }
     return runsDuringSsr(ctx, call, seen);
   });
 }
@@ -119,10 +131,15 @@ function asyncDataRunsOnServer(call: AnyNode, handler: AnyNode): boolean {
   if (!last || last === handler) return true;
   const options = resolveLocalObject(last);
   if (!options) return false;
-  const server = getObjectPropertyValue(options, "server");
-  if (server) return !isFalseLiteral(server);
-  return !options.properties?.some(
-    (property: AnyNode) => property.type === "SpreadElement" || property.type === "SpreadProperty",
+  if (
+    options.properties?.some(
+      (property: AnyNode) =>
+        property.type === "SpreadElement" || property.type === "SpreadProperty",
+    )
+  )
+    return false;
+  return !["server", "immediate"].some((key) =>
+    isFalseLiteral(getObjectPropertyValue(options, key)),
   );
 }
 
@@ -159,7 +176,7 @@ function functionName(fn: AnyNode): string | undefined {
     return parent.id.name;
 }
 
-// Calls by name, plus names passed as async-data handlers.
+// Calls by name, plus names passed as callbacks that run during SSR.
 function references(ctx: RuleContext): Map<string, AnyNode[]> {
   const program = ctx.file.scriptAst ?? {};
   let collected = localReferences.get(program);
@@ -171,7 +188,8 @@ function references(ctx: RuleContext): Map<string, AnyNode[]> {
   walkScriptLocal(program, (node) => {
     if (node.type !== "CallExpression") return;
     if (node.callee?.type === "Identifier") add(node.callee);
-    if (!ASYNC_DATA_ENTRIES.has(ctx.helpers.getCalleeName(node) ?? "")) return;
+    const callee = ctx.helpers.getCalleeName(node) ?? "";
+    if (!ASYNC_DATA_ENTRIES.has(callee) && !SSR_CALLBACK_ENTRIES.has(callee)) return;
     for (const argument of node.arguments ?? []) if (argument?.type === "Identifier") add(argument);
   });
   return found;

@@ -168,3 +168,27 @@ test("reports a named async-data handler", async () => {
     ),
   ).toEqual([ruleId]);
 });
+
+test("ignores an async-data handler with immediate: false", async () => {
+  expect(
+    await diagnose(
+      `export function useAccount() {\n  return useAsyncData('account', () => $fetch('/api/account'), { immediate: false })\n}`,
+      "app/composables/useAccount.ts",
+    ),
+  ).toEqual([]);
+});
+
+test.each([
+  [
+    "a named plugin callback",
+    "app/plugins/account.ts",
+    `function load() {\n  return $fetch('/api/account')\n}\nexport default defineNuxtPlugin(load)`,
+  ],
+  [
+    "a named watchEffect callback",
+    "app/composables/useAccount.ts",
+    `export function useAccount() {\n  function refresh() {\n    return $fetch('/api/account')\n  }\n  watchEffect(refresh)\n}`,
+  ],
+])("reports %s", async (_, file, source) => {
+  expect(await diagnose(source, file)).toEqual([ruleId]);
+});
