@@ -1,4 +1,12 @@
-import { mkdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -256,7 +264,7 @@ test("names a dangling runtime symlink and where it points", async () => {
   await withRuntimeGraph(
     { "package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }) },
     async (root) => {
-      const target = join(root, "deleted-store/node_modules/nuxt");
+      const target = join(realpathSync(root), "deleted-store/node_modules/nuxt");
       mkdirSync(join(root, "node_modules"), { recursive: true });
       symlinkSync("../deleted-store/node_modules/nuxt", join(root, "node_modules/nuxt"), "dir");
 
@@ -273,6 +281,43 @@ test("names a dangling runtime symlink and where it points", async () => {
       expect(diagnostic?.evidence).toContainEqual(
         expect.objectContaining({ file: link, summary: expect.stringContaining(target) }),
       );
+    },
+  );
+});
+
+test("follows a dangling runtime symlink chain to the missing path", async () => {
+  await withRuntimeGraph(
+    { "package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }) },
+    async (root) => {
+      mkdirSync(join(root, "node_modules"), { recursive: true });
+      mkdirSync(join(root, "store"), { recursive: true });
+      symlinkSync("../deleted/nuxt", join(root, "store/nuxt"), "dir");
+      symlinkSync("../store/nuxt", join(root, "node_modules/nuxt"), "dir");
+
+      const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+
+      expect(result.project.runtimeGraph?.packages.nuxt?.danglingLink).toEqual({
+        path: join(root, "node_modules/nuxt"),
+        target: join(realpathSync(root), "deleted/nuxt"),
+      });
+    },
+  );
+});
+
+test("resolves a dangling runtime symlink inside a symlinked node_modules", async () => {
+  await withRuntimeGraph(
+    { "package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }) },
+    async (root) => {
+      mkdirSync(join(root, "store/modules"), { recursive: true });
+      symlinkSync("store/modules", join(root, "node_modules"), "dir");
+      symlinkSync("../deleted/nuxt", join(root, "store/modules/nuxt"), "dir");
+
+      const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+
+      expect(result.project.runtimeGraph?.packages.nuxt?.danglingLink).toEqual({
+        path: join(root, "node_modules/nuxt"),
+        target: join(realpathSync(root), "store/deleted/nuxt"),
+      });
     },
   );
 });

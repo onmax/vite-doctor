@@ -1,4 +1,12 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "pathe";
 import { valid } from "semver";
@@ -408,11 +416,27 @@ function findDanglingLink(
     const path = join(directory, "node_modules", name);
     try {
       if (lstatSync(path).isSymbolicLink() && !existsSync(path))
-        return { path, target: resolve(dirname(path), readlinkSync(path)) };
+        return { path, target: missingLinkTarget(path) };
     } catch {}
     if (directory === dirname(directory)) return undefined;
     directory = dirname(directory);
   }
+}
+
+function missingLinkTarget(link: string): string {
+  const seen = new Set<string>();
+  let current = link;
+  while (!seen.has(current)) {
+    seen.add(current);
+    const target = resolve(realpathSync(dirname(current)), readlinkSync(current));
+    try {
+      if (!lstatSync(target).isSymbolicLink()) return target;
+    } catch {
+      return target;
+    }
+    current = target;
+  }
+  return current;
 }
 
 function resolvePackageJson(require: NodeRequire, name: string): string {
