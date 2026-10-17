@@ -20,12 +20,9 @@ const WEB_CLASSES = new Set([
   "ReadableStream",
 ]);
 
-const MODULE_LOADERS = new Set(["ssrLoadModule", "import"]);
-
 const REPLACEMENTS: Record<string, string> = {
   Date: "Object.prototype.toString.call(value) === '[object Date]'",
-  ArrayBuffer:
-    "ArrayBuffer.isView(value) || Object.prototype.toString.call(value) === '[object ArrayBuffer]'",
+  ArrayBuffer: "Object.prototype.toString.call(value) === '[object ArrayBuffer]'",
   Response:
     "a brand check such as Object.prototype.toString.call(value) === '[object Response]' plus typeof value.status === 'number'",
   Request:
@@ -34,7 +31,7 @@ const REPLACEMENTS: Record<string, string> = {
   Blob: "typeof value?.arrayBuffer === 'function' && typeof value?.size === 'number'",
   File: "typeof value?.arrayBuffer === 'function' && typeof value?.name === 'string'",
   FormData: "Object.prototype.toString.call(value) === '[object FormData]'",
-  URL: "Object.prototype.toString.call(value) === '[object URL]' or new URL(String(value))",
+  URL: "Object.prototype.toString.call(value) === '[object URL]'",
   URLSearchParams: "Object.prototype.toString.call(value) === '[object URLSearchParams]'",
   ReadableStream: "typeof value?.getReader === 'function'",
 };
@@ -79,7 +76,7 @@ export const noCrossRealmWebInstanceof = createRule({
         if (node.operator !== "instanceof" || node.right?.type !== "Identifier") return;
         const name = node.right.name;
         if (!WEB_CLASSES.has(name) || evidence.binding(node.right)) return;
-        if (hasDuckTypedAlternative(node)) return;
+        if (hasDuckTypedAlternative(node, name)) return;
         const origin = crossRealmOrigin(evidence, node.left);
         if (!origin) return;
         report(
@@ -95,7 +92,7 @@ export const noCrossRealmWebInstanceof = createRule({
 });
 
 // `value instanceof Response || isResponseLike(value)` already accepts other realms.
-function hasDuckTypedAlternative(node: AnyNode): boolean {
+function hasDuckTypedAlternative(node: AnyNode, className: string): boolean {
   const subject = expression(node.left, true);
   if (subject?.type !== "Identifier") return false;
   let chain = node;
@@ -116,6 +113,7 @@ function hasDuckTypedAlternative(node: AnyNode): boolean {
     return (
       callee?.type === "Identifier" &&
       /^is[A-Z]/.test(callee.name) &&
+      callee.name.toLowerCase().includes(className.toLowerCase()) &&
       operand.arguments?.some(
         (argument: AnyNode) =>
           expression(argument, true)?.type === "Identifier" &&
@@ -140,9 +138,30 @@ function crossRealmOrigin(
   if (!binding || binding.written) return undefined;
   if (binding.kind === "parameter")
     return isUnknownOrAny(binding.annotation) ? "unknown parameter" : undefined;
-  if (binding.kind === "const" && binding.node.start < value.start)
-    return valueOrigin(evidence, expression(binding.init, true));
-  return undefined;
+  if (binding.kind !== "const" || binding.node.start >= value.start) return undefined;
+  const init = binding.init ?? destructuredInit(binding.node);
+  if (!init) return undefined;
+  if (binding.init) {
+    const origin = valueOrigin(evidence, expression(init, true));
+    if (origin) return origin;
+  }
+  const root = memberRoot(init);
+  return root && moduleOrigin(evidence, root) ? "loaded module" : undefined;
+}
+
+// `const { handler } = await import(id)` binds `handler` without an initializer of its own.
+function destructuredInit(identifier: AnyNode): AnyNode {
+  let current = identifier;
+  let parent = parentOf(current);
+  while (parent?.type === "Property" || parent?.type === "ObjectPattern") {
+    current = parent;
+    parent = parentOf(current);
+  }
+  return current.type === "ObjectPattern" &&
+    parent?.type === "VariableDeclarator" &&
+    parent.id === current
+    ? parent.init
+    : undefined;
 }
 
 function valueOrigin(
@@ -181,11 +200,18 @@ function isModuleLoad(node: AnyNode): boolean {
   if (node?.type === "ImportExpression") return true;
   if (node?.type !== "CallExpression") return false;
   const callee = expression(node.callee, true);
-  return (
-    callee?.type === "MemberExpression" &&
-    !callee.computed &&
-    MODULE_LOADERS.has(callee.property?.name)
-  );
+  if (callee?.type !== "MemberExpression" || callee.computed) return false;
+  if (callee.property?.name === "ssrLoadModule") return true;
+  // Vite's ModuleRunner loads modules with runner.import(); other import() methods are unrelated.
+  if (callee.property?.name !== "import") return false;
+  const receiver = expression(callee.object, true);
+  const receiverName =
+    receiver?.type === "Identifier"
+      ? receiver.name
+      : receiver?.type === "MemberExpression" && !receiver.computed
+        ? receiver.property?.name
+        : undefined;
+  return typeof receiverName === "string" && /runner$/i.test(receiverName);
 }
 
 function awaited(node: AnyNode): AnyNode {
@@ -201,6 +227,8 @@ function memberRoot(node: AnyNode): AnyNode {
 }
 
 function isUnknownOrAny(annotation: AnyNode): boolean {
+  if (annotation?.type === "TSUnionType") return annotation.types?.some(isUnknownOrAny) ?? false;
+  if (annotation?.type === "TSParenthesizedType") return isUnknownOrAny(annotation.typeAnnotation);
   return annotation?.type === "TSUnknownKeyword" || annotation?.type === "TSAnyKeyword";
 }
 

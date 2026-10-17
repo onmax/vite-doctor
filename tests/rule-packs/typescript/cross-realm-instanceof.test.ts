@@ -52,6 +52,26 @@ test.each([
     "async function load(server: { ssrLoadModule(id: string): Promise<any> }) { return (await server.ssrLoadModule('/x')).handler instanceof Request }",
   ],
   [
+    "module from a Vite ModuleRunner",
+    "async function load(runner: { import(id: string): Promise<any> }) { const mod = await runner.import('/x'); return mod.default instanceof Response }",
+  ],
+  [
+    "const alias of a loaded module export",
+    "async function load(server: { ssrLoadModule(id: string): Promise<any> }) { const value = (await server.ssrLoadModule('/x')).handler; return value instanceof Response }",
+  ],
+  [
+    "destructured module export",
+    "async function load(id: string) { const { handler } = await import(id); return handler instanceof Request }",
+  ],
+  [
+    "parameter typed unknown | undefined",
+    "export const f = (value: unknown | undefined) => value instanceof Date",
+  ],
+  [
+    "guard that does not check the class",
+    "function f(value: unknown) { return value instanceof Date || isReady(value) }",
+  ],
+  [
     "negated check",
     "function f(value: unknown) { if (!(value instanceof Blob)) throw new Error('blob') }",
   ],
@@ -93,6 +113,10 @@ test.each([
   ],
   ["non-web class", "function f(value: unknown) { return value instanceof Map }"],
   [
+    "import() method that does not load modules",
+    "async function f(plugin: { import(id: string): Promise<any> }) { const data = await plugin.import('x'); return data.body instanceof Blob }",
+  ],
+  [
     "duck-typed alternative (vitehub agent chat-approvals.ts:412)",
     "function f(result: unknown) { if (result instanceof Response || isResponseLike(result)) return result }",
   ],
@@ -107,4 +131,18 @@ test("reports a remediation that names a brand or duck-type check", async () => 
   });
   expect(result.diagnostics[0]).toMatchObject({ code: "TS0013", severity: "warn" });
   expect(result.diagnostics[0]!.suggestion).toContain("[object Date]");
+});
+
+test.each([
+  [
+    "ArrayBuffer",
+    "Replace instanceof ArrayBuffer with Object.prototype.toString.call(value) === '[object ArrayBuffer]'.",
+  ],
+  ["URL", "Replace instanceof URL with Object.prototype.toString.call(value) === '[object URL]'."],
+])("suggests a %s brand check that keeps the original meaning", async (name, suggestion) => {
+  const result = await project.run({
+    rule: noCrossRealmWebInstanceof,
+    files: { "src/brand.ts": `export const is = (value: unknown) => value instanceof ${name}` },
+  });
+  expect(result.diagnostics[0]!.suggestion).toBe(suggestion);
 });
