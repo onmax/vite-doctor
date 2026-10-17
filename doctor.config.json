@@ -72,8 +72,7 @@
     },
     {
       "ruleId": "nuxt-better-auth/require-standard-auth-handler-mount",
-      "file": "docs/app/app.config.ts",
-      "reason": "nuxt-better-auth is a Rule fixture dependency and is not enabled in the documentation app."
+      "reason": "nuxt-better-auth is a Rule fixture dependency and is not enabled in the root package or the documentation app."
     }
   ]
 }
