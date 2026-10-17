@@ -301,3 +301,69 @@ test("applies Nuxt accessor exemptions to their import identity", async () => {
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.why).toContain("componentRouter()");
 });
+
+const caller = `import { useWorkspace } from './core/use.ts'\nexport async function runCommand(name: string) {\n  const workspace = await useWorkspace(name)\n  return workspace.exec('ls')\n}`;
+
+test("does not treat a local use* API without Vue evidence as a composable", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/server.ts": caller,
+      "src/core/use.ts": `import { createWorkspace } from './workspace.ts'\nimport { useRegisteredWorkspace } from './registry.ts'\nexport function useWorkspace(name: string) {\n  const definition = useRegisteredWorkspace(name)\n  const config = { ref: name }\n  return createWorkspace(definition, config)\n}`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["imports Vue", `import { ref } from 'vue'\nexport function useWorkspace() { return ref(null) }`],
+  [
+    "imports VueUse",
+    `import { useMounted } from '@vueuse/core'\nexport function useWorkspace() { return useMounted() }`,
+  ],
+  [
+    "auto-imports Vue APIs",
+    `export function useWorkspace() { const state = ref(null); onMounted(() => {}); return state }`,
+  ],
+  ["re-exports a composable", `export { useWorkspace } from './impl'`],
+])("still treats a local use* API as a composable when its module %s", async (_label, module) => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/server.ts": caller,
+      "src/core/use.ts": module,
+      "src/core/impl.ts": `import { inject } from 'vue'\nexport function useWorkspace() { return inject('workspace') }`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0026"]);
+});
+
+test("treats Nuxt app modules as composables and skips use* names Nuxt does not auto-import", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "nuxt",
+    files: {
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date(Date.now() + 10000).toISOString(),
+        nuxtVersion: "4.5.2",
+        appDir: "app",
+        autoImportEnabled: true,
+        autoImports: [
+          { name: "useCartState", as: "useCartState", from: "app/composables/cart.ts" },
+        ],
+        components: [],
+        layers: [],
+      }),
+      "app/composables/cart.ts": `export function useCartState() { return useState('cart') }`,
+      "app/composables/totals.ts": `import { useCartState as cart } from '~/composables/cart'\nexport function cartTotal() { return cart().value.total }`,
+      "app/composables/items.ts": `export function cartItems() { return useCartState().value.items }`,
+      "lib/directus.ts": `export function requestClient(event?: H3Event) { return event ?? useEvent() }`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.why)).toEqual([
+    expect.stringContaining("cartItems()"),
+    expect.stringContaining("cartTotal()"),
+  ]);
+});

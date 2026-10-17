@@ -1,4 +1,4 @@
-import { relative, resolve } from "pathe";
+import { dirname, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
 import { fileScriptScope, type ScopeVariable } from "./script-scope.js";
 import { AnyNode, createRule, namePattern, walkScriptLocal } from "./shared.js";
@@ -51,6 +51,12 @@ const NUXT_APP_CONTEXT_ACCESSORS = new Set(["useRouter", "useState", "useNuxtDat
 const VUE_API_SOURCES =
   /^(vue|vue-demi|vue-router|@vue\/(runtime-core|runtime-dom|composition-api)|#imports|#app(\/.*)?|nuxt\/app)$/;
 const NON_COMPOSABLE_SOURCES = /^(@nuxt\/kit|nuxt\/kit|h3|nitropack|nitro|unstorage)(\/|$)/;
+const VUE_COMPOSABLE_SOURCES =
+  /^(?:@vueuse\/|@pinia\/|pinia(?:\/|$)|(?:@[\w.-]+\/)?[\w.-]*vue[\w.-]*(?:\/|$))/;
+const MODULE_SOURCE = /(?:\bfrom|\bimport)\s*["']([^"']+)["']/g;
+const RE_EXPORT = /\bexport\s*(?:\*|\{([^}]*)\})\s*from\s*["']([^"']+)["']/g;
+const UNBOUND_VUE_API =
+  /(?<![\w$.])(ref|shallowRef|computed|reactive|shallowReactive|watch|watchEffect|onMounted|onUnmounted|onBeforeUnmount|onBeforeMount|onScopeDispose|inject|provide|getCurrentInstance|getCurrentScope|toRef|toRefs|toValue)\s*[<(]/g;
 const EXEMPT_NAME =
   /^_*(use|on|tryOn|provide|inject|define|create|ref|computed|watch)[A-Z0-9_$]|^_*[A-Z]/;
 const EXEMPT_NAMES = new Set(["setup", "render", "install"]);
@@ -96,8 +102,9 @@ export const requireUsePrefix = createRule({
         const bindings = resolveBindings(ctx);
         if (!bindings) return;
         const isNuxt = Boolean(ctx.project.nuxt);
+        const composable = (api: ApiIdentity) => isComposable(ctx, api);
         for (const exported of candidates) {
-          const signal = setupContextSignal(exported.fn, bindings, isNuxt);
+          const signal = setupContextSignal(exported.fn, bindings, isNuxt, composable);
           if (!signal) continue;
           const suggestion = `use${exported.name.replace(/^_+/, "").replace(/^./, (c) => c.toUpperCase())}`;
           ctx.report(
@@ -173,18 +180,87 @@ function isExemptName(name: string) {
 // Nuxt utils/ directories are owned by nuxt/structure/no-composable-in-utils, which
 // reports the same function with a move-and-rename remediation.
 function isNuxtUtilsFile(ctx: RuleContext) {
+  return nuxtAppPaths(ctx, ctx.file.path).some((path) => path.startsWith("utils/"));
+}
+
+function nuxtAppPaths(ctx: RuleContext, file: string): string[] {
   const nuxt = ctx.project.nuxt;
-  if (!nuxt) return false;
+  if (!nuxt) return [];
   const roots = new Set<string>([nuxt.appDir]);
   for (const layer of nuxt.layers ?? []) if (layer.srcDir) roots.add(layer.srcDir);
   for (const root of nuxt.appRoots ?? []) {
     roots.add(root);
     roots.add(resolve(root, "app"));
   }
-  return [...roots].some((root) => {
-    const path = relative(resolve(ctx.project.root, root), ctx.file.path);
-    return path.startsWith("utils/");
-  });
+  return [...roots]
+    .map((root) => relative(resolve(ctx.project.root, root), file))
+    .filter((path) => !path.startsWith(".."));
+}
+
+// A use* name is only a convention; the callee has to be a Vue composable for the caller to
+// inherit setup-only semantics. Local modules are read for that evidence, and a readable
+// module without it, such as a server-side API that happens to be named useX(), is not one.
+function isComposable(ctx: RuleContext, api: ApiIdentity): boolean {
+  const nuxt = ctx.project.nuxt;
+  if (api.local) return true;
+  if (!api.source)
+    return !(
+      nuxt?.autoImportEnabled &&
+      nuxt.autoImportsAuthoritative &&
+      !nuxt.autoImports.has(api.name)
+    );
+  const module = resolveLocalModule(ctx, dirname(ctx.file.path), api.source);
+  return module === undefined || providesComposable(ctx, module, api.name, new Set());
+}
+
+function providesComposable(
+  ctx: RuleContext,
+  file: string,
+  name: string,
+  seen: Set<string>,
+): boolean {
+  if (seen.has(file)) return false;
+  seen.add(file);
+  if (nuxtAppPaths(ctx, file).some((path) => !path.startsWith("server/"))) return true;
+  const text = ctx.fs.readText(file) ?? "";
+  const sources = [...text.matchAll(MODULE_SOURCE)].map((match) => match[1]!);
+  if (sources.some((source) => VUE_API_SOURCES.test(source) || VUE_COMPOSABLE_SOURCES.test(source)))
+    return true;
+  for (const match of text.matchAll(UNBOUND_VUE_API)) {
+    const api = match[1]!;
+    const declared = new RegExp(
+      `\\bimport\\s+(?:type\\s+)?(?:\\w+\\s*,\\s*)?\\{[^}]*\\b${api}\\b[^}]*\\}|\\b(?:function|const|let|var)\\s+${api}\\b`,
+    );
+    if (!declared.test(text)) return true;
+  }
+  for (const match of text.matchAll(RE_EXPORT)) {
+    const [, names, source] = match;
+    if (names && !new RegExp(`\\b${name}\\b`).test(names)) continue;
+    const target = resolveLocalModule(ctx, dirname(file), source!);
+    if (target && providesComposable(ctx, target, name, seen)) return true;
+  }
+  return false;
+}
+
+function resolveLocalModule(ctx: RuleContext, from: string, source: string): string | undefined {
+  const nuxt = ctx.project.nuxt;
+  const base = source.startsWith(".")
+    ? resolve(from, source)
+    : nuxt && /^(~~|@@)\//.test(source)
+      ? resolve(ctx.project.root, source.slice(3))
+      : nuxt && /^[~@]\//.test(source)
+        ? resolve(ctx.project.root, nuxt.appDir, source.slice(2))
+        : undefined;
+  if (!base) return;
+  const stem = base.replace(/\.[cm]?jsx?$/, "");
+  const candidates = [
+    base,
+    ...[".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs"].map((extension) => `${stem}${extension}`),
+    ...["/index.ts", "/index.js"].map((index) => `${base}${index}`),
+  ];
+  return candidates.find(
+    (candidate) => SCRIPT_FILE.test(candidate) && ctx.fs.stat(candidate)?.isFile(),
+  );
 }
 
 function exportedFunctions(program: AnyNode): ExportedFunction[] {
@@ -254,6 +330,7 @@ function resolveBindings(ctx: RuleContext): Bindings | null {
 interface ApiIdentity {
   name: string;
   source?: string;
+  local?: boolean;
 }
 
 function callIdentity(call: AnyNode, bindings: Bindings): ApiIdentity | null {
@@ -292,7 +369,7 @@ function callIdentity(call: AnyNode, bindings: Bindings): ApiIdentity | null {
         (definition.type === "Variable" && isFunctionNode(unwrapExpression(definition.node.init))),
     )
   )
-    return { name: identifier.name };
+    return { name: identifier.name, local: true };
   return null;
 }
 
@@ -344,7 +421,12 @@ function guaranteesContext(test: AnyNode, truth: boolean, bindings: Bindings): b
   return truth && guardName(node, bindings) !== null;
 }
 
-function setupContextSignal(fn: AnyNode, bindings: Bindings, isNuxt: boolean): SetupSignal | null {
+function setupContextSignal(
+  fn: AnyNode,
+  bindings: Bindings,
+  isNuxt: boolean,
+  composable: (api: ApiIdentity) => boolean,
+): SetupSignal | null {
   let signal: SetupSignal | null = null;
   // null means the path exits; only facts shared by all surviving paths carry on.
   function scan(node: AnyNode, guarded: boolean): boolean | null {
@@ -412,7 +494,8 @@ function setupContextSignal(fn: AnyNode, bindings: Bindings, isNuxt: boolean): S
               isVueSource(source) &&
               source !== "vue-router"
             ) &&
-            !(source && NON_COMPOSABLE_SOURCES.test(source))
+            !(source && NON_COMPOSABLE_SOURCES.test(source)) &&
+            composable(api)
           )
             signal = { name };
         }
