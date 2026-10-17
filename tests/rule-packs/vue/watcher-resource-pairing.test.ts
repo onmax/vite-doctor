@@ -160,6 +160,7 @@ test.each([
   `let stopped = false; let timer; function clearTimer() { if (timer !== undefined) clearTimeout(timer); timer = undefined }; function schedule() { clearTimer(); if (stopped) return; timer = setTimeout(() => {}, 1000) }; watch(() => interval.value, schedule); function stop() { if (stopped) return; stopped = true; clearTimer() }; onScopeDispose(stop, true)`,
   `let timer; watch(status, (value) => { clearTimeout(timer); if (value) timer = setTimeout(() => {}, 1); else timer = setTimeout(() => {}, 2) }); onBeforeUnmount(() => clearTimeout(timer))`,
   `let stopped = false; let timer; watch(status, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onScopeDispose(() => { if (stopped) return; stopped = true; clearTimeout(timer) })`,
+  `let stopped = false; let active; let timer; function clearTimer() { if (timer !== undefined) clearTimeout(timer); timer = undefined }; function schedule() { clearTimer(); if (stopped || active) return; timer = setTimeout(() => {}, 1000) }; watch(() => interval.value, schedule); function stop() { if (stopped) return; stopped = true; clearTimer() }; onScopeDispose(stop, true); defineExpose({ stop })`,
   `let timer; watch(status, (value) => { if (value) clearTimeout(timer); else return; timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
   `let timer; watch(status, () => { if (timer !== void 0) clearTimeout(timer); timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => { if (timer !== void 0) clearTimeout(timer) })`,
 ])(

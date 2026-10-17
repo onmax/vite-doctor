@@ -696,7 +696,9 @@ function createResourceEvidence(ctx: RuleContext) {
         return false;
       const teardown = callback(node.arguments[0]);
       if (!teardown) return false;
-      return walk(withoutRunOnceGuard(teardown), (call) => releasesThrough(call, resource));
+      return walk(withoutRunOnceGuard(teardown, resource), (call) =>
+        releasesThrough(call, resource),
+      );
     });
   }
 
@@ -713,7 +715,7 @@ function createResourceEvidence(ctx: RuleContext) {
 
   // `if (stopped) return; stopped = true; ...` only exits early when this teardown already ran
   // past the guard, so the rest of the body is what every first run executes.
-  function withoutRunOnceGuard(teardown: AnyNode): AnyNode {
+  function withoutRunOnceGuard(teardown: AnyNode, resource: Resource): AnyNode {
     const body = teardown.body;
     const [guard, ...rest] = body?.type === "BlockStatement" ? body.body : [];
     const exit =
@@ -727,7 +729,7 @@ function createResourceEvidence(ctx: RuleContext) {
     )
       return body;
     const flag = bindings.get(guard.test);
-    if (!onlyRunsOnTeardown(teardown)) return body;
+    if (!flag || !(onlyRunsOnTeardown(teardown) || acquisitionStopsOn(flag, resource))) return body;
     const onlySetHere = flag?.references.every((reference) => {
       if (!reference.isWrite()) return true;
       const value = unwrap(reference.writeExpr);
@@ -741,6 +743,25 @@ function createResourceEvidence(ctx: RuleContext) {
       );
     });
     return onlySetHere ? { ...body, body: rest } : body;
+  }
+
+  // `if (stopped || active) return; timer = setTimeout(...)`: once the flag is set, nothing
+  // acquires the handle again, so an earlier run of the teardown leaves nothing to release.
+  function acquisitionStopsOn(flag: Variable, resource: Resource): boolean {
+    const mentions = (test: AnyNode): boolean =>
+      (test?.type === "Identifier" && bindings.get(test) === flag) ||
+      (test?.type === "LogicalExpression" &&
+        test.operator === "||" &&
+        (mentions(test.left) || mentions(test.right)));
+    const statements =
+      resource.owner.body?.type === "BlockStatement" ? resource.owner.body.body : [];
+    return statements.some(
+      (statement: AnyNode) =>
+        statement.end <= resource.node.start &&
+        statement.type === "IfStatement" &&
+        mentions(statement.test) &&
+        alwaysExits(statement.consequent),
+    );
   }
 
   // A teardown that also runs earlier, e.g. a `stop()` called before teardown, may find its
