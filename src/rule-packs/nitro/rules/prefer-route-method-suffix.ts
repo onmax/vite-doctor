@@ -154,32 +154,72 @@ function isReturnedValue(node: AnyNode): boolean {
     return isReturnedValue(parent);
   if (parent.type === "ConditionalExpression" && parent.test !== node)
     return isReturnedValue(parent);
+  if (parent.type === "CallExpression" && parent.callee === node) return isReturnedValue(parent);
+  if (isFunctionInvocationMember(parent, node)) return isReturnedValue(parent.__doctorParent);
   if (parent.type === "ReturnStatement") return true;
   if (parent.type === "VariableDeclarator" && parent.init === node)
     return isReturnedBinding(parent);
   return parent.type === "ArrowFunctionExpression" && parent.body === node;
 }
 
-function isReturnedBinding(declarator: AnyNode) {
-  if (declarator.id?.type !== "Identifier") return false;
+function isFunctionInvocationMember(member: AnyNode, object: AnyNode) {
+  return (
+    (member.type === "MemberExpression" || member.type === "StaticMemberExpression") &&
+    member.object === object &&
+    !member.computed &&
+    ["call", "apply", "bind"].includes(member.property?.name) &&
+    member.__doctorParent?.type === "CallExpression" &&
+    member.__doctorParent.callee === member
+  );
+}
+
+function isReturnedBinding(declarator: AnyNode): boolean {
+  const declaration = declarator.__doctorParent;
+  if (declarator.id?.type !== "Identifier" || declaration?.kind !== "const") return false;
   const name = declarator.id.name;
   const scope = nearestFunctionOrProgram(declarator);
   let returned = false;
   walkScriptLocal(scope, (node) => {
     if (
-      node.type === "ReturnStatement" &&
-      node.argument?.type === "Identifier" &&
-      node.argument.name === name &&
-      nearestFunctionOrProgram(node) === scope
+      !returned &&
+      node.type === "Identifier" &&
+      node.name === name &&
+      node !== declarator.id &&
+      nearestFunctionOrProgram(node) === scope &&
+      resolvesTo(node, declaration) &&
+      isReturnedValue(node)
     )
       returned = true;
   });
   return returned;
 }
 
-function branchExits(node: AnyNode) {
+function resolvesTo(reference: AnyNode, declaration: AnyNode) {
+  const home = declaration.__doctorParent;
+  for (let block = reference.__doctorParent; block; block = block.__doctorParent) {
+    if (block === home) return true;
+    if (block.type === "BlockStatement" && declaresName(block, reference.name)) return false;
+  }
+  return false;
+}
+
+function declaresName(block: AnyNode, name: string) {
+  return block.body?.some(
+    (statement: AnyNode) =>
+      (statement.type === "VariableDeclaration" &&
+        statement.declarations?.some(
+          (item: AnyNode) => item.id?.type === "Identifier" && item.id.name === name,
+        )) ||
+      ((statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") &&
+        statement.id?.name === name),
+  );
+}
+
+function branchExits(node: AnyNode): boolean {
   if (!node) return false;
   if (node.type === "ReturnStatement" || node.type === "ThrowStatement") return true;
+  if (node.type === "IfStatement")
+    return branchExits(node.consequent) && branchExits(node.alternate);
   if (node.type !== "BlockStatement") return false;
   return branchExits(node.body?.at(-1));
 }

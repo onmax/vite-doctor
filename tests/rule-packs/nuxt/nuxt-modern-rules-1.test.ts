@@ -1405,6 +1405,102 @@ test("Nitro route method suffix rule reports conditionals assigned to the return
   expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
 });
 
+test.each([
+  [
+    "a returned call through .call",
+    "return (event.req.method === 'POST' ? handlers.post : handlers.get).call(handlers, event)",
+  ],
+  [
+    "a returned call through .bind",
+    "return (event.req.method === 'POST' ? handlers.post : handlers.get).bind(handlers)(event)",
+  ],
+  [
+    "a returned direct call",
+    "return (event.req.method === 'POST' ? createUser : listUsers)(event)",
+  ],
+  [
+    "a handler binding called in the return",
+    "const handler = event.req.method === 'POST' ? createUser : listUsers\n  return handler(event)",
+  ],
+  [
+    "an awaited returned binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  return await response",
+  ],
+  [
+    "an asserted returned binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  return response as Response",
+  ],
+])(
+  "Nitro route method suffix rule reports conditionals that select the response via %s",
+  async (_, body) => {
+    const result = await runRuleFixture({
+      rule: preferRouteMethodSuffix,
+      framework: "nuxt",
+      files: {
+        "server/api/user.ts": `export default defineEventHandler(async (event) => {
+  ${body}
+})`,
+      },
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([
+      "nitro/request/prefer-route-method-suffix",
+    ]);
+  },
+);
+
+test.each([
+  [
+    "a shadowing block binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  {\n    const response = cachedResponse\n    return response\n  }",
+  ],
+  [
+    "an overwritten let binding",
+    "let response = event.req.method === 'POST' ? createUser(event) : reject()\n  response = cachedResponse\n  return response",
+  ],
+])(
+  "Nitro route method suffix rule ignores conditionals whose binding is not the returned value: %s",
+  async (_, body) => {
+    const result = await runRuleFixture({
+      rule: preferRouteMethodSuffix,
+      framework: "nuxt",
+      files: {
+        "server/api/user.ts": `export default defineEventHandler(async (event) => {
+  ${body}
+})`,
+      },
+    });
+
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test("Nitro route method suffix rule reports guards whose branch ends in a nested if/else that exits", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  if (event.req.method !== 'POST') {
+    if (shouldReject(event)) {
+      throw createError({ statusCode: 405 })
+    } else {
+      return rejectLater(event)
+    }
+  }
+  if (event.req.method === 'PUT') {
+    if (isAdmin(event)) return replaceUser(event)
+  }
+  return updateUser(event)
+})`,
+    },
+  });
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect.stringContaining("checks POST manually"),
+  ]);
+});
+
 test("Nitro route method suffix rule ignores method checks that do not end the request", async () => {
   const result = await runRuleFixture({
     rule: preferRouteMethodSuffix,
