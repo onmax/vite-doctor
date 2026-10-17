@@ -404,11 +404,14 @@ function resolveNuxtNitro(nuxtManifest: string): RuntimePackageInstance {
   let serverManifest: string;
   try {
     serverManifest = resolvePackageJson(createRequire(nuxtManifest), "@nuxt/nitro-server");
-  } catch {
+  } catch (error) {
     const danglingLink = findDanglingLink(nuxtManifest, "@nuxt/nitro-server");
-    if (!danglingLink) return resolveRuntimePackage("nitro", nuxtManifest, "nuxt");
     return unknownRuntime("nitro", "@nuxt/nitro-server", "nuxt", serverDeclaration, {
-      reason: danglingLinkReason(danglingLink),
+      reason: danglingLink
+        ? danglingLinkReason(danglingLink)
+        : error instanceof Error
+          ? error.message
+          : String(error),
       danglingLink,
     });
   }

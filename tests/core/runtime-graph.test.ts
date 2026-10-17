@@ -387,6 +387,30 @@ test.skipIf(process.getuid?.() === 0)(
   },
 );
 
+test("does not resolve a hoisted Nitro when declared @nuxt/nitro-server is missing", async () => {
+  await withRuntimeGraph(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }),
+      "node_modules/nuxt/package.json": packageManifest("nuxt", "4.5.2", {
+        "@nuxt/nitro-server": "4.5.2",
+      }),
+      "node_modules/nitro/package.json": packageManifest("nitro", "2.13.4"),
+    },
+    async (root) => {
+      const project = await withoutNodePath(() => detectProject(root));
+
+      expect(project.runtimeGraph?.packages.nitro).toMatchObject({
+        state: "unknown",
+        requestedName: "@nuxt/nitro-server",
+        owner: "nuxt",
+      });
+      expect(project.runtimeGraph?.packages.nitro?.reason).toContain(
+        "Cannot find module '@nuxt/nitro-server'",
+      );
+    },
+  );
+});
+
 test("names a dangling @nuxt/nitro-server link as the Nitro cause", async () => {
   await withRuntimeGraph(
     {
