@@ -55,7 +55,7 @@ test.each(["", " \n\t\n"])(
         expect(reportStatus(result)).toBe("findings");
         expect(result.diagnostics).toMatchObject([
           {
-            code: "DOC0034",
+            code: "DOC0033",
             ruleId: "doctor/inventory/empty-sfc",
             severity: "warn",
             file: join(root, "src/Empty.vue"),

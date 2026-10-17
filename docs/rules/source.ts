@@ -234,8 +234,8 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       key: "diagnostics/DOC0022.md",
     },
     {
-      code: "DOC0034",
-      title: "DOC0034: Remove or fill the empty Vue component",
+      code: "DOC0033",
+      title: "DOC0033: Remove or fill the empty Vue component",
       description: "A .vue file in the project contains only whitespace.",
       why: "Vue's SFC compiler rejects a component without a <template> or <script>, so any build that imports or routes the file fails. Doctor reports the file instead of treating it as missing evidence, because there is nothing in it to analyze.",
       fix: "Delete the file if the component is no longer needed, or give it a <template> or <script> block.",
@@ -250,8 +250,8 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       rulePath: "",
       fixable: "no",
       examples: [],
-      path: "/diagnostics/DOC0034",
-      key: "diagnostics/DOC0034.md",
+      path: "/diagnostics/DOC0033",
+      key: "diagnostics/DOC0033.md",
     },
   ];
 }
