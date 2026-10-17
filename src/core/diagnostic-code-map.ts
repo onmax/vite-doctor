@@ -213,6 +213,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0081", ruleId: "nuxt/module/require-meta" },
   { code: "NUXT0082", ruleId: "nuxt/module/resolve-runtime-paths" },
   { code: "NUXT0083", ruleId: "nuxt/module/explicit-runtime-imports" },
+  { code: "NUXT0086", ruleId: "nuxt/hydration/require-clientonly-fallback" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
