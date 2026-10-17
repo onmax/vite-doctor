@@ -193,13 +193,16 @@ test("a config suppression without a Rule is reported when extends composes auto
   expect(result.diagnostics).toMatchObject([{ code: "DOC0031" }]);
 });
 
-test("identical unlocated stale suppressions get distinct identities", async () => {
+test("identical stale suppressions get distinct identities", async () => {
   const result = await runProjectFixture({
     framework: "vite",
     rules: [noClientSecretPattern],
     files: { "src/main.ts": "console.log(1)\n" },
-    run: { config: { suppressions: [stale, { ...stale }] } },
+    config: { suppressions: [stale, { ...stale }] },
   });
-  const fingerprints = result.diagnostics.map((diagnostic) => diagnostic.fingerprint);
-  expect(new Set(fingerprints).size).toBe(fingerprints.length);
+  expect(result.diagnostics).toMatchObject([
+    { code: "DOC0031", range: { line: 3 } },
+    { code: "DOC0031", range: { line: 8 } },
+  ]);
+  expect(result.diagnostics[0]!.fingerprint).not.toBe(result.diagnostics[1]!.fingerprint);
 });
