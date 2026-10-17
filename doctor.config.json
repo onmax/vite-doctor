@@ -69,10 +69,6 @@
       "ruleId": "nuxt/seo/prefer-seo-composables",
       "file": "docs/app/pages/index.vue",
       "reason": "The head block owns a title template, canonical link, and font preconnects as one static declaration."
-    },
-    {
-      "ruleId": "nuxt-better-auth/require-standard-auth-handler-mount",
-      "reason": "nuxt-better-auth is a Rule fixture dependency and is not enabled in the root package or the documentation app."
     }
   ]
 }
