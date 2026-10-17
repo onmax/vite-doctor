@@ -26,6 +26,7 @@ const HOST_CONFIGS = ["nitro", "nuxt", "vite"].flatMap((name) =>
 );
 const CLOUDFLARE_PRESET = /\bpreset\s*:\s*["'`]cloudflare/i;
 const CLOUDFLARE_PRESET_ENV = /\bNITRO_PRESET=["']?cloudflare/i;
+const CLOUDFLARE_MODULE = /\b(?:from|import|require)\s*\(?\s*["'`]cloudflare:/;
 const ASYNC_LOCAL_STORAGE = /\bAsyncLocalStorage\b|\basync_hooks\b/;
 const TEST_FILE = /(?:^|\/)(?:tests?|__tests__|e2e)\/|\.(?:spec|test)\.[cm]?[jt]sx?$/;
 
@@ -86,7 +87,7 @@ function alwaysThrows(handler: AnyNode) {
 
 // Project Inventory evidence that the code owned by this workspace package runs in workerd.
 function targetsCloudflare(ctx: RuleContext) {
-  if (/\bfrom\s+["']cloudflare:/.test(ctx.file.text)) return true;
+  if (CLOUDFLARE_MODULE.test(ctx.file.text)) return true;
   const packages = projectWorkspacePackages(ctx.project);
   const root = owningWorkspacePackage(packages, ctx.file.relativePath.replace(/\\/g, "/"));
   const key = `nitro:cloudflare-target:${root}`;

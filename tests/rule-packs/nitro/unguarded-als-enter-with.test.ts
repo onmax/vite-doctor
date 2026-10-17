@@ -91,6 +91,16 @@ test("reports files that import cloudflare: modules", async () => {
   expect(await run({ "src/state.ts": source })).toMatchObject([{ code: "NITRO0024" }]);
 });
 
+test.each([
+  ["a side-effect import", 'import "cloudflare:workers"'],
+  ["a dynamic import", 'const workers = await import("cloudflare:workers")'],
+  ["a require call", 'const workers = require("cloudflare:workers")'],
+])("reports files that load cloudflare: modules through %s", async (_, line) => {
+  expect(await run({ "src/state.ts": `${line}\n${unguarded}` })).toMatchObject([
+    { code: "NITRO0024" },
+  ]);
+});
+
 test("reports workspace packages that declare a cloudflare keyword", async () => {
   const diagnostics = await run({
     "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
