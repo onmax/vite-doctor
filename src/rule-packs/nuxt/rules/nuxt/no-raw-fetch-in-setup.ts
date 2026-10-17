@@ -1,4 +1,4 @@
-import { AnyNode, createRule, report } from "./shared.js";
+import { AnyNode, createRule, nearestFunctionOrProgram, report } from "./shared.js";
 
 export const noRawFetchInSetup = createRule({
   meta: {
@@ -22,18 +22,28 @@ export const noRawFetchInSetup = createRule({
       AwaitExpression(node: AnyNode) {
         const call = node.argument;
         const name = ctx.helpers.getCalleeName(call);
-        if (name === "$fetch" || name === "fetch" || name === "axios.get") {
-          report(
-            ctx,
-            call,
-            "nuxt/fetch/no-raw-fetch-in-setup",
-            "warn",
-            "fetching",
-            "This fetch runs in setup for SSR-rendered data. Use useFetch() or useAsyncData() to avoid duplicate fetching and hydration issues.",
-            "Replace with await useFetch(...) or await useAsyncData(key, () => $fetch(...)).",
-          );
-        }
+        if (name !== "$fetch" && name !== "fetch" && name !== "axios.get") return;
+        if (!isSetupScope(nearestFunctionOrProgram(node))) return;
+        report(
+          ctx,
+          call,
+          "nuxt/fetch/no-raw-fetch-in-setup",
+          "warn",
+          "fetching",
+          "This fetch runs in setup for SSR-rendered data. Use useFetch() or useAsyncData() to avoid duplicate fetching and hydration issues.",
+          "Replace with await useFetch(...) or await useAsyncData(key, () => $fetch(...)).",
+        );
       },
     };
   },
 });
+
+function isSetupScope(scope: AnyNode): boolean {
+  if (!scope) return false;
+  if (scope.type === "Program") return true;
+  const owner = scope.__doctorParent;
+  if (owner?.type !== "Property" && owner?.type !== "MethodDefinition") return false;
+  if (owner.value !== scope || owner.computed) return false;
+  const key = owner.key;
+  return (key?.type === "Identifier" ? key.name : key?.value) === "setup";
+}
