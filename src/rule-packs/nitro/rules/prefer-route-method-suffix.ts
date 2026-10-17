@@ -1,4 +1,10 @@
-import { type AnyNode, createRule, report } from "./shared.js";
+import {
+  type AnyNode,
+  createRule,
+  nearestFunctionOrProgram,
+  report,
+  walkScriptLocal,
+} from "./shared.js";
 import {
   isNitroRouteFile,
   isInIfStatementTest,
@@ -146,8 +152,29 @@ function isReturnedValue(node: AnyNode): boolean {
     isTypeExpressionWrapper(parent)
   )
     return isReturnedValue(parent);
+  if (parent.type === "ConditionalExpression" && parent.test !== node)
+    return isReturnedValue(parent);
   if (parent.type === "ReturnStatement") return true;
+  if (parent.type === "VariableDeclarator" && parent.init === node)
+    return isReturnedBinding(parent);
   return parent.type === "ArrowFunctionExpression" && parent.body === node;
+}
+
+function isReturnedBinding(declarator: AnyNode) {
+  if (declarator.id?.type !== "Identifier") return false;
+  const name = declarator.id.name;
+  const scope = nearestFunctionOrProgram(declarator);
+  let returned = false;
+  walkScriptLocal(scope, (node) => {
+    if (
+      node.type === "ReturnStatement" &&
+      node.argument?.type === "Identifier" &&
+      node.argument.name === name &&
+      nearestFunctionOrProgram(node) === scope
+    )
+      returned = true;
+  });
+  return returned;
 }
 
 function branchExits(node: AnyNode) {

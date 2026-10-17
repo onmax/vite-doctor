@@ -1369,6 +1369,42 @@ test.each([
   },
 );
 
+test("Nitro route method suffix rule reports every method in chained returned conditionals", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  return event.req.method === 'POST'
+    ? createUser(event)
+    : event.req.method === 'GET'
+      ? listUsers(event)
+      : reject()
+})`,
+    },
+  });
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect.stringContaining("checks POST manually"),
+    expect.stringContaining("checks GET manually"),
+  ]);
+});
+
+test("Nitro route method suffix rule reports conditionals assigned to the returned response", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  const response = event.req.method === 'POST' ? createUser(event) : reject()
+  return response
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
+});
+
 test("Nitro route method suffix rule ignores method checks that do not end the request", async () => {
   const result = await runRuleFixture({
     rule: preferRouteMethodSuffix,
