@@ -148,6 +148,8 @@ function crossRealmOrigin(
     if (expression(init, true)?.type === "Identifier" && depth < 4)
       return crossRealmOrigin(evidence, init, depth + 1);
   }
+  // The module namespace itself is never a web value; only its exports are.
+  if (binding.init && awaited(init)?.type !== "MemberExpression") return undefined;
   const root = memberRoot(init);
   return root && moduleOrigin(evidence, root) ? "loaded module" : undefined;
 }

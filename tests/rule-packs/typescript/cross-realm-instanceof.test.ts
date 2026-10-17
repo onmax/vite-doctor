@@ -128,6 +128,10 @@ test.each([
     "function f(request: Request | undefined) { if (request) return request.clone() instanceof Request }",
   ],
   [
+    "module namespace itself",
+    "async function load(id: string) { const mod = await import(id); return mod instanceof Response }",
+  ],
+  [
     "imported function result",
     "import { load } from './load'; export const ok = load() instanceof Response",
   ],
