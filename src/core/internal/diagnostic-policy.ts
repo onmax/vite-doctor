@@ -257,6 +257,10 @@ export function unusedConfigSuppressionEntries(
     );
 }
 
+export function matchesSuppressionFile(relativePath: string, pattern: string): boolean {
+  return nativeMatch(relativePath, pattern);
+}
+
 function matchesConfigSuppression(
   root: string,
   suppression: ConfigSuppression,

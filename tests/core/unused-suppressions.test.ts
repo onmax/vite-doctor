@@ -135,7 +135,7 @@ test("a config suppression without a Rule does not hide the DOC0031 it causes", 
     framework: "vite",
     rules: [noClientSecretPattern],
     files: { "src/main.ts": "console.log(1)\n" },
-    config: { suppressions: [{ file: "doctor.config.ts", reason: "Config noise." }] },
+    config: { suppressions: [{ reason: "Hide everything." }] },
   });
   expect(result.diagnostics).toMatchObject([{ code: "DOC0031" }]);
 });
@@ -151,4 +151,55 @@ test("a config suppression without a Rule is not reported while a Rule is turned
     },
   });
   expect(result.diagnostics).toEqual([]);
+});
+
+test("a config suppression for an excluded file is not reported", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noClientSecretPattern],
+    files: { "src/main.ts": "console.log(import.meta.env.VITE_SECRET)\n" },
+    config: { suppressions: [stale], exclude: ["src/main.ts"] },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "DOC0031")).toEqual([]);
+});
+
+test("a config suppression for a file Doctor could not parse is not reported", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noClientSecretPattern],
+    files: { "src/main.ts": "console.log(import.meta.env.VITE_SECRET\nconst = ;\n" },
+    config: { suppressions: [stale] },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "DOC0031")).toEqual([]);
+});
+
+test("a config suppression for a deleted file is reported", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noClientSecretPattern],
+    files: { "src/other.ts": "console.log(1)\n" },
+    config: { suppressions: [stale] },
+  });
+  expect(result.diagnostics).toMatchObject([{ code: "DOC0031" }]);
+});
+
+test("a config suppression without a Rule is reported when extends composes auto", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noClientSecretPattern],
+    files: { "src/main.ts": "console.log(1)\n" },
+    config: { extends: ["auto"], suppressions: [{ file: "src/gone.ts", reason: "Moved." }] },
+  });
+  expect(result.diagnostics).toMatchObject([{ code: "DOC0031" }]);
+});
+
+test("identical unlocated stale suppressions get distinct identities", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noClientSecretPattern],
+    files: { "src/main.ts": "console.log(1)\n" },
+    run: { config: { suppressions: [stale, { ...stale }] } },
+  });
+  const fingerprints = result.diagnostics.map((diagnostic) => diagnostic.fingerprint);
+  expect(new Set(fingerprints).size).toBe(fingerprints.length);
 });

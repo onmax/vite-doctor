@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -24,6 +25,7 @@ import type { GraphSummary } from "./cache-store.js";
 import {
   applyDiagnosticPolicy,
   settleDiagnosticIdentity,
+  matchesSuppressionFile,
   unusedConfigSuppressionEntries,
 } from "./diagnostic-policy.js";
 import { lineColumnAt } from "./line-index.js";
@@ -68,28 +70,45 @@ export function applyPolicyFilters(session: ScanSession): void {
 
 // Scoped runs skip Rules or files, so a suppression can match nothing without being stale.
 function reportUnusedConfigSuppressions(session: ScanSession): void {
-  const { options } = session;
+  const { options, root } = session;
   if (options.changed || options.since || options.rules || options.analyses) return;
   const ran = new Set(session.enabledRules.map((rule) => rule.meta.id));
   const effectiveExtends = options.extends ?? session.config.extends;
   // An entry without a Rule may belong to a Rule turned off in config, which cannot prove it stale.
   const unscoped =
-    (effectiveExtends === undefined || effectiveExtends === "auto") &&
+    (effectiveExtends === undefined ||
+      effectiveExtends === "auto" ||
+      (Array.isArray(effectiveExtends) && effectiveExtends.includes("auto"))) &&
     !Object.values(session.config.rules ?? {}).includes("off");
-  const unused = unusedConfigSuppressionEntries(
-    session.root,
-    session.config,
-    session.diagnostics,
-  ).filter(({ suppression }) => {
-    if (!suppression.ruleId) return unscoped;
-    if (!ran.has(suppression.ruleId)) return false;
-    const scope = session.ruleScopes.get(suppression.ruleId);
-    if (!scope || !suppression.file) return true;
-    const target = relative(session.root, resolve(session.root, suppression.file));
-    return scope.has(owningWorkspacePackage(session.project.workspacePackages ?? [], target));
-  });
+  const analyzed = session.files.map((file) => relative(root, file.path));
+  const unproven = new Set(
+    (session.project.evidenceGaps ?? []).flatMap((gap) =>
+      gap.files.map((file) => relative(root, resolve(root, file))),
+    ),
+  );
+  const workspacePackages = session.project.workspacePackages ?? [];
+  const unused = unusedConfigSuppressionEntries(root, session.config, session.diagnostics).filter(
+    ({ suppression }) => {
+      if (suppression.ruleId ? !ran.has(suppression.ruleId) : !unscoped) return false;
+      const pattern = suppression.file;
+      if (!pattern) return unproven.size === 0;
+      let targets = analyzed.filter((file) => matchesSuppressionFile(file, pattern));
+      // Only a literal path that no longer exists is provably stale; any other unanalyzed
+      // target may be excluded, ignored, or outside the source inventory.
+      if (!targets.length) {
+        if (pattern.includes("*") || existsSync(resolve(root, pattern))) return false;
+        targets = [relative(root, resolve(root, pattern))];
+      }
+      if (targets.some((file) => unproven.has(file))) return false;
+      const scope = suppression.ruleId ? session.ruleScopes.get(suppression.ruleId) : undefined;
+      return (
+        !scope || targets.some((file) => scope.has(owningWorkspacePackage(workspacePackages, file)))
+      );
+    },
+  );
   if (!unused.length) return;
   const configFiles = doctorConfigFiles(session.root);
+  const reported = session.diagnostics.length;
   for (const { suppression, index } of unused) {
     const entry = Object.entries(suppression)
       .filter(([key, value]) => key !== "reason" && typeof value === "string")
@@ -109,6 +128,10 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
       analysisPhase: "manifest",
     });
   }
+  session.diagnostics = [
+    ...session.diagnostics.slice(0, reported),
+    ...settleDiagnosticIdentity(session.diagnostics.slice(reported)),
+  ];
 }
 
 function doctorConfigFiles(root: string): string[] {
@@ -122,7 +145,10 @@ function doctorConfigFiles(root: string): string[] {
   return entries
     .map((name) => ({
       name,
-      match: /^(doctor|nuxt|vite)\.config\.(?:json|[cm]?[jt]s)$/.exec(name),
+      match:
+        /^(doctor)\.config\.(?:json5?|jsonc|ya?ml|toml|[cm]?[jt]s)$/.exec(name) ??
+        /^\.(doctor)rc(?:\.json)?$/.exec(name) ??
+        /^(nuxt|vite)\.config\.[cm]?[jt]s$/.exec(name),
     }))
     .filter((entry) => entry.match)
     .sort((a, b) => order.indexOf(a.match![1]!) - order.indexOf(b.match![1]!))
