@@ -311,8 +311,15 @@ function configOption(config: AnyNode, key: string): AnyNode {
   let value: AnyNode;
   let dynamic = false;
   for (const property of config.properties) {
-    if (property.type !== "Property" || property.computed) dynamic = true;
-    else if ((property.key.name ?? property.key.value) === key) value = property.value;
+    if (property.type !== "Property" || property.computed) {
+      // A later spread or computed key may override an earlier explicit value.
+      // Keep the option unresolved until a subsequent explicit assignment wins.
+      value = undefined;
+      dynamic = true;
+    } else if ((property.key.name ?? property.key.value) === key) {
+      value = property.value;
+      dynamic = false;
+    }
   }
   return value ?? (dynamic ? null : undefined);
 }

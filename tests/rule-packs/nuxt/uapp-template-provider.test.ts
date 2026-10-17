@@ -253,6 +253,20 @@ test.each([
 
 test.each([
   [
+    "an extends value followed by a spread",
+    {
+      "nuxt.config.ts": `const shared = { extends: ["./base"] }; export default defineNuxtConfig({ extends: ["./missing"], ...shared })`,
+      "base/app/app.vue": uappShell,
+    },
+  ],
+  [
+    "a srcDir followed by a spread",
+    {
+      "nuxt.config.ts": `const shared = { srcDir: "src" }; export default defineNuxtConfig({ srcDir: "./missing", ...shared })`,
+      "src/app.vue": uappShell,
+    },
+  ],
+  [
     "a srcDir built from a template expression",
     {
       "nuxt.config.ts": "export default defineNuxtConfig({ srcDir: `${process.cwd()}/src` })",
