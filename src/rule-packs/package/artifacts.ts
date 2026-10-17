@@ -418,7 +418,8 @@ function readPackageArtifactsForMode(
       addTargets(exports, true, "require");
     }
   } else if (!manifest.main && !manifest.module) {
-    if (fs.exists(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
+    if (fs.exists(resolve(root, "index.js")))
+      enqueue("index.js", "runtime", true, root, true, true, false, rootTyped);
   }
   if (manifest.main) enqueue(manifest.main, "runtime", true, root, "main", true, false, rootTyped);
   if (manifest.module)

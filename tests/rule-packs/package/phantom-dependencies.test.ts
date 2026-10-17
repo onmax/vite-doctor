@@ -155,6 +155,18 @@ test.each<{ name: string; manifest: object; files: Record<string, string>; entry
     files: { "types/index.d.ts": "export declare const value: number;" },
   },
   {
+    name: "a types field for the default index.js",
+    manifest: { types: "types/index.d.ts" },
+    files: { "types/index.d.ts": "export declare const value: number;" },
+    entry: "index.js",
+  },
+  {
+    name: "a sibling declaration of the default index.js",
+    manifest: {},
+    files: { "index.d.ts": "export declare const value: number;" },
+    entry: "index.js",
+  },
+  {
     name: "an export types condition outside the JavaScript directory",
     manifest: {
       exports: { ".": { types: "./types/index.d.ts", import: "./dist/index.js" } },
