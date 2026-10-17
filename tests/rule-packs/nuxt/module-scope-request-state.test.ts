@@ -284,6 +284,16 @@ export async function useDefaults() {
   expect(await run({ [file]: source })).toEqual([]);
 });
 
+test("reports request work in a dynamic import continuation", async () => {
+  const diagnostics = await run({
+    "app/composables/useCurrentUser.ts": `let currentUser: unknown
+export async function useCurrentUser() {
+  currentUser = await import('./defaults').then(() => $fetch('/api/me'))
+}`,
+  });
+  expect(diagnostics).toEqual([{ code: "NUXT0084", file: "app/composables/useCurrentUser.ts", line: 1 }]);
+});
+
 test("ships in the Strict Preset only", () => {
   expect(nuxtRulePack.presets.recommended).not.toContain("nuxt/ssr/no-module-scope-request-state");
   expect(nuxtRulePack.presets.strict).toContain("nuxt/ssr/no-module-scope-request-state");

@@ -235,8 +235,19 @@ function isRequestScopedValue(value: AnyNode, setup: Range | null, depth: number
   let scoped = false;
   const visit = (node: AnyNode) => {
     if (scoped || !node || typeof node !== "object") return;
-    if (isModuleImport(node) || (node.type === "AwaitExpression" && isModuleImport(node.argument)))
+    if (isModuleImport(node)) {
+      if (node.type !== "CallExpression") return;
+      // A continuation can still perform request-scoped work even though the
+      // imported module value itself is shared and safe to cache.
+      for (const argument of node.arguments ?? []) {
+        if (typeof argument?.type === "string") visit(argument);
+      }
       return;
+    }
+    if (node.type === "AwaitExpression" && isModuleImport(node.argument)) {
+      visit(node.argument);
+      return;
+    }
     if (node.type === "ThisExpression" || node.type === "AwaitExpression") {
       scoped = true;
       return;
@@ -258,7 +269,7 @@ function isRequestScopedValue(value: AnyNode, setup: Range | null, depth: number
       scoped = true;
       return;
     }
-    if (FUNCTION_TYPES.has(node.type) && !isInvoked(node)) return;
+    if (FUNCTION_TYPES.has(node.type) && !isInvoked(node) && !isPromiseCallback(node)) return;
     for (const [key, child] of Object.entries(node) as [string, AnyNode][]) {
       if (key === "__doctorParent" || key === "parent" || key === "typeAnnotation") continue;
       if (Array.isArray(child)) child.forEach(visit);
@@ -267,6 +278,18 @@ function isRequestScopedValue(value: AnyNode, setup: Range | null, depth: number
   };
   visit(value);
   return scoped;
+}
+
+function isPromiseCallback(node: AnyNode) {
+  const parent = node.__doctorParent;
+  if (parent?.type !== "CallExpression") return false;
+  if (!parent.arguments?.includes(node)) return false;
+  const callee = unwrap(parent.callee);
+  return (
+    callee?.type === "MemberExpression" &&
+    PROMISE_METHODS.has(callee.property?.name) &&
+    isModuleImport(callee.object)
+  );
 }
 
 // `import()` resolves to the same module instance for every request.
