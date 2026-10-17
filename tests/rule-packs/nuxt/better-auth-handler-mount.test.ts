@@ -50,7 +50,8 @@ test("accepts the auth handler registered by @nuxtjs/better-auth without a manif
     dependencies: { "@nuxtjs/better-auth": "^0.3.4", "better-auth": "^1.3.0" },
     files: {
       "nuxt.config.ts": `export default defineNuxtConfig({ modules: ["@nuxtjs/better-auth"] })\n`,
-      "app/app.config.ts": "export default defineAppConfig({})",
+      "server/utils/auth.ts":
+        "import { betterAuth } from 'better-auth'\n\nexport const auth = betterAuth({})\n",
     },
   });
   expect(result.diagnostics).toEqual([]);
@@ -145,4 +146,60 @@ test("ignores auth handlers recorded by a stale manifest", async () => {
       join(root, "server/utils/auth.ts"),
     ]);
   });
+});
+
+test.each([
+  [
+    "a comment",
+    `// modules: ["@nuxtjs/better-auth"]\nexport default defineNuxtConfig({ modules: [] })\n`,
+  ],
+  [
+    "a string outside modules",
+    `export default defineNuxtConfig({ modules: [], app: { head: { title: "nuxt-better-auth" } } })\n`,
+  ],
+])("reports when a handler module is only named in %s", async (_name, config) => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireStandardAuthHandlerMount],
+    dependencies: { "@nuxtjs/better-auth": "^0.3.4", "better-auth": "^1.3.0" },
+    files: { ...authInstance, "nuxt.config.ts": config },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("accepts a handler module registered with options", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireStandardAuthHandlerMount],
+    files: {
+      ...authInstance,
+      "nuxt.config.ts": `export default defineNuxtConfig({ modules: [["nuxt-better-auth", {}]] })\n`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("follows an aliased betterAuth import", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireStandardAuthHandlerMount],
+    files: {
+      "nuxt.config.ts": "export default defineNuxtConfig({})\n",
+      "server/utils/auth.ts":
+        "import { betterAuth as createAuth } from 'better-auth'\n\nexport const auth = createAuth({})\n",
+    },
+  });
+  expect(result.diagnostics[0]?.range).toMatchObject({ line: 3, column: 21 });
+});
+
+test("ignores a local function named betterAuth", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireStandardAuthHandlerMount],
+    files: {
+      "nuxt.config.ts": "export default defineNuxtConfig({})\n",
+      "server/utils/auth.ts": "function betterAuth() {}\n\nexport const auth = betterAuth()\n",
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
 });
