@@ -3,7 +3,7 @@ import { AnyNode, createRule, report } from "./shared.js";
 
 const SECRET_NAME = /(?:secret|password|passwd|token|private)$/i;
 const SECRET_KEY_NAME =
-  /(?:secret|private|service|servicerole|admin|master|signing|encryption|access|write|webhook)_?key$/i;
+  /(?:secret|private|service|servicerole|admin|master|signing|encryption|access|write|webhook)_?(?:api)?key$/i;
 // Public-by-design credentials: publishable, site, widget, anon, and search-only keys.
 const PUBLIC_KEY_QUALIFIER = /publishable|public|site|widget|project|anon|client|browser|search/i;
 

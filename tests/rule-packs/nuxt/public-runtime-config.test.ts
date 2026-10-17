@@ -70,6 +70,9 @@ test.each([
   [`jwt: { privateKey: "-----BEGIN PRIVATE KEY-----" }`, "privateKey"],
   [`aws: { secretAccessKey: "secret" }`, "secretAccessKey"],
   [`supabase: { serviceRoleKey: "service" }`, "serviceRoleKey"],
+  [`secretApiKey: "secret"`, "secretApiKey"],
+  [`serviceApiKey: "service"`, "serviceApiKey"],
+  [`adminApiKey: "admin"`, "adminApiKey"],
   [`githubToken: "ghp_"`, "githubToken"],
   [`dbPassword: "hunter2"`, "dbPassword"],
 ])("reports secret-shaped key names as errors: %s", async (publicConfig, key) => {
