@@ -11,6 +11,7 @@ import {
   createAgentReport,
   createRulesReport,
   createSarifReport,
+  createTextReport,
   createNuxtProjectInventory,
   allDiagnostics,
   createDoctorDiagnosticsHost,
@@ -1266,6 +1267,50 @@ test("explicit extends can select an inactive pack exactly", async () => {
     },
   );
 });
+
+test.each([
+  [["inactive/recommended"], ["test/inactive"], ["test/base"]],
+  [["auto", "inactive/recommended"], ["test/base", "test/inactive"], []],
+  ["auto" as const, ["test/base"], []],
+])(
+  "reports activated Rule Packs that extends %j did not select",
+  async (selection, selected, unselected) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        extends: selection,
+        extensions: [
+          defineDoctorExtension({
+            name: "test",
+            rulePacks: [
+              testPack("test/base", reportProgramRule),
+              defineRulePack({
+                name: "test/inactive",
+                version: "0.0.0",
+                activation: { packages: ["missing-package"] },
+                rules: [secondRule],
+                presets: { recommended: ["test/second-rule"] },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      expect(result.rulePacks).toEqual({ activated: ["test/base"], selected });
+      expect(JSON.parse(createJsonReport(result)).rulePacks).toEqual(result.rulePacks);
+      expect(JSON.parse(createAgentReport(result)).rulePacks).toEqual(result.rulePacks);
+      const note = createTextReport(result)
+        .split("\n")
+        .find((line) => line.startsWith("Rule Packs not selected"));
+      expect(note).toBe(
+        unselected.length
+          ? `Rule Packs not selected by extends: ${unselected.join(", ")} (add "auto" to extends to run them)`
+          : undefined,
+      );
+    });
+  },
+);
 
 test("severity filters use final configured severity", async () => {
   await withFixture(

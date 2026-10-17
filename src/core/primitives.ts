@@ -389,6 +389,12 @@ export interface WorkspacePackageActivation {
   rulePacks: string[];
 }
 
+/** The Rule Packs whose Activation matched, and the Rule Packs whose Presets Config Extends selected. */
+export interface RulePackSelection {
+  activated: string[];
+  selected: string[];
+}
+
 export interface RuntimePackageInstance {
   runtime: RuntimePackageName;
   state: "resolved" | "unknown";
@@ -905,6 +911,7 @@ export interface DoctorRunResult {
   phases?: Record<string, number>;
   ruleTimings?: Array<{ rule: string; ms: number; files: number }>;
   workspacePackages?: WorkspacePackageActivation[];
+  rulePacks?: RulePackSelection;
   graph?: {
     files: number;
     importEdges: number;

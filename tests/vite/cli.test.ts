@@ -10,7 +10,7 @@ import {
 } from "../../src/core/index.ts";
 import { expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
-import { viteDoctorExtensions, viteDoctorRulePacks } from "../../src/doctor.ts";
+import { runViteDoctor, viteDoctorExtensions, viteDoctorRulePacks } from "../../src/doctor.ts";
 import { formatMigrationReport } from "../../src/migration.ts";
 import { doctor } from "../../src/plugin.ts";
 
@@ -635,6 +635,39 @@ test("CLI rejects repeated migration targets", async () => {
   expect(JSON.parse(result.output)).toMatchObject({
     error: { kind: "invocation", message: "Option --to may only be provided once." },
   });
+});
+
+test("CLI and Vite plugin report the Rule Packs an explicit extends left out", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ devDependencies: { vite: "^7.0.0", typescript: "^5.9.0" } }),
+      "tsconfig.json": "{}",
+      "src/main.ts": "export {}",
+    },
+    async (root) => {
+      const cli = await runCli(
+        [".", "--extends", "vite-doctor/typescript/strict", "--no-cache", "--format", "json"],
+        root,
+      );
+      const plugin = await runViteDoctor({
+        root,
+        extends: ["vite-doctor/typescript/strict"],
+        cache: false,
+      });
+      expect(JSON.parse(cli.output).rulePacks).toEqual({
+        activated: ["vite-doctor/vite", "vite-doctor/typescript"],
+        selected: ["vite-doctor/typescript"],
+      });
+      expect(plugin.rulePacks).toEqual(JSON.parse(cli.output).rulePacks);
+      const text = await runCli(
+        [".", "--extends", "vite-doctor/typescript/strict", "--no-cache"],
+        root,
+      );
+      expect(text.output).toContain(
+        'Rule Packs not selected by extends: vite-doctor/vite (add "auto" to extends to run them)',
+      );
+    },
+  );
 });
 
 test("CLI keeps comma-separated selectors and repeated boolean flags", async () => {

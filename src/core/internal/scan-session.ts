@@ -14,6 +14,7 @@ import {
   type ProjectInfo,
   type RuntimeEvidenceContributor,
   type RulePack,
+  type RulePackSelection,
   type SourceFileHandle,
   type WorkspaceGraph,
   type WorkspacePackageActivation,
@@ -80,6 +81,7 @@ export interface ScanSession {
   enabledRules: DoctorRule[];
   ruleScopes: Map<string, ReadonlySet<string>>;
   workspaceActivations: WorkspacePackageActivation[];
+  rulePacks: RulePackSelection;
   ruleConfigs: Map<string, ResolvedRuleConfig>;
   timings: Record<string, number>;
   phases: Record<string, number>;
@@ -160,6 +162,10 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     enabledRules: selection.rules,
     ruleScopes: selection.scopes,
     workspaceActivations: workspacePackageActivations(project, activations),
+    rulePacks: {
+      activated: [...activations].filter(([, roots]) => roots.length).map(([pack]) => pack.name),
+      selected: registry.packs.filter((pack) => selection.packs.has(pack)).map((pack) => pack.name),
+    },
     ruleConfigs,
     phases,
     ruleTimings: new Map(),
@@ -351,6 +357,8 @@ interface RuleSelection {
   rules: DoctorRule[];
   /** Workspace package roots a file must belong to for a rule that only workspace packages activated. */
   scopes: Map<string, ReadonlySet<string>>;
+  /** Rule Packs whose Presets Config Extends selected. */
+  packs: ReadonlySet<RulePack>;
 }
 
 function selectRules(
@@ -390,6 +398,7 @@ function selectRules(
         (rule) => evaluateRuleApplicability(rule, project).state === "active",
       ),
       scopes: selected.scopes,
+      packs: selected.packs,
     };
   }
   const roots = projectWorkspacePackages(project).map((item) => item.root);
@@ -410,7 +419,7 @@ function selectRules(
     if (scope || included.length < roots.length)
       selected.scopes.set(rule.meta.id, new Set(included));
   }
-  return { rules, scopes: selected.scopes };
+  return { rules, scopes: selected.scopes, packs: selected.packs };
 }
 
 function resolveRulePackActivations(
@@ -438,8 +447,9 @@ function resolveExtends(
   packs: RulePack[],
   requested: DoctorRunOptions["extends"] = "auto",
   activations: ReadonlyMap<RulePack, string[]>,
-): { ruleIds: Set<string>; scopes: Map<string, Set<string>> } {
+): { ruleIds: Set<string>; scopes: Map<string, Set<string>>; packs: Set<RulePack> } {
   const ruleIds = new Set<string>();
+  const selectedPacks = new Set<RulePack>();
   const scopes = new Map<string, Set<string>>();
   const select = (ruleId: string, scope?: readonly string[]) => {
     const unscoped = ruleIds.has(ruleId) && !scopes.has(ruleId);
@@ -456,6 +466,7 @@ function resolveExtends(
   const selectActivated = () => {
     for (const [pack, roots] of activations) {
       if (!roots.length) continue;
+      selectedPacks.add(pack);
       for (const ruleId of pack.presets.recommended) {
         select(ruleId, roots.includes(".") ? undefined : roots);
       }
@@ -463,7 +474,7 @@ function resolveExtends(
   };
   if (requested === "auto") {
     selectActivated();
-    return { ruleIds, scopes };
+    return { ruleIds, scopes, packs: selectedPacks };
   }
   for (const entry of requested) {
     if (entry === "auto") {
@@ -497,9 +508,10 @@ function resolveExtends(
         pack: pack.name,
         preset: presetName,
       });
+    selectedPacks.add(pack);
     for (const ruleId of preset) select(ruleId);
   }
-  return { ruleIds, scopes };
+  return { ruleIds, scopes, packs: selectedPacks };
 }
 
 function rulePackKey(pack: RulePack): string {
