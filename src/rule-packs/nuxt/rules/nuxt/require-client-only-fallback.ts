@@ -34,7 +34,8 @@ export const requireClientOnlyFallback = createRule({
       template: {
         element(node) {
           if (node.tag !== "ClientOnly" && node.tag !== "client-only") return;
-          if (hasFallback(ctx.helpers, node) || rendersOnlyOverlays(node)) return;
+          if (!hasContent(node) || hasFallback(ctx.helpers, node) || rendersOnlyOverlays(node))
+            return;
           ctx.helpers.report(
             ctx,
             node,
@@ -60,17 +61,29 @@ function hasFallback(helpers: RuleContext["helpers"], node: TemplateElementNode)
       return true;
   }
   if (FALLBACK_SLOTS.some((name) => helpers.hasVueDirective(node, "slot", name))) return true;
-  if (
-    node.props.some(
-      (prop) => prop.type === TemplateNodeType.DIRECTIVE && prop.name === "bind" && !prop.arg,
-    )
-  )
-    return true;
+  // `v-bind="props"`, `:[name]` and `#[name]` can supply a fallback Doctor cannot see.
+  if (hasUnknownArgument(node, "bind") || hasUnknownArgument(node, "slot")) return true;
   return node.children.some(
     (child) =>
       child.type === TemplateNodeType.ELEMENT &&
       child.tag === "template" &&
-      FALLBACK_SLOTS.some((name) => helpers.hasVueDirective(child, "slot", name)),
+      (FALLBACK_SLOTS.some((name) => helpers.hasVueDirective(child, "slot", name)) ||
+        hasUnknownArgument(child, "slot")),
+  );
+}
+
+function hasUnknownArgument(node: TemplateElementNode, directive: "bind" | "slot") {
+  return node.props.some((prop) => {
+    if (prop.type !== TemplateNodeType.DIRECTIVE || prop.name !== directive) return false;
+    // An argument-less v-bind spreads an object; an argument-less v-slot is the default slot.
+    if (!prop.arg) return directive === "bind";
+    return (prop.arg as { isStatic?: boolean }).isStatic !== true;
+  });
+}
+
+function hasContent(node: TemplateElementNode) {
+  return node.children.some(
+    (child) => child.type !== TemplateNodeType.COMMENT && !isWhitespace(child),
   );
 }
 
