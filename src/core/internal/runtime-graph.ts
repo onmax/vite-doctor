@@ -6,6 +6,7 @@ import {
   readlinkSync,
   realpathSync,
   statSync,
+  type Stats,
 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "pathe";
@@ -51,7 +52,7 @@ export function resolveRuntimeGraph(
     const nuxtManifest =
       packages.nuxt.state === "resolved" ? packages.nuxt.packageJsonPath : undefined;
     packages.nitro = nuxtManifest
-      ? resolveRuntimePackage("nitro", nuxtNitroOwnerManifest(nuxtManifest), "nuxt")
+      ? resolveNuxtNitro(nuxtManifest)
       : blockedRuntime("nitro", "nuxt", packages.nuxt);
     edges.push(edge("nuxt", packages.nitro));
     packages.h3 =
@@ -371,7 +372,7 @@ function resolveRuntimePackage(
       danglingLink ??=
         declaration === undefined ? undefined : findDanglingLink(ownerManifest, requestedName);
       lastReason = danglingLink
-        ? `${danglingLink.path} is a dangling symlink to ${danglingLink.target}, which does not exist.`
+        ? danglingLinkReason(danglingLink)
         : error instanceof Error
           ? error.message
           : String(error);
@@ -392,18 +393,30 @@ function resolveRuntimePackage(
 }
 
 /** Nuxt 4.5 moved its Nitro dependency into @nuxt/nitro-server. */
-function nuxtNitroOwnerManifest(nuxtManifest: string): string {
+function resolveNuxtNitro(nuxtManifest: string): RuntimePackageInstance {
   const nuxt = readPackageManifest(nuxtManifest);
   const declaresNitro = packageCandidates.nitro.some(
     (name) => packageDeclaration(nuxt, name) !== undefined,
   );
-  if (declaresNitro || packageDeclaration(nuxt, "@nuxt/nitro-server") === undefined)
-    return nuxtManifest;
+  const serverDeclaration = packageDeclaration(nuxt, "@nuxt/nitro-server");
+  if (declaresNitro || serverDeclaration === undefined)
+    return resolveRuntimePackage("nitro", nuxtManifest, "nuxt");
+  let serverManifest: string;
   try {
-    return resolvePackageJson(createRequire(nuxtManifest), "@nuxt/nitro-server");
+    serverManifest = resolvePackageJson(createRequire(nuxtManifest), "@nuxt/nitro-server");
   } catch {
-    return nuxtManifest;
+    const danglingLink = findDanglingLink(nuxtManifest, "@nuxt/nitro-server");
+    if (!danglingLink) return resolveRuntimePackage("nitro", nuxtManifest, "nuxt");
+    return unknownRuntime("nitro", "@nuxt/nitro-server", "nuxt", serverDeclaration, {
+      reason: danglingLinkReason(danglingLink),
+      danglingLink,
+    });
   }
+  return resolveRuntimePackage("nitro", serverManifest, "nuxt");
+}
+
+function danglingLinkReason(link: NonNullable<RuntimePackageInstance["danglingLink"]>): string {
+  return `${link.path} is a dangling symlink to ${link.target}, which does not exist.`;
 }
 
 /** Node skips a broken node_modules link silently, so a deleted install target reads as a missing package. */
@@ -414,10 +427,18 @@ function findDanglingLink(
   let directory = dirname(resolve(ownerManifest));
   while (true) {
     const path = join(directory, "node_modules", name);
+    let entry: Stats | undefined;
     try {
-      const target = lstatSync(path).isSymbolicLink() ? missingLinkTarget(path) : undefined;
-      if (target) return { path, target };
+      entry = lstatSync(path);
     } catch {}
+    if (entry) {
+      // Node walks past only entries it cannot stat, so an existing nearer one is the culprit.
+      if (!entry.isSymbolicLink() || existsSync(path)) return undefined;
+      try {
+        const target = missingLinkTarget(path);
+        if (target) return { path, target };
+      } catch {}
+    }
     if (directory === dirname(directory)) return undefined;
     directory = dirname(directory);
   }

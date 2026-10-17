@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
+import Module from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
@@ -386,6 +387,54 @@ test.skipIf(process.getuid?.() === 0)(
   },
 );
 
+test("names a dangling @nuxt/nitro-server link as the Nitro cause", async () => {
+  await withRuntimeGraph(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }),
+      "node_modules/nuxt/package.json": packageManifest("nuxt", "4.5.2", {
+        "@nuxt/nitro-server": "4.5.2",
+      }),
+    },
+    async (root) => {
+      mkdirSync(join(root, "node_modules/@nuxt"), { recursive: true });
+      symlinkSync(
+        "../../deleted/nitro-server",
+        join(root, "node_modules/@nuxt/nitro-server"),
+        "dir",
+      );
+
+      const project = await withoutNodePath(() => detectProject(root));
+
+      expect(project.runtimeGraph?.packages.nitro).toMatchObject({
+        state: "unknown",
+        requestedName: "@nuxt/nitro-server",
+        danglingLink: {
+          path: join(root, "node_modules/@nuxt/nitro-server"),
+          target: join(realpathSync(root), "deleted/nitro-server"),
+        },
+      });
+    },
+  );
+});
+
+test("does not blame an ancestor dangling link when a nearer package shadows it", async () => {
+  await withRuntimeGraph(
+    {
+      "packages/app/package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }),
+      "packages/app/node_modules/nuxt/package.json": JSON.stringify({ name: "nuxt", exports: {} }),
+    },
+    async (repo) => {
+      mkdirSync(join(repo, "node_modules"), { recursive: true });
+      symlinkSync("../deleted/nuxt", join(repo, "node_modules/nuxt"), "dir");
+
+      const project = await detectProject(join(repo, "packages/app"));
+
+      expect(project.runtimeGraph?.packages.nuxt?.state).toBe("unknown");
+      expect(project.runtimeGraph?.packages.nuxt?.danglingLink).toBeUndefined();
+    },
+  );
+});
+
 test("does not blame a dangling symlink for a package the owner does not declare", async () => {
   await withRuntimeGraph({ "package.json": JSON.stringify({}) }, async (root) => {
     mkdirSync(join(root, "node_modules"), { recursive: true });
@@ -534,6 +583,20 @@ test("unknown package identity suppresses version rules and emits one inventory 
     },
   );
 });
+
+/** pnpm points NODE_PATH at its hoisted store, which would resolve fixture packages Doctor must not find. */
+async function withoutNodePath<T>(run: () => Promise<T>): Promise<T> {
+  const saved = process.env.NODE_PATH;
+  const initPaths = () => (Module as unknown as { _initPaths(): void })._initPaths();
+  delete process.env.NODE_PATH;
+  initPaths();
+  try {
+    return await run();
+  } finally {
+    if (saved !== undefined) process.env.NODE_PATH = saved;
+    initPaths();
+  }
+}
 
 async function withRuntimeGraph(
   files: Record<string, string>,
