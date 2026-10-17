@@ -859,7 +859,11 @@ test.each([
               name: "vite-doctor/package",
               version: "0.0.0",
               rules: [reportProgramRule],
-              presets: { recommended: ["test/report-program"], strict: ["test/report-program"] },
+              presets: {
+                recommended: ["test/report-program"],
+                strict: ["test/report-program"],
+                optional: undefined,
+              },
             }),
           ],
         }),

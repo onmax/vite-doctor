@@ -449,7 +449,11 @@ function resolveExtends(
   const namedPack = (entry: string) => {
     const matches = matchingPacks(entry);
     if (matches.length !== 1) return {};
-    return { rulePack: matches[0]!.name, presets: Object.keys(matches[0]!.presets).join(", ") };
+    const presets = Object.entries(matches[0]!.presets)
+      .filter(([, value]) => value !== undefined)
+      .map(([name]) => name)
+      .join(", ");
+    return { rulePack: matches[0]!.name, presets };
   };
   const select = (ruleId: string, scope?: readonly string[]) => {
     const unscoped = ruleIds.has(ruleId) && !scopes.has(ruleId);
