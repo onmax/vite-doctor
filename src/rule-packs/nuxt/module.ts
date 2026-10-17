@@ -376,7 +376,9 @@ export async function writeManifest(
     extensions: extensions.length ? extensions : undefined,
     doctorConfig: serializableDoctorConfig(nuxt.options.doctor),
     runtimeConfig: redactRuntimeConfig(nuxt.options.runtimeConfig),
-    keyedComposables: toArray(nuxt.options.optimization?.keyedComposables).map(String),
+    keyedComposables: toArray(nuxt.options.optimization?.keyedComposables)
+      .map((entry: any) => (typeof entry === "string" ? entry : entry?.name))
+      .filter((name): name is string => typeof name === "string"),
     importsDirs: normalizeDirs(rootDir, [
       ...toArray(nuxt.options.imports?.dirs),
       ...toArray(evidence?.importDirs),

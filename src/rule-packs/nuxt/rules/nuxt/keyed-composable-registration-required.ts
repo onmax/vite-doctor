@@ -1,3 +1,5 @@
+import { join } from "pathe";
+import type { RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule, report } from "./shared.js";
 
 export const keyedComposableRegistrationRequired = createRule({
@@ -15,10 +17,18 @@ export const keyedComposableRegistrationRequired = createRule({
     const visit = (node: AnyNode) => {
       const name = ctx.helpers.getCalleeName(node);
       if (name !== "createUseFetch" && name !== "createUseAsyncData") return;
-      const decl = ctx.file.text.slice(Math.max(0, node.start - 120), node.start);
-      const match = decl.match(/use[A-Z]\w+/);
-      const composable = match?.[0];
+      const declarator = node.__doctorParent;
+      const declared =
+        declarator?.type === "VariableDeclarator" &&
+        declarator.init === node &&
+        declarator.id?.type === "Identifier"
+          ? declarator.id.name
+          : undefined;
+      const composable =
+        declared ??
+        ctx.file.text.slice(Math.max(0, node.start - 120), node.start).match(/use[A-Z]\w+/)?.[0];
       if (composable && ctx.project.nuxt?.manifest?.keyedComposables.includes(composable)) return;
+      if (declared && isExported(declarator) && inScannedComposablesDir(ctx)) return;
       report(
         ctx,
         node,
@@ -32,3 +42,20 @@ export const keyedComposableRegistrationRequired = createRule({
     return { CallExpression: visit, NewExpression: visit };
   },
 });
+
+function isExported(declarator: AnyNode): boolean {
+  const declaration = declarator.__doctorParent;
+  return (
+    declaration?.type === "VariableDeclaration" &&
+    declaration.__doctorParent?.type === "ExportNamedDeclaration"
+  );
+}
+
+// Nuxt's compiler scan registers factories exported from every layer's `composables/` tree.
+function inScannedComposablesDir(ctx: RuleContext): boolean {
+  const nuxt = ctx.project.nuxt;
+  if (ctx.file.inAppDir("composables")) return true;
+  return (nuxt?.layers ?? []).some(
+    (layer) => layer.srcDir && ctx.file.path.startsWith(`${join(layer.srcDir, "composables")}/`),
+  );
+}
