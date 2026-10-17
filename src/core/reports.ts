@@ -12,7 +12,7 @@ import {
   allDiagnosticCodeListsByRuleId,
   allDiagnosticCodesByRuleId,
 } from "./diagnostic-code-map.js";
-import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
+import { DOCTOR_DIAGNOSTICS_DOCS_BASE, FINGERPRINT_SCHEME } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
 import {
   workspaceDiagnosticMetadataByCode,
@@ -133,6 +133,7 @@ export function createJsonReport(result: DoctorRunResult): string {
     {
       version: result.version,
       reportVersion: result.reportVersion ?? 3,
+      fingerprintScheme: FINGERPRINT_SCHEME,
       status: reportStatus(result),
       framework: result.framework,
       root: result.root,

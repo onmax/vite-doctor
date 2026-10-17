@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../src/core/testkit.ts";
+import { FINGERPRINT_SCHEME } from "../../src/core/diagnostic-constants.ts";
 import { requireStandardAuthHandlerMount } from "../../src/rule-packs/nuxt/rules/nuxt-better-auth.ts";
 
 const ruleId = requireStandardAuthHandlerMount.meta.id;
@@ -51,6 +52,8 @@ test("baseline suppression still applies to a manifest diagnostic without a sour
     files: {
       ...files,
       "baseline.json": JSON.stringify({
+        version: 2,
+        fingerprintScheme: FINGERPRINT_SCHEME,
         diagnostics: [{ fingerprint: initial.diagnostics[0]!.fingerprint }],
       }),
     },

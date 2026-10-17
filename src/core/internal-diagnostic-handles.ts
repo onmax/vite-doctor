@@ -73,7 +73,7 @@ export const doctorInternalDiagnostics = defineDiagnostics({
     DOC0025: {
       why: (params: { file: string; reason: string }) =>
         `Invalid Doctor baseline "${params.file}": ${params.reason}`,
-      fix: "Restore a readable baseline containing fingerprint strings or a version 1 diagnostics array before retrying the Doctor Run.",
+      fix: "Restore a readable baseline containing fingerprint strings or a version 2 diagnostics array, or regenerate it with --update-baseline, before retrying the Doctor Run.",
     },
     DOC0026: {
       why: (params: { kind: string; name: string }) =>

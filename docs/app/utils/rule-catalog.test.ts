@@ -154,6 +154,13 @@ test("diagnostic source carries upstream docs as reference links", async () => {
   );
 });
 
+test("stale baselines have a public diagnostic reference", async () => {
+  const diagnostic = getDiagnosticDocuments().find((item) => item.code === "DOC0032");
+
+  expect(diagnostic?.ruleId).toBe("doctor/baseline/stale-fingerprint-scheme");
+  expect(await diagnosticsCollectionSource.getItem(diagnostic!.key)).toContain("--update-baseline");
+});
+
 test("unresolved runtime inventory has a public diagnostic reference", async () => {
   const diagnostic = getDiagnosticDocuments().find((item) => item.code === "DOC0022");
 

@@ -20,7 +20,12 @@ import type {
   ProjectInfo,
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
-import { applyDiagnosticPolicy, settleDiagnosticIdentity } from "./diagnostic-policy.js";
+import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
+import {
+  applyDiagnosticPolicy,
+  settleDiagnosticIdentity,
+  type StaleBaseline,
+} from "./diagnostic-policy.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
@@ -56,6 +61,27 @@ export function applyPolicyFilters(session: ScanSession): void {
   const result = applyDiagnosticPolicy(session);
   session.diagnostics = result.diagnostics;
   session.suppressedDiagnostics = result.suppressedDiagnostics;
+  if (result.staleBaseline) reportStaleBaseline(session, result.staleBaseline);
+}
+
+// The baseline is not a source file, so this runs after scope filtering instead of through it.
+function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): void {
+  if (session.options.severity === "error") return;
+  const path = relative(session.root, baseline.file) || baseline.file;
+  const writer =
+    baseline.fingerprintScheme === undefined
+      ? "does not record the fingerprint scheme it was written with"
+      : `was written with fingerprint scheme ${baseline.fingerprintScheme}`;
+  pushDiagnostic(session, {
+    ruleId: "doctor/baseline/stale-fingerprint-scheme",
+    severity: "warn",
+    category: "baseline",
+    file: baseline.file,
+    why: `Baseline "${path}"${baseline.doctorVersion ? ` (Doctor ${baseline.doctorVersion})` : ""} ${writer}, but this Doctor uses fingerprint scheme ${FINGERPRINT_SCHEME}. Recorded findings whose fingerprints changed are reported as new by --new-only.`,
+    suggestion: `Regenerate the baseline with a full Doctor Run, without --changed, --since, or --rules: vite-doctor . --baseline ${path} --update-baseline. Then commit the updated baseline.`,
+    confidence: "proven",
+    analysisPhase: "manifest",
+  });
 }
 
 export function applyReportEligibility(session: ScanSession): void {
