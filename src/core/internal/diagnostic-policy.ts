@@ -16,6 +16,7 @@ import type { Diagnostic } from "../primitives.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import { lineColumnAt } from "./line-index.js";
 import { loadVueCompilerSfc } from "./lazy-parsers.js";
+import { walkAstFacts } from "./facts.js";
 import { parseScript } from "./script.js";
 import { parseVueScriptsResult } from "./sfc.js";
 import {
@@ -284,13 +285,13 @@ function collectInlineSuppressions(file: string, lines: string[]): InlineSuppres
   const source = lines.join("\n");
   if (!source.includes("doctor-disable")) return suppressions;
   const directives = new Map<number, InlineSuppression>();
-  const comments = file.endsWith(".vue")
-    ? collectVueComments(file, source)
+  const { comments, codeFree } = file.endsWith(".vue")
+    ? { comments: collectVueComments(file, source), codeFree: [] }
     : collectScriptComments(file, source);
   for (const comment of comments) {
     addCommentSuppressions(directives, source, comment.start, comment.end);
   }
-  const code = linesWithCode(source, comments);
+  const code = linesWithCode(source, [...comments, ...codeFree]);
   for (const [line, directive] of directives) {
     if (!directive.nextLine) {
       suppressions.nearby.set(line, directive);
@@ -306,18 +307,12 @@ function collectInlineSuppressions(file: string, lines: string[]): InlineSuppres
   return suppressions;
 }
 
-function linesWithCode(source: string, comments: SourceComment[]): boolean[] {
+function linesWithCode(source: string, spans: SourceComment[]): boolean[] {
   const masked = source.split("");
-  for (const comment of comments) {
-    for (let index = comment.start; index < comment.end; index++) {
+  for (const span of spans) {
+    for (let index = span.start; index < span.end; index++) {
       if (masked[index] !== "\n") masked[index] = " ";
     }
-    // JSX comments keep their `{}` container outside the parsed comment span.
-    let open = comment.start - 1;
-    while (open >= 0 && /[ \t]/.test(masked[open]!)) open--;
-    let close = comment.end;
-    while (close < masked.length && /[ \t]/.test(masked[close]!)) close++;
-    if (masked[open] === "{" && masked[close] === "}") masked[open] = masked[close] = " ";
   }
   return masked
     .join("")
@@ -330,13 +325,28 @@ interface SourceComment {
   end: number;
 }
 
-function collectScriptComments(file: string, source: string): SourceComment[] {
+function collectScriptComments(
+  file: string,
+  source: string,
+): { comments: SourceComment[]; codeFree: SourceComment[] } {
   const parsed = parseScript(file, source);
-  if (!parsed) return [];
-  return ((parsed.comments as Array<{ start?: number; end?: number }>) ?? []).filter(
+  if (!parsed) return { comments: [], codeFree: [] };
+  const comments = ((parsed.comments as Array<{ start?: number; end?: number }>) ?? []).filter(
     (comment): comment is { start: number; end: number } =>
       typeof comment.start === "number" && typeof comment.end === "number",
   );
+  // A JSX comment's `{}` container holds no code, but it sits outside the parsed comment span.
+  const codeFree: SourceComment[] = [];
+  if (/\.[cm]?[jt]sx$/.test(file))
+    walkAstFacts(parsed, (node) => {
+      const container = node as { type?: string; expression?: { type?: string } } & SourceComment;
+      if (
+        container.type === "JSXExpressionContainer" &&
+        container.expression?.type === "JSXEmptyExpression"
+      )
+        codeFree.push({ start: container.start, end: container.end });
+    });
+  return { comments, codeFree };
 }
 
 function collectVueComments(file: string, source: string): SourceComment[] {

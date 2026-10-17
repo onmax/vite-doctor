@@ -521,3 +521,43 @@ test("next-line suppression targets a line that holds only an empty object", () 
   });
   expect(result.diagnostics).toEqual([]);
 });
+
+test("next-line suppression treats a block comment inside an ordinary block as code", () => {
+  const { root, file } = fixture(
+    [
+      "// doctor-disable-next-line test/example -- intentional fixture",
+      "{ /* ordinary block comment */ }",
+      "const after = 3;",
+    ].join("\n"),
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 2), finding(file, 3)],
+  });
+  expect(result.diagnostics).toMatchObject([{ range: { line: 3 } }]);
+});
+
+test("next-line suppression skips a JSX comment container that spans lines", () => {
+  const { root, file } = fixture(
+    [
+      "export const view = (",
+      "  <section>",
+      "    {",
+      "      /* doctor-disable-next-line test/example -- jsx next line */",
+      "    }",
+      "    <div />",
+      "  </section>",
+      ");",
+    ].join("\n"),
+    "view.tsx",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 6)],
+  });
+  expect(result.diagnostics).toEqual([]);
+});
