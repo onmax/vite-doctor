@@ -842,6 +842,56 @@ test("configuration validation failures use stable diagnostic codes", async () =
   });
 });
 
+test.each([
+  ["vite-doctor/package", "DOC0017"],
+  ["package", "DOC0016"],
+])("Config Extends entry %s that names a Rule Pack suggests its Presets", async (entry, code) => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const error = await runDoctor({
+      root,
+      framework: "vue",
+      extends: [entry],
+      extensions: [
+        defineDoctorExtension({
+          name: "test",
+          rulePacks: [
+            defineRulePack({
+              name: "vite-doctor/package",
+              version: "0.0.0",
+              rules: [reportProgramRule],
+              presets: {
+                recommended: ["test/report-program"],
+                strict: ["test/report-program"],
+                optional: undefined,
+              },
+            }),
+          ],
+        }),
+      ],
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ name: code });
+    expect((error as Error).message).toBe(
+      `Config Extends entry "${entry}" names Rule Pack "vite-doctor/package" without a Preset. Use "${entry}/recommended" (Presets: recommended, strict).`,
+    );
+  });
+});
+
+test("unknown Config Extends Rule Packs list the installed Rule Packs", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
+        extends: ["missing/recommended"],
+        extensions: [pluginWith(reportProgramRule)],
+      }),
+    ).rejects.toThrow(
+      'Unknown Rule Pack "missing" in Config Extends entry "missing/recommended". Installed Rule Packs: test.',
+    );
+  });
+});
+
 test("rule diagnostics must include actionable fix text", async () => {
   await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
     await expect(
