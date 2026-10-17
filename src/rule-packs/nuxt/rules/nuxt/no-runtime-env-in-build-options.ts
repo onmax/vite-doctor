@@ -9,6 +9,7 @@ const WRAPPER_TYPES = new Set([
   "TSNonNullExpression",
   "ParenthesizedExpression",
 ]);
+const ENVIRONMENT_OVERRIDE_KEYS = new Set(["$production", "$development", "$test"]);
 const FUNCTION_TYPES = new Set([
   "FunctionExpression",
   "ArrowFunctionExpression",
@@ -44,7 +45,7 @@ export const noRuntimeEnvInBuildOptions = createRule({
         if (!runtimeEnvKeys.size) return;
         const readsFor = envReadsResolver(bindings);
 
-        for (const { path, value } of buildOptionValues(config)) {
+        for (const { path, value } of buildOptionValues(config, bindings)) {
           const reads = readsFor(value);
           if (reads.opaque || !reads.names.size) continue;
           const names = [...reads.names];
@@ -95,10 +96,17 @@ function exportedConfigObject(program: AnyNode, bindings: Map<string, AnyNode>):
     (statement: AnyNode) => statement.type === "ExportDefaultDeclaration",
   )?.declaration;
   let config = unwrap(exported);
-  if (config?.type === "CallExpression" && config.callee?.name === "defineNuxtConfig") {
+  if (config?.type === "Identifier" && isDefineNuxtConfig(unwrap(bindings.get(config.name)))) {
+    config = unwrap(bindings.get(config.name));
+  }
+  if (isDefineNuxtConfig(config)) {
     config = unwrap(config.arguments?.[0]);
   }
   return objectExpression(config, bindings);
+}
+
+function isDefineNuxtConfig(node: AnyNode): boolean {
+  return node?.type === "CallExpression" && node.callee?.name === "defineNuxtConfig";
 }
 
 function objectExpression(node: AnyNode, bindings: Map<string, AnyNode>): AnyNode {
@@ -111,21 +119,27 @@ function objectExpression(node: AnyNode, bindings: Map<string, AnyNode>): AnyNod
   return null;
 }
 
+// Only the places Nuxt reads runtime config from: the root, environment overrides, and nitro.
 function collectRuntimeConfigKeys(
   node: AnyNode,
   bindings: Map<string, AnyNode>,
   keys: Map<string, string>,
 ) {
-  for (const property of node.properties ?? []) {
+  for (const property of node?.properties ?? []) {
     if (property.type !== "Property") continue;
     const key = propertyName(property);
-    if (key === "runtimeConfig") {
-      const runtimeConfig = objectExpression(property.value, bindings);
-      if (runtimeConfig) collectDeclaredKeys(runtimeConfig, [], bindings, keys);
-      continue;
+    const value = objectExpression(property.value, bindings);
+    if (!key || !value) continue;
+    if (key === "runtimeConfig") collectDeclaredKeys(value, [], bindings, keys);
+    else if (key === "nitro" || ENVIRONMENT_OVERRIDE_KEYS.has(key)) {
+      collectRuntimeConfigKeys(value, bindings, keys);
+    } else if (key === "$env") {
+      for (const environment of value.properties ?? []) {
+        if (environment.type === "Property") {
+          collectRuntimeConfigKeys(objectExpression(environment.value, bindings), bindings, keys);
+        }
+      }
     }
-    const nested = unwrap(property.value);
-    if (nested?.type === "ObjectExpression") collectRuntimeConfigKeys(nested, bindings, keys);
   }
 }
 
@@ -148,27 +162,36 @@ function collectDeclaredKeys(
 
 function* buildOptionValues(
   node: AnyNode,
+  bindings: Map<string, AnyNode>,
   parents: string[] = [],
 ): Generator<{ path: string; value: AnyNode }> {
   for (const property of node.properties ?? []) {
+    if (property.type === "SpreadElement") {
+      const spread = objectExpression(property.argument, bindings);
+      if (spread) yield* buildOptionValues(spread, bindings, parents);
+      continue;
+    }
     if (property.type !== "Property") continue;
     const key = propertyName(property);
     if (!key || key === "runtimeConfig") continue;
-    yield* buildOptionValue(property.value, [...parents, key]);
+    yield* buildOptionValue(property.value, bindings, [...parents, key]);
   }
 }
 
 function* buildOptionValue(
   node: AnyNode,
+  bindings: Map<string, AnyNode>,
   path: string[],
 ): Generator<{ path: string; value: AnyNode }> {
   const value = unwrap(node);
   if (!value || FUNCTION_TYPES.has(value.type)) return;
   if (value.type === "ObjectExpression") {
-    yield* buildOptionValues(value, path);
+    yield* buildOptionValues(value, bindings, path);
   } else if (value.type === "ArrayExpression") {
     for (const element of value.elements ?? []) {
-      if (element && element.type !== "SpreadElement") yield* buildOptionValue(element, path);
+      if (element && element.type !== "SpreadElement") {
+        yield* buildOptionValue(element, bindings, path);
+      }
     }
   } else {
     yield { path: path.join("."), value: node };
@@ -189,6 +212,8 @@ function envReadsResolver(bindings: Map<string, AnyNode>) {
         return;
       }
       if (node.type !== "Identifier" || !bindings.has(node.name) || isNonReference(node)) return;
+      // A function passed as a value reads the environment when it runs, not when config loads.
+      if (FUNCTION_TYPES.has(unwrap(bindings.get(node.name))?.type) && !isCallee(node)) return;
       const bound = bindingReads(node.name);
       for (const name of bound.names) reads.names.add(name);
       reads.opaque ||= bound.opaque;
@@ -229,6 +254,11 @@ function envMemberName(parent: AnyNode, env: AnyNode): string | null {
     return property.quasis[0]?.value.cooked ?? null;
   }
   return null;
+}
+
+function isCallee(node: AnyNode): boolean {
+  const parent = node.__doctorParent;
+  return parent?.type === "CallExpression" && parent.callee === node;
 }
 
 function isNonReference(node: AnyNode): boolean {

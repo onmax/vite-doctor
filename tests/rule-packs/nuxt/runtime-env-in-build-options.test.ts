@@ -124,3 +124,79 @@ test("only checks nuxt.config files", async () => {
 
   expect(result.diagnostics).toHaveLength(0);
 });
+
+test("does not treat a module option named runtimeConfig as Nuxt runtime config", async () => {
+  const result = await run(`export default defineNuxtConfig({
+  myModule: { runtimeConfig: { foo: '' } },
+  other: { value: process.env.NUXT_FOO },
+})`);
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["$production", `$production: { runtimeConfig: { foo: '' } },`],
+  ["$env", `$env: { staging: { runtimeConfig: { foo: '' } } },`],
+  ["nitro", `nitro: { runtimeConfig: { foo: '' } },`],
+])("reads runtime config keys declared under %s", async (_name, declaration) => {
+  const result = await run(`export default defineNuxtConfig({
+  ${declaration}
+  other: { value: process.env.NUXT_FOO },
+})`);
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("does not report a callback binding that reads the variable when it runs", async () => {
+  const result = await run(`
+const configure = () => process.env.NUXT_PUBLIC_API_BASE
+function onReady() { return process.env.NUXT_PUBLIC_API_BASE }
+
+export default defineNuxtConfig({
+  runtimeConfig: { public: { apiBase: '' } },
+  hooks: { ready: configure, 'app:resolve': onReady },
+  myModule: { resolve: [configure] },
+})
+`);
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("reports a function binding called while nuxt.config loads", async () => {
+  const result = await run(`
+function apiBase() { return process.env.NUXT_PUBLIC_API_BASE }
+
+export default defineNuxtConfig({
+  runtimeConfig: { public: { apiBase: '' } },
+  myModule: { endpoint: apiBase() + '/graphql' },
+})
+`);
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("reports through a config bound to a variable before export", async () => {
+  const result = await run(`
+const config = defineNuxtConfig({
+  runtimeConfig: { public: { apiBase: '' } },
+  myModule: { endpoint: process.env.NUXT_PUBLIC_API_BASE },
+})
+export default config
+`);
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("reports a read spread into a build option", async () => {
+  const result = await run(`
+const opts = { endpoint: process.env.NUXT_PUBLIC_API_URL }
+
+export default defineNuxtConfig({
+  runtimeConfig: { public: { apiUrl: '' } },
+  apollo: { ...opts },
+})
+`);
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.why).toContain("apollo.endpoint");
+});
