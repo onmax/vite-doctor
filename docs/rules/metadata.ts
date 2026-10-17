@@ -129,7 +129,7 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/cloudflare/no-unguarded-als-enterwith": {
     description:
-      "Report AsyncLocalStorage#enterWith() calls without a try/catch in code that targets Cloudflare Workers.",
+      "Report AsyncLocalStorage#enterWith() calls whose failure is not handled, outside a try/catch or in one whose catch throws, in code that targets Cloudflare Workers.",
     why: "workerd implements AsyncLocalStorage run(), exit(), getStore(), bind(), and snapshot(), but enterWith() throws `asyncLocalStorage.enterWith() is not implemented`, with nodejs_compat or nodejs_als enabled. Code that works in Node.js then fails the request on Cloudflare. The rule runs when Project Inventory shows a Cloudflare target for the workspace package: a wrangler config, a cloudflare Nitro preset, Cloudflare tooling dependencies such as wrangler or @cloudflare/workers-types, a cloudflare package keyword, or `cloudflare:` imports in the file.",
     recommendedReplacement:
       "Run the work inside als.run(store, callback) so the store is scoped to the callback. If the call has to stay for Node.js runtimes, wrap it in try/catch and keep a fallback that does not depend on enterWith().",

@@ -48,7 +48,7 @@ export const noUnguardedAlsEnterWith = createRule({
       CallExpression(node: AnyNode) {
         const callee = node.callee;
         if (callee?.type !== "MemberExpression") return;
-        const property = callee.computed ? callee.property?.value : callee.property?.name;
+        const property = callee.computed ? staticKey(callee.property) : callee.property?.name;
         if (property !== "enterWith") return;
         if (isInsideTry(node) || !targetsCloudflare(ctx)) return;
         report(
@@ -130,6 +130,17 @@ function hasCloudflareEvidence(ctx: RuleContext, root: string, packages: Record<
   if (scripts.some((script) => typeof script === "string" && CLOUDFLARE_PRESET_ENV.test(script)))
     return true;
   return HOST_CONFIGS.some((file) =>
-    CLOUDFLARE_PRESET.test(ctx.fs.readText(join(directory, file)) ?? ""),
+    CLOUDFLARE_PRESET.test(stripComments(ctx.fs.readText(join(directory, file)) ?? "")),
   );
+}
+
+function stripComments(source: string) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+}
+
+function staticKey(node: AnyNode): string | undefined {
+  if (node?.type === "Literal") return node.value;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
+    return node.quasis[0]?.value?.cooked;
+  return undefined;
 }

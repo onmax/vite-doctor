@@ -129,6 +129,7 @@ test.each([
   ["a try/finally", "try {\n    storage.enterWith(event)\n  }\n  finally {}"],
   ["optional chaining", "storage?.enterWith(event)"],
   ["a computed member", 'storage["enterWith"](event)'],
+  ["a template literal member", "storage[`enterWith`](event)"],
   [
     "a catch that logs and rethrows",
     "try {\n    storage.enterWith(event)\n  }\n  catch (error) {\n    console.error(error)\n    throw new Error('enter failed', { cause: error })\n  }",
@@ -147,6 +148,15 @@ export function enter(event: unknown) {
 test.each([
   ["guarded calls", { "src/runtime/state.ts": guarded }, { wrangler: "^4.0.0" }],
   ["projects without a Cloudflare target", { "src/runtime/state.ts": unguarded }, undefined],
+  [
+    "a commented-out cloudflare preset",
+    {
+      "nitro.config.ts":
+        "export default defineNitroConfig({\n  // preset: 'cloudflare-pages',\n  /* preset: 'cloudflare-module' */\n  preset: 'node-server',\n})",
+      "server/utils/state.ts": unguarded,
+    },
+    undefined,
+  ],
   ["test files", { "test/runtime.test.ts": unguarded }, { wrangler: "^4.0.0" }],
   [
     "a call inside a function invoked synchronously within try",
