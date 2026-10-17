@@ -312,6 +312,11 @@ function createResourceEvidence(ctx: RuleContext) {
     }
     if (!resource.handle) return false;
     if (changedAfterAcquisition(resource.handle, resource, node)) return false;
+    return releases(node, resource);
+  }
+
+  function releases(node: AnyNode, resource: Resource): boolean {
+    if (node.type !== "CallExpression" || !resource.handle) return false;
     if (resource.kind === "interval" || resource.kind === "timeout") {
       return (
         ["clearInterval", "clearTimeout"].includes(browserApi(node.callee) ?? "") &&
@@ -383,6 +388,18 @@ function createResourceEvidence(ctx: RuleContext) {
       return value === undefined ? undefined : !value;
     }
     if (resource?.handle && identity(node) === resource.handle) return true;
+    if (resource?.handle && node?.type === "BinaryExpression") {
+      const sides = [node.left, node.right];
+      const nullish = sides.some(
+        (side) =>
+          (side?.type === "Literal" && side.value === null) ||
+          (side?.type === "Identifier" && side.name === "undefined" && !bindings.get(side)),
+      );
+      if (nullish && sides.some((side) => identity(side) === resource.handle)) {
+        if (node.operator === "!==" || node.operator === "!=") return true;
+        if (node.operator === "===" || node.operator === "==") return false;
+      }
+    }
     return undefined;
   }
 
@@ -537,6 +554,7 @@ function createResourceEvidence(ctx: RuleContext) {
   function cleansWatcher(resource: Resource): boolean {
     if (!watchers.has(resource.owner) || owner(resource.node, false) !== resource.owner)
       return false;
+    if (releasesBeforeReuse(resource) && releasedOnTeardown(resource)) return true;
     const parameter = watchers.get(resource.owner);
     const registrar = parameter?.type === "Identifier" ? bindings.get(parameter) : undefined;
     return executes(
@@ -562,6 +580,49 @@ function createResourceEvidence(ctx: RuleContext) {
       },
       resource,
     );
+  }
+
+  function releasesThrough(
+    node: AnyNode,
+    resource: Resource,
+    walk: (body: AnyNode, predicate: (node: AnyNode) => boolean) => boolean,
+    seen = new Set<AnyNode>(),
+  ): boolean {
+    if (node.type !== "CallExpression") return false;
+    if (releases(node, resource)) return true;
+    const helper = callback(node.callee);
+    if (!helper || seen.has(helper)) return false;
+    seen.add(helper);
+    return walk(helper.body, (call) => releasesThrough(call, resource, walk, seen));
+  }
+
+  // A watcher that reuses one outer handle owns the previous run's resource through that handle:
+  // releasing it before every reassignment plus on teardown is the cleanup onWatcherCleanup would do.
+  function releasesBeforeReuse(resource: Resource): boolean {
+    if (!resource.handle || resource.kind === "listener") return false;
+    const walk = (body: AnyNode, predicate: (node: AnyNode) => boolean) =>
+      executes(body, predicate, resource);
+    return walk(
+      resource.owner.body,
+      (node) => node.start < resource.node.start && releasesThrough(node, resource, walk),
+    );
+  }
+
+  function releasedOnTeardown(resource: Resource): boolean {
+    // Teardown guards such as `if (stopped) return` make once-only disposal paths conditional,
+    // so any reachable release in the teardown hook counts.
+    const walk = (body: AnyNode, predicate: (node: AnyNode) => boolean) => reaches(body, predicate);
+    return nodes.some((node) => {
+      if (node.type !== "CallExpression" || !LIFECYCLE_CLEANUP.has(vueApi(node.callee) ?? ""))
+        return false;
+      const teardown = callback(node.arguments[0]);
+      return !!teardown && walk(teardown.body, (call) => releasesThrough(call, resource, walk));
+    });
+  }
+
+  function reaches(node: AnyNode, predicate: (node: AnyNode) => boolean): boolean {
+    if (!node || isFunction(node)) return false;
+    return predicate(node) || children(node).some((child) => reaches(child, predicate));
   }
 
   return {
