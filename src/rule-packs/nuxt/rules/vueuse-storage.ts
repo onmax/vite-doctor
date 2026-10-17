@@ -1,7 +1,7 @@
 import { createRule, type RuleContext } from "../../../core/index.js";
-import { namePattern, type AnyNode } from "../../../core/rule-authoring.js";
+import { walkScriptLocal, type AnyNode } from "../../../core/rule-authoring.js";
 import { diagnostics } from "../diagnostics.js";
-import { isClientOnlyPath, isRuntimeAppFile } from "./nuxt/shared.js";
+import { isClientOnlyPath, isRenderedTemplateName, isRuntimeAppFile } from "./nuxt/shared.js";
 
 const RULE_ID = "vueuse/ssr/require-init-on-mounted-storage";
 
@@ -19,13 +19,9 @@ const BROWSER_STORAGES = new Set([
 ]);
 
 // Callbacks that run during setup and feed rendered state, so a storage read inside them
-// still reaches the hydrating render.
-const RENDER_CALLBACKS = new Set([
-  "computed",
-  "watchEffect",
-  "watchSyncEffect",
-  "reactiveComputed",
-]);
+// still reaches the hydrating render. Effects only feed it when they assign state.
+const RENDER_CALLBACKS = new Set(["computed", "reactiveComputed"]);
+const EFFECT_CALLBACKS = new Set(["watchEffect", "watchSyncEffect"]);
 
 const DEFERRED_CALLBACKS = new Set([
   "onMounted",
@@ -44,8 +40,6 @@ const WRAPPERS = new Set([
   "ConditionalExpression",
   "LogicalExpression",
 ]);
-
-const TEMPLATE_EVENT_RE_G = /(?:@|v-on:)[\w:-]+(?:\.[\w.]+)?\s*=\s*(["'])[\s\S]*?\1/g;
 
 export const requireInitOnMountedStorage = createRule({
   meta: {
@@ -167,11 +161,7 @@ function reachesRender(ctx: RuleContext, call: AnyNode, identifiers: AnyNode[]) 
   if (!binding) return true;
   const owner = ownerFunction(binding);
   if (owner?.type === "Program" && !ctx.file.relativePath.endsWith(".vue")) return true;
-  if (ctx.file.relativePath.endsWith(".vue") && owner?.type === "Program") {
-    const descriptor = ctx.file.sfc?.descriptor as { template?: { content: string } } | undefined;
-    const template = (descriptor?.template?.content ?? "").replace(TEMPLATE_EVENT_RE_G, "");
-    if (templateReferences(template, binding.name)) return true;
-  }
+  if (owner?.type === "Program" && isRenderedTemplateName(ctx, binding.name)) return true;
   return identifiers.some(
     (identifier) =>
       identifier !== binding &&
@@ -180,10 +170,6 @@ function reachesRender(ctx: RuleContext, call: AnyNode, identifiers: AnyNode[]) 
       isWithin(identifier, owner) &&
       isRenderReference(identifier, owner),
   );
-}
-
-function templateReferences(template: string, name: string) {
-  return new RegExp(`(?<![\\w$.])(?:${namePattern([name]).source})(?![\\w$])`).test(template);
 }
 
 function explicitBrowserStorage(ctx: RuleContext, call: AnyNode, composable: string) {
@@ -257,8 +243,10 @@ function isRenderReference(identifier: AnyNode, owner: AnyNode) {
 
 function isRenderCallback(fn: AnyNode) {
   const parent = fn.__doctorParent;
-  if (parent?.type === "CallExpression" && parent.arguments?.[0] === fn)
-    return RENDER_CALLBACKS.has(calleeName(parent));
+  if (parent?.type === "CallExpression" && parent.arguments?.[0] === fn) {
+    if (RENDER_CALLBACKS.has(calleeName(parent))) return true;
+    return EFFECT_CALLBACKS.has(calleeName(parent)) && assignsState(fn);
+  }
   if (parent?.type === "Property" && propertyName(parent) === "get" && parent.value === fn) {
     const object = parent.__doctorParent;
     const call = object?.__doctorParent;
@@ -269,6 +257,14 @@ function isRenderCallback(fn: AnyNode) {
     );
   }
   return false;
+}
+
+function assignsState(fn: AnyNode) {
+  let assigns = false;
+  walkScriptLocal(fn.body, (node) => {
+    if (node.type === "AssignmentExpression" || node.type === "UpdateExpression") assigns = true;
+  });
+  return assigns;
 }
 
 function isInsideCallback(node: AnyNode, names: Set<string>) {

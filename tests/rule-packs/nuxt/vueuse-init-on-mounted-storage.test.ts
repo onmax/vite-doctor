@@ -279,3 +279,21 @@ test("skips local or other-package bindings and functions only run on mount", as
     }),
   ).toEqual([]);
 });
+
+test("only counts rendered template expressions and effects that assign state", async () => {
+  expect(
+    await lines({
+      "app/components/Text.vue": component(
+        `const theme = useLocalStorage('theme', 'light')`,
+        "<span>theme</span>",
+      ),
+      "app/components/Log.vue": component(
+        `const draft = useLocalStorage('draft', '')\nwatchEffect(() => console.log(draft.value))`,
+      ),
+      "app/components/Label.vue": component(
+        `const stored = useLocalStorage('count', 1)\nconst label = ref('')\nwatchEffect(() => { label.value = String(stored.value) })`,
+        "{{ label }}",
+      ),
+    }),
+  ).toEqual(["Label.vue:2"]);
+});
