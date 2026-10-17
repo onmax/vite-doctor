@@ -156,9 +156,15 @@ function readsBrowserStorageOnSetup(ctx: RuleContext, call: AnyNode, composable:
   return initOnMounted.type === "Literal" && initOnMounted.value === false;
 }
 
-function reachesRender(ctx: RuleContext, call: AnyNode, identifiers: AnyNode[]) {
+function reachesRender(
+  ctx: RuleContext,
+  call: AnyNode,
+  identifiers: AnyNode[],
+  depth = 0,
+): boolean {
   const binding = boundIdentifier(call);
   if (!binding) return true;
+  if (depth > 4) return false;
   const owner = ownerFunction(binding);
   if (owner?.type === "Program" && !ctx.file.relativePath.endsWith(".vue")) return true;
   if (owner?.type === "Program" && isRenderedTemplateName(ctx, binding.name)) return true;
@@ -168,7 +174,7 @@ function reachesRender(ctx: RuleContext, call: AnyNode, identifiers: AnyNode[]) 
       identifier.name === binding.name &&
       isReference(identifier) &&
       isWithin(identifier, owner) &&
-      isRenderReference(identifier, owner),
+      isRenderReference(ctx, identifier, owner, identifiers, depth),
   );
 }
 
@@ -220,7 +226,13 @@ function boundIdentifier(call: AnyNode): AnyNode {
     : null;
 }
 
-function isRenderReference(identifier: AnyNode, owner: AnyNode) {
+function isRenderReference(
+  ctx: RuleContext,
+  identifier: AnyNode,
+  owner: AnyNode,
+  identifiers: AnyNode[],
+  depth: number,
+) {
   const parent = identifier.__doctorParent;
   if (
     parent?.type === "MemberExpression" &&
@@ -235,28 +247,52 @@ function isRenderReference(identifier: AnyNode, owner: AnyNode) {
     if (current.type === "CallExpression" && calleeName(current) === "watch") {
       if (current.arguments?.[0] === child) return false;
     }
-    if (isFunction(current) && !isRenderCallback(current)) return false;
+    if (current.type === "CallExpression" && isConsoleCall(current)) return false;
+    if (isFunction(current)) {
+      const computed = computedCall(current);
+      // A computed() is lazy, so its storage read only matters when the computed is rendered.
+      if (computed) return reachesRender(ctx, computed, identifiers, depth + 1);
+      if (!isRenderCallback(current)) return false;
+    }
     child = current;
   }
   return true;
 }
 
-function isRenderCallback(fn: AnyNode) {
+function isConsoleCall(call: AnyNode) {
+  const callee = unwrap(call.callee);
+  return (
+    callee?.type === "MemberExpression" &&
+    callee.object?.type === "Identifier" &&
+    callee.object.name === "console"
+  );
+}
+
+function computedCall(fn: AnyNode): AnyNode {
   const parent = fn.__doctorParent;
-  if (parent?.type === "CallExpression" && parent.arguments?.[0] === fn) {
-    if (RENDER_CALLBACKS.has(calleeName(parent))) return true;
-    return EFFECT_CALLBACKS.has(calleeName(parent)) && assignsState(fn);
-  }
+  if (parent?.type === "CallExpression" && parent.arguments?.[0] === fn)
+    return RENDER_CALLBACKS.has(calleeName(parent)) ? parent : undefined;
   if (parent?.type === "Property" && propertyName(parent) === "get" && parent.value === fn) {
     const object = parent.__doctorParent;
     const call = object?.__doctorParent;
-    return (
+    if (
       call?.type === "CallExpression" &&
       call.arguments?.[0] === object &&
       calleeName(call) === "computed"
-    );
+    )
+      return call;
   }
-  return false;
+  return undefined;
+}
+
+function isRenderCallback(fn: AnyNode) {
+  const parent = fn.__doctorParent;
+  return (
+    parent?.type === "CallExpression" &&
+    parent.arguments?.[0] === fn &&
+    EFFECT_CALLBACKS.has(calleeName(parent)) &&
+    assignsState(fn)
+  );
 }
 
 function assignsState(fn: AnyNode) {

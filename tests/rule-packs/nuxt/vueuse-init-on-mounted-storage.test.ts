@@ -41,6 +41,7 @@ const model = computed({ get: () => target.value, set: (value) => { target.value
       "app/components/Plan.vue": component(
         `const granularity = useSessionStorage('plan-granularity', 'month')
 const label = computed(() => granularity.value === 'week' ? 'Week' : 'Month')`,
+        "<h2>{{ label }}</h2>",
       ),
       "app/components/Search.vue": component(
         `const settings = useLocalStorage('search', {})`,
@@ -275,6 +276,20 @@ test("skips local or other-package bindings and functions only run on mount", as
       ),
       "app/components/Init.vue": component(
         `const init = () => useLocalStorage('key', '')\nonMounted(init)`,
+      ),
+    }),
+  ).toEqual([]);
+});
+
+test("skips computed values that never render and console reads", async () => {
+  expect(
+    await lines({
+      "app/components/Click.vue": component(
+        `const stored = useLocalStorage('mode', 'a')\nconst label = computed(() => stored.value)\nfunction onClick() { alert(label.value) }`,
+        "<button @click='onClick'>Go</button>",
+      ),
+      "app/components/Debug.vue": component(
+        `const debug = useLocalStorage('debug', false)\nconsole.info(debug.value)`,
       ),
     }),
   ).toEqual([]);
