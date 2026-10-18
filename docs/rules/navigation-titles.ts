@@ -107,6 +107,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vueuse/prefer-useclipboard": "useClipboard",
   "vueuse/prefer-useevent-listener": "useEventListener",
   "vueuse/prefer-usewindow-size": "useWindowSize",
+  "vueuse/ssr/require-init-on-mounted-storage": "Storage on mount",
 
   "package/no-phantom-dependencies": "Phantom deps",
   "package/no-required-optional-peer": "Optional peers",

@@ -281,9 +281,10 @@ function isRequestScopedValue(value: AnyNode, setup: Range | null, depth: number
 }
 
 function isPromiseCallback(node: AnyNode) {
-  const parent = node.__doctorParent;
+  let parent = node.__doctorParent;
+  while (parent && WRAPPERS.has(parent.type)) parent = parent.__doctorParent;
   if (parent?.type !== "CallExpression") return false;
-  if (!parent.arguments?.includes(node)) return false;
+  if (!parent.arguments?.some((argument: AnyNode) => unwrap(argument) === node)) return false;
   const callee = unwrap(parent.callee);
   return (
     callee?.type === "MemberExpression" &&

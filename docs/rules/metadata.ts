@@ -2293,14 +2293,31 @@ export const ruleDocumentationMetadata = {
       "Finds VueUse project code that should use the supported use storage pattern instead.",
     why: "Manual storage reads and watches duplicate serialization, cross-tab synchronization, default handling, and reactive updates already handled by useStorage().",
     recommendedReplacement:
-      "Use VueUse useStorage() for client storage so refs, serialization, and cleanup stay together.",
+      "Use VueUse useLocalStorage() or useSessionStorage() for client storage so refs, serialization, and cleanup stay together. In SSR apps, pass { initOnMounted: true } so the first client render matches the server, or use useCookie() for state the server must render.",
     examples: [
       {
         title: "Use VueUse storage",
         language: "ts",
         invalid:
           "const theme = ref(localStorage.getItem('theme') || 'light')\nwatch(theme, value => localStorage.setItem('theme', value))",
-        valid: "const theme = useStorage('theme', 'light')",
+        valid: "const theme = useLocalStorage('theme', 'light', { initOnMounted: true })",
+      },
+    ],
+  },
+  "vueuse/ssr/require-init-on-mounted-storage": {
+    description:
+      "Finds VueUse useLocalStorage(), useSessionStorage() and browser-backed useStorage() calls in SSR Nuxt apps that read storage while the page hydrates.",
+    why: "VueUse reads browser storage synchronously when the composable runs. The server has no browser storage and renders the default value, so a stored value changes the first client render and Vue reports a hydration mismatch. Guarding the call with import.meta.client does not help, because the client branch still runs during hydration.",
+    recommendedReplacement:
+      "Pass { initOnMounted: true } so VueUse reads storage after the component mounts, or use useCookie() for state the server must render. A useStorage() call that passes localStorage or sessionStorage explicitly throws on the server before initOnMounted can help, so use useLocalStorage() or useSessionStorage() with { initOnMounted: true } instead. Doctor skips .client files, calls inside onMounted(), apps with ssr: false, and refs that are only read in event handlers, watch callbacks, lifecycle hooks or unrendered computed values. With @vueuse/nuxt's ssrHandlers option, useStorage() without a storage argument uses cookies; Doctor cannot see that option, so it only reports useStorage() without a storage argument in apps without @vueuse/nuxt.",
+    examples: [
+      {
+        title: "Read stored preferences after mount",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nconst granularity = useSessionStorage('plan-granularity', 'month')\n</script>\n\n<template>\n  <span>{{ granularity }}</span>\n</template>",
+        valid:
+          "<script setup lang=\"ts\">\nconst granularity = useSessionStorage('plan-granularity', 'month', { initOnMounted: true })\n</script>\n\n<template>\n  <span>{{ granularity }}</span>\n</template>",
       },
     ],
   },

@@ -291,7 +291,21 @@ export async function useCurrentUser() {
   currentUser = await import('./defaults').then(() => $fetch('/api/me'))
 }`,
   });
-  expect(diagnostics).toEqual([{ code: "NUXT0084", file: "app/composables/useCurrentUser.ts", line: 1 }]);
+  expect(diagnostics).toEqual([
+    { code: "NUXT0084", file: "app/composables/useCurrentUser.ts", line: 1 },
+  ]);
+});
+
+test("reports request work in a wrapped dynamic import continuation", async () => {
+  const diagnostics = await run({
+    "app/composables/useCurrentUser.ts": `let currentUser: unknown
+export async function useCurrentUser() {
+  currentUser = await import('./defaults').then(((() => $fetch('/api/me')) as () => Promise<unknown>))
+}`,
+  });
+  expect(diagnostics).toEqual([
+    { code: "NUXT0084", file: "app/composables/useCurrentUser.ts", line: 1 },
+  ]);
 });
 
 test("ships in the Strict Preset only", () => {
