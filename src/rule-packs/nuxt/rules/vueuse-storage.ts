@@ -78,10 +78,22 @@ export const requireInitOnMountedStorage = createRule({
       },
       FunctionDeclaration(node: AnyNode) {
         if (node.id?.name) shadowed.push({ name: node.id.name, scope: ownerFunction(node) });
+        for (const parameter of node.params ?? [])
+          collectPatternBindings(parameter, node, shadowed);
+      },
+      FunctionExpression(node: AnyNode) {
+        for (const parameter of node.params ?? [])
+          collectPatternBindings(parameter, node, shadowed);
+      },
+      ArrowFunctionExpression(node: AnyNode) {
+        for (const parameter of node.params ?? [])
+          collectPatternBindings(parameter, node, shadowed);
+      },
+      CatchClause(node: AnyNode) {
+        if (node.param) collectPatternBindings(node.param, node, shadowed);
       },
       VariableDeclarator(node: AnyNode) {
-        if (node.id?.type === "Identifier")
-          shadowed.push({ name: node.id.name, scope: ownerFunction(node) });
+        collectPatternBindings(node.id, ownerFunction(node), shadowed);
       },
       Identifier(node: AnyNode) {
         identifiers.push(node);
@@ -89,10 +101,9 @@ export const requireInitOnMountedStorage = createRule({
       "Program:exit"() {
         for (const call of calls) {
           const name = call.callee.name;
-          const composable =
-            isShadowedAtCall(name, call, shadowed)
-              ? undefined
-              : imported.get(name) ?? autoImportedComposable(ctx, name);
+          const composable = isShadowedAtCall(name, call, shadowed)
+            ? undefined
+            : (imported.get(name) ?? autoImportedComposable(ctx, name));
           if (!composable || !readsBrowserStorageOnSetup(ctx, call, composable)) continue;
           if (isInsideCallback(call, DEFERRED_CALLBACKS)) continue;
           if (isInsideDeferredFunction(call, calls)) continue;
@@ -361,6 +372,38 @@ function isShadowedAtCall(
     if (scope.type === "Program") return true;
     return isWithin(call, scope);
   });
+}
+
+function collectPatternBindings(
+  pattern: AnyNode,
+  scope: AnyNode,
+  declarations: Array<{ name: string; scope: AnyNode }>,
+) {
+  if (!pattern) return;
+  if (pattern.type === "Identifier") {
+    declarations.push({ name: pattern.name, scope });
+    return;
+  }
+  if (pattern.type === "AssignmentPattern") {
+    collectPatternBindings(pattern.left, scope, declarations);
+    return;
+  }
+  if (pattern.type === "RestElement") {
+    collectPatternBindings(pattern.argument, scope, declarations);
+    return;
+  }
+  if (pattern.type === "ArrayPattern") {
+    for (const element of pattern.elements ?? [])
+      collectPatternBindings(element, scope, declarations);
+    return;
+  }
+  if (pattern.type === "ObjectPattern") {
+    for (const property of pattern.properties ?? []) {
+      if (property.type === "Property") collectPatternBindings(property.value, scope, declarations);
+      else if (property.type === "RestElement")
+        collectPatternBindings(property.argument, scope, declarations);
+    }
+  }
 }
 
 function isInsideCallback(node: AnyNode, names: Set<string>) {

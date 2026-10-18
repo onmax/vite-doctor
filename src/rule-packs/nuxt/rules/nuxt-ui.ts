@@ -140,7 +140,6 @@ export const nuxtUiRulePack = defineRulePack({
 
 export default nuxtUiRulePack;
 
-const SHELL_FILES = ["app.vue", "layouts/default.vue"];
 const NUXT_CONFIG_FILES = ["ts", "mts", "cts", "js", "mjs", "cjs"].map(
   (extension) => `nuxt.config.${extension}`,
 );
@@ -161,19 +160,41 @@ interface LayerConfig {
  */
 function projectHasUAppRoot(ctx: RuleContext): boolean {
   const layers = shellLayers(ctx);
-  // Nuxt takes each shell file from the highest-priority layer that has it.
-  return SHELL_FILES.some((file) => {
-    for (const layer of layers) {
-      if (layer === "unresolved") return true;
-      const path = layer.dirs
-        .map((dir) => join(dir, file))
-        .find((candidate) => ctx.fs.exists(candidate));
-      if (!path) continue;
-      const source = ctx.fs.readText(path);
-      return source === undefined || hasUAppTemplate(source);
+  const app = findShellFile(ctx, layers, "app.vue");
+  if (app === "unresolved") return true;
+  if (app) {
+    const source = ctx.fs.readText(app);
+    if (source === undefined || hasUAppTemplate(source)) return true;
+    if (/<NuxtLayout\b/i.test(source)) {
+      const layout = findShellFile(ctx, layers, "layouts/default.vue");
+      if (layout === "unresolved") return true;
+      if (layout) {
+        const layoutSource = ctx.fs.readText(layout);
+        if (layoutSource === undefined || hasUAppTemplate(layoutSource)) return true;
+      }
     }
     return false;
-  });
+  }
+  const layout = findShellFile(ctx, layers, "layouts/default.vue");
+  if (layout === "unresolved") return true;
+  if (!layout) return false;
+  const source = ctx.fs.readText(layout);
+  return source === undefined || hasUAppTemplate(source);
+}
+
+function findShellFile(
+  ctx: RuleContext,
+  layers: ShellLayer[],
+  file: string,
+): string | "unresolved" | undefined {
+  for (const layer of layers) {
+    if (layer === "unresolved") return "unresolved";
+    const path = layer.dirs
+      .map((dir) => join(dir, file))
+      .find((candidate) => ctx.fs.exists(candidate));
+    if (path) return path;
+  }
+  return undefined;
 }
 
 function shellLayers(ctx: RuleContext): ShellLayer[] {
