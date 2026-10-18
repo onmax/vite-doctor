@@ -1,5 +1,32 @@
-import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
+import { parseSync } from "oxc-parser";
+import { join, resolve } from "pathe";
+import {
+  createRule,
+  defineRulePack,
+  type DoctorRule,
+  type NuxtProjectInfo,
+  type RuleContext,
+} from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
+
+type AnyNode = any;
+
+// Modules that mount the Better Auth handler at /api/auth/** themselves; nuxt-better-auth does it
+// through its nitro-better-auth Nitro module.
+const HANDLER_MODULES = new Set(["@nuxtjs/better-auth", "nuxt-better-auth"]);
+const SCRIPT = "{ts,js,mts,mjs,cts,cjs}";
+// Where Better Auth's CLI looks for the auth instance, plus the Nitro server directory.
+const INSTANCE_GLOBS = [
+  `server/**/*.${SCRIPT}`,
+  ...["", "app/", "src/"].flatMap((dir) => [
+    `${dir}{lib,utils}/**/*.${SCRIPT}`,
+    `${dir}auth.${SCRIPT}`,
+  ]),
+];
+const NUXT_CONFIG_FILES = ["ts", "mts", "cts", "js", "mjs", "cjs"].map(
+  (extension) => `nuxt.config.${extension}`,
+);
+const AUTH_CATCH_ALL_ROUTE = /^\/api\/auth\/(?:\*\*(?::\w+)?|\[\.\.\.\w*\])$/;
 
 export const requireStandardAuthHandlerMount = createRule({
   meta: {
@@ -13,27 +40,269 @@ export const requireStandardAuthHandlerMount = createRule({
   },
   create(ctx) {
     return {
-      NuxtManifest(manifest) {
-        const hasHandler = [...manifest.serverDirs.api, ...manifest.serverDirs.routes].some(
-          (file) => /server\/api\/auth\/\[\.\.\.all\]\.[cm]?[jt]s$/.test(file),
-        );
-        if (hasHandler) return;
+      NuxtManifest(nuxt) {
+        const root = resolve(ctx.project.root, nuxt.layers[0]?.root ?? ".");
+        // An installed Better Auth package is not evidence: without a server instance there is
+        // nothing to mount.
+        const instance = findAuthInstance(ctx, root);
+        if (!instance || hasAuthHandler(ctx, nuxt, root)) return;
         ctx.report(
           diagnostics.NUXT0003({
             why: "Nuxt Better Auth should expose the standard server/api/auth/[...all] handler.",
-            fix: "Add server/api/auth/[...all].ts using the Better Auth Nuxt handler.",
+            fix: "Add server/api/auth/[...all].ts using the Better Auth Nuxt handler, or register @nuxtjs/better-auth, which mounts it.",
           }),
           {
             ruleId: "nuxt-better-auth/require-standard-auth-handler-mount",
             severity: "warn",
             category: "auth",
-            file: ctx.file.path,
+            file: instance.file,
+            range: instance.range,
           },
         );
       },
     };
   },
 });
+
+function hasAuthHandler(ctx: RuleContext, nuxt: NuxtProjectInfo, root: string): boolean {
+  if (
+    [...nuxt.serverDirs.api, ...nuxt.serverDirs.routes].some((file) =>
+      /server\/api\/auth\/\[\.\.\.all\]\.[cm]?[jt]s$/.test(file),
+    )
+  )
+    return true;
+  const manifest = nuxt.manifest?.isCurrent ? nuxt.manifest : undefined;
+  if (
+    [...(manifest?.serverHandlers ?? []), ...(manifest?.resolvedServerHandlers ?? [])].some(
+      (handler) => !handler.middleware && AUTH_CATCH_ALL_ROUTE.test(handler.route ?? ""),
+    )
+  )
+    return true;
+  const layerRoots = [root, ...nuxt.layers.map((layer) => resolve(ctx.project.root, layer.root))];
+  return [...new Set(layerRoots)].some((layer) =>
+    NUXT_CONFIG_FILES.some((name) => registersHandlerModule(join(layer, name), ctx)),
+  );
+}
+
+/** Whether a Nuxt config's `modules` names a handler module; unreadable `modules` counts. */
+function registersHandlerModule(file: string, ctx: RuleContext): boolean {
+  const text = ctx.fs.readText(file);
+  if (text === undefined) return false;
+  const modules = configModules(file, text);
+  if (!modules) return true;
+  return modules.some((name) => HANDLER_MODULES.has(name));
+}
+
+/** Statically named entries of `modules`, or `undefined` when they cannot be read. */
+function configModules(file: string, text: string): string[] | undefined {
+  const program = parseProgram(file, text);
+  if (!program) return undefined;
+  const imports = new Map<string, string>();
+  for (const statement of program.body)
+    if (statement.type === "ImportDeclaration")
+      for (const specifier of statement.specifiers)
+        if (specifier.type === "ImportDefaultSpecifier")
+          imports.set(specifier.local.name, statement.source.value);
+  let config = program.body.find(
+    (statement: AnyNode) => statement.type === "ExportDefaultDeclaration",
+  )?.declaration;
+  while (
+    ["TSAsExpression", "TSSatisfiesExpression", "ParenthesizedExpression"].includes(config?.type)
+  )
+    config = config.expression;
+  if (config?.type === "CallExpression" && config.arguments.length === 1)
+    config = config.arguments[0];
+  if (config?.type !== "ObjectExpression") return undefined;
+  let modules: AnyNode;
+  let modulesSeen = false;
+  let modulesUnknown = false;
+  for (const property of config.properties) {
+    if (property.type === "SpreadElement") {
+      // A later spread may replace an earlier static modules property.
+      if (modulesSeen) modulesUnknown = true;
+      continue;
+    }
+    // Dynamic unrelated properties do not prevent us from reading a static modules entry.
+    if (property.type !== "Property" || property.computed) continue;
+    if ((property.key.name ?? property.key.value) === "modules") {
+      modules = property.value;
+      modulesSeen = true;
+      modulesUnknown = false;
+    }
+  }
+  if (modulesUnknown) return undefined;
+  if (!modulesSeen) return [];
+  if (modules.type !== "ArrayExpression") return undefined;
+  const names: string[] = [];
+  for (const entry of modules.elements) {
+    const name = entry?.type === "ArrayExpression" ? entry.elements[0] : entry;
+    if (name?.type === "Literal" && typeof name.value === "string") names.push(name.value);
+    else if (name?.type === "Identifier") {
+      const source = imports.get(name.name);
+      if (source === undefined) return undefined;
+      names.push(source);
+    } else if (name?.type !== "CallExpression") return undefined;
+  }
+  return names;
+}
+
+function parseProgram(file: string, text: string): AnyNode {
+  try {
+    const parsed = parseSync(file, text, { sourceType: "module", lang: "ts" });
+    return parsed.errors.length ? undefined : parsed.program;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The first call to `betterAuth` imported from better-auth, under any local name. */
+function betterAuthCall(file: string, text: string): { start: number; end: number } | undefined {
+  if (!text.includes("better-auth")) return undefined;
+  const program = parseProgram(file, text);
+  if (!program) return undefined;
+  const callees = new Set<string>();
+  const namespaces = new Set<string>();
+  for (const statement of program.body) {
+    if (statement.type !== "ImportDeclaration" || statement.source.value !== "better-auth")
+      continue;
+    if (statement.importKind === "type") continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === "ImportNamespaceSpecifier") namespaces.add(specifier.local.name);
+      else if (
+        specifier.type === "ImportSpecifier" &&
+        specifier.importKind !== "type" &&
+        (specifier.imported.name ?? specifier.imported.value) === "betterAuth"
+      )
+        callees.add(specifier.local.name);
+    }
+  }
+  if (!callees.size && !namespaces.size) return undefined;
+  let found: AnyNode;
+  const visit = (node: AnyNode, shadowed = new Set<string>()) => {
+    if (found || !node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach((item: AnyNode) => visit(item, shadowed));
+      return;
+    }
+    const callee = node.type === "CallExpression" ? node.callee : undefined;
+    if (
+      (callee?.type === "Identifier" && callees.has(callee.name) && !shadowed.has(callee.name)) ||
+      (callee?.type === "MemberExpression" &&
+        !callee.computed &&
+        callee.object.type === "Identifier" &&
+        namespaces.has(callee.object.name) &&
+        !shadowed.has(callee.object.name) &&
+        callee.property.name === "betterAuth")
+    ) {
+      found = callee;
+      return;
+    }
+    if (isFunction(node)) {
+      const nestedShadowed = new Set(shadowed);
+      for (const name of functionBindings(node)) nestedShadowed.add(name);
+      if (node.type === "FunctionExpression" && node.id?.name) nestedShadowed.add(node.id.name);
+      for (const key in node) visit(node[key], nestedShadowed);
+      return;
+    }
+    if (node.type === "CatchClause") {
+      const nestedShadowed = new Set(shadowed);
+      addPatternNames(node.param, nestedShadowed);
+      visit(node.body, nestedShadowed);
+      return;
+    }
+    if (node.type === "BlockStatement") {
+      const nestedShadowed = new Set(shadowed);
+      for (const statement of node.body ?? []) {
+        if (statement.type === "VariableDeclaration" && statement.kind !== "var")
+          for (const declaration of statement.declarations)
+            addPatternNames(declaration.id, nestedShadowed);
+        else if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration")
+          addPatternNames(statement.id, nestedShadowed);
+      }
+      for (const statement of node.body ?? []) visit(statement, nestedShadowed);
+      return;
+    }
+    if (["ForStatement", "ForInStatement", "ForOfStatement"].includes(node.type)) {
+      const nestedShadowed = new Set(shadowed);
+      const binding = node.type === "ForStatement" ? node.init : node.left;
+      if (binding?.type === "VariableDeclaration" && binding.kind !== "var")
+        for (const declaration of binding.declarations)
+          addPatternNames(declaration.id, nestedShadowed);
+      // A lexical loop binding is in scope throughout the loop expressions and body.
+      // Use the nested set for every part so shadowed calls in an initializer, test,
+      // update, or for-in/of RHS cannot be mistaken for the imported factory.
+      visit(node.init, nestedShadowed);
+      visit(node.left, nestedShadowed);
+      visit(node.test, nestedShadowed);
+      visit(node.right, nestedShadowed);
+      visit(node.update, nestedShadowed);
+      visit(node.body, nestedShadowed);
+      return;
+    }
+    for (const key in node) visit(node[key], shadowed);
+  };
+  visit(program.body);
+  return found && { start: found.start, end: found.end };
+}
+
+function addPatternNames(pattern: AnyNode, names: Set<string>): void {
+  if (!pattern) return;
+  if (pattern.type === "Identifier") names.add(pattern.name);
+  else if (pattern.type === "AssignmentPattern") addPatternNames(pattern.left, names);
+  else if (pattern.type === "RestElement") addPatternNames(pattern.argument, names);
+  else if (pattern.type === "ArrayPattern")
+    pattern.elements.forEach((item: AnyNode) => addPatternNames(item, names));
+  else if (pattern.type === "ObjectPattern")
+    pattern.properties.forEach((property: AnyNode) =>
+      addPatternNames(property.type === "RestElement" ? property.argument : property.value, names),
+    );
+}
+
+function isFunction(node: AnyNode): boolean {
+  return ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(
+    node?.type,
+  );
+}
+
+function functionBindings(node: AnyNode): string[] {
+  const names: string[] = [];
+  const addPattern = (pattern: AnyNode) => {
+    if (!pattern) return;
+    if (pattern.type === "Identifier") names.push(pattern.name);
+    else if (pattern.type === "AssignmentPattern") addPattern(pattern.left);
+    else if (pattern.type === "RestElement") addPattern(pattern.argument);
+    else if (pattern.type === "ArrayPattern") pattern.elements.forEach(addPattern);
+    else if (pattern.type === "ObjectPattern")
+      pattern.properties.forEach((property: AnyNode) =>
+        addPattern(property.type === "RestElement" ? property.argument : property.value),
+      );
+  };
+  (node.params ?? []).forEach(addPattern);
+  const scan = (value: AnyNode) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) return value.forEach(scan);
+    if (value !== node && isFunction(value)) return;
+    if (value.type === "VariableDeclarator") addPattern(value.id);
+    if (value.type === "FunctionDeclaration" || value.type === "ClassDeclaration")
+      addPattern(value.id);
+    for (const key in value) scan(value[key]);
+  };
+  scan(node.body);
+  return names;
+}
+
+/** The first `betterAuth()` call, the server instance whose handler must be mounted. */
+function findAuthInstance(ctx: RuleContext, root: string) {
+  for (const pattern of INSTANCE_GLOBS) {
+    for (const file of ctx.fs.glob(pattern, { cwd: root, exclude: ["**/node_modules/**"] })) {
+      const text = ctx.fs.readText(file);
+      const call = text === undefined ? undefined : betterAuthCall(file, text);
+      if (text !== undefined && call)
+        return { file, range: ctx.helpers.rangeFromOffsets(file, text, call.start, call.end) };
+    }
+  }
+  return undefined;
+}
 
 export const rules: DoctorRule[] = [requireStandardAuthHandlerMount];
 
