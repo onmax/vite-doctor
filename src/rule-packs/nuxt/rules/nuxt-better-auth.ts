@@ -228,11 +228,14 @@ function betterAuthCall(file: string, text: string): { start: number; end: numbe
       if (binding?.type === "VariableDeclaration" && binding.kind !== "var")
         for (const declaration of binding.declarations)
           addPatternNames(declaration.id, nestedShadowed);
-      visit(node.init, shadowed);
-      visit(node.left, shadowed);
-      visit(node.test, shadowed);
-      visit(node.right, shadowed);
-      visit(node.update, shadowed);
+      // A lexical loop binding is in scope throughout the loop expressions and body.
+      // Use the nested set for every part so shadowed calls in an initializer, test,
+      // update, or for-in/of RHS cannot be mistaken for the imported factory.
+      visit(node.init, nestedShadowed);
+      visit(node.left, nestedShadowed);
+      visit(node.test, nestedShadowed);
+      visit(node.right, nestedShadowed);
+      visit(node.update, nestedShadowed);
       visit(node.body, nestedShadowed);
       return;
     }

@@ -224,6 +224,11 @@ test.each([
   ["for loop", "for (const betterAuth of [() => {}]) betterAuth()"],
   ["for-in loop", "for (const betterAuth in {}) betterAuth()"],
   ["for-of loop", "for (const betterAuth of []) betterAuth()"],
+  ["for initializer", "for (const betterAuth = betterAuth();; ) {}"],
+  ["for test", "for (let betterAuth;;) { if (betterAuth()) break }"],
+  ["for update", "for (let betterAuth;; betterAuth()) {}"],
+  ["for-in RHS", "for (let betterAuth in betterAuth()) {}"],
+  ["for-of RHS", "for (let betterAuth of betterAuth()) {}"],
 ])("ignores a %s-scoped shadow", async (_name, body) => {
   const result = await runProjectFixture({
     framework: "nuxt",
