@@ -221,6 +221,9 @@ test.each([
   ["block", "{ const betterAuth = () => {}; betterAuth() }"],
   ["catch", "try {} catch (betterAuth) { betterAuth() }"],
   ["named function expression", "const run = function betterAuth() { betterAuth() }\nrun()"],
+  ["for loop", "for (const betterAuth of [() => {}]) betterAuth()"],
+  ["for-in loop", "for (const betterAuth in {}) betterAuth()"],
+  ["for-of loop", "for (const betterAuth of []) betterAuth()"],
 ])("ignores a %s-scoped shadow", async (_name, body) => {
   const result = await runProjectFixture({
     framework: "nuxt",

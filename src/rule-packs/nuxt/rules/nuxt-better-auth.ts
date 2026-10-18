@@ -222,6 +222,20 @@ function betterAuthCall(file: string, text: string): { start: number; end: numbe
       for (const statement of node.body ?? []) visit(statement, nestedShadowed);
       return;
     }
+    if (["ForStatement", "ForInStatement", "ForOfStatement"].includes(node.type)) {
+      const nestedShadowed = new Set(shadowed);
+      const binding = node.type === "ForStatement" ? node.init : node.left;
+      if (binding?.type === "VariableDeclaration" && binding.kind !== "var")
+        for (const declaration of binding.declarations)
+          addPatternNames(declaration.id, nestedShadowed);
+      visit(node.init, shadowed);
+      visit(node.left, shadowed);
+      visit(node.test, shadowed);
+      visit(node.right, shadowed);
+      visit(node.update, shadowed);
+      visit(node.body, nestedShadowed);
+      return;
+    }
     for (const key in node) visit(node[key], shadowed);
   };
   visit(program.body);
