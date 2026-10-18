@@ -1,5 +1,8 @@
 import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
+import { requireInitOnMountedStorage } from "./vueuse-storage.js";
+
+export { requireInitOnMountedStorage };
 
 type AnyNode = any;
 
@@ -265,13 +268,16 @@ export const preferUseStorage = createRule({
       const name = ctx.helpers.getNodeName(node);
       if (name !== "localStorage" && name !== "sessionStorage") return;
       if (ctx.helpers.isTypeofOperand?.(node) || isWithinVueUseComposable(node)) return;
-      const replacement = name === "sessionStorage" ? "useSessionStorage" : "useStorage";
+      const replacement = name === "sessionStorage" ? "useSessionStorage" : "useLocalStorage";
+      const ssr = ctx.project.ssr
+        ? ` In SSR apps, pass { initOnMounted: true } so the first client render matches the server, or use useCookie() for state the server must render.`
+        : "";
       ctx.helpers.report(
         ctx,
         node,
         diagnostics.NUXT0067({
           why: `${name} is browser-only and imperative.`,
-          fix: `Use VueUse ${replacement}() for reactive client storage state.`,
+          fix: `Use VueUse ${replacement}() for reactive client storage state.${ssr}`,
         }),
         {
           ruleId: "vueuse/prefer-use-storage",
@@ -385,6 +391,7 @@ export const rules: DoctorRule[] = [
   preferUseStorage,
   preferUseScrollAndElement,
   noVueUseNuxtAutoImportCollision,
+  requireInitOnMountedStorage,
 ];
 
 export const vueUseRulePack = defineRulePack({
@@ -393,7 +400,7 @@ export const vueUseRulePack = defineRulePack({
   activation: { nuxt: ">=4", packages: ["@vueuse/core"] },
   rules,
   presets: {
-    recommended: [noVueUseNuxtAutoImportCollision.meta.id],
+    recommended: [noVueUseNuxtAutoImportCollision.meta.id, requireInitOnMountedStorage.meta.id],
     strict: rules.map((rule) => rule.meta.id),
   },
 });

@@ -1659,6 +1659,11 @@ function templateParent(node: AnyNode): AnyNode {
   return node.__doctorParent ?? templateContainers.get(node);
 }
 
+/** Whether a rendered template expression reads the script binding `name`. */
+export function isRenderedTemplateName(ctx: RuleContext, name: string) {
+  return getRenderedReferences(ctx).some((reference) => reference.name === name);
+}
+
 /** Identifiers that rendered template expressions read from script, skipping template locals. */
 function getRenderedReferences(ctx: RuleContext): AnyNode[] {
   const root = ctx.file.templateAst;
