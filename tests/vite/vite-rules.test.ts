@@ -126,6 +126,122 @@ console.log('/src/assets/logo.svg', logo, asset, worker, other, VITE_API_URL)`,
     ]);
   });
 
+  test("treats modules that import Vite as plugin sources", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [preferTransformFilter, requirePluginName],
+      files: {
+        "packages/env/src/vite.ts": `import { loadEnv } from 'vite'
+import type { Plugin } from 'vite'
+export function env(): Plugin {
+  return {
+    name: 'env',
+    transform(code) {
+      return code.includes('@env') ? code.replace('@env', JSON.stringify(loadEnv('', ''))) : undefined
+    },
+  }
+}
+export function unnamed(): Plugin {
+  return { load(id) { return id === 'virtual:x' ? '' : undefined } }
+}
+export function wrap(plugin: Plugin, load?: Function): Plugin {
+  return {
+    name: 'wrap:' + plugin.name,
+    ...(load ? { load(...args) { return load.call(this, ...args) } } : {}),
+    ...{ resolveId(id) { return id } },
+  }
+}`,
+        "packages/env/src/options.ts": `import type { UserConfig } from 'vite'
+export function shared(config: UserConfig, transform?: (code: string) => string) {
+  return { config, transform, load: config.root }
+}`,
+        "packages/env/src/runtime.ts": `export const hooks = {
+  transform(code) { return code },
+  load() {},
+}`,
+      },
+    });
+
+    expect(
+      result.diagnostics.map((item) => `${item.ruleId} ${item.file.split("/").pop()}`).sort(),
+    ).toEqual(["vite/plugin/prefer-transform-filter vite.ts", "vite/plugin/require-name vite.ts"]);
+  });
+
+  test("needs plugin evidence for hook-shaped objects in modules that import Vite", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [preferTransformFilter, requirePluginName],
+      files: {
+        "packages/kit/src/shorthand.ts": `import type { Plugin } from 'vite'
+const transform = (code: string) => code
+export default { name: 'shorthand', transform } satisfies Plugin`,
+        "packages/kit/src/annotated.ts": `import type { Plugin } from 'vite'
+function load(id: string) { return id }
+export const plugin: Plugin = { load: load as Plugin['load'] }`,
+        "packages/kit/src/array.ts": `import type { PluginOption } from 'vite'
+export function plugins(): PluginOption[] {
+  return [{ resolveId(id) { return id } }]
+}`,
+        "packages/kit/src/filtered.ts": `import type { Plugin } from 'vite'
+const transform = ((code: string, id: string) => (id ? code : code)) as Plugin['transform']
+export default { "name": 'filtered', transform }`,
+        "packages/kit/src/local-type.ts": `import type { UserConfig } from 'vite'
+type Plugin = { transform(code: string): string }
+export const lifecycle: Plugin = { transform(code) { return code } }
+export const config: UserConfig = {}`,
+        "packages/kit/src/aliased.ts": `import type { PluginOption as Option } from 'vite'
+export const plugin: Option = { load(id) { return id } }`,
+        "packages/kit/src/inline.ts": `import { loadEnv } from 'vite'
+export const plugin: import('vite').Plugin = { load(id) { return loadEnv(id, '') } }`,
+        "packages/kit/src/imported.ts": `import type { Plugin } from 'vite'
+import { load } from './load'
+export const plugin: Plugin = { load }`,
+        "packages/kit/src/asserted.ts": `import type { Plugin } from 'vite'
+export default <Plugin>{ resolveId(id) { return id } }`,
+        "packages/kit/src/extended.ts": `import type { Plugin } from 'vite'
+interface EnvPlugin extends Plugin { api: string }
+export function env(): EnvPlugin { return { api: '', load(id) { return id } } }`,
+        "packages/kit/src/metadata.ts": `import { loadEnv } from 'vite'
+const metadata = { plugins: [{ transform(code) { return code } }] }
+console.log(loadEnv('', ''), metadata)
+`,
+        "packages/kit/src/local-config.ts": `import { loadEnv } from 'vite'
+const defineConfig = (value: unknown) => value
+const config = defineConfig({ plugins: [{ transform(code) { return code } }] })
+console.log(loadEnv('', ''), config)
+`,
+        "packages/kit/src/local-user-config.ts": `import { loadEnv } from 'vite'
+type UserConfig = { plugins: unknown[] }
+const config: UserConfig = { plugins: [{ transform(code) { return code } }] }
+console.log(loadEnv('', ''), config)
+`,
+        "packages/kit/src/lifecycle.ts": `import type { UserConfig } from 'vite'
+export function lifecycle(config: UserConfig) {
+  const transform = config.root
+  return {
+    load() { return config },
+    transform(code: string) { return code },
+    resolveId: { handler: transform },
+    generateBundle: transform,
+  }
+}`,
+      },
+    });
+
+    expect(
+      result.diagnostics.map((item) => `${item.ruleId} ${item.file.split("/").pop()}`).sort(),
+    ).toEqual([
+      "vite/plugin/prefer-transform-filter shorthand.ts",
+      "vite/plugin/require-name aliased.ts",
+      "vite/plugin/require-name annotated.ts",
+      "vite/plugin/require-name array.ts",
+      "vite/plugin/require-name asserted.ts",
+      "vite/plugin/require-name extended.ts",
+      "vite/plugin/require-name imported.ts",
+      "vite/plugin/require-name inline.ts",
+    ]);
+  });
+
   test("narrows noisy Vite recommended heuristics", async () => {
     const result = await runProjectFixture({
       framework: "vite",
