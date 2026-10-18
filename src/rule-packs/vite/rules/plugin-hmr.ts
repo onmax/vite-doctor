@@ -3649,7 +3649,9 @@ function isPluginPosition(node: AnyNode, program: AnyNode): boolean {
       )
         return false;
       const configObject = parent.__doctorParent;
-      return configObject?.type === "ObjectExpression" && isViteConfigPosition(configObject, program);
+      return (
+        configObject?.type === "ObjectExpression" && isViteConfigPosition(configObject, program)
+      );
     }
     const passesValue =
       ["ArrayExpression", "ParenthesizedExpression", "TSNonNullExpression"].includes(parent.type) ||
@@ -3677,7 +3679,20 @@ function isViteConfigPosition(node: AnyNode, program: AnyNode): boolean {
       return parent.body === current && isViteConfigType(parent.returnType, program);
     if (parent.type === "CallExpression") {
       const callee = parent.callee;
-      if (callee?.type === "Identifier" && callee.name === "defineConfig") return true;
+      if (
+        callee?.type === "Identifier" &&
+        callee.name === "defineConfig" &&
+        isImportedFromVite(callee, "defineConfig", program)
+      )
+        return true;
+      if (
+        callee?.type === "MemberExpression" &&
+        !callee.computed &&
+        callee.property?.name === "defineConfig" &&
+        callee.object?.type === "Identifier" &&
+        isImportedFromVite(callee.object, "*", program)
+      )
+        return true;
     }
     const passesValue =
       ["ParenthesizedExpression", "TSNonNullExpression"].includes(parent.type) ||
@@ -3697,10 +3712,46 @@ function isViteConfigType(node: AnyNode, program: AnyNode, seen = new Set<AnyNod
   if (node.type === "TSImportType")
     return node.source?.value === "vite" && node.qualifier?.name === "UserConfig";
   if (node.type !== "TSTypeReference") return false;
-  const name = node.typeName?.name;
-  if (name === "UserConfig") return true;
-  const binding = typeBindings(program).get(node.typeName?.name);
-  return binding?.type === "TSTypeAliasDeclaration" && isViteConfigType(binding.typeAnnotation, program, seen);
+  const reference = node.typeName;
+  const qualified = reference?.type === "TSQualifiedName";
+  if (qualified) {
+    const namespace = typeBindings(program).get(reference.left?.name);
+    return (
+      namespace?.type === "ImportBinding" &&
+      namespace.source === "vite" &&
+      namespace.imported === "*" &&
+      reference.right?.name === "UserConfig"
+    );
+  }
+  const name = reference?.name;
+  const binding = typeBindings(program).get(name);
+  if (
+    binding?.type === "ImportBinding" &&
+    binding.source === "vite" &&
+    binding.imported === "UserConfig"
+  )
+    return true;
+  return (
+    binding?.type === "TSTypeAliasDeclaration" &&
+    isViteConfigType(binding.typeAnnotation, program, seen)
+  );
+}
+
+function isImportedFromVite(identifier: AnyNode, imported: string, program: AnyNode): boolean {
+  if (identifier?.type !== "Identifier") return false;
+  const binding = resourceBindings(program)(identifier);
+  if (!binding) return false;
+  let parent = binding.__doctorParent;
+  while (parent && parent.type !== "ImportDeclaration") parent = parent.__doctorParent;
+  if (parent?.type !== "ImportDeclaration" || parent.source?.value !== "vite") return false;
+  const specifier = binding.__doctorParent;
+  const actual =
+    specifier?.type === "ImportNamespaceSpecifier"
+      ? "*"
+      : specifier?.type === "ImportDefaultSpecifier"
+        ? "default"
+        : (specifier?.imported?.name ?? specifier?.imported?.value);
+  return actual === imported;
 }
 
 function enclosingFunction(node: AnyNode): AnyNode {

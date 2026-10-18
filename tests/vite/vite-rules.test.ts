@@ -205,6 +205,16 @@ export function env(): EnvPlugin { return { api: '', load(id) { return id } } }`
 const metadata = { plugins: [{ transform(code) { return code } }] }
 console.log(loadEnv('', ''), metadata)
 `,
+        "packages/kit/src/local-config.ts": `import { loadEnv } from 'vite'
+const defineConfig = (value: unknown) => value
+const config = defineConfig({ plugins: [{ transform(code) { return code } }] })
+console.log(loadEnv('', ''), config)
+`,
+        "packages/kit/src/local-user-config.ts": `import { loadEnv } from 'vite'
+type UserConfig = { plugins: unknown[] }
+const config: UserConfig = { plugins: [{ transform(code) { return code } }] }
+console.log(loadEnv('', ''), config)
+`,
         "packages/kit/src/lifecycle.ts": `import type { UserConfig } from 'vite'
 export function lifecycle(config: UserConfig) {
   const transform = config.root
