@@ -217,6 +217,22 @@ test("ignores a shadowed imported betterAuth binding", async () => {
   expect(result.diagnostics).toEqual([]);
 });
 
+test.each([
+  ["block", "{ const betterAuth = () => {}; betterAuth() }"],
+  ["catch", "try {} catch (betterAuth) { betterAuth() }"],
+  ["named function expression", "const run = function betterAuth() { betterAuth() }\nrun()"],
+])("ignores a %s-scoped shadow", async (_name, body) => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [requireStandardAuthHandlerMount],
+    files: {
+      "nuxt.config.ts": "export default defineNuxtConfig({})\n",
+      "server/utils/auth.ts": `import { betterAuth } from 'better-auth'\n${body}\n`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
 test("reads modules when an unrelated config property is dynamic", async () => {
   const result = await runProjectFixture({
     framework: "nuxt",

@@ -114,12 +114,24 @@ function configModules(file: string, text: string): string[] | undefined {
     config = config.arguments[0];
   if (config?.type !== "ObjectExpression") return undefined;
   let modules: AnyNode;
+  let modulesSeen = false;
+  let modulesUnknown = false;
   for (const property of config.properties) {
+    if (property.type === "SpreadElement") {
+      // A later spread may replace an earlier static modules property.
+      if (modulesSeen) modulesUnknown = true;
+      continue;
+    }
     // Dynamic unrelated properties do not prevent us from reading a static modules entry.
     if (property.type !== "Property" || property.computed) continue;
-    if ((property.key.name ?? property.key.value) === "modules") modules = property.value;
+    if ((property.key.name ?? property.key.value) === "modules") {
+      modules = property.value;
+      modulesSeen = true;
+      modulesUnknown = false;
+    }
   }
-  if (!modules) return [];
+  if (modulesUnknown) return undefined;
+  if (!modulesSeen) return [];
   if (modules.type !== "ArrayExpression") return undefined;
   const names: string[] = [];
   for (const entry of modules.elements) {
@@ -169,7 +181,7 @@ function betterAuthCall(file: string, text: string): { start: number; end: numbe
   const visit = (node: AnyNode, shadowed = new Set<string>()) => {
     if (found || !node || typeof node !== "object") return;
     if (Array.isArray(node)) {
-      node.forEach(visit);
+      node.forEach((item: AnyNode) => visit(item, shadowed));
       return;
     }
     const callee = node.type === "CallExpression" ? node.callee : undefined;
@@ -188,13 +200,45 @@ function betterAuthCall(file: string, text: string): { start: number; end: numbe
     if (isFunction(node)) {
       const nestedShadowed = new Set(shadowed);
       for (const name of functionBindings(node)) nestedShadowed.add(name);
+      if (node.type === "FunctionExpression" && node.id?.name) nestedShadowed.add(node.id.name);
       for (const key in node) visit(node[key], nestedShadowed);
+      return;
+    }
+    if (node.type === "CatchClause") {
+      const nestedShadowed = new Set(shadowed);
+      addPatternNames(node.param, nestedShadowed);
+      visit(node.body, nestedShadowed);
+      return;
+    }
+    if (node.type === "BlockStatement") {
+      const nestedShadowed = new Set(shadowed);
+      for (const statement of node.body ?? []) {
+        if (statement.type === "VariableDeclaration" && statement.kind !== "var")
+          for (const declaration of statement.declarations)
+            addPatternNames(declaration.id, nestedShadowed);
+        else if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration")
+          addPatternNames(statement.id, nestedShadowed);
+      }
+      for (const statement of node.body ?? []) visit(statement, nestedShadowed);
       return;
     }
     for (const key in node) visit(node[key], shadowed);
   };
   visit(program.body);
   return found && { start: found.start, end: found.end };
+}
+
+function addPatternNames(pattern: AnyNode, names: Set<string>): void {
+  if (!pattern) return;
+  if (pattern.type === "Identifier") names.add(pattern.name);
+  else if (pattern.type === "AssignmentPattern") addPatternNames(pattern.left, names);
+  else if (pattern.type === "RestElement") addPatternNames(pattern.argument, names);
+  else if (pattern.type === "ArrayPattern")
+    pattern.elements.forEach((item: AnyNode) => addPatternNames(item, names));
+  else if (pattern.type === "ObjectPattern")
+    pattern.properties.forEach((property: AnyNode) =>
+      addPatternNames(property.type === "RestElement" ? property.argument : property.value, names),
+    );
 }
 
 function isFunction(node: AnyNode): boolean {
