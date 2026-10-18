@@ -509,8 +509,8 @@ target.value?.getBoundingClientRect()
   ]);
   expect(events.diagnostics).toHaveLength(3);
   expect(storage.diagnostics.map((item) => item.suggestion)).toEqual([
-    "Use VueUse useStorage() for reactive client storage state.",
-    "Use VueUse useSessionStorage() for reactive client storage state.",
+    "Use VueUse useLocalStorage() for reactive client storage state. In SSR apps, pass { initOnMounted: true } so the first client render matches the server, or use useCookie() for state the server must render.",
+    "Use VueUse useSessionStorage() for reactive client storage state. In SSR apps, pass { initOnMounted: true } so the first client render matches the server, or use useCookie() for state the server must render.",
   ]);
   expect(scroll.diagnostics.map((item) => item.suggestion)).toEqual([
     "Use VueUse useScroll() for reactive browser state.",

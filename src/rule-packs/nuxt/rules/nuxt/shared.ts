@@ -46,6 +46,7 @@ export {
   isInsideExportedFunction,
   isLikelyRenderedTimeExpression,
   isPayloadSerializedEvidence,
+  isRenderedTemplateName,
   isReusableDataComposableContext,
   isSourceOnlyExecutionEvidence,
   isSsrExecutedEvidence,
