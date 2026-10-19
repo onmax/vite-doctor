@@ -495,7 +495,16 @@ function hasLocalBinding(node: unknown): boolean {
   const value = node as any;
   if (value?.type !== "Identifier" || typeof value.name !== "string") return false;
   const parent = value.__doctorParent;
-  if (parent?.type === "Property" && parent.key === value && !parent.computed) return true;
+  // In an object expression shorthand (`({ document })`) the identifier is
+  // shared by the key and value, but it is a reference to the global. Treat
+  // the key as a binding only when the property belongs to an object pattern.
+  if (
+    parent?.type === "Property" &&
+    parent.key === value &&
+    !parent.computed &&
+    (parent.parent ?? parent.__doctorParent)?.type === "ObjectPattern"
+  )
+    return true;
   for (let scope = value.__doctorParent; scope; scope = scope.__doctorParent) {
     if (scopeBindings(scope).has(value.name)) return true;
   }
