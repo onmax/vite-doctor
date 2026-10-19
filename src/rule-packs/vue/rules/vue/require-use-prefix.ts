@@ -285,7 +285,11 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
     if (NON_COMPOSABLE_SOURCES.test(source)) return false;
     if (VUE_API_SOURCES.test(source) || VUE_COMPOSABLE_SOURCES.test(source)) return true;
     const file = resolveLocalModule(ctx, dirname(module.file), source);
-    return file !== undefined && exportsComposable(file, name);
+    // Local imports are conservative when their target cannot be inspected. This
+    // preserves the rule's historical behavior for unresolved relative/Nuxt
+    // aliases while unresolved package imports remain non-evidence.
+    if (file) return exportsComposable(file, name);
+    return isLocalSpecifier(source, Boolean(ctx.project.nuxt));
   }
 
   function exportsComposable(file: string, name: string): boolean {
@@ -436,6 +440,12 @@ function resolveLocalModule(ctx: RuleContext, from: string, source: string): str
   return candidates.find(
     (candidate) => SCRIPT_FILE.test(candidate) && ctx.fs.stat(candidate)?.isFile(),
   );
+}
+
+function isLocalSpecifier(source: string, hasNuxt: boolean): boolean {
+  if (source.startsWith(".")) return true;
+  if (!hasNuxt) return false;
+  return /^(?:~~|@@|~|@)\//.test(source);
 }
 
 function exportedFunctions(program: AnyNode): ExportedFunction[] {
