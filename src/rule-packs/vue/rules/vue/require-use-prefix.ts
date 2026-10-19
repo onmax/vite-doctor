@@ -250,8 +250,7 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
         nuxt.autoImportsAuthoritative &&
         !nuxt.autoImports.has(api.name)
       );
-    const file = resolveLocalModule(ctx, dirname(current.file), api.source);
-    return file === undefined || exportsComposable(file, api.exportName ?? api.name);
+    return sourceUsesVue(api.source, api.exportName ?? api.name, current);
   }
 
   function usesVue(node: AnyNode, module: ModuleAnalysis): boolean {
