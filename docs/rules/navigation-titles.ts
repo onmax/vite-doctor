@@ -156,6 +156,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/imports/no-barrel-files": "Barrel files",
   "vite/imports/require-static-glob-pattern": "Static glob patterns",
   "vite/plugin-package/naming-conventions": "Plugin package names",
+  "vite/plugin/no-lossy-set-cookie-bridge": "Set-Cookie bridges",
   "vite/plugin/prefer-transform-filter": "Transform filters",
   "vite/plugin/require-name": "Plugin names",
   "vite/server/no-broad-fs-allow": "server.fs.allow",
