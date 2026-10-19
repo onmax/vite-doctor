@@ -181,7 +181,10 @@ function lexicalScope(node: AnyNode): AnyNode | undefined {
       current.type === "FunctionDeclaration" ||
       current.type === "FunctionExpression" ||
       current.type === "ArrowFunctionExpression" ||
-      current.type === "CatchClause"
+      current.type === "CatchClause" ||
+      current.type === "ForStatement" ||
+      current.type === "ForInStatement" ||
+      current.type === "ForOfStatement"
     )
       return current;
     current = current.__doctorParent;

@@ -214,6 +214,24 @@ export const routes = [{ handler, route: "/x" }]`,
   ).toEqual(["modules/register.ts:4"]);
 });
 
+test("resolves loop bindings in their lexical environment", async () => {
+  expect(
+    await lines({
+      "modules/register.ts": `import type { Plugin } from "vite"
+const handler = "./generated/top-level.ts"
+for (const handler = "./generated/for-init.ts"; handler; handler = "") {
+  const routes = [{ handler, route: "/for" }]
+}
+for (const handler of ["./generated/for-of.ts"]) {
+  const routes = [{ handler, route: "/for-of" }]
+}
+for (const handler in { generated: "./generated/for-in.ts" }) {
+  const routes = [{ handler, route: "/for-in" }]
+}`,
+    }),
+  ).toEqual(["modules/register.ts:4"]);
+});
+
 test("checks Nitro Vite entrypoints and wrapped Nitro config objects", async () => {
   expect(
     await lines({
