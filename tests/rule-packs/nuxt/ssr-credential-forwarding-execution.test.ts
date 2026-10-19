@@ -58,6 +58,21 @@ test.each([
 
 test.each([
   [
+    "nested plugin file without registration",
+    "app/plugins/nested/account.ts",
+    `export default { setup() { return $fetch('/api/account') } }`,
+  ],
+  [
+    "unrelated plugins path",
+    "app/utils/plugins/account.ts",
+    `export default { setup() { return $fetch('/api/account') } }`,
+  ],
+])("ignores setup objects in unregistered plugin-like files: %s", async (_, file, source) => {
+  expect(await diagnose(source, file)).toEqual([]);
+});
+
+test.each([
+  [
     "top-level script setup",
     "app/pages/index.vue",
     `<script setup lang="ts">\nconst user = await $fetch('/api/user')\n</script>`,

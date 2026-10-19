@@ -6,6 +6,7 @@ import {
   classifyExecutionEvidence,
   createRule,
   isClientOnlyPath,
+  isExplicitPlugin,
   isNuxtRuntimeFile,
   nearestFunctionOrProgram,
   report,
@@ -132,7 +133,11 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
 // Arbitrary default exports in scanned runtime files (for example app/utils) are inert.
 function isSetupEntryFile(ctx: RuleContext): boolean {
   const path = ctx.file.relativePath.replace(/\\/g, "/");
-  return path.endsWith(".vue") || /(?:^|\/)plugins\//.test(path);
+  if (path.endsWith(".vue") || isExplicitPlugin(ctx)) return true;
+  return /^(?:plugins|app\/plugins)\/[^/]+\.[cm]?[jt]s$/.test(path) ||
+    /^(?:plugins|app\/plugins)\/[^/]+\/index\.[cm]?[jt]s$/.test(path) ||
+    /\/app\/plugins\/[^/]+\.[cm]?[jt]s$/.test(path) ||
+    /\/app\/plugins\/[^/]+\/index\.[cm]?[jt]s$/.test(path);
 }
 
 // Vue runs `watchEffect()` callbacks once during SSR setup. `watch()` callbacks count as
