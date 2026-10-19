@@ -2,6 +2,7 @@ import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { allDiagnostics } from "../../src/core/index.ts";
 import { runProjectFixture } from "../../src/core/testkit.ts";
+import { FINGERPRINT_SCHEME } from "../../src/core/diagnostic-constants.ts";
 import { createRule } from "../../src/extension.ts";
 
 const ruleId = "test/unlocated-config";
@@ -79,6 +80,8 @@ test("baseline suppression still applies to a manifest diagnostic without a sour
     files: {
       ...files,
       "baseline.json": JSON.stringify({
+        version: 2,
+        fingerprintScheme: FINGERPRINT_SCHEME,
         diagnostics: [{ fingerprint: initial.diagnostics[0]!.fingerprint }],
       }),
     },

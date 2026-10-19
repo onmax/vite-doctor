@@ -1,0 +1,363 @@
+import { isAbsolute, relative, resolve } from "pathe";
+import type { RuleContext } from "../../../core/index.js";
+import { nitroServerFile, readStaticConfigOptions, staticOptionValue } from "./server-layout.js";
+import { createRule, isNitroServerFile, report, sourceForNode, type AnyNode } from "./shared.js";
+
+const RULE_ID = "nitro/config/require-absolute-generated-paths";
+const NUXT_KIT_SOURCES = new Set(["@nuxt/kit", "nuxt/kit"]);
+
+// Files that register Nitro handlers for someone else: Vite plugins, Nuxt modules, Nitro modules.
+const INTEGRATION_SOURCE_RE =
+  /^(?:vite|nitro|nitropack|@nuxt\/kit|nuxt\/kit|@nuxt\/schema)(?:\/|$)/;
+
+const HANDLER_SHAPE_KEYS = new Set(["route", "middleware", "method", "lazy"]);
+const CONFIG_FILE_RE = /(?:^|\/)(?:nuxt|nitro|vite|vitest|app)\.config\.[cm]?[jt]s$/;
+const TEST_FILE_RE = /(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/;
+// App and server runtime directories, relative to the workspace package that owns the file.
+const RUNTIME_DIR_RE =
+  /^(?:app\/)?(?:api|components|composables|layouts|middleware|pages|plugins|routes|server)\//;
+
+export const requireAbsoluteGeneratedPaths = createRule({
+  meta: {
+    id: RULE_ID,
+    title: "Register Nitro handlers and plugins with absolute paths",
+    category: "modules",
+    severity: "warn",
+    fixable: "suggestion",
+    docsUrl: "https://nitro.build/config#handlers",
+    requires: { script: true },
+    prefilter: { names: ["handler", "plugins"] },
+  },
+  create(ctx) {
+    const path = ctx.file.relativePath.replace(/\\/g, "/");
+    if (CONFIG_FILE_RE.test(path) || TEST_FILE_RE.test(path)) return;
+    if (isRuntimeFile(ctx, path)) return;
+    let integration = false;
+    const kitFunctions = new Set<string>();
+    const kitNamespaces = new Set<string>();
+    const strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }> = [];
+    const declarations: Array<{ name: string; scope: AnyNode | undefined }> = [];
+    const declare = (name: string, node: AnyNode) =>
+      declarations.push({ name, scope: declarationScope(node) });
+    const declareFunction = (node: AnyNode) => {
+      if (node.id?.name) declare(node.id.name, node);
+      for (const parameter of node.params ?? [])
+        for (const name of patternNames(parameter)) declare(name, parameter);
+    };
+    const candidates: Array<{ node: AnyNode; kind: "handler" | "plugin" }> = [];
+    return {
+      ImportDeclaration(node: AnyNode) {
+        const source = String(node.source?.value);
+        if (INTEGRATION_SOURCE_RE.test(source)) integration = true;
+        if (!NUXT_KIT_SOURCES.has(source)) return;
+        for (const specifier of node.specifiers ?? []) {
+          if (specifier.type === "ImportSpecifier") kitFunctions.add(specifier.local.name);
+          if (specifier.type === "ImportNamespaceSpecifier")
+            kitNamespaces.add(specifier.local.name);
+        }
+      },
+      VariableDeclarator(node: AnyNode) {
+        for (const name of patternNames(node.id)) declare(name, node.id);
+        if (node.id?.type !== "Identifier" || node.__doctorParent?.kind !== "const") return;
+        const value = unwrapExpression(node.init);
+        if (staticStringValue(value) !== undefined)
+          strings.push({ name: node.id.name, scope: lexicalScope(node), value });
+      },
+      FunctionDeclaration: declareFunction,
+      FunctionExpression: declareFunction,
+      ArrowFunctionExpression: declareFunction,
+      ClassDeclaration(node: AnyNode) {
+        if (node.id?.name) declare(node.id.name, node);
+      },
+      CatchClause(node: AnyNode) {
+        for (const name of patternNames(node.param)) declare(name, node.param);
+      },
+      ObjectExpression(node: AnyNode) {
+        const handler = node.properties?.find(
+          (property: AnyNode) => propertyKeyName(property) === "handler",
+        );
+        if (!handler) return;
+        if (
+          !node.properties.some((property: AnyNode) =>
+            HANDLER_SHAPE_KEYS.has(propertyKeyName(property) ?? ""),
+          )
+        )
+          return;
+        if (isKitHelperArgument(node, kitFunctions, kitNamespaces)) return;
+        candidates.push({ node: handler.value, kind: "handler" });
+      },
+      CallExpression(node: AnyNode) {
+        const callee = unwrapExpression(node.callee);
+        if (callee?.type !== "MemberExpression" || callee.computed) return;
+        if (callee.property?.name !== "push" && callee.property?.name !== "unshift") return;
+        const target = unwrapExpression(callee.object);
+        if (target?.type !== "MemberExpression" || target.property?.name !== "plugins") return;
+        if (!isNitroOptions(target.object)) return;
+        for (const argument of node.arguments ?? [])
+          candidates.push({ node: argument, kind: "plugin" });
+      },
+      AssignmentExpression(node: AnyNode) {
+        const target = unwrapExpression(node.left);
+        const value = unwrapExpression(node.right);
+        if (target?.type !== "MemberExpression" || target.computed) return;
+        if (target.property?.name !== "plugins" || value?.type !== "ArrayExpression") return;
+        if (!isNitroOptions(target.object)) return;
+        for (const element of value.elements ?? [])
+          candidates.push({ node: element, kind: "plugin" });
+      },
+      Property(node: AnyNode) {
+        if (
+          propertyKeyName(node) !== "plugins" ||
+          unwrapExpression(node.value)?.type !== "ArrayExpression"
+        )
+          return;
+        const owner = outerExpression(node.__doctorParent).__doctorParent;
+        if (owner?.type !== "Property" || propertyKeyName(owner) !== "nitro") return;
+        for (const element of unwrapExpression(node.value).elements ?? [])
+          candidates.push({ node: element, kind: "plugin" });
+      },
+      "Program:exit"() {
+        if (!integration) return;
+        for (const { node, kind } of candidates) {
+          const value = unwrapExpression(node);
+          // A name declared more than once may resolve to another scope's value, so skip it.
+          const literal =
+            value?.type === "Identifier"
+              ? resolveString(value, strings, declarations)
+              : staticStringValue(value) !== undefined
+                ? value
+                : undefined;
+          const text = staticStringValue(literal);
+          if (text === undefined || !isRelativeFilePath(text)) continue;
+          reportPath(ctx, value, text, kind);
+        }
+      },
+    };
+  },
+});
+
+function reportPath(ctx: RuleContext, node: AnyNode, text: string, kind: "handler" | "plugin") {
+  const raw = sourceForNode(node, ctx.file.text);
+  const base =
+    "Nitro resolves registered paths against its project root, not against this file or the directory the file was written to";
+  report(
+    ctx,
+    node,
+    RULE_ID,
+    ctx.severity,
+    "modules",
+    `This Nitro ${kind} is registered with the relative path ${JSON.stringify(text)}. ${base}, so the path breaks when those differ.`,
+    `Register an absolute path: resolve it from the same root you write the file to, such as resolve(root, ${raw}), or from this package with createResolver(import.meta.url).resolve(${raw}).`,
+  );
+}
+
+function isRuntimeFile(ctx: RuleContext, path: string) {
+  if (RUNTIME_DIR_RE.test(packageRelativePath(ctx, path)) || isNitroServerFile(ctx)) return true;
+  if (ctx.project.framework !== "nuxt") return false;
+  // Configured Nuxt serverDir, srcDir and appDir move runtime code away from the default paths.
+  const file = resolve(ctx.project.root, ctx.file.path);
+  if (nitroServerFile(ctx, file)) return true;
+  const packageRoot = resolve(ctx.project.root, owningPackagePrefix(ctx, path));
+  const srcDir = staticOptionValue(
+    readStaticConfigOptions(ctx, "nuxt"),
+    (option) => option.join(".") === "srcDir",
+  );
+  const appDirs = [
+    ctx.project.nuxt?.appDir,
+    typeof srcDir === "string" ? resolve(ctx.project.root, srcDir) : undefined,
+  ];
+  // An app directory that is the project or package root itself says nothing about the file.
+  return appDirs.some(
+    (dir) => dir && dir !== ctx.project.root && dir !== packageRoot && isInside(dir, file),
+  );
+}
+
+function lexicalScope(node: AnyNode): AnyNode | undefined {
+  let current = node?.__doctorParent;
+  while (current) {
+    if (
+      current.type === "Program" ||
+      current.type === "BlockStatement" ||
+      current.type === "FunctionDeclaration" ||
+      current.type === "FunctionExpression" ||
+      current.type === "ArrowFunctionExpression" ||
+      current.type === "CatchClause" ||
+      current.type === "ForStatement" ||
+      current.type === "ForInStatement" ||
+      current.type === "ForOfStatement"
+    )
+      return current;
+    current = current.__doctorParent;
+  }
+  return undefined;
+}
+
+function declarationScope(node: AnyNode): AnyNode | undefined {
+  // `var` bindings belong to the containing function or program, even when
+  // declared inside a block or loop lexical environment.
+  const declarator = node?.type === "VariableDeclarator" ? node : node?.__doctorParent;
+  const declaration = declarator?.__doctorParent;
+  if (declaration?.type === "VariableDeclaration" && declaration.kind === "var")
+    return functionScope(node);
+  return lexicalScope(node);
+}
+
+function functionScope(node: AnyNode): AnyNode | undefined {
+  let current = node?.__doctorParent;
+  while (current) {
+    if (
+      current.type === "Program" ||
+      current.type === "FunctionDeclaration" ||
+      current.type === "FunctionExpression" ||
+      current.type === "ArrowFunctionExpression"
+    )
+      return current;
+    current = current.__doctorParent;
+  }
+  return undefined;
+}
+
+function scopeDepth(scope: AnyNode | undefined) {
+  let depth = 0;
+  for (let current = scope; current; current = lexicalScope(current)) depth++;
+  return depth;
+}
+
+function isScopeInside(scope: AnyNode | undefined, ancestor: AnyNode | undefined) {
+  for (let current = scope; current; current = lexicalScope(current))
+    if (current === ancestor) return true;
+  return ancestor === undefined;
+}
+
+function resolveString(
+  value: AnyNode,
+  strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }>,
+  declarations: Array<{ name: string; scope: AnyNode | undefined }>,
+) {
+  const scope = lexicalScope(value);
+  const visible = declarations.filter(
+    (item) => item.name === value.name && isScopeInside(scope, item.scope),
+  );
+  if (!visible.length) return undefined;
+  const nearest = Math.max(...visible.map((item) => scopeDepth(item.scope)));
+  if (visible.filter((item) => scopeDepth(item.scope) === nearest).length !== 1) return undefined;
+  const match = strings.find(
+    (item) =>
+      item.name === value.name &&
+      item.scope &&
+      scopeDepth(item.scope) === nearest &&
+      isScopeInside(scope, item.scope),
+  );
+  return match?.value;
+}
+
+function patternNames(pattern: AnyNode): string[] {
+  if (!pattern) return [];
+  if (pattern.type === "Identifier") return [pattern.name];
+  if (pattern.type === "AssignmentPattern") return patternNames(pattern.left);
+  if (pattern.type === "RestElement") return patternNames(pattern.argument);
+  if (pattern.type === "TSParameterProperty") return patternNames(pattern.parameter);
+  if (pattern.type === "ArrayPattern") return (pattern.elements ?? []).flatMap(patternNames);
+  if (pattern.type === "ObjectPattern")
+    return (pattern.properties ?? []).flatMap((property: AnyNode) =>
+      patternNames(property.type === "RestElement" ? property : property.value),
+    );
+  return [];
+}
+
+function isInside(directory: string, file: string) {
+  const path = relative(directory, file);
+  return Boolean(path) && !path.startsWith("../") && !isAbsolute(path);
+}
+
+function packageRelativePath(ctx: RuleContext, path: string) {
+  return path.slice(owningPackagePrefix(ctx, path).length);
+}
+
+function owningPackagePrefix(ctx: RuleContext, path: string) {
+  let owner = "";
+  for (const item of ctx.project.workspacePackages ?? []) {
+    const root = item.root === "." ? "" : `${item.root.replace(/\\/g, "/")}/`;
+    if (root.length > owner.length && path.startsWith(root)) owner = root;
+  }
+  return owner;
+}
+
+function isRelativeFilePath(value: string) {
+  if (value.startsWith("./handlers/") || value.startsWith("./plugins/")) return false;
+  return value.startsWith("./") || value.startsWith("../") || /^\.[\w-]+[\\/]/.test(value);
+}
+
+const EXPRESSION_WRAPPERS = new Set([
+  "ParenthesizedExpression",
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "TSTypeAssertion",
+]);
+
+function unwrapExpression(node: AnyNode): AnyNode {
+  let current = node;
+  while (EXPRESSION_WRAPPERS.has(current?.type)) current = current.expression;
+  return current;
+}
+
+function staticStringValue(node: AnyNode): string | undefined {
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && !node.expressions?.length && node.quasis?.length === 1)
+    return node.quasis[0].value?.cooked ?? node.quasis[0].value?.raw;
+  return undefined;
+}
+
+function propertyKeyName(property: AnyNode): string | undefined {
+  if (property?.type !== "Property" || property.computed) return undefined;
+  if (property.key?.type === "Identifier") return property.key.name;
+  return staticStringValue(property.key);
+}
+
+function isKitHelperArgument(node: AnyNode, kitFunctions: Set<string>, kitNamespaces: Set<string>) {
+  let parent = outerExpression(node).__doctorParent;
+  if (parent?.type === "ArrayExpression") parent = outerExpression(parent).__doctorParent;
+  if (parent?.type !== "CallExpression") return false;
+  const callee = unwrapExpression(parent.callee);
+  if (callee?.type === "Identifier") return kitFunctions.has(callee.name);
+  return (
+    callee?.type === "MemberExpression" &&
+    callee.object?.type === "Identifier" &&
+    kitNamespaces.has(callee.object.name)
+  );
+}
+
+function outerExpression(node: AnyNode): AnyNode {
+  let current = node;
+  while (EXPRESSION_WRAPPERS.has(current.__doctorParent?.type)) current = current.__doctorParent;
+  return current;
+}
+
+function isNitroOptions(node: AnyNode): boolean {
+  for (let current = unwrapExpression(node); current; current = unwrapExpression(current.object)) {
+    const name = current.type === "MemberExpression" ? current.property?.name : current.name;
+    if (typeof name === "string" && /nitro/i.test(name)) return true;
+    if (current.type !== "MemberExpression") return isNitroConfigHookParameter(current);
+  }
+  return false;
+}
+
+function isNitroConfigHookParameter(identifier: AnyNode): boolean {
+  if (identifier?.type !== "Identifier") return false;
+  for (let current = identifier.__doctorParent; current; current = current.__doctorParent) {
+    if (
+      (current.type === "ArrowFunctionExpression" || current.type === "FunctionExpression") &&
+      current.params?.[0]?.type === "Identifier" &&
+      current.params[0].name === identifier.name
+    ) {
+      const call = current.__doctorParent;
+      return (
+        call?.type === "CallExpression" &&
+        call.arguments?.[1] === current &&
+        staticStringValue(call.arguments[0]) === "nitro:config"
+      );
+    }
+  }
+  return false;
+}

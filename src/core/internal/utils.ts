@@ -26,3 +26,7 @@ export function nodeOffsets(node: unknown): { start: number; end: number } | und
   const end = value.end ?? value.range?.[1] ?? value.loc?.end?.offset ?? start;
   return { start, end };
 }
+
+export function shellArgument(value: string): string {
+  return /^[a-zA-Z0-9_./:@,+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}

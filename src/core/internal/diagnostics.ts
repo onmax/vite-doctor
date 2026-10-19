@@ -22,18 +22,20 @@ import type {
   ProjectInfo,
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
+import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
 import {
   applyDiagnosticPolicy,
   settleDiagnosticIdentity,
   matchesSuppressionFile,
   unusedConfigSuppressionEntries,
+  type StaleBaseline,
 } from "./diagnostic-policy.js";
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
-import { VERSION, sha256 } from "./utils.js";
+import { VERSION, sha256, shellArgument } from "./utils.js";
 import { allDiagnosticCodesByRuleId, allDiagnostics } from "../diagnostic-code-map.js";
 import { codeForRuleId, diagnosticForCode } from "../diagnostics.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
@@ -66,6 +68,41 @@ export function applyPolicyFilters(session: ScanSession): void {
   const result = applyDiagnosticPolicy(session);
   session.diagnostics = result.diagnostics;
   session.suppressedDiagnostics = result.suppressedDiagnostics;
+  if (result.staleBaseline) reportStaleBaseline(session, result.staleBaseline);
+}
+
+// The baseline is not a source file, so this skips scope filtering but still honors the
+// severity threshold and the same suppression policy as every other Diagnostic.
+function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): void {
+  if (session.options.severity === "error") return;
+  const path = relative(session.root, baseline.file) || baseline.file;
+  const writer =
+    baseline.fingerprintScheme === undefined
+      ? "does not record the fingerprint scheme it was written with"
+      : `was written with fingerprint scheme ${baseline.fingerprintScheme}`;
+  const warning = normalizeDiagnosticFromRuleCode({
+    ruleId: "doctor/baseline/stale-fingerprint-scheme",
+    severity: "warn",
+    category: "baseline",
+    file: baseline.file,
+    why: `Baseline "${path}"${baseline.doctorVersion ? ` (Doctor ${baseline.doctorVersion})` : ""} ${writer}, but this Doctor uses fingerprint scheme ${FINGERPRINT_SCHEME}. Recorded findings whose fingerprints changed are reported as new by --new-only.`,
+    suggestion: `Regenerate the baseline with a full Doctor Run, without --changed, --since, or --rules: vite-doctor . --baseline ${shellArgument(path)} --update-baseline. Then commit the updated baseline.`,
+    confidence: "proven",
+    analysisPhase: "manifest",
+  });
+  warning.fingerprint ??= createDiagnosticFingerprint(
+    session.root,
+    warning,
+    sourceTextFor(session, warning.file),
+  );
+  const result = applyDiagnosticPolicy({
+    root: session.root,
+    config: session.config,
+    options: { ...session.options, updateBaseline: false },
+    diagnostics: [warning],
+  });
+  session.diagnostics.push(...result.diagnostics);
+  session.suppressedDiagnostics.push(...result.suppressedDiagnostics);
 }
 
 // Scoped runs skip Rules or files, so a suppression can match nothing without being stale.
@@ -107,7 +144,8 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
       }
       if (targets.some((file) => unproven.has(file))) return false;
       return (
-        !scope || targets.some((file) => scope.has(owningWorkspacePackage(workspacePackages, file)))
+        !scope ||
+        targets.every((file) => scope.has(owningWorkspacePackage(workspacePackages, file)))
       );
     },
   );
@@ -165,15 +203,15 @@ function locateSuppression(
   suppression: NonNullable<DoctorConfig["suppressions"]>[number],
   index: number,
 ): { file: string; range?: Diagnostic["range"] } | undefined {
-  const candidates: Array<{ file: string; opening: number }> = [];
+  const candidates: Array<{ file: string; opening: number; end: number }> = [];
   for (const file of files) {
     const source = readFileSyncIfExists(file);
     const section = source?.indexOf("suppressions") ?? -1;
     if (!source || section < 0) continue;
-    const opening = suppressionEntryOpening(source, section, index);
+    const bounds = suppressionEntryBounds(source, section, index);
     const marker = suppression.reason || suppression.fingerprint || suppression.file;
-    if (opening !== undefined && (!marker || source.indexOf(marker, opening) >= 0))
-      candidates.push({ file, opening });
+    if (bounds && (!marker || source.slice(bounds.opening, bounds.end).includes(marker)))
+      candidates.push({ file, ...bounds });
   }
   // Config merging does not retain source provenance. A precise range is safe only when
   // exactly one supported config can contain this indexed entry; otherwise avoid guessing.
@@ -186,17 +224,18 @@ function locateSuppression(
   };
 }
 
-function suppressionEntryOpening(
+function suppressionEntryBounds(
   source: string,
   section: number,
   index: number,
-): number | undefined {
+): { opening: number; end: number } | undefined {
   const array = source.indexOf("[", section);
   if (array < 0) return undefined;
   let depth = 0;
   let quote = "";
   let escaped = false;
   let found = 0;
+  let opening: number | undefined;
   for (let position = array + 1; position < source.length; position++) {
     const char = source[position]!;
     if (quote) {
@@ -211,11 +250,13 @@ function suppressionEntryOpening(
     }
     if (char === "{") {
       if (depth === 0) {
-        if (found++ === index) return position;
+        if (found++ === index) opening = position;
       }
       depth++;
-    } else if (char === "}") depth = Math.max(0, depth - 1);
-    else if (char === "]" && depth === 0) break;
+    } else if (char === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && opening !== undefined) return { opening, end: position + 1 };
+    } else if (char === "]" && depth === 0) break;
   }
   return undefined;
 }
