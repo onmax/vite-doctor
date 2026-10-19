@@ -23,7 +23,8 @@ export const noRawFetchInSetup = createRule({
         const call = node.argument;
         const name = ctx.helpers.getCalleeName(call);
         if (name !== "$fetch" && name !== "fetch" && name !== "axios.get") return;
-        if (!isSetupScope(nearestFunctionOrProgram(node), node, ctx.file.sfc)) return;
+        if (!isSetupScope(nearestFunctionOrProgram(node), node, ctx.file.sfc, ctx.file.scriptAst))
+          return;
         report(
           ctx,
           call,
@@ -38,7 +39,7 @@ export const noRawFetchInSetup = createRule({
   },
 });
 
-function isSetupScope(scope: AnyNode, node: AnyNode, sfc: AnyNode): boolean {
+function isSetupScope(scope: AnyNode, node: AnyNode, sfc: AnyNode, scriptAst: AnyNode): boolean {
   if (!scope) return false;
   if (scope.type === "Program") {
     const setup = sfc?.descriptor?.scriptSetup;
@@ -58,19 +59,59 @@ function isSetupScope(scope: AnyNode, node: AnyNode, sfc: AnyNode): boolean {
   if (owner.value !== scope || owner.computed) return false;
   const key = owner.key;
   if ((key?.type === "Identifier" ? key.name : key?.value) !== "setup") return false;
-  return isComponentOptions(owner.__doctorParent);
+  return isComponentOptions(owner.__doctorParent, scriptAst);
 }
 
 const COMPONENT_DEFINERS = new Set(["defineComponent", "defineNuxtComponent"]);
 
-function isComponentOptions(object: AnyNode): boolean {
+function isComponentOptions(object: AnyNode, scriptAst: AnyNode): boolean {
   if (object?.type !== "ObjectExpression") return false;
   const parent = object.__doctorParent;
   if (parent?.type === "ExportDefaultDeclaration") return true;
+  if (parent?.type !== "CallExpression" || parent.arguments?.[0] !== object) return false;
+  return isComponentDefiner(parent.callee, scriptAst);
+}
+
+function isComponentDefiner(callee: AnyNode, scriptAst: AnyNode): boolean {
+  if (callee?.type === "Identifier") {
+    if (COMPONENT_DEFINERS.has(callee.name)) return true;
+    return importedComponentAliases(scriptAst).has(callee.name);
+  }
+  if (callee?.type !== "MemberExpression" && callee?.type !== "StaticMemberExpression")
+    return false;
+  if (callee.computed || callee.property?.type !== "Identifier") return false;
+  if (!COMPONENT_DEFINERS.has(callee.property.name)) return false;
+  return importedComponentNamespaces(scriptAst).has(callee.object?.name);
+}
+
+function importedComponentAliases(scriptAst: AnyNode): Set<string> {
+  const aliases = new Set<string>();
+  for (const statement of scriptAst?.body ?? []) {
+    if (statement?.type !== "ImportDeclaration" || !isComponentModule(statement.source?.value))
+      continue;
+    for (const specifier of statement.specifiers ?? []) {
+      if (specifier.type === "ImportSpecifier" && COMPONENT_DEFINERS.has(specifier.imported?.name))
+        aliases.add(specifier.local?.name);
+    }
+  }
+  return aliases;
+}
+
+function importedComponentNamespaces(scriptAst: AnyNode): Set<string> {
+  const namespaces = new Set<string>();
+  for (const statement of scriptAst?.body ?? []) {
+    if (statement?.type !== "ImportDeclaration" || !isComponentModule(statement.source?.value))
+      continue;
+    for (const specifier of statement.specifiers ?? []) {
+      if (specifier.type === "ImportNamespaceSpecifier") namespaces.add(specifier.local?.name);
+    }
+  }
+  return namespaces;
+}
+
+function isComponentModule(source: unknown): boolean {
   return (
-    parent?.type === "CallExpression" &&
-    parent.arguments?.[0] === object &&
-    parent.callee?.type === "Identifier" &&
-    COMPONENT_DEFINERS.has(parent.callee.name)
+    typeof source === "string" &&
+    (source === "vue" || source === "#app" || source.startsWith("nuxt/"))
   );
 }

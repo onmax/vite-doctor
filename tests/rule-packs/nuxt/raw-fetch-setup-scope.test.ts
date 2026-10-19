@@ -19,6 +19,14 @@ test.each([
     `<script lang="ts">\nexport default defineComponent({\n  setup: async () => {\n    const user = await fetch('/api/user')\n    return { user }\n  },\n})\n</script>`,
   ],
   [
+    "aliased defineComponent",
+    `<script lang="ts">\nimport { defineComponent as component } from 'vue'\nexport default component({\n  async setup() {\n    const user = await $fetch('/api/user')\n    return { user }\n  },\n})\n</script>`,
+  ],
+  [
+    "namespace-qualified defineComponent",
+    `<script lang="ts">\nimport * as Vue from 'vue'\nexport default Vue.defineComponent({\n  async setup() {\n    const user = await $fetch('/api/user')\n    return { user }\n  },\n})\n</script>`,
+  ],
+  [
     "default-exported options object",
     `<script lang="ts">\nexport default {\n  async setup() {\n    const user = await $fetch('/api/user')\n    return { user }\n  },\n}\n</script>`,
   ],
