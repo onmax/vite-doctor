@@ -154,7 +154,7 @@ export function resolve(mode: string) {
       return new URL("./x", import.meta.url).pathname
   }
 }`,
-      ],
+    ],
     [
       "a hoisted var URL declared in a nested statement",
       "vite.config.ts",
@@ -164,7 +164,7 @@ export function resolve(mode: string) {
   }
   return new URL("./x", import.meta.url).pathname
 }
-export default createConfig()`,
+      export default createConfig()`,
     ],
   ])("accepts %s", async (_label, file, source) => {
     const result = await run(file, source);
@@ -179,6 +179,19 @@ export default createConfig()`,
 }
 const base = new URL("./runtime", import.meta.url)
 export default { resolve: { alias: { "#runtime": base.pathname } } }`,
+    );
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  test("reports a URL after a var inside a class static block", async () => {
+    const result = await run(
+      "vite.config.ts",
+      `class Config {
+  static {
+    var URL = CustomURL
+  }
+}
+export default { base: new URL("./x", import.meta.url).pathname }`,
     );
     expect(result.diagnostics).toHaveLength(1);
   });

@@ -134,6 +134,7 @@ function findVarBinding(fn: AnyNode, name: string): AnyNode | null {
   const visit = (node: AnyNode) => {
     if (!node || found) return;
     if (node !== fn && functionTypes.has(node.type)) return;
+    if (node.type === "ClassDeclaration" || node.type === "ClassExpression") return;
     if (node.type === "VariableDeclaration" && node.kind === "var") {
       const declarator = node.declarations.find((item: AnyNode) => bindsName(item.id, name));
       if (declarator) {
