@@ -98,7 +98,11 @@ const OUTCOME_OTHER = 4;
 
 function statementOutcomes(statement: AnyNode): number[] {
   if (statement.type === "ThrowStatement") return [OUTCOME_THROW];
-  if (statement.type === "ReturnStatement" || statement.type === "BreakStatement" || statement.type === "ContinueStatement")
+  if (
+    statement.type === "ReturnStatement" ||
+    statement.type === "BreakStatement" ||
+    statement.type === "ContinueStatement"
+  )
     return [OUTCOME_OTHER];
   if (statement.type === "BlockStatement") return sequenceOutcomes(statement.body ?? []);
   if (statement.type === "IfStatement") {
