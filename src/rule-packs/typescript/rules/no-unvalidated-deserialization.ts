@@ -161,7 +161,8 @@ function isGlobalFetchCall(evidence: LocalEvidence, node: AnyNode): boolean {
     memberPropertyName(callee) === "fetch" &&
     callee.object?.type === "Identifier" &&
     globalObjectNames.has(callee.object.name) &&
-    !evidence.binding(callee.object)
+    !evidence.binding(callee.object) &&
+    !evidence.propertyWritten(callee.object.name, "fetch")
   );
 }
 

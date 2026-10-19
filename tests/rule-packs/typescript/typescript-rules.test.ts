@@ -316,6 +316,11 @@ export function readRequest(request: Request): Promise<User> {
 export async function readShadowed(url: string, globalThis: { fetch(url: string): Promise<Store> }) {
   const store = await globalThis.fetch(url)
   return await store.json() as User
+}
+export async function readReassigned(url: string) {
+  globalThis.fetch = fetch
+  const response = await globalThis.fetch(url)
+  return await response.json() as User
 }`,
       },
     });
