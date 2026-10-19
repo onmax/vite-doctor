@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -24,9 +26,13 @@ import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
 import {
   applyDiagnosticPolicy,
   settleDiagnosticIdentity,
+  matchesSuppressionFile,
+  unusedConfigSuppressionEntries,
   type StaleBaseline,
 } from "./diagnostic-policy.js";
+import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
+import { owningWorkspacePackage } from "./workspace-packages.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256, shellArgument } from "./utils.js";
@@ -56,6 +62,7 @@ export function applyRequestedFixes(session: ScanSession): AppliedFixes | undefi
 
 export function applyPolicyFilters(session: ScanSession): void {
   session.diagnostics = settleDiagnosticIdentity(session.diagnostics);
+  reportUnusedConfigSuppressions(session);
   applyReportEligibility(session);
   applySeverityFilter(session);
   const result = applyDiagnosticPolicy(session);
@@ -96,6 +103,178 @@ function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): voi
   });
   session.diagnostics.push(...result.diagnostics);
   session.suppressedDiagnostics.push(...result.suppressedDiagnostics);
+}
+
+// Scoped runs skip Rules or files, so a suppression can match nothing without being stale.
+function reportUnusedConfigSuppressions(session: ScanSession): void {
+  const { options, root } = session;
+  if (options.changed || options.since || options.rules || options.analyses) return;
+  const ran = new Set(session.enabledRules.map((rule) => rule.meta.id));
+  const effectiveExtends = options.extends ?? session.config.extends;
+  // An entry without a Rule may belong to a Rule turned off in config, which cannot prove it stale.
+  const unscoped =
+    (effectiveExtends === undefined ||
+      effectiveExtends === "auto" ||
+      (Array.isArray(effectiveExtends) && effectiveExtends.includes("auto"))) &&
+    !Object.values(session.config.rules ?? {}).includes("off");
+  const analyzed = session.files.map((file) => relative(root, file.path));
+  const unproven = new Set(
+    (session.project.evidenceGaps ?? []).flatMap((gap) =>
+      gap.files.map((file) => relative(root, resolve(root, file))),
+    ),
+  );
+  const workspacePackages = session.project.workspacePackages ?? [];
+  const workspaceRoots = new Set(workspacePackages.map((item) => item.root));
+  const coversWorkspace = (scope: ReadonlySet<string> | undefined): boolean =>
+    !scope || [...workspaceRoots].every((root) => scope.has(root));
+  const unused = unusedConfigSuppressionEntries(root, session.config, session.diagnostics).filter(
+    ({ suppression }) => {
+      if (suppression.ruleId ? !ran.has(suppression.ruleId) : !unscoped) return false;
+      const scope = suppression.ruleId ? session.ruleScopes.get(suppression.ruleId) : undefined;
+      // A broad suppression is inconclusive when its Rule only ran in part of the workspace.
+      if (!suppression.file && !coversWorkspace(scope)) return false;
+      const pattern = suppression.file;
+      if (!pattern) return unproven.size === 0;
+      // The source inventory may omit files matched by a glob (for example excluded,
+      // ignored, or otherwise unavailable files). Without a complete target set we
+      // cannot prove that a wildcard suppression is stale.
+      if (isGlobPattern(pattern)) return false;
+      let targets = analyzed.filter((file) => matchesSuppressionFile(file, pattern));
+      // Only a literal path that no longer exists is provably stale; any other unanalyzed
+      // target may be excluded, ignored, or outside the source inventory.
+      if (!targets.length) {
+        // A basename is matched by `nativeMatch` as a substring (for example,
+        // `main.ts` matches `src/main.ts`). An omitted file can therefore still
+        // satisfy this suppression even when no analyzed target is available.
+        if (isGlobPattern(pattern) || !pattern.includes("/") || existsSync(resolve(root, pattern)))
+          return false;
+        targets = [relative(root, resolve(root, pattern))];
+      }
+      if (targets.some((file) => unproven.has(file))) return false;
+      return (
+        !scope ||
+        targets.every((file) => scope.has(owningWorkspacePackage(workspacePackages, file)))
+      );
+    },
+  );
+  if (!unused.length) return;
+  const configFiles = doctorConfigFiles(session.root);
+  const reported = session.diagnostics.length;
+  for (const { suppression, index } of unused) {
+    const entry = Object.entries(suppression)
+      .filter(([key, value]) => key !== "reason" && typeof value === "string")
+      .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+      .join(", ");
+    const location = locateSuppression(configFiles, suppression, index);
+    pushDiagnostic(session, {
+      ruleId: "doctor/config/unused-suppression",
+      severity: "info",
+      category: "config",
+      file: location?.file ?? resolve(session.root, "package.json"),
+      range: location?.range,
+      why: `The Doctor config suppression { ${entry} } matched no Diagnostic in this Doctor Run. Its reason was: ${suppression.reason}`,
+      suggestion:
+        "Delete this entry from the Doctor config suppressions. It no longer hides anything, and leaving it in place would silently hide a future Diagnostic that matches it.",
+      confidence: "proven",
+      analysisPhase: "manifest",
+    });
+  }
+  session.diagnostics = [
+    ...session.diagnostics.slice(0, reported),
+    ...settleDiagnosticIdentity(session.diagnostics.slice(reported)),
+  ];
+}
+
+function isGlobPattern(pattern: string): boolean {
+  // `nativeMatch` accepts multiple glob forms; any of them may match files
+  // omitted from the source inventory, so their unused status is inconclusive.
+  return /[*?\[\]{}]/.test(pattern);
+}
+
+function doctorConfigFiles(root: string): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const order = ["doctor", "nuxt", "vite"];
+  return entries
+    .map((name) => ({
+      name,
+      match:
+        /^(doctor)\.config\.(?:json5?|jsonc|ya?ml|toml|[cm]?[jt]s)$/.exec(name) ??
+        /^\.(doctor)rc(?:\.json)?$/.exec(name) ??
+        /^(nuxt|vite)\.config\.[cm]?[jt]s$/.exec(name),
+    }))
+    .filter((entry) => entry.match)
+    .sort((a, b) => order.indexOf(a.match![1]!) - order.indexOf(b.match![1]!))
+    .map((entry) => resolve(root, entry.name));
+}
+
+function locateSuppression(
+  files: string[],
+  suppression: NonNullable<DoctorConfig["suppressions"]>[number],
+  index: number,
+): { file: string; range?: Diagnostic["range"] } | undefined {
+  const candidates: Array<{ file: string; opening: number; end: number }> = [];
+  let suppressionSources = 0;
+  for (const file of files) {
+    const source = readFileSyncIfExists(file);
+    const section = source?.indexOf("suppressions") ?? -1;
+    if (!source || section < 0) continue;
+    suppressionSources++;
+    const bounds = suppressionEntryBounds(source, section, index);
+    const marker = suppression.reason || suppression.fingerprint || suppression.file;
+    if (bounds && (!marker || source.slice(bounds.opening, bounds.end).includes(marker)))
+      candidates.push({ file, ...bounds });
+  }
+  // Config merging does not retain source provenance. A precise range is safe only when
+  // exactly one supported config supplies suppressions; otherwise avoid guessing.
+  if (suppressionSources !== 1 || candidates.length !== 1) return undefined;
+  const { file, opening } = candidates[0]!;
+  const source = readFileSyncIfExists(file)!;
+  return {
+    file,
+    range: { start: opening, end: opening + 1, ...lineColumnAt(source, opening) },
+  };
+}
+
+function suppressionEntryBounds(
+  source: string,
+  section: number,
+  index: number,
+): { opening: number; end: number } | undefined {
+  const array = source.indexOf("[", section);
+  if (array < 0) return undefined;
+  let depth = 0;
+  let quote = "";
+  let escaped = false;
+  let found = 0;
+  let opening: number | undefined;
+  for (let position = array + 1; position < source.length; position++) {
+    const char = source[position]!;
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = "";
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) {
+        if (found++ === index) opening = position;
+      }
+      depth++;
+    } else if (char === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && opening !== undefined) return { opening, end: position + 1 };
+    } else if (char === "]" && depth === 0) break;
+  }
+  return undefined;
 }
 
 export function applyReportEligibility(session: ScanSession): void {

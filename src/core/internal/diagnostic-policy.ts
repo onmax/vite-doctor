@@ -282,6 +282,49 @@ function baselineTarget(file: string): { path: string; mode?: number } {
   }
 }
 
+type ConfigSuppression = NonNullable<DoctorConfig["suppressions"]>[number];
+
+export function unusedConfigSuppressions(
+  root: string,
+  config: DoctorConfig,
+  diagnostics: Diagnostic[],
+): ConfigSuppression[] {
+  return unusedConfigSuppressionEntries(root, config, diagnostics).map(
+    (entry) => entry.suppression,
+  );
+}
+
+export function unusedConfigSuppressionEntries(
+  root: string,
+  config: DoctorConfig,
+  diagnostics: Diagnostic[],
+): Array<{ suppression: ConfigSuppression; index: number }> {
+  return (config.suppressions ?? [])
+    .map((suppression, index) => ({ suppression, index }))
+    .filter(
+      ({ suppression }) =>
+        !diagnostics.some((diagnostic) => matchesConfigSuppression(root, suppression, diagnostic)),
+    );
+}
+
+export function matchesSuppressionFile(relativePath: string, pattern: string): boolean {
+  return nativeMatch(relativePath, pattern);
+}
+
+function matchesConfigSuppression(
+  root: string,
+  suppression: ConfigSuppression,
+  diagnostic: Diagnostic,
+): boolean {
+  if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
+  // Broad entries must not hide the warning that reports them as unused.
+  if (!suppression.ruleId && diagnostic.ruleId === "doctor/config/unused-suppression") return false;
+  if (suppression.fingerprint && suppression.fingerprint !== diagnostic.fingerprint) return false;
+  if (suppression.file && !nativeMatch(relative(root, diagnostic.file), suppression.file))
+    return false;
+  return true;
+}
+
 function findSuppression(
   root: string,
   config: DoctorConfig,
@@ -289,13 +332,9 @@ function findSuppression(
   sourceLines: Map<string, string[]>,
   sourceSuppressions: Map<string, InlineSuppressions>,
 ): string | null {
-  const configured = config.suppressions?.find((suppression) => {
-    if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
-    if (suppression.fingerprint && suppression.fingerprint !== diagnostic.fingerprint) return false;
-    if (suppression.file && !nativeMatch(relative(root, diagnostic.file), suppression.file))
-      return false;
-    return true;
-  });
+  const configured = config.suppressions?.find((suppression) =>
+    matchesConfigSuppression(root, suppression, diagnostic),
+  );
   if (configured) return configured.reason;
   if (!diagnostic.range) return null;
   let lines = sourceLines.get(diagnostic.file);

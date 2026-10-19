@@ -170,6 +170,16 @@ test("unresolved runtime inventory has a public diagnostic reference", async () 
   );
 });
 
+test("unused config suppressions have a public diagnostic reference", async () => {
+  const diagnostic = getDiagnosticDocuments().find((item) => item.code === "DOC0031");
+
+  expect(diagnostic?.ruleId).toBe("doctor/config/unused-suppression");
+  expect(allDiagnostics.DOC0031({ why: "stale", fix: "delete" }).docs).toBe(
+    "https://vite-doctor.onmax.me/diagnostics/DOC0031",
+  );
+  expect(await diagnosticsCollectionSource.getItem(diagnostic!.key)).toContain("changed-file runs");
+});
+
 test("internal diagnostics stay out of generated diagnostic references", async () => {
   const publicCodes = new Set(getDiagnosticDocuments().map((diagnostic) => diagnostic.code));
   const generatedKeys = await diagnosticsCollectionSource.getKeys();
