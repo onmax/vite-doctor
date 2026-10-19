@@ -190,10 +190,9 @@ test("keeps root JSDoc when typesVersions only maps a subpath", async () => {
     (root) =>
       runViteDoctor({ root, framework: "vite", cache: false, extends: ["package/recommended"] }),
   );
-  expect(result.diagnostics.map((d) => [d.code, d.message.match(/"([^"]+)"/)?.[1]])).toContainEqual([
-    "PKG0002",
-    "phantom-types",
-  ]);
+  expect(result.diagnostics.map((d) => [d.code, d.message.match(/"([^"]+)"/)?.[1]])).toContainEqual(
+    ["PKG0002", "phantom-types"],
+  );
 });
 
 test.each<{ name: string; manifest: object; files: Record<string, string>; entry?: string }>([
