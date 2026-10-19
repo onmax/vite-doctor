@@ -169,3 +169,19 @@ test("treats a literal computed method key as the final method", async () => {
     ),
   ).toEqual(["read"]);
 });
+
+test("resolves a no-substitution template computed method key", async () => {
+  expect(
+    await diagnose(
+      `const { execute } = useLazyFetch('/api/search', { method: 'GET', [\`method\`]: 'DELETE', immediate: false })`,
+    ),
+  ).toEqual(["read"]);
+});
+
+test("resolves a no-substitution template computed non-method key", async () => {
+  expect(
+    await diagnose(
+      `const { execute } = useLazyFetch('/api/search', { method: 'GET', [\`body\`]: body, immediate: false })`,
+    ),
+  ).toEqual([]);
+});

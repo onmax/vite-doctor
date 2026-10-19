@@ -398,6 +398,10 @@ function propertyKeyName(property: AnyNode): string | null {
   if (!key) return null;
   if (!property.computed && key.type === "Identifier") return key.name;
   if (key.type === "Literal" || key.type === "StringLiteral") return String(key.value);
+  if (key.type === "TemplateLiteral" && (key.expressions?.length ?? 0) === 0) {
+    const quasi = key.quasis?.[0];
+    return quasi?.value?.cooked ?? quasi?.value?.raw ?? null;
+  }
   return null;
 }
 
