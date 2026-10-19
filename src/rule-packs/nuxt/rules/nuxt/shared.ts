@@ -228,7 +228,7 @@ export function simpleTagRenameFix(text: string, node: TemplateElementNode, repl
 }
 
 export function isNewDate(node: AnyNode) {
-  return node.type === "NewExpression" && node.callee?.name === "Date";
+  return node.type === "NewExpression" && node.callee?.name === "Date" && !node.arguments?.length;
 }
 
 export function isStableKeyNode(node: AnyNode) {
