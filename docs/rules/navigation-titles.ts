@@ -62,6 +62,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/hydration/no-client-conditional-in-template": "Client conditionals",
   "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly": "Time-based render",
   "nuxt/hydration/prefer-usecookie-for-initial-client-state": "useCookie state",
+  "nuxt/hydration/require-clientonly-fallback": "ClientOnly fallback",
   "nuxt/imports/no-auto-import-collision": "Name collisions",
   "nuxt/imports/no-conflicting-usefetch-import": "Shadowed useFetch",
   "nuxt/imports/no-explicit-auto-import": "Redundant imports",
@@ -125,6 +126,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "shadcn/no-unknown-classes": "Unknown classes",
   "shadcn/require-static-classes": "Static classes",
 
+  "typescript/boundaries/no-cross-realm-web-instanceof": "Web instanceof",
   "typescript/boundaries/no-unvalidated-deserialization": "Deserialized values",
   "typescript/evidence/no-caller-chosen-result-type": "Caller-chosen types",
   "typescript/evidence/no-chained-type-assertions": "Chained assertions",
@@ -155,7 +157,11 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/imports/no-barrel-files": "Barrel files",
   "vite/imports/require-static-glob-pattern": "Static glob patterns",
   "vite/plugin-package/naming-conventions": "Plugin package names",
+
   "vite/plugin/no-config-hook-array-echo": "Config hook arrays",
+
+  "vite/plugin/no-lossy-set-cookie-bridge": "Set-Cookie bridges",
+
   "vite/plugin/prefer-transform-filter": "Transform filters",
   "vite/plugin/require-name": "Plugin names",
   "vite/server/no-broad-fs-allow": "server.fs.allow",

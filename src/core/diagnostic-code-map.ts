@@ -95,7 +95,11 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0022", ruleId: "vite/imports/require-static-glob-pattern" },
   { code: "VITE0023", ruleId: "vite/imports/no-barrel-files" },
   { code: "VITE0024", ruleId: "vite/plugin-package/naming-conventions" },
+
   { code: "VITE0026", ruleId: "vite/plugin/no-config-hook-array-echo" },
+
+  { code: "VITE0025", ruleId: "vite/plugin/no-lossy-set-cookie-bridge" },
+
   { code: "VITE0027", ruleId: "vite/config/no-url-pathname-as-fs-path" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
@@ -109,6 +113,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
     ruleId: "typescript/strict/require-safety-comment-for-type-assertion",
   },
   { code: "TS0012", ruleId: "typescript/performance/no-array-filter-map" },
+  { code: "TS0013", ruleId: "typescript/boundaries/no-cross-realm-web-instanceof" },
   { code: "NITRO0001", ruleId: "nitro/context/no-navigateto-in-nitro" },
   { code: "NITRO0002", ruleId: "nitro/context/no-usenuxtapp-in-nitro" },
   { code: "NITRO0003", ruleId: "nitro/request/prefer-assert-method" },
@@ -221,6 +226,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0083", ruleId: "nuxt/module/explicit-runtime-imports" },
   { code: "NUXT0084", ruleId: "nuxt/ssr/no-module-scope-request-state" },
   { code: "NUXT0085", ruleId: "vueuse/ssr/require-init-on-mounted-storage" },
+  { code: "NUXT0086", ruleId: "nuxt/hydration/require-clientonly-fallback" },
   { code: "NUXT0090", ruleId: "nuxt/config/no-runtime-env-in-build-options" },
 ]);
 

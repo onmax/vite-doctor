@@ -912,6 +912,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/hydration/require-clientonly-fallback": {
+    description:
+      "Finds <ClientOnly> components without a server fallback, which render an empty element on the server and shift the layout once their content mounts.",
+    why: "On the server, and until the component mounts, <ClientOnly> renders only its fallback. Without a #fallback slot or a fallback, placeholder or fallback-tag prop that is an empty <span>, so the client-only content appears after hydration and pushes the surrounding layout.",
+    recommendedReplacement:
+      "Add a #fallback slot with a placeholder of the same size, such as a skeleton, or set fallback-tag with classes that reserve the space. Prefer server-rendered markup when the content does not need the browser. Doctor skips <ClientOnly> wrappers whose only children are Teleport or overlay components such as modals, dialogs, drawers and toasts, and <ClientOnly> with a v-bind object, because those can pass a fallback Doctor cannot see. This Rule is opinionated, so it is only in the Strict Preset.",
+    examples: [
+      {
+        title: "Reserve the space with a fallback",
+        language: "vue",
+        invalid:
+          '<template>\n  <ClientOnly>\n    <SalesChart :data="data" />\n  </ClientOnly>\n</template>',
+        valid:
+          '<template>\n  <ClientOnly>\n    <SalesChart :data="data" />\n    <template #fallback>\n      <USkeleton class="h-80 w-full" />\n    </template>\n  </ClientOnly>\n</template>',
+      },
+    ],
+  },
   "nuxt/imports/no-auto-import-collision": {
     description:
       "Flags auto import collision in Nuxt imports code before it leaks into runtime behavior.",
@@ -1764,6 +1781,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+
   "vite/plugin/no-config-hook-array-echo": {
     description:
       "Reports Vite config and configEnvironment hooks that return arrays containing the incoming config's entries.",
@@ -1778,6 +1796,22 @@ export const ruleDocumentationMetadata = {
           "export function dedupePlugin(): Plugin {\n  return {\n    name: 'dedupe-vue',\n    config(config) {\n      return {\n        resolve: { dedupe: [...(config.resolve?.dedupe ?? []), 'vue'] },\n      }\n    },\n  }\n}",
         valid:
           "export function dedupePlugin(): Plugin {\n  return {\n    name: 'dedupe-vue',\n    config(config) {\n      if (config.resolve?.dedupe?.includes('vue')) return\n      return { resolve: { dedupe: ['vue'] } }\n    },\n  }\n}",
+
+  "vite/plugin/no-lossy-set-cookie-bridge": {
+    description:
+      "Reports loops that copy Fetch Response headers onto a Node ServerResponse with setHeader, which keeps only the last Set-Cookie.",
+    why: "Dev middleware and plugin servers often bridge a Fetch Response to Node's ServerResponse by iterating response.headers. The Headers iterator combines repeated headers into one comma-separated value, except Set-Cookie: each cookie is yielded as its own entry. res.setHeader replaces any value already set for that name, so every Set-Cookie but the last one is dropped and sessions or CSRF cookies silently go missing. Doctor reports a setHeader call that receives the header name from a for...of or forEach loop over a headers property, except the headers of a request binding such as req or request. It treats Set-Cookie as handled, and skips the loop, when the loop body mentions set-cookie, when the loop body checks the header name in a file that mentions set-cookie, or when the same function mentions set-cookie or getSetCookie after the loop.",
+    recommendedReplacement:
+      'Skip "set-cookie" in the loop and copy the cookies once with res.setHeader("set-cookie", response.headers.getSetCookie()), or append each value with res.appendHeader.',
+    examples: [
+      {
+        title: "Copy Set-Cookie values as a list",
+        language: "ts",
+        invalid:
+          "async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) res.setHeader(name, value)\n  res.end(await response.text())\n}",
+        valid:
+          'async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) {\n    if (name !== "set-cookie") res.setHeader(name, value)\n  }\n  const cookies = response.headers.getSetCookie()\n  if (cookies.length > 0) res.setHeader("set-cookie", cookies)\n  res.end(await response.text())\n}',
+
       },
     ],
   },

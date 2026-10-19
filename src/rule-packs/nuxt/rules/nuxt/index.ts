@@ -48,6 +48,7 @@ export { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 export { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
 export { noServerTypesInApp, noServerUtilsInApp } from "./no-server-utils-in-app.js";
 export { exportNameMatchesFile } from "./export-name-matches-file.js";
+export { requireClientOnlyFallback } from "./require-client-only-fallback.js";
 export { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
 export { moduleRequireMeta } from "./module-require-meta.js";
 export { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
@@ -104,6 +105,7 @@ import { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 import { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
 import { noServerTypesInApp, noServerUtilsInApp } from "./no-server-utils-in-app.js";
 import { exportNameMatchesFile } from "./export-name-matches-file.js";
+import { requireClientOnlyFallback } from "./require-client-only-fallback.js";
 import { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
 import { moduleRequireMeta } from "./module-require-meta.js";
 import { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
@@ -172,6 +174,7 @@ const strictOnlyRules = [
   noStatelessComposable,
   exportNameMatchesFile,
   noModuleScopeRequestState,
+  requireClientOnlyFallback,
 ];
 
 const nuxtRulePack = defineRulePack({
