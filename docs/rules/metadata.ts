@@ -1349,6 +1349,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/ssr/no-module-scope-request-state": {
+    description:
+      "Report module-scope variables, Maps, and Sets that request-time app code fills with request data.",
+    why: "On the server, Nuxt imports each app module once and reuses it for every SSR request. A module-scope let, Map, or Set that a store action, composable, plugin, or component setup writes during a request is shared by all concurrent requests: one user's fetched data, store instance, or in-flight promise becomes visible to the next request. An in-flight promise that closes over `this` in a Pinia action fills the first request's store, while later requests await it and keep their own store empty.",
+    recommendedReplacement:
+      "Keep per-request state in useState() or the Pinia store state. For values that cannot live in payload state, such as in-flight promises, key them by the Nuxt app with a WeakMap so each SSR request gets its own entry. Constant lookup tables and caches of pure values, such as Intl formatters, can stay at module scope.",
+    examples: [
+      {
+        title: "Key in-flight requests by the Nuxt app",
+        language: "ts",
+        invalid:
+          "let currencyPromise: Promise<void> | null = null\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      currencyPromise ??= (async () => {\n        this.currencies = await $fetch('/api/currencies')\n      })()\n      await currencyPromise\n    },\n  },\n})",
+        valid:
+          "const currencyPromises = new WeakMap<NuxtApp, Promise<void>>()\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      const nuxtApp = useNuxtApp()\n      let promise = currencyPromises.get(nuxtApp)\n      if (!promise) {\n        promise = (async () => {\n          this.currencies = await $fetch('/api/currencies')\n        })()\n        currencyPromises.set(nuxtApp, promise)\n      }\n      await promise\n    },\n  },\n})",
+      },
+    ],
+  },
   "nuxt/state/no-nonserializable-usestate": {
     description: "Report unsupported live values stored in Nuxt payload state.",
     why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",
