@@ -245,6 +245,21 @@ export async function load(key: string) {
 }`,
   ],
   [
+    "a nested function with a shadowed cached entry",
+    `const cache = new Map<string, { value: unknown, expiresAt: number }>()
+export async function load(key: string) {
+  const hit = cache.get(key)
+  const unrelated = () => {
+    const hit = { expiresAt: Date.now() + 1000 }
+    return hit.expiresAt > Date.now()
+  }
+  await unrelated()
+  const value = await $fetch('/value')
+  cache.set(key, { value, expiresAt: Date.now() + 1000 })
+  return value
+}`,
+  ],
+  [
     "a clock local declared in a nested function",
     `let now = 0
 const cache = new Map<string, { value: unknown, expiresAt: number }>()

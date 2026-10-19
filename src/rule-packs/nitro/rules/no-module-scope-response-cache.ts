@@ -236,7 +236,8 @@ function cachedEntryOf(node: AnyNode, references: AnyNode[]) {
       declarator?.type === "VariableDeclarator" &&
       unwrap(declarator.init) === call &&
       declarator.id?.type === "Identifier" &&
-      declarator.id.name === node.name
+      declarator.id.name === node.name &&
+      resolvesToBinding(node, node.name, nearestFunctionOrProgram(declarator))
     );
   });
 }
@@ -268,7 +269,7 @@ function clockComparisons(fn: AnyNode): AnyNode[] {
   if (sides) return sides;
   const found: AnyNode[] = [];
   const clocks = clockLocals(fn);
-  walkScriptLocal(fn.body, (node) => {
+  walkFunctionBody(fn.body, (node) => {
     if (node.type !== "BinaryExpression" || !RELATIONAL.has(node.operator)) return;
     if (readsClock(node.left, clocks)) found.push(node.right);
     else if (readsClock(node.right, clocks)) found.push(node.left);
@@ -277,9 +278,27 @@ function clockComparisons(fn: AnyNode): AnyNode[] {
   return found;
 }
 
+function walkFunctionBody(node: AnyNode, visit: (node: AnyNode) => void) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const child of node) walkFunctionBody(child, visit);
+    return;
+  }
+  if (typeof node.type === "string") visit(node);
+  if (node !== node.__doctorParent && FUNCTION_TYPES.has(node.type)) return;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "__doctorParent") continue;
+    if (Array.isArray(value)) {
+      for (const child of value) walkFunctionBody(child, visit);
+    } else if (value && typeof value === "object") {
+      walkFunctionBody(value, visit);
+    }
+  }
+}
+
 function clockLocals(fn: AnyNode) {
   const names = new Set<string>();
-  walkScriptLocal(fn.body, (node) => {
+  walkFunctionBody(fn.body, (node) => {
     if (
       node.type === "VariableDeclarator" &&
       node.id?.type === "Identifier" &&
