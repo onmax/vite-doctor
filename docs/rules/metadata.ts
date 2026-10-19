@@ -723,9 +723,9 @@ export const ruleDocumentationMetadata = {
         title: "Use keyed composable registration required",
         language: "ts",
         invalid:
-          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
+          "// app/utils/user.ts is outside the composables/ tree Nuxt scans for factories\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
         valid:
-          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
+          "// app/utils/user.ts\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
       },
     ],
   },
