@@ -554,7 +554,10 @@ function addStatementBindings(statements: unknown, names: Set<string>, moduleSco
       statement = statement.declaration;
     if (!statement) continue;
     if (moduleScope && statement.type === "ImportDeclaration") {
-      for (const specifier of statement.specifiers ?? []) addPatternNames(specifier.local, names);
+      if (statement.importKind === "type") continue;
+      for (const specifier of statement.specifiers ?? []) {
+        if (specifier.importKind !== "type") addPatternNames(specifier.local, names);
+      }
       continue;
     }
     if (statement.type === "TSImportEqualsDeclaration") {

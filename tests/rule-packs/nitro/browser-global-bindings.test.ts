@@ -90,6 +90,15 @@ test("nitro/server/no-browser-api still reports the global document in a server 
   ).toEqual(["document is not available in Nitro server runtime."]);
 });
 
+test("nitro/server/no-browser-api still reports document imported only as a type", async () => {
+  expect(
+    await nitroDiagnostics(
+      `import type { document } from "./documents"
+export const title = () => document.title`,
+    ),
+  ).toEqual(["document is not available in Nitro server runtime."]);
+});
+
 test("nitro/server/no-browser-api reports the global when the binding lives in another scope", async () => {
   expect(
     await nitroDiagnostics(`function parse(input: string) {
