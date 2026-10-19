@@ -17,6 +17,7 @@ export function workspaceProjectView(project: ProjectInfo, packageRoot: string):
   if (existing) return existing;
   const overrides: Partial<ProjectInfo> = {
     nuxt: inventory.nuxt,
+    ssr: inventory.nuxt.ssr !== false,
     nuxtVersion: inventory.nuxtVersion,
     nuxtModuleDefinitions: inventory.nuxtModuleDefinitions,
     runtimeGraph: inventory.runtimeGraph,
