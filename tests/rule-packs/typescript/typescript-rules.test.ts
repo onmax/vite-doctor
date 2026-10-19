@@ -45,6 +45,24 @@ describe("TypeScript rule pack", () => {
     );
   });
 
+  test("reports recommended syntax-only evidence as warnings", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: recommendedRules,
+      files: {
+        "src/index.ts": `const driver = (await import("driver")) as unknown as Driver
+const user = JSON.parse(text) as User
+console.log(driver, user)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => [item.ruleId, item.severity])).toEqual([
+      ["typescript/evidence/no-chained-type-assertions", "warn"],
+      ["typescript/boundaries/no-unvalidated-deserialization", "warn"],
+    ]);
+    expect(result.diagnostics[0]?.message).not.toContain("known type");
+  });
+
   test("reports missing type evidence and unvalidated boundaries", async () => {
     const result = await runProjectFixture({
       framework: "vite",
@@ -261,6 +279,128 @@ console.log(cached, parsed, readSession, readLocal, parseLocal)`,
       "typescript/boundaries/no-unvalidated-deserialization",
       "typescript/boundaries/no-unvalidated-deserialization",
     ]);
+  });
+
+  test("reports Fetch API bodies typed without validation", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `export async function readPayload<T>(request: Request): Promise<T> {
+  return await request.json() as T
+}
+export async function loadUser(url: string): Promise<User> {
+  const response = await fetch(url)
+  return await response.json()
+}
+export async function loadAccount(url: string) {
+  const account: Account = await (await fetch(url)).json()
+  return account
+}
+export function readBody(response: Response): Promise<Session> {
+  return response.json()
+}
+export async function loadGlobal(url: string) {
+  const response = await globalThis.fetch(url)
+  const windowed = await window.fetch(url)
+  return [await response.json() as User, await windowed.json() as User]
+}`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => [item.ruleId, item.range?.line])).toEqual([
+      ["typescript/boundaries/no-unvalidated-deserialization", 2],
+      ["typescript/boundaries/no-unvalidated-deserialization", 6],
+      ["typescript/boundaries/no-unvalidated-deserialization", 9],
+      ["typescript/boundaries/no-unvalidated-deserialization", 13],
+      ["typescript/boundaries/no-unvalidated-deserialization", 18],
+      ["typescript/boundaries/no-unvalidated-deserialization", 18],
+    ]);
+  });
+
+  test("ignores json() on imported Request and Response types", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import { Response } from "./api"
+import Request from "./request"
+export function read(response: Response): Promise<User> {
+  return response.json()
+}
+export function readRequest(request: Request): Promise<User> {
+  return request.json()
+}
+export async function readShadowed(url: string, globalThis: { fetch(url: string): Promise<Store> }) {
+  const store = await globalThis.fetch(url)
+  return await store.json() as User
+}
+export async function readReassigned(url: string) {
+  globalThis.fetch = fetch
+  const response = await globalThis.fetch(url)
+  return await response.json() as User
+}`,
+      },
+    });
+
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("reports direct Fetch bodies with imported annotations", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import { Response } from "./api"
+export async function read(url: string): Promise<User> {
+  const response: Response = await globalThis.fetch(url)
+  return response.json()
+}`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+      "typescript/boundaries/no-unvalidated-deserialization",
+    ]);
+  });
+
+  test("reports unknown-property shapes that exclude null", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `const marker = JSON.parse(text) as { digest?: unknown }
+console.log(marker.digest)`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+      "typescript/boundaries/no-unvalidated-deserialization",
+    ]);
+  });
+
+  test("ignores json() calls without Fetch API evidence or a type claim", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `export async function load(client: ApiClient, url: string, text: string, fetch: (url: string) => Promise<Store>) {
+  const user = await client.json() as User
+  const store = await fetch(url)
+  const items = await store.json() as Item[]
+  const response = await globalThis.fetch(url)
+  const raw = await response.json()
+  const validated = UserSchema.parse(await response.json())
+  const unknownBody = await response.json() as unknown
+  const identity = (await response.json()) as { email?: unknown; profile?: { name?: unknown } } | null
+  const parsed: { id?: unknown } | null = JSON.parse(text)
+  const error = await response.json().catch(() => undefined) as { message?: string } | undefined
+  return { user, items, raw, validated, unknownBody, identity, parsed, error }
+}`,
+      },
+    });
+
+    expect(result.diagnostics).toEqual([]);
   });
 
   test("keeps opinionated checks in the strict preset", async () => {

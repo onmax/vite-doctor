@@ -345,6 +345,7 @@ export async function writeManifest(
         aliases: Object.fromEntries(
           Object.entries(layer.config?.alias ?? {}).map(([key, value]) => [key, String(value)]),
         ),
+        compilerScan: layer.config?.compiler?.scan !== false,
         name: layer.config?.name,
         priority: index,
       }),
@@ -354,6 +355,7 @@ export async function writeManifest(
       Object.entries(nuxt.options.alias ?? {}).map(([key, value]) => [key, String(value)]),
     ),
     routeRules: nuxt.options.routeRules ?? {},
+    ssr: nuxt.options.ssr !== false,
     serverHandlers: toArray(nuxt.options.serverHandlers).map((handler: any) => ({
       route: handler.route,
       file: handler.handler ? relative(rootDir, handler.handler) : handler.file,
@@ -376,7 +378,9 @@ export async function writeManifest(
     extensions: extensions.length ? extensions : undefined,
     doctorConfig: serializableDoctorConfig(nuxt.options.doctor),
     runtimeConfig: redactRuntimeConfig(nuxt.options.runtimeConfig),
-    keyedComposables: toArray(nuxt.options.optimization?.keyedComposables).map(String),
+    keyedComposables: toArray(nuxt.options.optimization?.keyedComposables)
+      .map((entry: any) => (typeof entry === "string" ? entry : entry?.name))
+      .filter((name): name is string => typeof name === "string"),
     importsDirs: normalizeDirs(rootDir, [
       ...toArray(nuxt.options.imports?.dirs),
       ...toArray(evidence?.importDirs),

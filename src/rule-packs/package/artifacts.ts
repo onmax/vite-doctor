@@ -36,6 +36,8 @@ export interface PackageReference {
 }
 
 export interface PackageArtifacts {
+  /** Real path of the package directory; `missing` paths are relative to it. */
+  root: string;
   manifest: PackageManifest;
   references: PackageReference[];
   missing: string[];
@@ -106,22 +108,28 @@ function parsePackageManifest(value: unknown): PackageManifest {
   return value;
 }
 
-export function packageArtifacts(ctx: RuleContext): PackageArtifacts | null {
+/** Artifacts of every publishable package in the Doctor Run: the root and each workspace package. */
+export function packageArtifacts(ctx: RuleContext): PackageArtifacts[] {
   const key = "package:artifacts";
-  const cached = ctx.cache.get<PackageArtifacts | null>(key);
+  const cached = ctx.cache.get<PackageArtifacts[]>(key);
   if (cached !== undefined) return cached;
   const project = ctx.project;
-  const inventory = readPackageArtifacts(project.root, ctx.fs);
+  const inventory = (project.workspacePackages ?? [{ root: "." }]).flatMap(
+    (item) => readPackageArtifacts(resolve(project.root, item.root), ctx.fs) ?? [],
+  );
   ctx.cache.set(key, inventory);
-  if (inventory) project.inventory = { ...project.inventory, packageArtifacts: inventory };
-  if (inventory?.missing.length) {
+  if (inventory.length) project.inventory = { ...project.inventory, packageArtifacts: inventory };
+  const missing = inventory.flatMap((artifacts) =>
+    artifacts.missing.map((file) => relative(project.root, resolve(artifacts.root, file))),
+  );
+  if (missing.length) {
     project.evidenceGaps = [
       ...(project.evidenceGaps ?? []),
       {
         source: "vite-doctor/package",
         message:
           "Build the package before running package rules; some referenced artifacts are missing.",
-        files: inventory.missing,
+        files: missing,
       },
     ];
   }
@@ -157,6 +165,7 @@ export function readPackageArtifacts(
     });
   }
   return {
+    root: active.root,
     manifest: active.manifest,
     references: [...references.values()],
     missing: [...new Set([...active.missing, ...inactive.missing])],
@@ -606,7 +615,7 @@ function readPackageArtifactsForMode(
     const previous = unique.get(key);
     unique.set(key, { ...reference, required: reference.required || Boolean(previous?.required) });
   }
-  return { manifest, references: [...unique.values()], missing: [...missing] };
+  return { root, manifest, references: [...unique.values()], missing: [...missing] };
 }
 
 function typeCandidates(path: string) {

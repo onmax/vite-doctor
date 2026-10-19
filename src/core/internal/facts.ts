@@ -15,6 +15,7 @@ import { parseScriptResult } from "./script.js";
 import { TemplateNodeType, walkTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
 import { markSession, type ScanSession } from "./scan-session.js";
+import { pushDiagnostic } from "./diagnostics.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys } from "./visitor-keys.js";
 import type { EvidenceGap } from "./cache-store.js";
@@ -51,8 +52,25 @@ export async function parseSourceFiles(session: ScanSession): Promise<void> {
     const handle = await prepareSourceFile(session, file, fileId++);
     session.handles.push(handle);
     session.handlesByPath.set(handle.path, handle);
+    if (handle.isVueSfc && sourceShape(handle) === 0 && !handle.text.trim())
+      reportEmptySfc(session, handle);
   }
   markSession(session, "parse", started);
+}
+
+function reportEmptySfc(session: ScanSession, handle: SourceFileHandle): void {
+  pushDiagnostic(session, {
+    ruleId: "doctor/inventory/empty-sfc",
+    severity: "warn",
+    category: "inventory",
+    file: handle.path,
+    why: `${handle.relativePath} is an empty Vue single-file component. Vue's SFC compiler rejects a component without a <template> or <script>, so any build that compiles it fails.`,
+    suggestion:
+      "Delete the file if the component is no longer needed, or give it a <template> or <script> block.",
+    evidence: [{ kind: "facts", summary: "The file contains only whitespace." }],
+    confidence: "proven",
+    analysisPhase: "file",
+  });
 }
 
 /**
@@ -256,6 +274,7 @@ async function parseSource(file: ScanFileEntry, text: string, hash: string): Pro
   const absolute = file.path;
   const gaps: EvidenceGap[] = [];
   const isVueSfc = absolute.endsWith(".vue");
+  if (isVueSfc && !text.trim()) return { sfc: undefined, scriptAst: null, templateAst: null, gaps };
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
   if (sfc?.errors.length) {
     gaps.push({
