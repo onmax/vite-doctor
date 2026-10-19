@@ -1,4 +1,5 @@
 import { createRule, type RuleContext } from "../../../core/index.js";
+import { createLocalEvidence } from "./local-evidence.js";
 import {
   isOutermostTypeAssertion,
   isTypeAssertion,
@@ -10,14 +11,17 @@ import {
 const ruleId = "typescript/boundaries/no-unvalidated-deserialization";
 const globalObjectNames = new Set(["globalThis", "window"]);
 const deserializerObjectNames = new Set(["JSON", "localStorage", "sessionStorage"]);
+const fetchBodyTypeNames = ["Request", "Response"];
+
+type LocalEvidence = ReturnType<typeof createLocalEvidence>;
 
 export const noUnvalidatedDeserialization = createRule({
   meta: {
     id: "typescript/boundaries/no-unvalidated-deserialization",
     title: "Validate deserialized values before typing them",
     description:
-      "Reject direct type claims on values returned by JSON parsing and browser storage.",
-    why: "JSON and browser storage contain runtime data. A TypeScript annotation or assertion does not validate that data, so malformed values can enter the program under a trusted domain type.",
+      "Reject direct type claims on values returned by JSON parsing, Fetch API bodies, and browser storage.",
+    why: "JSON, Fetch API bodies, and browser storage contain runtime data. A TypeScript annotation or assertion does not validate that data, so malformed values can enter the program under a trusted domain type.",
     recommendedReplacement:
       "Deserialize to unknown and validate with the domain parser before using the value.",
     examples: [
@@ -36,19 +40,25 @@ export const noUnvalidatedDeserialization = createRule({
     aiGeneratedCodeRisk: "high",
   },
   create(ctx) {
+    let evidence: LocalEvidence;
+    const isUntrustedDeserialization = (expression: AnyNode) =>
+      isUntrustedValue(ctx, evidence, expression);
     const visitAssertion = (node: AnyNode) => {
       if (!isOutermostTypeAssertion(node)) return;
-      if (isUntrustedDeserialization(ctx, node.expression) && !isUnknownType(node.typeAnnotation)) {
+      if (isUntrustedDeserialization(node.expression) && !isUnknownType(node.typeAnnotation)) {
         reportBoundary(ctx, node);
       }
     };
     return {
+      Program(node: AnyNode) {
+        evidence = createLocalEvidence(node);
+      },
       TSAsExpression: visitAssertion,
       TSTypeAssertion: visitAssertion,
       ReturnStatement(node: AnyNode) {
         if (!node.argument || isTypeAssertion(node.argument)) return;
         const owner = containingFunction(node);
-        if (hasConcreteReturnType(owner) && isUntrustedDeserialization(ctx, node.argument)) {
+        if (hasConcreteReturnType(owner) && isUntrustedDeserialization(node.argument)) {
           reportBoundary(ctx, node.argument);
         }
       },
@@ -57,7 +67,7 @@ export const noUnvalidatedDeserialization = createRule({
           node.body?.type !== "BlockStatement" &&
           !isTypeAssertion(node.body) &&
           hasConcreteReturnType(node) &&
-          isUntrustedDeserialization(ctx, node.body)
+          isUntrustedDeserialization(node.body)
         ) {
           reportBoundary(ctx, node.body);
         }
@@ -69,7 +79,7 @@ export const noUnvalidatedDeserialization = createRule({
           annotation &&
           !isUnknownType(annotation) &&
           !isAnyType(annotation) &&
-          isUntrustedDeserialization(ctx, node.value)
+          isUntrustedDeserialization(node.value)
         ) {
           reportBoundary(ctx, node.value);
         }
@@ -81,7 +91,7 @@ export const noUnvalidatedDeserialization = createRule({
           annotation &&
           !isUnknownType(annotation) &&
           !isAnyType(annotation) &&
-          isUntrustedDeserialization(ctx, node.init)
+          isUntrustedDeserialization(node.init)
         ) {
           reportBoundary(ctx, node.init);
         }
@@ -100,7 +110,7 @@ function reportBoundary(ctx: Parameters<typeof report>[0], node: AnyNode) {
   );
 }
 
-function isUntrustedDeserialization(ctx: RuleContext, expression: AnyNode): boolean {
+function isUntrustedValue(ctx: RuleContext, evidence: LocalEvidence, expression: AnyNode) {
   const node = unwrapExpression(expression);
   if (node?.type !== "CallExpression") return false;
   const callee = node.callee;
@@ -119,7 +129,41 @@ function isUntrustedDeserialization(ctx: RuleContext, expression: AnyNode): bool
   ) {
     return true;
   }
-  return false;
+  return (
+    propertyName === "json" &&
+    !node.optional &&
+    !node.arguments?.length &&
+    isFetchBody(evidence, callee.object)
+  );
+}
+
+// Without type information, only a Fetch API annotation or an unshadowed fetch() result proves a body.
+function isFetchBody(evidence: LocalEvidence, receiver: AnyNode): boolean {
+  const node = unwrapExpression(receiver);
+  if (isGlobalFetchCall(evidence, node)) return true;
+  const target = evidence.binding(node);
+  if (!target || target.written || target.node.start >= node.start) return false;
+  if (
+    target.annotation &&
+    fetchBodyTypeNames.some((name) => evidence.globalType(target.annotation, name))
+  ) {
+    return true;
+  }
+  return target.kind === "const" && isGlobalFetchCall(evidence, unwrapExpression(target.init));
+}
+
+function isGlobalFetchCall(evidence: LocalEvidence, node: AnyNode): boolean {
+  if (node?.type !== "CallExpression") return false;
+  const callee = unwrapExpression(node.callee);
+  if (callee?.type === "Identifier") return callee.name === "fetch" && !evidence.binding(callee);
+  return (
+    (callee?.type === "MemberExpression" || callee?.type === "StaticMemberExpression") &&
+    memberPropertyName(callee) === "fetch" &&
+    callee.object?.type === "Identifier" &&
+    globalObjectNames.has(callee.object.name) &&
+    !evidence.binding(callee.object) &&
+    !evidence.propertyWritten(callee.object.name, "fetch")
+  );
 }
 
 function isJsonStringifyCall(ctx: RuleContext, expression: AnyNode): boolean {
@@ -182,7 +226,37 @@ function hasConcreteReturnType(node: AnyNode): boolean {
 }
 
 function isUnknownType(node: AnyNode): boolean {
-  return node?.type === "TSUnknownKeyword";
+  if (node?.type === "TSUnknownKeyword") return true;
+  if (node?.type === "TSParenthesizedType") return isUnknownType(node.typeAnnotation);
+  return node?.type === "TSUnionType" && isNullableUnknownShape(node.types);
+}
+
+// Property reads on any JSON value except null are safe, and TypeScript forces `?.` on optional
+// members, so `{ key?: unknown } | null` claims nothing the runtime value can violate.
+function isNullableUnknownShape(types: AnyNode[]): boolean {
+  return (
+    types.some((item) => item.type === "TSNullKeyword") &&
+    types.some((item) => isOptionalUnknownShape(item)) &&
+    types.every(
+      (item) =>
+        item.type === "TSNullKeyword" ||
+        item.type === "TSUndefinedKeyword" ||
+        isOptionalUnknownShape(item),
+    )
+  );
+}
+
+function isOptionalUnknownShape(node: AnyNode): boolean {
+  if (node?.type === "TSParenthesizedType") return isOptionalUnknownShape(node.typeAnnotation);
+  if (node?.type !== "TSTypeLiteral" || !node.members?.length) return false;
+  return node.members.every((member: AnyNode) => {
+    const type = member.typeAnnotation?.typeAnnotation;
+    return (
+      member.type === "TSPropertySignature" &&
+      member.optional === true &&
+      (type?.type === "TSUnknownKeyword" || isOptionalUnknownShape(type))
+    );
+  });
 }
 
 function isAnyType(node: AnyNode): boolean {
