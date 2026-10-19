@@ -6,6 +6,9 @@ export const ruleNavigationTitles: Record<string, string> = {
   "docus/appconfig/no-unknown-key": "Unknown keys",
   "docus/layers/no-empty-app-vue-shadow": "Empty app.vue",
 
+  "nitro/cloudflare/no-unguarded-als-enterwith": "ALS enterWith",
+  "nitro/cache/no-module-scope-response-cache": "Module-scope caches",
+  "nitro/config/require-absolute-generated-paths": "Generated paths",
   "nitro/context/no-navigateto-in-nitro": "navigateTo",
   "nitro/context/no-usenuxtapp-in-nitro": "useNuxtApp",
   "nitro/h3/no-http-error-masking": "HTTP error masking",
@@ -45,6 +48,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/composables/export-name-matches-file": "Export names",
   "nuxt/composables/no-nested-autoimport-assumption": "Composable subdirs",
   "nuxt/config/no-ignored-compatibility-config": "Ignored config",
+  "nuxt/config/no-runtime-env-in-build-options": "Build-time env",
   "nuxt/context/no-composable-after-await": "Calls after await",
   "nuxt/context/no-legacy-process-client-server": "import.meta flags",
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": "Factory directories",
@@ -59,6 +63,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/hydration/no-client-conditional-in-template": "Client conditionals",
   "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly": "Time-based render",
   "nuxt/hydration/prefer-usecookie-for-initial-client-state": "useCookie state",
+  "nuxt/hydration/require-clientonly-fallback": "ClientOnly fallback",
   "nuxt/imports/no-auto-import-collision": "Name collisions",
   "nuxt/imports/no-conflicting-usefetch-import": "Shadowed useFetch",
   "nuxt/imports/no-explicit-auto-import": "Redundant imports",
@@ -91,6 +96,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/shared/no-vue-or-nitro-context-in-shared": "Shared code context",
   "nuxt/structure/no-composable-in-utils": "utils/ composables",
   "nuxt/structure/no-stateless-composable": "Plain use* helpers",
+  "nuxt/ssr/no-module-scope-request-state": "Module request state",
   "nuxt/state/no-nonserializable-usestate": "useState values",
   "nuxt/state/prefer-explicit-usestate-key-in-exported-composables": "useState keys",
   "nuxt/structure/no-server-types-in-app": "Server types in app",
@@ -106,6 +112,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vueuse/prefer-useclipboard": "useClipboard",
   "vueuse/prefer-useevent-listener": "useEventListener",
   "vueuse/prefer-usewindow-size": "useWindowSize",
+  "vueuse/ssr/require-init-on-mounted-storage": "Storage on mount",
 
   "package/no-phantom-dependencies": "Phantom deps",
   "package/no-required-optional-peer": "Optional peers",
@@ -120,6 +127,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "shadcn/no-unknown-classes": "Unknown classes",
   "shadcn/require-static-classes": "Static classes",
 
+  "typescript/boundaries/no-cross-realm-web-instanceof": "Web instanceof",
   "typescript/boundaries/no-unvalidated-deserialization": "Deserialized values",
   "typescript/evidence/no-caller-chosen-result-type": "Caller-chosen types",
   "typescript/evidence/no-chained-type-assertions": "Chained assertions",
@@ -136,6 +144,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/assets/no-dynamic-new-url": "Dynamic new URL",
   "vite/assets/no-public-src-import": "Public asset imports",
   "vite/assets/no-src-absolute-public-url": "Source public URLs",
+  "vite/config/no-url-pathname-as-fs-path": "URL pathname paths",
   "vite/define/no-runtime-object-define": "Object defines",
   "vite/define/no-secret-define": "Secrets in define",
   "vite/define/no-untyped-define": "Typed define",
@@ -149,6 +158,11 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/imports/no-barrel-files": "Barrel files",
   "vite/imports/require-static-glob-pattern": "Static glob patterns",
   "vite/plugin-package/naming-conventions": "Plugin package names",
+
+  "vite/plugin/no-config-hook-array-echo": "Config hook arrays",
+
+  "vite/plugin/no-lossy-set-cookie-bridge": "Set-Cookie bridges",
+
   "vite/plugin/prefer-transform-filter": "Transform filters",
   "vite/plugin/require-name": "Plugin names",
   "vite/server/no-broad-fs-allow": "server.fs.allow",

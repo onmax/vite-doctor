@@ -28,6 +28,7 @@ export { noRouteObjectPageKey } from "./no-route-object-page-key.js";
 export { noHashSensitiveRouteFullpathInSsrMarkup } from "./no-hash-sensitive-route-fullpath-in-ssr-markup.js";
 export { noLegacyProcessClientServer } from "./no-legacy-process-client-server.js";
 export { noIgnoredCompatibilityConfig } from "./no-ignored-compatibility-config.js";
+export { noRuntimeEnvInBuildOptions } from "./no-runtime-env-in-build-options.js";
 export { preferAppDirectoryPlacement } from "./prefer-app-directory-placement.js";
 export { noNestedAutoimportAssumption } from "./no-nested-autoimport-assumption.js";
 export { noVueOrNitroContextInShared } from "./no-vue-or-nitro-context-in-shared.js";
@@ -47,10 +48,12 @@ export { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 export { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
 export { noServerTypesInApp, noServerUtilsInApp } from "./no-server-utils-in-app.js";
 export { exportNameMatchesFile } from "./export-name-matches-file.js";
+export { requireClientOnlyFallback } from "./require-client-only-fallback.js";
 export { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
 export { moduleRequireMeta } from "./module-require-meta.js";
 export { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
 export { moduleExplicitRuntimeImports } from "./module-explicit-runtime-imports.js";
+export { noModuleScopeRequestState } from "./no-module-scope-request-state.js";
 
 import { noExplicitAutoImport } from "./no-explicit-auto-import.js";
 import { noConflictingUseFetchImport } from "./no-conflicting-use-fetch-import.js";
@@ -82,6 +85,7 @@ import { noRouteObjectPageKey } from "./no-route-object-page-key.js";
 import { noHashSensitiveRouteFullpathInSsrMarkup } from "./no-hash-sensitive-route-fullpath-in-ssr-markup.js";
 import { noLegacyProcessClientServer } from "./no-legacy-process-client-server.js";
 import { noIgnoredCompatibilityConfig } from "./no-ignored-compatibility-config.js";
+import { noRuntimeEnvInBuildOptions } from "./no-runtime-env-in-build-options.js";
 import { preferAppDirectoryPlacement } from "./prefer-app-directory-placement.js";
 import { noNestedAutoimportAssumption } from "./no-nested-autoimport-assumption.js";
 import { noVueOrNitroContextInShared } from "./no-vue-or-nitro-context-in-shared.js";
@@ -101,10 +105,12 @@ import { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 import { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
 import { noServerTypesInApp, noServerUtilsInApp } from "./no-server-utils-in-app.js";
 import { exportNameMatchesFile } from "./export-name-matches-file.js";
+import { requireClientOnlyFallback } from "./require-client-only-fallback.js";
 import { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
 import { moduleRequireMeta } from "./module-require-meta.js";
 import { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
 import { moduleExplicitRuntimeImports } from "./module-explicit-runtime-imports.js";
+import { noModuleScopeRequestState } from "./no-module-scope-request-state.js";
 import { defineRulePack } from "../../../../core/index.js";
 
 const rules = [
@@ -138,6 +144,7 @@ const rules = [
   noHashSensitiveRouteFullpathInSsrMarkup,
   noLegacyProcessClientServer,
   noIgnoredCompatibilityConfig,
+  noRuntimeEnvInBuildOptions,
   preferAppDirectoryPlacement,
   noNestedAutoimportAssumption,
   noVueOrNitroContextInShared,
@@ -162,7 +169,13 @@ const rules = [
   moduleExplicitRuntimeImports,
 ];
 
-const strictOnlyRules = [noServerTypesInApp, noStatelessComposable, exportNameMatchesFile];
+const strictOnlyRules = [
+  noServerTypesInApp,
+  noStatelessComposable,
+  exportNameMatchesFile,
+  noModuleScopeRequestState,
+  requireClientOnlyFallback,
+];
 
 const nuxtRulePack = defineRulePack({
   name: "vite-doctor/nuxt",

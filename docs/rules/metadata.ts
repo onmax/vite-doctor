@@ -127,6 +127,57 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/cloudflare/no-unguarded-als-enterwith": {
+    description:
+      "Report AsyncLocalStorage#enterWith() calls whose failure is not handled, outside a try/catch or in one whose catch throws, in code that targets Cloudflare Workers.",
+    why: "workerd implements AsyncLocalStorage run(), exit(), getStore(), bind(), and snapshot(), but enterWith() throws `asyncLocalStorage.enterWith() is not implemented`, with nodejs_compat or nodejs_als enabled. Code that works in Node.js then fails the request on Cloudflare. The rule runs when Project Inventory shows a Cloudflare target for the workspace package: a wrangler config, a cloudflare Nitro preset, Cloudflare tooling dependencies such as wrangler or @cloudflare/workers-types, a cloudflare package keyword, or `cloudflare:` imports in the file.",
+    recommendedReplacement:
+      "Run the work inside als.run(store, callback) so the store is scoped to the callback. If the call has to stay for Node.js runtimes, wrap it in try/catch and keep a fallback that does not depend on enterWith().",
+    examples: [
+      {
+        title: "Scope the store with run()",
+        language: "ts",
+        invalid:
+          "const eventStorage = new AsyncLocalStorage<H3Event>()\n\nexport function enterEvent(event: H3Event) {\n  eventStorage.enterWith(event)\n}",
+        valid:
+          "const eventStorage = new AsyncLocalStorage<H3Event>()\n\nexport function runWithEvent<T>(event: H3Event, callback: () => T): T {\n  return eventStorage.run(event, callback)\n}",
+      },
+    ],
+  },
+  "nitro/cache/no-module-scope-response-cache": {
+    description:
+      "Report module-scope Maps and reassigned variables that server code uses as hand-rolled TTL caches for upstream responses.",
+    why: "A module-scope cache with an expiry check lives in one server instance or worker isolate. Each instance warms its own copy, entries for keys nobody asks for again are never evicted, and Nitro's cache storage, invalidation, and stale-while-revalidate cannot see it. The key is whatever the author remembered to include: when a request-scoped client, such as one authorized as the current user, fills the cache, the next caller with the same key gets that user's response.",
+    recommendedReplacement:
+      "Wrap the upstream call in defineCachedFunction() with a maxAge and a getKey that covers every input that changes the response, including the user or tenant when the client is authorized per request. Values that cannot be serialized to cache storage, such as compiled validators, can stay in memory; suppress the diagnostic with a comment that says why.",
+    examples: [
+      {
+        title: "Cache upstream responses with defineCachedFunction",
+        language: "ts",
+        invalid:
+          "const labelCache = new Map<string, { labels: string[]; expiry: number }>()\n\nexport async function getLabels(group: string) {\n  const cached = labelCache.get(group)\n  if (cached && cached.expiry > Date.now()) return cached.labels\n  const labels = await $fetch<string[]>(`/labels/${group}`)\n  labelCache.set(group, { labels, expiry: Date.now() + 60_000 })\n  return labels\n}",
+        valid:
+          "export const getLabels = defineCachedFunction(\n  (group: string) => $fetch<string[]>(`/labels/${group}`),\n  { name: 'labels', maxAge: 60, getKey: (group: string) => group },\n)",
+      },
+    ],
+  },
+  "nitro/config/require-absolute-generated-paths": {
+    description:
+      "Finds Nitro handlers and plugins that Vite plugins, Nuxt modules or Nitro modules register with relative paths.",
+    why: "Nitro does not resolve a registered path against the file that registers it. Nitro 2 and Nitro 3 resolve handler and plugin paths against Nitro’s project rootDir. A generated file written to resolve(root, '.vitehub/handler.ts') but registered as '.vitehub/handler.ts' only works while every root happens to match, and it breaks for monorepos, custom srcDir or Vite roots, and Nitro 2.",
+    recommendedReplacement:
+      "Register the same absolute path you write the file to, for example resolve(root, '.generated/handler.ts'), or resolve files shipped with the package with createResolver(import.meta.url). Doctor checks files that import from vite, nitro, nitropack, @nuxt/kit or @nuxt/schema, and skips config files, tests, app and server runtime directories, and arguments of @nuxt/kit helpers, which nuxt/module/resolve-runtime-paths reports. It reports handler objects with a route, middleware, method or lazy key, and nitro plugins arrays, whose path is a literal or const starting with ./, ../ or a dot directory such as .nuxt/.",
+    examples: [
+      {
+        title: "Register generated handlers with the path they were written to",
+        language: "ts",
+        invalid:
+          "const middleware = '.generated/nitro/middleware.ts'\nawait writeFile(resolve(root, middleware), code)\nnitroConfig.handlers.push({ handler: middleware, middleware: true })",
+        valid:
+          "const middleware = resolve(root, '.generated/nitro/middleware.ts')\nawait writeFile(middleware, code)\nnitroConfig.handlers.push({ handler: middleware, middleware: true })",
+      },
+    ],
+  },
   "nitro/context/no-navigateto-in-nitro": {
     description: "Flags the Nuxt-only navigateTo() helper in Nitro server handlers.",
     why: "navigateTo() belongs to the Nuxt app runtime and is unavailable in Nitro handlers, so the redirect must use the installed H3 generation's response API.",
@@ -666,6 +717,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/config/no-runtime-env-in-build-options": {
+    description:
+      "Finds nuxt.config options outside runtimeConfig whose value comes from a NUXT_ or NITRO_ environment variable that also overrides a declared runtimeConfig key.",
+    why: "nuxt.config runs once, when the app is built, so every option outside runtimeConfig keeps the value the variable had at build time. Nuxt applies NUXT_ variables to runtimeConfig again when the server starts, which is why they are the usual way to configure one build per environment or tenant. An option that reads the same variable gets the build-time value instead, often empty in a Docker build that sets the variable only on the running container. Doctor only reports values whose environment reads are all NUXT_ or NITRO_ variables and at least one of them matches a key declared in runtimeConfig. A fallback to a variable without a NUXT_ or NITRO_ prefix, or passing process.env as a whole, is treated as an intentional build-time source.",
+    recommendedReplacement:
+      "Read the value from useRuntimeConfig() where it is used, or set the variable in the build environment when the option has to be fixed at build time.",
+    examples: [
+      {
+        title: "Read tenant config at runtime",
+        language: "ts",
+        invalid:
+          "const organization = process.env.NUXT_PUBLIC_ORGANIZATION_CODE\n\nexport default defineNuxtConfig({\n  runtimeConfig: { public: { organizationCode: organization } },\n  piniaPluginPersistedstate: { key: `${organization}:%id` },\n})",
+        valid:
+          "export default defineNuxtConfig({\n  runtimeConfig: { public: { organizationCode: '' } },\n})\n\n// app/plugins/persisted-state.ts\nexport default defineNuxtPlugin(({ $pinia }) => {\n  const { organizationCode } = useRuntimeConfig().public\n  $pinia.use(createPersistedState({ key: id => `${organizationCode}:${id}` }))\n})",
+      },
+    ],
+  },
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",
@@ -706,9 +774,9 @@ export const ruleDocumentationMetadata = {
         title: "Use keyed composable registration required",
         language: "ts",
         invalid:
-          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
+          "// app/utils/user.ts is outside the composables/ tree Nuxt scans for factories\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
         valid:
-          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
+          "// app/utils/user.ts\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
       },
     ],
   },
@@ -858,6 +926,23 @@ export const ruleDocumentationMetadata = {
           "<script setup lang=\"ts\">\nconst theme = ref(localStorage.getItem('theme') || 'light')\n</script>",
         valid:
           "<script setup lang=\"ts\">\nconst theme = useCookie('theme', { default: () => 'light' })\n</script>",
+      },
+    ],
+  },
+  "nuxt/hydration/require-clientonly-fallback": {
+    description:
+      "Finds <ClientOnly> components without a server fallback, which render an empty element on the server and shift the layout once their content mounts.",
+    why: "On the server, and until the component mounts, <ClientOnly> renders only its fallback. Without a #fallback slot or a fallback, placeholder or fallback-tag prop that is an empty <span>, so the client-only content appears after hydration and pushes the surrounding layout.",
+    recommendedReplacement:
+      "Add a #fallback slot with a placeholder of the same size, such as a skeleton, or set fallback-tag with classes that reserve the space. Prefer server-rendered markup when the content does not need the browser. Doctor skips <ClientOnly> wrappers whose only children are Teleport or overlay components such as modals, dialogs, drawers and toasts, and <ClientOnly> with a v-bind object, because those can pass a fallback Doctor cannot see. This Rule is opinionated, so it is only in the Strict Preset.",
+    examples: [
+      {
+        title: "Reserve the space with a fallback",
+        language: "vue",
+        invalid:
+          '<template>\n  <ClientOnly>\n    <SalesChart :data="data" />\n  </ClientOnly>\n</template>',
+        valid:
+          '<template>\n  <ClientOnly>\n    <SalesChart :data="data" />\n    <template #fallback>\n      <USkeleton class="h-80 w-full" />\n    </template>\n  </ClientOnly>\n</template>',
       },
     ],
   },
@@ -1349,6 +1434,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/ssr/no-module-scope-request-state": {
+    description:
+      "Report module-scope variables, Maps, and Sets that request-time app code fills with request data.",
+    why: "On the server, Nuxt imports each app module once and reuses it for every SSR request. A module-scope let, Map, or Set that a store action, composable, plugin, or component setup writes during a request is shared by all concurrent requests: one user's fetched data, store instance, or in-flight promise becomes visible to the next request. An in-flight promise that closes over `this` in a Pinia action fills the first request's store, while later requests await it and keep their own store empty.",
+    recommendedReplacement:
+      "Keep per-request state in useState() or the Pinia store state. For values that cannot live in payload state, such as in-flight promises, key them by the Nuxt app with a WeakMap so each SSR request gets its own entry. Constant lookup tables and caches of pure values, such as Intl formatters, can stay at module scope.",
+    examples: [
+      {
+        title: "Key in-flight requests by the Nuxt app",
+        language: "ts",
+        invalid:
+          "let currencyPromise: Promise<void> | null = null\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      currencyPromise ??= (async () => {\n        this.currencies = await $fetch('/api/currencies')\n      })()\n      await currencyPromise\n    },\n  },\n})",
+        valid:
+          "const currencyPromises = new WeakMap<NuxtApp, Promise<void>>()\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      const nuxtApp = useNuxtApp()\n      let promise = currencyPromises.get(nuxtApp)\n      if (!promise) {\n        promise = (async () => {\n          this.currencies = await $fetch('/api/currencies')\n        })()\n        currencyPromises.set(nuxtApp, promise)\n      }\n      await promise\n    },\n  },\n})",
+      },
+    ],
+  },
   "nuxt/state/no-nonserializable-usestate": {
     description: "Report unsupported live values stored in Nuxt payload state.",
     why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",
@@ -1526,6 +1628,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/config/no-url-pathname-as-fs-path": {
+    description:
+      "Reports new URL(..., import.meta.url).pathname used as a file path in Vite and Vitest config files and Node-side plugin code.",
+    why: "A URL's pathname is not a file system path. It keeps percent-encoding, so a project under a directory with a space resolves to .../My%20App/..., and on Windows it starts with /C:/ instead of a drive letter path. Alias targets, build inputs, and fs reads built from it then point at files that do not exist. Doctor checks vite.config.* and vitest.config.* files and modules that import from vite, vite-plus, or vitest/config. It reports .pathname on new URL(..., import.meta.url), directly or through a const. URLs built from other bases, such as request URLs used for routing, are not reported.",
+    recommendedReplacement:
+      "Wrap the URL with fileURLToPath from node:url: fileURLToPath(new URL('./src/file.ts', import.meta.url)).",
+    examples: [
+      {
+        title: "Convert file URLs with fileURLToPath",
+        language: "ts",
+        invalid:
+          "import { defineConfig } from 'vitest/config'\n\nexport default defineConfig({\n  resolve: {\n    alias: {\n      '#registry': new URL('./src/runtime/empty-registry.ts', import.meta.url).pathname,\n    },\n  },\n})",
+        valid:
+          "import { fileURLToPath } from 'node:url'\nimport { defineConfig } from 'vitest/config'\n\nexport default defineConfig({\n  resolve: {\n    alias: {\n      '#registry': fileURLToPath(new URL('./src/runtime/empty-registry.ts', import.meta.url)),\n    },\n  },\n})",
+      },
+    ],
+  },
   "vite/define/no-runtime-object-define": {
     description:
       "Flags runtime object define in Vite define code before it leaks into runtime behavior.",
@@ -1676,6 +1795,42 @@ export const ruleDocumentationMetadata = {
           "const timer = setInterval(sync, 1000)\n\nif (import.meta.hot) {\n  import.meta.hot.accept()\n}",
         valid:
           "const timer = setInterval(sync, 1000)\n\nif (import.meta.hot) {\n  import.meta.hot.dispose(() => clearInterval(timer))\n}",
+      },
+    ],
+  },
+
+  "vite/plugin/no-config-hook-array-echo": {
+    description:
+      "Reports Vite config and configEnvironment hooks that return arrays containing the incoming config's entries.",
+    why: "Vite merges each config and configEnvironment hook result into the current config with mergeConfig, which concatenates arrays instead of replacing them. A hook that returns [...config.ssr.noExternal, 'my-package'] therefore adds every existing entry a second time, and each plugin that does this doubles the entries of the plugins before it. Doctor reports a returned array at a config path that spreads or concatenates the incoming value at the same path, directly or through a helper function defined once in the same file that returns its parameter spread or concatenated. It does not follow helpers imported from other files, and it ignores hooks that assign to the incoming config in place. An object counts as a plugin when it has Vite plugin hooks such as configResolved or enforce, or when it has a name and the file imports or requires Vite, Vitest, Rollup, Rolldown, unplugin, or @nuxt/kit, or is a Vite config.",
+    recommendedReplacement:
+      "Return only the entries the plugin adds, skipping entries that are already present, or assign to the incoming config in place and leave that field out of the returned object.",
+    examples: [
+      {
+        title: "Return only the added entries",
+        language: "ts",
+        invalid:
+          "export function dedupePlugin(): Plugin {\n  return {\n    name: 'dedupe-vue',\n    config(config) {\n      return {\n        resolve: { dedupe: [...(config.resolve?.dedupe ?? []), 'vue'] },\n      }\n    },\n  }\n}",
+        valid:
+          "export function dedupePlugin(): Plugin {\n  return {\n    name: 'dedupe-vue',\n    config(config) {\n      if (config.resolve?.dedupe?.includes('vue')) return\n      return { resolve: { dedupe: ['vue'] } }\n    },\n  }\n}",
+      },
+    ],
+  },
+
+  "vite/plugin/no-lossy-set-cookie-bridge": {
+    description:
+      "Reports loops that copy Fetch Response headers onto a Node ServerResponse with setHeader, which keeps only the last Set-Cookie.",
+    why: "Dev middleware and plugin servers often bridge a Fetch Response to Node's ServerResponse by iterating response.headers. The Headers iterator combines repeated headers into one comma-separated value, except Set-Cookie: each cookie is yielded as its own entry. res.setHeader replaces any value already set for that name, so every Set-Cookie but the last one is dropped and sessions or CSRF cookies silently go missing. Doctor reports a setHeader call that receives the header name from a for...of or forEach loop over a headers property, except the headers of a request binding such as req or request. It treats Set-Cookie as handled, and skips the loop, when the loop body mentions set-cookie, when the loop body checks the header name in a file that mentions set-cookie, or when the same function mentions set-cookie or getSetCookie after the loop.",
+    recommendedReplacement:
+      'Skip "set-cookie" in the loop and copy the cookies once with res.setHeader("set-cookie", response.headers.getSetCookie()), or append each value with res.appendHeader.',
+    examples: [
+      {
+        title: "Copy Set-Cookie values as a list",
+        language: "ts",
+        invalid:
+          "async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) res.setHeader(name, value)\n  res.end(await response.text())\n}",
+        valid:
+          'async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) {\n    if (name !== "set-cookie") res.setHeader(name, value)\n  }\n  const cookies = response.headers.getSetCookie()\n  if (cookies.length > 0) res.setHeader("set-cookie", cookies)\n  res.end(await response.text())\n}',
       },
     ],
   },
@@ -2276,14 +2431,31 @@ export const ruleDocumentationMetadata = {
       "Finds VueUse project code that should use the supported use storage pattern instead.",
     why: "Manual storage reads and watches duplicate serialization, cross-tab synchronization, default handling, and reactive updates already handled by useStorage().",
     recommendedReplacement:
-      "Use VueUse useStorage() for client storage so refs, serialization, and cleanup stay together.",
+      "Use VueUse useLocalStorage() or useSessionStorage() for client storage so refs, serialization, and cleanup stay together. In SSR apps, pass { initOnMounted: true } so the first client render matches the server, or use useCookie() for state the server must render.",
     examples: [
       {
         title: "Use VueUse storage",
         language: "ts",
         invalid:
           "const theme = ref(localStorage.getItem('theme') || 'light')\nwatch(theme, value => localStorage.setItem('theme', value))",
-        valid: "const theme = useStorage('theme', 'light')",
+        valid: "const theme = useLocalStorage('theme', 'light', { initOnMounted: true })",
+      },
+    ],
+  },
+  "vueuse/ssr/require-init-on-mounted-storage": {
+    description:
+      "Finds VueUse useLocalStorage(), useSessionStorage() and browser-backed useStorage() calls in SSR Nuxt apps that read storage while the page hydrates.",
+    why: "VueUse reads browser storage synchronously when the composable runs. The server has no browser storage and renders the default value, so a stored value changes the first client render and Vue reports a hydration mismatch. Guarding the call with import.meta.client does not help, because the client branch still runs during hydration.",
+    recommendedReplacement:
+      "Pass { initOnMounted: true } so VueUse reads storage after the component mounts, or use useCookie() for state the server must render. A useStorage() call that passes localStorage or sessionStorage explicitly throws on the server before initOnMounted can help, so use useLocalStorage() or useSessionStorage() with { initOnMounted: true } instead. Doctor skips .client files, calls inside onMounted(), apps with ssr: false, and refs that are only read in event handlers, watch callbacks, lifecycle hooks or unrendered computed values. With @vueuse/nuxt's ssrHandlers option, useStorage() without a storage argument uses cookies; Doctor cannot see that option, so it only reports useStorage() without a storage argument in apps without @vueuse/nuxt.",
+    examples: [
+      {
+        title: "Read stored preferences after mount",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nconst granularity = useSessionStorage('plan-granularity', 'month')\n</script>\n\n<template>\n  <span>{{ granularity }}</span>\n</template>",
+        valid:
+          "<script setup lang=\"ts\">\nconst granularity = useSessionStorage('plan-granularity', 'month', { initOnMounted: true })\n</script>\n\n<template>\n  <span>{{ granularity }}</span>\n</template>",
       },
     ],
   },

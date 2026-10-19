@@ -5,7 +5,6 @@ import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { allDiagnostics, runDoctor, type DoctorRule } from "../../src/core/index.ts";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../src/extension.ts";
-import { requireStandardAuthHandlerMount } from "../../src/rule-packs/nuxt/rules/nuxt-better-auth.ts";
 
 function extension(rule: DoctorRule) {
   return defineDoctorExtension({
@@ -49,6 +48,27 @@ async function withProject(run: (root: string) => Promise<void>) {
   }
 }
 
+// Reports without a file, so the finding is anchored to the view's first source file.
+const unanchoredProjectRule = createRule({
+  meta: {
+    id: "test/unanchored-project",
+    title: "Review the project",
+    category: "configuration",
+    severity: "warn",
+    execution: "manifest",
+  },
+  create(ctx) {
+    return {
+      onProjectStart() {
+        ctx.report(
+          allDiagnostics.DOC9999({ why: "Project needs review.", fix: "Review the project." }),
+          { ruleId: "test/unanchored-project", severity: "warn", category: "configuration" },
+        );
+      },
+    };
+  },
+});
+
 const runtimeTarget = {
   nuxt: "4.0.0",
   vue: "3.5.18",
@@ -66,14 +86,14 @@ test.each(["changed", "since"])(
         framework: "nuxt" as const,
         runtimeTarget,
         cache: false,
-        extensions: [extension(requireStandardAuthHandlerMount)],
+        extensions: [extension(unanchoredProjectRule)],
       };
       const changed = {
         ...options,
         ...(mode === "changed" ? { changed: true } : { since: "HEAD" }),
       };
       const initial = await runDoctor(options);
-      expect(initial.diagnostics.map((item) => item.code)).toEqual(["NUXT0003"]);
+      expect(initial.diagnostics.map((item) => item.code)).toEqual(["DOC9999"]);
       expect(initial.diagnostics[0]?.range).toBeUndefined();
       // Manifest Rules anchor project findings to the first source file, as in a full run.
       const anchor = initial.diagnostics[0]!.file;
@@ -87,7 +107,7 @@ test.each(["changed", "since"])(
       writeFileSync(anchor, "export const value = false;\n");
       const result = await runDoctor(changed);
 
-      expect(result.diagnostics.map((item) => item.code)).toEqual(["NUXT0003"]);
+      expect(result.diagnostics.map((item) => item.code)).toEqual(["DOC9999"]);
       expect(result.diagnostics[0]?.file).toBe(anchor);
       expect(result.diagnostics[0]?.range).toBeUndefined();
     });

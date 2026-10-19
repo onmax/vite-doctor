@@ -217,10 +217,13 @@ export interface NuxtProjectInfo {
     appMiddlewareDir?: string;
     serverDir?: string;
     aliases?: Record<string, string>;
+    compilerScan?: boolean;
     priority: number;
   }>;
   localLayerAliases?: boolean;
   routeRules?: Record<string, unknown>;
+  /** `false` when the Nuxt app disables server-side rendering. */
+  ssr?: boolean;
   runtimeConfig?: unknown;
   serverDirs: {
     api: string[];
@@ -310,12 +313,14 @@ export interface NuxtDoctorManifest {
     appMiddlewareDir?: string;
     serverDir?: string;
     aliases?: Record<string, string>;
+    compilerScan?: boolean;
     name?: string;
     priority: number;
   }>;
   localLayerAliases?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
+  ssr?: boolean;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
@@ -387,6 +392,12 @@ export interface WorkspacePackageActivation {
   name?: string;
   framework: DoctorFramework;
   rulePacks: string[];
+}
+
+/** The Rule Packs whose Activation matched, and the Rule Packs whose Presets Config Extends selected. */
+export interface RulePackSelection {
+  activated: string[];
+  selected: string[];
 }
 
 export interface RuntimePackageInstance {
@@ -574,7 +585,11 @@ export interface DoctorHelpers {
   isInSetupLikeContext(node: unknown): boolean;
   isClientOnlyExecutionContext(node: unknown, source: string): boolean;
   isTypeOnlyContext(node: unknown): boolean;
-  hasLocalBindingBefore(node: unknown, source: string): boolean;
+  /**
+   * Whether the identifier names a binding declared in an enclosing scope (parameter, variable,
+   * function, class, import, destructured name, catch parameter) instead of a global.
+   */
+  hasLocalBinding(node: unknown): boolean;
   isTypeofOperand(node: unknown): boolean;
   getNodeName(node: unknown): string | null;
   getCalleeName(node: unknown): string | null;
@@ -907,6 +922,7 @@ export interface DoctorRunResult {
   phases?: Record<string, number>;
   ruleTimings?: Array<{ rule: string; ms: number; files: number }>;
   workspacePackages?: WorkspacePackageActivation[];
+  rulePacks?: RulePackSelection;
   graph?: {
     files: number;
     importEdges: number;

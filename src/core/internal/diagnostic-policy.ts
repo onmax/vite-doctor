@@ -16,6 +16,7 @@ import type { Diagnostic } from "../primitives.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import { lineColumnAt } from "./line-index.js";
 import { loadVueCompilerSfc } from "./lazy-parsers.js";
+import { walkAstFacts } from "./facts.js";
 import { parseScript } from "./script.js";
 import { parseVueScriptsResult } from "./sfc.js";
 import {
@@ -25,6 +26,8 @@ import {
   walkTemplate,
 } from "./template.js";
 import { sha256 } from "./utils.js";
+import { viteDoctorVersion } from "../../version.js";
+import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
 
 export interface DiagnosticPolicyInput {
   root: string;
@@ -36,6 +39,18 @@ export interface DiagnosticPolicyInput {
 export interface DiagnosticPolicyResult {
   diagnostics: Diagnostic[];
   suppressedDiagnostics: Diagnostic[];
+  /** Set when `newOnly` filters through a baseline written with another fingerprint scheme. */
+  staleBaseline?: StaleBaseline;
+}
+
+export interface StaleBaseline {
+  file: string;
+  fingerprintScheme?: number;
+  doctorVersion?: string;
+}
+
+interface Baseline extends StaleBaseline {
+  fingerprints: Set<string>;
 }
 
 export interface BaselineWriteHooks {
@@ -49,11 +64,17 @@ interface InlineSuppression {
   reason: string;
 }
 
+interface InlineSuppressions {
+  nearby: Map<number, InlineSuppression>;
+  byTargetLine: Map<number, InlineSuppression[]>;
+}
+
 export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticPolicyResult {
   const suppressed: Diagnostic[] = [];
   const sourceLines = new Map<string, string[]>();
-  const sourceSuppressions = new Map<string, Map<number, InlineSuppression>>();
+  const sourceSuppressions = new Map<string, InlineSuppressions>();
   const baseline = readBaseline(input.root, input.options.baseline);
+  const fingerprints = baseline?.fingerprints ?? new Set<string>();
   const nextDiagnostics: Diagnostic[] = [];
   for (const diagnostic of input.diagnostics) {
     const suppression = findSuppression(
@@ -63,7 +84,7 @@ export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticP
       sourceLines,
       sourceSuppressions,
     );
-    const inBaseline = baseline.has(diagnostic.fingerprint ?? "");
+    const inBaseline = fingerprints.has(diagnostic.fingerprint ?? "");
     if (suppression || (input.options.newOnly && inBaseline)) {
       suppressed.push({
         ...diagnostic,
@@ -78,7 +99,23 @@ export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticP
   if (input.options.updateBaseline && input.options.baseline)
     writeBaseline(input.root, input.options.baseline, [...nextDiagnostics, ...suppressed]);
 
-  return { diagnostics: nextDiagnostics, suppressedDiagnostics: suppressed };
+  const stale =
+    baseline &&
+    input.options.newOnly &&
+    !input.options.updateBaseline &&
+    baseline.fingerprints.size > 0 &&
+    baseline.fingerprintScheme !== FINGERPRINT_SCHEME;
+  return {
+    diagnostics: nextDiagnostics,
+    suppressedDiagnostics: suppressed,
+    staleBaseline: stale
+      ? {
+          file: baseline.file,
+          fingerprintScheme: baseline.fingerprintScheme,
+          doctorVersion: baseline.doctorVersion,
+        }
+      : undefined,
+  };
 }
 
 // Duplicates are keyed by start offset because overlapping passes can report one finding with
@@ -120,8 +157,8 @@ export function settleDiagnosticIdentity(diagnostics: Diagnostic[]): Diagnostic[
   return unique;
 }
 
-function readBaseline(root: string, baseline?: string): Set<string> {
-  if (!baseline) return new Set();
+function readBaseline(root: string, baseline?: string): Baseline | undefined {
+  if (!baseline) return undefined;
   const file = resolve(root, baseline);
   const invalid = (reason: string) => doctorInternalDiagnostics.DOC0025({ file, reason });
   let source: string;
@@ -129,7 +166,7 @@ function readBaseline(root: string, baseline?: string): Set<string> {
     source = readFileSync(file, "utf8");
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return new Set();
+    if (code === "ENOENT") return undefined;
     throw invalid(`Cannot read the file${code ? ` (${code})` : ""}.`);
   }
   let json: unknown;
@@ -139,12 +176,23 @@ function readBaseline(root: string, baseline?: string): Set<string> {
     throw invalid("The file is not valid JSON.");
   }
   let entries: unknown[];
+  let fingerprintScheme: number | undefined;
+  let doctorVersion: string | undefined;
   if (Array.isArray(json)) entries = json;
   else if (json && typeof json === "object" && "diagnostics" in json) {
+    const scheme = "fingerprintScheme" in json ? json.fingerprintScheme : undefined;
+    if (scheme !== undefined && typeof scheme !== "number")
+      throw invalid('Expected "fingerprintScheme" to be a number.');
+    fingerprintScheme = scheme;
     if ("reportVersion" in json) {
       if (json.reportVersion !== 3) throw invalid("Expected Doctor JSON report version 3.");
+      if ("version" in json && typeof json.version === "string") doctorVersion = json.version;
+    } else if ("version" in json && json.version === 2) {
+      if (scheme === undefined) throw invalid('Baseline version 2 requires "fingerprintScheme".');
+      if ("doctorVersion" in json && typeof json.doctorVersion === "string")
+        doctorVersion = json.doctorVersion;
     } else if ("version" in json && json.version !== 1)
-      throw invalid("Expected baseline version 1.");
+      throw invalid("Expected baseline version 1 or 2.");
     if (!Array.isArray(json.diagnostics)) throw invalid('Expected a "diagnostics" array.');
     const suppressedEntries =
       "suppressedDiagnostics" in json ? json.suppressedDiagnostics : undefined;
@@ -161,7 +209,7 @@ function readBaseline(root: string, baseline?: string): Set<string> {
       throw invalid(`Entry ${index + 1} must contain a non-empty string fingerprint.`);
     fingerprints.add(fingerprint);
   }
-  return fingerprints;
+  return { file, fingerprints, fingerprintScheme, doctorVersion };
 }
 
 export function writeBaseline(
@@ -175,7 +223,9 @@ export function writeBaseline(
   const target = baselineTarget(file);
   const text = `${JSON.stringify(
     {
-      version: 1,
+      version: 2,
+      fingerprintScheme: FINGERPRINT_SCHEME,
+      doctorVersion: viteDoctorVersion,
       diagnostics: diagnostics
         .map((diagnostic) => ({
           ruleId: diagnostic.ruleId,
@@ -237,7 +287,7 @@ function findSuppression(
   config: DoctorConfig,
   diagnostic: Diagnostic,
   sourceLines: Map<string, string[]>,
-  sourceSuppressions: Map<string, Map<number, InlineSuppression>>,
+  sourceSuppressions: Map<string, InlineSuppressions>,
 ): string | null {
   const configured = config.suppressions?.find((suppression) => {
     if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
@@ -263,28 +313,55 @@ function findSuppression(
     sourceSuppressions.set(diagnostic.file, directives);
   }
   const line = diagnostic.range.line;
+  const applies = (inline: InlineSuppression) =>
+    inline.rules.includes(diagnostic.ruleId) || inline.rules.includes("*");
   const start = Math.max(0, line - 3);
   const end = Math.min(lines.length, line + 1);
   for (let index = start; index < end; index++) {
-    const inline = directives.get(index);
-    if (!inline || (inline.nextLine && line !== index + 2)) continue;
-    if (!inline.rules.includes(diagnostic.ruleId) && !inline.rules.includes("*")) continue;
-    return inline.reason;
+    const inline = directives.nearby.get(index);
+    if (inline && applies(inline)) return inline.reason;
   }
-  return null;
+  return directives.byTargetLine.get(line - 1)?.find(applies)?.reason ?? null;
 }
 
-function collectInlineSuppressions(file: string, lines: string[]): Map<number, InlineSuppression> {
+function collectInlineSuppressions(file: string, lines: string[]): InlineSuppressions {
+  const suppressions: InlineSuppressions = { nearby: new Map(), byTargetLine: new Map() };
   const source = lines.join("\n");
-  if (!source.includes("doctor-disable")) return new Map();
+  if (!source.includes("doctor-disable")) return suppressions;
   const directives = new Map<number, InlineSuppression>();
-  const comments = file.endsWith(".vue")
+  const { comments, codeFree } = file.endsWith(".vue")
     ? collectVueComments(file, source)
     : collectScriptComments(file, source);
   for (const comment of comments) {
     addCommentSuppressions(directives, source, comment.start, comment.end);
   }
-  return directives;
+  const code = linesWithCode(source, [...comments, ...codeFree]);
+  for (const [line, directive] of directives) {
+    if (!directive.nextLine) {
+      suppressions.nearby.set(line, directive);
+      continue;
+    }
+    // Comments such as SAFETY notes often sit between a directive and the code it covers.
+    let target = line + 1;
+    while (target < code.length && !code[target]) target++;
+    const targeted = suppressions.byTargetLine.get(target);
+    if (targeted) targeted.push(directive);
+    else suppressions.byTargetLine.set(target, [directive]);
+  }
+  return suppressions;
+}
+
+function linesWithCode(source: string, spans: SourceComment[]): boolean[] {
+  const masked = source.split("");
+  for (const span of spans) {
+    for (let index = span.start; index < span.end; index++) {
+      if (masked[index] !== "\n") masked[index] = " ";
+    }
+  }
+  return masked
+    .join("")
+    .split("\n")
+    .map((line) => line.trim().length > 0);
 }
 
 interface SourceComment {
@@ -292,16 +369,37 @@ interface SourceComment {
   end: number;
 }
 
-function collectScriptComments(file: string, source: string): SourceComment[] {
+function collectScriptComments(
+  file: string,
+  source: string,
+): { comments: SourceComment[]; codeFree: SourceComment[] } {
   const parsed = parseScript(file, source);
-  if (!parsed) return [];
-  return ((parsed.comments as Array<{ start?: number; end?: number }>) ?? []).filter(
+  if (!parsed) return { comments: [], codeFree: [] };
+  const comments = ((parsed.comments as Array<{ start?: number; end?: number }>) ?? []).filter(
     (comment): comment is { start: number; end: number } =>
       typeof comment.start === "number" && typeof comment.end === "number",
   );
+  return { comments, codeFree: /\.[cm]?[jt]sx$/.test(file) ? jsxCommentContainers(parsed) : [] };
 }
 
-function collectVueComments(file: string, source: string): SourceComment[] {
+// A JSX comment's `{}` container holds no code, but it sits outside the parsed comment span.
+function jsxCommentContainers(ast: unknown): SourceComment[] {
+  const containers: SourceComment[] = [];
+  walkAstFacts(ast, (node) => {
+    const container = node as { type?: string; expression?: { type?: string } } & SourceComment;
+    if (
+      container.type === "JSXExpressionContainer" &&
+      container.expression?.type === "JSXEmptyExpression"
+    )
+      containers.push({ start: container.start, end: container.end });
+  });
+  return containers;
+}
+
+function collectVueComments(
+  file: string,
+  source: string,
+): { comments: SourceComment[]; codeFree: SourceComment[] } {
   try {
     const { descriptor } = loadVueCompilerSfc().parse(source, {
       filename: file,
@@ -318,9 +416,9 @@ function collectVueComments(file: string, source: string): SourceComment[] {
         if (node.type === TemplateNodeType.COMMENT)
           comments.push({ start: node.loc.start.offset, end: node.loc.end.offset });
       });
-    return comments;
+    return { comments, codeFree: script ? jsxCommentContainers(script) : [] };
   } catch {
-    return [];
+    return { comments: [], codeFree: [] };
   }
 }
 

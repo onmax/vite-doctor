@@ -1,4 +1,17 @@
-import { AnyNode, createRule, isClientOnlyPath, isNuxtRuntimeFile, report } from "./shared.js";
+import type { RuleContext } from "../../../../core/index.js";
+import { getObjectPropertyValue, isFalseLiteral } from "./async-data.js";
+import { findStatementBinding, patternNames } from "./script-index.js";
+import {
+  AnyNode,
+  classifyExecutionEvidence,
+  createRule,
+  isClientOnlyPath,
+  isExplicitPlugin,
+  isNuxtRuntimeFile,
+  nearestFunctionOrProgram,
+  report,
+  walkScriptLocal,
+} from "./shared.js";
 
 export const forwardAuthHeadersSsr = createRule({
   meta: {
@@ -23,6 +36,7 @@ export const forwardAuthHeadersSsr = createRule({
         if (!String(url).startsWith("/api/")) return;
         if (!isAuthSensitiveInternalApi(String(url))) return;
         if (forwardsRequestCredentials(node)) return;
+        if (!runsDuringSsr(ctx, node, new Set())) return;
         report(
           ctx,
           node,
@@ -36,6 +50,175 @@ export const forwardAuthHeadersSsr = createRule({
     };
   },
 });
+
+const DEFERRED_EXECUTION = new Set([
+  "client-only",
+  "lifecycle-only",
+  "event-handler",
+  "server-only",
+]);
+const DEFERRING_CALLS = new Set([
+  "onMounted",
+  "onBeforeMount",
+  "onBeforeUnmount",
+  "onUnmounted",
+  "watch",
+  "watchPostEffect",
+  "nextTick",
+]);
+const ASYNC_DATA_ENTRIES = new Set(["useAsyncData", "useLazyAsyncData", "callOnce"]);
+const BROWSER_CALLBACKS = new Set(["requestAnimationFrame", "requestIdleCallback"]);
+const SETUP_OWNERS = new Set(["defineComponent", "defineNuxtComponent", "defineNuxtPlugin"]);
+const SSR_CALLBACK_ENTRIES = new Set([
+  "defineNuxtPlugin",
+  "defineNuxtRouteMiddleware",
+  "watchEffect",
+  "watchSyncEffect",
+]);
+const localReferences = new WeakMap<object, Map<string, AnyNode[]>>();
+
+// Only requests with evidence of running during SSR miss the browser's cookies.
+function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boolean {
+  const evidence = classifyExecutionEvidence(ctx, node);
+  if (evidence === "lifecycle-only" ? !onlyInSsrWatchers(node) : DEFERRED_EXECUTION.has(evidence))
+    return false;
+  const scope = nearestFunctionOrProgram(node);
+  if (!scope || seen.has(scope)) return false;
+  if (scope.type === "Program") return true;
+  seen.add(scope);
+  const parent = scope.__doctorParent;
+  if (parent?.type === "CallExpression" || parent?.type === "NewExpression") {
+    if (parent.callee === scope) return runsDuringSsr(ctx, parent, seen);
+    const callee = ctx.helpers.getCalleeName(parent) ?? "";
+    if (BROWSER_CALLBACKS.has(callee.replace(/^window\./, ""))) return false;
+    if (ASYNC_DATA_ENTRIES.has(callee) && !asyncDataRunsOnServer(parent, scope)) return false;
+    return runsDuringSsr(ctx, parent, seen);
+  }
+  if (
+    parent?.type === "Property" &&
+    parent.value === scope &&
+    !parent.computed &&
+    (parent.key?.name ?? parent.key?.value) === "setup"
+  ) {
+    const options = parent.__doctorParent;
+    const owner = options?.__doctorParent;
+    if (owner?.type === "ExportDefaultDeclaration") return isSetupEntryFile(ctx);
+    if (
+      owner?.type !== "CallExpression" ||
+      owner.arguments?.[0] !== options ||
+      !SETUP_OWNERS.has(ctx.helpers.getCalleeName(owner) ?? "")
+    )
+      return false;
+    return runsDuringSsr(ctx, owner, seen);
+  }
+  const name = functionName(scope);
+  if (!name) return false;
+  if (/^use[A-Z]/.test(name)) return true;
+  const declaration = scope.type === "FunctionDeclaration" ? scope : scope.__doctorParent;
+  return (references(ctx).get(name) ?? []).some((reference) => {
+    if (resolveBinding(reference) !== declaration) return false;
+    const call = reference.__doctorParent;
+    if (call.callee !== reference) {
+      const callee = ctx.helpers.getCalleeName(call) ?? "";
+      const runs = ASYNC_DATA_ENTRIES.has(callee)
+        ? asyncDataRunsOnServer(call, reference)
+        : SSR_CALLBACK_ENTRIES.has(callee);
+      if (!runs) return false;
+    }
+    return runsDuringSsr(ctx, call, seen);
+  });
+}
+
+// Nuxt invokes default-exported setup objects only for component files and plugin entries.
+// Arbitrary default exports in scanned runtime files (for example app/utils) are inert.
+function isSetupEntryFile(ctx: RuleContext): boolean {
+  const path = ctx.file.relativePath.replace(/\\/g, "/");
+  if (path.endsWith(".vue") || isExplicitPlugin(ctx)) return true;
+  const pluginFile = /^(?:plugins|app\/plugins)\/[^/]+(?:\.(?:client|server))?\.[cm]?[jt]s$/;
+  const indexPluginFile =
+    /^(?:plugins|app\/plugins)\/[^/]+\/index(?:\.(?:client|server))?\.[cm]?[jt]s$/;
+  return pluginFile.test(path) || indexPluginFile.test(path);
+}
+
+// Vue runs `watchEffect()` callbacks once during SSR setup. `watch()` callbacks count as
+// deferred in the shared classifier, so immediate watchers stay unreported.
+function onlyInSsrWatchers(node: AnyNode): boolean {
+  for (let current = node.__doctorParent; current; current = current.__doctorParent) {
+    if (current.type !== "CallExpression") continue;
+    const name = current.callee?.name ?? current.callee?.property?.name ?? "";
+    if (DEFERRING_CALLS.has(name)) return false;
+  }
+  return true;
+}
+
+function asyncDataRunsOnServer(call: AnyNode, handler: AnyNode): boolean {
+  const last = call.arguments?.at(-1);
+  if (!last || last === handler) return true;
+  const options = resolveLocalObject(last);
+  if (!options) return false;
+  if (
+    options.properties?.some(
+      (property: AnyNode) =>
+        property.type === "SpreadElement" || property.type === "SpreadProperty",
+    )
+  )
+    return false;
+  return !["server", "immediate"].some((key) =>
+    isFalseLiteral(getObjectPropertyValue(options, key)),
+  );
+}
+
+function resolveLocalObject(node: AnyNode): AnyNode {
+  const value = unwrapExpression(node);
+  if (value?.type === "ObjectExpression") return value;
+  if (value?.type !== "Identifier") return null;
+  const binding = resolveBinding(value);
+  if (binding?.type !== "VariableDeclarator" || binding.__doctorParent?.kind !== "const")
+    return null;
+  if (binding.id?.type !== "Identifier") return null;
+  const init = unwrapExpression(binding.init);
+  return init?.type === "ObjectExpression" ? init : null;
+}
+
+function resolveBinding(identifier: AnyNode): AnyNode {
+  for (let scope = identifier.__doctorParent; scope; scope = scope.__doctorParent) {
+    if (scope.params?.some((param: AnyNode) => patternNames(param).includes(identifier.name)))
+      return null;
+    const binding = findStatementBinding(scope, identifier.name);
+    if (binding) return binding;
+  }
+  return null;
+}
+
+function functionName(fn: AnyNode): string | undefined {
+  if (fn.type === "FunctionDeclaration") return fn.id?.name;
+  const parent = fn.__doctorParent;
+  if (
+    parent?.type === "VariableDeclarator" &&
+    parent.init === fn &&
+    parent.id?.type === "Identifier"
+  )
+    return parent.id.name;
+}
+
+// Calls by name, plus names passed as callbacks that run during SSR.
+function references(ctx: RuleContext): Map<string, AnyNode[]> {
+  const program = ctx.file.scriptAst ?? {};
+  let collected = localReferences.get(program);
+  if (collected) return collected;
+  const found = new Map<string, AnyNode[]>();
+  localReferences.set(program, found);
+  const add = (identifier: AnyNode) =>
+    found.set(identifier.name, [...(found.get(identifier.name) ?? []), identifier]);
+  walkScriptLocal(program, (node) => {
+    if (node.type !== "CallExpression") return;
+    if (node.callee?.type === "Identifier") add(node.callee);
+    const callee = ctx.helpers.getCalleeName(node) ?? "";
+    if (!ASYNC_DATA_ENTRIES.has(callee) && !SSR_CALLBACK_ENTRIES.has(callee)) return;
+    for (const argument of node.arguments ?? []) if (argument?.type === "Identifier") add(argument);
+  });
+  return found;
+}
 
 function isAuthSensitiveInternalApi(url: string): boolean {
   return /\/api\/(?:auth|admin|account|user|users|me|profile|session|feedback|agent|private|billing|settings)(?:\/|$)/i.test(

@@ -36,7 +36,7 @@ export const postFetchRequiresReadonlyMarker = createRule({
           "error",
           "fetching",
           `${call.name}() registers a write-like POST request to ${call.path ?? "an unknown endpoint"} as replayable Nuxt async data.`,
-          "Use $fetch() for writes. If this endpoint is read-only despite the write-like path, configure readonlyPaths for the Nuxt Doctor module.",
+          "Use $fetch() for writes. If this endpoint is read-only despite the write-like path, mark the call with /* nuxt-doctor: async-data-readonly */ or list the path in this rule's readonlyPaths option: rules: { 'nuxt/post-fetch-requires-readonly-marker': ['error', { readonlyPaths: ['/api/...'] }] }.",
         );
       },
     };

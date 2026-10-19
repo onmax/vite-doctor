@@ -36,6 +36,8 @@ export interface PackageReference {
 }
 
 export interface PackageArtifacts {
+  /** Real path of the package directory; `missing` paths are relative to it. */
+  root: string;
   manifest: PackageManifest;
   references: PackageReference[];
   missing: string[];
@@ -106,22 +108,28 @@ function parsePackageManifest(value: unknown): PackageManifest {
   return value;
 }
 
-export function packageArtifacts(ctx: RuleContext): PackageArtifacts | null {
+/** Artifacts of every publishable package in the Doctor Run: the root and each workspace package. */
+export function packageArtifacts(ctx: RuleContext): PackageArtifacts[] {
   const key = "package:artifacts";
-  const cached = ctx.cache.get<PackageArtifacts | null>(key);
+  const cached = ctx.cache.get<PackageArtifacts[]>(key);
   if (cached !== undefined) return cached;
   const project = ctx.project;
-  const inventory = readPackageArtifacts(project.root, ctx.fs);
+  const inventory = (project.workspacePackages ?? [{ root: "." }]).flatMap(
+    (item) => readPackageArtifacts(resolve(project.root, item.root), ctx.fs) ?? [],
+  );
   ctx.cache.set(key, inventory);
-  if (inventory) project.inventory = { ...project.inventory, packageArtifacts: inventory };
-  if (inventory?.missing.length) {
+  if (inventory.length) project.inventory = { ...project.inventory, packageArtifacts: inventory };
+  const missing = inventory.flatMap((artifacts) =>
+    artifacts.missing.map((file) => relative(project.root, resolve(artifacts.root, file))),
+  );
+  if (missing.length) {
     project.evidenceGaps = [
       ...(project.evidenceGaps ?? []),
       {
         source: "vite-doctor/package",
         message:
           "Build the package before running package rules; some referenced artifacts are missing.",
-        files: inventory.missing,
+        files: missing,
       },
     ];
   }
@@ -157,6 +165,7 @@ export function readPackageArtifacts(
     });
   }
   return {
+    root: active.root,
     manifest: active.manifest,
     references: [...references.values()],
     missing: [...new Set([...active.missing, ...inactive.missing])],
@@ -177,7 +186,12 @@ function readPackageArtifactsForMode(
   const references: PackageReference[] = [];
   const missing = new Set<string>();
   const visited = new Set<string>();
-  const queue: Array<{ path: string; kind: "runtime" | "types"; required: boolean }> = [];
+  const queue: Array<{
+    path: string;
+    kind: "runtime" | "types";
+    required: boolean;
+    declarationBacked?: boolean;
+  }> = [];
   const rootPath = fs.realpath(root) ?? root;
 
   function inside(path: string) {
@@ -259,6 +273,7 @@ function readPackageArtifactsForMode(
     probe: boolean | "main" | "commonjs" = true,
     adjacentDeclaration = false,
     sourceResolution = false,
+    declarationBacked = false,
   ) {
     const path = resolve(from, target);
     if (!inside(path)) return;
@@ -267,7 +282,17 @@ function readPackageArtifactsForMode(
         .glob(path.replace("*", "**/*"))
         .filter((match) => fs.stat(match)?.isFile() === true);
       if (!matches.length) missing.add(relative(root, path));
-      for (const match of matches) enqueue(match, kind, required);
+      for (const match of matches)
+        enqueue(
+          match,
+          kind,
+          required,
+          from,
+          false,
+          adjacentDeclaration,
+          sourceResolution,
+          declarationBacked,
+        );
       return;
     }
     const candidates = probe
@@ -304,18 +329,22 @@ function readPackageArtifactsForMode(
     }
     if (!inside(fs.realpath(file) ?? file) || !scriptExtension.test(file)) return;
     const resolvedKind = declarationExtension.test(file) ? "types" : kind;
+    const declaration =
+      resolvedKind === "runtime"
+        ? typeCandidates(file).find(
+            (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
+          )
+        : undefined;
     queue.push({
       path: file,
       kind: resolvedKind,
       required: required && resolvedKind === "runtime",
+      declarationBacked:
+        resolvedKind === "runtime" &&
+        (declarationBacked || Boolean(adjacentDeclaration && declaration)),
     });
-    if (resolvedKind === "runtime") {
-      const declaration = typeCandidates(file).find(
-        (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
-      );
-      if (adjacentDeclaration && declaration)
-        queue.push({ path: declaration, kind: "types", required: false });
-    }
+    if (resolvedKind === "runtime" && adjacentDeclaration && declaration)
+      queue.push({ path: declaration, kind: "types", required: false });
   }
 
   function targets(
@@ -343,9 +372,11 @@ function readPackageArtifactsForMode(
         for (const [condition, item] of Object.entries(value))
           if (condition === "types" || condition.startsWith("types@")) {
             const declarations = targets(item, "types", mode, addons);
-            if (Array.isArray(declarations))
+            if (Array.isArray(declarations)) {
+              typedTargets ||= declarations.some((declaration) => typed(declaration));
               for (const declaration of declarations)
                 enqueue(declaration, "types", false, root, false, true);
+            }
           }
       for (const [condition, item] of Object.entries(value)) {
         if (
@@ -362,11 +393,36 @@ function readPackageArtifactsForMode(
     return undefined;
   }
 
+  let typedTargets = false;
   function addTargets(value: unknown, required: boolean, mode: "import" | "require") {
+    typedTargets = false;
     const selected = targets(value, "runtime", mode, addons);
     if (Array.isArray(selected))
-      for (const target of selected) enqueue(target, "runtime", required, root, false, true);
+      for (const target of selected)
+        enqueue(target, "runtime", required, root, false, true, false, typedTargets);
   }
+
+  const typed = (path: string) => {
+    const resolved = resolve(root, path);
+    const candidates = path.includes("*")
+      ? fs
+          .glob(resolved.replaceAll("*", "**/*"))
+          .filter((candidate) => fs.stat(candidate)?.isFile() === true)
+      : typeCandidates(resolved);
+    return candidates.some(
+      (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
+    );
+  };
+  const rootTyped = Boolean(
+    (manifest.types && typed(manifest.types)) ||
+    (manifest.typings && typed(manifest.typings)) ||
+    Object.values(manifest.typesVersions ?? {}).some((version) =>
+      Object.entries(version).some(
+        ([pattern, entries]) => pattern === "*" && entries.some((entry) => typed(entry)),
+      ),
+    ) ||
+    (manifest.main && typed(manifest.main)),
+  );
 
   if (manifest.exports != null) {
     const exports = manifest.exports;
@@ -385,15 +441,18 @@ function readPackageArtifactsForMode(
       addTargets(exports, true, "require");
     }
   } else if (!manifest.main && !manifest.module) {
-    if (fs.exists(resolve(root, "index.js"))) enqueue("index.js", "runtime", true);
+    if (fs.exists(resolve(root, "index.js")))
+      enqueue("index.js", "runtime", true, root, true, true, false, rootTyped);
   }
-  if (manifest.main) enqueue(manifest.main, "runtime", true, root, "main", true);
-  if (manifest.module) enqueue(manifest.module, "runtime", true, root, true, true);
+  if (manifest.main) enqueue(manifest.main, "runtime", true, root, "main", true, false, rootTyped);
+  if (manifest.module)
+    enqueue(manifest.module, "runtime", true, root, true, true, false, rootTyped);
   if (typeof manifest.browser === "string")
-    enqueue(manifest.browser, "runtime", true, root, false, true);
+    enqueue(manifest.browser, "runtime", true, root, false, true, false, rootTyped);
   else if (manifest.browser) {
-    for (const entry of Object.values(manifest.browser))
-      if (entry && entry.startsWith(".")) enqueue(entry, "runtime", false, root, false, true);
+    for (const [original, entry] of Object.entries(manifest.browser))
+      if (entry && entry.startsWith("."))
+        enqueue(entry, "runtime", false, root, false, true, false, rootTyped || typed(original));
   }
   for (const entry of [manifest.types, manifest.typings])
     if (entry) enqueue(entry, "types", false, root, false);
@@ -409,14 +468,23 @@ function readPackageArtifactsForMode(
 
   for (let i = 0; i < queue.length; i++) {
     const current = queue[i]!;
-    const key = `${current.path}:${current.kind}:${current.required}`;
+    const key = `${current.path}:${current.kind}:${current.required}:${current.declarationBacked ?? false}`;
     if (visited.has(key)) continue;
     visited.add(key);
     if (current.required && manifest.browser && typeof manifest.browser === "object") {
       for (const [original, replacement] of Object.entries(manifest.browser)) {
         if (!replacement || resolve(root, original) !== current.path) continue;
         if (replacement.startsWith(".")) {
-          enqueue(replacement, "runtime", true, root, false, true);
+          enqueue(
+            replacement,
+            "runtime",
+            true,
+            root,
+            false,
+            true,
+            false,
+            current.declarationBacked,
+          );
           continue;
         }
         const packageName = externalPackageName(replacement);
@@ -452,6 +520,7 @@ function readPackageArtifactsForMode(
       current.kind,
       commonjs,
       explicitCommonjsModule(current.path),
+      !current.declarationBacked && !/\.(?:[cm]?ts|tsx)$/.test(current.path),
     )) {
       const required = current.required && edge.required;
       const executionRequired = required && !edge.resolutionOnly;
@@ -476,6 +545,7 @@ function readPackageArtifactsForMode(
               : edge.probe || kind === "types" || /\.(?:[cm]?ts|tsx|jsx)$/.test(current.path),
             false,
             /\.(?:[cm]?ts|tsx)$/.test(current.path),
+            current.declarationBacked,
           );
           continue;
         }
@@ -513,6 +583,9 @@ function readPackageArtifactsForMode(
                   target.kind === "runtime",
                 scope.directory,
                 exports === undefined ? "main" : false,
+                true,
+                false,
+                current.declarationBacked,
               );
           }
           continue;
@@ -541,7 +614,7 @@ function readPackageArtifactsForMode(
     const previous = unique.get(key);
     unique.set(key, { ...reference, required: reference.required || Boolean(previous?.required) });
   }
-  return { manifest, references: [...unique.values()], missing: [...missing] };
+  return { root, manifest, references: [...unique.values()], missing: [...missing] };
 }
 
 function typeCandidates(path: string) {
@@ -1034,6 +1107,7 @@ function importEdges(
   kind: "runtime" | "types",
   commonjs: boolean,
   explicitCommonjs: boolean,
+  jsdocTypes: boolean,
 ): ImportEdge[] {
   const edges: ImportEdge[] = [];
   const supportsStaticImports = !explicitCommonjs;
@@ -1119,18 +1193,18 @@ function importEdges(
     }
   });
   edges.sort((left, right) => left.start - right.start);
-  const jsdoc = /\/\*\*[\s\S]*?\*\//g;
-  for (let comment; (comment = jsdoc.exec(parsed.text));) {
+  for (const comment of jsdocTypes ? parsed.comments : []) {
+    const text = parsed.text.slice(comment.start, comment.end);
+    if (comment.type !== "Block" || !text.startsWith("/**")) continue;
     const imports = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
-    for (let match; (match = imports.exec(comment[0]));) {
-      const start = comment.index + match.index + match[0].indexOf(match[1]!);
+    for (let match; (match = imports.exec(text));) {
+      const start = comment.start + match.index + match[0].indexOf(match[1]!);
       edges.push({
         specifier: match[1]!,
         start,
         end: start + match[1]!.length,
         kind: "types",
         required: false,
-        typeReference: true,
       });
     }
   }

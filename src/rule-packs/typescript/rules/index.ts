@@ -5,6 +5,7 @@ export { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 export { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 export { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
 export { noConditionalEmptyObjectSpread } from "./no-conditional-empty-object-spread.js";
+export { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
 export { noObjectParameters } from "./no-object-parameters.js";
 export { noRuntimeTypeof } from "./no-runtime-typeof.js";
 export { noUnknownTypeAliases } from "./no-unknown-type-aliases.js";
@@ -15,6 +16,7 @@ import { defineRulePack } from "../../../core/index.js";
 import { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 import { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
 import { noConditionalEmptyObjectSpread } from "./no-conditional-empty-object-spread.js";
+import { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
 import { noObjectParameters } from "./no-object-parameters.js";
 import { noRuntimeTypeof } from "./no-runtime-typeof.js";
 import { noUnknownTypeAliases } from "./no-unknown-type-aliases.js";
@@ -35,6 +37,7 @@ const strictRules = [
   noReduceAccumulatorCopy,
   noCallerChosenResultType,
   ...recommendedRules,
+  noCrossRealmWebInstanceof,
   noObjectParameters,
   noUnknownTypeAliases,
   noConditionalEmptyObjectSpread,

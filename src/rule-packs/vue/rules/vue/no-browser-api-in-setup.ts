@@ -20,7 +20,7 @@ export const noBrowserApiInSetup = createRule({
           !ctx.file.relativePath.includes(".client.") &&
           !ctx.helpers.isTypeOnlyContext(node) &&
           !ctx.helpers.isTypeofOperand(node) &&
-          !ctx.helpers.hasLocalBindingBefore(node, ctx.file.text) &&
+          !ctx.helpers.hasLocalBinding(node) &&
           !ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)
         ) {
           report(
