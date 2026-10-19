@@ -1560,6 +1560,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/config/no-url-pathname-as-fs-path": {
+    description:
+      "Reports new URL(..., import.meta.url).pathname used as a file path in Vite and Vitest config files and Node-side plugin code.",
+    why: "A URL's pathname is not a file system path. It keeps percent-encoding, so a project under a directory with a space resolves to .../My%20App/..., and on Windows it starts with /C:/ instead of a drive letter path. Alias targets, build inputs, and fs reads built from it then point at files that do not exist. Doctor checks vite.config.* and vitest.config.* files and modules that import from vite, vite-plus, or vitest/config. It reports .pathname on new URL(..., import.meta.url), directly or through a const. URLs built from other bases, such as request URLs used for routing, are not reported.",
+    recommendedReplacement:
+      "Wrap the URL with fileURLToPath from node:url: fileURLToPath(new URL('./src/file.ts', import.meta.url)).",
+    examples: [
+      {
+        title: "Convert file URLs with fileURLToPath",
+        language: "ts",
+        invalid:
+          "import { defineConfig } from 'vitest/config'\n\nexport default defineConfig({\n  resolve: {\n    alias: {\n      '#registry': new URL('./src/runtime/empty-registry.ts', import.meta.url).pathname,\n    },\n  },\n})",
+        valid:
+          "import { fileURLToPath } from 'node:url'\nimport { defineConfig } from 'vitest/config'\n\nexport default defineConfig({\n  resolve: {\n    alias: {\n      '#registry': fileURLToPath(new URL('./src/runtime/empty-registry.ts', import.meta.url)),\n    },\n  },\n})",
+      },
+    ],
+  },
   "vite/define/no-runtime-object-define": {
     description:
       "Flags runtime object define in Vite define code before it leaks into runtime behavior.",
