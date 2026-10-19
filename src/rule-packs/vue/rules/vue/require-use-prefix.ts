@@ -253,22 +253,22 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
     return sourceUsesVue(api.source, api.exportName ?? api.name, current);
   }
 
-  function usesVue(node: AnyNode, module: ModuleAnalysis): boolean {
+  function usesVue(node: AnyNode, module: ModuleAnalysis, conservative = true): boolean {
     return memo(node, () => {
       let found = false;
       walkScriptLocal(node, (child) => {
-        if (!found && child.type === "CallExpression") found = callUsesVue(child, module);
+        if (!found && child.type === "CallExpression") found = callUsesVue(child, module, conservative);
       });
       return found;
     });
   }
 
-  function callUsesVue(call: AnyNode, module: ModuleAnalysis): boolean {
+  function callUsesVue(call: AnyNode, module: ModuleAnalysis, conservative = true): boolean {
     const api = callIdentity(call, module.bindings);
     if (!api) {
       const callee = unwrapExpression(call.callee);
       const fn = callee?.type === "Identifier" && localFunction(callee, module.bindings);
-      return Boolean(fn) && usesVue(fn, module);
+      return Boolean(fn) && usesVue(fn, module, false);
     }
     if (isContextAccessor(api.name, api.source, Boolean(nuxt))) return false;
     if (api.fn) return usesVue(api.fn, module);
@@ -278,10 +278,15 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
         (/^use[A-Z0-9]/.test(api.name) &&
           Boolean(nuxt?.autoImportsAuthoritative && nuxt.autoImports.has(api.name)))
       );
-    return sourceUsesVue(api.source, api.exportName ?? api.name, module);
+    return sourceUsesVue(api.source, api.exportName ?? api.name, module, conservative);
   }
 
-  function sourceUsesVue(source: string, name: string, module: ModuleAnalysis): boolean {
+  function sourceUsesVue(
+    source: string,
+    name: string,
+    module: ModuleAnalysis,
+    conservative = true,
+  ): boolean {
     if (NON_COMPOSABLE_SOURCES.test(source)) return false;
     if (VUE_API_SOURCES.test(source) || VUE_COMPOSABLE_SOURCES.test(source)) return true;
     const file = resolveLocalModule(ctx, dirname(module.file), source);
@@ -289,7 +294,7 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
     // preserves the rule's historical behavior for unresolved relative/Nuxt
     // aliases while unresolved package imports remain non-evidence.
     if (file) return exportsComposable(file, name);
-    return isLocalSpecifier(source, Boolean(ctx.project.nuxt));
+    return conservative && isLocalSpecifier(source, Boolean(ctx.project.nuxt));
   }
 
   function exportsComposable(file: string, name: string): boolean {
@@ -305,18 +310,18 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
     const definition = exportedDefinition(module.program, name);
     if (definition?.type === "ImportBinding")
       return sourceUsesVue(definition.source, definition.imported, module);
-    if (definition) return usesVue(definition, module);
+    if (definition) return usesVue(definition, module, false);
     for (const statement of module.program.body ?? []) {
       if (!statement.source || statement.exportKind === "type") continue;
       if (statement.type === "ExportAllDeclaration" && !statement.exported) {
-        if (sourceUsesVue(statement.source.value, name, module)) return true;
+        if (sourceUsesVue(statement.source.value, name, module, false)) return true;
       } else if (statement.type === "ExportNamedDeclaration") {
         const specifier = (statement.specifiers ?? []).find(
           (candidate: AnyNode) =>
             candidate.exportKind !== "type" && moduleExportName(candidate.exported) === name,
         );
         if (specifier)
-          return sourceUsesVue(statement.source.value, moduleExportName(specifier.local), module);
+          return sourceUsesVue(statement.source.value, moduleExportName(specifier.local), module, false);
       }
     }
     return false;
@@ -431,9 +436,12 @@ function resolveLocalModule(ctx: RuleContext, from: string, source: string): str
         ? resolve(ctx.project.root, nuxt.appDir, source.slice(2))
         : undefined;
   if (!base) return;
-  const stem = base.replace(/\.[cm]?jsx?$/, "");
+  // Keep an explicit script extension as-is. Stripping only JavaScript
+  // extensions here used to turn `./use.ts` into `./use.ts.ts` for the
+  // generated candidates, so the existing module was treated as unresolved.
+  const stem = base.replace(/\.[cm]?[jt]sx?$/, "");
   const candidates = [
-    base,
+    ...(SCRIPT_FILE.test(base) ? [base] : []),
     ...[".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs"].map((extension) => `${stem}${extension}`),
     ...["/index.ts", "/index.js"].map((index) => `${base}${index}`),
   ];
