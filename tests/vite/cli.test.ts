@@ -637,6 +637,40 @@ test("CLI rejects repeated migration targets", async () => {
   });
 });
 
+test("CLI and Vite plugin report the Rule Packs an explicit extends left out", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ devDependencies: { vite: "^7.0.0", typescript: "^5.9.0" } }),
+      "tsconfig.json": "{}",
+      "src/main.ts": "export {}",
+    },
+    async (root) => {
+      const cli = await runCli(
+        [".", "--extends", "vite-doctor/typescript/strict", "--no-cache", "--format", "json"],
+        root,
+      );
+      const logs = await runVitePlugin(
+        doctor({ extends: ["vite-doctor/typescript/strict"], format: "json", cache: false }),
+        root,
+        "build",
+      );
+      expect(JSON.parse(cli.output).rulePacks).toEqual({
+        activated: ["vite-doctor/vite", "vite-doctor/typescript"],
+        selected: ["vite-doctor/typescript"],
+      });
+      expect(logs).toHaveLength(1);
+      expect(JSON.parse(logs[0]!).rulePacks).toEqual(JSON.parse(cli.output).rulePacks);
+      const text = await runCli(
+        [".", "--extends", "vite-doctor/typescript/strict", "--no-cache"],
+        root,
+      );
+      expect(text.output).toContain(
+        'Rule Packs not selected by extends: vite-doctor/vite (add "auto" to extends to select their recommended presets)',
+      );
+    },
+  );
+});
+
 test("CLI keeps comma-separated selectors and repeated boolean flags", async () => {
   await withFixture({ "package.json": "{}", "index.js": "export {}" }, async (root) => {
     const result = await runCli(
@@ -1216,7 +1250,7 @@ test("CLI can record and refresh a baseline while retaining new-only findings", 
       expect(first.diagnostics.map((item: { code: string }) => item.code)).toEqual(["VITE0009"]);
       const readBaseline = () => JSON.parse(readFileSync(join(root, baseline), "utf8"));
       expect(readBaseline()).toMatchObject({
-        version: 1,
+        version: 2,
         diagnostics: [{ fingerprint: first.diagnostics[0].fingerprint, file: "src/known.ts" }],
       });
 

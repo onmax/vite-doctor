@@ -4,6 +4,7 @@ import { join } from "pathe";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
 import { createAgentReport } from "../../src/core/reports.ts";
+import { FINGERPRINT_SCHEME } from "../../src/core/diagnostic-constants.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 
 const roots: string[] = [];
@@ -82,7 +83,11 @@ test("agent rerun retains baseline suppression and a literal baseline path", asy
   const baseline = "baseline $VALUE's.json";
   writeFileSync(
     join(root, baseline),
-    JSON.stringify(initial.report.diagnostics.map((d: any) => d.fingerprint)),
+    JSON.stringify({
+      version: 2,
+      fingerprintScheme: FINGERPRINT_SCHEME,
+      diagnostics: initial.report.diagnostics.map((d: any) => ({ fingerprint: d.fingerprint })),
+    }),
   );
   const original = await run(root, [
     ".",

@@ -410,3 +410,205 @@ test("removing a suppression is reflected in the next Doctor policy pass", () =>
   writeFileSync(file, "// suppression removed\nconst ignored = 2;");
   expect(applyDiagnosticPolicy(input).diagnostics).toEqual([diagnostic]);
 });
+
+test.each([
+  ["a line comment", ["// SAFETY: the adapter installs every member."]],
+  ["a blank line", [""]],
+  ["a multiline block comment", ["/*", " * SAFETY: the adapter installs every member.", " */"]],
+  ["stacked comments", ["// SAFETY: first.", "", "/* second */ // third"]],
+  ["comments after astral characters", ["// SAFETY: 🔒🔒🔒🔒🔒🔒🔒🔒🔒🔒", "// 🔒🔒🔒🔒🔒🔒🔒🔒"]],
+])("next-line suppression skips %s before its target line", (_, between) => {
+  const { root, file } = fixture(
+    [
+      "// doctor-disable-next-line test/example -- intentional fixture",
+      ...between,
+      "const ignored = value as unknown as string;",
+      "const after = 3;",
+    ].join("\n"),
+  );
+  const target = between.length + 2;
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, target), finding(file, target + 1)],
+  });
+  expect(result.diagnostics).toMatchObject([{ range: { line: target + 1 } }]);
+  expect(result.suppressedDiagnostics).toMatchObject([
+    { range: { line: target }, suppressionReason: "intentional fixture" },
+  ]);
+});
+
+test("next-line suppression does not hide a diagnostic on a skipped comment line", () => {
+  const { root, file } = fixture(
+    [
+      "// doctor-disable-next-line test/example -- intentional fixture",
+      "// SAFETY: the adapter installs every member.",
+      "const ignored = 2;",
+    ].join("\n"),
+  );
+  const diagnostic = finding(file, 2);
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [diagnostic],
+  });
+  expect(result.diagnostics).toEqual([diagnostic]);
+});
+
+test("next-line suppression skips Vue template comments before its target line", () => {
+  const { root, file } = fixture(
+    [
+      "<template>",
+      "  <!-- doctor-disable-next-line test/example -- html next line -->",
+      "  <!-- explains the element -->",
+      "  <div />",
+      "</template>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 4)],
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([{ suppressionReason: "html next line" }]);
+});
+
+test("next-line suppression skips stacked JSX comments before its target line", () => {
+  const { root, file } = fixture(
+    [
+      "export const view = (",
+      "  <section>",
+      "    {/* doctor-disable-next-line test/example -- jsx next line */}",
+      "    {/* explains the element */}",
+      "    <div />",
+      "    <span />",
+      "  </section>",
+      ");",
+    ].join("\n"),
+    "view.tsx",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 5), finding(file, 6)],
+  });
+  expect(result.diagnostics).toMatchObject([{ range: { line: 6 } }]);
+  expect(result.suppressedDiagnostics).toMatchObject([
+    { range: { line: 5 }, suppressionReason: "jsx next line" },
+  ]);
+});
+
+test("next-line suppression targets a line that holds only an empty object", () => {
+  const { root, file } = fixture(
+    [
+      "configure(",
+      "  // doctor-disable-next-line test/example -- intentional fixture",
+      "  {}",
+      ")",
+    ].join("\n"),
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 3)],
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("next-line suppression treats a block comment inside an ordinary block as code", () => {
+  const { root, file } = fixture(
+    [
+      "// doctor-disable-next-line test/example -- intentional fixture",
+      "{ /* ordinary block comment */ }",
+      "const after = 3;",
+    ].join("\n"),
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 2), finding(file, 3)],
+  });
+  expect(result.diagnostics).toMatchObject([{ range: { line: 3 } }]);
+});
+
+test("next-line suppression skips a JSX comment container that spans lines", () => {
+  const { root, file } = fixture(
+    [
+      "export const view = (",
+      "  <section>",
+      "    {",
+      "      /* doctor-disable-next-line test/example -- jsx next line */",
+      "    }",
+      "    <div />",
+      "  </section>",
+      ");",
+    ].join("\n"),
+    "view.tsx",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 6)],
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("next-line suppression skips JSX comments in a Vue TSX script", () => {
+  const { root, file } = fixture(
+    [
+      '<script setup lang="tsx">',
+      "const view = (",
+      "  <section>",
+      "    {/* doctor-disable-next-line test/example -- vue tsx */}",
+      "    {/* explains the element */}",
+      "    <div />",
+      "  </section>",
+      ");",
+      "</script>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 6)],
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("next-line suppression skips JSX comments in a Vue TSX script beside script setup", () => {
+  const { root, file } = fixture(
+    [
+      '<script setup lang="ts">',
+      "const count = 1;",
+      "</script>",
+      '<script lang="tsx">',
+      "export const view = (",
+      "  <section>",
+      "    {/* doctor-disable-next-line test/example -- vue tsx */}",
+      "    {/* explains the element */}",
+      "    <div />",
+      "  </section>",
+      ");",
+      "</script>",
+    ].join("\n"),
+    "app.vue",
+  );
+  const result = applyDiagnosticPolicy({
+    root,
+    config: {},
+    options: {},
+    diagnostics: [finding(file, 9)],
+  });
+  expect(result.diagnostics).toEqual([]);
+});

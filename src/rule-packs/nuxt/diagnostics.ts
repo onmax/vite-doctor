@@ -87,6 +87,9 @@ export const nuxtDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0081", ruleId: "nuxt/module/require-meta" },
   { code: "NUXT0082", ruleId: "nuxt/module/resolve-runtime-paths" },
   { code: "NUXT0083", ruleId: "nuxt/module/explicit-runtime-imports" },
+  { code: "NUXT0084", ruleId: "nuxt/ssr/no-module-scope-request-state" },
+  { code: "NUXT0085", ruleId: "vueuse/ssr/require-init-on-mounted-storage" },
+  { code: "NUXT0090", ruleId: "nuxt/config/no-runtime-env-in-build-options" },
 ]);
 
 export const diagnostics = nuxtDiagnosticRegistry.diagnostics;

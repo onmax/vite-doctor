@@ -213,6 +213,26 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       };
     }),
     {
+      code: "DOC0032",
+      title: "DOC0032: Regenerate a stale baseline",
+      description:
+        "A `--new-only` run read a baseline that was written with another fingerprint scheme, or that does not record one.",
+      why: "Fingerprints identify a finding across runs. When Doctor changes how it computes them, findings recorded in an older baseline no longer match and `--new-only` reports them as new. Doctor still applies the fingerprints that do match and reports this Diagnostic instead of failing the run.",
+      fix: "Regenerate the baseline with a full Doctor Run, without `--changed`, `--since`, or `--rules`: `vite-doctor . --baseline <file> --update-baseline`. Then commit the updated baseline.",
+      docsUrl: "https://vite-doctor.onmax.me/cli",
+      ruleId: "doctor/baseline/stale-fingerprint-scheme",
+      pack: "vite-doctor/core",
+      severity: "warn",
+      category: "baseline",
+      source: "src/core/internal/diagnostic-policy.ts",
+      sourceUrl: githubSourceUrl("src/core/internal/diagnostic-policy.ts"),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0032",
+      key: "diagnostics/DOC0032.md",
+    },
+    {
       code: "DOC0022",
       title: "DOC0022: Resolve the runtime graph",
       description:
@@ -232,6 +252,26 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       examples: [],
       path: "/diagnostics/DOC0022",
       key: "diagnostics/DOC0022.md",
+    },
+    {
+      code: "DOC0033",
+      title: "DOC0033: Remove or fill the empty Vue component",
+      description: "A .vue file in the project contains only whitespace.",
+      why: "Vue's SFC compiler rejects a component without a <template> or <script>, so any build that imports or routes the file fails. Doctor reports the file instead of treating it as missing evidence, because there is nothing in it to analyze.",
+      fix: "Delete the file if the component is no longer needed, or give it a <template> or <script> block.",
+      docsUrl: "https://vuejs.org/api/sfc-spec.html",
+      ruleId: "doctor/inventory/empty-sfc",
+      pack: "vite-doctor/core",
+      severity: "warn",
+      category: "inventory",
+      framework: "vue",
+      source: "src/core/internal/facts.ts",
+      sourceUrl: githubSourceUrl("src/core/internal/facts.ts"),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0033",
+      key: "diagnostics/DOC0033.md",
     },
   ];
 }
