@@ -5,6 +5,7 @@ import {
   fileMayCallAsyncData,
   getAsyncDataCall,
   getDestructuredAsyncDataCommands,
+  hasReadonlyEvidence,
   isWriteLikePath,
 } from "./async-data.js";
 
@@ -25,23 +26,20 @@ export const noManualActionUseFetch = createRule({
       CallExpression(node: AnyNode) {
         const call = getAsyncDataCall(ctx, node);
         if (!call || !call.hasImmediateFalse) return;
-        const commands = getDestructuredAsyncDataCommands(node);
-        const mutating = Boolean(
-          call.method &&
-          (MUTATING_METHODS.has(call.method) ||
-            (call.method === "POST" && isWriteLikePath(call.path, options))),
-        );
-        if (!mutating && commands.size === 0) return;
+        const mutating = Boolean(call.method && MUTATING_METHODS.has(call.method));
+        if (!mutating && hasReadonlyEvidence(ctx, call, options)) return;
+        const write = mutating || (call.method === "POST" && isWriteLikePath(call.path, options));
+        if (!write && getDestructuredAsyncDataCommands(node).size === 0) return;
         report(
           ctx,
           node,
           "nuxt/no-manual-action-usefetch",
-          mutating ? "error" : "warn",
+          write ? "error" : "warn",
           "fetching",
-          mutating
+          write
             ? `\`immediate: false\` only disables initial execution. This ${call.method} async-data entry can still run from refreshNuxtData().`
             : "`immediate: false` only disables initial execution. This async-data entry can still run from refreshNuxtData().",
-          mutating
+          write
             ? "Use $fetch() for event-driven mutations."
             : "Use async data for replay-safe reads, and keep one-shot actions outside Nuxt async-data entries.",
         );

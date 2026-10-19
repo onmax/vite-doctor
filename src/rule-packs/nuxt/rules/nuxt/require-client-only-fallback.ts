@@ -60,7 +60,21 @@ function hasFallback(helpers: RuleContext["helpers"], node: TemplateElementNode)
     if (helpers.hasVueAttribute(node, name) || helpers.hasVueDirective(node, "bind", name))
       return true;
   }
-  if (FALLBACK_SLOTS.some((name) => helpers.hasVueDirective(node, "slot", name))) return true;
+  // Component-level slots use the component children as their slot body.
+  // Require visible content so an empty `#fallback`/`v-slot:fallback` does not
+  // mask the missing server placeholder.
+  const directSlot = FALLBACK_SLOTS.find((name) => helpers.hasVueDirective(node, "slot", name));
+  if (directSlot) {
+    // If an explicit child fallback slot is present, its body is the slot content;
+    // an empty one must not be accepted just because default children exist.
+    const explicit = node.children.find(
+      (child) =>
+        child.type === TemplateNodeType.ELEMENT &&
+        child.tag === "template" &&
+        helpers.hasVueDirective(child, "slot", directSlot),
+    );
+    return explicit ? hasContent(explicit) : hasContent(node);
+  }
   // `v-bind="props"`, `:[name]` and `#[name]` can supply a fallback Doctor cannot see.
   if (hasUnknownArgument(node, "bind") || hasUnknownArgument(node, "slot")) return true;
   return node.children.some(

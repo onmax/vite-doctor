@@ -34,6 +34,8 @@ test.each([
   ["<ClientOnly><h3>Forecast</h3><ForecastChart /></ClientOnly>"],
   ["<ClientOnly><Modal v-if='open' /><Chart /></ClientOnly>"],
   ["<ClientOnly fallback><Chart /></ClientOnly>"],
+  ["<ClientOnly #fallback><Chart /><template #fallback /></ClientOnly>"],
+  ["<ClientOnly v-slot:fallback><Chart /><template v-slot:fallback /></ClientOnly>"],
   ["<ClientOnly placeholder=''><Chart /></ClientOnly>"],
   ["<ClientOnly><template v-if='ready'><Chart /></template></ClientOnly>"],
   ["<ClientOnly><Chart /><template #fallback /></ClientOnly>"],
