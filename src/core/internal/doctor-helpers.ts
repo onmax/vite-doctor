@@ -21,8 +21,8 @@ export function createHelpers(): DoctorHelpers {
     isTypeOnlyContext(node) {
       return isTypeOnlyContext(node);
     },
-    hasLocalBindingBefore(node, source) {
-      return hasLocalBindingBefore(node, source);
+    hasLocalBinding(node) {
+      return hasLocalBinding(node);
     },
     isTypeofOperand(node) {
       return isTypeofOperand(node);
@@ -466,6 +466,14 @@ function isTemplateEventHandlerReference(source: string, name: string): boolean 
 function isTypeOnlyContext(node: unknown): boolean {
   return getDoctorParents(node).some((parent) => {
     const type = parent?.type;
+    if (
+      (type === "ImportSpecifier" ||
+        type === "ImportDefaultSpecifier" ||
+        type === "ImportNamespaceSpecifier") &&
+      (parent as any).importKind === "type"
+    )
+      return true;
+    if (type === "ImportDeclaration" && (parent as any).importKind === "type") return true;
     return (
       typeof type === "string" &&
       ((type.startsWith("TS") &&
@@ -483,19 +491,164 @@ function isTypeOnlyContext(node: unknown): boolean {
   });
 }
 
-function hasLocalBindingBefore(node: unknown, source: string): boolean {
+function hasLocalBinding(node: unknown): boolean {
   const value = node as any;
   if (value?.type !== "Identifier" || typeof value.name !== "string") return false;
   const parent = value.__doctorParent;
-  if (parent?.type === "VariableDeclarator" && parent.id === value) return true;
-  if (parent?.type === "FunctionDeclaration" && parent.id === value) return true;
-  if (parent?.type === "Property" && parent.key === value && !parent.computed) return true;
+  // In an object expression shorthand (`({ document })`) the identifier is
+  // shared by the key and value, but it is a reference to the global. Treat
+  // the key as a binding only when the property belongs to an object pattern.
+  if (
+    parent?.type === "Property" &&
+    parent.key === value &&
+    !parent.computed &&
+    (parent.parent ?? parent.__doctorParent)?.type === "ObjectPattern"
+  )
+    return true;
+  for (let scope = value.__doctorParent; scope; scope = scope.__doctorParent) {
+    if (scopeBindings(scope).has(value.name)) return true;
+  }
+  return false;
+}
 
-  const name = value.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const before = source.slice(0, value.start);
-  return new RegExp(
-    String.raw`(?:\b(?:const|let|var)\s+${name}\b|\b(?:const|let|var)\s*\{[^}]*\b${name}\b[^}]*\}|\{[^}]*\b${name}\b[^}]*\}\s*\)\s*=>|[,(]\s*${name}\s*(?::[^)=]+)?=>|\(\s*${name}\s*(?::[^)]*)?\)\s*=>|function[^(]*\([^)]*\b${name}\b|[,(]\s*\{[^)]*\b${name}\b[^)]*\}\s*(?::[^)=]+)?=>|function[^(]*\([^)]*\{[^)]*\b${name}\b)`,
-  ).test(before);
+const scopeBindingCache = new WeakMap<object, Set<string>>();
+
+// Names a node declares into its own scope. Declarations anywhere in a scope shadow the global
+// for every reference in it, before or after the declaration, so position does not matter here.
+function scopeBindings(scope: any): Set<string> {
+  if (!scope || typeof scope !== "object") return new Set();
+  const cached = scopeBindingCache.get(scope);
+  if (cached) return cached;
+  const names = new Set<string>();
+  switch (scope.type) {
+    case "Program":
+      addStatementBindings(scope.body, names, true);
+      addHoistedVars(scope.body, names);
+      break;
+    case "FunctionDeclaration":
+    case "FunctionExpression":
+    case "ArrowFunctionExpression":
+      if (scope.type === "FunctionExpression" && scope.id) addPatternNames(scope.id, names);
+      for (const param of scope.params ?? []) addPatternNames(param, names);
+      if (scope.body?.type === "BlockStatement") addHoistedVars(scope.body.body, names);
+      break;
+    case "ClassExpression":
+    case "ClassDeclaration":
+      if (scope.id) addPatternNames(scope.id, names);
+      break;
+    case "BlockStatement":
+    case "StaticBlock":
+    case "TSModuleBlock":
+      addStatementBindings(scope.body, names, false);
+      break;
+    case "SwitchStatement":
+      for (const switchCase of scope.cases ?? [])
+        addStatementBindings(switchCase.consequent, names, false);
+      break;
+    case "ForStatement":
+      addDeclarationNames(scope.init, names);
+      break;
+    case "ForInStatement":
+    case "ForOfStatement":
+      addDeclarationNames(scope.left, names);
+      break;
+    case "CatchClause":
+      if (scope.param) addPatternNames(scope.param, names);
+      break;
+  }
+  scopeBindingCache.set(scope, names);
+  return names;
+}
+
+function addStatementBindings(statements: unknown, names: Set<string>, moduleScope: boolean) {
+  if (!Array.isArray(statements)) return;
+  for (let statement of statements) {
+    if (
+      (statement?.type === "ExportNamedDeclaration" ||
+        statement?.type === "ExportDefaultDeclaration") &&
+      statement.declaration
+    )
+      statement = statement.declaration;
+    if (!statement) continue;
+    if (moduleScope && statement.type === "ImportDeclaration") {
+      if (statement.importKind === "type") continue;
+      for (const specifier of statement.specifiers ?? []) {
+        if (specifier.importKind !== "type") addPatternNames(specifier.local, names);
+      }
+      continue;
+    }
+    if (statement.type === "TSImportEqualsDeclaration") {
+      if (statement.importKind !== "type") addPatternNames(statement.id, names);
+      continue;
+    }
+    if (statement.type === "VariableDeclaration") {
+      if (statement.kind !== "var") addDeclarationNames(statement, names);
+      continue;
+    }
+    if (
+      (statement.type === "FunctionDeclaration" ||
+        statement.type === "ClassDeclaration" ||
+        statement.type === "TSEnumDeclaration" ||
+        (statement.type === "TSModuleDeclaration" && !statement.declare)) &&
+      statement.id
+    )
+      addPatternNames(statement.id, names);
+  }
+}
+
+// `var` hoists to the enclosing function or module through blocks, loops, and catch clauses.
+function addHoistedVars(statements: unknown, names: Set<string>) {
+  const visit = (node: any) => {
+    if (!node || typeof node !== "object" || typeof node.type !== "string") return;
+    if (
+      node.type === "FunctionDeclaration" ||
+      node.type === "FunctionExpression" ||
+      node.type === "ArrowFunctionExpression" ||
+      node.type === "ClassDeclaration" ||
+      node.type === "ClassExpression"
+    )
+      return;
+    if (node.type === "VariableDeclaration") {
+      if (node.kind === "var") addDeclarationNames(node, names);
+      for (const declarator of node.declarations ?? []) visit(declarator.init);
+      return;
+    }
+    for (const key of getNodeVisitorKeys(node)) {
+      const child = node[key];
+      if (Array.isArray(child)) for (const item of child) visit(item);
+      else visit(child);
+    }
+  };
+  if (Array.isArray(statements)) for (const statement of statements) visit(statement);
+}
+
+function addDeclarationNames(declaration: any, names: Set<string>) {
+  if (declaration?.type !== "VariableDeclaration") return;
+  for (const declarator of declaration.declarations ?? []) addPatternNames(declarator.id, names);
+}
+
+function addPatternNames(pattern: any, names: Set<string>) {
+  if (!pattern || typeof pattern !== "object") return;
+  switch (pattern.type) {
+    case "Identifier":
+      names.add(pattern.name);
+      return;
+    case "ObjectPattern":
+      for (const property of pattern.properties ?? [])
+        addPatternNames(property.type === "RestElement" ? property : property.value, names);
+      return;
+    case "ArrayPattern":
+      for (const element of pattern.elements ?? []) addPatternNames(element, names);
+      return;
+    case "AssignmentPattern":
+      addPatternNames(pattern.left, names);
+      return;
+    case "RestElement":
+      addPatternNames(pattern.argument, names);
+      return;
+    case "TSParameterProperty":
+      addPatternNames(pattern.parameter, names);
+  }
 }
 
 function isTypeofOperand(node: unknown): boolean {

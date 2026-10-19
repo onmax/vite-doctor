@@ -597,8 +597,10 @@ function reportUnresolvedRuntime(
       : []),
   ];
   if (!details.length) return;
-  const runtimeFix =
-    "Install project dependencies and run Doctor from the target project package. If the project uses Yarn PnP, run Doctor through Yarn so its loader is active.";
+  const dangling = unresolved.filter((item) => item?.danglingLink);
+  const runtimeFix = dangling.length
+    ? `Reinstall dependencies with the project package manager to recreate the dangling ${dangling.map((item) => item!.danglingLink!.path).join(", ")} link${dangling.length > 1 ? "s" : ""}, then rerun Doctor.`
+    : "Install project dependencies and run Doctor from the target project package. If the project uses Yarn PnP, run Doctor through Yarn so its loader is active.";
   const compatibilityFix =
     "Make the effective future.compatibilityVersion statically provable in nuxt.config, or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.";
   const compatibilityUnknown = project.nuxtCompatibility?.state === "unknown";
@@ -618,11 +620,19 @@ function reportUnresolvedRuntime(
       .filter(Boolean)
       .join(" "),
     evidence: [
-      ...unresolved.map((item) => ({
-        kind: "manifest" as const,
-        summary: `${item?.owner} -> ${item?.runtime} is unresolved.`,
-        file: item?.packageJsonPath,
-      })),
+      ...unresolved.map((item) =>
+        item?.danglingLink
+          ? {
+              kind: "manifest" as const,
+              summary: `${item.owner} -> ${item.runtime} goes through a symlink to ${item.danglingLink.target}, which does not exist.`,
+              file: item.danglingLink.path,
+            }
+          : {
+              kind: "manifest" as const,
+              summary: `${item?.owner} -> ${item?.runtime} is unresolved.`,
+              file: item?.packageJsonPath,
+            },
+      ),
       ...(project.nuxtCompatibility?.state === "unknown"
         ? [
             {

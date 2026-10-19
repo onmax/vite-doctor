@@ -25,6 +25,11 @@ export const viteDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0022", ruleId: "vite/imports/require-static-glob-pattern" },
   { code: "VITE0023", ruleId: "vite/imports/no-barrel-files" },
   { code: "VITE0024", ruleId: "vite/plugin-package/naming-conventions" },
+
+  { code: "VITE0026", ruleId: "vite/plugin/no-config-hook-array-echo" },
+
+  { code: "VITE0025", ruleId: "vite/plugin/no-lossy-set-cookie-bridge" },
+
   { code: "VITE0027", ruleId: "vite/config/no-url-pathname-as-fs-path" },
 ]);
 

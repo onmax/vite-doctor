@@ -1,12 +1,12 @@
 import { relative, resolve } from "pathe";
 import { isNuxtManifestCurrent } from "./runtime-graph.js";
-import type { NuxtDoctorManifest, NuxtModuleSource } from "../primitives.js";
+import type { NuxtDoctorManifest, NuxtKeyedComposable, NuxtModuleSource } from "../primitives.js";
 
 export interface NuxtProjectInventory {
   scannedComposableFiles?: string[];
   importsDirs: string[];
   pluginFiles: string[];
-  keyedComposables: string[];
+  keyedComposables: NuxtKeyedComposable[];
   aliases: Record<string, string>;
   autoImportTransform?: {
     include: Array<{ source: string; flags: string }>;
@@ -43,7 +43,7 @@ export function createNuxtProjectInventory(
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
-    keyedComposables: keyedComposableNames(manifest?.keyedComposables),
+    keyedComposables: keyedComposables(root, manifest?.keyedComposables),
     aliases: manifest?.aliases ?? {},
     autoImportTransform: manifest?.autoImportTransform,
     appScanRoots: (manifest?.appScanRoots ?? [manifest?.appDir ?? "app"]).map((dir) =>
@@ -76,13 +76,17 @@ export function createNuxtProjectInventory(
 
 const IDENTIFIER_RE = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*$/u;
 
-// Manifests written before keyed composables were serialized by name hold "[object Object]".
-function keyedComposableNames(entries: unknown[] = []): string[] {
-  return entries
-    .map((entry) =>
-      typeof entry === "string" ? entry : (entry as { name?: unknown } | null)?.name,
-    )
-    .filter((name): name is string => typeof name === "string" && IDENTIFIER_RE.test(name));
+// Manifests written before keyed composables were serialized by name hold "[object Object]",
+// and later ones hold bare names without the source Nuxt matched them by.
+function keyedComposables(root: string, entries: unknown[] = []): NuxtKeyedComposable[] {
+  return entries.flatMap((entry) => {
+    const { name, source } =
+      typeof entry === "string"
+        ? { name: entry, source: undefined }
+        : ((entry ?? {}) as { name?: unknown; source?: unknown });
+    if (typeof name !== "string" || !IDENTIFIER_RE.test(name)) return [];
+    return typeof source === "string" ? [{ name, source: resolve(root, source) }] : [{ name }];
+  });
 }
 
 export function normalizeNuxtModuleSources(sources: NuxtModuleSource[]): NuxtModuleSource[] {

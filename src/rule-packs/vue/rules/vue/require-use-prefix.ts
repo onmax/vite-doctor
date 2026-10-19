@@ -1,6 +1,11 @@
-import { relative, resolve } from "pathe";
+import { dirname, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
-import { fileScriptScope, type ScopeVariable } from "./script-scope.js";
+import {
+  analyzeScript,
+  fileScriptScope,
+  type ScopeVariable,
+  type ScriptScope,
+} from "./script-scope.js";
 import { AnyNode, createRule, namePattern, walkScriptLocal } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
@@ -51,6 +56,25 @@ const NUXT_APP_CONTEXT_ACCESSORS = new Set(["useRouter", "useState", "useNuxtDat
 const VUE_API_SOURCES =
   /^(vue|vue-demi|vue-router|@vue\/(runtime-core|runtime-dom|composition-api)|#imports|#app(\/.*)?|nuxt\/app)$/;
 const NON_COMPOSABLE_SOURCES = /^(@nuxt\/kit|nuxt\/kit|h3|nitropack|nitro|unstorage)(\/|$)/;
+const VUE_COMPOSABLE_SOURCES = /^(?:@vueuse\/|@pinia\/|pinia(?:\/|$)|vue-demi(?:\/|$))/;
+// Unbound calls to these names come from auto-imports (unplugin-auto-import, Nuxt).
+const VUE_RUNTIME_APIS = new Set([
+  ...LIFECYCLE_HOOKS,
+  ...INJECTION_APIS,
+  "ref",
+  "shallowRef",
+  "computed",
+  "reactive",
+  "shallowReactive",
+  "watch",
+  "watchEffect",
+  "onScopeDispose",
+  "getCurrentInstance",
+  "getCurrentScope",
+  "toRef",
+  "toRefs",
+  "toValue",
+]);
 const EXEMPT_NAME =
   /^_*(use|on|tryOn|provide|inject|define|create|ref|computed|watch)[A-Z0-9_$]|^_*[A-Z]/;
 const EXEMPT_NAMES = new Set(["setup", "render", "install"]);
@@ -93,11 +117,17 @@ export const requireUsePrefix = createRule({
           (exported) => !isExemptName(exported.name),
         );
         if (candidates.length === 0 || !maySignalSetupContext(ctx, node, candidates)) return;
-        const bindings = resolveBindings(ctx);
-        if (!bindings) return;
+        const scope = fileScriptScope(ctx);
+        if (!scope) return;
+        const bindings = scopeBindings(scope);
         const isNuxt = Boolean(ctx.project.nuxt);
+        const composable = composableEvidence(ctx, {
+          file: ctx.file.path,
+          program: scope.ast,
+          bindings,
+        });
         for (const exported of candidates) {
-          const signal = setupContextSignal(exported.fn, bindings, isNuxt);
+          const signal = setupContextSignal(exported.fn, bindings, isNuxt, composable);
           if (!signal) continue;
           const suggestion = `use${exported.name.replace(/^_+/, "").replace(/^./, (c) => c.toUpperCase())}`;
           ctx.report(
@@ -173,18 +203,263 @@ function isExemptName(name: string) {
 // Nuxt utils/ directories are owned by nuxt/structure/no-composable-in-utils, which
 // reports the same function with a move-and-rename remediation.
 function isNuxtUtilsFile(ctx: RuleContext) {
+  return nuxtAppPaths(ctx, ctx.file.path).some((path) => path.startsWith("utils/"));
+}
+
+function nuxtAppPaths(ctx: RuleContext, file: string): string[] {
   const nuxt = ctx.project.nuxt;
-  if (!nuxt) return false;
+  if (!nuxt) return [];
   const roots = new Set<string>([nuxt.appDir]);
   for (const layer of nuxt.layers ?? []) if (layer.srcDir) roots.add(layer.srcDir);
   for (const root of nuxt.appRoots ?? []) {
     roots.add(root);
     roots.add(resolve(root, "app"));
   }
-  return [...roots].some((root) => {
-    const path = relative(resolve(ctx.project.root, root), ctx.file.path);
-    return path.startsWith("utils/");
-  });
+  return [...roots]
+    .map((root) => relative(resolve(ctx.project.root, root), file))
+    .filter((path) => !path.startsWith(".."));
+}
+
+interface ModuleAnalysis {
+  file: string;
+  program: AnyNode;
+  bindings: Bindings;
+}
+
+// A use* name is only a convention; the callee has to be a Vue composable for the caller to
+// inherit setup-only semantics. Local definitions and local modules are traced for Vue calls,
+// so a server-side API that happens to be named useX() is not one. Bare packages are not read.
+function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
+  const nuxt = ctx.project.nuxt;
+  const modules = new Map<string, ModuleAnalysis | null>();
+  // Cycles resolve to false while their first visit is still in progress.
+  const results = new Map<unknown, boolean>();
+  const memo = (key: unknown, compute: () => boolean): boolean => {
+    if (!results.has(key)) {
+      results.set(key, false);
+      results.set(key, compute());
+    }
+    return results.get(key)!;
+  };
+
+  function isComposable(api: ApiIdentity): boolean {
+    if (api.fn) return usesVue(api.fn, current);
+    if (!api.source)
+      return !(
+        nuxt?.autoImportEnabled &&
+        nuxt.autoImportsAuthoritative &&
+        !nuxt.autoImports.has(api.name)
+      );
+    return sourceUsesVue(api.source, api.exportName ?? api.name, current);
+  }
+
+  function usesVue(node: AnyNode, module: ModuleAnalysis, conservative = true): boolean {
+    return memo(node, () => {
+      let found = false;
+      walkScriptLocal(node, (child) => {
+        if (!found && child.type === "CallExpression")
+          found = callUsesVue(child, module, conservative);
+      });
+      return found;
+    });
+  }
+
+  function callUsesVue(call: AnyNode, module: ModuleAnalysis, conservative = true): boolean {
+    const api = callIdentity(call, module.bindings);
+    if (!api) {
+      const callee = unwrapExpression(call.callee);
+      const fn = callee?.type === "Identifier" && localFunction(callee, module.bindings);
+      return Boolean(fn) && usesVue(fn, module, false);
+    }
+    if (isContextAccessor(api.name, api.source, Boolean(nuxt))) return false;
+    if (api.fn) return usesVue(api.fn, module);
+    if (!api.source)
+      return (
+        VUE_RUNTIME_APIS.has(api.name) ||
+        (/^use[A-Z0-9]/.test(api.name) &&
+          Boolean(nuxt?.autoImportsAuthoritative && nuxt.autoImports.has(api.name)))
+      );
+    return sourceUsesVue(api.source, api.exportName ?? api.name, module, conservative);
+  }
+
+  function sourceUsesVue(
+    source: string,
+    name: string,
+    module: ModuleAnalysis,
+    conservative = true,
+  ): boolean {
+    if (NON_COMPOSABLE_SOURCES.test(source)) return false;
+    if (VUE_API_SOURCES.test(source) || VUE_COMPOSABLE_SOURCES.test(source)) return true;
+    const file = resolveLocalModule(ctx, dirname(module.file), source);
+    // Local imports are conservative when their target cannot be inspected. This
+    // preserves the rule's historical behavior for unresolved relative/Nuxt
+    // aliases while unresolved package imports remain non-evidence.
+    if (file) return exportsComposable(file, name);
+    return conservative && isLocalSpecifier(source, Boolean(ctx.project.nuxt));
+  }
+
+  function exportsComposable(file: string, name: string): boolean {
+    return memo(`${file}\0${name}`, () => moduleExportsComposable(file, name));
+  }
+
+  function moduleExportsComposable(file: string, name: string): boolean {
+    // Nuxt's composables directory is auto-imported. Other app directories (plugins,
+    // utils, pages, and so on) are not composable evidence by location alone.
+    if (nuxtAppPaths(ctx, file).some((path) => path.startsWith("composables/"))) return true;
+    const module = analyzeModule(file);
+    if (!module) return false;
+    const definition = exportedDefinition(module.program, name);
+    if (definition?.type === "ImportBinding")
+      return sourceUsesVue(definition.source, definition.imported, module);
+    if (definition) return usesVue(definition, module, false);
+    for (const statement of module.program.body ?? []) {
+      if (!statement.source || statement.exportKind === "type") continue;
+      if (statement.type === "ExportAllDeclaration" && !statement.exported) {
+        if (sourceUsesVue(statement.source.value, name, module, false)) return true;
+      } else if (statement.type === "ExportNamedDeclaration") {
+        const specifier = (statement.specifiers ?? []).find(
+          (candidate: AnyNode) =>
+            candidate.exportKind !== "type" && moduleExportName(candidate.exported) === name,
+        );
+        if (specifier)
+          return sourceUsesVue(
+            statement.source.value,
+            moduleExportName(specifier.local),
+            module,
+            false,
+          );
+      }
+    }
+    return false;
+  }
+
+  function analyzeModule(file: string): ModuleAnalysis | null {
+    if (!modules.has(file)) {
+      const text = ctx.fs.readText(file);
+      const scope = text === undefined ? null : analyzeScript(text, /\.[jt]sx$/.test(file));
+      modules.set(
+        file,
+        scope ? { file, program: scope.ast, bindings: scopeBindings(scope) } : null,
+      );
+    }
+    return modules.get(file)!;
+  }
+
+  return isComposable;
+}
+
+function exportedDefinition(program: AnyNode, name: string): AnyNode {
+  const declarations = new Map<string, AnyNode>();
+  let definition: AnyNode;
+  for (const statement of program.body ?? []) {
+    if (statement.type === "ExportDefaultDeclaration") {
+      if (name === "default") definition = statement.declaration;
+      continue;
+    }
+    if (statement.type === "ImportDeclaration" && statement.importKind !== "type")
+      for (const specifier of statement.specifiers ?? []) {
+        if (specifier.type === "ImportNamespaceSpecifier" || specifier.importKind === "type")
+          continue;
+        const imported =
+          specifier.type === "ImportDefaultSpecifier"
+            ? "default"
+            : moduleExportName(specifier.imported);
+        declarations.set(specifier.local.name, {
+          type: "ImportBinding",
+          source: statement.source.value,
+          imported,
+        });
+      }
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type === "FunctionDeclaration" && declaration.id)
+      declarations.set(declaration.id.name, declaration);
+    if (declaration?.type === "VariableDeclaration")
+      for (const declarator of declaration.declarations ?? [])
+        for (const declared of patternNames(declarator.id))
+          if (declarator.init) declarations.set(declared, declarator.init);
+    if (statement.type === "ExportNamedDeclaration" && !statement.source) {
+      if (declaredNames(statement.declaration).includes(name))
+        definition = { type: "Identifier", name };
+      for (const specifier of statement.specifiers ?? [])
+        if (moduleExportName(specifier.exported) === name)
+          definition = { type: "Identifier", name: moduleExportName(specifier.local) };
+    }
+  }
+  // `export default useWorkspace` and `export const { useWorkspace } = composables` name a
+  // local binding, so follow it to the code that defines it.
+  const followed = new Set<string>();
+  while (definition?.type === "Identifier" && !followed.has(definition.name)) {
+    followed.add(definition.name);
+    definition = declarations.get(definition.name);
+  }
+  return definition;
+}
+
+function declaredNames(declaration: AnyNode): string[] {
+  if (declaration?.type === "FunctionDeclaration")
+    return declaration.id ? [declaration.id.name] : [];
+  if (declaration?.type !== "VariableDeclaration") return [];
+  return (declaration.declarations ?? []).flatMap((declarator: AnyNode) =>
+    patternNames(declarator.id),
+  );
+}
+
+// `export const [provideCounter, useCounter] = createInjectionState(...)` exports both names.
+function patternNames(pattern: AnyNode): string[] {
+  if (pattern?.type === "Identifier") return [pattern.name];
+  if (pattern?.type === "ArrayPattern") return (pattern.elements ?? []).flatMap(patternNames);
+  if (pattern?.type === "ObjectPattern")
+    return (pattern.properties ?? []).flatMap((property: AnyNode) =>
+      patternNames(property.type === "RestElement" ? property.argument : property.value),
+    );
+  if (pattern?.type === "AssignmentPattern") return patternNames(pattern.left);
+  if (pattern?.type === "RestElement") return patternNames(pattern.argument);
+  return [];
+}
+
+function moduleExportName(node: AnyNode): string {
+  return node?.type === "Identifier" ? node.name : node?.value;
+}
+
+function localFunction(identifier: AnyNode, bindings: Bindings): AnyNode {
+  const variable = bindings.get(offset(identifier));
+  for (const definition of variable?.defs ?? []) {
+    if (definition.type === "FunctionName") return definition.node;
+    const init = definition.type === "Variable" ? unwrapExpression(definition.node.init) : null;
+    if (isFunctionNode(init)) return init;
+  }
+  return undefined;
+}
+
+function resolveLocalModule(ctx: RuleContext, from: string, source: string): string | undefined {
+  const nuxt = ctx.project.nuxt;
+  const base = source.startsWith(".")
+    ? resolve(from, source)
+    : nuxt && /^(~~|@@)\//.test(source)
+      ? resolve(ctx.project.root, source.slice(3))
+      : nuxt && /^[~@]\//.test(source)
+        ? resolve(ctx.project.root, nuxt.appDir, source.slice(2))
+        : undefined;
+  if (!base) return;
+  // Keep an explicit script extension as-is. Stripping only JavaScript
+  // extensions here used to turn `./use.ts` into `./use.ts.ts` for the
+  // generated candidates, so the existing module was treated as unresolved.
+  const stem = base.replace(/\.[cm]?[jt]sx?$/, "");
+  const candidates = [
+    ...(SCRIPT_FILE.test(base) ? [base] : []),
+    ...[".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs"].map((extension) => `${stem}${extension}`),
+    ...["/index.ts", "/index.js"].map((index) => `${base}${index}`),
+  ];
+  return candidates.find(
+    (candidate) => SCRIPT_FILE.test(candidate) && ctx.fs.stat(candidate)?.isFile(),
+  );
+}
+
+function isLocalSpecifier(source: string, hasNuxt: boolean): boolean {
+  if (source.startsWith(".")) return true;
+  if (!hasNuxt) return false;
+  return /^(?:~~|@@|~|@)\//.test(source);
 }
 
 function exportedFunctions(program: AnyNode): ExportedFunction[] {
@@ -241,9 +516,7 @@ function offset(node: AnyNode): number {
   return node.range?.[0] ?? node.start;
 }
 
-function resolveBindings(ctx: RuleContext): Bindings | null {
-  const scope = fileScriptScope(ctx);
-  if (!scope) return null;
+function scopeBindings(scope: ScriptScope): Bindings {
   const bindings: Bindings = new Map();
   for (const { references } of scope.scopeManager.scopes)
     for (const reference of references)
@@ -254,6 +527,10 @@ function resolveBindings(ctx: RuleContext): Bindings | null {
 interface ApiIdentity {
   name: string;
   source?: string;
+  /** The name the source module exports, when it differs from `name` (default imports). */
+  exportName?: string;
+  /** The local function definition of a use* call. */
+  fn?: AnyNode;
 }
 
 function callIdentity(call: AnyNode, bindings: Bindings): ApiIdentity | null {
@@ -279,21 +556,17 @@ function callIdentity(call: AnyNode, bindings: Bindings): ApiIdentity | null {
           ? specifier.imported.name
           : specifier.imported.value
         : identifier.name;
-    return { name, source: definition.parent.source.value };
+    return {
+      name,
+      source: definition.parent.source.value,
+      ...(specifier.type === "ImportDefaultSpecifier" && { exportName: "default" }),
+    };
   }
   // Locally declared composables still carry the use convention; parameters and
   // local lookalikes of Vue's built-in APIs do not identify a framework API.
-  if (
-    !member &&
-    /^use[A-Z0-9]/.test(identifier.name) &&
-    variable.defs.some(
-      (definition) =>
-        definition.type === "FunctionName" ||
-        (definition.type === "Variable" && isFunctionNode(unwrapExpression(definition.node.init))),
-    )
-  )
-    return { name: identifier.name };
-  return null;
+  if (member || !/^use[A-Z0-9]/.test(identifier.name)) return null;
+  const fn = localFunction(identifier, bindings);
+  return fn ? { name: identifier.name, fn } : null;
 }
 
 function guardName(node: AnyNode, bindings: Bindings): string | null {
@@ -344,7 +617,12 @@ function guaranteesContext(test: AnyNode, truth: boolean, bindings: Bindings): b
   return truth && guardName(node, bindings) !== null;
 }
 
-function setupContextSignal(fn: AnyNode, bindings: Bindings, isNuxt: boolean): SetupSignal | null {
+function setupContextSignal(
+  fn: AnyNode,
+  bindings: Bindings,
+  isNuxt: boolean,
+  composable: (api: ApiIdentity) => boolean,
+): SetupSignal | null {
   let signal: SetupSignal | null = null;
   // null means the path exits; only facts shared by all surviving paths carry on.
   function scan(node: AnyNode, guarded: boolean): boolean | null {
@@ -404,15 +682,9 @@ function setupContextSignal(fn: AnyNode, bindings: Bindings, isNuxt: boolean): S
             signal = { name };
           if (
             /^use[A-Z0-9]/.test(name) &&
-            !APP_CONTEXT_ACCESSORS.has(name) &&
-            !/^use\w*Store$/.test(name) &&
-            !(
-              isNuxt &&
-              NUXT_APP_CONTEXT_ACCESSORS.has(name) &&
-              isVueSource(source) &&
-              source !== "vue-router"
-            ) &&
-            !(source && NON_COMPOSABLE_SOURCES.test(source))
+            !isContextAccessor(name, source, isNuxt) &&
+            !(source && NON_COMPOSABLE_SOURCES.test(source)) &&
+            composable(api)
           )
             signal = { name };
         }
@@ -439,6 +711,18 @@ function setupContextSignal(fn: AnyNode, bindings: Bindings, isNuxt: boolean): S
   }
   scan(fn.body, false);
   return signal;
+}
+
+// App-level accessors and stores also work outside component setup.
+function isContextAccessor(name: string, source: string | undefined, isNuxt: boolean) {
+  return (
+    APP_CONTEXT_ACCESSORS.has(name) ||
+    /^use\w*Store$/.test(name) ||
+    (isNuxt &&
+      NUXT_APP_CONTEXT_ACCESSORS.has(name) &&
+      isVueSource(source) &&
+      source !== "vue-router")
+  );
 }
 
 function isVueSource(source: string | undefined) {

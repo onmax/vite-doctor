@@ -6,6 +6,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "docus/appconfig/no-unknown-key": "Unknown keys",
   "docus/layers/no-empty-app-vue-shadow": "Empty app.vue",
 
+  "nitro/cloudflare/no-unguarded-als-enterwith": "ALS enterWith",
+  "nitro/cache/no-module-scope-response-cache": "Module-scope caches",
   "nitro/config/require-absolute-generated-paths": "Generated paths",
   "nitro/context/no-navigateto-in-nitro": "navigateTo",
   "nitro/context/no-usenuxtapp-in-nitro": "useNuxtApp",
@@ -46,6 +48,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/composables/export-name-matches-file": "Export names",
   "nuxt/composables/no-nested-autoimport-assumption": "Composable subdirs",
   "nuxt/config/no-ignored-compatibility-config": "Ignored config",
+  "nuxt/config/no-runtime-env-in-build-options": "Build-time env",
   "nuxt/context/no-composable-after-await": "Calls after await",
   "nuxt/context/no-legacy-process-client-server": "import.meta flags",
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": "Factory directories",
@@ -60,6 +63,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/hydration/no-client-conditional-in-template": "Client conditionals",
   "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly": "Time-based render",
   "nuxt/hydration/prefer-usecookie-for-initial-client-state": "useCookie state",
+  "nuxt/hydration/require-clientonly-fallback": "ClientOnly fallback",
   "nuxt/imports/no-auto-import-collision": "Name collisions",
   "nuxt/imports/no-conflicting-usefetch-import": "Shadowed useFetch",
   "nuxt/imports/no-explicit-auto-import": "Redundant imports",
@@ -123,6 +127,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "shadcn/no-unknown-classes": "Unknown classes",
   "shadcn/require-static-classes": "Static classes",
 
+  "typescript/boundaries/no-cross-realm-web-instanceof": "Web instanceof",
   "typescript/boundaries/no-unvalidated-deserialization": "Deserialized values",
   "typescript/evidence/no-caller-chosen-result-type": "Caller-chosen types",
   "typescript/evidence/no-chained-type-assertions": "Chained assertions",
@@ -153,6 +158,11 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/imports/no-barrel-files": "Barrel files",
   "vite/imports/require-static-glob-pattern": "Static glob patterns",
   "vite/plugin-package/naming-conventions": "Plugin package names",
+
+  "vite/plugin/no-config-hook-array-echo": "Config hook arrays",
+
+  "vite/plugin/no-lossy-set-cookie-bridge": "Set-Cookie bridges",
+
   "vite/plugin/prefer-transform-filter": "Transform filters",
   "vite/plugin/require-name": "Plugin names",
   "vite/server/no-broad-fs-allow": "server.fs.allow",

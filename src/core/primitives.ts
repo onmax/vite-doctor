@@ -239,7 +239,7 @@ export interface NuxtProjectInfo {
     scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
-    keyedComposables: string[];
+    keyedComposables: NuxtKeyedComposable[];
     aliases: Record<string, string>;
     autoImportTransform?: {
       include: Array<{ source: string; flags: string }>;
@@ -285,6 +285,15 @@ export interface NuxtModuleDefinition {
   runtimeDir?: string;
   /** The package root is also a Nuxt layer, so Nuxt transforms its files even inside node_modules. */
   layer?: boolean;
+}
+
+/**
+ * A function Nuxt injects keys into. `source` is the absolute module file Nuxt resolved the
+ * registration to; registrations without one match by name alone.
+ */
+export interface NuxtKeyedComposable {
+  name: string;
+  source?: string;
 }
 
 export interface NuxtDoctorManifest {
@@ -413,6 +422,8 @@ export interface RuntimePackageInstance {
   declaration?: string;
   identity?: "exact" | "alias" | "unknown";
   reason?: string;
+  /** A node_modules symlink for this package whose target no longer exists. */
+  danglingLink?: { path: string; target: string };
 }
 
 export interface RuntimeGraphEdge {
@@ -583,7 +594,11 @@ export interface DoctorHelpers {
   isInSetupLikeContext(node: unknown): boolean;
   isClientOnlyExecutionContext(node: unknown, source: string): boolean;
   isTypeOnlyContext(node: unknown): boolean;
-  hasLocalBindingBefore(node: unknown, source: string): boolean;
+  /**
+   * Whether the identifier names a binding declared in an enclosing scope (parameter, variable,
+   * function, class, import, destructured name, catch parameter) instead of a global.
+   */
+  hasLocalBinding(node: unknown): boolean;
   isTypeofOperand(node: unknown): boolean;
   getNodeName(node: unknown): string | null;
   getCalleeName(node: unknown): string | null;
