@@ -89,9 +89,38 @@ function isInvokedInPlace(fn: AnyNode) {
 }
 
 function alwaysThrows(handler: AnyNode) {
-  return (handler.body?.body ?? []).some(
-    (statement: AnyNode) => statement.type === "ThrowStatement",
-  );
+  return statementOutcomes(handler.body ?? handler).some((outcome) => outcome === OUTCOME_THROW);
+}
+
+const OUTCOME_NORMAL = 1;
+const OUTCOME_THROW = 2;
+const OUTCOME_OTHER = 4;
+
+function statementOutcomes(statement: AnyNode): number[] {
+  if (statement.type === "ThrowStatement") return [OUTCOME_THROW];
+  if (statement.type === "ReturnStatement" || statement.type === "BreakStatement" || statement.type === "ContinueStatement")
+    return [OUTCOME_OTHER];
+  if (statement.type === "BlockStatement") return sequenceOutcomes(statement.body ?? []);
+  if (statement.type === "IfStatement") {
+    return [
+      ...statementOutcomes(statement.consequent),
+      ...(statement.alternate ? statementOutcomes(statement.alternate) : [OUTCOME_NORMAL]),
+    ];
+  }
+  return [OUTCOME_NORMAL];
+}
+
+function sequenceOutcomes(statements: AnyNode[]): number[] {
+  let outcomes = [OUTCOME_NORMAL];
+  for (const statement of statements) {
+    const next: number[] = [];
+    for (const outcome of outcomes) {
+      if (outcome === OUTCOME_NORMAL) next.push(...statementOutcomes(statement));
+      else next.push(outcome);
+    }
+    outcomes = next;
+  }
+  return outcomes;
 }
 
 // Project Inventory evidence that the code owned by this workspace package runs in workerd.

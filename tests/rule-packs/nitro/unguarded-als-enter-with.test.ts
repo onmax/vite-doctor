@@ -134,6 +134,10 @@ test.each([
     "a catch that logs and rethrows",
     "try {\n    storage.enterWith(event)\n  }\n  catch (error) {\n    console.error(error)\n    throw new Error('enter failed', { cause: error })\n  }",
   ],
+  [
+    "a catch with a conditional return before rethrow",
+    "try {\n    storage.enterWith(event)\n  }\n  catch (error) {\n    if (shouldIgnore) return\n    throw error\n  }",
+  ],
 ])("reports %s", async (_, body) => {
   const source = `import { AsyncLocalStorage } from "node:async_hooks"
 const storage = new AsyncLocalStorage<unknown>()
