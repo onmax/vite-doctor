@@ -91,6 +91,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/shared/no-vue-or-nitro-context-in-shared": "Shared code context",
   "nuxt/structure/no-composable-in-utils": "utils/ composables",
   "nuxt/structure/no-stateless-composable": "Plain use* helpers",
+  "nuxt/ssr/no-module-scope-request-state": "Module request state",
   "nuxt/state/no-nonserializable-usestate": "useState values",
   "nuxt/state/prefer-explicit-usestate-key-in-exported-composables": "useState keys",
   "nuxt/structure/no-server-types-in-app": "Server types in app",
@@ -106,6 +107,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vueuse/prefer-useclipboard": "useClipboard",
   "vueuse/prefer-useevent-listener": "useEventListener",
   "vueuse/prefer-usewindow-size": "useWindowSize",
+  "vueuse/ssr/require-init-on-mounted-storage": "Storage on mount",
 
   "package/no-phantom-dependencies": "Phantom deps",
   "package/no-required-optional-peer": "Optional peers",
