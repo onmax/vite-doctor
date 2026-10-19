@@ -418,8 +418,7 @@ function readPackageArtifactsForMode(
     (manifest.typings && typed(manifest.typings)) ||
     Object.values(manifest.typesVersions ?? {}).some((version) =>
       Object.entries(version).some(
-        ([pattern, entries]) =>
-          pattern === "*" && entries.some((entry) => typed(entry)),
+        ([pattern, entries]) => pattern === "*" && entries.some((entry) => typed(entry)),
       ),
     ) ||
     (manifest.main && typed(manifest.main)),
