@@ -1,5 +1,6 @@
 import { join, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
+import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
 import { AnyNode, createRule, report } from "./shared.js";
 
 export const keyedComposableRegistrationRequired = createRule({
@@ -38,7 +39,12 @@ export const keyedComposableRegistrationRequired = createRule({
       const exported =
         node.type === "CallExpression" &&
         (declared ? isExported(declarator, declared) : defaultExport);
-      if (exported && SCANNED_EXTENSION_RE.test(ctx.file.path) && inScannedComposablesDir(ctx))
+      if (
+        exported &&
+        isNuxtFactoryBinding(ctx, node, name) &&
+        SCANNED_EXTENSION_RE.test(ctx.file.path) &&
+        inScannedComposablesDir(ctx)
+      )
         return;
       report(
         ctx,
@@ -55,6 +61,44 @@ export const keyedComposableRegistrationRequired = createRule({
 });
 
 const SCANNED_EXTENSION_RE = /\.(?:[jt]sx?|[cm][jt]s)$/;
+
+// Nuxt's scan sees the transformed Nuxt auto-import, not an arbitrary local function
+// or an import from another package. Keep this exemption conservative when scope parsing
+// cannot establish the binding.
+function isNuxtFactoryBinding(ctx: RuleContext, node: AnyNode, name: string): boolean {
+  try {
+    const parsed = parseForESLint(ctx.file.text, {
+      range: true,
+      sourceType: "module",
+      ecmaVersion: "latest",
+      filePath: ctx.file.path,
+    });
+    const callee = unwrapCallee(node.callee);
+    const start = callee?.type === "Identifier" ? callee.start : undefined;
+    if (start === undefined) return false;
+    for (const scope of parsed.scopeManager.scopes) {
+      for (const reference of scope.references) {
+        if (reference.identifier.range?.[0] !== start) continue;
+        const variable = reference.resolved;
+        if (!variable) return true;
+        return variable.defs.some((definition: any) => {
+          if (definition.type !== "ImportBinding") return false;
+          const declaration = definition.parent;
+          const source = String(declaration?.source?.value ?? "");
+          const configured = ctx.project.nuxt?.autoImports.get(name)?.from;
+          return source === "#imports" || (!!configured && source === configured);
+        });
+      }
+    }
+  } catch {
+    // Recovered syntax has no reliable binding information; report conservatively.
+  }
+  return false;
+}
+
+function unwrapCallee(node: AnyNode): AnyNode {
+  return node?.type === "ChainExpression" ? node.expression : node;
+}
 
 // Mirrors the export shapes Nuxt's keyed-function-factories scan accepts.
 function isExported(declarator: AnyNode, name: string): boolean {

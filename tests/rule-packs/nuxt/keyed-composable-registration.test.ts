@@ -200,6 +200,21 @@ test.each([
   expect(await diagnose({ [file]: source })).toEqual([ruleId]);
 });
 
+test.each([
+  [
+    "a locally shadowed factory",
+    "app/composables/useOrders.ts",
+    "function createUseFetch() { return () => {} }\nexport const useOrders = createUseFetch('/api/orders')",
+  ],
+  [
+    "a factory imported from an unrelated module",
+    "app/composables/useOrders.ts",
+    "import { createUseFetch } from 'some-package'\nexport const useOrders = createUseFetch('/api/orders')",
+  ],
+])("reports a factory whose binding Nuxt cannot auto-import: %s", async (_, file, source) => {
+  expect(await diagnose({ [file]: source })).toEqual([ruleId]);
+});
+
 test("accepts a default-exported factory registered as default", async () => {
   expect(
     await diagnose({
