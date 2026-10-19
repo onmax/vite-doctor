@@ -138,12 +138,12 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
       // The source inventory may omit files matched by a glob (for example excluded,
       // ignored, or otherwise unavailable files). Without a complete target set we
       // cannot prove that a wildcard suppression is stale.
-      if (pattern.includes("*")) return false;
+      if (isGlobPattern(pattern)) return false;
       let targets = analyzed.filter((file) => matchesSuppressionFile(file, pattern));
       // Only a literal path that no longer exists is provably stale; any other unanalyzed
       // target may be excluded, ignored, or outside the source inventory.
       if (!targets.length) {
-        if (pattern.includes("*") || existsSync(resolve(root, pattern))) return false;
+        if (isGlobPattern(pattern) || existsSync(resolve(root, pattern))) return false;
         targets = [relative(root, resolve(root, pattern))];
       }
       if (targets.some((file) => unproven.has(file))) return false;
@@ -179,6 +179,12 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
     ...session.diagnostics.slice(0, reported),
     ...settleDiagnosticIdentity(session.diagnostics.slice(reported)),
   ];
+}
+
+function isGlobPattern(pattern: string): boolean {
+  // `nativeMatch` accepts multiple glob forms; any of them may match files
+  // omitted from the source inventory, so their unused status is inconclusive.
+  return /[*?\[\]{}]/.test(pattern);
 }
 
 function doctorConfigFiles(root: string): string[] {

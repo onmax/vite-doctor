@@ -175,6 +175,18 @@ test("a glob suppression is not reported when the source inventory may be incomp
   expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "DOC0031")).toEqual([]);
 });
 
+test("a question-mark glob suppression is not reported when the source inventory may be incomplete", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noClientSecretPattern],
+    files: { "src/main.ts": "console.log(1)\n" },
+    config: {
+      suppressions: [{ ruleId, file: "src/main?.ts", reason: "Moved." }],
+    },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "DOC0031")).toEqual([]);
+});
+
 test("a config suppression for a file Doctor could not parse is not reported", async () => {
   const result = await runProjectFixture({
     framework: "vite",
