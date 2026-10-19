@@ -43,6 +43,14 @@ const label = String(Date.now())
   expect(lines).toEqual([]);
 });
 
+test("ignores direct interpolation rendered only inside ClientOnly", async () => {
+  const lines = await reportedLines(`<script setup lang="ts">
+const label = String(Date.now())
+</script>
+<template><ClientOnly>{{ label }}</ClientOnly></template>`);
+  expect(lines).toEqual([]);
+});
+
 test("reports time output outside ClientOnly in a file that also uses ClientOnly", async () => {
   const lines = await reportedLines(`<script setup lang="ts">
 const clientLabel = String(Date.now())
