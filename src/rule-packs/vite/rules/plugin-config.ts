@@ -272,6 +272,8 @@ function localFunction(from: AnyNode, name: string): AnyNode {
 
 function isPluginObject(node: AnyNode, viteCode: boolean): boolean {
   const properties = node?.type === "ObjectExpression" ? node.properties : [];
+  const nameProperty = properties.find((property: AnyNode) => keyName(property) === "name");
+  const name = nameProperty ? staticString(nameProperty.value) : null;
   const keys = new Set(
     properties
       .map((property: AnyNode) => keyName(property))
@@ -288,7 +290,8 @@ function isPluginObject(node: AnyNode, viteCode: boolean): boolean {
           ((keys.has("config") || keys.has("configEnvironment")) &&
             keys.has("name") &&
             (keys.has("transform") ||
-              [...genericPluginKeys].filter((candidate) => keys.has(candidate)).length >= 2)))
+              [...genericPluginKeys].filter((candidate) => keys.has(candidate)).length >= 2) &&
+            /plugin/i.test(name ?? "")))
       );
     })
   );
