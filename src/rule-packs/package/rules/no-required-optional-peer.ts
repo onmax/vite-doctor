@@ -33,48 +33,48 @@ export const noRequiredOptionalPeer = createRule({
     return {
       async onProjectStart() {
         const { packageArtifacts } = await import("../artifacts.js");
-        const artifacts = packageArtifacts(ctx);
-        if (!artifacts) return;
-        const manifest = artifacts.manifest;
-        for (const reference of artifacts.references) {
-          const name = reference.packageName;
-          if (
-            reference.kind !== "runtime" ||
-            !reference.required ||
-            !manifest.peerDependencies?.[name] ||
-            manifest.peerDependenciesMeta?.[name]?.optional !== true ||
-            manifest.dependencies?.[name]
-          )
-            continue;
-          ctx.report(
-            diagnostics.PKG0003({
-              why: `"${name}" is declared as an optional peer but "${reference.specifier}" is loaded unconditionally from a default package entrypoint. Consumers that omit the peer cannot load this entrypoint.`,
-              fix: `Make "${name}" a required peer, or move the integration behind a guarded deferred load or a dedicated subpath that the default entrypoint does not load. Do not remove the peer declaration.`,
-              sources: [`${reference.file}:${reference.range.line}:${reference.range.column}`],
-            }),
-            {
-              ruleId: "package/no-required-optional-peer",
-              severity: ctx.severity,
-              category: "dependencies",
-              file: reference.file,
-              range: reference.range,
-              confidence: "manifest-backed",
-              evidence: [
-                {
-                  kind: "manifest",
-                  file: `${ctx.project.root}/package.json`,
-                  summary: `peerDependenciesMeta["${name}"].optional is true.`,
-                },
-                {
-                  kind: "ast",
-                  file: reference.file,
-                  range: reference.range,
-                  summary:
-                    "An unconditional load is reachable through required imports from a default package entrypoint.",
-                },
-              ],
-            },
-          );
+        for (const artifacts of packageArtifacts(ctx)) {
+          const manifest = artifacts.manifest;
+          for (const reference of artifacts.references) {
+            const name = reference.packageName;
+            if (
+              reference.kind !== "runtime" ||
+              !reference.required ||
+              !manifest.peerDependencies?.[name] ||
+              manifest.peerDependenciesMeta?.[name]?.optional !== true ||
+              manifest.dependencies?.[name]
+            )
+              continue;
+            ctx.report(
+              diagnostics.PKG0003({
+                why: `"${name}" is declared as an optional peer but "${reference.specifier}" is loaded unconditionally from a default package entrypoint. Consumers that omit the peer cannot load this entrypoint.`,
+                fix: `Make "${name}" a required peer, or move the integration behind a guarded deferred load or a dedicated subpath that the default entrypoint does not load. Do not remove the peer declaration.`,
+                sources: [`${reference.file}:${reference.range.line}:${reference.range.column}`],
+              }),
+              {
+                ruleId: "package/no-required-optional-peer",
+                severity: ctx.severity,
+                category: "dependencies",
+                file: reference.file,
+                range: reference.range,
+                confidence: "manifest-backed",
+                evidence: [
+                  {
+                    kind: "manifest",
+                    file: `${artifacts.root}/package.json`,
+                    summary: `peerDependenciesMeta["${name}"].optional is true.`,
+                  },
+                  {
+                    kind: "ast",
+                    file: reference.file,
+                    range: reference.range,
+                    summary:
+                      "An unconditional load is reachable through required imports from a default package entrypoint.",
+                  },
+                ],
+              },
+            );
+          }
         }
       },
     };

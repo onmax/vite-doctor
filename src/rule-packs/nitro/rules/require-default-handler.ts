@@ -13,6 +13,22 @@ interface RuntimeExport {
   names: string[];
 }
 
+interface RequireDefaultHandlerOptions {
+  allowedExports?: string[];
+}
+
+const NON_EVENT_TYPE_KEYWORDS = new Set([
+  "TSArrayType",
+  "TSBigIntKeyword",
+  "TSBooleanKeyword",
+  "TSLiteralType",
+  "TSNumberKeyword",
+  "TSStringKeyword",
+  "TSSymbolKeyword",
+  "TSTupleType",
+]);
+const NON_EVENT_TYPE_NAMES = new Set(["Array", "Date", "Map", "ReadonlyArray", "Record", "Set"]);
+
 export const requireDefaultHandler = createRule({
   meta: {
     id: RULE_ID,
@@ -27,16 +43,24 @@ export const requireDefaultHandler = createRule({
   create(ctx) {
     const route = nitroRouteFile(ctx, ctx.file.path);
     if (!route) return;
+    const allowedExports = new Set(allowedExportsOption(ctx.options));
     return {
       Program(node: AnyNode) {
-        const { defaultExport, defaultLocal, runtimeExports } = moduleExports(node);
+        const { defaultExport, defaultLocal, defaultValue, runtimeExports } = moduleExports(node);
         if (!defaultExport) {
           if (hasCommonJsDefault(node)) return;
           reportMissingHandler(ctx, route, runtimeExports);
           return;
         }
+        const notHandler = defaultValue && nonHandlerDescription(defaultValue, node);
+        if (notHandler) {
+          reportNonHandlerDefault(ctx, route, defaultValue, notHandler);
+          return;
+        }
         for (const runtimeExport of runtimeExports) {
-          const names = runtimeExport.names.filter((name) => name !== defaultLocal);
+          const names = runtimeExport.names.filter(
+            (name) => name !== defaultLocal && !allowedExports.has(name),
+          );
           if (!names.length) continue;
           reportExtraExports(ctx, route, runtimeExport.node, names);
         }
@@ -74,6 +98,26 @@ function reportMissingHandler(
   );
 }
 
+function reportNonHandlerDefault(
+  ctx: RuleContext,
+  route: NitroServerFile,
+  node: AnyNode,
+  description: { label: string; name?: string },
+) {
+  const handler =
+    (runtimeMajor(ctx.project, "nitro") ?? 2) >= 3 ? "defineHandler" : "defineEventHandler";
+  const moved = description.name ?? "this module";
+  ctx.helpers.report(
+    ctx,
+    node,
+    diagnostics.NITRO0019({
+      why: `Nitro registers this file as the ${routePath(route)} route, but its default export is ${description.label}, not an event handler. The route has no working handler.`,
+      fix: `Move ${moved} to ${utilsDir(ctx.project, route)}/ and import it where needed, or default-export a ${handler}() if this file should serve ${routePath(route)}.`,
+    }),
+    { ruleId: RULE_ID, severity: "error", category: "routing" },
+  );
+}
+
 function reportExtraExports(
   ctx: RuleContext,
   route: NitroServerFile,
@@ -84,8 +128,8 @@ function reportExtraExports(
     ctx,
     node,
     diagnostics.NITRO0020({
-      why: `This ${routePath(route)} route module also exports ${formatNames(names)}. Nitro only uses the default export, and every module that imports these names loads the route module.`,
-      fix: `Move ${formatNames(names)} to ${utilsDir(ctx.project, route)}/ and keep the handler as this file's only runtime export. Type-only exports can stay.`,
+      why: `This ${routePath(route)} route module also exports ${formatNames(names)}. Nitro only uses the default export, so these exports are only reachable by importing the route module, which also loads its handler and dependencies.`,
+      fix: `Move ${formatNames(names)} to ${utilsDir(ctx.project, route)}/ and keep the handler as this file's only runtime export. Type-only exports can stay. If a build step reads these exports intentionally, list them in this rule's allowedExports option.`,
     }),
     { ruleId: RULE_ID, severity: "warn", category: "routing" },
   );
@@ -94,11 +138,13 @@ function reportExtraExports(
 function moduleExports(program: AnyNode) {
   let defaultExport = false;
   let defaultLocal: string | undefined;
+  let defaultValue: AnyNode;
   const runtimeExports: RuntimeExport[] = [];
   for (const statement of program.body ?? []) {
     if (statement.type === "ExportDefaultDeclaration") {
       defaultExport = true;
       defaultLocal = declaredName(statement.declaration);
+      defaultValue = statement.declaration;
     } else if (statement.type === "TSExportAssignment") {
       defaultExport = true;
     } else if (statement.type === "ExportAllDeclaration") {
@@ -122,13 +168,155 @@ function moduleExports(program: AnyNode) {
         const exported = moduleExportName(specifier.exported);
         if (exported === "default") {
           defaultExport = true;
-          if (!statement.source) defaultLocal = moduleExportName(specifier.local);
+          if (!statement.source) {
+            defaultLocal = moduleExportName(specifier.local);
+            defaultValue = specifier.local;
+          }
         } else if (exported) names.push(exported);
       }
       if (names.length) runtimeExports.push({ node: statement, names });
     }
   }
-  return { defaultExport, defaultLocal, runtimeExports };
+  return { defaultExport, defaultLocal, defaultValue, runtimeExports };
+}
+
+function allowedExportsOption(options: unknown): string[] {
+  const allowed = (options as RequireDefaultHandlerOptions | undefined)?.allowedExports;
+  return Array.isArray(allowed) ? allowed.filter((name) => typeof name === "string") : [];
+}
+
+// Unknown calls and imports may produce handlers, so only shapes that can never serve an event count.
+function nonHandlerDescription(
+  node: AnyNode,
+  program: AnyNode,
+  resolved = false,
+): { label: string; name?: string } | undefined {
+  const value = unwrapExpression(node);
+  if (value?.type === "Identifier") {
+    if (resolved) return undefined;
+    const binding = localBinding(program, value.name);
+    const description = binding && nonHandlerDescription(binding, program, true);
+    return description && { ...description, name: description.name ?? value.name };
+  }
+  if (
+    value?.type === "FunctionDeclaration" ||
+    value?.type === "FunctionExpression" ||
+    value?.type === "ArrowFunctionExpression"
+  ) {
+    if (!hasNonEventParameters(value.params ?? [])) return undefined;
+    const name = moduleExportName(value.id);
+    const params = (value.params ?? []).flatMap(patternNames).join(", ");
+    return { label: `${name ? `${name}(), ` : ""}a function that takes (${params})`, name };
+  }
+  if (value?.type === "ClassDeclaration" || value?.type === "ClassExpression") {
+    const name = moduleExportName(value.id);
+    return { label: name ? `the class ${name}` : "a class", name };
+  }
+  if (value?.type === "ObjectExpression") {
+    return isHandlerObject(value, program) ? undefined : { label: "a plain object" };
+  }
+  if (value?.type === "ArrayExpression") return { label: "an array" };
+  if (value?.type === "Literal" || value?.type === "TemplateLiteral")
+    return { label: "a constant value" };
+  return undefined;
+}
+
+function unwrapExpression(node: AnyNode): AnyNode {
+  let current = node;
+  while (
+    current?.type === "ParenthesizedExpression" ||
+    current?.type === "TSAsExpression" ||
+    current?.type === "TSSatisfiesExpression" ||
+    current?.type === "TSNonNullExpression"
+  )
+    current = current.expression;
+  return current;
+}
+
+function localBinding(program: AnyNode, name: string): AnyNode {
+  for (const statement of program.body ?? []) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (
+      (declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") &&
+      declaration.id?.name === name
+    )
+      return declaration;
+    if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") continue;
+    for (const declarator of declaration.declarations ?? []) {
+      if (declarator.id?.type === "Identifier" && declarator.id.name === name)
+        return declarator.init ?? undefined;
+    }
+  }
+  return undefined;
+}
+
+// Nitro calls a route handler with the event alone, so a second required parameter is never filled.
+function hasNonEventParameters(params: AnyNode[]) {
+  const [first, second] = params;
+  if (second && isRequiredParameter(second)) return true;
+  if (!first) return false;
+  if (first.type === "ArrayPattern") return true;
+  const type = first.typeAnnotation?.typeAnnotation;
+  if (!type) return false;
+  if (NON_EVENT_TYPE_KEYWORDS.has(type.type)) return true;
+  return (
+    type.type === "TSTypeReference" &&
+    type.typeName?.type === "Identifier" &&
+    NON_EVENT_TYPE_NAMES.has(type.typeName.name)
+  );
+}
+
+function isRequiredParameter(param: AnyNode) {
+  if (param.type === "AssignmentPattern" || param.type === "RestElement") return false;
+  if (param.type === "TSParameterProperty") return false;
+  return param.optional !== true;
+}
+
+function isHandlerObject(node: AnyNode, program?: AnyNode) {
+  let hasUnknown = false;
+  let hasCallable = false;
+  let hasNonCallable = false;
+  for (const property of node.properties ?? []) {
+    if (property.type !== "Property") {
+      hasUnknown = true;
+      continue;
+    }
+    const key = property.computed ? undefined : moduleExportName(property.key);
+    if (key === undefined) {
+      hasUnknown = true;
+      continue;
+    }
+    if (key !== "handler" && key !== "fetch") continue;
+    if (isPlausiblyCallable(property.value, program)) hasCallable = true;
+    else hasNonCallable = true;
+  }
+  return hasCallable || (hasUnknown && !hasNonCallable);
+}
+
+function isPlausiblyCallable(node: AnyNode, program?: AnyNode): boolean {
+  const value = unwrapExpression(node);
+  if (!value) return true;
+  if (
+    value.type === "FunctionExpression" ||
+    value.type === "ArrowFunctionExpression" ||
+    value.type === "FunctionDeclaration"
+  )
+    return true;
+  if (value.type === "Identifier" && program) {
+    const binding = localBinding(program, value.name);
+    return binding ? isPlausiblyCallable(binding, undefined) : true;
+  }
+  if (
+    value.type === "Literal" ||
+    value.type === "TemplateLiteral" ||
+    value.type === "ArrayExpression" ||
+    value.type === "ObjectExpression" ||
+    value.type === "ClassExpression" ||
+    value.type === "ClassDeclaration"
+  )
+    return false;
+  return true;
 }
 
 function hasCommonJsDefault(program: AnyNode) {
