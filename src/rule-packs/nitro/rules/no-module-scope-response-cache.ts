@@ -237,7 +237,12 @@ function cachedEntryOf(node: AnyNode, references: AnyNode[]) {
       unwrap(declarator.init) === call &&
       declarator.id?.type === "Identifier" &&
       declarator.id.name === node.name &&
-      resolvesToBinding(node, node.name, nearestFunctionOrProgram(declarator))
+      resolvesToBinding(
+        node,
+        node.name,
+        nearestFunctionOrProgram(declarator),
+        declarator,
+      )
     );
   });
 }
@@ -334,7 +339,12 @@ function resolvesToModuleBinding(node: AnyNode, name: string) {
 
 // `node` refers to the `name` bound by `owner` (a function's parameter), or by the module when
 // `owner` is null, rather than to a nearer declaration.
-function resolvesToBinding(node: AnyNode, name: string, owner: AnyNode) {
+function resolvesToBinding(
+  node: AnyNode,
+  name: string,
+  owner: AnyNode,
+  expectedDeclarator?: AnyNode,
+) {
   for (let current = node.__doctorParent; current; current = current.__doctorParent) {
     if (current === owner || current.type === "Program") return true;
     if (FUNCTION_TYPES.has(current.type)) {
@@ -349,7 +359,29 @@ function resolvesToBinding(node: AnyNode, name: string, owner: AnyNode) {
           : current.type === "SwitchCase"
             ? current.consequent
             : [current.init ?? current.left];
-      if (statements.some((statement: AnyNode) => declaresLexical(statement, name))) return false;
+      if (
+        statements.some(
+          (statement: AnyNode) =>
+            declaresLexical(statement, name) &&
+            !containsNode(statement, expectedDeclarator),
+        )
+      )
+        return false;
+    }
+  }
+  return false;
+}
+
+function containsNode(root: AnyNode, target?: AnyNode): boolean {
+  if (!target) return false;
+  if (root === target) return true;
+  for (const [key, value] of Object.entries(root)) {
+    if (key === "__doctorParent") continue;
+    if (Array.isArray(value)) {
+      if (value.some((child) => child && typeof child === "object" && containsNode(child, target)))
+        return true;
+    } else if (value && typeof value === "object" && containsNode(value, target)) {
+      return true;
     }
   }
   return false;
