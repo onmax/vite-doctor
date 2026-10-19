@@ -132,6 +132,31 @@ export default function plugin(): Plugin {
     expect(result.diagnostics[0]?.message).toContain(path);
   });
 
+  test("reports generic plugin keys without a Vite import", async () => {
+    const result = await run(`export default {
+  name: "generic-vite-plugin",
+  transform(code) { return code },
+  config(config) {
+    return { resolve: { dedupe: [...config.resolve.dedupe, "x"] } }
+  },
+}`);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.code).toBe("VITE0026");
+  });
+
+  test("ignores URL-like strings when checking CommonJS Vite signals", async () => {
+    const result = await run(`const url = "https://example.test//not-a-comment"
+const vite = require("vite")
+export default {
+  name: "generic-vite-plugin",
+  transform(code) { return code },
+  config(config) {
+    return { resolve: { dedupe: [...config.resolve.dedupe, "x"] } }
+  },
+}`);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
   test.each([
     [
       "only additions from a helper (vitehub 9ad7b6825 fix)",

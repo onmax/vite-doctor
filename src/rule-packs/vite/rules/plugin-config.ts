@@ -271,11 +271,25 @@ function localFunction(from: AnyNode, name: string): AnyNode {
 }
 
 function isPluginObject(node: AnyNode, viteCode: boolean): boolean {
+  const properties = node?.type === "ObjectExpression" ? node.properties : [];
+  const keys = new Set(
+    properties
+      .map((property: AnyNode) => keyName(property))
+      .filter((key: string | null): key is string => key !== null),
+  );
   return (
     node?.type === "ObjectExpression" &&
-    node.properties.some((property: AnyNode) => {
+    properties.some((property: AnyNode) => {
       const key = keyName(property);
-      return key !== null && (pluginKeys.has(key) || (viteCode && genericPluginKeys.has(key)));
+      return (
+        key !== null &&
+        (pluginKeys.has(key) ||
+          (viteCode && genericPluginKeys.has(key)) ||
+          (keys.has("config") || keys.has("configEnvironment")) &&
+            (keys.has("transform") ||
+              (keys.has("name") &&
+                [...genericPluginKeys].filter((candidate) => keys.has(candidate)).length >= 2)))
+      );
     })
   );
 }
@@ -358,5 +372,52 @@ function walkOwnBody(node: AnyNode, visit: (node: AnyNode) => void, root = node)
 }
 
 function stripComments(source: string) {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  let result = "";
+  let state: "code" | "single" | "double" | "template" | "line" | "block" = "code";
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]!;
+    const next = source[index + 1];
+    if (state === "line") {
+      if (char === "\n") {
+        state = "code";
+        result += char;
+      } else result += " ";
+      continue;
+    }
+    if (state === "block") {
+      if (char === "*" && next === "/") {
+        result += "  ";
+        index++;
+        state = "code";
+      } else result += char === "\n" ? "\n" : " ";
+      continue;
+    }
+    if (state !== "code") {
+      result += char;
+      if (char === "\\" && next !== undefined) {
+        result += next;
+        index++;
+      } else if (
+        (state === "single" && char === "'") ||
+        (state === "double" && char === '"') ||
+        (state === "template" && char === "`")
+      ) state = "code";
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      result += "  ";
+      index++;
+      state = "line";
+    } else if (char === "/" && next === "*") {
+      result += "  ";
+      index++;
+      state = "block";
+    } else {
+      result += char;
+      if (char === "'") state = "single";
+      else if (char === '"') state = "double";
+      else if (char === "`") state = "template";
+    }
+  }
+  return result;
 }
