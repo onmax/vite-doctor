@@ -85,7 +85,6 @@ describe("Vite asset URL templates", () => {
   const conditionalUrl = `const ERRORS_ID = new URL(import.meta.url.endsWith(".ts") ? "./errors.ts" : "./errors.js", import.meta.url).href`;
 
   test.each([
-    `import type { Plugin } from "vite"\n${conditionalUrl}\nexport function kv(): Plugin { return { name: "kv", load: () => ERRORS_ID } }`,
     `import { createServer } from "vite"\n${conditionalUrl}`,
     `import { writeFile } from "node:fs/promises"\n${conditionalUrl}`,
   ])("skips Node-side modules that Vite never bundles for the client: %s", async (source) => {
@@ -99,6 +98,7 @@ describe("Vite asset URL templates", () => {
 
   test.each([
     `import { createApp } from "vue"\n${conditionalUrl}`,
+    `import type { Plugin } from "vite"\n${conditionalUrl}\nexport function kv(): Plugin { return { name: "kv", load: () => ERRORS_ID } }`,
     `import type { ViteHotContext } from "vite/types/hot.d.ts"\n${conditionalUrl}`,
   ])("reports conditional URL paths in client modules: %s", async (source) => {
     const result = await runRuleFixture({

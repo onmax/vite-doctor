@@ -242,11 +242,16 @@ function isToolingOrServerPath(path: string): boolean {
 // Vite only rewrites new URL(..., import.meta.url) in client bundles. Modules that import the
 // Vite API or Node builtins are plugin or server code that Vite never bundles for the browser.
 function isNodeSideModule(program: AnyNode): boolean {
-  return (program?.body ?? []).some(
-    (statement: AnyNode) =>
-      statement.type === "ImportDeclaration" &&
-      (statement.source?.value === "vite" || statement.source?.value?.startsWith("node:")),
-  );
+  return (program?.body ?? []).some((statement: AnyNode) => {
+    if (statement.type !== "ImportDeclaration") return false;
+    if (statement.importKind === "type") return false;
+    const source = statement.source?.value;
+    if (source !== "vite" && !source?.startsWith("node:")) return false;
+    return (
+      statement.specifiers?.length === 0 ||
+      statement.specifiers.some((specifier: AnyNode) => specifier.importKind !== "type")
+    );
+  });
 }
 
 function isFixturePath(path: string): boolean {
