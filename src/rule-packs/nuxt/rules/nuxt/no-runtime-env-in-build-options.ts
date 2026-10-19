@@ -151,9 +151,6 @@ function collectRuntimeConfigKeys(
     if (!key || !value) continue;
     if (key === "runtimeConfig") {
       collectDeclaredKeys(value, [], bindings, keys[owner]);
-      // Both Nuxt and Nitro loaders can override the generated runtime config.
-      if (owner === "nuxt") collectDeclaredKeys(value, [], bindings, keys.nitro);
-      else collectDeclaredKeys(value, [], bindings, keys.nuxt);
     } else if (key === "nitro") {
       collectRuntimeConfigKeys(value, bindings, keys, "nitro");
     } else if (ENVIRONMENT_OVERRIDE_KEYS.has(key)) {
