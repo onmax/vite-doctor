@@ -204,6 +204,11 @@ test.each([
     "app/utils/account.ts",
     `export const config = {\n  setup() {\n    return $fetch('/api/account')\n  },\n}`,
   ],
+  [
+    "a default-exported setup object in utils",
+    "app/utils/account.ts",
+    `export default {\n  setup() {\n    return $fetch('/api/account')\n  },\n}`,
+  ],
 ])("ignores %s", async (_, file, source) => {
   expect(await diagnose(source, file)).toEqual([]);
 });

@@ -101,7 +101,7 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
   ) {
     const options = parent.__doctorParent;
     const owner = options?.__doctorParent;
-    if (owner?.type === "ExportDefaultDeclaration") return true;
+    if (owner?.type === "ExportDefaultDeclaration") return isSetupEntryFile(ctx);
     if (
       owner?.type !== "CallExpression" ||
       owner.arguments?.[0] !== options ||
@@ -126,6 +126,13 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
     }
     return runsDuringSsr(ctx, call, seen);
   });
+}
+
+// Nuxt invokes default-exported setup objects only for component files and plugin entries.
+// Arbitrary default exports in scanned runtime files (for example app/utils) are inert.
+function isSetupEntryFile(ctx: RuleContext): boolean {
+  const path = ctx.file.relativePath.replace(/\\/g, "/");
+  return path.endsWith(".vue") || /(?:^|\/)plugins\//.test(path);
 }
 
 // Vue runs `watchEffect()` callbacks once during SSR setup. `watch()` callbacks count as
