@@ -42,9 +42,9 @@ export const noRuntimeEnvInBuildOptions = createRule({
         if (bindings.has("process") || importsLocalProcess(program)) return;
         const config = exportedConfigObject(program, bindings);
         if (!config) return;
-        const runtimeEnvKeys = new Map<string, string>();
-        collectRuntimeConfigKeys(config, bindings, runtimeEnvKeys);
-        if (!runtimeEnvKeys.size) return;
+        const runtimeEnvKeys = { nuxt: new Map<string, string>(), nitro: new Map<string, string>() };
+        collectRuntimeConfigKeys(config, bindings, runtimeEnvKeys, "nuxt");
+        if (!runtimeEnvKeys.nuxt.size && !runtimeEnvKeys.nitro.size) return;
         const readsFor = envReadsResolver(bindings);
 
         for (const { path, value } of buildOptionValues(config, bindings)) {
@@ -53,7 +53,7 @@ export const noRuntimeEnvInBuildOptions = createRule({
           const names = [...reads.names];
           if (!names.every(isRuntimeEnvName)) continue;
           const overridden = names
-            .map((name) => ({ name, key: runtimeEnvKeys.get(stripRuntimePrefix(name)) }))
+            .map((name) => ({ name, key: runtimeConfigKey(name, runtimeEnvKeys) }))
             .find((entry): entry is { name: string; key: string } => Boolean(entry.key));
           if (!overridden) continue;
           ctx.report(
@@ -94,12 +94,16 @@ function topLevelBindings(program: AnyNode): Map<string, AnyNode> {
 }
 
 function importsLocalProcess(program: AnyNode): boolean {
-  return (program.body ?? []).some(
-    (statement: AnyNode) =>
-      statement.type === "ImportDeclaration" &&
-      !["process", "node:process"].includes(statement.source?.value) &&
-      statement.specifiers?.some((specifier: AnyNode) => specifier.local?.name === "process"),
-  );
+  return (program.body ?? []).some((statement: AnyNode) => {
+    if (statement.type !== "ImportDeclaration") return false;
+    const source = statement.source?.value;
+    for (const specifier of statement.specifiers ?? []) {
+      if (specifier.local?.name !== "process") continue;
+      if (!["process", "node:process"].includes(source)) return true;
+      if (specifier.type !== "ImportDefaultSpecifier") return true;
+    }
+    return false;
+  });
 }
 
 function exportedConfigObject(program: AnyNode, bindings: Map<string, AnyNode>): AnyNode {
@@ -134,20 +138,23 @@ function objectExpression(node: AnyNode, bindings: Map<string, AnyNode>): AnyNod
 function collectRuntimeConfigKeys(
   node: AnyNode,
   bindings: Map<string, AnyNode>,
-  keys: Map<string, string>,
+  keys: { nuxt: Map<string, string>; nitro: Map<string, string> },
+  owner: "nuxt" | "nitro",
 ) {
   for (const property of node?.properties ?? []) {
     if (property.type !== "Property") continue;
     const key = propertyName(property);
     const value = objectExpression(property.value, bindings);
     if (!key || !value) continue;
-    if (key === "runtimeConfig") collectDeclaredKeys(value, [], bindings, keys);
-    else if (key === "nitro" || ENVIRONMENT_OVERRIDE_KEYS.has(key)) {
-      collectRuntimeConfigKeys(value, bindings, keys);
+    if (key === "runtimeConfig") collectDeclaredKeys(value, [], bindings, keys[owner]);
+    else if (key === "nitro") {
+      collectRuntimeConfigKeys(value, bindings, keys, "nitro");
+    } else if (ENVIRONMENT_OVERRIDE_KEYS.has(key)) {
+      collectRuntimeConfigKeys(value, bindings, keys, "nuxt");
     } else if (key === "$env") {
       for (const environment of value.properties ?? []) {
         if (environment.type === "Property") {
-          collectRuntimeConfigKeys(objectExpression(environment.value, bindings), bindings, keys);
+          collectRuntimeConfigKeys(objectExpression(environment.value, bindings), bindings, keys, "nuxt");
         }
       }
     }
@@ -354,13 +361,14 @@ function isNonReference(node: AnyNode): boolean {
   return false;
 }
 
-function isRuntimeEnvName(name: string): boolean {
-  return RUNTIME_ENV_PREFIXES.some((prefix) => name.startsWith(prefix));
+function runtimeConfigKey(name: string, keys: { nuxt: Map<string, string>; nitro: Map<string, string> }): string | undefined {
+  if (name.startsWith("NUXT_")) return keys.nuxt.get(name.slice("NUXT_".length));
+  if (name.startsWith("NITRO_")) return keys.nitro.get(name.slice("NITRO_".length));
+  return undefined;
 }
 
-function stripRuntimePrefix(name: string): string {
-  const prefix = RUNTIME_ENV_PREFIXES.find((candidate) => name.startsWith(candidate)) ?? "";
-  return name.slice(prefix.length);
+function isRuntimeEnvName(name: string): boolean {
+  return RUNTIME_ENV_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
 // Nitro maps runtimeConfig paths to env names with scule: snakeCase(path.join("_")).toUpperCase().

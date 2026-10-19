@@ -19,7 +19,11 @@ test.each([
     /only one <template>/,
   ],
   ["unclosed template elements", "<template><div></template>", /missing end tag/],
-  ["missing component blocks", "", /at least one <template> or <script>/i],
+  [
+    "missing component blocks",
+    "<style>.a { color: red; }</style>",
+    /at least one <template> or <script>/i,
+  ],
 ])("marks %s incomplete on cold and cached runs", async (_name, source, message) => {
   await withProject({ "src/App.vue": source }, async (root) => {
     for (let run = 0; run < 2; run++) {
@@ -40,6 +44,28 @@ test.each([
     }
   });
 });
+
+test.each(["", " \n\t\n"])(
+  "reports a whitespace-only SFC instead of an evidence gap on cold and cached runs: %j",
+  async (source) => {
+    await withProject({ "src/Empty.vue": source }, async (root) => {
+      for (let run = 0; run < 2; run++) {
+        const result = await runViteDoctor({ root, framework: "vite", rules: rule, cache: true });
+        expect(result.project.evidenceGaps ?? []).toEqual([]);
+        expect(reportStatus(result)).toBe("findings");
+        expect(result.diagnostics).toMatchObject([
+          {
+            code: "DOC0033",
+            ruleId: "doctor/inventory/empty-sfc",
+            severity: "warn",
+            file: join(root, "src/Empty.vue"),
+          },
+        ]);
+        expect(result.diagnostics[0]?.range).toBeUndefined();
+      }
+    });
+  },
+);
 
 test("retains findings from a recovered SFC and clears its evidence gap after repair", async () => {
   const script = "<script setup>console.info(import.meta.env.VITE_API_SECRET)</script>";

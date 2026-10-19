@@ -40,8 +40,8 @@ test.each([
   apollo: { clients: { default: { httpEndpoint: process.env['NUXT_PUBLIC_DIRECTUS_URL'] } } },`,
   ],
   [
-    "a NITRO_ variable for a private key",
-    `runtimeConfig: { apiSecret: '' },
+    "a NITRO_ variable declared by Nitro",
+    `nitro: { runtimeConfig: { apiSecret: '' } },
   myModule: { secret: process.env.NITRO_API_SECRET },`,
   ],
   [
@@ -90,12 +90,40 @@ test.each([
   nitro: { preset: process.env.NITRO_PRESET_NAME_UNUSED ?? process.env.DEPLOY_PRESET },
   devtools: { enabled: process.env.NODE_ENV !== 'production' },`,
   ],
+  [
+    "a Nitro variable for Nuxt runtimeConfig",
+    `runtimeConfig: { apiSecret: '' },
+  myModule: { secret: process.env.NITRO_API_SECRET },`,
+  ],
 ])("does not report %s", async (_name, properties) => {
   const result = await run(`export default defineNuxtConfig({
   ${properties}
 })`);
 
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  `import { env as process } from "node:process"`,
+  `import * as process from "node:process"`,
+])("does not treat a non-default node:process import as global", async (statement) => {
+  const result = await run(`${statement}
+export default defineNuxtConfig({
+  runtimeConfig: { public: { apiBase: '' } },
+  module: { endpoint: process.env.NUXT_PUBLIC_API_BASE },
+})`);
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("allows the default node:process import", async () => {
+  const result = await run(`import process from "node:process"
+export default defineNuxtConfig({
+  runtimeConfig: { public: { apiBase: '' } },
+  module: { endpoint: process.env.NUXT_PUBLIC_API_BASE },
+})`);
+
+  expect(result.diagnostics).toHaveLength(1);
 });
 
 test("does not report a fallback through a top-level binding", async () => {
