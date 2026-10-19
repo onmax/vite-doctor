@@ -934,19 +934,55 @@ function guardFunctionVerdict(resolver: GuardResolver, guard: GuardFunction): Gu
 }
 
 function throwsAuthError(statements: AnyNode[]): boolean {
-  return statements.some((statement: AnyNode) => {
-    if (statement?.type === "ThrowStatement") return isAuthHttpError(statement.argument);
-    if (statement?.type === "BlockStatement") return throwsAuthError(statement.body);
-    if (statement?.type === "IfStatement" && isMissingIdentityCondition(statement.test))
-      return throwsAuthError([statement.consequent, statement.alternate].filter(Boolean));
+  for (let index = 0; index < statements.length; index++) {
+    const statement = statements[index];
+    if (statement?.type === "ThrowStatement" && isAuthHttpError(statement.argument)) return true;
+    if (statement?.type === "BlockStatement" && throwsAuthError(statement.body)) return true;
+    if (statement?.type !== "IfStatement") continue;
+    if (isMissingIdentityCondition(statement.test)) {
+      if (throwsAuthError([statement.consequent, statement.alternate].filter(Boolean))) return true;
+      continue;
+    }
+    // Common proven-identity shape: `if (who) return who; throw 401`.
+    // The return establishes identity on the truthy branch, while the following
+    // auth throw rejects the only path that can continue without it.
+    if (
+      containsNonEmptyReturn(statement.consequent) &&
+      throwsAuthError(statements.slice(index + 1))
+    )
+      return true;
+  }
+  return false;
+}
+
+function containsNonEmptyReturn(node: AnyNode): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (node.type === "ReturnStatement")
+    return (
+      !!node.argument &&
+      !(
+        node.argument.type === "Literal" &&
+        (node.argument.value == null || node.argument.value === false)
+      )
+    );
+  if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type))
     return false;
-  });
+  return Object.entries(node).some(
+    ([key, value]) =>
+      key !== "parent" && value && typeof value === "object" && containsNonEmptyReturn(value),
+  );
 }
 
 function isMissingIdentityCondition(node: AnyNode): boolean {
   if (!node || typeof node !== "object") return false;
   if (node.type === "UnaryExpression" && node.operator === "!")
-    return mentionsIdentity(node.argument);
+    return (
+      mentionsIdentity(node.argument) ||
+      containsNamedProperty(
+        node.argument,
+        /(?:authorization|cookie|token|credential|apikey|api_key|bearer)/i,
+      )
+    );
   if (node.type === "BinaryExpression" || node.type === "LogicalExpression") {
     const left = node.left;
     const right = node.right;
@@ -957,7 +993,13 @@ function isMissingIdentityCondition(node: AnyNode): boolean {
     );
     if (identity && nullish) return true;
     const credential = /(?:authorization|cookie|token|credential|apikey|api_key|bearer)/i;
-    return [left, right].some((value: AnyNode) => containsNamedProperty(value, credential));
+    if (![left, right].some((value: AnyNode) => containsNamedProperty(value, credential)))
+      return false;
+    if (node.type !== "BinaryExpression") return true;
+    // A missing credential is represented by inequality (or a nullish check).
+    // Equality with a valid token is the success branch and must not prove a guard.
+    if (nullish) return true;
+    return node.operator === "!==" || node.operator === "!=";
   }
   return false;
 }
@@ -967,7 +1009,8 @@ function mentionsIdentity(node: AnyNode): boolean {
   if (node.type === "Identifier")
     return /^(?:user|users|identity|who|session|auth)$/i.test(node.name);
   return Object.entries(node).some(
-    ([key, value]) => key !== "parent" && value && typeof value === "object" && mentionsIdentity(value),
+    ([key, value]) =>
+      key !== "parent" && value && typeof value === "object" && mentionsIdentity(value),
   );
 }
 
@@ -991,8 +1034,13 @@ function hasHandlerBinding(fn: AnyNode, name: string): boolean {
     if (Array.isArray(node)) return node.some(visit);
     if (node.type === "VariableDeclarator" && bindsName(node.id, name)) return true;
     if (node.type === "FunctionDeclaration" && node.id?.name === name) return true;
-    if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type))
-      return node.params?.some((param: AnyNode) => bindsName(param, name)) || node.body && visit(node.body);
+    if (
+      ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
+    )
+      return (
+        node.params?.some((param: AnyNode) => bindsName(param, name)) ||
+        (node.body && visit(node.body))
+      );
     if (node.type === "BlockStatement" || node.type === "Program") return node.body.some(visit);
     return Object.entries(node).some(
       ([key, value]) => key !== "parent" && value && typeof value === "object" && visit(value),
