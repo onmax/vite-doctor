@@ -252,7 +252,7 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/routes/require-default-handler": {
     description:
-      "Requires every file in a statically resolved Nitro api/ or routes/ directory to default-export a handler and keep helpers out of the route tree. The rule stays disabled for ambiguous configs or configured scanDirs, apiDir, or routesDir until resolved Runtime Evidence is available.",
+      "Requires every file in a statically resolved Nitro api/ or routes/ directory to default-export an event handler and keep helpers out of the route tree. Default exports that can never serve an event, such as plain objects, constants, classes, or functions that take data instead of an event, count as missing handlers. List exports a build step reads on purpose, such as route metadata, in the allowedExports option. The rule stays disabled for ambiguous configs or configured scanDirs, apiDir, or routesDir until resolved Runtime Evidence is available.",
     why: "Nitro registers every file under server/api and server/routes as a route. A helper module placed there becomes a public URL with no working handler, and other routes that import it pull in a route module.",
     recommendedReplacement:
       "Default-export a handler from each route file. Move shared helpers to server/utils/, where Nitro 2 and Nuxt auto-import them, and keep only type exports next to the handler.",
@@ -1242,7 +1242,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/runtime/no-secret-in-public-config": {
     description:
       "Flags secret in public config in Nuxt runtime code before it leaks into runtime behavior.",
-    why: "Secrets that reach public runtime config or client bundles can be exposed to every visitor and crawler.",
+    why: "Secrets that reach public runtime config or client bundles can be exposed to every visitor and crawler. Keys that are public by design, such as publishable, site, widget, project, or bare `key` values, are not reported; generic `apiKey` names are reported as a low-confidence warning because browser keys like Firebase or Algolia search keys belong in public config.",
     recommendedReplacement:
       "Move secrets to private runtimeConfig and read them only on the server.",
     examples: [
@@ -1363,6 +1363,23 @@ export const ruleDocumentationMetadata = {
           "// app/composables/useSlugify.ts\nexport function useSlugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
         valid:
           "// app/utils/slugify.ts\nexport function slugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
+      },
+    ],
+  },
+  "nuxt/ssr/no-module-scope-request-state": {
+    description:
+      "Report module-scope variables, Maps, and Sets that request-time app code fills with request data.",
+    why: "On the server, Nuxt imports each app module once and reuses it for every SSR request. A module-scope let, Map, or Set that a store action, composable, plugin, or component setup writes during a request is shared by all concurrent requests: one user's fetched data, store instance, or in-flight promise becomes visible to the next request. An in-flight promise that closes over `this` in a Pinia action fills the first request's store, while later requests await it and keep their own store empty.",
+    recommendedReplacement:
+      "Keep per-request state in useState() or the Pinia store state. For values that cannot live in payload state, such as in-flight promises, key them by the Nuxt app with a WeakMap so each SSR request gets its own entry. Constant lookup tables and caches of pure values, such as Intl formatters, can stay at module scope.",
+    examples: [
+      {
+        title: "Key in-flight requests by the Nuxt app",
+        language: "ts",
+        invalid:
+          "let currencyPromise: Promise<void> | null = null\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      currencyPromise ??= (async () => {\n        this.currencies = await $fetch('/api/currencies')\n      })()\n      await currencyPromise\n    },\n  },\n})",
+        valid:
+          "const currencyPromises = new WeakMap<NuxtApp, Promise<void>>()\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      const nuxtApp = useNuxtApp()\n      let promise = currencyPromises.get(nuxtApp)\n      if (!promise) {\n        promise = (async () => {\n          this.currencies = await $fetch('/api/currencies')\n        })()\n        currencyPromises.set(nuxtApp, promise)\n      }\n      await promise\n    },\n  },\n})",
       },
     ],
   },
@@ -2293,14 +2310,31 @@ export const ruleDocumentationMetadata = {
       "Finds VueUse project code that should use the supported use storage pattern instead.",
     why: "Manual storage reads and watches duplicate serialization, cross-tab synchronization, default handling, and reactive updates already handled by useStorage().",
     recommendedReplacement:
-      "Use VueUse useStorage() for client storage so refs, serialization, and cleanup stay together.",
+      "Use VueUse useLocalStorage() or useSessionStorage() for client storage so refs, serialization, and cleanup stay together. In SSR apps, pass { initOnMounted: true } so the first client render matches the server, or use useCookie() for state the server must render.",
     examples: [
       {
         title: "Use VueUse storage",
         language: "ts",
         invalid:
           "const theme = ref(localStorage.getItem('theme') || 'light')\nwatch(theme, value => localStorage.setItem('theme', value))",
-        valid: "const theme = useStorage('theme', 'light')",
+        valid: "const theme = useLocalStorage('theme', 'light', { initOnMounted: true })",
+      },
+    ],
+  },
+  "vueuse/ssr/require-init-on-mounted-storage": {
+    description:
+      "Finds VueUse useLocalStorage(), useSessionStorage() and browser-backed useStorage() calls in SSR Nuxt apps that read storage while the page hydrates.",
+    why: "VueUse reads browser storage synchronously when the composable runs. The server has no browser storage and renders the default value, so a stored value changes the first client render and Vue reports a hydration mismatch. Guarding the call with import.meta.client does not help, because the client branch still runs during hydration.",
+    recommendedReplacement:
+      "Pass { initOnMounted: true } so VueUse reads storage after the component mounts, or use useCookie() for state the server must render. A useStorage() call that passes localStorage or sessionStorage explicitly throws on the server before initOnMounted can help, so use useLocalStorage() or useSessionStorage() with { initOnMounted: true } instead. Doctor skips .client files, calls inside onMounted(), apps with ssr: false, and refs that are only read in event handlers, watch callbacks, lifecycle hooks or unrendered computed values. With @vueuse/nuxt's ssrHandlers option, useStorage() without a storage argument uses cookies; Doctor cannot see that option, so it only reports useStorage() without a storage argument in apps without @vueuse/nuxt.",
+    examples: [
+      {
+        title: "Read stored preferences after mount",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nconst granularity = useSessionStorage('plan-granularity', 'month')\n</script>\n\n<template>\n  <span>{{ granularity }}</span>\n</template>",
+        valid:
+          "<script setup lang=\"ts\">\nconst granularity = useSessionStorage('plan-granularity', 'month', { initOnMounted: true })\n</script>\n\n<template>\n  <span>{{ granularity }}</span>\n</template>",
       },
     ],
   },

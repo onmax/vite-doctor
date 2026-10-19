@@ -405,9 +405,29 @@ function commandFailureMessage(prefix: string, result: CommandResult): string {
   return detail ? `${prefix}: ${detail}` : `${prefix}.`;
 }
 
+/**
+ * Untracked paths under `root` that Git ignores, relative to `root`; ignored directories end with
+ * "/". Undefined outside a Git work tree, or when `root` itself is ignored.
+ */
+export async function listGitIgnoredPaths(root: string): Promise<string[] | undefined> {
+  const result = await runGit(root, [
+    "ls-files",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "--directory",
+    "-z",
+  ]);
+  if (!result.ok) return undefined;
+  const paths = splitNull(result.stdout);
+  return paths.some((path) => path === "./" || path.startsWith("../")) ? undefined : paths;
+}
+
 function runGit(root: string, args: string[]): Promise<CommandResult> {
   return new Promise((resolvePromise) => {
-    execFile("git", args, { cwd: root, encoding: "utf8" }, (error, stdout, stderr) => {
+    // Path listings of large repositories exceed execFile's 1 MiB default.
+    const options = { cwd: root, encoding: "utf8", maxBuffer: Infinity } as const;
+    execFile("git", args, options, (error, stdout, stderr) => {
       resolvePromise({
         ok: !error,
         stdout,
