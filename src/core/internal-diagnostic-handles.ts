@@ -25,13 +25,19 @@ export const doctorInternalDiagnostics = defineDiagnostics({
       fix: "Add at least one rule ID to the rule pack recommended preset.",
     },
     DOC0016: {
-      why: (params: { entry: string }) =>
-        `Invalid Config Extends entry "${params.entry}". Use "pack/preset".`,
+      why: (params: { entry: string } & Partial<PresetSuggestion>) =>
+        params.rulePack
+          ? presetSuggestion(params as PresetSuggestion)
+          : `Invalid Config Extends entry "${params.entry}". Use "pack/preset".`,
       fix: 'Use a rule-pack-qualified preset such as "vite-doctor/vue/recommended".',
     },
     DOC0017: {
-      why: (params: { entry: string; pack: string }) =>
-        `Unknown Rule Pack "${params.pack}" in Config Extends entry "${params.entry}".`,
+      why: (
+        params: { entry: string; pack: string; installed?: string } & Partial<PresetSuggestion>,
+      ) =>
+        params.rulePack
+          ? presetSuggestion(params as PresetSuggestion)
+          : `Unknown Rule Pack "${params.pack}" in Config Extends entry "${params.entry}".${params.installed ? ` Installed Rule Packs: ${params.installed}.` : ""}`,
       fix: "Use an installed Rule Pack name or remove the Config Extends entry.",
     },
     DOC0018: {
@@ -103,3 +109,13 @@ export const doctorInternalDiagnostics = defineDiagnostics({
     },
   },
 });
+
+interface PresetSuggestion {
+  entry: string;
+  rulePack: string;
+  presets: string;
+}
+
+function presetSuggestion(params: PresetSuggestion): string {
+  return `Config Extends entry "${params.entry}" names Rule Pack "${params.rulePack}" without a Preset. Use "${params.entry}/recommended" (Presets: ${params.presets}).`;
+}

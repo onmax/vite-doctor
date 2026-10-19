@@ -57,6 +57,14 @@ export function createTextReport(result: DoctorRunResult): string {
       `Evidence used: manifest ${result.project.nuxt.manifest.hasManifest ? "present" : "missing"}, route graph ${evidence?.routeGraph ? "present" : "missing"}, build manifest ${evidence?.buildManifest ? "present" : "missing"}, ${evidence?.prerenderRoutes ?? 0} prerender routes, ${evidence?.serverRoutes ?? 0} server routes`,
     );
   }
+  const unselected = result.rulePacks?.activated.filter(
+    (pack) => !result.rulePacks?.selected.includes(pack),
+  );
+  if (unselected?.length) {
+    lines.push(
+      `Rule Packs not selected by extends: ${unselected.join(", ")} (add "auto" to extends to select their recommended presets)`,
+    );
+  }
   const confidence = confidenceMix(result);
   lines.push(
     `Confidence mix: ${confidence.proven} proven, ${confidence.probable} probable, ${confidence.sourceOnly} source-only`,
@@ -152,6 +160,7 @@ export function createJsonReport(result: DoctorRunResult): string {
       ruleTimings: result.ruleTimings,
       graph: result.graph,
       extends: result.extends,
+      rulePacks: result.rulePacks,
       workspacePackages: result.workspacePackages,
       evidenceGaps: result.project.evidenceGaps,
       runtimeGraph: result.project.runtimeGraph,
@@ -190,6 +199,7 @@ export function createAgentReport(
       framework: result.framework,
       workspacePackages: result.workspacePackages,
     },
+    rulePacks: result.rulePacks,
     scope: result.scope,
     summary: result.summary,
     diagnostics: result.diagnostics.map((diagnostic) =>

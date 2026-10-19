@@ -6,6 +6,7 @@ import type { DoctorRunOptions } from "../config.js";
 import type { ProjectInfo, SourceFileHandle } from "../primitives.js";
 import {
   collectGitChangeInventory,
+  listGitIgnoredPaths,
   type ChangedLineRange,
   type GitChangeInventory,
   type UnavailableGitChangeInventory,
@@ -33,6 +34,8 @@ const DEFAULT_EXCLUDE = [
   "**/.output/**",
   "**/dist/**",
   "**/coverage/**",
+  "**/test-results/**",
+  "**/playwright-report/**",
   "**/public/**",
   "**/generated/**",
   "**/*.generated.{ts,tsx,mts,cts,js,jsx,mjs,cjs,vue}",
@@ -143,9 +146,13 @@ async function selectAllFiles(
   const files = new Map<string, ScanFileEntry>();
   const exclude = [...DEFAULT_EXCLUDE, ...(config.exclude ?? [])];
   const include = config.include ?? defaultIncludeForProject(project);
+  const ignoredPaths = listGitIgnoredPaths(root);
   const walk = takeProjectFileWalk(project, root) ?? new ProjectFileWalk(root);
-  for (const file of await selectProjectFiles(walk, include, exclude, memo)) {
-    if (authored(file)) files.set(file, createAppFileEntry(root, file));
+  const selected = await selectProjectFiles(walk, include, exclude, memo);
+  const ignored = gitIgnoreMatcher(await ignoredPaths);
+  for (const file of selected) {
+    if (!ignored(relative(root, file)) && authored(file))
+      files.set(file, createAppFileEntry(root, file));
   }
 
   for (const source of projectNuxtInventories(project).flatMap(
@@ -166,6 +173,17 @@ async function selectAllFiles(
   }
 
   return [...files.values()].sort((a, b) => a.displayPath.localeCompare(b.displayPath));
+}
+
+function gitIgnoreMatcher(paths: string[] | undefined): (path: string) => boolean {
+  if (!paths?.length) return () => false;
+  const ignored = new Set(paths.map((path) => path.replace(/\/$/, "")));
+  return (path) => {
+    for (let end = path.length; end > 0; end = path.lastIndexOf("/", end - 1)) {
+      if (ignored.has(path.slice(0, end))) return true;
+    }
+    return false;
+  };
 }
 
 // The project walk can run well before this read, so a file deleted in between is skipped like
