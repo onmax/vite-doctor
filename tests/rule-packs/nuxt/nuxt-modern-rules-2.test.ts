@@ -182,13 +182,19 @@ test("Nuxt UI form controls rule ignores ambiguous native inputs and layout elem
     <input type="file">
     <input type="hidden">
     <input :type="dynamicType">
+    <input ref="input" v-bind="attachments.inputProps.value" class="sr-only">
+    <input type="text" v-bind="inputAttrs">
+    <input v-bind="inputAttrs" type="text">
   </form>
 </div>
 </template>`,
     },
   });
 
-  expect(result.diagnostics).toHaveLength(0);
+  // Only the input whose static type follows the spread is known to be text.
+  expect(result.diagnostics.map((item) => [item.range?.line, item.suggestion])).toEqual([
+    [11, expect.stringContaining("<UInput>")],
+  ]);
 });
 
 test("browser globals inside client-only callbacks are not reported", async () => {
