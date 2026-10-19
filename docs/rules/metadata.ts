@@ -717,6 +717,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/config/no-runtime-env-in-build-options": {
+    description:
+      "Finds nuxt.config options outside runtimeConfig whose value comes from a NUXT_ or NITRO_ environment variable that also overrides a declared runtimeConfig key.",
+    why: "nuxt.config runs once, when the app is built, so every option outside runtimeConfig keeps the value the variable had at build time. Nuxt applies NUXT_ variables to runtimeConfig again when the server starts, which is why they are the usual way to configure one build per environment or tenant. An option that reads the same variable gets the build-time value instead, often empty in a Docker build that sets the variable only on the running container. Doctor only reports values whose environment reads are all NUXT_ or NITRO_ variables and at least one of them matches a key declared in runtimeConfig. A fallback to a variable without a NUXT_ or NITRO_ prefix, or passing process.env as a whole, is treated as an intentional build-time source.",
+    recommendedReplacement:
+      "Read the value from useRuntimeConfig() where it is used, or set the variable in the build environment when the option has to be fixed at build time.",
+    examples: [
+      {
+        title: "Read tenant config at runtime",
+        language: "ts",
+        invalid:
+          "const organization = process.env.NUXT_PUBLIC_ORGANIZATION_CODE\n\nexport default defineNuxtConfig({\n  runtimeConfig: { public: { organizationCode: organization } },\n  piniaPluginPersistedstate: { key: `${organization}:%id` },\n})",
+        valid:
+          "export default defineNuxtConfig({\n  runtimeConfig: { public: { organizationCode: '' } },\n})\n\n// app/plugins/persisted-state.ts\nexport default defineNuxtPlugin(({ $pinia }) => {\n  const { organizationCode } = useRuntimeConfig().public\n  $pinia.use(createPersistedState({ key: id => `${organizationCode}:${id}` }))\n})",
+      },
+    ],
+  },
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",
@@ -909,6 +926,23 @@ export const ruleDocumentationMetadata = {
           "<script setup lang=\"ts\">\nconst theme = ref(localStorage.getItem('theme') || 'light')\n</script>",
         valid:
           "<script setup lang=\"ts\">\nconst theme = useCookie('theme', { default: () => 'light' })\n</script>",
+      },
+    ],
+  },
+  "nuxt/hydration/require-clientonly-fallback": {
+    description:
+      "Finds <ClientOnly> components without a server fallback, which render an empty element on the server and shift the layout once their content mounts.",
+    why: "On the server, and until the component mounts, <ClientOnly> renders only its fallback. Without a #fallback slot or a fallback, placeholder or fallback-tag prop that is an empty <span>, so the client-only content appears after hydration and pushes the surrounding layout.",
+    recommendedReplacement:
+      "Add a #fallback slot with a placeholder of the same size, such as a skeleton, or set fallback-tag with classes that reserve the space. Prefer server-rendered markup when the content does not need the browser. Doctor skips <ClientOnly> wrappers whose only children are Teleport or overlay components such as modals, dialogs, drawers and toasts, and <ClientOnly> with a v-bind object, because those can pass a fallback Doctor cannot see. This Rule is opinionated, so it is only in the Strict Preset.",
+    examples: [
+      {
+        title: "Reserve the space with a fallback",
+        language: "vue",
+        invalid:
+          '<template>\n  <ClientOnly>\n    <SalesChart :data="data" />\n  </ClientOnly>\n</template>',
+        valid:
+          '<template>\n  <ClientOnly>\n    <SalesChart :data="data" />\n    <template #fallback>\n      <USkeleton class="h-80 w-full" />\n    </template>\n  </ClientOnly>\n</template>',
       },
     ],
   },
@@ -1761,6 +1795,23 @@ export const ruleDocumentationMetadata = {
           "const timer = setInterval(sync, 1000)\n\nif (import.meta.hot) {\n  import.meta.hot.accept()\n}",
         valid:
           "const timer = setInterval(sync, 1000)\n\nif (import.meta.hot) {\n  import.meta.hot.dispose(() => clearInterval(timer))\n}",
+      },
+    ],
+  },
+  "vite/plugin/no-lossy-set-cookie-bridge": {
+    description:
+      "Reports loops that copy Fetch Response headers onto a Node ServerResponse with setHeader, which keeps only the last Set-Cookie.",
+    why: "Dev middleware and plugin servers often bridge a Fetch Response to Node's ServerResponse by iterating response.headers. The Headers iterator combines repeated headers into one comma-separated value, except Set-Cookie: each cookie is yielded as its own entry. res.setHeader replaces any value already set for that name, so every Set-Cookie but the last one is dropped and sessions or CSRF cookies silently go missing. Doctor reports a setHeader call that receives the header name from a for...of or forEach loop over a headers property, except the headers of a request binding such as req or request. It treats Set-Cookie as handled, and skips the loop, when the loop body mentions set-cookie, when the loop body checks the header name in a file that mentions set-cookie, or when the same function mentions set-cookie or getSetCookie after the loop.",
+    recommendedReplacement:
+      'Skip "set-cookie" in the loop and copy the cookies once with res.setHeader("set-cookie", response.headers.getSetCookie()), or append each value with res.appendHeader.',
+    examples: [
+      {
+        title: "Copy Set-Cookie values as a list",
+        language: "ts",
+        invalid:
+          "async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) res.setHeader(name, value)\n  res.end(await response.text())\n}",
+        valid:
+          'async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) {\n    if (name !== "set-cookie") res.setHeader(name, value)\n  }\n  const cookies = response.headers.getSetCookie()\n  if (cookies.length > 0) res.setHeader("set-cookie", cookies)\n  res.end(await response.text())\n}',
       },
     ],
   },
