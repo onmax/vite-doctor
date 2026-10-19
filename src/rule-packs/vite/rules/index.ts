@@ -18,7 +18,11 @@ export { requireStaticGlobPattern } from "./imports.js";
 export { noBarrelFiles } from "./barrels.js";
 export { pluginPackageNamingConventions } from "./plugin-package.js";
 export { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
+
+export { noConfigHookArrayEcho } from "./plugin-config.js";
+
 export { noLossySetCookieBridge } from "./response-bridge.js";
+
 export { noUrlPathnameAsFsPath } from "./config-paths.js";
 export {
   requireDisposeForSideEffects,
@@ -47,7 +51,11 @@ import { requireStaticGlobPattern } from "./imports.js";
 import { noBarrelFiles } from "./barrels.js";
 import { pluginPackageNamingConventions } from "./plugin-package.js";
 import { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
+
+import { noConfigHookArrayEcho } from "./plugin-config.js";
+
 import { noLossySetCookieBridge } from "./response-bridge.js";
+
 import { noUrlPathnameAsFsPath } from "./config-paths.js";
 import {
   requireDisposeForSideEffects,
@@ -80,7 +88,11 @@ const rules = [
   requireStaticGlobPattern,
   noBarrelFiles,
   pluginPackageNamingConventions,
+
+  noConfigHookArrayEcho,
+
   noLossySetCookieBridge,
+
   noUrlPathnameAsFsPath,
 ];
 
@@ -100,7 +112,11 @@ const recommended = [
   requireDisposeForSideEffects,
   requireStaticGlobPattern,
   pluginPackageNamingConventions,
+
+  noConfigHookArrayEcho,
+
   noLossySetCookieBridge,
+
   noUrlPathnameAsFsPath,
 ].map((rule) => rule.meta.id);
 
