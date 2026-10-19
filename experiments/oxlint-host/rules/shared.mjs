@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { relative, sep } from "node:path";
 
 const projectCache = new Map();
 const inventoryFiles = new Map();
@@ -17,7 +17,10 @@ export function projectFor(context) {
   const projects = inventoryProjects(context.settings?.doctor);
   cached = null;
   for (const project of projects) {
-    if (filename !== project.root && !filename.startsWith(`${project.root}/`)) continue;
+    // oxlint supplies native paths. `relative` handles Windows separators and avoids treating
+    // a sibling root with the same prefix as a child project.
+    const fromRoot = relative(project.root, filename);
+    if (fromRoot === ".." || fromRoot.startsWith(`..${sep}`)) continue;
     if (!cached || project.root.length > cached.root.length) cached = project;
   }
   projectCache.set(filename, cached);
