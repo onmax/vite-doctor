@@ -91,7 +91,7 @@ function isActionableUniversalBrowserGlobal(ctx: RuleContext, node: AnyNode) {
     isObjectPropertyKey(node) ||
     ctx.helpers.isTypeOnlyContext(node) ||
     ctx.helpers.isTypeofOperand(node) ||
-    ctx.helpers.hasLocalBindingBefore(node, ctx.file.text) ||
+    ctx.helpers.hasLocalBinding(node) ||
     isKnownGuardedBrowserGlobal(ctx.file.text, node.start) ||
     hasPriorServerReturnGuard(ctx.file.text, node.start) ||
     isVueUseBrowserGlobalTarget(node) ||
