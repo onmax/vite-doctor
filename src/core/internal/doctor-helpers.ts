@@ -466,6 +466,14 @@ function isTemplateEventHandlerReference(source: string, name: string): boolean 
 function isTypeOnlyContext(node: unknown): boolean {
   return getDoctorParents(node).some((parent) => {
     const type = parent?.type;
+    if (
+      (type === "ImportSpecifier" ||
+        type === "ImportDefaultSpecifier" ||
+        type === "ImportNamespaceSpecifier") &&
+      (parent as any).importKind === "type"
+    )
+      return true;
+    if (type === "ImportDeclaration" && (parent as any).importKind === "type") return true;
     return (
       typeof type === "string" &&
       ((type.startsWith("TS") &&
