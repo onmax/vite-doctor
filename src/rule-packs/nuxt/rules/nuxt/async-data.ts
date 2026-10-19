@@ -232,7 +232,7 @@ function readonlyRequest(path: string | null, optionsArgument: AnyNode) {
   if (!options) return { path, method: null };
   let method: string | null = "GET";
   for (const property of options.properties ?? []) {
-    const name = property.computed ? null : propertyKeyName(property);
+    const name = propertyKeyName(property);
     if (name === "method") method = resolveHttpMethod(property.value);
     else if (!name) method = null;
   }

@@ -153,3 +153,19 @@ test("accepts a query-like path whose method follows a spread", async () => {
     ),
   ).toEqual([]);
 });
+
+test("accepts literal computed non-method keys with a read-only method", async () => {
+  expect(
+    await diagnose(
+      `const { execute } = useLazyFetch('/api/search', { method: 'GET', ['body']: body, immediate: false })`,
+    ),
+  ).toEqual([]);
+});
+
+test("treats a literal computed method key as the final method", async () => {
+  expect(
+    await diagnose(
+      `const { execute } = useLazyFetch('/api/search', { method: 'GET', ['method']: 'DELETE', immediate: false })`,
+    ),
+  ).toEqual(["read"]);
+});
