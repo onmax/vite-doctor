@@ -19,6 +19,7 @@ import { noHttpErrorMasking } from "./no-http-error-masking.js";
 import { requireDefaultHandler } from "./require-default-handler.js";
 import { preferServerUtils } from "./prefer-server-utils.js";
 import { noModuleScopeResponseCache } from "./no-module-scope-response-cache.js";
+import { requireAbsoluteGeneratedPaths } from "./require-absolute-generated-paths.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -41,6 +42,7 @@ export {
   requireDefaultHandler,
   preferServerUtils,
   noModuleScopeResponseCache,
+  requireAbsoluteGeneratedPaths,
 };
 
 const rules = [
@@ -62,6 +64,7 @@ const rules = [
   preferGetRequestIp,
   noHttpErrorMasking,
   requireDefaultHandler,
+  requireAbsoluteGeneratedPaths,
 ];
 
 const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache];

@@ -26,6 +26,8 @@ import {
   walkTemplate,
 } from "./template.js";
 import { sha256 } from "./utils.js";
+import { viteDoctorVersion } from "../../version.js";
+import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
 
 export interface DiagnosticPolicyInput {
   root: string;
@@ -37,6 +39,18 @@ export interface DiagnosticPolicyInput {
 export interface DiagnosticPolicyResult {
   diagnostics: Diagnostic[];
   suppressedDiagnostics: Diagnostic[];
+  /** Set when `newOnly` filters through a baseline written with another fingerprint scheme. */
+  staleBaseline?: StaleBaseline;
+}
+
+export interface StaleBaseline {
+  file: string;
+  fingerprintScheme?: number;
+  doctorVersion?: string;
+}
+
+interface Baseline extends StaleBaseline {
+  fingerprints: Set<string>;
 }
 
 export interface BaselineWriteHooks {
@@ -60,6 +74,7 @@ export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticP
   const sourceLines = new Map<string, string[]>();
   const sourceSuppressions = new Map<string, InlineSuppressions>();
   const baseline = readBaseline(input.root, input.options.baseline);
+  const fingerprints = baseline?.fingerprints ?? new Set<string>();
   const nextDiagnostics: Diagnostic[] = [];
   for (const diagnostic of input.diagnostics) {
     const suppression = findSuppression(
@@ -69,7 +84,7 @@ export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticP
       sourceLines,
       sourceSuppressions,
     );
-    const inBaseline = baseline.has(diagnostic.fingerprint ?? "");
+    const inBaseline = fingerprints.has(diagnostic.fingerprint ?? "");
     if (suppression || (input.options.newOnly && inBaseline)) {
       suppressed.push({
         ...diagnostic,
@@ -84,7 +99,23 @@ export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticP
   if (input.options.updateBaseline && input.options.baseline)
     writeBaseline(input.root, input.options.baseline, [...nextDiagnostics, ...suppressed]);
 
-  return { diagnostics: nextDiagnostics, suppressedDiagnostics: suppressed };
+  const stale =
+    baseline &&
+    input.options.newOnly &&
+    !input.options.updateBaseline &&
+    baseline.fingerprints.size > 0 &&
+    baseline.fingerprintScheme !== FINGERPRINT_SCHEME;
+  return {
+    diagnostics: nextDiagnostics,
+    suppressedDiagnostics: suppressed,
+    staleBaseline: stale
+      ? {
+          file: baseline.file,
+          fingerprintScheme: baseline.fingerprintScheme,
+          doctorVersion: baseline.doctorVersion,
+        }
+      : undefined,
+  };
 }
 
 // Duplicates are keyed by start offset because overlapping passes can report one finding with
@@ -126,8 +157,8 @@ export function settleDiagnosticIdentity(diagnostics: Diagnostic[]): Diagnostic[
   return unique;
 }
 
-function readBaseline(root: string, baseline?: string): Set<string> {
-  if (!baseline) return new Set();
+function readBaseline(root: string, baseline?: string): Baseline | undefined {
+  if (!baseline) return undefined;
   const file = resolve(root, baseline);
   const invalid = (reason: string) => doctorInternalDiagnostics.DOC0025({ file, reason });
   let source: string;
@@ -135,7 +166,7 @@ function readBaseline(root: string, baseline?: string): Set<string> {
     source = readFileSync(file, "utf8");
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return new Set();
+    if (code === "ENOENT") return undefined;
     throw invalid(`Cannot read the file${code ? ` (${code})` : ""}.`);
   }
   let json: unknown;
@@ -145,12 +176,23 @@ function readBaseline(root: string, baseline?: string): Set<string> {
     throw invalid("The file is not valid JSON.");
   }
   let entries: unknown[];
+  let fingerprintScheme: number | undefined;
+  let doctorVersion: string | undefined;
   if (Array.isArray(json)) entries = json;
   else if (json && typeof json === "object" && "diagnostics" in json) {
+    const scheme = "fingerprintScheme" in json ? json.fingerprintScheme : undefined;
+    if (scheme !== undefined && typeof scheme !== "number")
+      throw invalid('Expected "fingerprintScheme" to be a number.');
+    fingerprintScheme = scheme;
     if ("reportVersion" in json) {
       if (json.reportVersion !== 3) throw invalid("Expected Doctor JSON report version 3.");
+      if ("version" in json && typeof json.version === "string") doctorVersion = json.version;
+    } else if ("version" in json && json.version === 2) {
+      if (scheme === undefined) throw invalid('Baseline version 2 requires "fingerprintScheme".');
+      if ("doctorVersion" in json && typeof json.doctorVersion === "string")
+        doctorVersion = json.doctorVersion;
     } else if ("version" in json && json.version !== 1)
-      throw invalid("Expected baseline version 1.");
+      throw invalid("Expected baseline version 1 or 2.");
     if (!Array.isArray(json.diagnostics)) throw invalid('Expected a "diagnostics" array.');
     const suppressedEntries =
       "suppressedDiagnostics" in json ? json.suppressedDiagnostics : undefined;
@@ -167,7 +209,7 @@ function readBaseline(root: string, baseline?: string): Set<string> {
       throw invalid(`Entry ${index + 1} must contain a non-empty string fingerprint.`);
     fingerprints.add(fingerprint);
   }
-  return fingerprints;
+  return { file, fingerprints, fingerprintScheme, doctorVersion };
 }
 
 export function writeBaseline(
@@ -181,7 +223,9 @@ export function writeBaseline(
   const target = baselineTarget(file);
   const text = `${JSON.stringify(
     {
-      version: 1,
+      version: 2,
+      fingerprintScheme: FINGERPRINT_SCHEME,
+      doctorVersion: viteDoctorVersion,
       diagnostics: diagnostics
         .map((diagnostic) => ({
           ruleId: diagnostic.ruleId,

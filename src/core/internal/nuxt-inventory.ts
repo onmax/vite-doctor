@@ -43,7 +43,7 @@ export function createNuxtProjectInventory(
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
-    keyedComposables: (manifest?.keyedComposables ?? []).map(String),
+    keyedComposables: keyedComposableNames(manifest?.keyedComposables),
     aliases: manifest?.aliases ?? {},
     autoImportTransform: manifest?.autoImportTransform,
     appScanRoots: (manifest?.appScanRoots ?? [manifest?.appDir ?? "app"]).map((dir) =>
@@ -72,6 +72,17 @@ export function createNuxtProjectInventory(
       serverRoutes: manifest?.serverHandlers?.length ?? 0,
     },
   };
+}
+
+const IDENTIFIER_RE = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*$/u;
+
+// Manifests written before keyed composables were serialized by name hold "[object Object]".
+function keyedComposableNames(entries: unknown[] = []): string[] {
+  return entries
+    .map((entry) =>
+      typeof entry === "string" ? entry : (entry as { name?: unknown } | null)?.name,
+    )
+    .filter((name): name is string => typeof name === "string" && IDENTIFIER_RE.test(name));
 }
 
 export function normalizeNuxtModuleSources(sources: NuxtModuleSource[]): NuxtModuleSource[] {

@@ -237,12 +237,7 @@ function cachedEntryOf(node: AnyNode, references: AnyNode[]) {
       unwrap(declarator.init) === call &&
       declarator.id?.type === "Identifier" &&
       declarator.id.name === node.name &&
-      resolvesToBinding(
-        node,
-        node.name,
-        nearestFunctionOrProgram(declarator),
-        declarator,
-      )
+      resolvesToBinding(node, node.name, nearestFunctionOrProgram(declarator), declarator)
     );
   });
 }
@@ -362,8 +357,7 @@ function resolvesToBinding(
       if (
         statements.some(
           (statement: AnyNode) =>
-            declaresLexical(statement, name) &&
-            !containsNode(statement, expectedDeclarator),
+            declaresLexical(statement, name) && !containsNode(statement, expectedDeclarator),
         )
       )
         return false;
