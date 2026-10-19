@@ -87,9 +87,15 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
     ),
   );
   const workspacePackages = session.project.workspacePackages ?? [];
+  const workspaceRoots = new Set(workspacePackages.map((item) => item.root));
+  const coversWorkspace = (scope: ReadonlySet<string> | undefined): boolean =>
+    !scope || [...workspaceRoots].every((root) => scope.has(root));
   const unused = unusedConfigSuppressionEntries(root, session.config, session.diagnostics).filter(
     ({ suppression }) => {
       if (suppression.ruleId ? !ran.has(suppression.ruleId) : !unscoped) return false;
+      const scope = suppression.ruleId ? session.ruleScopes.get(suppression.ruleId) : undefined;
+      // A broad suppression is inconclusive when its Rule only ran in part of the workspace.
+      if (!suppression.file && !coversWorkspace(scope)) return false;
       const pattern = suppression.file;
       if (!pattern) return unproven.size === 0;
       let targets = analyzed.filter((file) => matchesSuppressionFile(file, pattern));
@@ -100,7 +106,6 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
         targets = [relative(root, resolve(root, pattern))];
       }
       if (targets.some((file) => unproven.has(file))) return false;
-      const scope = suppression.ruleId ? session.ruleScopes.get(suppression.ruleId) : undefined;
       return (
         !scope || targets.some((file) => scope.has(owningWorkspacePackage(workspacePackages, file)))
       );
@@ -160,21 +165,25 @@ function locateSuppression(
   suppression: NonNullable<DoctorConfig["suppressions"]>[number],
   index: number,
 ): { file: string; range?: Diagnostic["range"] } | undefined {
-  let fallback: string | undefined;
+  const candidates: Array<{ file: string; opening: number }> = [];
   for (const file of files) {
     const source = readFileSyncIfExists(file);
     const section = source?.indexOf("suppressions") ?? -1;
     if (!source || section < 0) continue;
-    fallback ??= file;
     const opening = suppressionEntryOpening(source, section, index);
     const marker = suppression.reason || suppression.fingerprint || suppression.file;
     if (opening !== undefined && (!marker || source.indexOf(marker, opening) >= 0))
-      return {
-        file,
-        range: { start: opening, end: opening + 1, ...lineColumnAt(source, opening) },
-      };
+      candidates.push({ file, opening });
   }
-  return fallback ? { file: fallback } : undefined;
+  // Config merging does not retain source provenance. A precise range is safe only when
+  // exactly one supported config can contain this indexed entry; otherwise avoid guessing.
+  if (candidates.length !== 1) return undefined;
+  const { file, opening } = candidates[0]!;
+  const source = readFileSyncIfExists(file)!;
+  return {
+    file,
+    range: { start: opening, end: opening + 1, ...lineColumnAt(source, opening) },
+  };
 }
 
 function suppressionEntryOpening(
