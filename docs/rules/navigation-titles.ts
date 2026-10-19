@@ -126,6 +126,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "shadcn/no-unknown-classes": "Unknown classes",
   "shadcn/require-static-classes": "Static classes",
 
+  "typescript/boundaries/no-cross-realm-web-instanceof": "Web instanceof",
   "typescript/boundaries/no-unvalidated-deserialization": "Deserialized values",
   "typescript/evidence/no-caller-chosen-result-type": "Caller-chosen types",
   "typescript/evidence/no-chained-type-assertions": "Chained assertions",
