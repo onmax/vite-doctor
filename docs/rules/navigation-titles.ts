@@ -47,6 +47,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/composables/export-name-matches-file": "Export names",
   "nuxt/composables/no-nested-autoimport-assumption": "Composable subdirs",
   "nuxt/config/no-ignored-compatibility-config": "Ignored config",
+  "nuxt/config/no-runtime-env-in-build-options": "Build-time env",
   "nuxt/context/no-composable-after-await": "Calls after await",
   "nuxt/context/no-legacy-process-client-server": "import.meta flags",
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": "Factory directories",
