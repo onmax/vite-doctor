@@ -127,6 +127,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/config/require-absolute-generated-paths": {
+    description:
+      "Finds Nitro handlers and plugins that Vite plugins, Nuxt modules or Nitro modules register with relative paths.",
+    why: "Nitro does not resolve a registered path against the file that registers it. Nitro 2 and Nitro 3 resolve handler and plugin paths against Nitro’s project rootDir. A generated file written to resolve(root, '.vitehub/handler.ts') but registered as '.vitehub/handler.ts' only works while every root happens to match, and it breaks for monorepos, custom srcDir or Vite roots, and Nitro 2.",
+    recommendedReplacement:
+      "Register the same absolute path you write the file to, for example resolve(root, '.generated/handler.ts'), or resolve files shipped with the package with createResolver(import.meta.url). Doctor checks files that import from vite, nitro, nitropack, @nuxt/kit or @nuxt/schema, and skips config files, tests, app and server runtime directories, and arguments of @nuxt/kit helpers, which nuxt/module/resolve-runtime-paths reports. It reports handler objects with a route, middleware, method or lazy key, and nitro plugins arrays, whose path is a literal or const starting with ./, ../ or a dot directory such as .nuxt/.",
+    examples: [
+      {
+        title: "Register generated handlers with the path they were written to",
+        language: "ts",
+        invalid:
+          "const middleware = '.generated/nitro/middleware.ts'\nawait writeFile(resolve(root, middleware), code)\nnitroConfig.handlers.push({ handler: middleware, middleware: true })",
+        valid:
+          "const middleware = resolve(root, '.generated/nitro/middleware.ts')\nawait writeFile(middleware, code)\nnitroConfig.handlers.push({ handler: middleware, middleware: true })",
+      },
+    ],
+  },
   "nitro/context/no-navigateto-in-nitro": {
     description: "Flags the Nuxt-only navigateTo() helper in Nitro server handlers.",
     why: "navigateTo() belongs to the Nuxt app runtime and is unavailable in Nitro handlers, so the redirect must use the installed H3 generation's response API.",
