@@ -73,7 +73,7 @@ function hasFallback(helpers: RuleContext["helpers"], node: TemplateElementNode)
         child.tag === "template" &&
         helpers.hasVueDirective(child, "slot", directSlot),
     );
-    return explicit ? hasContent(explicit) : hasContent(node);
+    return explicit ? hasContent(explicit as TemplateElementNode) : hasContent(node);
   }
   // `v-bind="props"`, `:[name]` and `#[name]` can supply a fallback Doctor cannot see.
   if (hasUnknownArgument(node, "bind") || hasUnknownArgument(node, "slot")) return true;

@@ -130,6 +130,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0020", ruleId: "nitro/routes/require-default-handler" },
   { code: "NITRO0021", ruleId: "nitro/structure/prefer-server-utils" },
   { code: "NITRO0022", ruleId: "nitro/structure/prefer-server-utils" },
+  { code: "NITRO0023", ruleId: "nitro/cache/no-module-scope-response-cache" },
   { code: "NITRO0025", ruleId: "nitro/config/require-absolute-generated-paths" },
   { code: "NUXT0001", ruleId: "docus/appconfig/no-unknown-key" },
   { code: "NUXT0002", ruleId: "docus/layers/no-empty-app-vue-shadow" },
@@ -220,6 +221,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0084", ruleId: "nuxt/ssr/no-module-scope-request-state" },
   { code: "NUXT0085", ruleId: "vueuse/ssr/require-init-on-mounted-storage" },
   { code: "NUXT0086", ruleId: "nuxt/hydration/require-clientonly-fallback" },
+  { code: "NUXT0090", ruleId: "nuxt/config/no-runtime-env-in-build-options" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;

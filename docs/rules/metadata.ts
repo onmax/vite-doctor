@@ -127,6 +127,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/cache/no-module-scope-response-cache": {
+    description:
+      "Report module-scope Maps and reassigned variables that server code uses as hand-rolled TTL caches for upstream responses.",
+    why: "A module-scope cache with an expiry check lives in one server instance or worker isolate. Each instance warms its own copy, entries for keys nobody asks for again are never evicted, and Nitro's cache storage, invalidation, and stale-while-revalidate cannot see it. The key is whatever the author remembered to include: when a request-scoped client, such as one authorized as the current user, fills the cache, the next caller with the same key gets that user's response.",
+    recommendedReplacement:
+      "Wrap the upstream call in defineCachedFunction() with a maxAge and a getKey that covers every input that changes the response, including the user or tenant when the client is authorized per request. Values that cannot be serialized to cache storage, such as compiled validators, can stay in memory; suppress the diagnostic with a comment that says why.",
+    examples: [
+      {
+        title: "Cache upstream responses with defineCachedFunction",
+        language: "ts",
+        invalid:
+          "const labelCache = new Map<string, { labels: string[]; expiry: number }>()\n\nexport async function getLabels(group: string) {\n  const cached = labelCache.get(group)\n  if (cached && cached.expiry > Date.now()) return cached.labels\n  const labels = await $fetch<string[]>(`/labels/${group}`)\n  labelCache.set(group, { labels, expiry: Date.now() + 60_000 })\n  return labels\n}",
+        valid:
+          "export const getLabels = defineCachedFunction(\n  (group: string) => $fetch<string[]>(`/labels/${group}`),\n  { name: 'labels', maxAge: 60, getKey: (group: string) => group },\n)",
+      },
+    ],
+  },
   "nitro/config/require-absolute-generated-paths": {
     description:
       "Finds Nitro handlers and plugins that Vite plugins, Nuxt modules or Nitro modules register with relative paths.",
@@ -680,6 +697,23 @@ export const ruleDocumentationMetadata = {
         invalid:
           "export default defineNuxtConfig({\n  unhead: { legacy: true },\n  experimental: { parseErrorData: false },\n})",
         valid: "export default defineNuxtConfig({})",
+      },
+    ],
+  },
+  "nuxt/config/no-runtime-env-in-build-options": {
+    description:
+      "Finds nuxt.config options outside runtimeConfig whose value comes from a NUXT_ or NITRO_ environment variable that also overrides a declared runtimeConfig key.",
+    why: "nuxt.config runs once, when the app is built, so every option outside runtimeConfig keeps the value the variable had at build time. Nuxt applies NUXT_ variables to runtimeConfig again when the server starts, which is why they are the usual way to configure one build per environment or tenant. An option that reads the same variable gets the build-time value instead, often empty in a Docker build that sets the variable only on the running container. Doctor only reports values whose environment reads are all NUXT_ or NITRO_ variables and at least one of them matches a key declared in runtimeConfig. A fallback to a variable without a NUXT_ or NITRO_ prefix, or passing process.env as a whole, is treated as an intentional build-time source.",
+    recommendedReplacement:
+      "Read the value from useRuntimeConfig() where it is used, or set the variable in the build environment when the option has to be fixed at build time.",
+    examples: [
+      {
+        title: "Read tenant config at runtime",
+        language: "ts",
+        invalid:
+          "const organization = process.env.NUXT_PUBLIC_ORGANIZATION_CODE\n\nexport default defineNuxtConfig({\n  runtimeConfig: { public: { organizationCode: organization } },\n  piniaPluginPersistedstate: { key: `${organization}:%id` },\n})",
+        valid:
+          "export default defineNuxtConfig({\n  runtimeConfig: { public: { organizationCode: '' } },\n})\n\n// app/plugins/persisted-state.ts\nexport default defineNuxtPlugin(({ $pinia }) => {\n  const { organizationCode } = useRuntimeConfig().public\n  $pinia.use(createPersistedState({ key: id => `${organizationCode}:${id}` }))\n})",
       },
     ],
   },
