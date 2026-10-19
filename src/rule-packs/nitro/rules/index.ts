@@ -19,6 +19,8 @@ import { noHttpErrorMasking } from "./no-http-error-masking.js";
 import { requireDefaultHandler } from "./require-default-handler.js";
 import { preferServerUtils } from "./prefer-server-utils.js";
 import { noUnguardedAlsEnterWith } from "./no-unguarded-als-enter-with.js";
+import { noModuleScopeResponseCache } from "./no-module-scope-response-cache.js";
+import { requireAbsoluteGeneratedPaths } from "./require-absolute-generated-paths.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -41,6 +43,8 @@ export {
   requireDefaultHandler,
   preferServerUtils,
   noUnguardedAlsEnterWith,
+  noModuleScopeResponseCache,
+  requireAbsoluteGeneratedPaths,
 };
 
 const rules = [
@@ -63,9 +67,10 @@ const rules = [
   noHttpErrorMasking,
   requireDefaultHandler,
   noUnguardedAlsEnterWith,
+  requireAbsoluteGeneratedPaths,
 ];
 
-const strictOnlyRules = [preferServerUtils];
+const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache];
 
 const nitroRulePack = defineRulePack({
   name: "vite-doctor/nitro",

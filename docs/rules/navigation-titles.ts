@@ -7,6 +7,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "docus/layers/no-empty-app-vue-shadow": "Empty app.vue",
 
   "nitro/cloudflare/no-unguarded-als-enterwith": "ALS enterWith",
+  "nitro/cache/no-module-scope-response-cache": "Module-scope caches",
+  "nitro/config/require-absolute-generated-paths": "Generated paths",
   "nitro/context/no-navigateto-in-nitro": "navigateTo",
   "nitro/context/no-usenuxtapp-in-nitro": "useNuxtApp",
   "nitro/h3/no-http-error-masking": "HTTP error masking",
@@ -139,6 +141,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/assets/no-dynamic-new-url": "Dynamic new URL",
   "vite/assets/no-public-src-import": "Public asset imports",
   "vite/assets/no-src-absolute-public-url": "Source public URLs",
+  "vite/config/no-url-pathname-as-fs-path": "URL pathname paths",
+  "vite/config/no-url-pathname-as-fs-path": "URL pathname paths",
   "vite/define/no-runtime-object-define": "Object defines",
   "vite/define/no-secret-define": "Secrets in define",
   "vite/define/no-untyped-define": "Typed define",

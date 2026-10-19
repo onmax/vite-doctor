@@ -18,6 +18,7 @@ export { requireStaticGlobPattern } from "./imports.js";
 export { noBarrelFiles } from "./barrels.js";
 export { pluginPackageNamingConventions } from "./plugin-package.js";
 export { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
+export { noUrlPathnameAsFsPath } from "./config-paths.js";
 export {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -45,6 +46,7 @@ import { requireStaticGlobPattern } from "./imports.js";
 import { noBarrelFiles } from "./barrels.js";
 import { pluginPackageNamingConventions } from "./plugin-package.js";
 import { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
+import { noUrlPathnameAsFsPath } from "./config-paths.js";
 import {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -76,6 +78,7 @@ const rules = [
   requireStaticGlobPattern,
   noBarrelFiles,
   pluginPackageNamingConventions,
+  noUrlPathnameAsFsPath,
 ];
 
 const recommended = [
@@ -94,6 +97,7 @@ const recommended = [
   requireDisposeForSideEffects,
   requireStaticGlobPattern,
   pluginPackageNamingConventions,
+  noUrlPathnameAsFsPath,
 ].map((rule) => rule.meta.id);
 
 const viteRulePack = defineRulePack({

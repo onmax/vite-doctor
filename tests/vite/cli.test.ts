@@ -1250,7 +1250,7 @@ test("CLI can record and refresh a baseline while retaining new-only findings", 
       expect(first.diagnostics.map((item: { code: string }) => item.code)).toEqual(["VITE0009"]);
       const readBaseline = () => JSON.parse(readFileSync(join(root, baseline), "utf8"));
       expect(readBaseline()).toMatchObject({
-        version: 1,
+        version: 2,
         diagnostics: [{ fingerprint: first.diagnostics[0].fingerprint, file: "src/known.ts" }],
       });
 
