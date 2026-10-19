@@ -53,6 +53,13 @@ export const title = () => document.title`,
 export const title = () => document.title`,
   "a namespace import": `import * as document from "./documents"
 export const title = () => document.title`,
+  "a TypeScript import-equals binding": `import document = Documents.document
+export const title = () => document.title`,
+  "a TypeScript namespace binding": `namespace Documents {
+  export const document = { title: "Drop" }
+  export const title = document.title
+}
+export const title = () => Documents.title`,
   "a catch parameter": `export function title(read: () => string) {
   try { return read() }
   catch (document) { return String(document) }

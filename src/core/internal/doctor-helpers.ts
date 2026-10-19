@@ -521,6 +521,7 @@ function scopeBindings(scope: any): Set<string> {
       break;
     case "BlockStatement":
     case "StaticBlock":
+    case "TSModuleBlock":
       addStatementBindings(scope.body, names, false);
       break;
     case "SwitchStatement":
@@ -556,6 +557,10 @@ function addStatementBindings(statements: unknown, names: Set<string>, moduleSco
       for (const specifier of statement.specifiers ?? []) addPatternNames(specifier.local, names);
       continue;
     }
+    if (statement.type === "TSImportEqualsDeclaration") {
+      if (statement.importKind !== "type") addPatternNames(statement.id, names);
+      continue;
+    }
     if (statement.type === "VariableDeclaration") {
       if (statement.kind !== "var") addDeclarationNames(statement, names);
       continue;
@@ -563,7 +568,8 @@ function addStatementBindings(statements: unknown, names: Set<string>, moduleSco
     if (
       (statement.type === "FunctionDeclaration" ||
         statement.type === "ClassDeclaration" ||
-        statement.type === "TSEnumDeclaration") &&
+        statement.type === "TSEnumDeclaration" ||
+        (statement.type === "TSModuleDeclaration" && !statement.declare)) &&
       statement.id
     )
       addPatternNames(statement.id, names);
