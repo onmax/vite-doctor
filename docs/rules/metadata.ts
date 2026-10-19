@@ -912,6 +912,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/hydration/require-clientonly-fallback": {
+    description:
+      "Finds <ClientOnly> components without a server fallback, which render an empty element on the server and shift the layout once their content mounts.",
+    why: "On the server, and until the component mounts, <ClientOnly> renders only its fallback. Without a #fallback slot or a fallback, placeholder or fallback-tag prop that is an empty <span>, so the client-only content appears after hydration and pushes the surrounding layout.",
+    recommendedReplacement:
+      "Add a #fallback slot with a placeholder of the same size, such as a skeleton, or set fallback-tag with classes that reserve the space. Prefer server-rendered markup when the content does not need the browser. Doctor skips <ClientOnly> wrappers whose only children are Teleport or overlay components such as modals, dialogs, drawers and toasts, and <ClientOnly> with a v-bind object, because those can pass a fallback Doctor cannot see. This Rule is opinionated, so it is only in the Strict Preset.",
+    examples: [
+      {
+        title: "Reserve the space with a fallback",
+        language: "vue",
+        invalid:
+          '<template>\n  <ClientOnly>\n    <SalesChart :data="data" />\n  </ClientOnly>\n</template>',
+        valid:
+          '<template>\n  <ClientOnly>\n    <SalesChart :data="data" />\n    <template #fallback>\n      <USkeleton class="h-80 w-full" />\n    </template>\n  </ClientOnly>\n</template>',
+      },
+    ],
+  },
   "nuxt/imports/no-auto-import-collision": {
     description:
       "Flags auto import collision in Nuxt imports code before it leaks into runtime behavior.",

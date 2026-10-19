@@ -62,6 +62,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/hydration/no-client-conditional-in-template": "Client conditionals",
   "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly": "Time-based render",
   "nuxt/hydration/prefer-usecookie-for-initial-client-state": "useCookie state",
+  "nuxt/hydration/require-clientonly-fallback": "ClientOnly fallback",
   "nuxt/imports/no-auto-import-collision": "Name collisions",
   "nuxt/imports/no-conflicting-usefetch-import": "Shadowed useFetch",
   "nuxt/imports/no-explicit-auto-import": "Redundant imports",
