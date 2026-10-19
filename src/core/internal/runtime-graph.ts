@@ -1,4 +1,13 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  statSync,
+  type Stats,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "pathe";
 import { valid } from "semver";
@@ -43,7 +52,7 @@ export function resolveRuntimeGraph(
     const nuxtManifest =
       packages.nuxt.state === "resolved" ? packages.nuxt.packageJsonPath : undefined;
     packages.nitro = nuxtManifest
-      ? resolveRuntimePackage("nitro", nuxtNitroOwnerManifest(nuxtManifest), "nuxt")
+      ? resolveNuxtNitro(nuxtManifest)
       : blockedRuntime("nitro", "nuxt", packages.nuxt);
     edges.push(edge("nuxt", packages.nitro));
     packages.h3 =
@@ -316,6 +325,7 @@ function resolveRuntimePackage(
   const ownerPackage = readPackageManifest(ownerManifest);
   const require = createRequire(ownerManifest);
   let lastReason = `No ${runtime} package is resolvable from ${ownerManifest}.`;
+  let danglingLink: RuntimePackageInstance["danglingLink"];
   const declaredCandidates = packageCandidates[runtime].filter(
     (name) => packageDeclaration(ownerPackage, name) !== undefined,
   );
@@ -359,7 +369,13 @@ function resolveRuntimePackage(
         identity,
       };
     } catch (error) {
-      lastReason = error instanceof Error ? error.message : String(error);
+      danglingLink ??=
+        declaration === undefined ? undefined : findDanglingLink(ownerManifest, requestedName);
+      lastReason = danglingLink
+        ? danglingLinkReason(danglingLink)
+        : error instanceof Error
+          ? error.message
+          : String(error);
     }
   }
 
@@ -371,23 +387,84 @@ function resolveRuntimePackage(
     packageDeclaration(ownerPackage, requestedName),
     {
       reason: lastReason,
+      danglingLink,
     },
   );
 }
 
 /** Nuxt 4.5 moved its Nitro dependency into @nuxt/nitro-server. */
-function nuxtNitroOwnerManifest(nuxtManifest: string): string {
+function resolveNuxtNitro(nuxtManifest: string): RuntimePackageInstance {
   const nuxt = readPackageManifest(nuxtManifest);
   const declaresNitro = packageCandidates.nitro.some(
     (name) => packageDeclaration(nuxt, name) !== undefined,
   );
-  if (declaresNitro || packageDeclaration(nuxt, "@nuxt/nitro-server") === undefined)
-    return nuxtManifest;
+  const serverDeclaration = packageDeclaration(nuxt, "@nuxt/nitro-server");
+  if (declaresNitro || serverDeclaration === undefined)
+    return resolveRuntimePackage("nitro", nuxtManifest, "nuxt");
+  let serverManifest: string;
   try {
-    return resolvePackageJson(createRequire(nuxtManifest), "@nuxt/nitro-server");
-  } catch {
-    return nuxtManifest;
+    serverManifest = resolvePackageJson(createRequire(nuxtManifest), "@nuxt/nitro-server");
+  } catch (error) {
+    const danglingLink = findDanglingLink(nuxtManifest, "@nuxt/nitro-server");
+    return unknownRuntime("nitro", "@nuxt/nitro-server", "nuxt", serverDeclaration, {
+      reason: danglingLink
+        ? danglingLinkReason(danglingLink)
+        : error instanceof Error
+          ? error.message
+          : String(error),
+      danglingLink,
+    });
   }
+  return resolveRuntimePackage("nitro", serverManifest, "nuxt");
+}
+
+function danglingLinkReason(link: NonNullable<RuntimePackageInstance["danglingLink"]>): string {
+  return `${link.path} is a dangling symlink to ${link.target}, which does not exist.`;
+}
+
+/** Node skips a broken node_modules link silently, so a deleted install target reads as a missing package. */
+function findDanglingLink(
+  ownerManifest: string,
+  name: string,
+): RuntimePackageInstance["danglingLink"] {
+  let directory = dirname(resolve(ownerManifest));
+  while (true) {
+    const path = join(directory, "node_modules", name);
+    let entry: Stats | undefined;
+    try {
+      entry = lstatSync(path);
+    } catch {}
+    // The nearest entry is what the package manager installed, so an ancestor link is never blamed.
+    if (entry) {
+      if (!entry.isSymbolicLink()) return undefined;
+      try {
+        const target = missingLinkTarget(path);
+        return target ? { path, target } : undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    if (directory === dirname(directory)) return undefined;
+    directory = dirname(directory);
+  }
+}
+
+/** A loop or an unreadable target is not a deleted install, so only ENOENT and ENOTDIR count. */
+function missingLinkTarget(link: string): string | undefined {
+  const seen = new Set<string>();
+  let current = link;
+  while (!seen.has(current)) {
+    seen.add(current);
+    const target = resolve(realpathSync(dirname(current)), readlinkSync(current));
+    try {
+      if (!lstatSync(target).isSymbolicLink()) return undefined;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === "ENOENT" || code === "ENOTDIR" ? target : undefined;
+    }
+    current = target;
+  }
+  return undefined;
 }
 
 function resolvePackageJson(require: NodeRequire, name: string): string {
