@@ -378,9 +378,7 @@ export async function writeManifest(
     extensions: extensions.length ? extensions : undefined,
     doctorConfig: serializableDoctorConfig(nuxt.options.doctor),
     runtimeConfig: redactRuntimeConfig(nuxt.options.runtimeConfig),
-    keyedComposables: toArray(nuxt.options.optimization?.keyedComposables)
-      .map((entry: any) => (typeof entry === "string" ? entry : entry?.name))
-      .filter((name): name is string => typeof name === "string"),
+    keyedComposables: await serializeKeyedComposables(nuxt, rootDir),
     importsDirs: normalizeDirs(rootDir, [
       ...toArray(nuxt.options.imports?.dirs),
       ...toArray(evidence?.importDirs),
@@ -421,6 +419,25 @@ function nuxtConfigModifiedAt(root: string): number | undefined {
     if (existsSync(file)) return statSync(file).mtimeMs;
   }
   return undefined;
+}
+
+// Nuxt injects keys per name and source, so keep the source a registration resolves to.
+async function serializeKeyedComposables(nuxt: any, rootDir: string) {
+  const entries: Array<{ name: string; source?: string }> = [];
+  for (const entry of toArray<any>(nuxt.options.optimization?.keyedComposables)) {
+    const name = typeof entry === "string" ? entry : entry?.name;
+    if (typeof name !== "string") continue;
+    const source = typeof entry?.source === "string" ? entry.source : undefined;
+    const path = source
+      ? await resolvePath(source, {
+          cwd: rootDir,
+          alias: nuxt.options.alias ?? {},
+          fallbackToOriginal: true,
+        }).catch(() => undefined)
+      : undefined;
+    entries.push(path && isAbsolute(path) ? { name, source: relative(rootDir, path) } : { name });
+  }
+  return entries;
 }
 
 function flattenPages(pages: any[]): any[] {

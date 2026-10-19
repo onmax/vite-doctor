@@ -38,32 +38,55 @@ async function diagnose(files: Record<string, string>) {
   return result.diagnostics.map((diagnostic) => diagnostic.ruleId);
 }
 
-test("Nuxt manifest serializes keyed composables by name", async () => {
-  await withFixture({}, {}, async (root) => {
-    await writeManifest({
-      options: {
-        rootDir: root,
-        buildDir: ".nuxt",
-        modules: [],
-        optimization: {
-          keyedComposables: [
-            { name: "useState", source: "#app/composables/state", argumentLength: 2 },
-            { name: "useOrders", source: join(root, "app/utils/api.ts"), argumentLength: 2 },
-          ],
+test("Nuxt manifest serializes keyed composables by name and resolved source", async () => {
+  await withFixture(
+    {
+      "app/utils/api.ts": "export const useOrders = createUseFetch('/api/orders')",
+      "app/utils/cart.ts": "export const useCart = createUseFetch('/api/cart')",
+    },
+    {},
+    async (root) => {
+      await writeManifest({
+        options: {
+          rootDir: root,
+          buildDir: ".nuxt",
+          modules: [],
+          alias: { "~": join(root, "app") },
+          optimization: {
+            keyedComposables: [
+              { name: "useState", source: "#app/composables/state", argumentLength: 2 },
+              { name: "useOrders", source: join(root, "app/utils/api.ts"), argumentLength: 2 },
+              { name: "useCart", source: "~/utils/cart", argumentLength: 2 },
+            ],
+          },
         },
-      },
-      async callHook() {},
-    });
-    const written = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
-    expect(written.keyedComposables).toEqual(["useState", "useOrders"]);
-  });
+        async callHook() {},
+      });
+      const written = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+      expect(written.keyedComposables).toEqual([
+        { name: "useState" },
+        { name: "useOrders", source: "app/utils/api.ts" },
+        { name: "useCart", source: "app/utils/cart.ts" },
+      ]);
+    },
+  );
 });
 
 test("Nuxt inventory ignores keyed composables that older manifests stringified", () => {
   const inventory = createNuxtProjectInventory("/project", {
-    keyedComposables: ["[object Object]", "useOrders", { name: "useCart" }, 1, "useÜber"],
+    keyedComposables: [
+      "[object Object]",
+      "useOrders",
+      { name: "useCart", source: "app/utils/cart.ts" },
+      1,
+      "useÜber",
+    ],
   } as never);
-  expect(inventory.keyedComposables).toEqual(["useOrders", "useCart", "useÜber"]);
+  expect(inventory.keyedComposables).toEqual([
+    { name: "useOrders" },
+    { name: "useCart", source: "/project/app/utils/cart.ts" },
+    { name: "useÜber" },
+  ]);
 });
 
 test("accepts a factory registered by name in the Nuxt manifest", async () => {
@@ -73,6 +96,26 @@ test("accepts a factory registered by name in the Nuxt manifest", async () => {
       ".nuxt/doctor.manifest.json": manifest(["useState", "useOrders"]),
     }),
   ).toEqual([]);
+});
+
+test("accepts a factory registered from its own file", async () => {
+  expect(
+    await diagnose({
+      "app/utils/api.ts": `export const useOrders = createUseFetch('/api/orders')`,
+      ".nuxt/doctor.manifest.json": manifest([{ name: "useOrders", source: "app/utils/api.ts" }]),
+    }),
+  ).toEqual([]);
+});
+
+test("reports a factory when the registration with its name points at another file", async () => {
+  expect(
+    await diagnose({
+      "app/utils/api.ts": `export const useOrders = createUseFetch('/api/orders')`,
+      ".nuxt/doctor.manifest.json": manifest([
+        { name: "useOrders", source: "app/utils/legacy-api.ts" },
+      ]),
+    }),
+  ).toEqual([ruleId]);
 });
 
 test("reports a factory when an old manifest only holds stringified objects", async () => {
