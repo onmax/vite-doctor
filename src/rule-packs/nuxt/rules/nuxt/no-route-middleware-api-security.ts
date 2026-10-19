@@ -937,7 +937,7 @@ function throwsAuthError(statements: AnyNode[]): boolean {
   return statements.some((statement: AnyNode) => {
     if (statement?.type === "ThrowStatement") return isAuthHttpError(statement.argument);
     if (statement?.type === "BlockStatement") return throwsAuthError(statement.body);
-    if (statement?.type === "IfStatement" && mentionsIdentity(statement.test))
+    if (statement?.type === "IfStatement" && isMissingIdentityCondition(statement.test))
       return throwsAuthError([statement.consequent, statement.alternate].filter(Boolean));
     return false;
   });
