@@ -943,12 +943,45 @@ function throwsAuthError(statements: AnyNode[]): boolean {
   });
 }
 
+function isMissingIdentityCondition(node: AnyNode): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (node.type === "UnaryExpression" && node.operator === "!")
+    return mentionsIdentity(node.argument);
+  if (node.type === "BinaryExpression" || node.type === "LogicalExpression") {
+    const left = node.left;
+    const right = node.right;
+    const identity = mentionsIdentity(left) || mentionsIdentity(right);
+    const nullish = [left, right].some(
+      (value: AnyNode) =>
+        value?.type === "Literal" && (value.value === null || value.value === undefined),
+    );
+    if (identity && nullish) return true;
+    const credential = /(?:authorization|cookie|token|credential|apikey|api_key|bearer)/i;
+    return [left, right].some((value: AnyNode) => containsNamedProperty(value, credential));
+  }
+  return false;
+}
+
 function mentionsIdentity(node: AnyNode): boolean {
   if (!node || typeof node !== "object") return false;
   if (node.type === "Identifier")
-    return /^(?:user|users|identity|who|session|auth|token|role)$/i.test(node.name);
+    return /^(?:user|users|identity|who|session|auth)$/i.test(node.name);
   return Object.entries(node).some(
     ([key, value]) => key !== "parent" && value && typeof value === "object" && mentionsIdentity(value),
+  );
+}
+
+function containsNamedProperty(node: AnyNode, pattern: RegExp): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (node.type === "Identifier" && pattern.test(node.name)) return true;
+  if (node.type === "Literal" && typeof node.value === "string" && pattern.test(node.value))
+    return true;
+  return Object.entries(node).some(
+    ([key, value]) =>
+      key !== "parent" &&
+      value &&
+      typeof value === "object" &&
+      containsNamedProperty(value, pattern),
   );
 }
 
