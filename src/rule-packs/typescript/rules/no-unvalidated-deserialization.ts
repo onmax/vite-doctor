@@ -182,11 +182,11 @@ function isJsonStringifyCall(ctx: RuleContext, expression: AnyNode): boolean {
 function deserializerObjectName(ctx: RuleContext, node: AnyNode): string | null {
   if (node?.type === "Identifier") {
     if (!deserializerObjectNames.has(node.name)) return null;
-    return ctx.helpers.hasLocalBindingBefore(node, ctx.file.text) ? null : node.name;
+    return ctx.helpers.hasLocalBinding(node) ? null : node.name;
   }
   if (node?.type !== "MemberExpression" && node?.type !== "StaticMemberExpression") return null;
   if (node.object?.type !== "Identifier" || !globalObjectNames.has(node.object.name)) return null;
-  if (ctx.helpers.hasLocalBindingBefore(node.object, ctx.file.text)) return null;
+  if (ctx.helpers.hasLocalBinding(node.object)) return null;
   const propertyName = memberPropertyName(node);
   return propertyName && deserializerObjectNames.has(propertyName) ? propertyName : null;
 }
