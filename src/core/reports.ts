@@ -12,13 +12,14 @@ import {
   allDiagnosticCodeListsByRuleId,
   allDiagnosticCodesByRuleId,
 } from "./diagnostic-code-map.js";
-import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
+import { DOCTOR_DIAGNOSTICS_DOCS_BASE, FINGERPRINT_SCHEME } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
 import {
   workspaceDiagnosticMetadataByCode,
   workspaceDiagnosticMetadataByRuleId,
 } from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
+import { shellArgument } from "./internal/utils.js";
 
 export interface DoctorReportContext {
   runOptions?: Readonly<DoctorRunOptions>;
@@ -54,6 +55,14 @@ export function createTextReport(result: DoctorRunResult): string {
     const evidence = result.project.nuxt.manifest.evidence;
     lines.push(
       `Evidence used: manifest ${result.project.nuxt.manifest.hasManifest ? "present" : "missing"}, route graph ${evidence?.routeGraph ? "present" : "missing"}, build manifest ${evidence?.buildManifest ? "present" : "missing"}, ${evidence?.prerenderRoutes ?? 0} prerender routes, ${evidence?.serverRoutes ?? 0} server routes`,
+    );
+  }
+  const unselected = result.rulePacks?.activated.filter(
+    (pack) => !result.rulePacks?.selected.includes(pack),
+  );
+  if (unselected?.length) {
+    lines.push(
+      `Rule Packs not selected by extends: ${unselected.join(", ")} (add "auto" to extends to select their recommended presets)`,
     );
   }
   const confidence = confidenceMix(result);
@@ -133,6 +142,7 @@ export function createJsonReport(result: DoctorRunResult): string {
     {
       version: result.version,
       reportVersion: result.reportVersion ?? 3,
+      fingerprintScheme: FINGERPRINT_SCHEME,
       status: reportStatus(result),
       framework: result.framework,
       root: result.root,
@@ -150,6 +160,7 @@ export function createJsonReport(result: DoctorRunResult): string {
       ruleTimings: result.ruleTimings,
       graph: result.graph,
       extends: result.extends,
+      rulePacks: result.rulePacks,
       workspacePackages: result.workspacePackages,
       evidenceGaps: result.project.evidenceGaps,
       runtimeGraph: result.project.runtimeGraph,
@@ -188,6 +199,7 @@ export function createAgentReport(
       framework: result.framework,
       workspacePackages: result.workspacePackages,
     },
+    rulePacks: result.rulePacks,
     scope: result.scope,
     summary: result.summary,
     diagnostics: result.diagnostics.map((diagnostic) =>
@@ -585,10 +597,6 @@ function agentFramework(result: DoctorRunResult, context: DoctorReportContext): 
   const requested = context.runOptions?.framework;
   if (requested && requested !== "auto") return requested;
   return (result.workspacePackages?.length ?? 0) > 1 ? "auto" : result.framework;
-}
-
-function shellArgument(value: string): string {
-  return /^[a-zA-Z0-9_./:@,+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function diagnosticReferenceUrl(code: string) {

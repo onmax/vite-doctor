@@ -723,9 +723,9 @@ export const ruleDocumentationMetadata = {
         title: "Use keyed composable registration required",
         language: "ts",
         invalid:
-          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
+          "// app/utils/user.ts is outside the composables/ tree Nuxt scans for factories\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
         valid:
-          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
+          "// app/utils/user.ts\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
       },
     ],
   },
@@ -1363,6 +1363,23 @@ export const ruleDocumentationMetadata = {
           "// app/composables/useSlugify.ts\nexport function useSlugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
         valid:
           "// app/utils/slugify.ts\nexport function slugify(input: string) {\n  return input.toLowerCase().replace(/\\s+/g, '-')\n}",
+      },
+    ],
+  },
+  "nuxt/ssr/no-module-scope-request-state": {
+    description:
+      "Report module-scope variables, Maps, and Sets that request-time app code fills with request data.",
+    why: "On the server, Nuxt imports each app module once and reuses it for every SSR request. A module-scope let, Map, or Set that a store action, composable, plugin, or component setup writes during a request is shared by all concurrent requests: one user's fetched data, store instance, or in-flight promise becomes visible to the next request. An in-flight promise that closes over `this` in a Pinia action fills the first request's store, while later requests await it and keep their own store empty.",
+    recommendedReplacement:
+      "Keep per-request state in useState() or the Pinia store state. For values that cannot live in payload state, such as in-flight promises, key them by the Nuxt app with a WeakMap so each SSR request gets its own entry. Constant lookup tables and caches of pure values, such as Intl formatters, can stay at module scope.",
+    examples: [
+      {
+        title: "Key in-flight requests by the Nuxt app",
+        language: "ts",
+        invalid:
+          "let currencyPromise: Promise<void> | null = null\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      currencyPromise ??= (async () => {\n        this.currencies = await $fetch('/api/currencies')\n      })()\n      await currencyPromise\n    },\n  },\n})",
+        valid:
+          "const currencyPromises = new WeakMap<NuxtApp, Promise<void>>()\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      const nuxtApp = useNuxtApp()\n      let promise = currencyPromises.get(nuxtApp)\n      if (!promise) {\n        promise = (async () => {\n          this.currencies = await $fetch('/api/currencies')\n        })()\n        currencyPromises.set(nuxtApp, promise)\n      }\n      await promise\n    },\n  },\n})",
       },
     ],
   },
@@ -2293,14 +2310,31 @@ export const ruleDocumentationMetadata = {
       "Finds VueUse project code that should use the supported use storage pattern instead.",
     why: "Manual storage reads and watches duplicate serialization, cross-tab synchronization, default handling, and reactive updates already handled by useStorage().",
     recommendedReplacement:
-      "Use VueUse useStorage() for client storage so refs, serialization, and cleanup stay together.",
+      "Use VueUse useLocalStorage() or useSessionStorage() for client storage so refs, serialization, and cleanup stay together. In SSR apps, pass { initOnMounted: true } so the first client render matches the server, or use useCookie() for state the server must render.",
     examples: [
       {
         title: "Use VueUse storage",
         language: "ts",
         invalid:
           "const theme = ref(localStorage.getItem('theme') || 'light')\nwatch(theme, value => localStorage.setItem('theme', value))",
-        valid: "const theme = useStorage('theme', 'light')",
+        valid: "const theme = useLocalStorage('theme', 'light', { initOnMounted: true })",
+      },
+    ],
+  },
+  "vueuse/ssr/require-init-on-mounted-storage": {
+    description:
+      "Finds VueUse useLocalStorage(), useSessionStorage() and browser-backed useStorage() calls in SSR Nuxt apps that read storage while the page hydrates.",
+    why: "VueUse reads browser storage synchronously when the composable runs. The server has no browser storage and renders the default value, so a stored value changes the first client render and Vue reports a hydration mismatch. Guarding the call with import.meta.client does not help, because the client branch still runs during hydration.",
+    recommendedReplacement:
+      "Pass { initOnMounted: true } so VueUse reads storage after the component mounts, or use useCookie() for state the server must render. A useStorage() call that passes localStorage or sessionStorage explicitly throws on the server before initOnMounted can help, so use useLocalStorage() or useSessionStorage() with { initOnMounted: true } instead. Doctor skips .client files, calls inside onMounted(), apps with ssr: false, and refs that are only read in event handlers, watch callbacks, lifecycle hooks or unrendered computed values. With @vueuse/nuxt's ssrHandlers option, useStorage() without a storage argument uses cookies; Doctor cannot see that option, so it only reports useStorage() without a storage argument in apps without @vueuse/nuxt.",
+    examples: [
+      {
+        title: "Read stored preferences after mount",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nconst granularity = useSessionStorage('plan-granularity', 'month')\n</script>\n\n<template>\n  <span>{{ granularity }}</span>\n</template>",
+        valid:
+          "<script setup lang=\"ts\">\nconst granularity = useSessionStorage('plan-granularity', 'month', { initOnMounted: true })\n</script>\n\n<template>\n  <span>{{ granularity }}</span>\n</template>",
       },
     ],
   },

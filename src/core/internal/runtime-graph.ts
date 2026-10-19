@@ -572,6 +572,27 @@ function readExportedCompatibilityVersion(file: string, text: string): Compatibi
       };
 }
 
+/** Returns the boolean `ssr` option that the root's exported Nuxt config sets statically. */
+export function readNuxtConfigSsr(root: string, configs: NuxtConfigCache): boolean | undefined {
+  const config = readNuxtConfig(root, configs);
+  return config ? readExportedNuxtSsr(config.file, config.text) : undefined;
+}
+
+function readExportedNuxtSsr(file: string, text: string): boolean | undefined {
+  if (!/\bssr["'`]?\s*:/.test(text)) return undefined;
+  const program = parseScript(file, text) as { body?: AnyRuntimeNode[] } | null;
+  const exported = program?.body?.find((node) => node.type === "ExportDefaultDeclaration");
+  let config = unwrapExpression(exported?.declaration);
+  if (config?.type === "CallExpression" && config.callee?.name === "defineNuxtConfig") {
+    config = unwrapExpression(config.arguments?.[0]);
+  }
+  if (config?.type !== "ObjectExpression") return undefined;
+  const ssr = objectProperty(config, "ssr");
+  if (ssr.state !== "resolved") return undefined;
+  const value = unwrapExpression(ssr.value);
+  return value?.type === "Literal" && typeof value.value === "boolean" ? value.value : undefined;
+}
+
 type AnyRuntimeNode = Record<string, any>;
 
 function unwrapExpression(node: AnyRuntimeNode | undefined): AnyRuntimeNode | undefined {
