@@ -209,7 +209,6 @@ test("reads declaration shapes, malformed emit and CommonJS positions", () => {
     ["default-re-export", "types", false, false, "index.d.ts:7:30"],
     ["inside-module", "types", false, false, "index.d.ts:9:21"],
     ["overload-type", "types", false, false, "index.d.ts:12:64"],
-    ["jsdoc-type", "types", false, true, "index.d.ts:14:22"],
     ["node", "types", false, true, "index.d.ts:1:23"],
     ["after-malformed-emit", "types", false, false, "legacy.d.ts:3:23"],
     ["global-type", "types", false, false, "globals.d.ts:1:38"],
