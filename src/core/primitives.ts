@@ -239,7 +239,7 @@ export interface NuxtProjectInfo {
     scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
-    keyedComposables: string[];
+    keyedComposables: NuxtKeyedComposable[];
     aliases: Record<string, string>;
     autoImportTransform?: {
       include: Array<{ source: string; flags: string }>;
@@ -285,6 +285,15 @@ export interface NuxtModuleDefinition {
   runtimeDir?: string;
   /** The package root is also a Nuxt layer, so Nuxt transforms its files even inside node_modules. */
   layer?: boolean;
+}
+
+/**
+ * A function Nuxt injects keys into. `source` is the absolute module file Nuxt resolved the
+ * registration to; registrations without one match by name alone.
+ */
+export interface NuxtKeyedComposable {
+  name: string;
+  source?: string;
 }
 
 export interface NuxtDoctorManifest {

@@ -776,7 +776,7 @@ export const ruleDocumentationMetadata = {
         invalid:
           "// app/utils/user.ts is outside the composables/ tree Nuxt scans for factories\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
         valid:
-          "// app/utils/user.ts\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
+          "// app/utils/user.ts\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', source: '~/utils/user', argumentLength: 2 },\n    ],\n  },\n})",
       },
     ],
   },

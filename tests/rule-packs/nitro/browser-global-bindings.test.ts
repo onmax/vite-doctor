@@ -90,6 +90,15 @@ test("nitro/server/no-browser-api still reports the global document in a server 
   ).toEqual(["document is not available in Nitro server runtime."]);
 });
 
+test("nitro/server/no-browser-api reports shorthand browser-global references", async () => {
+  expect(
+    await nitroDiagnostics(
+      `export default defineEventHandler(() => ({ document }))`,
+      "server/api/title.get.ts",
+    ),
+  ).toEqual(["document is not available in Nitro server runtime."]);
+});
+
 test("nitro/server/no-browser-api still reports document imported only as a type", async () => {
   expect(
     await nitroDiagnostics(

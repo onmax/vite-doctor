@@ -35,7 +35,7 @@ export const keyedComposableRegistrationRequired = createRule({
           : ctx.file.text
               .slice(Math.max(0, node.start - 120), node.start)
               .match(/use[A-Z]\w+/)?.[0]);
-      if (composable && ctx.project.nuxt?.manifest?.keyedComposables.includes(composable)) return;
+      if (composable && isRegistered(ctx, composable)) return;
       const exported =
         node.type === "CallExpression" &&
         (declared ? isExported(declarator, declared) : defaultExport);
@@ -61,6 +61,20 @@ export const keyedComposableRegistrationRequired = createRule({
 });
 
 const SCANNED_EXTENSION_RE = /\.(?:[jt]sx?|[cm][jt]s)$/;
+
+// Nuxt only injects keys into a registration's name imported from its source, so a same-named
+// factory in another file stays unregistered.
+function isRegistered(ctx: RuleContext, composable: string): boolean {
+  const file = withoutExtension(ctx.file.path);
+  return (ctx.project.nuxt?.manifest?.keyedComposables ?? []).some(
+    (entry) =>
+      entry.name === composable && (!entry.source || withoutExtension(entry.source) === file),
+  );
+}
+
+function withoutExtension(path: string): string {
+  return path.replace(/\.[^./]+$/, "");
+}
 
 // Nuxt's scan sees the transformed Nuxt auto-import, not an arbitrary local function
 // or an import from another package. Keep this exemption conservative when scope parsing
