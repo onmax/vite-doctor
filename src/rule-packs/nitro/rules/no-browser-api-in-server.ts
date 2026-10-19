@@ -31,7 +31,7 @@ export const noBrowserApiInServer = createRule({
           ctx.helpers.isTypeOnlyContext(node) ||
           ctx.helpers.isTypeofOperand(node) ||
           isObjectPropertyKey(node) ||
-          ctx.helpers.hasLocalBindingBefore(node, ctx.file.text)
+          ctx.helpers.hasLocalBinding(node)
         )
           return;
         report(

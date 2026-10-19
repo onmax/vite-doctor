@@ -583,7 +583,11 @@ export interface DoctorHelpers {
   isInSetupLikeContext(node: unknown): boolean;
   isClientOnlyExecutionContext(node: unknown, source: string): boolean;
   isTypeOnlyContext(node: unknown): boolean;
-  hasLocalBindingBefore(node: unknown, source: string): boolean;
+  /**
+   * Whether the identifier names a binding declared in an enclosing scope (parameter, variable,
+   * function, class, import, destructured name, catch parameter) instead of a global.
+   */
+  hasLocalBinding(node: unknown): boolean;
   isTypeofOperand(node: unknown): boolean;
   getNodeName(node: unknown): string | null;
   getCalleeName(node: unknown): string | null;
