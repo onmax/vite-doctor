@@ -257,7 +257,8 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
     return memo(node, () => {
       let found = false;
       walkScriptLocal(node, (child) => {
-        if (!found && child.type === "CallExpression") found = callUsesVue(child, module, conservative);
+        if (!found && child.type === "CallExpression")
+          found = callUsesVue(child, module, conservative);
       });
       return found;
     });
@@ -321,7 +322,12 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
             candidate.exportKind !== "type" && moduleExportName(candidate.exported) === name,
         );
         if (specifier)
-          return sourceUsesVue(statement.source.value, moduleExportName(specifier.local), module, false);
+          return sourceUsesVue(
+            statement.source.value,
+            moduleExportName(specifier.local),
+            module,
+            false,
+          );
       }
     }
     return false;
