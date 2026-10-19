@@ -98,13 +98,17 @@ function isRequestBinding(identifier: AnyNode): boolean {
   let current = identifier.__doctorParent;
   while (current) {
     if (isFunction(current)) {
-      const parameter = current.params.find((param: AnyNode) =>
-        param?.type === "Identifier" && param.name === identifier.name,
+      const parameter = current.params.find(
+        (param: AnyNode) => param?.type === "Identifier" && param.name === identifier.name,
       );
       if (parameter?.typeAnnotation) return isRequestType(parameter.typeAnnotation.typeAnnotation);
       return false;
     }
-    if (current.type === "VariableDeclarator" && current.id?.type === "Identifier" && current.id.name === identifier.name) {
+    if (
+      current.type === "VariableDeclarator" &&
+      current.id?.type === "Identifier" &&
+      current.id.name === identifier.name
+    ) {
       return isRequestType(current.id.typeAnnotation?.typeAnnotation);
     }
     current = current.__doctorParent;
@@ -169,9 +173,12 @@ function walkBinding(node: AnyNode, name: string, visit: (node: AnyNode) => void
   if (node.type === "SwitchStatement") {
     visit(node);
     walkBinding(node.discriminant, name, visit);
+    const switchRebinds = node.cases?.some((caseNode: AnyNode) =>
+      caseNode.consequent?.some((statement: AnyNode) => declares(statement, name)),
+    );
     for (const caseNode of node.cases ?? []) {
       walkBinding(caseNode.test, name, visit);
-      if (!caseNode.consequent?.some((statement: AnyNode) => declares(statement, name))) {
+      if (!switchRebinds) {
         for (const statement of caseNode.consequent ?? []) walkBinding(statement, name, visit);
       }
     }

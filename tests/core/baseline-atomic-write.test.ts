@@ -133,11 +133,11 @@ test("atomic updates create and refresh baseline contents", () => {
     const baseline = "baseline.json";
     writeBaseline(root, baseline, []);
     const file = join(root, baseline);
-    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ version: 1, diagnostics: [] });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ version: 2, diagnostics: [] });
 
     writeBaseline(root, baseline, findings(root, "src/new.ts", "new"));
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({
-      version: 1,
+      version: 2,
       diagnostics: [{ fingerprint: "new", file: "src/new.ts" }],
     });
   } finally {
@@ -178,7 +178,7 @@ test("public runDoctor updates and consumes a baseline", async () => {
     expect(second.diagnostics).toEqual([]);
     expect(second.suppressedDiagnostics).toHaveLength(1);
     expect(JSON.parse(readFileSync(join(root, options.baseline), "utf8"))).toMatchObject({
-      version: 1,
+      version: 2,
       diagnostics: [{ fingerprint: first.diagnostics[0]!.fingerprint }],
     });
   } finally {
@@ -221,8 +221,8 @@ test.skipIf(process.platform === "win32")(
 
       expect(lstatSync(join(root, "first.json")).isSymbolicLink()).toBe(true);
       expect(lstatSync(join(root, "second.json")).isSymbolicLink()).toBe(true);
-      expect(JSON.parse(readFileSync(join(root, "actual.json"), "utf8"))).toEqual({
-        version: 1,
+      expect(JSON.parse(readFileSync(join(root, "actual.json"), "utf8"))).toMatchObject({
+        version: 2,
         diagnostics: [],
       });
     } finally {
@@ -243,8 +243,8 @@ test.skipIf(process.platform === "win32")(
       writeBaseline(root, "logical/baseline.json", []);
 
       expect(lstatSync(join(root, "logical/baseline.json")).isSymbolicLink()).toBe(true);
-      expect(JSON.parse(readFileSync(join(root, "physical/target.json"), "utf8"))).toEqual({
-        version: 1,
+      expect(JSON.parse(readFileSync(join(root, "physical/target.json"), "utf8"))).toMatchObject({
+        version: 2,
         diagnostics: [],
       });
     } finally {

@@ -19,6 +19,7 @@ export { noBarrelFiles } from "./barrels.js";
 export { pluginPackageNamingConventions } from "./plugin-package.js";
 export { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
 export { noLossySetCookieBridge } from "./response-bridge.js";
+export { noUrlPathnameAsFsPath } from "./config-paths.js";
 export {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -47,6 +48,7 @@ import { noBarrelFiles } from "./barrels.js";
 import { pluginPackageNamingConventions } from "./plugin-package.js";
 import { noBroadFsAllow, noDisabledFsStrict } from "./server.js";
 import { noLossySetCookieBridge } from "./response-bridge.js";
+import { noUrlPathnameAsFsPath } from "./config-paths.js";
 import {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -79,6 +81,7 @@ const rules = [
   noBarrelFiles,
   pluginPackageNamingConventions,
   noLossySetCookieBridge,
+  noUrlPathnameAsFsPath,
 ];
 
 const recommended = [
@@ -98,6 +101,7 @@ const recommended = [
   requireStaticGlobPattern,
   pluginPackageNamingConventions,
   noLossySetCookieBridge,
+  noUrlPathnameAsFsPath,
 ].map((rule) => rule.meta.id);
 
 const viteRulePack = defineRulePack({

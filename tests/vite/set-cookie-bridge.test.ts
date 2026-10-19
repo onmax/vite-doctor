@@ -212,6 +212,20 @@ function copy(res, response) {
   input.headers.forEach((value, key) => target.setHeader(key, value))
 }`,
     ],
+    [
+      "a switch declaration shadowing a later case",
+      `function copy(res, response, mode) {
+  for (const [name, value] of response.headers) {
+    switch (mode) {
+      case "error":
+        const name = "x-error"
+        break
+      case "ok":
+        res.setHeader(name, value)
+    }
+  }
+}`,
+    ],
   ])("accepts %s", async (_label, source) => {
     const result = await run(source);
     expect(result.diagnostics).toEqual([]);
