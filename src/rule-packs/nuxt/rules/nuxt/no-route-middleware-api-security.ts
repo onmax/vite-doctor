@@ -947,7 +947,7 @@ function throwsAuthError(statements: AnyNode[]): boolean {
     // The return establishes identity on the truthy branch, while the following
     // auth throw rejects the only path that can continue without it.
     if (
-      containsNonEmptyReturn(statement.consequent) &&
+      containsIdentityReturn(statement.consequent) &&
       throwsAuthError(statements.slice(index + 1))
     )
       return true;
@@ -955,21 +955,17 @@ function throwsAuthError(statements: AnyNode[]): boolean {
   return false;
 }
 
-function containsNonEmptyReturn(node: AnyNode): boolean {
+// An early return only proves authentication when it returns the identity being
+// checked. Arbitrary truthy values (for example `{ public: true }`) must not
+// suppress the route diagnostic.
+function containsIdentityReturn(node: AnyNode): boolean {
   if (!node || typeof node !== "object") return false;
-  if (node.type === "ReturnStatement")
-    return (
-      !!node.argument &&
-      !(
-        node.argument.type === "Literal" &&
-        (node.argument.value == null || node.argument.value === false)
-      )
-    );
+  if (node.type === "ReturnStatement") return mentionsIdentity(node.argument);
   if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type))
     return false;
   return Object.entries(node).some(
     ([key, value]) =>
-      key !== "parent" && value && typeof value === "object" && containsNonEmptyReturn(value),
+      key !== "parent" && value && typeof value === "object" && containsIdentityReturn(value),
   );
 }
 
