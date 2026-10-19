@@ -40,18 +40,23 @@ export function resolveRuntimeGraph(
   if (framework === "nuxt") {
     packages.nuxt = resolveRuntimePackage("nuxt", rootManifest, "project");
     edges.push(edge("project", packages.nuxt));
-    packages.nitro =
-      packages.nuxt.state === "resolved" && packages.nuxt.packageJsonPath
-        ? resolveRuntimePackage("nitro", packages.nuxt.packageJsonPath, "nuxt")
-        : blockedRuntime("nitro", "nuxt", packages.nuxt);
+    const nuxtManifest =
+      packages.nuxt.state === "resolved" ? packages.nuxt.packageJsonPath : undefined;
+    packages.nitro = nuxtManifest
+      ? resolveRuntimePackage("nitro", nuxtNitroOwnerManifest(nuxtManifest), "nuxt")
+      : blockedRuntime("nitro", "nuxt", packages.nuxt);
     edges.push(edge("nuxt", packages.nitro));
     packages.h3 =
       packages.nitro.state === "resolved" && packages.nitro.packageJsonPath
         ? resolveRuntimePackage("h3", packages.nitro.packageJsonPath, "nitro")
         : blockedRuntime("h3", "nitro", packages.nitro);
     edges.push(edge("nitro", packages.h3));
-    packages.vue = resolveRuntimePackage("vue", rootManifest, "project");
-    edges.push(edge("project", packages.vue));
+    // Under a strict pnpm layout a Nuxt app that does not declare vue can only reach Nuxt's own.
+    packages.vue =
+      nuxtManifest && packageDeclaration(readPackageManifest(rootManifest), "vue") === undefined
+        ? resolveRuntimePackage("vue", nuxtManifest, "nuxt")
+        : resolveRuntimePackage("vue", rootManifest, "project");
+    edges.push(edge(packages.vue.owner, packages.vue));
   } else if (framework === "nitro") {
     packages.nitro = resolveRuntimePackage("nitro", rootManifest, "project");
     edges.push(edge("project", packages.nitro));
@@ -370,6 +375,21 @@ function resolveRuntimePackage(
   );
 }
 
+/** Nuxt 4.5 moved its Nitro dependency into @nuxt/nitro-server. */
+function nuxtNitroOwnerManifest(nuxtManifest: string): string {
+  const nuxt = readPackageManifest(nuxtManifest);
+  const declaresNitro = packageCandidates.nitro.some(
+    (name) => packageDeclaration(nuxt, name) !== undefined,
+  );
+  if (declaresNitro || packageDeclaration(nuxt, "@nuxt/nitro-server") === undefined)
+    return nuxtManifest;
+  try {
+    return resolvePackageJson(createRequire(nuxtManifest), "@nuxt/nitro-server");
+  } catch {
+    return nuxtManifest;
+  }
+}
+
 function resolvePackageJson(require: NodeRequire, name: string): string {
   try {
     return require.resolve(`${name}/package.json`);
@@ -550,6 +570,27 @@ function readExportedCompatibilityVersion(file: string, text: string): Compatibi
         state: "unknown",
         reason: `Nuxt future.compatibilityVersion in ${file} is not a static 4 or 5 literal.`,
       };
+}
+
+/** Returns the boolean `ssr` option that the root's exported Nuxt config sets statically. */
+export function readNuxtConfigSsr(root: string, configs: NuxtConfigCache): boolean | undefined {
+  const config = readNuxtConfig(root, configs);
+  return config ? readExportedNuxtSsr(config.file, config.text) : undefined;
+}
+
+function readExportedNuxtSsr(file: string, text: string): boolean | undefined {
+  if (!/\bssr["'`]?\s*:/.test(text)) return undefined;
+  const program = parseScript(file, text) as { body?: AnyRuntimeNode[] } | null;
+  const exported = program?.body?.find((node) => node.type === "ExportDefaultDeclaration");
+  let config = unwrapExpression(exported?.declaration);
+  if (config?.type === "CallExpression" && config.callee?.name === "defineNuxtConfig") {
+    config = unwrapExpression(config.arguments?.[0]);
+  }
+  if (config?.type !== "ObjectExpression") return undefined;
+  const ssr = objectProperty(config, "ssr");
+  if (ssr.state !== "resolved") return undefined;
+  const value = unwrapExpression(ssr.value);
+  return value?.type === "Literal" && typeof value.value === "boolean" ? value.value : undefined;
 }
 
 type AnyRuntimeNode = Record<string, any>;

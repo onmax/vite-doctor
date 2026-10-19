@@ -671,18 +671,19 @@ const { execute } = useLazyFetch('/api/settings', { method: 'DELETE', immediate:
   expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn", "error"]);
 });
 
-test("manual action useFetch keeps read-like POST immediate:false as warning", async () => {
+test("manual action useFetch keeps unproven POST immediate:false as warning", async () => {
   const result = await runRuleFixture({
     rule: noManualActionUseFetch,
     framework: "nuxt",
     files: {
       "app/pages/search.vue": `<script setup lang="ts">
-const { execute } = useLazyFetch('/api/search', { method: 'POST', immediate: false })
+const { execute } = useLazyFetch('/api/orders', { method: 'POST', immediate: false })
+const { execute: search } = useLazyFetch('/api/search', { method: 'POST', immediate: false })
 </script>`,
     },
   });
 
-  expect(result.diagnostics[0]?.severity).toBe("warn");
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn"]);
 });
 
 test("preview mode rule accepts explicit callbacks", async () => {

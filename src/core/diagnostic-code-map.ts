@@ -43,6 +43,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0028", ruleId: "doctor/extension/reserved-diagnostic-prefix", docs: false },
   { code: "DOC0029", ruleId: "doctor/extension/unloadable-host-entry", docs: false },
   { code: "DOC0030", ruleId: "doctor/rule/undeclared-cross-file-report", docs: false },
+  { code: "DOC0033", ruleId: "doctor/inventory/empty-sfc" },
   { code: "VUE0001", ruleId: "vue/i18n/no-untranslated-text" },
   { code: "VUE0002", ruleId: "vue/i18n/no-unused-translations" },
   { code: "VUE0003", ruleId: "vue/lifecycle/no-mutation-in-onupdated" },
@@ -213,6 +214,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0081", ruleId: "nuxt/module/require-meta" },
   { code: "NUXT0082", ruleId: "nuxt/module/resolve-runtime-paths" },
   { code: "NUXT0083", ruleId: "nuxt/module/explicit-runtime-imports" },
+  { code: "NUXT0084", ruleId: "nuxt/ssr/no-module-scope-request-state" },
+  { code: "NUXT0085", ruleId: "vueuse/ssr/require-init-on-mounted-storage" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;

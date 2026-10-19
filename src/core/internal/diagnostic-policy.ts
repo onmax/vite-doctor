@@ -16,6 +16,7 @@ import type { Diagnostic } from "../primitives.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import { lineColumnAt } from "./line-index.js";
 import { loadVueCompilerSfc } from "./lazy-parsers.js";
+import { walkAstFacts } from "./facts.js";
 import { parseScript } from "./script.js";
 import { parseVueScriptsResult } from "./sfc.js";
 import {
@@ -49,10 +50,15 @@ interface InlineSuppression {
   reason: string;
 }
 
+interface InlineSuppressions {
+  nearby: Map<number, InlineSuppression>;
+  byTargetLine: Map<number, InlineSuppression[]>;
+}
+
 export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticPolicyResult {
   const suppressed: Diagnostic[] = [];
   const sourceLines = new Map<string, string[]>();
-  const sourceSuppressions = new Map<string, Map<number, InlineSuppression>>();
+  const sourceSuppressions = new Map<string, InlineSuppressions>();
   const baseline = readBaseline(input.root, input.options.baseline);
   const nextDiagnostics: Diagnostic[] = [];
   for (const diagnostic of input.diagnostics) {
@@ -237,7 +243,7 @@ function findSuppression(
   config: DoctorConfig,
   diagnostic: Diagnostic,
   sourceLines: Map<string, string[]>,
-  sourceSuppressions: Map<string, Map<number, InlineSuppression>>,
+  sourceSuppressions: Map<string, InlineSuppressions>,
 ): string | null {
   const configured = config.suppressions?.find((suppression) => {
     if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
@@ -263,28 +269,55 @@ function findSuppression(
     sourceSuppressions.set(diagnostic.file, directives);
   }
   const line = diagnostic.range.line;
+  const applies = (inline: InlineSuppression) =>
+    inline.rules.includes(diagnostic.ruleId) || inline.rules.includes("*");
   const start = Math.max(0, line - 3);
   const end = Math.min(lines.length, line + 1);
   for (let index = start; index < end; index++) {
-    const inline = directives.get(index);
-    if (!inline || (inline.nextLine && line !== index + 2)) continue;
-    if (!inline.rules.includes(diagnostic.ruleId) && !inline.rules.includes("*")) continue;
-    return inline.reason;
+    const inline = directives.nearby.get(index);
+    if (inline && applies(inline)) return inline.reason;
   }
-  return null;
+  return directives.byTargetLine.get(line - 1)?.find(applies)?.reason ?? null;
 }
 
-function collectInlineSuppressions(file: string, lines: string[]): Map<number, InlineSuppression> {
+function collectInlineSuppressions(file: string, lines: string[]): InlineSuppressions {
+  const suppressions: InlineSuppressions = { nearby: new Map(), byTargetLine: new Map() };
   const source = lines.join("\n");
-  if (!source.includes("doctor-disable")) return new Map();
+  if (!source.includes("doctor-disable")) return suppressions;
   const directives = new Map<number, InlineSuppression>();
-  const comments = file.endsWith(".vue")
+  const { comments, codeFree } = file.endsWith(".vue")
     ? collectVueComments(file, source)
     : collectScriptComments(file, source);
   for (const comment of comments) {
     addCommentSuppressions(directives, source, comment.start, comment.end);
   }
-  return directives;
+  const code = linesWithCode(source, [...comments, ...codeFree]);
+  for (const [line, directive] of directives) {
+    if (!directive.nextLine) {
+      suppressions.nearby.set(line, directive);
+      continue;
+    }
+    // Comments such as SAFETY notes often sit between a directive and the code it covers.
+    let target = line + 1;
+    while (target < code.length && !code[target]) target++;
+    const targeted = suppressions.byTargetLine.get(target);
+    if (targeted) targeted.push(directive);
+    else suppressions.byTargetLine.set(target, [directive]);
+  }
+  return suppressions;
+}
+
+function linesWithCode(source: string, spans: SourceComment[]): boolean[] {
+  const masked = source.split("");
+  for (const span of spans) {
+    for (let index = span.start; index < span.end; index++) {
+      if (masked[index] !== "\n") masked[index] = " ";
+    }
+  }
+  return masked
+    .join("")
+    .split("\n")
+    .map((line) => line.trim().length > 0);
 }
 
 interface SourceComment {
@@ -292,16 +325,37 @@ interface SourceComment {
   end: number;
 }
 
-function collectScriptComments(file: string, source: string): SourceComment[] {
+function collectScriptComments(
+  file: string,
+  source: string,
+): { comments: SourceComment[]; codeFree: SourceComment[] } {
   const parsed = parseScript(file, source);
-  if (!parsed) return [];
-  return ((parsed.comments as Array<{ start?: number; end?: number }>) ?? []).filter(
+  if (!parsed) return { comments: [], codeFree: [] };
+  const comments = ((parsed.comments as Array<{ start?: number; end?: number }>) ?? []).filter(
     (comment): comment is { start: number; end: number } =>
       typeof comment.start === "number" && typeof comment.end === "number",
   );
+  return { comments, codeFree: /\.[cm]?[jt]sx$/.test(file) ? jsxCommentContainers(parsed) : [] };
 }
 
-function collectVueComments(file: string, source: string): SourceComment[] {
+// A JSX comment's `{}` container holds no code, but it sits outside the parsed comment span.
+function jsxCommentContainers(ast: unknown): SourceComment[] {
+  const containers: SourceComment[] = [];
+  walkAstFacts(ast, (node) => {
+    const container = node as { type?: string; expression?: { type?: string } } & SourceComment;
+    if (
+      container.type === "JSXExpressionContainer" &&
+      container.expression?.type === "JSXEmptyExpression"
+    )
+      containers.push({ start: container.start, end: container.end });
+  });
+  return containers;
+}
+
+function collectVueComments(
+  file: string,
+  source: string,
+): { comments: SourceComment[]; codeFree: SourceComment[] } {
   try {
     const { descriptor } = loadVueCompilerSfc().parse(source, {
       filename: file,
@@ -318,9 +372,9 @@ function collectVueComments(file: string, source: string): SourceComment[] {
         if (node.type === TemplateNodeType.COMMENT)
           comments.push({ start: node.loc.start.offset, end: node.loc.end.offset });
       });
-    return comments;
+    return { comments, codeFree: script ? jsxCommentContainers(script) : [] };
   } catch {
-    return [];
+    return { comments: [], codeFree: [] };
   }
 }
 
