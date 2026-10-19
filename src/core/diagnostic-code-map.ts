@@ -130,6 +130,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0020", ruleId: "nitro/routes/require-default-handler" },
   { code: "NITRO0021", ruleId: "nitro/structure/prefer-server-utils" },
   { code: "NITRO0022", ruleId: "nitro/structure/prefer-server-utils" },
+  { code: "NITRO0023", ruleId: "nitro/cache/no-module-scope-response-cache" },
   { code: "NITRO0025", ruleId: "nitro/config/require-absolute-generated-paths" },
   { code: "NUXT0001", ruleId: "docus/appconfig/no-unknown-key" },
   { code: "NUXT0002", ruleId: "docus/layers/no-empty-app-vue-shadow" },

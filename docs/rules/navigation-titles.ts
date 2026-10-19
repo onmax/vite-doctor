@@ -6,6 +6,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "docus/appconfig/no-unknown-key": "Unknown keys",
   "docus/layers/no-empty-app-vue-shadow": "Empty app.vue",
 
+  "nitro/cache/no-module-scope-response-cache": "Module-scope caches",
   "nitro/config/require-absolute-generated-paths": "Generated paths",
   "nitro/context/no-navigateto-in-nitro": "navigateTo",
   "nitro/context/no-usenuxtapp-in-nitro": "useNuxtApp",
