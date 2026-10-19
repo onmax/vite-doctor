@@ -141,6 +141,9 @@ export const ruleDocumentationMetadata = {
           "const eventStorage = new AsyncLocalStorage<H3Event>()\n\nexport function enterEvent(event: H3Event) {\n  eventStorage.enterWith(event)\n}",
         valid:
           "const eventStorage = new AsyncLocalStorage<H3Event>()\n\nexport function runWithEvent<T>(event: H3Event, callback: () => T): T {\n  return eventStorage.run(event, callback)\n}",
+      },
+    ],
+  },
   "nitro/cache/no-module-scope-response-cache": {
     description:
       "Report module-scope Maps and reassigned variables that server code uses as hand-rolled TTL caches for upstream responses.",
@@ -172,7 +175,6 @@ export const ruleDocumentationMetadata = {
           "const middleware = '.generated/nitro/middleware.ts'\nawait writeFile(resolve(root, middleware), code)\nnitroConfig.handlers.push({ handler: middleware, middleware: true })",
         valid:
           "const middleware = resolve(root, '.generated/nitro/middleware.ts')\nawait writeFile(middleware, code)\nnitroConfig.handlers.push({ handler: middleware, middleware: true })",
-
       },
     ],
   },
