@@ -73,3 +73,71 @@ test.each([
   });
   expect(result.diagnostics).toHaveLength(0);
 });
+
+const tabCapture = `export function useTabCapture() {
+  let stream: MediaStream | null = null
+  async function start() {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
+    const track = stream.getVideoTracks()[0]!
+    track.addEventListener("ended", stop)
+  }
+  function stop() {
+    stream?.getTracks().forEach(track => track.stop())
+    stream = null
+  }
+  onScopeDispose(stop)
+  return { start, stop }
+}`;
+
+test.each([
+  ["a listener on a local object, stopped through onScopeDispose", tabCapture],
+  [
+    "a window listener removed by a named onScopeDispose callback",
+    `export function useResize() {
+  function onResize() {}
+  window.addEventListener("resize", onResize)
+  function stop() { window.removeEventListener("resize", onResize) }
+  onScopeDispose(stop)
+}`,
+  ],
+  [
+    "a window listener removed by an auto-imported tryOnScopeDispose",
+    `export function useResize() {
+  function onResize() {}
+  window.addEventListener("resize", onResize)
+  tryOnScopeDispose(() => window.removeEventListener("resize", onResize))
+}`,
+  ],
+  [
+    "useEventListener, which removes its own listener",
+    `export function useResize() { useEventListener(window, "resize", () => {}) }`,
+  ],
+])("cleanup accepts a Nuxt composable with %s", async (_, source) => {
+  const result = await runRuleFixture({
+    rule: requireLifecycleCleanup,
+    framework: "nuxt",
+    files: { "app/composables/useResource.ts": source },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  [
+    "never removes its listener",
+    `export function useResize() { window.addEventListener("resize", () => {}) }`,
+  ],
+  [
+    "removes its listener from another composable's scope",
+    `function onResize() {}
+export function useResize() { window.addEventListener("resize", onResize) }
+export function useOther() { onScopeDispose(() => window.removeEventListener("resize", onResize)) }`,
+  ],
+])("cleanup reports a Nuxt composable that %s", async (_, source) => {
+  const result = await runRuleFixture({
+    rule: requireLifecycleCleanup,
+    framework: "nuxt",
+    files: { "app/composables/useResource.ts": source },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.code).toBe("VUE0004");
+});

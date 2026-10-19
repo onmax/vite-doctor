@@ -21,6 +21,10 @@ interface Resource {
 
 const GLOBAL_RECEIVERS = new Set(["window", "document", "globalThis", "self"]);
 const LIFECYCLE_CLEANUP = new Set(["onUnmounted", "onBeforeUnmount", "onScopeDispose"]);
+// VueUse's tryOn* helpers register the same Vue hook when a component or effect scope is active.
+const VUEUSE_CLEANUP = new Set(["tryOnUnmounted", "tryOnBeforeUnmount", "tryOnScopeDispose"]);
+const VUE_SOURCES = new Set(["vue"]);
+const VUEUSE_SOURCES = new Set(["@vueuse/core", "@vueuse/shared"]);
 const MOUNT_HOOKS = new Set(["onMounted", "onBeforeMount"]);
 const WATCHERS = new Set(["watch", "watchEffect", "watchPostEffect", "watchSyncEffect"]);
 const RESOURCE_NAMES = namePattern([
@@ -186,6 +190,10 @@ function createResourceEvidence(ctx: RuleContext) {
   }
 
   function vueApi(expression: AnyNode): string | undefined {
+    return importedApi(expression, VUE_SOURCES);
+  }
+
+  function importedApi(expression: AnyNode, sources: Set<string>): string | undefined {
     const node = unwrap(expression);
     if (node?.type === "Identifier") {
       const variable = bindings.get(node);
@@ -194,7 +202,7 @@ function createResourceEvidence(ctx: RuleContext) {
         if (
           definition.type === "ImportBinding" &&
           definition.parent.type === "ImportDeclaration" &&
-          definition.parent.source.value === "vue" &&
+          sources.has(definition.parent.source.value) &&
           definition.node.type === "ImportSpecifier"
         )
           return definition.node.imported.type === "Identifier"
@@ -209,7 +217,7 @@ function createResourceEvidence(ctx: RuleContext) {
           (definition) =>
             definition.type === "ImportBinding" &&
             definition.parent.type === "ImportDeclaration" &&
-            definition.parent.source.value === "vue" &&
+            sources.has(definition.parent.source.value) &&
             definition.node.type === "ImportNamespaceSpecifier",
         )
       )
@@ -486,8 +494,7 @@ function createResourceEvidence(ctx: RuleContext) {
       resource.owner.type === "Program" ? resource.owner : resource.owner.body,
       (node) => {
         if (node.start > resource.node.start && disposes(node, resource)) return true;
-        if (node.type !== "CallExpression" || !LIFECYCLE_CLEANUP.has(vueApi(node.callee) ?? ""))
-          return false;
+        if (!isCleanupRegistration(node)) return false;
         const cleanup = callback(node.arguments[0]);
         return !!cleanup && executes(cleanup.body, (call) => disposes(call, resource), resource);
       },
@@ -710,7 +717,11 @@ function createResourceEvidence(ctx: RuleContext) {
   }
 
   function isCleanupRegistration(node: AnyNode): boolean {
-    return node?.type === "CallExpression" && LIFECYCLE_CLEANUP.has(vueApi(node.callee) ?? "");
+    return (
+      node?.type === "CallExpression" &&
+      (LIFECYCLE_CLEANUP.has(vueApi(node.callee) ?? "") ||
+        VUEUSE_CLEANUP.has(importedApi(node.callee, VUEUSE_SOURCES) ?? ""))
+    );
   }
 
   // `if (stopped) return; stopped = true; ...` only exits early when this teardown already ran

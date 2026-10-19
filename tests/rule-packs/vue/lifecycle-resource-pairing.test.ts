@@ -40,6 +40,8 @@ test.each([
   `window.addEventListener('resize', handle, { capture: false, capture: true }); onUnmounted(() => window.removeEventListener('resize', handle, false))`,
   `window.addEventListener('resize', handle, { ['capture']: true }); onUnmounted(() => window.removeEventListener('resize', handle, false))`,
   `let handler = () => {}; window.addEventListener('resize', handler); handler = () => {}; onUnmounted(() => window.removeEventListener('resize', handler))`,
+  `const timer = setInterval(() => {}, 1000); tryOnScopeDispose(() => clearInterval(other))`,
+  `import { tryOnScopeDispose } from './dispose'; const timer = setInterval(() => {}, 1000); tryOnScopeDispose(() => clearInterval(timer))`,
 ])("lifecycle cleanup must dispose the acquired resource: %s", async (source) => {
   const result = await diagnose(source);
   expect(result.diagnostics).toHaveLength(1);
@@ -61,6 +63,9 @@ test.each([
   `const socket = new WebSocket('wss://example.test'); onScopeDispose(() => socket.close())`,
   `window.addEventListener('resize', handle); onUnmounted(() => window.removeEventListener('resize', handle))`,
   `window.addEventListener('resize', handle, { capture: true }); onUnmounted(() => window.removeEventListener('resize', handle, true))`,
+  `const timer = setInterval(() => {}, 1000); tryOnUnmounted(() => clearInterval(timer))`,
+  `import { tryOnScopeDispose } from '@vueuse/core'; window.addEventListener('resize', handle); tryOnScopeDispose(() => window.removeEventListener('resize', handle))`,
+  `import { tryOnBeforeUnmount as dispose } from '@vueuse/shared'; const observer = new ResizeObserver(() => {}); dispose(() => observer.disconnect())`,
 ])("lifecycle cleanup recognizes the matching resource: %s", async (source) => {
   const result = await diagnose(source);
   expect(result.diagnostics).toHaveLength(0);
