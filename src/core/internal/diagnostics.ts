@@ -143,7 +143,11 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
       // Only a literal path that no longer exists is provably stale; any other unanalyzed
       // target may be excluded, ignored, or outside the source inventory.
       if (!targets.length) {
-        if (isGlobPattern(pattern) || existsSync(resolve(root, pattern))) return false;
+        // A basename is matched by `nativeMatch` as a substring (for example,
+        // `main.ts` matches `src/main.ts`). An omitted file can therefore still
+        // satisfy this suppression even when no analyzed target is available.
+        if (isGlobPattern(pattern) || !pattern.includes("/") || existsSync(resolve(root, pattern)))
+          return false;
         targets = [relative(root, resolve(root, pattern))];
       }
       if (targets.some((file) => unproven.has(file))) return false;

@@ -207,6 +207,16 @@ test("a config suppression for a deleted file is reported", async () => {
   expect(result.diagnostics).toMatchObject([{ code: "DOC0031" }]);
 });
 
+test("a basename suppression with no analyzed target is inconclusive", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noClientSecretPattern],
+    files: { "src/other.ts": "console.log(1)\n" },
+    config: { suppressions: [{ ...stale, file: "main.ts" }] },
+  });
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "DOC0031")).toEqual([]);
+});
+
 test("a config suppression without a Rule is reported when extends composes auto", async () => {
   const result = await runProjectFixture({
     framework: "vite",
