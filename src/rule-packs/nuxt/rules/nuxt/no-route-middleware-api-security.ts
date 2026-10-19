@@ -476,8 +476,8 @@ function installedPackageManifest(
     if (ctx.fs.exists(candidate)) {
       const path = ctx.fs.realpath(candidate) ?? candidate;
       const json = ctx.fs.readJson(path) as AnyNode;
-      return json && typeof json === "object" && json.name === name
-        ? { name, path, json }
+      return json && typeof json === "object"
+        ? { name: typeof json.name === "string" ? json.name : name, path, json }
         : undefined;
     }
     if (dirname(directory) === directory) return undefined;
@@ -885,6 +885,9 @@ function isGuardedFunction(resolver: GuardResolver, module: ParsedModule, fn: An
       expression.arguments[0].name !== event.name
     )
       return false;
+    // A declaration in the handler can shadow an imported or auto-imported guard.
+    // Conservatively reject the call when the handler contains any same-named binding.
+    if (hasHandlerBinding(fn, expression.callee.name)) return false;
     const verdict = guardVerdict(resolver, module, expression.callee.name);
     return verdict !== null && (!mustSettle || awaited || verdict.sync);
   };
@@ -934,10 +937,35 @@ function throwsAuthError(statements: AnyNode[]): boolean {
   return statements.some((statement: AnyNode) => {
     if (statement?.type === "ThrowStatement") return isAuthHttpError(statement.argument);
     if (statement?.type === "BlockStatement") return throwsAuthError(statement.body);
-    if (statement?.type === "IfStatement")
+    if (statement?.type === "IfStatement" && mentionsIdentity(statement.test))
       return throwsAuthError([statement.consequent, statement.alternate].filter(Boolean));
     return false;
   });
+}
+
+function mentionsIdentity(node: AnyNode): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (node.type === "Identifier")
+    return /^(?:user|users|identity|who|session|auth|token|role)$/i.test(node.name);
+  return Object.entries(node).some(
+    ([key, value]) => key !== "parent" && value && typeof value === "object" && mentionsIdentity(value),
+  );
+}
+
+function hasHandlerBinding(fn: AnyNode, name: string): boolean {
+  const visit = (node: AnyNode): boolean => {
+    if (!node || typeof node !== "object") return false;
+    if (Array.isArray(node)) return node.some(visit);
+    if (node.type === "VariableDeclarator" && bindsName(node.id, name)) return true;
+    if (node.type === "FunctionDeclaration" && node.id?.name === name) return true;
+    if (["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type))
+      return node.params?.some((param: AnyNode) => bindsName(param, name)) || node.body && visit(node.body);
+    if (node.type === "BlockStatement" || node.type === "Program") return node.body.some(visit);
+    return Object.entries(node).some(
+      ([key, value]) => key !== "parent" && value && typeof value === "object" && visit(value),
+    );
+  };
+  return visit(fn.body);
 }
 
 function isAuthHttpError(node: AnyNode): boolean {

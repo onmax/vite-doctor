@@ -186,6 +186,19 @@ export default defineHandler(async (event) => { await requireAdmin(event); retur
       }),
     ).toEqual(["server/api/admin/index.get.ts"]);
   });
+
+  test("does not trust a handler-local shadow of an imported guard", async () => {
+    expect(
+      await reported({
+        "server/utils/identity.ts": identity,
+        "server/api/admin/index.get.ts": `import { requireAdmin } from "../../utils/identity"
+export default defineHandler(async (event) => {
+  { const requireAdmin = () => undefined; await requireAdmin(event) }
+  return []
+})`,
+      }),
+    ).toEqual(["server/api/admin/index.get.ts"]);
+  });
 });
 
 describe("guards option", () => {
@@ -249,6 +262,15 @@ describe("auth provider mounts re-exported from a package", () => {
       await reported({
         ...packages,
         "server/api/auth/[...all].ts": 'export { default } from "@vite-hub/auth/server"',
+      }),
+    ).toEqual([]);
+  });
+
+  test("accepts an npm alias whose installed manifest has another name", async () => {
+    expect(
+      await reported({
+        "node_modules/my-auth/package.json": JSON.stringify({ name: "better-auth" }),
+        "server/api/auth/[...all].ts": 'export { default } from "my-auth/server"',
       }),
     ).toEqual([]);
   });
