@@ -671,18 +671,19 @@ const { execute } = useLazyFetch('/api/settings', { method: 'DELETE', immediate:
   expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn", "error"]);
 });
 
-test("manual action useFetch keeps read-like POST immediate:false as warning", async () => {
+test("manual action useFetch keeps unproven POST immediate:false as warning", async () => {
   const result = await runRuleFixture({
     rule: noManualActionUseFetch,
     framework: "nuxt",
     files: {
       "app/pages/search.vue": `<script setup lang="ts">
-const { execute } = useLazyFetch('/api/search', { method: 'POST', immediate: false })
+const { execute } = useLazyFetch('/api/orders', { method: 'POST', immediate: false })
+const { execute: search } = useLazyFetch('/api/search', { method: 'POST', immediate: false })
 </script>`,
     },
   });
 
-  expect(result.diagnostics[0]?.severity).toBe("warn");
+  expect(result.diagnostics.map((item) => item.severity)).toEqual(["warn"]);
 });
 
 test("preview mode rule accepts explicit callbacks", async () => {
@@ -1345,6 +1346,261 @@ test("Nitro route method suffix rule reports non-if method gates in file-routed 
 
   expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
   expect(result.diagnostics[0]?.suggestion).toContain("POST-specific branch");
+});
+
+test.each([
+  "return (event.req.method === 'POST' ? createUser(event) : reject()) as Response",
+  "return (event.req.method === 'POST' ? createUser(event) : reject()) satisfies Response",
+  "return (event.req.method === 'POST' ? createUser(event) : reject())!",
+  "return <Response>(event.req.method === 'POST' ? createUser(event) : reject())",
+])(
+  "Nitro route method suffix rule preserves returned conditionals through TypeScript wrappers: %s",
+  async (statement) => {
+    const result = await runRuleFixture({
+      rule: preferRouteMethodSuffix,
+      framework: "nuxt",
+      files: {
+        "server/api/user.ts": `export default defineEventHandler((event) => {
+  ${statement}
+})`,
+      },
+    });
+
+    expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
+  },
+);
+
+test("Nitro route method suffix rule reports every method in chained returned conditionals", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  return event.req.method === 'POST'
+    ? createUser(event)
+    : event.req.method === 'GET'
+      ? listUsers(event)
+      : reject()
+})`,
+    },
+  });
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect.stringContaining("checks POST manually"),
+    expect.stringContaining("checks GET manually"),
+  ]);
+});
+
+test("Nitro route method suffix rule reports conditionals assigned to the returned response", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  const response = event.req.method === 'POST' ? createUser(event) : reject()
+  return response
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
+});
+
+test.each([
+  [
+    "a returned call through .call",
+    "return (event.req.method === 'POST' ? handlers.post : handlers.get).call(handlers, event)",
+  ],
+  [
+    "a returned call through .bind",
+    "return (event.req.method === 'POST' ? handlers.post : handlers.get).bind(handlers)(event)",
+  ],
+  [
+    "a returned direct call",
+    "return (event.req.method === 'POST' ? createUser : listUsers)(event)",
+  ],
+  [
+    "a handler binding called in the return",
+    "const handler = event.req.method === 'POST' ? createUser : listUsers\n  return handler(event)",
+  ],
+  [
+    "an awaited returned binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  return await response",
+  ],
+  [
+    "an asserted returned binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  return response as Response",
+  ],
+  [
+    "an optional returned call",
+    "return (event.req.method === 'POST' ? createUser : listUsers)?.(event)",
+  ],
+  [
+    "a returned ordinary member call",
+    "return (event.req.method === 'POST' ? handlers.post : handlers.get).handle(event)",
+  ],
+  [
+    "a boolean alias tested by the returned conditional",
+    "const isPost = event.req.method === 'POST'\n  return isPost ? createUser(event) : reject()",
+  ],
+  [
+    "a boolean alias tested by an exiting if",
+    "const isPost = event.req.method === 'POST'\n  if (!isPost) throw createError({ statusCode: 405 })\n  return createUser(event)",
+  ],
+])(
+  "Nitro route method suffix rule reports conditionals that select the response via %s",
+  async (_, body) => {
+    const result = await runRuleFixture({
+      rule: preferRouteMethodSuffix,
+      framework: "nuxt",
+      files: {
+        "server/api/user.ts": `export default defineEventHandler(async (event) => {
+  ${body}
+})`,
+      },
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([
+      "nitro/request/prefer-route-method-suffix",
+    ]);
+  },
+);
+
+test.each([
+  [
+    "a shadowing block binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  {\n    const response = cachedResponse\n    return response\n  }",
+  ],
+  [
+    "an overwritten let binding",
+    "let response = event.req.method === 'POST' ? createUser(event) : reject()\n  response = cachedResponse\n  return response",
+  ],
+  [
+    "a for-of binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  for (const response of cached) return response",
+  ],
+  [
+    "a catch parameter",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  try { load() } catch (response) { return response }",
+  ],
+  [
+    "a destructured block binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  {\n    const { response } = cached\n    return response\n  }",
+  ],
+  [
+    "a switch case binding",
+    "const response = event.req.method === 'POST' ? createUser(event) : reject()\n  switch (mode) {\n    case 'cached':\n      const response = cachedResponse\n      return response\n  }",
+  ],
+  [
+    "a self-referencing initializer",
+    "const response = event.req.method === 'POST' ? response : reject()",
+  ],
+  [
+    "a boolean alias that only selects a request option",
+    "const isWrite = event.req.method !== 'GET'\n  const body = isWrite ? await readRawBody(event) : undefined\n  if (isWrite) audit(event)\n  return proxyRequest(event, upstream, { body })",
+  ],
+])(
+  "Nitro route method suffix rule ignores conditionals whose binding is not the returned value: %s",
+  async (_, body) => {
+    const result = await runRuleFixture({
+      rule: preferRouteMethodSuffix,
+      framework: "nuxt",
+      files: {
+        "server/api/user.ts": `export default defineEventHandler(async (event) => {
+  ${body}
+})`,
+      },
+    });
+
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test("Nitro route method suffix rule reports guards whose branch ends in a nested if/else that exits", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  if (event.req.method !== 'POST') {
+    if (shouldReject(event)) {
+      throw createError({ statusCode: 405 })
+    } else {
+      return rejectLater(event)
+    }
+  }
+  if (event.req.method === 'PUT') {
+    if (isAdmin(event)) return replaceUser(event)
+  }
+  return updateUser(event)
+})`,
+    },
+  });
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect.stringContaining("checks POST manually"),
+  ]);
+});
+
+test("Nitro route method suffix rule reports guards ending in a terminating try", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  if (event.req.method !== 'POST') {
+    try {
+      return reject(event)
+    } finally {
+      audit(event)
+    }
+  }
+  return updateUser(event)
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
+});
+
+test("Nitro route method suffix rule ignores method checks that do not end the request", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/routes/_proxy/[...path].ts": `export default defineEventHandler(async (event) => {
+  const rawBody = event.method !== 'GET' && event.method !== 'HEAD'
+    ? await readRawBody(event, false)
+    : undefined
+  let mode = 'read'
+  if (event.method === 'POST') {
+    mode = 'write'
+  }
+  return proxyRequest(event, upstream, { body: rawBody, mode })
+})`,
+    },
+  });
+
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("Nitro route method suffix rule reports method gates that end the request in the else branch", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  if (event.req.method === 'POST') {
+    audit(event)
+  } else {
+    throw createError({ statusCode: 405 })
+  }
+  return updateUser(event)
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
 });
 
 test("Nitro route method suffix rule ignores request aliases from unrelated nested scopes", async () => {

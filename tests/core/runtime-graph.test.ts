@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -38,6 +38,57 @@ test("resolves the Nuxt to Nitro to H3 graph from each owning package", async ()
         version: 4,
         provenance: "default",
       });
+    },
+  );
+});
+
+test("resolves Nitro through @nuxt/nitro-server and Vue through Nuxt in a pnpm layout", async () => {
+  // Versions differ from Doctor's own dependencies, which the test runner exposes through NODE_PATH.
+  const store = "node_modules/.pnpm";
+  await withRuntimeGraph(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "4.5.2" } }),
+      [`${store}/nuxt@4.5.2/node_modules/nuxt/package.json`]: packageManifest("nuxt", "4.5.2", {
+        "@nuxt/nitro-server": "4.5.2",
+        vue: "^3.5.40",
+      }),
+      [`${store}/@nuxt+nitro-server@4.5.2/node_modules/@nuxt/nitro-server/package.json`]:
+        packageManifest("@nuxt/nitro-server", "4.5.2", { h3: "^1.99.0", nitropack: "^2.99.0" }),
+      [`${store}/nitropack@2.99.0/node_modules/nitropack/package.json`]: packageManifest(
+        "nitropack",
+        "2.99.0",
+        { h3: "^1.99.0" },
+      ),
+      [`${store}/h3@1.99.0/node_modules/h3/package.json`]: packageManifest("h3", "1.99.0"),
+      [`${store}/vue@3.9.1/node_modules/vue/package.json`]: packageManifest("vue", "3.9.1"),
+    },
+    async (root) => {
+      const link = (target: string, path: string) => {
+        mkdirSync(dirname(join(root, path)), { recursive: true });
+        symlinkSync(target, join(root, path), "dir");
+      };
+      link(".pnpm/nuxt@4.5.2/node_modules/nuxt", "node_modules/nuxt");
+      link(
+        "../../../@nuxt+nitro-server@4.5.2/node_modules/@nuxt/nitro-server",
+        `${store}/nuxt@4.5.2/node_modules/@nuxt/nitro-server`,
+      );
+      link("../../vue@3.9.1/node_modules/vue", `${store}/nuxt@4.5.2/node_modules/vue`);
+      link(
+        "../../nitropack@2.99.0/node_modules/nitropack",
+        `${store}/@nuxt+nitro-server@4.5.2/node_modules/nitropack`,
+      );
+      link("../../h3@1.99.0/node_modules/h3", `${store}/nitropack@2.99.0/node_modules/h3`);
+
+      const project = await detectProject(root);
+
+      expect(project.runtimeGraph?.packages).toMatchObject({
+        nuxt: { state: "resolved", version: "4.5.2", owner: "project" },
+        nitro: { state: "resolved", name: "nitropack", version: "2.99.0", owner: "nuxt" },
+        h3: { state: "resolved", version: "1.99.0", owner: "nitro" },
+        vue: { state: "resolved", version: "3.9.1", owner: "nuxt" },
+      });
+      const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+      expect(result.diagnostics.filter((item) => item.code === "DOC0022")).toEqual([]);
     },
   );
 });
