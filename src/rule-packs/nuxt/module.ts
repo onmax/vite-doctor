@@ -354,6 +354,7 @@ export async function writeManifest(
       Object.entries(nuxt.options.alias ?? {}).map(([key, value]) => [key, String(value)]),
     ),
     routeRules: nuxt.options.routeRules ?? {},
+    ssr: nuxt.options.ssr !== false,
     serverHandlers: toArray(nuxt.options.serverHandlers).map((handler: any) => ({
       route: handler.route,
       file: handler.handler ? relative(rootDir, handler.handler) : handler.file,
