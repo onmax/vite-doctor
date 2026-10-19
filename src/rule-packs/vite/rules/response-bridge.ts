@@ -88,7 +88,33 @@ function isHeadersMember(input: AnyNode): boolean {
   if (node?.type !== "MemberExpression" || memberName(node) !== "headers") return false;
   const owner = unwrap(node.object);
   const name = owner?.type === "MemberExpression" ? memberName(owner) : owner?.name;
-  return !(typeof name === "string" && /(?:^|[a-z_])req(?:uest)?$/i.test(name));
+  return !(
+    (typeof name === "string" && /(?:^|[a-z_])req(?:uest)?$/i.test(name)) ||
+    (owner?.type === "Identifier" && isRequestBinding(owner))
+  );
+}
+
+function isRequestBinding(identifier: AnyNode): boolean {
+  let current = identifier.__doctorParent;
+  while (current) {
+    if (isFunction(current)) {
+      const parameter = current.params.find((param: AnyNode) =>
+        param?.type === "Identifier" && param.name === identifier.name,
+      );
+      if (parameter?.typeAnnotation) return isRequestType(parameter.typeAnnotation.typeAnnotation);
+      return false;
+    }
+    if (current.type === "VariableDeclarator" && current.id?.type === "Identifier" && current.id.name === identifier.name) {
+      return isRequestType(current.id.typeAnnotation?.typeAnnotation);
+    }
+    current = current.__doctorParent;
+  }
+  return false;
+}
+
+function isRequestType(node: AnyNode): boolean {
+  const typeName = node?.typeName;
+  return typeName?.type === "Identifier" && typeName.name === "Request";
 }
 
 function forOfKeyName(left: AnyNode): string | null {
@@ -140,6 +166,17 @@ function walkBinding(node: AnyNode, name: string, visit: (node: AnyNode) => void
   }
   if (typeof node.type !== "string") return;
   if (isFunction(node) && node.params.some((param: AnyNode) => bindsName(param, name))) return;
+  if (node.type === "SwitchStatement") {
+    visit(node);
+    walkBinding(node.discriminant, name, visit);
+    for (const caseNode of node.cases ?? []) {
+      walkBinding(caseNode.test, name, visit);
+      if (!caseNode.consequent?.some((statement: AnyNode) => declares(statement, name))) {
+        for (const statement of caseNode.consequent ?? []) walkBinding(statement, name, visit);
+      }
+    }
+    return;
+  }
   if (rebinds(node, name)) return;
   visit(node);
   for (const [key, child] of Object.entries(node)) {

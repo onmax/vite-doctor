@@ -192,6 +192,26 @@ function copy(res, response) {
   }
 }`,
     ],
+    [
+      "a switch case declaration that rebinds the header name",
+      `function copy(res, response, mode) {
+  for (const [name, value] of response.headers) {
+    switch (mode) {
+      case "error": {
+        const name = "x-error"
+        res.setHeader(name, value)
+        break
+      }
+    }
+  }
+}`,
+    ],
+    [
+      "an aliased Request parameter",
+      `function copy(target, input: Request) {
+  input.headers.forEach((value, key) => target.setHeader(key, value))
+}`,
+    ],
   ])("accepts %s", async (_label, source) => {
     const result = await run(source);
     expect(result.diagnostics).toEqual([]);
