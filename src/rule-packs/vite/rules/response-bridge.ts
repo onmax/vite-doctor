@@ -174,7 +174,7 @@ function walkBinding(node: AnyNode, name: string, visit: (node: AnyNode) => void
     visit(node);
     walkBinding(node.discriminant, name, visit);
     const switchRebinds = node.cases?.some((caseNode: AnyNode) =>
-      caseNode.consequent?.some((statement: AnyNode) => declares(statement, name)),
+      caseNode.consequent?.some((statement: AnyNode) => declaresLexical(statement, name)),
     );
     for (const caseNode of node.cases ?? []) {
       walkBinding(caseNode.test, name, visit);
@@ -199,6 +199,11 @@ function rebinds(node: AnyNode, name: string): boolean {
   if (node.type === "ForStatement") return declares(node.init, name);
   if (node.type === "CatchClause") return bindsName(node.param, name);
   return false;
+}
+
+function declaresLexical(statement: AnyNode, name: string): boolean {
+  if (statement?.type === "VariableDeclaration" && statement.kind === "var") return false;
+  return declares(statement, name);
 }
 
 function declares(statement: AnyNode, name: string): boolean {

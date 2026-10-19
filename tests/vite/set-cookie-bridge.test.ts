@@ -53,6 +53,20 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
   for (const [name, value] of response.headers) res.setHeader(name as string, value)
 }`,
     ],
+    [
+      "a var declaration in a switch case",
+      `function copy(res, response, mode) {
+  for (const [name, value] of response.headers) {
+    switch (mode) {
+      case "replace":
+        var other = "x-other"
+        break
+      case "copy":
+        res.setHeader(name, value)
+    }
+  }
+}`,
+    ],
   ])("reports %s", async (_label, source) => {
     const result = await run(source);
     expect(result.diagnostics).toHaveLength(1);
