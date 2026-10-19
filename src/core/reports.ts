@@ -12,13 +12,14 @@ import {
   allDiagnosticCodeListsByRuleId,
   allDiagnosticCodesByRuleId,
 } from "./diagnostic-code-map.js";
-import { DOCTOR_DIAGNOSTICS_DOCS_BASE } from "./diagnostic-constants.js";
+import { DOCTOR_DIAGNOSTICS_DOCS_BASE, FINGERPRINT_SCHEME } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
 import {
   workspaceDiagnosticMetadataByCode,
   workspaceDiagnosticMetadataByRuleId,
 } from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
+import { shellArgument } from "./internal/utils.js";
 
 export interface DoctorReportContext {
   runOptions?: Readonly<DoctorRunOptions>;
@@ -141,6 +142,7 @@ export function createJsonReport(result: DoctorRunResult): string {
     {
       version: result.version,
       reportVersion: result.reportVersion ?? 3,
+      fingerprintScheme: FINGERPRINT_SCHEME,
       status: reportStatus(result),
       framework: result.framework,
       root: result.root,
@@ -595,10 +597,6 @@ function agentFramework(result: DoctorRunResult, context: DoctorReportContext): 
   const requested = context.runOptions?.framework;
   if (requested && requested !== "auto") return requested;
   return (result.workspacePackages?.length ?? 0) > 1 ? "auto" : result.framework;
-}
-
-function shellArgument(value: string): string {
-  return /^[a-zA-Z0-9_./:@,+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function diagnosticReferenceUrl(code: string) {

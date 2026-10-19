@@ -121,8 +121,10 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
       bind(node.id, outer, { kind: "other" });
     if (
       ["ImportSpecifier", "ImportDefaultSpecifier", "ImportNamespaceSpecifier"].includes(node.type)
-    )
+    ) {
+      outer.types.add(node.local.name);
       bind(node.local, outer, { kind: "other" });
+    }
     if (
       node.type === "TSModuleDeclaration" &&
       node.id?.name &&
@@ -219,6 +221,15 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
     }
   }
   collect(program, root);
+  function propertyWritten(objectName: string, propertyName: string): boolean {
+    return writes.some((write) => {
+      if (write?.type !== "MemberExpression" && write?.type !== "StaticMemberExpression")
+        return false;
+      if (write.object?.type !== "Identifier" || write.object.name !== objectName) return false;
+      const name = write.computed ? write.property?.value : write.property?.name;
+      return name === propertyName;
+    });
+  }
   function binding(node: AnyNode): Binding | null {
     node = expression(node);
     if (node?.type !== "Identifier") return null;
@@ -429,6 +440,7 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
   }
   return {
     binding,
+    propertyWritten,
     broadType,
     globalType,
     isArray,

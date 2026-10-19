@@ -127,6 +127,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/config/require-absolute-generated-paths": {
+    description:
+      "Finds Nitro handlers and plugins that Vite plugins, Nuxt modules or Nitro modules register with relative paths.",
+    why: "Nitro does not resolve a registered path against the file that registers it. Nitro 2 and Nitro 3 resolve handler and plugin paths against Nitro’s project rootDir. A generated file written to resolve(root, '.vitehub/handler.ts') but registered as '.vitehub/handler.ts' only works while every root happens to match, and it breaks for monorepos, custom srcDir or Vite roots, and Nitro 2.",
+    recommendedReplacement:
+      "Register the same absolute path you write the file to, for example resolve(root, '.generated/handler.ts'), or resolve files shipped with the package with createResolver(import.meta.url). Doctor checks files that import from vite, nitro, nitropack, @nuxt/kit or @nuxt/schema, and skips config files, tests, app and server runtime directories, and arguments of @nuxt/kit helpers, which nuxt/module/resolve-runtime-paths reports. It reports handler objects with a route, middleware, method or lazy key, and nitro plugins arrays, whose path is a literal or const starting with ./, ../ or a dot directory such as .nuxt/.",
+    examples: [
+      {
+        title: "Register generated handlers with the path they were written to",
+        language: "ts",
+        invalid:
+          "const middleware = '.generated/nitro/middleware.ts'\nawait writeFile(resolve(root, middleware), code)\nnitroConfig.handlers.push({ handler: middleware, middleware: true })",
+        valid:
+          "const middleware = resolve(root, '.generated/nitro/middleware.ts')\nawait writeFile(middleware, code)\nnitroConfig.handlers.push({ handler: middleware, middleware: true })",
+      },
+    ],
+  },
   "nitro/context/no-navigateto-in-nitro": {
     description: "Flags the Nuxt-only navigateTo() helper in Nitro server handlers.",
     why: "navigateTo() belongs to the Nuxt app runtime and is unavailable in Nitro handlers, so the redirect must use the installed H3 generation's response API.",
@@ -706,9 +723,9 @@ export const ruleDocumentationMetadata = {
         title: "Use keyed composable registration required",
         language: "ts",
         invalid:
-          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
+          "// app/utils/user.ts is outside the composables/ tree Nuxt scans for factories\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({})",
         valid:
-          "export const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
+          "// app/utils/user.ts\nexport const useUser = createUseFetch('/api/user')\n\nexport default defineNuxtConfig({\n  optimization: {\n    keyedComposables: [\n      { name: 'useUser', argumentLength: 2 },\n    ],\n  },\n})",
       },
     ],
   },
@@ -1557,6 +1574,23 @@ export const ruleDocumentationMetadata = {
         invalid: '<template>\n  <img :src="\'/src/assets/logo.svg\'" alt="Logo">\n</template>',
         valid:
           '<script setup lang="ts">\nimport logoUrl from \'./assets/logo.svg\'\n</script>\n\n<template>\n  <img :src="logoUrl" alt="Logo">\n</template>',
+      },
+    ],
+  },
+  "vite/config/no-url-pathname-as-fs-path": {
+    description:
+      "Reports new URL(..., import.meta.url).pathname used as a file path in Vite and Vitest config files and Node-side plugin code.",
+    why: "A URL's pathname is not a file system path. It keeps percent-encoding, so a project under a directory with a space resolves to .../My%20App/..., and on Windows it starts with /C:/ instead of a drive letter path. Alias targets, build inputs, and fs reads built from it then point at files that do not exist. Doctor checks vite.config.* and vitest.config.* files and modules that import from vite, vite-plus, or vitest/config. It reports .pathname on new URL(..., import.meta.url), directly or through a const. URLs built from other bases, such as request URLs used for routing, are not reported.",
+    recommendedReplacement:
+      "Wrap the URL with fileURLToPath from node:url: fileURLToPath(new URL('./src/file.ts', import.meta.url)).",
+    examples: [
+      {
+        title: "Convert file URLs with fileURLToPath",
+        language: "ts",
+        invalid:
+          "import { defineConfig } from 'vitest/config'\n\nexport default defineConfig({\n  resolve: {\n    alias: {\n      '#registry': new URL('./src/runtime/empty-registry.ts', import.meta.url).pathname,\n    },\n  },\n})",
+        valid:
+          "import { fileURLToPath } from 'node:url'\nimport { defineConfig } from 'vitest/config'\n\nexport default defineConfig({\n  resolve: {\n    alias: {\n      '#registry': fileURLToPath(new URL('./src/runtime/empty-registry.ts', import.meta.url)),\n    },\n  },\n})",
       },
     ],
   },
