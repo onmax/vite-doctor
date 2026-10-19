@@ -413,6 +413,8 @@ export interface RuntimePackageInstance {
   declaration?: string;
   identity?: "exact" | "alias" | "unknown";
   reason?: string;
+  /** A node_modules symlink for this package whose target no longer exists. */
+  danglingLink?: { path: string; target: string };
 }
 
 export interface RuntimeGraphEdge {
