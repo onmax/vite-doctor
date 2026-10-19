@@ -995,18 +995,18 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/middleware/no-route-middleware-api-security": {
     description:
-      "Flags route middleware API security in Nuxt middleware code before it leaks into runtime behavior.",
-    why: "Navigation helpers only work correctly in the runtime they were designed for. Returning the navigation result keeps redirects and aborts observable to Nuxt.",
+      'Reports auth-sensitive server handlers, such as server/api/admin/** or server/api/me.get.ts, in projects whose auth route middleware suggests the API is protected, when the handler has no visible server guard. A handler counts as guarded when its defineEventHandler, eventHandler, defineHandler, defineValidatedHandler (including the handler method of its options object), or cached handler awaits a guard with the event before any control flow, either as a statement or as const user = await guard(event). Built-in guard names are requireUserSession, requireAuth, requireMcpAdminToken, authGuard, and protectRoute. Doctor also follows imported and auto-imported app guards into server/utils and accepts a function that throws a 401 or 403 HTTPError or createError on a failing branch, or that first awaits another guard, and never returns nothing, null, or false. Name guards Doctor cannot follow, such as ones from a package, in the guards option under rules in doctor.config.json or the doctor key of nuxt.config: "nuxt/middleware/no-route-middleware-api-security": ["warn", { "guards": ["requireAdmin"] }]. Named guards still have to be awaited with the event before any control flow. An auth catch-all route that only re-exports a default handler from an installed auth package that depends on Better Auth, such as export { default } from "vite-hub/auth/server", counts as the provider mount.',
+    why: "Nuxt route middleware runs only during app navigation. Requests to server/api go straight to Nitro, so an API handler without its own server guard is public even when every page that calls it is protected.",
     recommendedReplacement:
-      "Remove route middleware API security, or move it to the Nuxt runtime/API that owns that behavior.",
+      "Call a server guard at the top of the handler, or protect the route with server middleware. If the handler already calls an app guard Doctor cannot follow, add its name to the rule's guards option.",
     examples: [
       {
         title: "Keep API authorization on the server",
         language: "ts",
         invalid:
-          "export default defineNuxtRouteMiddleware((to) => {\n  if (!to.query.token) return abortNavigation()\n})",
+          "// server/api/admin/reports.get.ts\nexport default defineHandler(() => listReports())",
         valid:
-          "export default defineEventHandler((event) => {\n  const token = getQuery(event).token\n  if (!token) throw createError({ statusCode: 401 })\n})",
+          "// server/api/admin/reports.get.ts\nexport default defineHandler(async (event) => {\n  await requireAdmin(event)\n  return listReports()\n})",
       },
     ],
   },
