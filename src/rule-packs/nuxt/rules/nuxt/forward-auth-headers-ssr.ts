@@ -134,10 +134,10 @@ function runsDuringSsr(ctx: RuleContext, node: AnyNode, seen: Set<AnyNode>): boo
 function isSetupEntryFile(ctx: RuleContext): boolean {
   const path = ctx.file.relativePath.replace(/\\/g, "/");
   if (path.endsWith(".vue") || isExplicitPlugin(ctx)) return true;
-  return /^(?:plugins|app\/plugins)\/[^/]+\.[cm]?[jt]s$/.test(path) ||
-    /^(?:plugins|app\/plugins)\/[^/]+\/index\.[cm]?[jt]s$/.test(path) ||
-    /\/app\/plugins\/[^/]+\.[cm]?[jt]s$/.test(path) ||
-    /\/app\/plugins\/[^/]+\/index\.[cm]?[jt]s$/.test(path);
+  const pluginFile = /^(?:plugins|app\/plugins)\/[^/]+(?:\.(?:client|server))?\.[cm]?[jt]s$/;
+  const indexPluginFile =
+    /^(?:plugins|app\/plugins)\/[^/]+\/index(?:\.(?:client|server))?\.[cm]?[jt]s$/;
+  return pluginFile.test(path) || indexPluginFile.test(path);
 }
 
 // Vue runs `watchEffect()` callbacks once during SSR setup. `watch()` callbacks count as

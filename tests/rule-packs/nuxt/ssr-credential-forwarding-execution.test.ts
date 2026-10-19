@@ -103,6 +103,11 @@ test.each([
     `export default defineNuxtPlugin(async () => {\n  await $fetch('/api/user')\n})`,
   ],
   [
+    "a server-suffixed plugin entry",
+    "app/plugins/auth.server.ts",
+    `export default { setup() { return $fetch('/api/auth/session') } }`,
+  ],
+  [
     "route middleware",
     "app/middleware/auth.ts",
     `export default defineNuxtRouteMiddleware(async () => {\n  await $fetch('/api/session')\n})`,
