@@ -213,6 +213,26 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       };
     }),
     {
+      code: "DOC0032",
+      title: "DOC0032: Regenerate a stale baseline",
+      description:
+        "A `--new-only` run read a baseline that was written with another fingerprint scheme, or that does not record one.",
+      why: "Fingerprints identify a finding across runs. When Doctor changes how it computes them, findings recorded in an older baseline no longer match and `--new-only` reports them as new. Doctor still applies the fingerprints that do match and reports this Diagnostic instead of failing the run.",
+      fix: "Regenerate the baseline with a full Doctor Run, without `--changed`, `--since`, or `--rules`: `vite-doctor . --baseline <file> --update-baseline`. Then commit the updated baseline.",
+      docsUrl: "https://vite-doctor.onmax.me/cli",
+      ruleId: "doctor/baseline/stale-fingerprint-scheme",
+      pack: "vite-doctor/core",
+      severity: "warn",
+      category: "baseline",
+      source: "src/core/internal/diagnostic-policy.ts",
+      sourceUrl: githubSourceUrl("src/core/internal/diagnostic-policy.ts"),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0032",
+      key: "diagnostics/DOC0032.md",
+    },
+    {
       code: "DOC0022",
       title: "DOC0022: Resolve the runtime graph",
       description:
