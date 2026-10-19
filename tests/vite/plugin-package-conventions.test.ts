@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../src/core/testkit.ts";
-import { diagnostics } from "../../src/diagnostics.ts";
 import { pluginPackageNamingConventions, viteRulePack } from "../../src/rules.ts";
 import { diagnosticsCollectionSource, getDiagnosticDocuments } from "../../docs/rules/source.ts";
 
@@ -350,7 +349,11 @@ export const plugin = { name: 'icons', transform: (code: string) => code }`,
 
   test("is Recommended, uses VITE0024 only, and documents the convention", async () => {
     expect(viteRulePack.presets?.recommended).toContain(pluginPackageNamingConventions.meta.id);
-    expect(Object.keys(diagnostics)).not.toContain("VITE0025");
+    expect(
+      getDiagnosticDocuments()
+        .filter((document) => document.ruleId === pluginPackageNamingConventions.meta.id)
+        .map((document) => document.code),
+    ).toEqual(["VITE0024"]);
     expect(getDiagnosticDocuments()).toContainEqual(
       expect.objectContaining({
         code: "VITE0024",

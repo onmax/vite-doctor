@@ -95,6 +95,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0022", ruleId: "vite/imports/require-static-glob-pattern" },
   { code: "VITE0023", ruleId: "vite/imports/no-barrel-files" },
   { code: "VITE0024", ruleId: "vite/plugin-package/naming-conventions" },
+  { code: "VITE0025", ruleId: "vite/plugin/no-lossy-set-cookie-bridge" },
   { code: "VITE0027", ruleId: "vite/config/no-url-pathname-as-fs-path" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
@@ -221,6 +222,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0083", ruleId: "nuxt/module/explicit-runtime-imports" },
   { code: "NUXT0084", ruleId: "nuxt/ssr/no-module-scope-request-state" },
   { code: "NUXT0085", ruleId: "vueuse/ssr/require-init-on-mounted-storage" },
+  { code: "NUXT0086", ruleId: "nuxt/hydration/require-clientonly-fallback" },
   { code: "NUXT0090", ruleId: "nuxt/config/no-runtime-env-in-build-options" },
 ]);
 
