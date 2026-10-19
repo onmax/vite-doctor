@@ -154,6 +154,17 @@ export function resolve(mode: string) {
       return new URL("./x", import.meta.url).pathname
   }
 }`,
+      ],
+    [
+      "a hoisted var URL declared in a nested statement",
+      "vite.config.ts",
+      `function createConfig() {
+  if (true) {
+    var URL = CustomURL
+  }
+  return new URL("./x", import.meta.url).pathname
+}
+export default createConfig()`,
     ],
   ])("accepts %s", async (_label, file, source) => {
     const result = await run(file, source);

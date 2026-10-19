@@ -95,6 +95,8 @@ function findBinding(from: AnyNode, name: string): AnyNode {
     if (functionTypes.has(current.type)) {
       if (current.params.some((param: AnyNode) => bindsName(param, name))) return current;
       if (current.type === "FunctionExpression" && current.id?.name === name) return current;
+      const hoisted = findVarBinding(current, name);
+      if (hoisted) return hoisted;
     }
     if (current.type === "CatchClause" && bindsName(current.param, name)) return current;
     for (const statement of scopeStatements(current)) {
@@ -122,6 +124,33 @@ function findBinding(from: AnyNode, name: string): AnyNode {
     }
   }
   return null;
+}
+
+// `var` declarations are scoped to the containing function, even when nested
+// inside a conditional, loop, or try statement. Do not descend into nested
+// functions, which introduce a separate var scope.
+function findVarBinding(fn: AnyNode, name: string): AnyNode | null {
+  let found: AnyNode | null = null;
+  const visit = (node: AnyNode) => {
+    if (!node || found) return;
+    if (node !== fn && functionTypes.has(node.type)) return;
+    if (node.type === "VariableDeclaration" && node.kind === "var") {
+      const declarator = node.declarations.find((item: AnyNode) => bindsName(item.id, name));
+      if (declarator) {
+        found = declarator;
+        return;
+      }
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "__doctorParent" || key === "parent") continue;
+      if (Array.isArray(value)) {
+        for (const child of value) if (child && typeof child === "object") visit(child as AnyNode);
+      } else if (value && typeof value === "object") visit(value as AnyNode);
+      if (found) return;
+    }
+  };
+  visit(fn.body);
+  return found;
 }
 
 function scopeStatements(node: AnyNode): AnyNode[] {
