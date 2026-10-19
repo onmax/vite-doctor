@@ -152,6 +152,8 @@ export function handlers(root: string, generatedRoot: string) {
     { handler: join(root, generatedWebhook), route: "/hooks" },
     { handler: resolve(generatedRoot, "agent/ready.ts"), route: "/ready" },
     { handler: "~/server/handlers/ready.ts", route: "/ready" },
+    { handler: "./handlers/health.ts", route: "/health" },
+    { handler: "./plugins/health.ts", route: "/health" },
     { handler: "#vitehub/agent/route", route: "/agent" },
     { handler: "my-package/handler", route: "/pkg" },
     { handler: \`\${generatedRoot}/agent.ts\`, route: "/agent" },
@@ -199,6 +201,17 @@ export function register({ middleware }: { middleware: string }) {
 }`,
     }),
   ).toEqual([]);
+});
+
+test("resolves a top-level const despite unrelated nested bindings", async () => {
+  expect(
+    await lines({
+      "modules/register.ts": `import type { Plugin } from "vite"
+const handler = "./generated/top-level.ts"
+function register({ handler }: { handler: string }) {}
+export const routes = [{ handler, route: "/x" }]`,
+    }),
+  ).toEqual(["modules/register.ts:4"]);
 });
 
 test("checks Nitro Vite entrypoints and wrapped Nitro config objects", async () => {

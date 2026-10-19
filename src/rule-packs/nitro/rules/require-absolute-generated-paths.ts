@@ -35,13 +35,14 @@ export const requireAbsoluteGeneratedPaths = createRule({
     let integration = false;
     const kitFunctions = new Set<string>();
     const kitNamespaces = new Set<string>();
-    const strings = new Map<string, AnyNode>();
-    const declarations = new Map<string, number>();
-    const declare = (name: string) => declarations.set(name, (declarations.get(name) ?? 0) + 1);
+    const strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }> = [];
+    const declarations: Array<{ name: string; scope: AnyNode | undefined }> = [];
+    const declare = (name: string, node: AnyNode) =>
+      declarations.push({ name, scope: lexicalScope(node) });
     const declareFunction = (node: AnyNode) => {
-      if (node.id?.name) declare(node.id.name);
+      if (node.id?.name) declare(node.id.name, node);
       for (const parameter of node.params ?? [])
-        for (const name of patternNames(parameter)) declare(name);
+        for (const name of patternNames(parameter)) declare(name, parameter);
     };
     const candidates: Array<{ node: AnyNode; kind: "handler" | "plugin" }> = [];
     return {
@@ -56,19 +57,20 @@ export const requireAbsoluteGeneratedPaths = createRule({
         }
       },
       VariableDeclarator(node: AnyNode) {
-        for (const name of patternNames(node.id)) declare(name);
+        for (const name of patternNames(node.id)) declare(name, node.id);
         if (node.id?.type !== "Identifier" || node.__doctorParent?.kind !== "const") return;
         const value = unwrapExpression(node.init);
-        if (staticStringValue(value) !== undefined) strings.set(node.id.name, value);
+        if (staticStringValue(value) !== undefined)
+          strings.push({ name: node.id.name, scope: lexicalScope(node), value });
       },
       FunctionDeclaration: declareFunction,
       FunctionExpression: declareFunction,
       ArrowFunctionExpression: declareFunction,
       ClassDeclaration(node: AnyNode) {
-        if (node.id?.name) declare(node.id.name);
+        if (node.id?.name) declare(node.id.name, node);
       },
       CatchClause(node: AnyNode) {
-        for (const name of patternNames(node.param)) declare(name);
+        for (const name of patternNames(node.param)) declare(name, node.param);
       },
       ObjectExpression(node: AnyNode) {
         const handler = node.properties?.find(
@@ -121,9 +123,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
           // A name declared more than once may resolve to another scope's value, so skip it.
           const literal =
             value?.type === "Identifier"
-              ? declarations.get(value.name) === 1
-                ? strings.get(value.name)
-                : undefined
+              ? resolveString(value, strings, declarations)
               : staticStringValue(value) !== undefined
                 ? value
                 : undefined;
@@ -139,16 +139,14 @@ export const requireAbsoluteGeneratedPaths = createRule({
 function reportPath(ctx: RuleContext, node: AnyNode, text: string, kind: "handler" | "plugin") {
   const raw = sourceForNode(node, ctx.file.text);
   const base =
-    kind === "plugin"
-      ? "Nitro resolves plugin paths against srcDir (Nitro 2) or rootDir (Nitro 3)"
-      : "Nitro 3 resolves handler paths against rootDir, and Nitro 2 imports them as written";
+    "Nitro resolves registered paths against its project root, not against this file or the directory the file was written to";
   report(
     ctx,
     node,
     RULE_ID,
     ctx.severity,
     "modules",
-    `This Nitro ${kind} is registered with the relative path ${JSON.stringify(text)}. ${base}, not against this file or the directory the file was written to, so the path breaks when those differ.`,
+    `This Nitro ${kind} is registered with the relative path ${JSON.stringify(text)}. ${base}, so the path breaks when those differ.`,
     `Register an absolute path: resolve it from the same root you write the file to, such as resolve(root, ${raw}), or from this package with createResolver(import.meta.url).resolve(${raw}).`,
   );
 }
@@ -172,6 +170,57 @@ function isRuntimeFile(ctx: RuleContext, path: string) {
   return appDirs.some(
     (dir) => dir && dir !== ctx.project.root && dir !== packageRoot && isInside(dir, file),
   );
+}
+
+function lexicalScope(node: AnyNode): AnyNode | undefined {
+  let current = node?.__doctorParent;
+  while (current) {
+    if (
+      current.type === "Program" ||
+      current.type === "BlockStatement" ||
+      current.type === "FunctionDeclaration" ||
+      current.type === "FunctionExpression" ||
+      current.type === "ArrowFunctionExpression" ||
+      current.type === "CatchClause"
+    )
+      return current;
+    current = current.__doctorParent;
+  }
+  return undefined;
+}
+
+function scopeDepth(scope: AnyNode | undefined) {
+  let depth = 0;
+  for (let current = scope; current; current = lexicalScope(current)) depth++;
+  return depth;
+}
+
+function isScopeInside(scope: AnyNode | undefined, ancestor: AnyNode | undefined) {
+  for (let current = scope; current; current = lexicalScope(current))
+    if (current === ancestor) return true;
+  return ancestor === undefined;
+}
+
+function resolveString(
+  value: AnyNode,
+  strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }>,
+  declarations: Array<{ name: string; scope: AnyNode | undefined }>,
+) {
+  const scope = lexicalScope(value);
+  const visible = declarations.filter(
+    (item) => item.name === value.name && isScopeInside(scope, item.scope),
+  );
+  if (!visible.length) return undefined;
+  const nearest = Math.max(...visible.map((item) => scopeDepth(item.scope)));
+  if (visible.filter((item) => scopeDepth(item.scope) === nearest).length !== 1) return undefined;
+  const match = strings.find(
+    (item) =>
+      item.name === value.name &&
+      item.scope &&
+      scopeDepth(item.scope) === nearest &&
+      isScopeInside(scope, item.scope),
+  );
+  return match?.value;
 }
 
 function patternNames(pattern: AnyNode): string[] {
@@ -207,6 +256,7 @@ function owningPackagePrefix(ctx: RuleContext, path: string) {
 }
 
 function isRelativeFilePath(value: string) {
+  if (value.startsWith("./handlers/") || value.startsWith("./plugins/")) return false;
   return value.startsWith("./") || value.startsWith("../") || /^\.[\w-]+[\\/]/.test(value);
 }
 
