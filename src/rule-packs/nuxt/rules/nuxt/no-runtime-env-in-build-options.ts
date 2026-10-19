@@ -42,7 +42,10 @@ export const noRuntimeEnvInBuildOptions = createRule({
         if (bindings.has("process") || importsLocalProcess(program)) return;
         const config = exportedConfigObject(program, bindings);
         if (!config) return;
-        const runtimeEnvKeys = { nuxt: new Map<string, string>(), nitro: new Map<string, string>() };
+        const runtimeEnvKeys = {
+          nuxt: new Map<string, string>(),
+          nitro: new Map<string, string>(),
+        };
         collectRuntimeConfigKeys(config, bindings, runtimeEnvKeys, "nuxt");
         if (!runtimeEnvKeys.nuxt.size && !runtimeEnvKeys.nitro.size) return;
         const readsFor = envReadsResolver(bindings);
@@ -146,15 +149,24 @@ function collectRuntimeConfigKeys(
     const key = propertyName(property);
     const value = objectExpression(property.value, bindings);
     if (!key || !value) continue;
-    if (key === "runtimeConfig") collectDeclaredKeys(value, [], bindings, keys[owner]);
-    else if (key === "nitro") {
+    if (key === "runtimeConfig") {
+      collectDeclaredKeys(value, [], bindings, keys[owner]);
+      // Both Nuxt and Nitro loaders can override the generated runtime config.
+      if (owner === "nuxt") collectDeclaredKeys(value, [], bindings, keys.nitro);
+      else collectDeclaredKeys(value, [], bindings, keys.nuxt);
+    } else if (key === "nitro") {
       collectRuntimeConfigKeys(value, bindings, keys, "nitro");
     } else if (ENVIRONMENT_OVERRIDE_KEYS.has(key)) {
       collectRuntimeConfigKeys(value, bindings, keys, "nuxt");
     } else if (key === "$env") {
       for (const environment of value.properties ?? []) {
         if (environment.type === "Property") {
-          collectRuntimeConfigKeys(objectExpression(environment.value, bindings), bindings, keys, "nuxt");
+          collectRuntimeConfigKeys(
+            objectExpression(environment.value, bindings),
+            bindings,
+            keys,
+            "nuxt",
+          );
         }
       }
     }
@@ -361,7 +373,10 @@ function isNonReference(node: AnyNode): boolean {
   return false;
 }
 
-function runtimeConfigKey(name: string, keys: { nuxt: Map<string, string>; nitro: Map<string, string> }): string | undefined {
+function runtimeConfigKey(
+  name: string,
+  keys: { nuxt: Map<string, string>; nitro: Map<string, string> },
+): string | undefined {
   if (name.startsWith("NUXT_")) return keys.nuxt.get(name.slice("NUXT_".length));
   if (name.startsWith("NITRO_")) return keys.nitro.get(name.slice("NITRO_".length));
   return undefined;

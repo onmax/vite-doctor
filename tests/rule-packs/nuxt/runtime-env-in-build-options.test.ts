@@ -57,6 +57,15 @@ test.each([
   expect(result.diagnostics).toHaveLength(1);
 });
 
+test("reports a Nitro variable for root Nuxt runtimeConfig", async () => {
+  const result = await run(`export default defineNuxtConfig({
+  runtimeConfig: { apiSecret: '' },
+  myModule: { secret: process.env.NITRO_API_SECRET },
+})`);
+
+  expect(result.diagnostics).toHaveLength(1);
+});
+
 test.each([
   [
     "reads inside runtimeConfig",
@@ -91,9 +100,9 @@ test.each([
   devtools: { enabled: process.env.NODE_ENV !== 'production' },`,
   ],
   [
-    "a Nitro variable for Nuxt runtimeConfig",
+    "a Nitro variable unrelated to Nuxt runtimeConfig",
     `runtimeConfig: { apiSecret: '' },
-  myModule: { secret: process.env.NITRO_API_SECRET },`,
+  myModule: { secret: process.env.NITRO_OTHER_SECRET },`,
   ],
 ])("does not report %s", async (_name, properties) => {
   const result = await run(`export default defineNuxtConfig({
