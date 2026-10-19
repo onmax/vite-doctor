@@ -97,7 +97,6 @@ export function isTopLevelVueScriptSetupCall(ctx: RuleContext, node: AnyNode) {
 
 export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) {
   const text = ctx.file.text;
-  if (/<\s*(NuxtTime|ClientOnly)\b/.test(text)) return false;
   // Event bindings do not exclude SSR calls to the same helper. Preserve source offsets for guards.
   const templateBlock = getTemplateBlock(ctx);
   const start = templateBlock?.loc.start.offset;
@@ -110,7 +109,7 @@ export function isLikelyRenderedTimeExpression(ctx: RuleContext, node: AnyNode) 
   if (ctx.helpers.isClientOnlyExecutionContext(node, executionSource)) return false;
   const source = sourceForNode(node, text);
   if (!source) return false;
-  const template = getTemplateSource(ctx);
+  const template = getServerRenderedTemplateSource(ctx);
   if (template.includes(source)) return true;
 
   const declarator = nearestVariableDeclarator(node);
@@ -1659,6 +1658,11 @@ function templateParent(node: AnyNode): AnyNode {
   return node.__doctorParent ?? templateContainers.get(node);
 }
 
+/** Whether a rendered template expression reads the script binding `name`. */
+export function isRenderedTemplateName(ctx: RuleContext, name: string) {
+  return getRenderedReferences(ctx).some((reference) => reference.name === name);
+}
+
 /** Identifiers that rendered template expressions read from script, skipping template locals. */
 function getRenderedReferences(ctx: RuleContext): AnyNode[] {
   const root = ctx.file.templateAst;
@@ -1689,6 +1693,7 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
     }
   };
   const visitElement = (element: TemplateElementNode, outer: Set<string>) => {
+    const nuxtTime = NUXT_TIME_TAGS.has(element.tag);
     let locals = outer;
     for (const prop of element.props) {
       if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
@@ -1697,6 +1702,8 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
     }
     for (const prop of element.props) {
       if (prop.type !== TemplateNodeType.DIRECTIVE || !RENDERED_DIRECTIVES.has(prop.name)) continue;
+      // NuxtTime renders its own values without a mismatch, but its conditions still shape SSR markup.
+      if (nuxtTime && !CONTROL_DIRECTIVES.has(prop.name)) continue;
       if (prop.name === "for")
         collect(prop.forParseResult?.source, outer, (right) => ({ type: "VForExpression", right }));
       // Vue evaluates conditionals before introducing same-element loop aliases.
@@ -1709,7 +1716,12 @@ function getRenderedReferences(ctx: RuleContext): AnyNode[] {
       if (prop.name === "bind" && prop.arg && !prop.arg.isStatic)
         collect(prop.arg, locals, expressionContainer);
     }
-    visitChildren(element, locals);
+    if (nuxtTime) return;
+    // SSR renders ClientOnly's own bindings and fallback slots, but not its default content.
+    if (CLIENT_ONLY_TAGS.has(element.tag)) {
+      const fallback = getServerFallbackSlot(element);
+      if (fallback) visitElement(fallback, locals);
+    } else visitChildren(element, locals);
   };
   visitChildren(root, new Set());
   renderedReferenceCache.set(root, references);
@@ -2534,6 +2546,80 @@ function getTemplateBlock(ctx: RuleContext) {
       | { template?: { content: string; loc: { start: { offset: number } } } }
       | undefined
   )?.template;
+}
+
+const CLIENT_ONLY_TAGS = new Set(["ClientOnly", "client-only"]);
+const NUXT_TIME_TAGS = new Set(["NuxtTime", "nuxt-time"]);
+const CONTROL_DIRECTIVES = new Set(["if", "else-if", "show", "for"]);
+
+function isServerFallbackSlot(element: TemplateElementNode) {
+  return element.props.some(
+    (prop) =>
+      prop.type === TemplateNodeType.DIRECTIVE &&
+      prop.name === "slot" &&
+      ["fallback", "placeholder"].includes(prop.arg?.isStatic ? prop.arg.content : ""),
+  );
+}
+
+/** Nuxt renders the fallback slot when present, otherwise the placeholder slot. */
+function getServerFallbackSlot(element: TemplateElementNode) {
+  const slots = element.children.filter(
+    (child): child is TemplateElementNode =>
+      child.type === TemplateNodeType.ELEMENT && isServerFallbackSlot(child),
+  );
+  return (
+    slots.find((slot) =>
+      slot.props.some(
+        (prop) =>
+          prop.type === TemplateNodeType.DIRECTIVE &&
+          prop.name === "slot" &&
+          prop.arg?.isStatic &&
+          prop.arg.content === "fallback",
+      ),
+    ) ??
+    slots.find((slot) =>
+      slot.props.some(
+        (prop) =>
+          prop.type === TemplateNodeType.DIRECTIVE &&
+          prop.name === "slot" &&
+          prop.arg?.isStatic &&
+          prop.arg.content === "placeholder",
+      ),
+    )
+  );
+}
+
+/** Template text with subtrees that SSR does not hydrate from script values blanked out. */
+function getServerRenderedTemplateSource(ctx: RuleContext): string {
+  const key = `nuxt:server-template:${ctx.file.hash}`;
+  const cached = ctx.cache.get<string>(key);
+  if (cached !== undefined) return cached;
+  let value = getTemplateSource(ctx);
+  const block = getTemplateBlock(ctx);
+  const root = ctx.file.templateAst;
+  if (block && root && /<\s*(ClientOnly|client-only|NuxtTime|nuxt-time)\b/.test(value)) {
+    const offset = block.loc.start.offset;
+    const blank = (node: { loc: { start: { offset: number }; end: { offset: number } } }) => {
+      const start = node.loc.start.offset - offset;
+      const end = node.loc.end.offset - offset;
+      value = value.slice(0, start) + " ".repeat(end - start) + value.slice(end);
+    };
+    const visit = (parent: TemplateParentNode) => {
+      for (const child of parent.children) {
+        if (child.type !== TemplateNodeType.ELEMENT) continue;
+        if (NUXT_TIME_TAGS.has(child.tag)) blank(child);
+        else if (CLIENT_ONLY_TAGS.has(child.tag)) {
+          const fallback = getServerFallbackSlot(child);
+          for (const slot of child.children)
+            if (slot !== fallback) blank(slot);
+            else visit(slot);
+        } else visit(child);
+      }
+    };
+    visit(root);
+  }
+  ctx.cache.set(key, value);
+  return value;
 }
 
 function getTemplateSource(ctx: RuleContext): string {

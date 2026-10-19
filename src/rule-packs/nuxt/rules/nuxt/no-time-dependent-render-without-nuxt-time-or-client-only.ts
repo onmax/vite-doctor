@@ -23,8 +23,7 @@ export const noTimeDependentRenderWithoutNuxtTimeOrClientOnly = createRule({
     if (
       !isNuxtRuntimeFile(ctx) ||
       isClientOnlyPath(ctx.file.relativePath) ||
-      ctx.helpers.isNuxtServerFile(ctx.file.relativePath) ||
-      /<\s*(NuxtTime|ClientOnly)\b/.test(ctx.file.text)
+      ctx.helpers.isNuxtServerFile(ctx.file.relativePath)
     )
       return;
     const visit = (node: AnyNode) => {

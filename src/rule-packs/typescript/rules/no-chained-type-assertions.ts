@@ -27,7 +27,7 @@ export const noChainedTypeAssertions = createRule({
       },
     ],
     category: "evidence",
-    severity: "error",
+    severity: "warn",
     fixable: "suggestion",
     docsUrl: "https://github.com/dmmulroy/anti-slop#no-chained-type-assertions",
     requires: { script: true },
@@ -49,7 +49,7 @@ export const noChainedTypeAssertions = createRule({
         ctx,
         node,
         ruleId,
-        "This assertion chain discards the value's known type before claiming a new one.",
+        "This assertion chain skips the compiler's compatibility check, so nothing verifies that the value matches the final type.",
         "Keep the original type, narrow it with a guard, or parse the value at its boundary.",
       );
     };
