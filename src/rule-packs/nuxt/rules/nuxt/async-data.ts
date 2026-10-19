@@ -192,6 +192,53 @@ export function isReadonlyPath(path: string | null, options: AsyncDataRuleOption
   );
 }
 
+export function isReadonlyRequestPath(path: string | null, options: AsyncDataRuleOptions): boolean {
+  return (
+    isReadonlyPath(path, options) || (isQueryLikePath(path) && !isWriteLikePath(path, options))
+  );
+}
+
+export function hasReadonlyEvidence(
+  ctx: RuleContext,
+  call: AsyncDataCall,
+  options: AsyncDataRuleOptions,
+): boolean {
+  const requests = FETCH_ASYNC_DATA_COMPOSABLES.has(call.name)
+    ? [readonlyRequest(call.path, call.node.arguments?.[1])]
+    : handlerFetchRequests(ctx, call.handler);
+  if (requests.some(({ method }) => method && MUTATING_METHODS.has(method))) return false;
+  if (call.readonlyMarked) return true;
+  return (
+    requests.length > 0 &&
+    requests.every(({ path, method }) => method && isReadonlyRequestPath(path, options))
+  );
+}
+
+function handlerFetchRequests(ctx: RuleContext, handler: AnyNode) {
+  const requests: Array<ReturnType<typeof readonlyRequest>> = [];
+  walkScriptLocal(handler, (node) => {
+    if (ctx.helpers.isCall(node) && ctx.helpers.getCalleeName(node) === "$fetch")
+      requests.push(
+        readonlyRequest(getStaticRequestPath(node.arguments?.[0]), node.arguments?.[1]),
+      );
+  });
+  return requests;
+}
+
+// The method is the last static `method` after any spread or computed key; otherwise unknown (null).
+function readonlyRequest(path: string | null, optionsArgument: AnyNode) {
+  if (!optionsArgument) return { path, method: "GET" };
+  const options = objectExpression(optionsArgument);
+  if (!options) return { path, method: null };
+  let method: string | null = "GET";
+  for (const property of options.properties ?? []) {
+    const name = propertyKeyName(property);
+    if (name === "method") method = resolveHttpMethod(property.value);
+    else if (!name) method = null;
+  }
+  return { path, method };
+}
+
 export function isWriteLikePath(path: string | null, options: AsyncDataRuleOptions): boolean {
   if (!path) return false;
   const segments = options.writeLikePathSegments ?? DEFAULT_WRITE_LIKE_PATH_SEGMENTS;
@@ -351,6 +398,10 @@ function propertyKeyName(property: AnyNode): string | null {
   if (!key) return null;
   if (!property.computed && key.type === "Identifier") return key.name;
   if (key.type === "Literal" || key.type === "StringLiteral") return String(key.value);
+  if (key.type === "TemplateLiteral" && (key.expressions?.length ?? 0) === 0) {
+    const quasi = key.quasis?.[0];
+    return quasi?.value?.cooked ?? quasi?.value?.raw ?? null;
+  }
   return null;
 }
 

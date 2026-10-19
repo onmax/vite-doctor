@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { join } from "pathe";
+import { join, relative } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { runViteDoctor } from "../../../src/doctor.js";
 import {
@@ -61,9 +61,9 @@ test("rereads artifacts on each Doctor Run and exposes missing output in invento
     expect(JSON.parse(createAgentReport(missing)).commands.verify).toContain(
       "--extends package/recommended",
     );
-    expect(missing.project.inventory?.packageArtifacts).toMatchObject({
-      missing: ["dist/index.js"],
-    });
+    expect(missing.project.inventory?.packageArtifacts).toMatchObject([
+      { missing: ["dist/index.js"] },
+    ]);
     writeFileSync(join(root, "package.json"), JSON.stringify({ ...manifest, main: "index.js" }));
     writeFileSync(join(root, "index.js"), files["dist/index.js"]);
     const built = await runViteDoctor(options);
@@ -74,6 +74,44 @@ test("rereads artifacts on each Doctor Run and exposes missing output in invento
     const rebuilt = await runViteDoctor(options);
     expect(rebuilt.diagnostics.filter((d) => d.ruleId.startsWith("package/"))).toEqual([]);
   });
+});
+
+test("analyzes each publishable workspace package from the workspace root", async () => {
+  await withPackage(
+    { private: true, workspaces: ["packages/*"] },
+    {
+      "packages/lib/package.json": JSON.stringify({ name: "lib", ...manifest }),
+      "packages/lib/dist/index.js": files["dist/index.js"],
+      "packages/unbuilt/package.json": JSON.stringify({ name: "unbuilt", main: "dist/index.js" }),
+      "packages/internal/package.json": JSON.stringify({
+        name: "internal",
+        private: true,
+        main: "index.js",
+      }),
+      "packages/internal/index.js": 'import "phantom";',
+    },
+    async (root) => {
+      const result = await runViteDoctor({
+        root,
+        framework: "vite",
+        cache: false,
+        extends: ["package/recommended"],
+      });
+      const diagnostics = result.diagnostics.filter((d) => d.ruleId.startsWith("package/"));
+      expect(
+        diagnostics
+          .map((d) => `${d.code} ${relative(root, d.file)}`)
+          .sort((a, b) => a.localeCompare(b)),
+      ).toEqual(["PKG0001 packages/lib/dist/index.js", "PKG0003 packages/lib/dist/index.js"]);
+      for (const diagnostic of diagnostics)
+        expect(diagnostic.evidence?.find((item) => item.kind === "manifest")?.file).toBe(
+          join(root, "packages/lib/package.json"),
+        );
+      expect(JSON.parse(createJsonReport(result)).evidenceGaps).toEqual([
+        expect.objectContaining({ files: ["packages/unbuilt/dist/index.js"] }),
+      ]);
+    },
+  );
 });
 
 test("generates rule and diagnostic pages for every package diagnostic code", async () => {
