@@ -160,19 +160,17 @@ function isReturnedValue(node: AnyNode, seen: Set<AnyNode>): boolean {
     return isReturnedValue(parent, seen);
   if (parent.type === "CallExpression" && parent.callee === node)
     return isReturnedValue(parent, seen);
-  if (isFunctionInvocationMember(parent, node)) return isReturnedValue(parent.__doctorParent, seen);
+  if (isInvokedMember(parent, node)) return isReturnedValue(parent.__doctorParent, seen);
   if (parent.type === "ReturnStatement") return true;
   if (parent.type === "VariableDeclarator" && parent.init === node)
     return someReference(parent, seen, (reference) => isReturnedValue(reference, seen));
   return parent.type === "ArrowFunctionExpression" && parent.body === node;
 }
 
-function isFunctionInvocationMember(member: AnyNode, object: AnyNode) {
+function isInvokedMember(member: AnyNode, object: AnyNode) {
   return (
     (member.type === "MemberExpression" || member.type === "StaticMemberExpression") &&
     member.object === object &&
-    !member.computed &&
-    ["call", "apply", "bind"].includes(member.property?.name) &&
     member.__doctorParent?.type === "CallExpression" &&
     member.__doctorParent.callee === member
   );
@@ -281,6 +279,10 @@ function branchExits(node: AnyNode): boolean {
   if (node.type === "ReturnStatement" || node.type === "ThrowStatement") return true;
   if (node.type === "IfStatement")
     return branchExits(node.consequent) && branchExits(node.alternate);
+  if (node.type === "TryStatement") {
+    if (node.finalizer && branchExits(node.finalizer)) return true;
+    return branchExits(node.block) && (!node.handler || branchExits(node.handler.body));
+  }
   if (node.type !== "BlockStatement") return false;
   return branchExits(node.body?.at(-1));
 }

@@ -1435,6 +1435,10 @@ test.each([
     "return (event.req.method === 'POST' ? createUser : listUsers)?.(event)",
   ],
   [
+    "a returned ordinary member call",
+    "return (event.req.method === 'POST' ? handlers.post : handlers.get).handle(event)",
+  ],
+  [
     "a boolean alias tested by the returned conditional",
     "const isPost = event.req.method === 'POST'\n  return isPost ? createUser(event) : reject()",
   ],
@@ -1535,6 +1539,27 @@ test("Nitro route method suffix rule reports guards whose branch ends in a neste
   expect(result.diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
     expect.stringContaining("checks POST manually"),
   ]);
+});
+
+test("Nitro route method suffix rule reports guards ending in a terminating try", async () => {
+  const result = await runRuleFixture({
+    rule: preferRouteMethodSuffix,
+    framework: "nuxt",
+    files: {
+      "server/api/user.ts": `export default defineEventHandler((event) => {
+  if (event.req.method !== 'POST') {
+    try {
+      return reject(event)
+    } finally {
+      audit(event)
+    }
+  }
+  return updateUser(event)
+})`,
+    },
+  });
+
+  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-route-method-suffix");
 });
 
 test("Nitro route method suffix rule ignores method checks that do not end the request", async () => {
