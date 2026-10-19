@@ -1796,6 +1796,9 @@ export const ruleDocumentationMetadata = {
           "export function dedupePlugin(): Plugin {\n  return {\n    name: 'dedupe-vue',\n    config(config) {\n      return {\n        resolve: { dedupe: [...(config.resolve?.dedupe ?? []), 'vue'] },\n      }\n    },\n  }\n}",
         valid:
           "export function dedupePlugin(): Plugin {\n  return {\n    name: 'dedupe-vue',\n    config(config) {\n      if (config.resolve?.dedupe?.includes('vue')) return\n      return { resolve: { dedupe: ['vue'] } }\n    },\n  }\n}",
+      },
+    ],
+  },
 
   "vite/plugin/no-lossy-set-cookie-bridge": {
     description:
@@ -1811,7 +1814,6 @@ export const ruleDocumentationMetadata = {
           "async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) res.setHeader(name, value)\n  res.end(await response.text())\n}",
         valid:
           'async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) {\n    if (name !== "set-cookie") res.setHeader(name, value)\n  }\n  const cookies = response.headers.getSetCookie()\n  if (cookies.length > 0) res.setHeader("set-cookie", cookies)\n  res.end(await response.text())\n}',
-
       },
     ],
   },
