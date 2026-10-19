@@ -393,10 +393,17 @@ function readPackageArtifactsForMode(
         enqueue(target, "runtime", required, root, false, true, false, typedTargets);
   }
 
-  const typed = (path: string) =>
-    typeCandidates(resolve(root, path)).some(
+  const typed = (path: string) => {
+    const resolved = resolve(root, path);
+    const candidates = path.includes("*")
+      ? fs
+          .glob(resolved.replaceAll("*", "**/*"))
+          .filter((candidate) => fs.stat(candidate)?.isFile() === true)
+      : typeCandidates(resolved);
+    return candidates.some(
       (candidate) => declarationExtension.test(candidate) && fs.exists(candidate),
     );
+  };
   const rootTyped = Boolean(
     (manifest.types && typed(manifest.types)) ||
     (manifest.typings && typed(manifest.typings)) ||

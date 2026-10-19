@@ -200,6 +200,11 @@ test.each<{ name: string; manifest: object; files: Record<string, string>; entry
     files: { "types/index.d.ts": "export declare const value: number;" },
   },
   {
+    name: "a wildcard typesVersions target",
+    manifest: { main: "dist/index.js", typesVersions: { "*": { "*": ["types/*"] } } },
+    files: { "types/index.d.ts": "export declare const value: number;" },
+  },
+  {
     name: "a typed export subpath reached through a self-reference",
     manifest: {
       exports: {
