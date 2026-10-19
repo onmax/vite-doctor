@@ -176,6 +176,26 @@ test.each([
   expect(result.project.evidenceGaps?.[0]?.files.length).toBeGreaterThan(0);
 });
 
+test("keeps root JSDoc when typesVersions only maps a subpath", async () => {
+  const result = await withPackage(
+    {
+      main: "dist/index.js",
+      typesVersions: { "*": { "foo/*": ["types/foo/*"] } },
+    },
+    {
+      "dist/index.js":
+        '/** @param {import("phantom-types").Value} value */\nexport function use(value) { return value; }',
+      "types/foo/bar.d.ts": "export declare const value: number;",
+    },
+    (root) =>
+      runViteDoctor({ root, framework: "vite", cache: false, extends: ["package/recommended"] }),
+  );
+  expect(result.diagnostics.map((d) => [d.code, d.message.match(/"([^"]+)"/)?.[1]])).toContainEqual([
+    "PKG0002",
+    "phantom-types",
+  ]);
+});
+
 test.each<{ name: string; manifest: object; files: Record<string, string>; entry?: string }>([
   {
     name: "a types field outside the JavaScript directory",
