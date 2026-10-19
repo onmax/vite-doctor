@@ -80,7 +80,12 @@ function isNuxtFactoryBinding(ctx: RuleContext, node: AnyNode, name: string): bo
       for (const reference of scope.references) {
         if (reference.identifier.range?.[0] !== start) continue;
         const variable = reference.resolved;
-        if (!variable) return true;
+        if (!variable) {
+          const nuxt = ctx.project.nuxt;
+          if (!nuxt?.autoImportsAuthoritative || !nuxt.autoImportEnabled) return false;
+          const entry = nuxt.autoImports.get(name);
+          return entry?.from === keyedFactorySource(name);
+        }
         return variable.defs.some((definition: any) => {
           if (definition.type !== "ImportBinding") return false;
           const declaration = definition.parent;
@@ -94,6 +99,10 @@ function isNuxtFactoryBinding(ctx: RuleContext, node: AnyNode, name: string): bo
     // Recovered syntax has no reliable binding information; report conservatively.
   }
   return false;
+}
+
+function keyedFactorySource(name: string): string {
+  return name === "createUseFetch" ? "#app/composables/fetch" : "#app/composables/asyncData";
 }
 
 function unwrapCallee(node: AnyNode): AnyNode {

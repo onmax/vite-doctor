@@ -9,12 +9,21 @@ import { withFixture } from "./nuxt-modern-rules-fixture.ts";
 
 const ruleId = "nuxt/fetch/keyed-composable-registration-required";
 
-function manifest(keyedComposables: unknown[], layers?: unknown[]) {
+function manifest(keyedComposables: unknown[], layers?: unknown[], withAutoImports = true) {
   return JSON.stringify({
     generatedAt: new Date().toISOString(),
     nuxtVersion: "4",
     vueVersion: "3.5",
     appDir: "app",
+    ...(withAutoImports
+      ? {
+          autoImportEnabled: true,
+          autoImports: [
+            { name: "createUseFetch", from: "#app/composables/fetch", kind: "nuxt" },
+            { name: "createUseAsyncData", from: "#app/composables/asyncData", kind: "nuxt" },
+          ],
+        }
+      : {}),
     ...(layers ? { layers } : {}),
     keyedComposables,
   });
@@ -71,6 +80,15 @@ test("reports a factory when an old manifest only holds stringified objects", as
     await diagnose({
       "app/utils/api.ts": `export const useOrders = createUseFetch('/api/orders')`,
       ".nuxt/doctor.manifest.json": manifest(["[object Object]"]),
+    }),
+  ).toEqual([ruleId]);
+});
+
+test("reports an unresolved factory when auto-import evidence is unavailable", async () => {
+  expect(
+    await diagnose({
+      "app/composables/useOrders.ts": "export const useOrders = createUseFetch('/api/orders')",
+      ".nuxt/doctor.manifest.json": manifest(["[object Object]"], undefined, false),
     }),
   ).toEqual([ruleId]);
 });
