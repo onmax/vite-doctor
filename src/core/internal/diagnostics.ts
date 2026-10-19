@@ -135,6 +135,10 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
       if (!suppression.file && !coversWorkspace(scope)) return false;
       const pattern = suppression.file;
       if (!pattern) return unproven.size === 0;
+      // The source inventory may omit files matched by a glob (for example excluded,
+      // ignored, or otherwise unavailable files). Without a complete target set we
+      // cannot prove that a wildcard suppression is stale.
+      if (pattern.includes("*")) return false;
       let targets = analyzed.filter((file) => matchesSuppressionFile(file, pattern));
       // Only a literal path that no longer exists is provably stale; any other unanalyzed
       // target may be excluded, ignored, or outside the source inventory.
@@ -204,18 +208,20 @@ function locateSuppression(
   index: number,
 ): { file: string; range?: Diagnostic["range"] } | undefined {
   const candidates: Array<{ file: string; opening: number; end: number }> = [];
+  let suppressionSources = 0;
   for (const file of files) {
     const source = readFileSyncIfExists(file);
     const section = source?.indexOf("suppressions") ?? -1;
     if (!source || section < 0) continue;
+    suppressionSources++;
     const bounds = suppressionEntryBounds(source, section, index);
     const marker = suppression.reason || suppression.fingerprint || suppression.file;
     if (bounds && (!marker || source.slice(bounds.opening, bounds.end).includes(marker)))
       candidates.push({ file, ...bounds });
   }
   // Config merging does not retain source provenance. A precise range is safe only when
-  // exactly one supported config can contain this indexed entry; otherwise avoid guessing.
-  if (candidates.length !== 1) return undefined;
+  // exactly one supported config supplies suppressions; otherwise avoid guessing.
+  if (suppressionSources !== 1 || candidates.length !== 1) return undefined;
   const { file, opening } = candidates[0]!;
   const source = readFileSyncIfExists(file)!;
   return {
