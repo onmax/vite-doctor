@@ -26,6 +26,7 @@ export const viteDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0023", ruleId: "vite/imports/no-barrel-files" },
   { code: "VITE0024", ruleId: "vite/plugin-package/naming-conventions" },
   { code: "VITE0026", ruleId: "vite/plugin/no-config-hook-array-echo" },
+  { code: "VITE0027", ruleId: "vite/config/no-url-pathname-as-fs-path" },
 ]);
 
 export const diagnostics = viteDiagnosticRegistry.diagnostics;
