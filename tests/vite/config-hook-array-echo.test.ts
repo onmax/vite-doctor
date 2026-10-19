@@ -243,6 +243,15 @@ export default (): Plugin => ({
 }`,
     ],
     [
+      "ordinary objects with config and transform methods",
+      `export const transformer = {
+  config(options) {
+    return { items: [...options.items, "x"] }
+  },
+  transform(value) { return value },
+}`,
+    ],
+    [
       "a shadowed alias",
       `import type { Plugin } from "vite"
 export default (): Plugin => ({

@@ -285,10 +285,10 @@ function isPluginObject(node: AnyNode, viteCode: boolean): boolean {
         key !== null &&
         (pluginKeys.has(key) ||
           (viteCode && genericPluginKeys.has(key)) ||
-          (keys.has("config") || keys.has("configEnvironment")) &&
+          ((keys.has("config") || keys.has("configEnvironment")) &&
+            keys.has("name") &&
             (keys.has("transform") ||
-              (keys.has("name") &&
-                [...genericPluginKeys].filter((candidate) => keys.has(candidate)).length >= 2)))
+              [...genericPluginKeys].filter((candidate) => keys.has(candidate)).length >= 2)))
       );
     })
   );
@@ -401,7 +401,8 @@ function stripComments(source: string) {
         (state === "single" && char === "'") ||
         (state === "double" && char === '"') ||
         (state === "template" && char === "`")
-      ) state = "code";
+      )
+        state = "code";
       continue;
     }
     if (char === "/" && next === "/") {
