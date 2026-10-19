@@ -38,7 +38,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
     const strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }> = [];
     const declarations: Array<{ name: string; scope: AnyNode | undefined }> = [];
     const declare = (name: string, node: AnyNode) =>
-      declarations.push({ name, scope: lexicalScope(node) });
+      declarations.push({ name, scope: declarationScope(node) });
     const declareFunction = (node: AnyNode) => {
       if (node.id?.name) declare(node.id.name, node);
       for (const parameter of node.params ?? [])
@@ -185,6 +185,31 @@ function lexicalScope(node: AnyNode): AnyNode | undefined {
       current.type === "ForStatement" ||
       current.type === "ForInStatement" ||
       current.type === "ForOfStatement"
+    )
+      return current;
+    current = current.__doctorParent;
+  }
+  return undefined;
+}
+
+function declarationScope(node: AnyNode): AnyNode | undefined {
+  // `var` bindings belong to the containing function or program, even when
+  // declared inside a block or loop lexical environment.
+  const declarator = node?.type === "VariableDeclarator" ? node : node?.__doctorParent;
+  const declaration = declarator?.__doctorParent;
+  if (declaration?.type === "VariableDeclaration" && declaration.kind === "var")
+    return functionScope(node);
+  return lexicalScope(node);
+}
+
+function functionScope(node: AnyNode): AnyNode | undefined {
+  let current = node?.__doctorParent;
+  while (current) {
+    if (
+      current.type === "Program" ||
+      current.type === "FunctionDeclaration" ||
+      current.type === "FunctionExpression" ||
+      current.type === "ArrowFunctionExpression"
     )
       return current;
     current = current.__doctorParent;

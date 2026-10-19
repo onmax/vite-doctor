@@ -232,6 +232,17 @@ for (const handler in { generated: "./generated/for-in.ts" }) {
   ).toEqual(["modules/register.ts:4"]);
 });
 
+test("keeps var loop declarations in the containing function scope", async () => {
+  expect(
+    await lines({
+      "modules/register.ts": `import type { Plugin } from "vite"
+const handler = "./generated/top-level.ts"
+for (var handler = "./generated/loop.ts"; handler; handler = "") {}
+export const routes = [{ handler, route: "/x" }]`,
+    }),
+  ).toEqual([]);
+});
+
 test("checks Nitro Vite entrypoints and wrapped Nitro config objects", async () => {
   expect(
     await lines({
