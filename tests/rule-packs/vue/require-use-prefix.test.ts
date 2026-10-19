@@ -301,3 +301,219 @@ test("applies Nuxt accessor exemptions to their import identity", async () => {
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.why).toContain("componentRouter()");
 });
+
+const caller = `import { useWorkspace } from './core/use.ts'\nexport async function runCommand(name: string) {\n  const workspace = await useWorkspace(name)\n  return workspace.exec('ls')\n}`;
+
+test("does not treat a local use* API without Vue evidence as a composable", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/server.ts": caller,
+      "src/core/use.ts": `import { createWorkspace } from './workspace.ts'\nimport { useRegisteredWorkspace } from './registry.ts'\nexport function useWorkspace(name: string) {\n  const definition = useRegisteredWorkspace(name)\n  const config = { ref: name }\n  return createWorkspace(definition, config)\n}`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["imports Vue", `import { ref } from 'vue'\nexport function useWorkspace() { return ref(null) }`],
+  [
+    "imports VueUse",
+    `import { useMounted } from '@vueuse/core'\nexport function useWorkspace() { return useMounted() }`,
+  ],
+  [
+    "auto-imports Vue APIs",
+    `export function useWorkspace() { const state = ref(null); onMounted(() => {}); return state }`,
+  ],
+  ["re-exports a composable", `export { useWorkspace } from './impl'`],
+])("still treats a local use* API as a composable when its module %s", async (_label, module) => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/server.ts": caller,
+      "src/core/use.ts": module,
+      "src/core/impl.ts": `import { inject } from 'vue'\nexport function useWorkspace() { return inject('workspace') }`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0026"]);
+});
+
+test("treats Nuxt app modules as composables and skips use* names Nuxt does not auto-import", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "nuxt",
+    files: {
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date(Date.now() + 10000).toISOString(),
+        nuxtVersion: "4.5.2",
+        appDir: "app",
+        autoImportEnabled: true,
+        autoImports: [
+          { name: "useCartState", as: "useCartState", from: "app/composables/cart.ts" },
+        ],
+        components: [],
+        layers: [],
+      }),
+      "app/composables/cart.ts": `export function useCartState() { return useState('cart') }`,
+      "app/composables/totals.ts": `import { useCartState as cart } from '~/composables/cart'\nexport function cartTotal() { return cart().value.total }`,
+      "app/composables/items.ts": `export function cartItems() { return useCartState().value.items }`,
+      "lib/directus.ts": `export function requestClient(event?: H3Event) { return event ?? useEvent() }`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.why)).toEqual([
+    expect.stringContaining("cartItems()"),
+    expect.stringContaining("cartTotal()"),
+  ]);
+});
+
+test.each([
+  [
+    "imports a vue-named tooling package",
+    `import { parse } from '@vue/compiler-sfc'\nexport function useWorkspace(source: string) { return parse(source) }`,
+  ],
+  [
+    "only imports Vue types",
+    `import type { Ref } from 'vue'\nexport function useWorkspace(): Ref | undefined { return undefined }`,
+  ],
+  [
+    "mentions Vue APIs in comments and strings",
+    `// ref(value) is not used here\nexport function useWorkspace() { return { template: "onMounted(() => {})" } }`,
+  ],
+  [
+    "calls Vue only from another export",
+    `import { ref } from 'vue'\nexport const counter = () => ref(0)\nexport function useWorkspace() { return { ready: true } }`,
+  ],
+])("does not treat a local use* API as a composable when its module %s", async (_label, module) => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: { "src/server.ts": caller, "src/core/use.ts": module },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test.each([
+  ["Vue evidence", "import { ref } from 'vue'\nexport function useState() { return ref(0) }", 1],
+  ["no Vue evidence", "export function useState() { return { value: 0 } }", 0],
+])("traces aliased local dependencies with %s", async (_label, state, count) => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/server.ts": caller,
+      "src/core/use.ts": `import {\n  useState as state,\n} from './state'\nexport function useWorkspace() { return state() }`,
+      "src/core/state.ts": state,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  [
+    "a default export",
+    `import useWorkspace from './core/use'\nexport function run() { return useWorkspace() }`,
+    `import { ref } from 'vue'\nexport default function () { return ref(0) }`,
+  ],
+  [
+    "a destructured export",
+    `import { useWorkspace } from './core/use'\nexport function run() { return useWorkspace() }`,
+    `import { createInjectionState } from '@vueuse/core'\nexport const [provideWorkspace, useWorkspace] = createInjectionState(() => ({}))`,
+  ],
+  [
+    "a default export alias",
+    `import useWorkspace from './core/use'\nexport function run() { return useWorkspace() }`,
+    `export default useWorkspace\nfunction useWorkspace() { onMounted(() => {}) }`,
+  ],
+  [
+    "a destructured local object",
+    `import { useWorkspace } from './core/use'\nexport function run() { return useWorkspace() }`,
+    `const composables = { useWorkspace() { onMounted(() => {}) } }\nexport const { useWorkspace } = composables`,
+  ],
+  [
+    "an imported binding",
+    `import { useWorkspace } from './core/use'\nexport function run() { return useWorkspace() }`,
+    `import { useMounted } from '@vueuse/core'\nexport { useMounted as useWorkspace }`,
+  ],
+  [
+    "an imported default binding",
+    `import useWorkspace from './core/use'\nexport function run() { return useWorkspace() }`,
+    `import useImpl from './impl-default'\nexport default useImpl`,
+  ],
+  [
+    "a star re-export",
+    `import { useWorkspace } from './core/use'\nexport function run() { return useWorkspace() }`,
+    `export * from './impl'`,
+  ],
+])("traces composables exported as %s", async (_label, runner, module) => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/runner.ts": runner,
+      "src/core/use.ts": module,
+      "src/core/impl.ts": `import { inject } from 'vue'\nexport function useWorkspace() { return inject('workspace') }`,
+      "src/core/impl-default.ts": `import { inject } from 'vue'\nexport default function () { return inject('workspace') }`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("does not treat helpers that only read app context as composables", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "nuxt",
+    files: {
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date(Date.now() + 10000).toISOString(),
+        nuxtVersion: "4.5.2",
+        appDir: "app",
+        autoImportEnabled: true,
+        autoImports: [
+          { name: "useRuntimeConfig", as: "useRuntimeConfig", from: "#app" },
+          { name: "useCartStore", as: "useCartStore", from: "app/stores/cart.ts" },
+        ],
+        components: [],
+        layers: [],
+      }),
+      "lib/config.ts": `function useConfig() { return useRuntimeConfig().public }\nfunction useCart() { return useCartStore() }\nexport function readConfig() { return useConfig().apiBase }\nexport function readCart() { return useCart().items }`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("traces same-file use* helpers for Vue evidence", async () => {
+  const result = await runVue(
+    `function useWorkspace() { return { ready: true } }\nfunction useMountedWorkspace() { onMounted(() => {}); return useWorkspace() }\nexport function run() { return useWorkspace() }\nexport function first() { return useMountedWorkspace() }\nexport function second() { return useMountedWorkspace() }`,
+  );
+  expect(result.diagnostics.map((diagnostic) => diagnostic.why)).toEqual([
+    expect.stringContaining("first()"),
+    expect.stringContaining("second()"),
+  ]);
+});
+
+test("does not treat arbitrary Nuxt app modules as composables by location", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "nuxt",
+    files: {
+      "app/plugins/workspace.ts": `export function useWorkspace() { return { ready: true } }`,
+      "src/runner.ts": `import { useWorkspace } from '~/plugins/workspace'; export function run() { return useWorkspace() }`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("follows imported local composable dependencies", async () => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/runner.ts": `import { useWorkspaceState } from './state'; export function workspace() { return useWorkspaceState() }`,
+      "src/state.ts": `import { ref } from 'vue'; export function useWorkspaceState() { return ref(0) }`,
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.why).toContain("workspace()");
+});
