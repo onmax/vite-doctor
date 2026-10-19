@@ -323,6 +323,24 @@ export async function readShadowed(url: string, globalThis: { fetch(url: string)
     expect(result.diagnostics).toEqual([]);
   });
 
+  test("reports direct Fetch bodies with imported annotations", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import { Response } from "./api"
+export async function read(url: string): Promise<User> {
+  const response: Response = await globalThis.fetch(url)
+  return response.json()
+}`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
+      "typescript/boundaries/no-unvalidated-deserialization",
+    ]);
+  });
+
   test("reports unknown-property shapes that exclude null", async () => {
     const result = await runProjectFixture({
       framework: "vite",

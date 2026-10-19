@@ -143,8 +143,12 @@ function isFetchBody(evidence: LocalEvidence, receiver: AnyNode): boolean {
   if (isGlobalFetchCall(evidence, node)) return true;
   const target = evidence.binding(node);
   if (!target || target.written || target.node.start >= node.start) return false;
-  if (target.annotation)
-    return fetchBodyTypeNames.some((name) => evidence.globalType(target.annotation, name));
+  if (
+    target.annotation &&
+    fetchBodyTypeNames.some((name) => evidence.globalType(target.annotation, name))
+  ) {
+    return true;
+  }
   return target.kind === "const" && isGlobalFetchCall(evidence, unwrapExpression(target.init));
 }
 
