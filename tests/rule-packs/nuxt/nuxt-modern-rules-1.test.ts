@@ -253,7 +253,7 @@ const cases = [
   {
     rule: keyedComposableRegistrationRequired,
     id: "nuxt/fetch/keyed-composable-registration-required",
-    file: "app/composables/useUser.ts",
+    file: "app/utils/useUser.ts",
     source: `export const useUser = createUseFetch('/api/user')`,
   },
   {
