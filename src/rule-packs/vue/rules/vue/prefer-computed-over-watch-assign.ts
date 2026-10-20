@@ -89,10 +89,12 @@ function derivedWatches(ctx: RuleContext): Map<number, DerivedWatch> {
       const read = readVariables(script, assignment.right);
       if (!read || read.has(target)) continue;
       if (effect ? !read.size : !derivesFromSources(script, call, callback, read)) continue;
+      const isImmediate = effect ? false : immediate(call.arguments[2]);
+      if (isImmediate === undefined) continue;
       result.set(call.range[0], {
         target: target.name,
         expression: ctx.file.text.slice(assignment.right.range[0], assignment.right.range[1]),
-        lazy: !effect && !immediate(call.arguments[2]),
+        lazy: !effect && !isImmediate,
         fromCallbackValue: !effect && readsParameter(script, callback, read, 0),
       });
     }
@@ -119,16 +121,20 @@ function plainOptions(options: AnyNode, effect: boolean): boolean {
   });
 }
 
-function immediate(options: AnyNode): boolean {
+function immediate(options: AnyNode): boolean | undefined {
   options = unwrapTs(options);
-  return (
-    options?.type === "ObjectExpression" &&
-    options.properties.some(
-      (property: AnyNode) =>
-        propertyName(property.key) === "immediate" &&
-        !(property.value.type === "Literal" && !property.value.value),
-    )
-  );
+  if (!options) return false;
+  if (options.type !== "ObjectExpression") return undefined;
+  for (const property of options.properties) {
+    if (property.type !== "Property" || property.computed) return undefined;
+    if (propertyName(property.key) !== "immediate") continue;
+    const value = unwrapTs(property.value);
+    if (value.type === "Literal") return Boolean(value.value);
+    if (value.type === "Identifier" && value.name === "undefined") return false;
+    if (value.type === "UnaryExpression" && value.operator === "void") return false;
+    return undefined;
+  }
+  return false;
 }
 
 function onlyAssignment(callback: AnyNode): AnyNode {

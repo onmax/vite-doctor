@@ -57,6 +57,16 @@ test("explains the lazy first run and suggests the computed", async () => {
   );
 });
 
+test.each(["undefined", "void 0"])("%s is treated as a lazy watch", async (value) => {
+  const result = await runVueSfcRuleFixture(
+    preferComputedOverWatchAssign,
+    setup(
+      `const doubled = ref(0)\nwatch(count, (value) => { doubled.value = value * 2 }, { immediate: ${value} })`,
+    ),
+  );
+  expect(result.diagnostics[0]?.why).toContain("never during SSR");
+});
+
 test.each([
   [
     "a callback with other effects",
