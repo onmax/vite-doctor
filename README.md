@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://vite-doctor.onmax.me/og/doctor-lifeline-bg.png" alt="Vite Doctor" width="100%">
+  <img src="https://vite-doctor.onmax.me/og/readme-banner.png" alt="Vite Doctor: catch framework bugs AI agents miss" width="100%">
 </p>
 
 <h1 align="center"><img src="https://vite-doctor.onmax.me/doctor-icon.png" alt="" width="32" height="32" style="vertical-align: middle;"> Vite Doctor</h1>
