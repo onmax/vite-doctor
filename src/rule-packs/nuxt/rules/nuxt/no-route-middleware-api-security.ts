@@ -872,7 +872,8 @@ function hasUnconditionalAuthGuard(ctx: RuleContext, file: string): boolean {
 
 // A handler is guarded when it awaits a guard with its event before any control flow.
 function isGuardedFunction(resolver: GuardResolver, module: ParsedModule, fn: AnyNode): boolean {
-  if (!["ArrowFunctionExpression", "FunctionExpression"].includes(fn?.type)) return false;
+  if (!["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(fn?.type))
+    return false;
   const event = fn.params[0];
   if (event?.type !== "Identifier") return false;
   const isGuard = (expression: AnyNode, mustSettle: boolean): boolean => {
