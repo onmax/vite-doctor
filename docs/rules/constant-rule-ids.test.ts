@@ -11,6 +11,9 @@ import { preferSameNamePropShorthand } from "../../src/rule-packs/vue/rules/vue/
 import { preferTrueAttributeShorthand } from "../../src/rule-packs/vue/rules/vue/prefer-true-attribute-shorthand.js";
 import { preferUseEventListener } from "../../src/rule-packs/vue/rules/vue/prefer-use-event-listener.js";
 import { requireUsePrefix } from "../../src/rule-packs/vue/rules/vue/require-use-prefix.js";
+import { noWatchUseAttrs } from "../../src/rule-packs/vue/rules/vue/no-watch-use-attrs.js";
+import { noReactiveDestructure } from "../../src/rule-packs/vue/rules/vue/no-reactive-destructure.js";
+import { preferComputedOverWatchAssign } from "../../src/rule-packs/vue/rules/vue/prefer-computed-over-watch-assign.js";
 import { diagnostics } from "../../src/rule-packs/vue/diagnostics.js";
 import { parseSync, visitorKeys } from "oxc-parser";
 
@@ -32,6 +35,9 @@ test.each([
   [preferTrueAttributeShorthand, "VUE0024"],
   [preferUseEventListener, "VUE0025"],
   [requireUsePrefix, "VUE0026"],
+  [noWatchUseAttrs, "VUE0032"],
+  [noReactiveDestructure, "VUE0033"],
+  [preferComputedOverWatchAssign, "VUE0034"],
 ] as const)("documents the constant ID in $0.meta.id", async (rule, code) => {
   const document = getRuleDocuments().find((entry) => entry.id === rule.meta.id);
   expect(document).toMatchObject({

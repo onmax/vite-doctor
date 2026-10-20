@@ -23,6 +23,9 @@ export { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 export { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
 export { requireUsePrefix } from "./require-use-prefix.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
+export { noWatchUseAttrs } from "./no-watch-use-attrs.js";
+export { noReactiveDestructure } from "./no-reactive-destructure.js";
+export { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
@@ -49,6 +52,9 @@ import { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 import { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
 import { requireUsePrefix } from "./require-use-prefix.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
+import { noWatchUseAttrs } from "./no-watch-use-attrs.js";
+import { noReactiveDestructure } from "./no-reactive-destructure.js";
+import { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
 import { defineRulePack } from "../../../../core/index.js";
 
 const rules = [
@@ -78,7 +84,13 @@ const rules = [
   requireUsePrefix,
   noUnusedTranslations,
   noUntranslatedText,
+  noWatchUseAttrs,
+  noReactiveDestructure,
+  preferComputedOverWatchAssign,
 ];
+
+// Style and design Rules that do not identify a specific defect stay out of the default preset.
+const strictOnly = new Set<string>([preferComputedOverWatchAssign.meta.id]);
 
 const vueRulePack = defineRulePack({
   name: "vite-doctor/vue",
@@ -86,7 +98,7 @@ const vueRulePack = defineRulePack({
   activation: { frameworks: ["vue", "nuxt"] },
   rules,
   presets: {
-    recommended: rules.map((rule) => rule.meta.id),
+    recommended: rules.map((rule) => rule.meta.id).filter((id) => !strictOnly.has(id)),
     strict: rules.map((rule) => rule.meta.id),
   },
 });
