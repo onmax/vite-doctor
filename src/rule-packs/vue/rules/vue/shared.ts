@@ -169,7 +169,6 @@ export function createEslintVueRule(options: {
             if (!message.ruleId || !eslintIds.includes(message.ruleId)) continue;
             reportEslintMessage(ctx, options.doctorId, options.meta, message);
           }
-          }
         },
       };
     },

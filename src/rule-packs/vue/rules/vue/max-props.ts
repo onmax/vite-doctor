@@ -106,23 +106,39 @@ function scriptSetupPropSurface(ctx: RuleContext, descriptor: AnyNode): PropSurf
 }
 
 function countDefineModelModifiers(body: AnyNode[] | undefined): number {
-  let count = 0;
-  walkBabel(body, (node) => {
-    if (node.type === "CallExpression" && node.callee?.type === "Identifier" && node.callee.name === "defineModel")
-      count++;
-  });
-  return count;
+  return topLevelMacroCalls(body, "defineModel").length;
 }
 
 function findMacroCall(body: AnyNode[] | undefined): AnyNode {
-  let defineProps: AnyNode = null;
-  let defineModel: AnyNode = null;
-  walkBabel(body, (node) => {
-    if (node.type !== "CallExpression" || node.callee?.type !== "Identifier") return;
-    if (node.callee.name === "defineProps") defineProps ??= node;
-    if (node.callee.name === "defineModel") defineModel ??= node;
-  });
-  return defineProps ?? defineModel;
+  return (
+    topLevelMacroCalls(body, "defineProps")[0] ?? topLevelMacroCalls(body, "defineModel")[0] ?? null
+  );
+}
+
+/** Return compiler-macro calls in the top-level declaration/expression forms Vue recognizes. */
+function topLevelMacroCalls(body: AnyNode[] | undefined, name: string): AnyNode[] {
+  const calls: AnyNode[] = [];
+  for (const statement of body ?? []) {
+    if (statement.type === "VariableDeclaration") {
+      for (const declaration of statement.declarations ?? []) {
+        const call = declaration.init;
+        if (
+          call?.type === "CallExpression" &&
+          call.callee?.type === "Identifier" &&
+          call.callee.name === name
+        )
+          calls.push(call);
+      }
+    } else if (
+      statement.type === "ExpressionStatement" &&
+      statement.expression?.type === "CallExpression" &&
+      statement.expression.callee?.type === "Identifier" &&
+      statement.expression.callee.name === name
+    ) {
+      calls.push(statement.expression);
+    }
+  }
+  return calls;
 }
 
 // compileScript links resolved type nodes back to their scopes through `_` keys, which form cycles.
