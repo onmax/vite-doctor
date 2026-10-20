@@ -96,11 +96,22 @@ function scriptSetupPropSurface(ctx: RuleContext, descriptor: AnyNode): PropSurf
   }
   for (const dep of compiled.deps ?? []) sfc.invalidateTypeCache(dep);
 
-  const count = Object.values(compiled.bindings ?? {}).filter((type) => type === "props").length;
+  const count =
+    Object.values(compiled.bindings ?? {}).filter((type) => type === "props").length +
+    countDefineModelModifiers(compiled.scriptSetupAst);
   const macro = findMacroCall(compiled.scriptSetupAst);
   if (!macro || runtimeDeclarationIsPartial(macro)) return null;
   const offset = descriptor.scriptSetup.loc.start.offset;
   return { count, start: offset + macro.start, end: offset + macro.end };
+}
+
+function countDefineModelModifiers(body: AnyNode[] | undefined): number {
+  let count = 0;
+  walkBabel(body, (node) => {
+    if (node.type === "CallExpression" && node.callee?.type === "Identifier" && node.callee.name === "defineModel")
+      count++;
+  });
+  return count;
 }
 
 function findMacroCall(body: AnyNode[] | undefined): AnyNode {

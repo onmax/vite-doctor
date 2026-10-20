@@ -61,9 +61,10 @@ function propsObjectNames(ctx: RuleContext): Set<string> | null {
     }
     const setup = setupFunction(node);
     const param = setup?.params?.[0];
-    if (param?.type === "Identifier") {
-      names.add(param.name);
-      declarations.add(param);
+    const paramIdentifier = param?.type === "Identifier" ? param : param?.type === "AssignmentPattern" && param.left?.type === "Identifier" ? param.left : null;
+    if (paramIdentifier) {
+      names.add(paramIdentifier.name);
+      declarations.add(paramIdentifier);
     }
   });
   if (names.size === 0) return names;
@@ -82,8 +83,13 @@ function propsObjectNames(ctx: RuleContext): Set<string> | null {
       parent.type === "VariableDeclarator" &&
       parent.init === node &&
       parent.id?.type === "ObjectPattern"
-    )
+    ) {
+      if ((parent.id.properties ?? []).some((property: AnyNode) => property.type === "RestElement")) {
+        escapes = true;
+        return;
+      }
       return;
+    }
     if (
       parent.type === "CallExpression" &&
       parent.arguments?.[0] === node &&
