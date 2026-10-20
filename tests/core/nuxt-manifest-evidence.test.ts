@@ -57,6 +57,16 @@ test("a prepared manifest or an app without the module has no manifest gap", asy
   ).toBeUndefined();
 });
 
+test("a nested workspace package that registers vite-doctor/nuxt leaves the root app complete", async () => {
+  const root = nuxtApp({
+    "pnpm-workspace.yaml": "packages:\n  - docs\n",
+    "docs/package.json": JSON.stringify({ devDependencies: { nuxt: "^4.1.0" } }),
+    "docs/nuxt.config.ts": withModule,
+  });
+
+  expect((await detectProject(root, "auto", { nuxt: "4.1.0" })).evidenceGaps).toBeUndefined();
+});
+
 test("detects the Doctor module through a static modules binding", async () => {
   const root = nuxtApp({
     "nuxt.config.ts": `const doctorModules = ["vite-doctor/nuxt"];

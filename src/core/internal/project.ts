@@ -9,10 +9,12 @@ import type {
   ProjectInfo,
   ProjectLanguage,
   WorkspaceNuxtInventory,
+  WorkspacePackage,
 } from "../primitives.js";
 import {
   detectWorkspacePackages,
   nuxtInventoryOwner,
+  owningWorkspacePackage,
   runtimeGraphPackage,
   workspaceFramework,
 } from "./workspace-packages.js";
@@ -115,7 +117,7 @@ export async function detectProject(
   };
   const unappliedConfigs = workspaceNuxt.filter((item) => item.nuxt.doctorConfig);
   const evidenceGaps: NonNullable<ProjectInfo["evidenceGaps"]> = [
-    ...(owner ? missingNuxtManifestGaps(root, owner.root, owner.nuxt) : []),
+    ...(owner ? missingNuxtManifestGaps(root, owner.root, owner.nuxt, workspacePackages) : []),
     ...unappliedConfigs.map((item) => ({
       source: "vite-doctor/workspace-nuxt",
       message: `Doctor options from the vite-doctor/nuxt module in ${item.root} only apply when Doctor runs from that package. Run Doctor from ${item.root} to apply them.`,
@@ -429,9 +431,16 @@ function missingNuxtManifestGaps(
   root: string,
   packageRoot: string,
   nuxt: NuxtProjectInfo,
+  workspacePackages: readonly WorkspacePackage[],
 ): NonNullable<ProjectInfo["evidenceGaps"]> {
   const appRoot = join(root, packageRoot);
-  if (nuxt.manifestPath || !registersDoctorModule(appRoot, nuxt)) return [];
+  // A nuxt.config inside another workspace package writes its manifest to that package's .nuxt,
+  // so it cannot be what this app's missing manifest is about.
+  const ownAppRoots = nuxt.appRoots.filter(
+    (appDir) => owningWorkspacePackage(workspacePackages, relative(root, appDir)) === packageRoot,
+  );
+  if (nuxt.manifestPath || !registersDoctorModule(appRoot, { ...nuxt, appRoots: ownAppRoots }))
+    return [];
   const manifest = relative(root, join(appRoot, ".nuxt/doctor.manifest.json"));
   return [
     {
