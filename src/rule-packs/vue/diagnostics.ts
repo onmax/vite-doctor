@@ -29,6 +29,9 @@ export const vueDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0026", ruleId: "vue/composables/require-use-prefix" },
   { code: "VUE0036", ruleId: "vue/component/max-props" },
   { code: "VUE0037", ruleId: "vue/props/no-unused-props" },
+  { code: "VUE0032", ruleId: "vue/attrs/no-watch-use-attrs" },
+  { code: "VUE0033", ruleId: "vue/reactivity/no-reactive-destructure" },
+  { code: "VUE0034", ruleId: "vue/reactivity/prefer-computed-over-watch-assign" },
 ]);
 
 export const diagnostics = vueDiagnosticRegistry.diagnostics;

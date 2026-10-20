@@ -61,7 +61,12 @@ function propsObjectNames(ctx: RuleContext): Set<string> | null {
     }
     const setup = setupFunction(node);
     const param = setup?.params?.[0];
-    const paramIdentifier = param?.type === "Identifier" ? param : param?.type === "AssignmentPattern" && param.left?.type === "Identifier" ? param.left : null;
+    const paramIdentifier =
+      param?.type === "Identifier"
+        ? param
+        : param?.type === "AssignmentPattern" && param.left?.type === "Identifier"
+          ? param.left
+          : null;
     if (paramIdentifier) {
       names.add(paramIdentifier.name);
       declarations.add(paramIdentifier);
@@ -84,7 +89,9 @@ function propsObjectNames(ctx: RuleContext): Set<string> | null {
       parent.init === node &&
       parent.id?.type === "ObjectPattern"
     ) {
-      if ((parent.id.properties ?? []).some((property: AnyNode) => property.type === "RestElement")) {
+      if (
+        (parent.id.properties ?? []).some((property: AnyNode) => property.type === "RestElement")
+      ) {
         escapes = true;
         return;
       }

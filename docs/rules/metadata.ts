@@ -1990,6 +1990,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/attrs/no-watch-use-attrs": {
+    description:
+      "Flags watch() calls whose source is the useAttrs() object itself, which Vue never re-runs.",
+    why: 'useAttrs() returns a proxy over the component\'s fallthrough attributes, not a ref or reactive object. watch(attrs, cb) is an invalid watch source: Vue logs "Invalid watch source" in development and the callback never runs. An array entry of attrs is always undefined, and a getter that returns attrs without reading an attribute never changes, so in every case the callback misses attribute updates from the parent.',
+    recommendedReplacement:
+      "Declare the attribute as a prop and watch(() => props.name, ...). If it has to stay a fallthrough attribute, watch a getter that reads it, watch(() => attrs.name, ...), or read attrs in onUpdated(). Deep watchers and getters that read attributes are not reported.",
+    examples: [
+      {
+        title: "Watch a declared prop instead of the attrs object",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nconst attrs = useAttrs()\nwatch(attrs, () => validate(attrs.value))\n</script>',
+        valid:
+          '<script setup lang="ts">\nconst props = defineProps<{ value?: string }>()\nwatch(() => props.value, (value) => validate(value))\n</script>',
+      },
+    ],
+  },
   "vue/composables/require-use-prefix": {
     description:
       "Finds exported functions that need a component setup context but are not named like composables.",
@@ -2128,6 +2145,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/reactivity/no-reactive-destructure": {
+    description:
+      "Flags primitive properties destructured from reactive() or shallowReactive() state, which become plain values.",
+    why: "Vue tracks reactive() state through property access on the proxy. Destructuring a primitive property copies its current value into a plain local, so later writes to state.count never reach that local or the template, computed values, and watchers that read it. Destructuring straight out of reactive() discards the proxy, so the values are never reactive at all.",
+    recommendedReplacement:
+      "Read state.count where the value is used, or destructure toRefs(state) and read count.value in script. Doctor reports only keys that reactive() initializes with a primitive literal; nested objects stay reactive proxies after destructuring, and destructuring inside callbacks reads a fresh value on each call, so neither is reported.",
+    examples: [
+      {
+        title: "Keep reactive state connected",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nconst state = reactive({ count: 0 })\nconst { count } = state\nconst increment = () => state.count++\n</script>\n\n<template>\n  <button @click="increment">{{ count }}</button>\n</template>',
+        valid:
+          '<script setup lang="ts">\nconst state = reactive({ count: 0 })\nconst { count } = toRefs(state)\nconst increment = () => state.count++\n</script>\n\n<template>\n  <button @click="increment">{{ count }}</button>\n</template>',
+      },
+    ],
+  },
   "vue/reactivity/no-ref-as-operand": {
     description:
       "Flags ref as operand in Vue reactivity code before it leaks into runtime behavior.",
@@ -2173,6 +2207,23 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: "export function useCounter() {\n  const count = ref(0)\n  return count.value\n}",
         valid: "export function useCounter() {\n  const count = ref(0)\n  return count\n}",
+      },
+    ],
+  },
+  "vue/reactivity/prefer-computed-over-watch-assign": {
+    description:
+      "Finds watchers whose only effect is assigning a value derived from their sources to a local ref.",
+    why: "A ref fed by a watcher is a second copy of derived state. A watch() without immediate does not run until a source changes, and Vue skips it entirely during server rendering, so the ref keeps its initial value until then. Other watchers write the ref in a later flush, so code that reads it right after changing a source sees the old value. computed() derives the value on read, caches it, and cannot drift from its sources.",
+    recommendedReplacement:
+      "Replace the ref and the watcher with a computed(). This Rule is in the strict preset: a non-immediate watcher also skips its first run on the client, so server and client render the same initial value and the pattern is a design choice, not a hydration defect.",
+    examples: [
+      {
+        title: "Derive state with computed()",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nconst count = ref(1)\nconst doubled = ref(0)\nwatch(count, (value) => {\n  doubled.value = value * 2\n})\n</script>',
+        valid:
+          '<script setup lang="ts">\nconst count = ref(1)\nconst doubled = computed(() => count.value * 2)\n</script>',
       },
     ],
   },

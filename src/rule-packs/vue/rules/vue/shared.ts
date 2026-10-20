@@ -289,8 +289,8 @@ function reportEslintMessage(
   if (!diagnostic) throw doctorInternalDiagnostics.DOC0013({ ruleId: doctorId, code });
   ctx.report(
     diagnostic({
-      why: delegatedMessages[doctorId] ?? message.message,
-      fix: delegatedSuggestions[doctorId] ?? message.message,
+      why: delegatedText(delegatedMessages[doctorId], message.message),
+      fix: delegatedText(delegatedSuggestions[doctorId], message.message),
     }),
     {
       ruleId: doctorId,

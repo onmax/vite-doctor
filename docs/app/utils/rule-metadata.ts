@@ -48,6 +48,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   "app-config": "App config",
   architecture: "Architecture",
   assets: "Assets",
+  attrs: "Attributes",
   auth: "Authentication",
   boundaries: "Boundaries",
   "browser-api": "Browser APIs",
