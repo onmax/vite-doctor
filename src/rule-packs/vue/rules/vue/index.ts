@@ -89,8 +89,22 @@ const rules = [
   preferComputedOverWatchAssign,
 ];
 
-// Style and design Rules that do not identify a specific defect stay out of the default preset.
-const strictOnly = new Set<string>([preferComputedOverWatchAssign.meta.id]);
+// Recommended only holds rules whose hits identify a specific defect; style, naming,
+// library-migration, and documentation rules need an explicit opt-in through Strict.
+const strictOnlyRules = [
+  preferUseTemplateRef,
+  preferTrueAttributeShorthand,
+  preferUseEventListener,
+  dataAllowMismatchSurgical,
+  preferDefineModel,
+  preferPropsDestructureDefaults,
+  preferTypeProps,
+  preferSameNamePropShorthand,
+  requireUsePrefix,
+  noUnusedTranslations,
+  noUntranslatedText,
+  preferComputedOverWatchAssign,
+];
 
 const vueRulePack = defineRulePack({
   name: "vite-doctor/vue",
@@ -98,7 +112,9 @@ const vueRulePack = defineRulePack({
   activation: { frameworks: ["vue", "nuxt"] },
   rules,
   presets: {
-    recommended: rules.map((rule) => rule.meta.id).filter((id) => !strictOnly.has(id)),
+    recommended: rules
+      .map((rule) => rule.meta.id)
+      .filter((id) => !strictOnlyRules.some((rule) => rule.meta.id === id)),
     strict: rules.map((rule) => rule.meta.id),
   },
 });
