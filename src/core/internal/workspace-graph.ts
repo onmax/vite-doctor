@@ -16,7 +16,7 @@ import { pushDiagnostic } from "./diagnostics.js";
 import { walkAstFacts } from "./facts.js";
 import { projectNuxtInventories } from "./workspace-nuxt.js";
 
-interface GraphIndex {
+export interface GraphIndex {
   resolveImport(from: FileFacts, specifier: string): number | undefined;
   packageDeps(): PackageDependencyFacts;
 }
@@ -113,7 +113,7 @@ export function buildWorkspaceGraph(session: ScanSession, fs: RuleFileSystem): W
   return graph;
 }
 
-function createGraphIndex(session: ScanSession, fs: RuleFileSystem): GraphIndex {
+export function createGraphIndex(session: ScanSession, fs: RuleFileSystem): GraphIndex {
   const byRelativePath = new Map(session.facts.map((fact) => [fact.relativePath, fact.fileId]));
   const resolved = new Map<string, number | undefined>();
   const directories = new Map<string, string>();

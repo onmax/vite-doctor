@@ -12,7 +12,6 @@ import type {
 } from "../primitives.js";
 import { parseSfcFile, parseVueScriptsResult } from "./sfc.js";
 import { parseScriptResult } from "./script.js";
-import { TemplateNodeType, walkTemplate } from "./template.js";
 import type { ScanFileEntry } from "./source-inventory.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { pushDiagnostic } from "./diagnostics.js";
@@ -20,6 +19,7 @@ import { nativeMatch, sha256 } from "./utils.js";
 import { getNodeVisitorKeys } from "./visitor-keys.js";
 import type { EvidenceGap } from "./cache-store.js";
 import { isCachedFileFacts } from "./cached-file-facts.js";
+import { createComponentFactsCollector } from "./component-facts.js";
 import { projectWorkspacePackages } from "./applicability.js";
 import { workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
@@ -347,9 +347,16 @@ function createFileFacts(
   const calls: Array<{ name: string; range?: ReturnType<DoctorHelpers["rangeFromOffsets"]> }> = [];
   const macros: Array<{ name: string; range?: ReturnType<DoctorHelpers["rangeFromOffsets"]> }> = [];
   const templateRefs: TemplateFact[] = [];
+  const rangeOf = (start: number, end: number) =>
+    session.helpers.rangeFromOffsets(file.path, text, start, end);
+  const component =
+    sfc && (scriptAst || templateAst)
+      ? createComponentFactsCollector(sfc.descriptor, scriptAst, rangeOf)
+      : undefined;
 
   if (scriptAst) {
     walkAstFacts(scriptAst, (node: any) => {
+      component?.visitScript(node);
       if (node.type === "ImportDeclaration") {
         imports.push({
           source: String(node.source?.value ?? ""),
@@ -412,22 +419,12 @@ function createFileFacts(
     });
   }
 
-  if (templateAst) {
-    walkTemplate(templateAst, (node) => {
-      if (node.type !== TemplateNodeType.ATTRIBUTE) return;
-      if (node.name !== "ref" && node.name !== "key") return;
-      templateRefs.push({
-        name: node.name,
-        value: node.value?.content,
-        range: session.helpers.rangeFromOffsets(
-          file.path,
-          text,
-          node.loc.start.offset,
-          node.loc.end.offset,
-        ),
-      });
-    });
-  }
+  const visitAttribute = (name: string, value: string | undefined, start: number, end: number) => {
+    if (name === "ref" || name === "key")
+      templateRefs.push({ name, value, range: rangeOf(start, end) });
+  };
+  // Every template belongs to an SFC, so the Component Facts walk is the only template walk.
+  const componentFacts = component?.finish(templateAst, visitAttribute);
 
   return {
     fileId,
@@ -445,6 +442,7 @@ function createFileFacts(
     templateRefs,
     macros,
     diagnosticsHints: [],
+    ...(componentFacts && { component: componentFacts }),
   };
 }
 
