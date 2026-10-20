@@ -8,7 +8,7 @@ import type {
   TemplateElementNode,
   TemplateRootNode,
 } from "../primitives.js";
-import { TemplateNodeType } from "./template.js";
+import { TemplateNodeType, templateDirectiveBindings } from "./template.js";
 
 type AnyNode = any;
 type RangeOf = (start: number, end: number) => SourceRange;
@@ -134,9 +134,16 @@ function isMacroCall(statement: AnyNode, name: string): boolean {
   let call =
     statement.type === "ExpressionStatement"
       ? statement.expression
-      : statement.type === "VariableDeclaration"
-        ? statement.declarations?.[0]?.init
-        : undefined;
+      : undefined;
+  if (statement.type === "VariableDeclaration")
+    return (statement.declarations ?? []).some((declarator: AnyNode) =>
+      isMacroInitializer(declarator.init, name),
+    );
+  return isMacroInitializer(call, name);
+}
+
+function isMacroInitializer(initializer: AnyNode, name: string): boolean {
+  let call = initializer;
   if (call?.callee?.name === "withDefaults") call = call.arguments?.[0];
   return call?.type === "CallExpression" && call.callee?.name === name;
 }
@@ -199,10 +206,16 @@ function readMacroStatement(
 ): boolean {
   if (statement.type === "ExpressionStatement")
     return readMacroCall(facts, statement.expression, undefined, types, rangeOf);
-  if (statement.type !== "VariableDeclaration" || statement.declarations?.length !== 1)
+  if (statement.type !== "VariableDeclaration" || !statement.declarations?.length)
     return false;
-  const declarator = statement.declarations[0];
-  return readMacroCall(facts, declarator.init, declarator.id, types, rangeOf);
+  let recognized = false;
+  let allRecognized = true;
+  for (const declarator of statement.declarations) {
+    const handled = readMacroCall(facts, declarator.init, declarator.id, types, rangeOf);
+    recognized ||= handled;
+    allRecognized &&= handled;
+  }
+  return recognized && allRecognized;
 }
 
 function readMacroCall(
@@ -528,11 +541,7 @@ function walkElement(
   for (const prop of element.props) {
     if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
     if (prop.name === "for" && prop.forParseResult) {
-      const aliases = [
-        prop.forParseResult.value,
-        prop.forParseResult.key,
-        prop.forParseResult.index,
-      ].flatMap((expression) => identifiers(expression?.content));
+      const aliases = templateDirectiveBindings(prop);
       elementScope = [...scope, ...aliases];
       childScope = elementScope;
       elementInFor = true;
