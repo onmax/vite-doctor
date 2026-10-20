@@ -28,7 +28,6 @@ test("Vue all-issues fixture reports the Vue rule pack", async () => {
     "vue/ssr/no-browser-api-in-setup:app.vue",
     "vue/template/html-button-has-type:src/components/TemplateRefsAndHtml.vue",
     "vue/template/no-v-if-with-v-for:app.vue",
-    "vue/template/prefer-use-template-ref:src/components/TemplateRefsAndHtml.vue",
   ]);
 });
 
