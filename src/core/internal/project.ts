@@ -437,7 +437,9 @@ function missingNuxtManifestGaps(
   // A nuxt.config inside another workspace package writes its manifest to that package's .nuxt,
   // so it cannot be what this app's missing manifest is about.
   const ownAppRoots = nuxt.appRoots.filter(
-    (appDir) => owningWorkspacePackage(workspacePackages, relative(root, appDir)) === packageRoot,
+    (appDir) =>
+      owningWorkspacePackage(workspacePackages, relative(root, appDir)) === packageRoot ||
+      isNuxtLayerAppRoot(appRoot, appDir, workspacePackages, root),
   );
   if (nuxt.manifestPath || !registersDoctorModule(appRoot, { ...nuxt, appRoots: ownAppRoots }))
     return [];
@@ -449,6 +451,31 @@ function missingNuxtManifestGaps(
       files: [manifest],
     },
   ];
+}
+
+function isNuxtLayerAppRoot(
+  appRoot: string,
+  candidateRoot: string,
+  workspacePackages: readonly WorkspacePackage[],
+  workspaceRoot: string,
+): boolean {
+  if (candidateRoot === appRoot) return false;
+  const config = readNuxtConfigText(appRoot).anyFormat;
+  if (!config) return false;
+  const extendsValues = [...config.matchAll(/\bextends\s*:\s*(?:\[([^\]]*)\]|(['"])(.*?)\2)/gs)]
+    .flatMap((match) =>
+      match[1] ? [...match[1].matchAll(/['"]([^'"]+)['"]/g)].map((item) => item[1]) : [match[3]],
+    )
+    .filter((value): value is string => Boolean(value));
+  const candidatePackage = owningWorkspacePackage(
+    workspacePackages,
+    relative(workspaceRoot, candidateRoot),
+  );
+  const candidate = workspacePackages.find((item) => item.root === candidatePackage);
+  return extendsValues.some((value) => {
+    const resolved = resolve(appRoot, value);
+    return resolved === candidateRoot || value === candidate?.name;
+  });
 }
 
 function registersDoctorModule(appRoot: string, nuxt: NuxtProjectInfo): boolean {

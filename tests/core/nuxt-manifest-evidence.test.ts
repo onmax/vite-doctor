@@ -67,6 +67,23 @@ test("a nested workspace package that registers vite-doctor/nuxt leaves the root
   expect((await detectProject(root, "auto", { nuxt: "4.1.0" })).evidenceGaps).toBeUndefined();
 });
 
+test("detects the Doctor module from a workspace Nuxt layer", async () => {
+  const root = nuxtApp({
+    "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+    "package.json": JSON.stringify({ devDependencies: { nuxt: "^4.1.0" } }),
+    "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["./packages/base-layer"] });\n`,
+    "packages/base-layer/package.json": JSON.stringify({
+      name: "base-layer",
+      devDependencies: { nuxt: "^4.1.0" },
+    }),
+    "packages/base-layer/nuxt.config.ts": withModule,
+  });
+
+  expect((await detectProject(root, "auto", { nuxt: "4.1.0" })).evidenceGaps).toEqual([
+    expect.objectContaining({ source: "vite-doctor/nuxt" }),
+  ]);
+});
+
 test("detects the Doctor module through a static modules binding", async () => {
   const root = nuxtApp({
     "nuxt.config.ts": `const doctorModules = ["vite-doctor/nuxt"];
