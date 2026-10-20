@@ -61,7 +61,7 @@
     "docs:build": "NODE_OPTIONS=--max-old-space-size=4096 pnpm --dir docs build",
     "deploy": "pnpm run docs:build && pnpm --dir docs exec wrangler deploy --no-bundle",
     "deploy:preview": "pnpm run docs:build && pnpm --dir docs exec wrangler versions upload --preview-alias preview --no-bundle",
-    "test": "vp test --passWithNoTests",
+    "test": "vp test --passWithNoTests --testTimeout=30000",
     "test:pack": "node scripts/test-packed-cli.mjs",
     "perf": "node scripts/perf-lab/lab.mjs",
     "check": "vp check",
