@@ -20,6 +20,7 @@ import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-i
 import { detectNuxtModuleDefinitions } from "./nuxt-module-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
 import { ProjectFileWalk, rememberProjectFileWalk, type ProjectEntry } from "./project-files.js";
+import { loadTypeScript } from "./lazy-parsers.js";
 import {
   applyRuntimeTarget,
   isNuxtManifestCurrent,
@@ -430,7 +431,7 @@ function missingNuxtManifestGaps(
   nuxt: NuxtProjectInfo,
 ): NonNullable<ProjectInfo["evidenceGaps"]> {
   const appRoot = join(root, packageRoot);
-  if (nuxt.manifestPath || !registersDoctorModule(readNuxtConfigText(appRoot).anyFormat)) return [];
+  if (nuxt.manifestPath || !registersDoctorModule(appRoot, nuxt)) return [];
   const manifest = relative(root, join(appRoot, ".nuxt/doctor.manifest.json"));
   return [
     {
@@ -441,8 +442,40 @@ function missingNuxtManifestGaps(
   ];
 }
 
-function registersDoctorModule(config: string | null): boolean {
-  return Boolean(config && /["'`]vite-doctor\/nuxt["'`]/.test(config));
+function registersDoctorModule(appRoot: string, nuxt: NuxtProjectInfo): boolean {
+  const roots = new Set([
+    appRoot,
+    ...nuxt.appRoots,
+    ...nuxt.layers.map((layer) => resolve(appRoot, layer.root)),
+  ]);
+  return [...roots].some((root) => registersDoctorModuleInConfig(readNuxtConfigText(root).anyFormat));
+}
+
+function registersDoctorModuleInConfig(config: string | null): boolean {
+  if (!config) return false;
+  const ts = loadTypeScript();
+  const source = ts.createSourceFile("nuxt.config.ts", config, ts.ScriptTarget.Latest, true);
+  let registered = false;
+  const visit = (node: import("typescript").Node) => {
+    if (registered) return;
+    if (ts.isPropertyAssignment(node) && node.name.getText(source).replace(/["']/g, "") === "modules") {
+      const inspect = (value: import("typescript").Expression) => {
+        if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+          registered ||= value.text === "vite-doctor/nuxt";
+        } else if (ts.isArrayLiteralExpression(value)) {
+          value.elements.forEach((element) => {
+            if (ts.isSpreadElement(element)) inspect(element.expression);
+            else if (element.kind !== ts.SyntaxKind.OmittedExpression)
+              inspect(element as import("typescript").Expression);
+          });
+        }
+      };
+      inspect(node.initializer);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return registered;
 }
 
 function readJson<T>(file: string): T | null {
