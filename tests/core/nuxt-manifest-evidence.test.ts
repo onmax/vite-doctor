@@ -68,3 +68,17 @@ export default defineNuxtConfig({ modules: doctorModules });
     expect.objectContaining({ source: "vite-doctor/nuxt" }),
   ]);
 });
+
+test("ignores unrelated modules properties and shadowed bindings", async () => {
+  const root = nuxtApp({
+    "nuxt.config.ts": `const modules = ["vite-doctor/nuxt"];
+const unrelated = { modules };
+export default defineNuxtConfig({
+  modules: [],
+  nested: { modules: ["vite-doctor/nuxt"] },
+});
+`,
+  });
+
+  expect((await detectProject(root, "auto", { nuxt: "4.1.0" })).evidenceGaps).toBeUndefined();
+});

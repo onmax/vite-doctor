@@ -457,47 +457,84 @@ function registersDoctorModuleInConfig(config: string | null): boolean {
   if (!config) return false;
   const ts = loadTypeScript();
   const source = ts.createSourceFile("nuxt.config.ts", config, ts.ScriptTarget.Latest, true);
-  const bindings = new Map<string, import("typescript").Expression>();
-  const collect = (node: import("typescript").Node) => {
+  type Expr = import("typescript").Expression;
+  type Scope = { parent: Scope | null; bindings: Map<string, Expr> };
+  const nodeScopes = new WeakMap<import("typescript").Node, Scope>();
+  const rootScope: Scope = { parent: null, bindings: new Map() };
+  const scopeNodes = new Set([
+    ts.SyntaxKind.SourceFile,
+    ts.SyntaxKind.Block,
+    ts.SyntaxKind.ModuleBlock,
+    ts.SyntaxKind.CatchClause,
+  ]);
+  const collectScopes = (node: import("typescript").Node, scope: Scope) => {
+    const current = scopeNodes.has(node.kind) && node !== source
+      ? { parent: scope, bindings: new Map<string, Expr>() }
+      : scope;
+    nodeScopes.set(node, current);
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-      bindings.set(node.name.text, node.initializer);
+      current.bindings.set(node.name.text, node.initializer);
     }
-    ts.forEachChild(node, collect);
+    ts.forEachChild(node, (child) => collectScopes(child, current));
   };
-  collect(source);
-  let registered = false;
-  const resolving = new Set<string>();
-  const visit = (node: import("typescript").Node) => {
-    if (registered) return;
-    if (
-      ts.isPropertyAssignment(node) &&
-      node.name.getText(source).replace(/["']/g, "") === "modules"
-    ) {
-      const inspect = (value: import("typescript").Expression) => {
-        if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
-          registered ||= value.text === "vite-doctor/nuxt";
-        } else if (ts.isIdentifier(value)) {
-          if (resolving.has(value.text)) return;
-          const binding = bindings.get(value.text);
-          if (binding) {
-            resolving.add(value.text);
-            inspect(binding);
-            resolving.delete(value.text);
-          }
-        } else if (ts.isArrayLiteralExpression(value)) {
-          value.elements.forEach((element) => {
-            if (ts.isSpreadElement(element)) inspect(element.expression);
-            else if (element.kind !== ts.SyntaxKind.OmittedExpression)
-              inspect(element as import("typescript").Expression);
-          });
-        }
-      };
-      inspect(node.initializer);
+  collectScopes(source, rootScope);
+
+  const resolve = (name: string, scope: Scope | null | undefined): Expr | undefined => {
+    for (let current = scope; current; current = current.parent) {
+      const binding = current.bindings.get(name);
+      if (binding) return binding;
     }
-    ts.forEachChild(node, visit);
+    return undefined;
   };
-  visit(source);
-  return registered;
+  const resolving = new Set<Expr>();
+  const hasDoctorModule = (value: Expr, scope: Scope | undefined): boolean => {
+    if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+      return value.text === "vite-doctor/nuxt";
+    }
+    if (ts.isIdentifier(value)) {
+      const binding = resolve(value.text, scope);
+      if (!binding || resolving.has(binding)) return false;
+      resolving.add(binding);
+      const found = hasDoctorModule(binding, nodeScopes.get(binding));
+      resolving.delete(binding);
+      return found;
+    }
+    if (ts.isArrayLiteralExpression(value)) {
+      return value.elements.some((element) =>
+        ts.isSpreadElement(element)
+          ? hasDoctorModule(element.expression, scope)
+          : element.kind !== ts.SyntaxKind.OmittedExpression &&
+            hasDoctorModule(element as Expr, scope),
+      );
+    }
+    return false;
+  };
+  const inspectConfig = (value: Expr, scope: Scope | undefined): boolean => {
+    if (ts.isIdentifier(value)) {
+      const binding = resolve(value.text, scope);
+      if (!binding || resolving.has(binding)) return false;
+      resolving.add(binding);
+      const found = inspectConfig(binding, nodeScopes.get(binding));
+      resolving.delete(binding);
+      return found;
+    }
+    if (ts.isCallExpression(value)) {
+      return value.arguments.some((arg) => ts.isObjectLiteralExpression(arg) && inspectConfig(arg, scope));
+    }
+    if (!ts.isObjectLiteralExpression(value)) return false;
+    return value.properties.some((property) => {
+      if (!ts.isPropertyAssignment(property)) return false;
+      const name = property.name.getText(source).replace(/["']/g, "");
+      return name === "modules"
+        ? hasDoctorModule(property.initializer, scope)
+        : false;
+    });
+  };
+  const exportDefault = source.statements.find(
+    (statement): statement is import("typescript").ExportAssignment =>
+      ts.isExportAssignment(statement) && !statement.isExportEquals,
+  );
+  return exportDefault ? inspectConfig(exportDefault.expression, nodeScopes.get(exportDefault)) : false;
 }
 
 function readJson<T>(file: string): T | null {
