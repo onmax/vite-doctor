@@ -8,6 +8,7 @@ import type {
   TemplateElementNode,
   TemplateRootNode,
 } from "../primitives.js";
+
 import { TemplateNodeType, templateDirectiveBindings } from "./template.js";
 
 type AnyNode = any;
@@ -131,7 +132,7 @@ function readScriptDeclarations(
 }
 
 function isMacroCall(statement: AnyNode, name: string): boolean {
-  let call = statement.type === "ExpressionStatement" ? statement.expression : undefined;
+  const call = statement.type === "ExpressionStatement" ? statement.expression : undefined;
   if (statement.type === "VariableDeclaration")
     return (statement.declarations ?? []).some((declarator: AnyNode) =>
       isMacroInitializer(declarator.init, name),
@@ -538,6 +539,7 @@ function walkElement(
     if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
     if (prop.name === "for" && prop.forParseResult) {
       const aliases = templateDirectiveBindings(prop);
+
       elementScope = [...scope, ...aliases];
       childScope = elementScope;
       elementInFor = true;
@@ -640,7 +642,13 @@ function readUsageDirective(
       usage.spreads.push({ directive: "bind", expression: `[${prop.arg.content}]`, range });
       return;
     }
-    usage.bindings.push({ name: argument ?? "modelValue", expression, model: true, range });
+    usage.bindings.push({
+      name: argument ?? "modelValue",
+      expression,
+      model: true,
+      modifiers: prop.modifiers.length > 0,
+      range,
+    });
     return;
   }
   usage.directives.push(prop.name);

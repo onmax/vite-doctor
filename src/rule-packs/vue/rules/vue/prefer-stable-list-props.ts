@@ -88,12 +88,12 @@ function unstableBindings(usage: ComponentUsageFact, child: ComponentFacts): Uns
     if (binding.model) continue;
     const prop = camelize(binding.name);
     const identifiers = binding.expression.match(IDENTIFIER) ?? [];
-    if (identifiers.some((name) => scope.has(name))) {
+    const root = identifiers[0];
+    if (root !== undefined && scope.has(root)) {
       perItem.set(prop, binding.expression);
       continue;
     }
     const expression = binding.expression.trim();
-    const root = identifiers[0];
     if (!MEMBER_PATH.test(expression) || !root || LITERAL_NAMES.has(root)) continue;
     shared.push({ binding: binding.name, prop, expression, range: binding.range });
   }
