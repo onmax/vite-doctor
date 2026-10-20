@@ -9,10 +9,12 @@ import type {
   ProjectInfo,
   ProjectLanguage,
   WorkspaceNuxtInventory,
+  WorkspacePackage,
 } from "../primitives.js";
 import {
   detectWorkspacePackages,
   nuxtInventoryOwner,
+  owningWorkspacePackage,
   runtimeGraphPackage,
   workspaceFramework,
 } from "./workspace-packages.js";
@@ -115,7 +117,7 @@ export async function detectProject(
   };
   const unappliedConfigs = workspaceNuxt.filter((item) => item.nuxt.doctorConfig);
   const evidenceGaps: NonNullable<ProjectInfo["evidenceGaps"]> = [
-    ...(owner ? missingNuxtManifestGaps(root, owner.root, owner.nuxt) : []),
+    ...(owner ? missingNuxtManifestGaps(root, owner.root, owner.nuxt, workspacePackages) : []),
     ...unappliedConfigs.map((item) => ({
       source: "vite-doctor/workspace-nuxt",
       message: `Doctor options from the vite-doctor/nuxt module in ${item.root} only apply when Doctor runs from that package. Run Doctor from ${item.root} to apply them.`,
@@ -429,9 +431,18 @@ function missingNuxtManifestGaps(
   root: string,
   packageRoot: string,
   nuxt: NuxtProjectInfo,
+  workspacePackages: readonly WorkspacePackage[],
 ): NonNullable<ProjectInfo["evidenceGaps"]> {
   const appRoot = join(root, packageRoot);
-  if (nuxt.manifestPath || !registersDoctorModule(appRoot, nuxt)) return [];
+  // A nuxt.config inside another workspace package writes its manifest to that package's .nuxt,
+  // so it cannot be what this app's missing manifest is about.
+  const ownAppRoots = nuxt.appRoots.filter(
+    (appDir) =>
+      owningWorkspacePackage(workspacePackages, relative(root, appDir)) === packageRoot ||
+      isNuxtLayerAppRoot(appRoot, appDir, workspacePackages, root),
+  );
+  if (nuxt.manifestPath || !registersDoctorModule(appRoot, { ...nuxt, appRoots: ownAppRoots }))
+    return [];
   const manifest = relative(root, join(appRoot, ".nuxt/doctor.manifest.json"));
   return [
     {
@@ -440,6 +451,54 @@ function missingNuxtManifestGaps(
       files: [manifest],
     },
   ];
+}
+
+function isNuxtLayerAppRoot(
+  appRoot: string,
+  candidateRoot: string,
+  workspacePackages: readonly WorkspacePackage[],
+  workspaceRoot: string,
+): boolean {
+  if (candidateRoot === appRoot) return false;
+  const config = readNuxtConfigText(appRoot).anyFormat;
+  if (!config) return false;
+  const extendsValues = readNuxtExtendsValues(config);
+  const candidatePackage = owningWorkspacePackage(
+    workspacePackages,
+    relative(workspaceRoot, candidateRoot),
+  );
+  const candidate = workspacePackages.find((item) => item.root === candidatePackage);
+  return extendsValues.some((value) => {
+    const resolved = resolve(appRoot, value);
+    return resolved === candidateRoot || value === candidate?.name;
+  });
+}
+
+function readNuxtExtendsValues(config: string): string[] {
+  const ts = loadTypeScript();
+  const source = ts.createSourceFile("nuxt.config.ts", config, ts.ScriptTarget.Latest, true);
+  const values: string[] = [];
+  const visit = (node: import("typescript").Node) => {
+    if (ts.isPropertyAssignment(node)) {
+      const name = node.name;
+      const key = ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+      if (key === "extends") {
+        const value = node.initializer;
+        if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+          values.push(value.text);
+        } else if (ts.isArrayLiteralExpression(value)) {
+          for (const element of value.elements) {
+            if (ts.isStringLiteral(element) || ts.isNoSubstitutionTemplateLiteral(element)) {
+              values.push(element.text);
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return values;
 }
 
 function registersDoctorModule(appRoot: string, nuxt: NuxtProjectInfo): boolean {
