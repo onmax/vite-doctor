@@ -177,6 +177,26 @@ import ActionButton from '../components/ActionButton.vue'
   expect(result.diagnostics[0]!.related).toHaveLength(2);
 });
 
+test("VUE0039 accounts for implicit v-model modifier props", async () => {
+  const result = await runRuleFixture({
+    rule: noUnpassedProps,
+    files: {
+      "src/components/ActionButton.vue": `<script setup lang="ts">
+defineProps<{ modelValue?: string; modelModifiers?: Record<string, boolean>; title?: string; titleModifiers?: Record<string, boolean> }>()
+</script>
+<template><button>{{ modelValue }} {{ title }}</button></template>`,
+      "src/App.vue": `<script setup lang="ts">
+import ActionButton from './components/ActionButton.vue'
+</script>
+<template><ActionButton v-model.trim="value" v-model:title.capitalize="title" /></template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.why.match(/prop "(\w+)"/)?.[1])).toEqual(
+    [],
+  );
+});
+
 test("VUE0039 stays silent when some usage of the component is not visible", async () => {
   const caller = `<script setup lang="ts">
 import ActionButton from '../components/ActionButton.vue'
@@ -285,6 +305,22 @@ const state = reactive({ selectedId: 1 })
   expect(result.diagnostics[0]!.suggestion).toContain(':active="item.id === activeId"');
   expect(result.diagnostics[1]!.suggestion).toContain(':selected="row.id === state.selectedId"');
   expect(result.diagnostics[0]!.why).toContain('compares it with its own "id" prop');
+});
+
+test("VUE0040 does not treat a member property named like a loop alias as per-item", async () => {
+  const result = await runRuleFixture({
+    rule: preferStableListProps,
+    files: {
+      "src/components/ListItem.vue": listItem,
+      "src/App.vue": `<script setup lang="ts">
+import ListItem from './components/ListItem.vue'
+const state = reactive({ index: 1 })
+</script>
+<template><ListItem v-for="(item, index) in items" :id="item.id" :active-id="state.index" :label="item.label" /></template>`,
+    },
+  });
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0040"]);
 });
 
 test("VUE0040 stays silent outside v-for and when the child does not compare the props", async () => {

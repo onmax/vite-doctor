@@ -84,6 +84,12 @@ export function passedProps(usage: ComponentUsageFact): Set<string> {
   const names = new Set<string>();
   for (const attribute of usage.attributes) names.add(camelize(attribute.name));
   for (const binding of usage.bindings) names.add(camelize(binding.name));
+  for (const binding of usage.bindings) {
+    if (binding.model && binding.modifiers) {
+      const modelName = camelize(binding.name);
+      names.add(modelName === "modelValue" ? "modelModifiers" : `${modelName}Modifiers`);
+    }
+  }
   return names;
 }
 

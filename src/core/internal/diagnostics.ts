@@ -188,7 +188,7 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
 function isGlobPattern(pattern: string): boolean {
   // `nativeMatch` accepts multiple glob forms; any of them may match files
   // omitted from the source inventory, so their unused status is inconclusive.
-  return /[*?\[\]{}]/.test(pattern);
+  return /[*?[\]{}]/.test(pattern);
 }
 
 function doctorConfigFiles(root: string): string[] {
