@@ -84,8 +84,23 @@ const rules = [
   noUntranslatedText,
 ];
 
-// Contract reviews that do not prove a runtime defect, so only the Strict Preset enables them.
-const strictOnlyRules = [maxProps, noUnusedProps];
+// Recommended only holds rules whose hits identify a specific defect; style, naming,
+// library-migration, and documentation rules need an explicit opt-in through Strict.
+const strictOnlyRules = [
+  preferUseTemplateRef,
+  preferTrueAttributeShorthand,
+  preferUseEventListener,
+  dataAllowMismatchSurgical,
+  preferDefineModel,
+  preferPropsDestructureDefaults,
+  preferTypeProps,
+  preferSameNamePropShorthand,
+  requireUsePrefix,
+  noUnusedTranslations,
+  noUntranslatedText,
+  maxProps,
+  noUnusedProps,
+];
 
 const vueRulePack = defineRulePack({
   name: "vite-doctor/vue",
@@ -93,7 +108,9 @@ const vueRulePack = defineRulePack({
   activation: { frameworks: ["vue", "nuxt"] },
   rules: [...rules, ...strictOnlyRules],
   presets: {
-    recommended: rules.map((rule) => rule.meta.id),
+    recommended: [...rules, ...strictOnlyRules]
+      .map((rule) => rule.meta.id)
+      .filter((id) => !strictOnlyRules.some((rule) => rule.meta.id === id)),
     strict: [...rules, ...strictOnlyRules].map((rule) => rule.meta.id),
   },
 });

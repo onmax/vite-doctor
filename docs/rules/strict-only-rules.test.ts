@@ -32,7 +32,7 @@ test("Strict-only Nuxt rule commands survive combined preset discovery", async (
   }
 });
 
-test("Strict-only TypeScript and Vite rules select their Strict Presets", async () => {
+test("Strict-only TypeScript, Vite, and Vue rules select their Strict Presets", async () => {
   const cases = [
     [
       "typescript/performance/no-array-filter-map",
@@ -41,6 +41,10 @@ test("Strict-only TypeScript and Vite rules select their Strict Presets", async 
     [
       "vite/define/no-unused-define",
       "pnpm vite-doctor . --framework vite --extends auto,vite/strict",
+    ],
+    [
+      "vue/template/prefer-true-attribute-shorthand",
+      "pnpm vite-doctor . --framework vue --extends auto,vue/strict",
     ],
   ] as const;
   for (const [id, prefix] of cases) {
