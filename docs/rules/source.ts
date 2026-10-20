@@ -844,6 +844,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     );
   }
 
+  if (rule.id === "vue/template/no-index-key-on-stateful-list") {
+    add("Vue TransitionGroup", "https://vuejs.org/guide/built-ins/transition-group.html");
+    add(
+      "eslint-plugin-vue require-v-for-key",
+      "https://eslint.vuejs.org/rules/require-v-for-key.html",
+    );
+  }
+
   if (rule.id === "vue/template/prefer-true-attribute-shorthand") {
     add(
       "eslint-plugin-vue prefer-true-attribute-shorthand",
