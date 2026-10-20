@@ -172,7 +172,6 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/worker/no-node-api-in-worker": "Node APIs",
   "vite/worker/require-worker-url-pattern": "Worker URL pattern",
 
-
   "vue/attrs/no-duplicate-attr-inheritance": "Duplicate $attrs",
 
   "vue/attrs/no-watch-use-attrs": "Watching attrs",

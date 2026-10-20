@@ -34,7 +34,6 @@ export { noWatchUseAttrs } from "./no-watch-use-attrs.js";
 export { noReactiveDestructure } from "./no-reactive-destructure.js";
 export { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
 
-
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
 import { noOnWatcherCleanupAfterAwait } from "./no-on-watcher-cleanup-after-await.js";
@@ -110,7 +109,6 @@ const rules = [
   noWatchUseAttrs,
   noReactiveDestructure,
   preferComputedOverWatchAssign,
-
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,

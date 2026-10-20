@@ -53,7 +53,6 @@ test.each([
   [noWatchUseAttrs, "VUE0032"],
   [noReactiveDestructure, "VUE0033"],
   [preferComputedOverWatchAssign, "VUE0034"],
-
 ] as const)("documents the constant ID in $0.meta.id", async (rule, code) => {
   const document = getRuleDocuments().find((entry) => entry.id === rule.meta.id);
   expect(document).toMatchObject({
