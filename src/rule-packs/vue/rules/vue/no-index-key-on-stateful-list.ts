@@ -20,7 +20,8 @@ const STATELESS_INPUT_TYPES = new Set(["hidden", "button", "submit", "reset", "i
 const TRANSITION_GROUP_TAGS = new Set(["TransitionGroup", "transition-group"]);
 const STATELESS_COMPONENTS = new Set(["RouterLink", "router-link", "NuxtLink", "nuxt-link"]);
 // For plain objects Vue passes the property key as the second alias, so only index-like names count.
-const INDEX_LIKE_ALIAS = /^(?:i|j|ix|idx|index|[a-z]\w*(?:Index|Idx)|\w+_(?:index|idx))$/;
+const INDEX_LIKE_ALIAS =
+  /^(?:i|j|ix|idx|index|pos|position|offset|[a-z]\w*(?:Index|Idx)|\w+_(?:index|idx))$/;
 const TS_VALUE_WRAPPERS = new Set([
   "TSAsExpression",
   "TSSatisfiesExpression",
@@ -147,10 +148,19 @@ function indexAliasUsedByKey(
 ): string | null {
   const { value, key: second, index: third } = vFor.forParseResult!;
   const candidates = new Set<string>();
+  const sourceContent = vFor.forParseResult!.source.content.trim();
+  const source = parse(vFor.forParseResult!.source);
+  const sourceKind = classifyForSource(source, sourceContent);
+  const objectSource = /^(?:record|object|map|dict)$/i.test(sourceContent);
   const thirdName = aliasIdentifier(third);
-  if (thirdName) candidates.add(thirdName);
+  if ((sourceKind === "object" || objectSource) && thirdName) candidates.add(thirdName);
   const secondName = aliasIdentifier(second);
-  if (secondName && INDEX_LIKE_ALIAS.test(secondName)) candidates.add(secondName);
+  if (
+    !objectSource &&
+    secondName &&
+    (sourceKind === "array-like" || INDEX_LIKE_ALIAS.test(secondName))
+  )
+    candidates.add(secondName);
   if (candidates.size === 0) return null;
 
   const expression = parse(key.exp!);
@@ -161,6 +171,22 @@ function indexAliasUsedByKey(
   for (const name of valueNames) if (names.has(name)) return null;
   for (const name of candidates) if (names.has(name)) return name;
   return null;
+}
+
+function classifyForSource(source: AnyNode, content: string): "object" | "array-like" | "unknown" {
+  if (/^(?:record|object|map|dict)$/i.test(content.trim())) return "object";
+  if (source?.type === "ObjectExpression") return "object";
+  if (
+    source?.type === "ArrayExpression" ||
+    source?.type === "StringLiteral" ||
+    source?.type === "NumericLiteral" ||
+    source?.type === "Literal"
+  ) {
+    return source.type === "Literal" && typeof source.value === "object" ? "unknown" : "array-like";
+  }
+  // Template-only identifiers have no binding information here. Preserve the
+  // established name heuristic while recognizing the common object iteration name.
+  return "unknown";
 }
 
 function aliasIdentifier(alias: TemplateDirectiveNode["exp"]): string | null {

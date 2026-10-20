@@ -32,6 +32,10 @@ test.each([
   ["a concatenated key", '<Row v-for="(item, i) in items" :key="\'row-\' + i" />'],
   ["v-bind:key", '<Row v-for="(item, rowIndex) in items" v-bind:key="rowIndex" />'],
   ["the object iteration index", '<Row v-for="(value, name, index) in record" :key="index" />'],
+  [
+    "an array index with a positional alias",
+    '<Row v-for="(item, position) in items" :key="position" />',
+  ],
   ["a destructured item", '<Row v-for="({ title }, i) in items" :key="i" :title="title" />'],
   [
     "a template v-for with a component child",
@@ -50,6 +54,8 @@ test.each([
   ["a key mixing item and index", '<Row v-for="(item, i) in items" :key="`${item.type}-${i}`" />'],
   ["an object property key", '<Row v-for="(value, name) in record" :key="name" />'],
   ["a key alias named key", '<Row v-for="(value, key) in record" :key="key" />'],
+  ["an object property alias named index", '<Row v-for="(value, index) in record" :key="index" />'],
+  ["an array third alias", '<Row v-for="(item, key, index) in items" :key="index" />'],
   ["a numeric range", '<Row v-for="(n, i) in 5" :key="i" />'],
   ["an inline array literal", "<Row v-for=\"(label, i) in ['a', 'b']\" :key=\"i\" :label />"],
   ["a hidden input", '<input v-for="(item, i) in items" :key="i" type="hidden" :value="item">'],
