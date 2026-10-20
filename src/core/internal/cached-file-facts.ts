@@ -36,7 +36,49 @@ export function isCachedFileFacts(value: unknown): value is FileFacts {
     facts(value.calls, named) &&
     facts(value.macros, named) &&
     facts(value.templateRefs, (item) => named(item) && optionalString(item.value)) &&
-    strings(value.diagnosticsHints)
+    strings(value.diagnosticsHints) &&
+    (value.component === undefined || componentFacts(value.component))
+  );
+}
+
+function componentFacts(value: unknown): boolean {
+  return (
+    record(value) &&
+    (value.props === undefined ||
+      facts(value.props, (item) => named(item) && typeof item.default === "boolean")) &&
+    optionalString(value.propsBinding) &&
+    (value.propAliases === undefined || record(value.propAliases)) &&
+    (value.emits === undefined || strings(value.emits)) &&
+    optionalString(value.emitBinding) &&
+    facts(value.models, (item) => named(item) && typeof item.default === "boolean") &&
+    Array.isArray(value.imports) &&
+    value.imports.every(
+      (item) =>
+        record(item) &&
+        typeof item.local === "string" &&
+        typeof item.imported === "string" &&
+        typeof item.source === "string",
+    ) &&
+    typeof value.ownLogic === "boolean" &&
+    typeof value.ownMarkup === "boolean" &&
+    integer(value.rootNodes) &&
+    Array.isArray(value.comparisons) &&
+    value.comparisons.every(
+      (item) => record(item) && typeof item.left === "string" && typeof item.right === "string",
+    ) &&
+    facts(
+      value.usages,
+      (item) =>
+        typeof item.tag === "string" &&
+        Array.isArray(item.attributes) &&
+        Array.isArray(item.bindings) &&
+        Array.isArray(item.spreads) &&
+        Array.isArray(item.listeners) &&
+        strings(item.directives) &&
+        strings(item.scope) &&
+        typeof item.inFor === "boolean",
+    ) &&
+    strings(value.bindingReferences)
   );
 }
 
