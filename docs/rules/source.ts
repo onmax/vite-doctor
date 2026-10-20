@@ -844,6 +844,19 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     );
   }
 
+  if (rule.id === "vue/component/max-props") {
+    add(
+      "vuejs-ai vue-best-practices: component boundaries",
+      "https://github.com/vuejs-ai/skills/pull/54",
+    );
+    add("Vue slots", "https://vuejs.org/guide/components/slots.html");
+    add("eslint-plugin-vue max-props", "https://eslint.vuejs.org/rules/max-props.html");
+  }
+
+  if (rule.id === "vue/props/no-unused-props") {
+    add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
+  }
+
   if (rule.id === "vue/template/no-index-key-on-stateful-list") {
     add("Vue TransitionGroup", "https://vuejs.org/guide/built-ins/transition-group.html");
     add(

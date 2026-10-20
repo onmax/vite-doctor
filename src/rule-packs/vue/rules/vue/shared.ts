@@ -22,8 +22,14 @@ export const BROWSER_GLOBALS = new Set([
   "navigator",
 ]);
 
-export const delegatedMessages: Record<string, string> = {
+type DelegatedText = string | ((eslintMessage: string) => string);
+
+export const delegatedMessages: Record<string, DelegatedText> = {
   "vue/reactivity/no-ref-as-operand": "Refs used as script operands must be unwrapped with .value.",
+
+  "vue/props/no-unused-props": (message) =>
+    `The ${unusedPropLabel(message)} is declared but never read in this component's script, template or style v-bind(). An unread prop is dead contract: callers can pass it and nothing changes. It is usually left behind when a refactor moved or dropped its use.`,
+
   "vue/props/no-mutating-props":
     "Props belong to the parent. A direct write such as `props.count++` is rejected with a readonly warning in development and, in production, lasts only until the parent's next render overwrites it. A deep write such as `props.user.name = 'x'` or `v-model=\"props.user.name\"` silently changes the parent's object behind its back.",
   "vue/reactivity/no-computed-side-effects":
@@ -36,8 +42,12 @@ export const delegatedMessages: Record<string, string> = {
     'A prop that is required and also has a default contradicts itself. Parents that omit it get a type error with type-based props and Vue\'s "Missing required prop" warning in development, yet the default still fills the value at runtime, so the declared contract and the actual behavior disagree.',
 };
 
-export const delegatedSuggestions: Record<string, string> = {
+export const delegatedSuggestions: Record<string, DelegatedText> = {
   "vue/reactivity/no-ref-as-operand": "Use .value in script expressions.",
+
+  "vue/props/no-unused-props": (message) =>
+    `Remove the ${unusedPropLabel(message)} from the props declaration and from the parents that pass it, or restore the read the component lost. Once it is no longer declared, a value parents still pass falls through to the root element as an attribute. If the declaration exists to stop that, keep it and suppress this diagnostic with that reason.`,
+
   "vue/props/no-mutating-props":
     "Emit an event (`emit('update:count', next)`) or declare the value with `defineModel()` so the parent applies the change, or copy the prop into local state (`const draft = ref(props.count)`) when the child needs its own editable value.",
   "vue/reactivity/no-computed-side-effects":
@@ -49,6 +59,16 @@ export const delegatedSuggestions: Record<string, string> = {
   "vue/props/no-required-prop-with-default":
     "Make the prop optional (`title?: string`, or `required: false`) when the default is the intended fallback, or remove the default when every parent must pass the prop.",
 };
+
+function unusedPropLabel(message: string): string {
+  const name = /^'([^']+)'/.exec(message)?.[1];
+  return name ? `prop "${name}"` : "prop";
+}
+
+function delegatedText(text: DelegatedText | undefined, eslintMessage: string): string {
+  if (text === undefined) return eslintMessage;
+  return typeof text === "function" ? text(eslintMessage) : text;
+}
 
 export function report(
   ctx: RuleContext,
@@ -153,6 +173,8 @@ export function createEslintVueRule(options: {
   /** Drops eslint messages that Doctor does not treat as a defect, such as a style-only variant. */
   keepMessage?: (message: EslintMessage, ctx: RuleContext) => boolean;
   meta: DoctorRule["meta"];
+  /** Set for rules that read template expressions, so TypeScript syntax in them is not lost. */
+  templateReferences?: boolean;
 }): DoctorRule {
   const eslintIds: readonly string[] =
     typeof options.eslintId === "string" ? [options.eslintId] : options.eslintId;
@@ -165,7 +187,7 @@ export function createEslintVueRule(options: {
         rules[eslintId] = eslintRuleConfig(
           options.eslintOptions ? options.eslintOptions(ctx.options, eslintId) : ctx.options,
         );
-      const batches = joinEslintBatches(ctx.file, rules);
+      const batches = joinEslintBatches(ctx.file, rules, Boolean(options.templateReferences));
       return {
         async SFC() {
           const messages = (await Promise.all(batches.map(runEslintBatch))).flat();
@@ -188,6 +210,7 @@ interface EslintBatch {
   filename: string;
   rules: Record<string, EslintRuleConfig>;
   messages?: Promise<EslintMessage[]>;
+  templateReferences: boolean;
 }
 
 // Doctor creates every pending Rule for a file before it runs any visitor, so each bridged Rule
@@ -197,6 +220,7 @@ const eslintBatches = new WeakMap<object, EslintBatch[]>();
 function joinEslintBatches(
   file: RuleContext["file"],
   rules: Record<string, EslintRuleConfig>,
+  templateReferences: boolean,
 ): EslintBatch[] {
   let batches = eslintBatches.get(file);
   if (!batches || batches.some((batch) => batch.messages || batch.text !== file.text)) {
@@ -211,22 +235,24 @@ function joinEslintBatches(
   // This prevents a later multi-ID bridge from being attached to a batch whose
   // other IDs forced a different configuration.
   for (const [id, config] of Object.entries(rules)) {
-    const batch = batches.find((candidate) => sameConfig(candidate.rules[id]!, config));
-    if (batch) {
-      joined.push(batch);
-      pending.delete(id);
-    }
-  }
-  for (const id of pending) {
-    const config = rules[id]!;
-    let batch = batches.find((candidate) =>
-      Object.entries(rules).every(
-        ([otherId, otherConfig]) =>
-          !(otherId in candidate.rules) || sameConfig(candidate.rules[otherId]!, otherConfig),
-      ),
+
+    let batch = batches.find(
+      (candidate) =>
+        candidate.templateReferences === templateReferences &&
+        sameConfig(candidate.rules[id]!, config),
     );
+    if (!batch)
+      batch = batches.find(
+        (candidate) =>
+          candidate.templateReferences === templateReferences && !(id in candidate.rules),
+      );
     if (!batch) {
-      batch = { text: file.text, filename: file.relativePath, rules: { [id]: config } };
+      batch = {
+        text: file.text,
+        filename: file.relativePath,
+        rules: { [id]: config },
+        templateReferences,
+      };
       batches.push(batch);
     } else {
       batch.rules[id] ??= config;
@@ -241,33 +267,37 @@ function sameConfig(left: EslintRuleConfig, right: EslintRuleConfig): boolean {
 }
 
 function runEslintBatch(batch: EslintBatch): Promise<EslintMessage[]> {
-  return (batch.messages ??= eslintVueRuntime().then(({ linter, languageOptions, plugin }) =>
-    linter.verify(
-      batch.text,
-      [
-        {
-          name: "vite-doctor/eslint-plugin-vue",
-          files: ["**/*.vue"],
-          languageOptions,
-          plugins: { vue: plugin },
-          rules: batch.rules,
-        },
-      ],
-      { filename: batch.filename },
-    ),
+  return (batch.messages ??= eslintVueRuntime(batch.templateReferences).then(
+    ({ linter, languageOptions, plugin }) =>
+      linter.verify(
+        batch.text,
+        [
+          {
+            name: "vite-doctor/eslint-plugin-vue",
+            files: ["**/*.vue"],
+            languageOptions,
+            plugins: { vue: plugin },
+            rules: batch.rules,
+          },
+        ],
+        { filename: batch.filename },
+      ),
   ));
 }
 
-let eslintVueRuntimePromise:
-  | Promise<{
-      linter: import("eslint").Linter;
-      languageOptions: import("eslint").Linter.LanguageOptions;
-      plugin: any;
-    }>
-  | undefined;
+const eslintVueRuntimePromises = new Map<
+  boolean,
+  Promise<{
+    linter: import("eslint").Linter;
+    languageOptions: import("eslint").Linter.LanguageOptions;
+    plugin: any;
+  }>
+>();
 
-function eslintVueRuntime() {
-  return (eslintVueRuntimePromise ??= Promise.all([
+function eslintVueRuntime(templateReferences = false) {
+  let promise = eslintVueRuntimePromises.get(templateReferences);
+  if (promise) return promise;
+  promise = Promise.all([
     optionalImport<typeof import("eslint")>("eslint"),
     optionalImport<typeof import("eslint-plugin-vue")>("eslint-plugin-vue"),
     optionalImport<typeof import("vue-eslint-parser")>("vue-eslint-parser"),
@@ -288,14 +318,16 @@ function eslintVueRuntime() {
             jsx: tsParserRuntime,
             ts: tsParserRuntime,
             tsx: tsParserRuntime,
-            "<template>": "espree",
+            "<template>": templateReferences ? tsParserRuntime : "espree",
           },
           ecmaVersion: "latest",
           sourceType: "module",
         },
       },
     };
-  }));
+  });
+  eslintVueRuntimePromises.set(templateReferences, promise);
+  return promise;
 }
 
 function reportEslintMessage(
@@ -310,8 +342,8 @@ function reportEslintMessage(
   if (!diagnostic) throw doctorInternalDiagnostics.DOC0013({ ruleId: doctorId, code });
   ctx.report(
     diagnostic({
-      why: delegatedMessages[doctorId] ?? message.message,
-      fix: delegatedSuggestions[doctorId] ?? message.message,
+      why: delegatedText(delegatedMessages[doctorId], message.message),
+      fix: delegatedText(delegatedSuggestions[doctorId], message.message),
     }),
     {
       ruleId: doctorId,

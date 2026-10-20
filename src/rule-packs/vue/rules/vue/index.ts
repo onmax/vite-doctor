@@ -22,6 +22,8 @@ export { preferTypeProps } from "./prefer-type-props.js";
 export { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 export { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
 export { requireUsePrefix } from "./require-use-prefix.js";
+export { maxProps } from "./max-props.js";
+export { noUnusedProps } from "./no-unused-props.js";
 export { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
@@ -59,6 +61,8 @@ import { preferTypeProps } from "./prefer-type-props.js";
 import { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 import { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
 import { requireUsePrefix } from "./require-use-prefix.js";
+import { maxProps } from "./max-props.js";
+import { noUnusedProps } from "./no-unused-props.js";
 import { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
@@ -103,12 +107,15 @@ const rules = [
   noUnusedTranslations,
   noUntranslatedText,
 
+  maxProps,
+  noUnusedProps,
+
+
   noMutatingProps,
   noComputedSideEffects,
   noVIfWithVFor,
   noDuplicateAttrInheritance,
   noRequiredPropWithDefault,
-
   noWatchUseAttrs,
   noReactiveDestructure,
   preferComputedOverWatchAssign,
@@ -128,6 +135,8 @@ const strictOnlyRules = [
   requireUsePrefix,
   noUnusedTranslations,
   noUntranslatedText,
+  maxProps,
+  noUnusedProps,
   preferComputedOverWatchAssign,
 ];
 
