@@ -11,14 +11,18 @@ useSeoMeta({
   ogSiteName: "Doctor",
   ogType: "website",
   ogUrl: "https://vite-doctor.onmax.me/",
+  ogImage: {
+    url: "https://vite-doctor.onmax.me/og/doctor-home.png",
+    width: 1200,
+    height: 630,
+    type: "image/png",
+    alt: "Vite Doctor: catch the AI slop your agents ship.",
+  },
   twitterCard: "summary_large_image",
   twitterTitle: homeTitle,
   twitterDescription: homeDescription,
+  twitterImage: "https://vite-doctor.onmax.me/og/doctor-home.png",
 });
-
-// Text props are encoded into the prerendered image path, and a trailing period
-// there yields an unwritable `..png` file, so the component reads its own copy.
-defineOgImage("DoctorHome", {}, { width: 1200, height: 630 });
 
 useHead({
   titleTemplate: "%s",
