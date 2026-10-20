@@ -165,10 +165,10 @@ export function createEslintVueRule(options: {
         rules[eslintId] = eslintRuleConfig(
           options.eslintOptions ? options.eslintOptions(ctx.options, eslintId) : ctx.options,
         );
-      const batch = joinEslintBatch(ctx.file, rules);
+      const batches = joinEslintBatches(ctx.file, rules);
       return {
         async SFC() {
-          const messages = await runEslintBatch(batch);
+          const messages = (await Promise.all(batches.map(runEslintBatch))).flat();
           for (const message of messages) {
             if (!message.ruleId || !eslintIds.includes(message.ruleId)) continue;
             if (options.keepMessage && !options.keepMessage(message, ctx)) continue;
@@ -194,28 +194,30 @@ interface EslintBatch {
 // joins its file's batch in `create`, and the first `SFC` visitor parses and lints once for all.
 const eslintBatches = new WeakMap<object, EslintBatch[]>();
 
-function joinEslintBatch(
+function joinEslintBatches(
   file: RuleContext["file"],
   rules: Record<string, EslintRuleConfig>,
-): EslintBatch {
+): EslintBatch[] {
   let batches = eslintBatches.get(file);
   if (!batches || batches.some((batch) => batch.messages || batch.text !== file.text)) {
     batches = [];
     eslintBatches.set(file, batches);
   }
-  // Two Doctor Rules that bridge one eslint id with different options cannot share a config.
-  const compatible = batches.find((batch) =>
-    Object.keys(rules).every(
-      (id) => !(id in batch.rules) || sameConfig(batch.rules[id]!, rules[id]!),
-    ),
-  );
-  if (compatible) {
-    Object.assign(compatible.rules, rules);
-    return compatible;
+  // Each eslint ID is owned by one compatible batch. A multi-ID bridge can join
+  // several existing batches when those IDs were split by incompatible options.
+  const joined: EslintBatch[] = [];
+  for (const [id, config] of Object.entries(rules)) {
+    let batch = batches.find((candidate) => sameConfig(candidate.rules[id]!, config));
+    if (!batch) batch = batches.find((candidate) => !(id in candidate.rules));
+    if (!batch) {
+      batch = { text: file.text, filename: file.relativePath, rules: { [id]: config } };
+      batches.push(batch);
+    } else {
+      batch.rules[id] ??= config;
+    }
+    if (!joined.includes(batch)) joined.push(batch);
   }
-  const batch: EslintBatch = { text: file.text, filename: file.relativePath, rules: { ...rules } };
-  batches.push(batch);
-  return batch;
+  return joined;
 }
 
 function sameConfig(left: EslintRuleConfig, right: EslintRuleConfig): boolean {

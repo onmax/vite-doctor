@@ -3,6 +3,7 @@ import { nitroRulePack } from "../../src/rule-packs/nitro/index.js";
 import nuxtRulePack from "../../src/rule-packs/nuxt/rules/nuxt/index.js";
 import typescriptRulePack from "../../src/rule-packs/typescript/rules/index.js";
 import viteRulePack from "../../src/rule-packs/vite/rules/index.js";
+import vueRulePack from "../../src/rule-packs/vue/rules/vue/index.js";
 import { getRuleDocuments, rulesCollectionSource } from "./source.js";
 
 test("Strict-only Nitro rule pages run the rule through the Strict Preset", async () => {
@@ -31,7 +32,7 @@ test("Strict-only Nuxt rule commands survive combined preset discovery", async (
   }
 });
 
-test("Strict-only TypeScript and Vite rules select their Strict Presets", async () => {
+test("Strict-only TypeScript, Vite, and Vue rules select their Strict Presets", async () => {
   const cases = [
     [
       "typescript/performance/no-array-filter-map",
@@ -40,6 +41,10 @@ test("Strict-only TypeScript and Vite rules select their Strict Presets", async 
     [
       "vite/define/no-unused-define",
       "pnpm vite-doctor . --framework vite --extends auto,vite/strict",
+    ],
+    [
+      "vue/template/prefer-true-attribute-shorthand",
+      "pnpm vite-doctor . --framework vue --extends auto,vue/strict",
     ],
   ] as const;
   for (const [id, prefix] of cases) {
@@ -53,6 +58,7 @@ test("Strict-only TypeScript and Vite rules select their Strict Presets", async 
 for (const [framework, pack] of [
   ["typescript", typescriptRulePack],
   ["vite", viteRulePack],
+  ["vue", vueRulePack],
 ] as const) {
   test(`${framework} commands match actual preset membership`, async () => {
     const recommended = new Set(pack.presets.recommended);

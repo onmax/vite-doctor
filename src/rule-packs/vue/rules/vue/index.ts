@@ -95,13 +95,31 @@ const rules = [
   noRequiredPropWithDefault,
 ];
 
+// Recommended only holds rules whose hits identify a specific defect; style, naming,
+// library-migration, and documentation rules need an explicit opt-in through Strict.
+const strictOnlyRules = [
+  preferUseTemplateRef,
+  preferTrueAttributeShorthand,
+  preferUseEventListener,
+  dataAllowMismatchSurgical,
+  preferDefineModel,
+  preferPropsDestructureDefaults,
+  preferTypeProps,
+  preferSameNamePropShorthand,
+  requireUsePrefix,
+  noUnusedTranslations,
+  noUntranslatedText,
+];
+
 const vueRulePack = defineRulePack({
   name: "vite-doctor/vue",
   version: "0.0.0",
   activation: { frameworks: ["vue", "nuxt"] },
   rules,
   presets: {
-    recommended: rules.map((rule) => rule.meta.id),
+    recommended: rules
+      .map((rule) => rule.meta.id)
+      .filter((id) => !strictOnlyRules.some((rule) => rule.meta.id === id)),
     strict: rules.map((rule) => rule.meta.id),
   },
 });
