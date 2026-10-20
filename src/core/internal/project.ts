@@ -20,6 +20,7 @@ import { createNuxtProjectInventory, normalizeNuxtModuleSources } from "./nuxt-i
 import { detectNuxtModuleDefinitions } from "./nuxt-module-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
 import { ProjectFileWalk, rememberProjectFileWalk, type ProjectEntry } from "./project-files.js";
+import { loadTypeScript } from "./lazy-parsers.js";
 import {
   applyRuntimeTarget,
   isNuxtManifestCurrent,
@@ -113,13 +114,15 @@ export async function detectProject(
     inventory: { packages: deps },
   };
   const unappliedConfigs = workspaceNuxt.filter((item) => item.nuxt.doctorConfig);
-  if (unappliedConfigs.length) {
-    project.evidenceGaps = unappliedConfigs.map((item) => ({
+  const evidenceGaps: NonNullable<ProjectInfo["evidenceGaps"]> = [
+    ...(owner ? missingNuxtManifestGaps(root, owner.root, owner.nuxt) : []),
+    ...unappliedConfigs.map((item) => ({
       source: "vite-doctor/workspace-nuxt",
       message: `Doctor options from the vite-doctor/nuxt module in ${item.root} only apply when Doctor runs from that package. Run Doctor from ${item.root} to apply them.`,
       files: [relative(root, item.nuxt.manifestPath ?? join(root, item.root))],
-    }));
-  }
+    })),
+  ];
+  if (evidenceGaps.length) project.evidenceGaps = evidenceGaps;
   rememberProjectFileWalk(project, walk);
   return project;
 }
@@ -418,6 +421,154 @@ async function detectNuxtAppRoots(root: string): Promise<string[]> {
   ]);
   if (!configs.length) return [root];
   return [...new Set(configs.map((file) => resolve(file, "..")))].sort();
+}
+
+// The module hands nuxt.config `doctor` options and Nuxt's resolved inventory to the CLI only
+// through this manifest, so without it a run silently ignores the developer's configuration.
+function missingNuxtManifestGaps(
+  root: string,
+  packageRoot: string,
+  nuxt: NuxtProjectInfo,
+): NonNullable<ProjectInfo["evidenceGaps"]> {
+  const appRoot = join(root, packageRoot);
+  if (nuxt.manifestPath || !registersDoctorModule(appRoot, nuxt)) return [];
+  const manifest = relative(root, join(appRoot, ".nuxt/doctor.manifest.json"));
+  return [
+    {
+      source: "vite-doctor/nuxt",
+      message: `nuxt.config registers vite-doctor/nuxt, but ${manifest} does not exist, so this Doctor Run ignored the doctor options in nuxt.config and Nuxt's resolved auto-imports, components, and server handlers. Run nuxt prepare first; it does not need a build.`,
+      files: [manifest],
+    },
+  ];
+}
+
+function registersDoctorModule(appRoot: string, nuxt: NuxtProjectInfo): boolean {
+  const roots = new Set([
+    appRoot,
+    ...nuxt.appRoots,
+    ...nuxt.layers.map((layer) => resolve(appRoot, layer.root)),
+  ]);
+  return [...roots].some((root) =>
+    registersDoctorModuleInConfig(readNuxtConfigText(root).anyFormat),
+  );
+}
+
+function registersDoctorModuleInConfig(config: string | null): boolean {
+  if (!config) return false;
+  const ts = loadTypeScript();
+  const source = ts.createSourceFile("nuxt.config.ts", config, ts.ScriptTarget.Latest, true);
+  type Expr = import("typescript").Expression;
+  type Scope = { parent: Scope | null; bindings: Map<string, Expr> };
+  const nodeScopes = new WeakMap<import("typescript").Node, Scope>();
+  const rootScope: Scope = { parent: null, bindings: new Map() };
+  const scopeNodes = new Set([
+    ts.SyntaxKind.SourceFile,
+    ts.SyntaxKind.Block,
+    ts.SyntaxKind.ModuleBlock,
+    ts.SyntaxKind.CatchClause,
+  ]);
+  const collectScopes = (node: import("typescript").Node, scope: Scope) => {
+    const current =
+      scopeNodes.has(node.kind) && node !== source
+        ? { parent: scope, bindings: new Map<string, Expr>() }
+        : scope;
+    nodeScopes.set(node, current);
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      current.bindings.set(node.name.text, node.initializer);
+    }
+    ts.forEachChild(node, (child) => collectScopes(child, current));
+  };
+  collectScopes(source, rootScope);
+
+  const resolve = (name: string, scope: Scope | null | undefined): Expr | undefined => {
+    for (let current = scope; current; current = current.parent) {
+      const binding = current.bindings.get(name);
+      if (binding) return binding;
+    }
+    return undefined;
+  };
+  const resolving = new Set<Expr>();
+  const hasDoctorModule = (value: Expr, scope: Scope | undefined): boolean => {
+    if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+      return value.text === "vite-doctor/nuxt";
+    }
+    if (ts.isIdentifier(value)) {
+      const binding = resolve(value.text, scope);
+      if (!binding || resolving.has(binding)) return false;
+      resolving.add(binding);
+      const found = hasDoctorModule(binding, nodeScopes.get(binding));
+      resolving.delete(binding);
+      return found;
+    }
+    if (ts.isArrayLiteralExpression(value)) {
+      return value.elements.some((element) =>
+        ts.isSpreadElement(element)
+          ? hasDoctorModule(element.expression, scope)
+          : element.kind !== ts.SyntaxKind.OmittedExpression &&
+            hasDoctorModule(element as Expr, scope),
+      );
+    }
+    return false;
+  };
+  const inspectConfig = (value: Expr, scope: Scope | undefined): boolean => {
+    if (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isTypeAssertionExpression(value) ||
+      ts.isSatisfiesExpression(value)
+    ) {
+      return inspectConfig(value.expression, scope);
+    }
+    if (ts.isIdentifier(value)) {
+      const binding = resolve(value.text, scope);
+      if (!binding || resolving.has(binding)) return false;
+      resolving.add(binding);
+      const found = inspectConfig(binding, nodeScopes.get(binding));
+      resolving.delete(binding);
+      return found;
+    }
+    if (ts.isCallExpression(value)) {
+      return value.arguments.some((arg) => inspectConfig(arg, scope));
+    }
+    if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+      if (ts.isBlock(value.body)) {
+        return value.body.statements.some((statement) =>
+          ts.isReturnStatement(statement) && statement.expression
+            ? inspectConfig(statement.expression, nodeScopes.get(statement))
+            : false,
+        );
+      }
+      return inspectConfig(value.body, nodeScopes.get(value.body));
+    }
+    if (!ts.isObjectLiteralExpression(value)) return false;
+    return value.properties.some((property) => {
+      if (ts.isPropertyAssignment(property)) {
+        const name = property.name.getText(source).replace(/["']/g, "");
+        return name === "modules" ? hasDoctorModule(property.initializer, scope) : false;
+      }
+      return ts.isShorthandPropertyAssignment(property) && property.name.text === "modules"
+        ? hasDoctorModule(property.name, nodeScopes.get(property))
+        : false;
+    });
+  };
+  for (const statement of source.statements) {
+    if (ts.isExportAssignment(statement)) {
+      if (inspectConfig(statement.expression, nodeScopes.get(statement))) return true;
+      continue;
+    }
+    if (
+      ts.isExpressionStatement(statement) &&
+      ts.isBinaryExpression(statement.expression) &&
+      statement.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(statement.expression.left) &&
+      ts.isIdentifier(statement.expression.left.expression) &&
+      statement.expression.left.expression.text === "module" &&
+      statement.expression.left.name.text === "exports" &&
+      inspectConfig(statement.expression.right, nodeScopes.get(statement))
+    )
+      return true;
+  }
+  return false;
 }
 
 function readJson<T>(file: string): T | null {

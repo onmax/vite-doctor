@@ -59,6 +59,18 @@ pnpm nuxt doctor
 
 Use `--framework` only when Doctor cannot identify the framework automatically.
 
+For CI, add a package script and run it before the build. Doctor reads source and config, not build output. Nuxt projects only need `nuxt prepare` first:
+
+```json
+{
+  "scripts": {
+    "check:doctor": "vite-doctor . --max-warnings 0"
+  }
+}
+```
+
+Don't name the script `doctor`. `pnpm doctor` and `npm doctor` run the package manager's built-in health check instead of your script.
+
 Check a migration before changing dependencies:
 
 ```bash
