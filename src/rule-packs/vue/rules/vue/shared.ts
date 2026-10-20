@@ -126,89 +126,30 @@ export function walkScriptLocal(node: AnyNode, visit: (node: AnyNode) => void) {
 
 export function createEslintVueRule(options: {
   doctorId: string;
-  eslintId: string;
+  /** One or more eslint-plugin-vue rule ids whose messages all report as this Doctor Rule. */
+  eslintId: string | readonly string[];
+  /** Maps the Doctor Rule's options to one eslint rule's options. Defaults to passing them through. */
+  eslintOptions?: (ruleOptions: unknown, eslintId: string) => unknown;
   meta: DoctorRule["meta"];
 }): DoctorRule {
+  const eslintIds: readonly string[] =
+    typeof options.eslintId === "string" ? [options.eslintId] : options.eslintId;
   return createRule({
     meta: options.meta,
     create(ctx) {
       if (!ctx.file.isVueSfc) return;
+      const rules: Record<string, EslintRuleConfig> = {};
+      for (const eslintId of eslintIds)
+        rules[eslintId] = eslintRuleConfig(
+          options.eslintOptions ? options.eslintOptions(ctx.options, eslintId) : ctx.options,
+        );
+      const batch = joinEslintBatch(ctx.file, rules);
       return {
         async SFC() {
-          const [{ Linter }, vuePlugin, vueParser, tsParser] = await Promise.all([
-            optionalImport<typeof import("eslint")>("eslint"),
-            optionalImport<typeof import("eslint-plugin-vue")>("eslint-plugin-vue"),
-            optionalImport<typeof import("vue-eslint-parser")>("vue-eslint-parser"),
-            optionalImport<typeof import("@typescript-eslint/parser")>("@typescript-eslint/parser"),
-          ]);
-          const vuePluginRuntime = defaultExport(vuePlugin);
-          const vueParserRuntime = defaultExport(vueParser);
-          const tsParserRuntime = defaultExport(tsParser);
-          const linter = new Linter({ configType: "flat" });
-          const messages = linter.verify(
-            ctx.file.text,
-            [
-              {
-                name: "vite-doctor/eslint-plugin-vue",
-                files: ["**/*.vue"],
-                languageOptions: {
-                  parser: vueParserRuntime as any,
-                  ecmaVersion: "latest",
-                  sourceType: "module",
-                  parserOptions: {
-                    // Bridged Rules read <script> only; TypeScript for every template expression was most of their cost.
-                    parser: {
-                      js: tsParserRuntime,
-                      jsx: tsParserRuntime,
-                      ts: tsParserRuntime,
-                      tsx: tsParserRuntime,
-                      "<template>": "espree",
-                    },
-                    ecmaVersion: "latest",
-                    sourceType: "module",
-                  },
-                },
-                plugins: { vue: vuePluginRuntime as any },
-                rules: { [options.eslintId]: eslintRuleConfig(ctx.options) },
-              },
-            ],
-            { filename: ctx.file.relativePath },
-          );
-
+          const messages = await runEslintBatch(batch);
           for (const message of messages) {
-            if (message.ruleId !== options.eslintId) continue;
-            const code = codeForRuleId(diagnosticCodesByRuleId, options.doctorId);
-            if (!code) throw doctorInternalDiagnostics.DOC0013({ ruleId: options.doctorId });
-            const diagnostic = diagnosticForCode(diagnostics, code);
-            if (!diagnostic)
-              throw doctorInternalDiagnostics.DOC0013({ ruleId: options.doctorId, code });
-            ctx.report(
-              diagnostic({
-                why: delegatedMessages[options.doctorId] ?? message.message,
-                fix: delegatedSuggestions[options.doctorId] ?? message.message,
-              }),
-              {
-                ruleId: options.doctorId,
-                severity: options.meta.severity,
-                category: options.meta.category,
-                file: ctx.file.path,
-                range: rangeFromLintMessage(ctx.file.text, message),
-                fix: message.fix
-                  ? {
-                      kind: "suggestion",
-                      message:
-                        "eslint-plugin-vue can suggest a fix, but Vue Doctor does not classify it as safe.",
-                      edits: [
-                        {
-                          range: { start: message.fix.range[0], end: message.fix.range[1] },
-                          text: message.fix.text,
-                        },
-                      ],
-                    }
-                  : null,
-                tags: ["eslint-plugin-vue"],
-              },
-            );
+            if (!message.ruleId || !eslintIds.includes(message.ruleId)) continue;
+            reportEslintMessage(ctx, options.doctorId, options.meta, message);
           }
         },
       };
@@ -216,11 +157,150 @@ export function createEslintVueRule(options: {
   });
 }
 
+type EslintRuleConfig = "error" | ["error", ...unknown[]];
+type EslintMessage = import("eslint").Linter.LintMessage;
+
+interface EslintBatch {
+  text: string;
+  filename: string;
+  rules: Record<string, EslintRuleConfig>;
+  messages?: Promise<EslintMessage[]>;
+}
+
+// Doctor creates every pending Rule for a file before it runs any visitor, so each bridged Rule
+// joins its file's batch in `create`, and the first `SFC` visitor parses and lints once for all.
+const eslintBatches = new WeakMap<object, EslintBatch[]>();
+
+function joinEslintBatch(
+  file: RuleContext["file"],
+  rules: Record<string, EslintRuleConfig>,
+): EslintBatch {
+  let batches = eslintBatches.get(file);
+  if (!batches || batches.some((batch) => batch.messages || batch.text !== file.text)) {
+    batches = [];
+    eslintBatches.set(file, batches);
+  }
+  // Two Doctor Rules that bridge one eslint id with different options cannot share a config.
+  const compatible = batches.find((batch) =>
+    Object.keys(rules).every(
+      (id) => !(id in batch.rules) || sameConfig(batch.rules[id]!, rules[id]!),
+    ),
+  );
+  if (compatible) {
+    Object.assign(compatible.rules, rules);
+    return compatible;
+  }
+  const batch: EslintBatch = { text: file.text, filename: file.relativePath, rules: { ...rules } };
+  batches.push(batch);
+  return batch;
+}
+
+function sameConfig(left: EslintRuleConfig, right: EslintRuleConfig): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function runEslintBatch(batch: EslintBatch): Promise<EslintMessage[]> {
+  return (batch.messages ??= eslintVueRuntime().then(({ linter, languageOptions, plugin }) =>
+    linter.verify(
+      batch.text,
+      [
+        {
+          name: "vite-doctor/eslint-plugin-vue",
+          files: ["**/*.vue"],
+          languageOptions,
+          plugins: { vue: plugin },
+          rules: batch.rules,
+        },
+      ],
+      { filename: batch.filename },
+    ),
+  ));
+}
+
+let eslintVueRuntimePromise:
+  | Promise<{
+      linter: import("eslint").Linter;
+      languageOptions: import("eslint").Linter.LanguageOptions;
+      plugin: any;
+    }>
+  | undefined;
+
+function eslintVueRuntime() {
+  return (eslintVueRuntimePromise ??= Promise.all([
+    optionalImport<typeof import("eslint")>("eslint"),
+    optionalImport<typeof import("eslint-plugin-vue")>("eslint-plugin-vue"),
+    optionalImport<typeof import("vue-eslint-parser")>("vue-eslint-parser"),
+    optionalImport<typeof import("@typescript-eslint/parser")>("@typescript-eslint/parser"),
+  ]).then(([{ Linter }, vuePlugin, vueParser, tsParser]) => {
+    const tsParserRuntime = defaultExport(tsParser);
+    return {
+      linter: new Linter({ configType: "flat" }),
+      plugin: defaultExport(vuePlugin) as any,
+      languageOptions: {
+        parser: defaultExport(vueParser) as any,
+        ecmaVersion: "latest" as const,
+        sourceType: "module" as const,
+        parserOptions: {
+          // Bridged Rules read <script> only; TypeScript for every template expression was most of their cost.
+          parser: {
+            js: tsParserRuntime,
+            jsx: tsParserRuntime,
+            ts: tsParserRuntime,
+            tsx: tsParserRuntime,
+            "<template>": "espree",
+          },
+          ecmaVersion: "latest",
+          sourceType: "module",
+        },
+      },
+    };
+  }));
+}
+
+function reportEslintMessage(
+  ctx: RuleContext,
+  doctorId: string,
+  meta: DoctorRule["meta"],
+  message: EslintMessage,
+) {
+  const code = codeForRuleId(diagnosticCodesByRuleId, doctorId);
+  if (!code) throw doctorInternalDiagnostics.DOC0013({ ruleId: doctorId });
+  const diagnostic = diagnosticForCode(diagnostics, code);
+  if (!diagnostic) throw doctorInternalDiagnostics.DOC0013({ ruleId: doctorId, code });
+  ctx.report(
+    diagnostic({
+      why: delegatedMessages[doctorId] ?? message.message,
+      fix: delegatedSuggestions[doctorId] ?? message.message,
+    }),
+    {
+      ruleId: doctorId,
+      severity: meta.severity,
+      category: meta.category,
+      file: ctx.file.path,
+      range: rangeFromLintMessage(ctx.file.text, message),
+      fix: message.fix
+        ? {
+            kind: "suggestion",
+            message:
+              "eslint-plugin-vue can suggest a fix, but Vue Doctor does not classify it as safe.",
+            edits: [
+              {
+                range: { start: message.fix.range[0], end: message.fix.range[1] },
+                text: message.fix.text,
+              },
+            ],
+          }
+        : null,
+      tags: ["eslint-plugin-vue"],
+    },
+  );
+}
+
 function defaultExport<T>(mod: T): T {
   return ((mod as { default?: T }).default ?? mod) as T;
 }
 
-function eslintRuleConfig(options: unknown): "error" | ["error", ...unknown[]] {
+function eslintRuleConfig(options: unknown): EslintRuleConfig {
   if (Array.isArray(options)) return ["error", ...options];
   return options ? ["error", options] : "error";
 }
