@@ -9,8 +9,9 @@ async function runVue(source: string, file = "src/composables/state.ts") {
   return runRuleFixture({ rule: requireUsePrefix, framework: "vue", files: { [file]: source } });
 }
 
-test("is part of the Vue recommended preset", () => {
-  expect(vueRulePack.presets.recommended).toContain(ruleId);
+test("is a naming convention, so only the Vue Strict Preset runs it", () => {
+  expect(vueRulePack.presets.recommended).not.toContain(ruleId);
+  expect(vueRulePack.presets.strict).toContain(ruleId);
 });
 
 test.each([
