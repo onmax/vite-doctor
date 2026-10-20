@@ -468,9 +468,10 @@ function registersDoctorModuleInConfig(config: string | null): boolean {
     ts.SyntaxKind.CatchClause,
   ]);
   const collectScopes = (node: import("typescript").Node, scope: Scope) => {
-    const current = scopeNodes.has(node.kind) && node !== source
-      ? { parent: scope, bindings: new Map<string, Expr>() }
-      : scope;
+    const current =
+      scopeNodes.has(node.kind) && node !== source
+        ? { parent: scope, bindings: new Map<string, Expr>() }
+        : scope;
     nodeScopes.set(node, current);
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       current.bindings.set(node.name.text, node.initializer);
@@ -510,6 +511,13 @@ function registersDoctorModuleInConfig(config: string | null): boolean {
     return false;
   };
   const inspectConfig = (value: Expr, scope: Scope | undefined): boolean => {
+    if (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isTypeAssertionExpression(value)
+    ) {
+      return inspectConfig(value.expression, scope);
+    }
     if (ts.isIdentifier(value)) {
       const binding = resolve(value.text, scope);
       if (!binding || resolving.has(binding)) return false;
@@ -519,22 +527,47 @@ function registersDoctorModuleInConfig(config: string | null): boolean {
       return found;
     }
     if (ts.isCallExpression(value)) {
-      return value.arguments.some((arg) => ts.isObjectLiteralExpression(arg) && inspectConfig(arg, scope));
+      return value.arguments.some((arg) => inspectConfig(arg, scope));
+    }
+    if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+      if (ts.isBlock(value.body)) {
+        return value.body.statements.some((statement) =>
+          ts.isReturnStatement(statement) && statement.expression
+            ? inspectConfig(statement.expression, nodeScopes.get(statement))
+            : false,
+        );
+      }
+      return inspectConfig(value.body, nodeScopes.get(value.body));
     }
     if (!ts.isObjectLiteralExpression(value)) return false;
     return value.properties.some((property) => {
-      if (!ts.isPropertyAssignment(property)) return false;
-      const name = property.name.getText(source).replace(/["']/g, "");
-      return name === "modules"
-        ? hasDoctorModule(property.initializer, scope)
+      if (ts.isPropertyAssignment(property)) {
+        const name = property.name.getText(source).replace(/["']/g, "");
+        return name === "modules" ? hasDoctorModule(property.initializer, scope) : false;
+      }
+      return ts.isShorthandPropertyAssignment(property) && property.name.text === "modules"
+        ? hasDoctorModule(property.name, nodeScopes.get(property))
         : false;
     });
   };
-  const exportDefault = source.statements.find(
-    (statement): statement is import("typescript").ExportAssignment =>
-      ts.isExportAssignment(statement) && !statement.isExportEquals,
-  );
-  return exportDefault ? inspectConfig(exportDefault.expression, nodeScopes.get(exportDefault)) : false;
+  for (const statement of source.statements) {
+    if (ts.isExportAssignment(statement)) {
+      if (inspectConfig(statement.expression, nodeScopes.get(statement))) return true;
+      continue;
+    }
+    if (
+      ts.isExpressionStatement(statement) &&
+      ts.isBinaryExpression(statement.expression) &&
+      statement.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(statement.expression.left) &&
+      ts.isIdentifier(statement.expression.left.expression) &&
+      statement.expression.left.expression.text === "module" &&
+      statement.expression.left.name.text === "exports" &&
+      inspectConfig(statement.expression.right, nodeScopes.get(statement))
+    )
+      return true;
+  }
+  return false;
 }
 
 function readJson<T>(file: string): T | null {

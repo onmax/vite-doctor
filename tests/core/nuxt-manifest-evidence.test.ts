@@ -82,3 +82,16 @@ export default defineNuxtConfig({
 
   expect((await detectProject(root, "auto", { nuxt: "4.1.0" })).evidenceGaps).toBeUndefined();
 });
+
+test.each([
+  `export default defineNuxtConfig(() => ({ modules: ["vite-doctor/nuxt"] }));`,
+  `const modules = ["vite-doctor/nuxt"]; export default defineNuxtConfig({ modules });`,
+  `module.exports = defineNuxtConfig({ modules: ["vite-doctor/nuxt"] });`,
+  `const config = { modules: ["vite-doctor/nuxt"] }; export = config;`,
+])("detects supported Nuxt config export forms", async (config) => {
+  const root = nuxtApp({ "nuxt.config.ts": config });
+
+  expect((await detectProject(root, "auto", { nuxt: "4.1.0" })).evidenceGaps).toEqual([
+    expect.objectContaining({ source: "vite-doctor/nuxt" }),
+  ]);
+});
