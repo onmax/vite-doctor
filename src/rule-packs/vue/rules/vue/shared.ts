@@ -206,9 +206,25 @@ function joinEslintBatches(
   // Each eslint ID is owned by one compatible batch. A multi-ID bridge can join
   // several existing batches when those IDs were split by incompatible options.
   const joined: EslintBatch[] = [];
+  const pending = new Set(Object.keys(rules));
+  // Prefer an existing batch that already owns each ID with this exact config.
+  // This prevents a later multi-ID bridge from being attached to a batch whose
+  // other IDs forced a different configuration.
   for (const [id, config] of Object.entries(rules)) {
-    let batch = batches.find((candidate) => sameConfig(candidate.rules[id]!, config));
-    if (!batch) batch = batches.find((candidate) => !(id in candidate.rules));
+    const batch = batches.find((candidate) => sameConfig(candidate.rules[id]!, config));
+    if (batch) {
+      joined.push(batch);
+      pending.delete(id);
+    }
+  }
+  for (const id of pending) {
+    const config = rules[id]!;
+    let batch = batches.find((candidate) =>
+      Object.entries(rules).every(
+        ([otherId, otherConfig]) =>
+          !(otherId in candidate.rules) || sameConfig(candidate.rules[otherId]!, otherConfig),
+      ),
+    );
     if (!batch) {
       batch = { text: file.text, filename: file.relativePath, rules: { [id]: config } };
       batches.push(batch);
