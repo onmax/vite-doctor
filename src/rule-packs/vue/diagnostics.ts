@@ -28,6 +28,9 @@ export const vueDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0025", ruleId: "vue/lifecycle/prefer-use-event-listener" },
   { code: "VUE0026", ruleId: "vue/composables/require-use-prefix" },
 
+  { code: "VUE0038", ruleId: "vue/component/no-prop-relay" },
+  { code: "VUE0039", ruleId: "vue/props/no-unpassed-props" },
+  { code: "VUE0040", ruleId: "vue/perf/prefer-stable-list-props" },
   { code: "VUE0036", ruleId: "vue/component/max-props" },
   { code: "VUE0037", ruleId: "vue/props/no-unused-props" },
 

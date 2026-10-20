@@ -73,6 +73,9 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0025", ruleId: "vue/lifecycle/prefer-use-event-listener" },
   { code: "VUE0026", ruleId: "vue/composables/require-use-prefix" },
 
+  { code: "VUE0038", ruleId: "vue/component/no-prop-relay" },
+  { code: "VUE0039", ruleId: "vue/props/no-unpassed-props" },
+  { code: "VUE0040", ruleId: "vue/perf/prefer-stable-list-props" },
   { code: "VUE0036", ruleId: "vue/component/max-props" },
   { code: "VUE0037", ruleId: "vue/props/no-unused-props" },
 
@@ -85,6 +88,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0033", ruleId: "vue/reactivity/no-reactive-destructure" },
   { code: "VUE0034", ruleId: "vue/reactivity/prefer-computed-over-watch-assign" },
   { code: "VUE0035", ruleId: "vue/template/no-index-key-on-stateful-list" },
+
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },
   { code: "VITE0003", ruleId: "vite/assets/no-src-absolute-public-url" },

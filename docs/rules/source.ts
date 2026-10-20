@@ -876,6 +876,10 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     );
   }
 
+  if (rule.id === "vue/component/no-prop-relay") {
+    add("Vue slots", "https://vuejs.org/guide/components/slots.html");
+    add("Vue provide/inject", "https://vuejs.org/guide/components/provide-inject.html");
+  }
   for (const eslintRule of bridgedEslintVueRules[rule.id] ?? [])
     add(`eslint-plugin-vue ${eslintRule}`, `https://eslint.vuejs.org/rules/${eslintRule}.html`);
 

@@ -172,6 +172,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/worker/no-node-api-in-worker": "Node APIs",
   "vite/worker/require-worker-url-pattern": "Worker URL pattern",
 
+  "vue/component/no-prop-relay": "Prop relays",
+
   "vue/component/max-props": "Prop surface size",
 
   "vue/attrs/no-duplicate-attr-inheritance": "Duplicate $attrs",
@@ -183,6 +185,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/lifecycle/no-mutation-in-onupdated": "onUpdated writes",
   "vue/lifecycle/prefer-use-event-listener": "useEventListener",
   "vue/lifecycle/require-cleanup": "Lifecycle cleanup",
+  "vue/perf/prefer-stable-list-props": "Stable list props",
+  "vue/props/no-unpassed-props": "Unpassed props",
 
   "vue/props/no-unused-props": "Unused props",
 
