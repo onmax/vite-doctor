@@ -1973,6 +1973,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/component/max-props": {
+    description:
+      "Reports Vue components that declare more props than the maxProps option allows (default 12), counting props the way Vue compiles them: type-based defineProps with extended interfaces and imported types, runtime declarations, defineModel, and the Options API props option. Files whose prop types Vue cannot resolve, or whose runtime declaration spreads a shared object, are skipped instead of undercounted. Strict Preset only.",
+    why: "A large prop surface is a review signal, not a defect. It often means the component relays most of its props to one child, or holds several responsibilities behind one tag. The vuejs-ai vue-best-practices skill treats API size as a review signal rather than an extraction threshold, so this rule is opt-in.",
+    recommendedReplacement:
+      "Check whether most props are forwarded to a single child; if so, let parents use that child directly or pass it through a slot. Otherwise split the component by responsibility, or turn content-shaped props such as labels, icons and render variants into slots. Do not group unrelated props into one object prop; the contract stays the same size. Raise maxProps when the surface is intentional, such as a design-system primitive.",
+    examples: [
+      {
+        title: "Pass content through slots instead of relaying props",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\ndefineProps<{\n  title: string\n  subtitle?: string\n  icon?: string\n  iconColor?: string\n  badge?: string\n  badgeColor?: string\n  actionLabel?: string\n  actionIcon?: string\n  actionTo?: string\n  actionVariant?: string\n  footerText?: string\n  footerLink?: string\n  dense?: boolean\n}>()\n</script>',
+        valid:
+          '<script setup lang="ts">\ndefineProps<{\n  title: string\n  dense?: boolean\n}>()\n</script>\n\n<template>\n  <section>\n    <header>{{ title }} <slot name="badge" /></header>\n    <slot />\n    <footer><slot name="actions" /></footer>\n  </section>\n</template>',
+      },
+    ],
+  },
   "vue/composables/require-use-prefix": {
     description:
       "Finds exported functions that need a component setup context but are not named like composables.",
@@ -2075,6 +2092,23 @@ export const ruleDocumentationMetadata = {
           "watch(active, (_value, _oldValue, onCleanup) => {\n  const el = document.querySelector('.target')\n  if (!el) return\n  const onEnd = () => el.classList.remove('active')\n  el.addEventListener('animationend', onEnd, { once: true })\n  onCleanup(() => el.removeEventListener('animationend', onEnd))\n})",
         valid:
           "watch(active, (_value, _oldValue, onCleanup) => {\n  const el = document.querySelector('.target')\n  if (!el) return\n  const stop = useEventListener(el, 'animationend', () => {\n    el.classList.remove('active')\n  }, { once: true })\n  onCleanup(stop)\n})",
+      },
+    ],
+  },
+  "vue/props/no-unused-props": {
+    description:
+      "Reports props a component declares but never reads in its script, inline template, or style v-bind(), using eslint-plugin-vue no-unused-properties limited to props. Files that pass the whole props object to code eslint cannot follow, such as useVModel(props) or reactiveOmit(props, 'class'), and files with src or non-HTML templates are skipped. Single-file only: it does not check whether callers pass a prop. Strict Preset only.",
+    why: "A declared prop the component never reads is dead contract. Callers can pass it and nothing changes, and readers assume it does something. It is usually left behind when a refactor moved or dropped its use.",
+    recommendedReplacement:
+      "Remove the prop from the props declaration and from the parents that pass it, or restore the read the component lost. Once a prop is no longer declared, a value parents still pass falls through to the root element as an attribute; if the declaration exists to stop that, keep it and suppress the diagnostic with that reason.",
+    examples: [
+      {
+        title: "Remove a prop left behind by a refactor",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nconst props = defineProps<{ title: string; legacySize?: string }>()\n</script>\n\n<template>\n  <h1>{{ props.title }}</h1>\n</template>',
+        valid:
+          '<script setup lang="ts">\nconst props = defineProps<{ title: string }>()\n</script>\n\n<template>\n  <h1>{{ props.title }}</h1>\n</template>',
       },
     ],
   },

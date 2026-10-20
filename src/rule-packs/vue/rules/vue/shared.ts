@@ -22,13 +22,29 @@ export const BROWSER_GLOBALS = new Set([
   "navigator",
 ]);
 
-export const delegatedMessages: Record<string, string> = {
+type DelegatedText = string | ((eslintMessage: string) => string);
+
+export const delegatedMessages: Record<string, DelegatedText> = {
   "vue/reactivity/no-ref-as-operand": "Refs used as script operands must be unwrapped with .value.",
+  "vue/props/no-unused-props": (message) =>
+    `The ${unusedPropLabel(message)} is declared but never read in this component's script, template or style v-bind(). An unread prop is dead contract: callers can pass it and nothing changes. It is usually left behind when a refactor moved or dropped its use.`,
 };
 
-export const delegatedSuggestions: Record<string, string> = {
+export const delegatedSuggestions: Record<string, DelegatedText> = {
   "vue/reactivity/no-ref-as-operand": "Use .value in script expressions.",
+  "vue/props/no-unused-props": (message) =>
+    `Remove the ${unusedPropLabel(message)} from the props declaration and from the parents that pass it, or restore the read the component lost. Once it is no longer declared, a value parents still pass falls through to the root element as an attribute. If the declaration exists to stop that, keep it and suppress this diagnostic with that reason.`,
 };
+
+function unusedPropLabel(message: string): string {
+  const name = /^'([^']+)'/.exec(message)?.[1];
+  return name ? `prop "${name}"` : "prop";
+}
+
+function delegatedText(text: DelegatedText | undefined, eslintMessage: string): string {
+  if (text === undefined) return eslintMessage;
+  return typeof text === "function" ? text(eslintMessage) : text;
+}
 
 export function report(
   ctx: RuleContext,
@@ -128,6 +144,10 @@ export function createEslintVueRule(options: {
   doctorId: string;
   eslintId: string;
   meta: DoctorRule["meta"];
+  /** Maps the Doctor rule options to the eslint rule options, for options Doctor fixes. */
+  eslintOptions?: (options: unknown) => unknown;
+  /** Set for rules that read template expressions, so TypeScript syntax in them is not lost. */
+  templateReferences?: boolean;
 }): DoctorRule {
   return createRule({
     meta: options.meta,
@@ -156,20 +176,24 @@ export function createEslintVueRule(options: {
                   ecmaVersion: "latest",
                   sourceType: "module",
                   parserOptions: {
-                    // Bridged Rules read <script> only; TypeScript for every template expression was most of their cost.
+                    // Most bridged Rules read <script> only; TypeScript for every template expression was most of their cost.
                     parser: {
                       js: tsParserRuntime,
                       jsx: tsParserRuntime,
                       ts: tsParserRuntime,
                       tsx: tsParserRuntime,
-                      "<template>": "espree",
+                      "<template>": options.templateReferences ? tsParserRuntime : "espree",
                     },
                     ecmaVersion: "latest",
                     sourceType: "module",
                   },
                 },
                 plugins: { vue: vuePluginRuntime as any },
-                rules: { [options.eslintId]: eslintRuleConfig(ctx.options) },
+                rules: {
+                  [options.eslintId]: eslintRuleConfig(
+                    options.eslintOptions ? options.eslintOptions(ctx.options) : ctx.options,
+                  ),
+                },
               },
             ],
             { filename: ctx.file.relativePath },
@@ -184,8 +208,8 @@ export function createEslintVueRule(options: {
               throw doctorInternalDiagnostics.DOC0013({ ruleId: options.doctorId, code });
             ctx.report(
               diagnostic({
-                why: delegatedMessages[options.doctorId] ?? message.message,
-                fix: delegatedSuggestions[options.doctorId] ?? message.message,
+                why: delegatedText(delegatedMessages[options.doctorId], message.message),
+                fix: delegatedText(delegatedSuggestions[options.doctorId], message.message),
               }),
               {
                 ruleId: options.doctorId,

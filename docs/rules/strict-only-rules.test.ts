@@ -3,6 +3,7 @@ import { nitroRulePack } from "../../src/rule-packs/nitro/index.js";
 import nuxtRulePack from "../../src/rule-packs/nuxt/rules/nuxt/index.js";
 import typescriptRulePack from "../../src/rule-packs/typescript/rules/index.js";
 import viteRulePack from "../../src/rule-packs/vite/rules/index.js";
+import vueRulePack from "../../src/rule-packs/vue/rules/vue/index.js";
 import { getRuleDocuments, rulesCollectionSource } from "./source.js";
 
 test("Strict-only Nitro rule pages run the rule through the Strict Preset", async () => {
@@ -53,6 +54,7 @@ test("Strict-only TypeScript and Vite rules select their Strict Presets", async 
 for (const [framework, pack] of [
   ["typescript", typescriptRulePack],
   ["vite", viteRulePack],
+  ["vue", vueRulePack],
 ] as const) {
   test(`${framework} commands match actual preset membership`, async () => {
     const recommended = new Set(pack.presets.recommended);

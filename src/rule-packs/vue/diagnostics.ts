@@ -27,6 +27,8 @@ export const vueDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0024", ruleId: "vue/template/prefer-true-attribute-shorthand" },
   { code: "VUE0025", ruleId: "vue/lifecycle/prefer-use-event-listener" },
   { code: "VUE0026", ruleId: "vue/composables/require-use-prefix" },
+  { code: "VUE0036", ruleId: "vue/component/max-props" },
+  { code: "VUE0037", ruleId: "vue/props/no-unused-props" },
 ]);
 
 export const diagnostics = vueDiagnosticRegistry.diagnostics;

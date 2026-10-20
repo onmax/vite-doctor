@@ -102,6 +102,7 @@ const strictOnlyRuleIndexes = [
   "src/rule-packs/nuxt/rules/nuxt/index.ts",
   "src/rule-packs/typescript/rules/index.ts",
   "src/rule-packs/vite/rules/index.ts",
+  "src/rule-packs/vue/rules/vue/index.ts",
 ];
 let parser: typeof import("oxc-parser") | null = null;
 
@@ -830,6 +831,19 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
       "HTML button type",
       "https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/button#type",
     );
+  }
+
+  if (rule.id === "vue/component/max-props") {
+    add(
+      "vuejs-ai vue-best-practices: component boundaries",
+      "https://github.com/vuejs-ai/skills/pull/54",
+    );
+    add("Vue slots", "https://vuejs.org/guide/components/slots.html");
+    add("eslint-plugin-vue max-props", "https://eslint.vuejs.org/rules/max-props.html");
+  }
+
+  if (rule.id === "vue/props/no-unused-props") {
+    add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }
 
   if (rule.id === "vue/template/prefer-true-attribute-shorthand") {
