@@ -76,7 +76,6 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0036", ruleId: "vue/component/max-props" },
   { code: "VUE0037", ruleId: "vue/props/no-unused-props" },
 
-
   { code: "VUE0027", ruleId: "vue/props/no-mutating-props" },
   { code: "VUE0028", ruleId: "vue/reactivity/no-computed-side-effects" },
   { code: "VUE0029", ruleId: "vue/template/no-v-if-with-v-for" },

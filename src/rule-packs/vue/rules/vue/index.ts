@@ -110,7 +110,6 @@ const rules = [
   maxProps,
   noUnusedProps,
 
-
   noMutatingProps,
   noComputedSideEffects,
   noVIfWithVFor,

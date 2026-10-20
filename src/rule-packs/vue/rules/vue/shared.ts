@@ -235,7 +235,6 @@ function joinEslintBatches(
   // This prevents a later multi-ID bridge from being attached to a batch whose
   // other IDs forced a different configuration.
   for (const [id, config] of Object.entries(rules)) {
-
     let batch = batches.find(
       (candidate) =>
         candidate.templateReferences === templateReferences &&

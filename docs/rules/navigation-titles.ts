@@ -172,7 +172,6 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/worker/no-node-api-in-worker": "Node APIs",
   "vite/worker/require-worker-url-pattern": "Worker URL pattern",
 
-
   "vue/component/max-props": "Prop surface size",
 
   "vue/attrs/no-duplicate-attr-inheritance": "Duplicate $attrs",
@@ -188,7 +187,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/props/no-unused-props": "Unused props",
 
   "vue/props/no-mutating-props": "Prop mutation",
-  "vue/props/no-required-prop-with-default": "Required defaults",  "vue/reactivity/defineprops-watch-getter": "Prop watch getters",
+  "vue/props/no-required-prop-with-default": "Required defaults",
+  "vue/reactivity/defineprops-watch-getter": "Prop watch getters",
 
   "vue/reactivity/no-computed-side-effects": "Computed effects",
 
