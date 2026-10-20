@@ -811,6 +811,17 @@ interface RuleUsefulLink {
   url: string;
 }
 
+const bridgedEslintVueRules: Record<string, string[]> = {
+  "vue/props/no-mutating-props": ["no-mutating-props"],
+  "vue/reactivity/no-computed-side-effects": [
+    "no-side-effects-in-computed-properties",
+    "no-async-in-computed-properties",
+  ],
+  "vue/template/no-v-if-with-v-for": ["no-use-v-if-with-v-for"],
+  "vue/attrs/no-duplicate-attr-inheritance": ["no-duplicate-attr-inheritance"],
+  "vue/props/no-required-prop-with-default": ["no-required-prop-with-default"],
+};
+
 function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   const links = new Map<string, RuleUsefulLink>();
   const add = (title: string, url: string) => links.set(url, { title, url });
@@ -842,6 +853,9 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
       "https://vuejs.org/guide/essentials/template-syntax.html#boolean-attributes",
     );
   }
+
+  for (const eslintRule of bridgedEslintVueRules[rule.id] ?? [])
+    add(`eslint-plugin-vue ${eslintRule}`, `https://eslint.vuejs.org/rules/${eslintRule}.html`);
 
   if (rule.id.includes("usefetch") || rule.id.includes("use-fetch")) {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");

@@ -20,11 +20,14 @@ test("Vue all-issues fixture reports the Vue rule pack", async () => {
 
   expect(uniqueDiagnosticIdentities(result)).toHaveLength(result.diagnostics.length);
   expect(diagnosticKeys(result, vueFixture)).toEqual([
+    "vue/props/no-mutating-props:app.vue",
     "vue/reactivity/defineprops-watch-getter:app.vue",
+    "vue/reactivity/no-computed-side-effects:app.vue",
     "vue/reactivity/no-ref-as-operand:app.vue",
     "vue/security/restrict-v-html:src/components/TemplateRefsAndHtml.vue",
     "vue/ssr/no-browser-api-in-setup:app.vue",
     "vue/template/html-button-has-type:src/components/TemplateRefsAndHtml.vue",
+    "vue/template/no-v-if-with-v-for:app.vue",
     "vue/template/prefer-use-template-ref:src/components/TemplateRefsAndHtml.vue",
   ]);
 });

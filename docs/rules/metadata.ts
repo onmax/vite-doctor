@@ -1973,6 +1973,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/attrs/no-duplicate-attr-inheritance": {
+    description:
+      'Flags single-root components that forward `v-bind="$attrs"` to an inner element while Vue still applies the same attrs to the root.',
+    why: "With `inheritAttrs` left on, fallthrough attrs land on the component root and on the element that binds `$attrs`, so classes and ids are duplicated and bubbling listeners such as `@click` run twice.",
+    recommendedReplacement:
+      "Add `defineOptions({ inheritAttrs: false })` so attrs reach only the element that binds `$attrs`.",
+    examples: [
+      {
+        title: "Turn off attribute inheritance when forwarding $attrs",
+        language: "vue",
+        invalid:
+          '<template>\n  <label class="field">\n    <input v-bind="$attrs">\n  </label>\n</template>',
+        valid:
+          '<script setup lang="ts">\ndefineOptions({ inheritAttrs: false })\n</script>\n\n<template>\n  <label class="field">\n    <input v-bind="$attrs">\n  </label>\n</template>',
+      },
+    ],
+  },
   "vue/composables/require-use-prefix": {
     description:
       "Finds exported functions that need a component setup context but are not named like composables.",
@@ -2078,6 +2095,38 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/props/no-mutating-props": {
+    description: "Flags writes to props, including deep writes to objects the parent passed in.",
+    why: "Props belong to the parent. Vue rejects a direct write such as `props.count++` in development, and in production the parent's next render overwrites it. A deep write such as `props.user.name = 'x'` silently changes the parent's object.",
+    recommendedReplacement:
+      "Emit an event or use `defineModel()` so the parent applies the change, or copy the prop into local state when the child needs its own editable value.",
+    examples: [
+      {
+        title: "Let the parent own prop updates",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nconst props = defineProps<{ user: { name: string } }>()\nfunction rename(name: string) {\n  props.user.name = name\n}\n</script>',
+        valid:
+          "<script setup lang=\"ts\">\nconst props = defineProps<{ user: { name: string } }>()\nconst emit = defineEmits<{ rename: [name: string] }>()\nfunction rename(name: string) {\n  emit('rename', name)\n}\n</script>",
+      },
+    ],
+  },
+  "vue/props/no-required-prop-with-default": {
+    description: "Flags props declared as required that also define a default value.",
+    why: 'Parents that omit a required prop get a type error with type-based props and Vue\'s "Missing required prop" warning in development, yet the default still fills the value at runtime, so the declared contract and the actual behavior disagree.',
+    recommendedReplacement:
+      "Make the prop optional when the default is the intended fallback, or remove the default when every parent must pass the prop.",
+    examples: [
+      {
+        title: "Make defaulted props optional",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nconst props = withDefaults(defineProps<{ size: string }>(), {\n  size: 'md',\n})\n</script>",
+        valid:
+          "<script setup lang=\"ts\">\nconst props = withDefaults(defineProps<{ size?: string }>(), {\n  size: 'md',\n})\n</script>",
+      },
+    ],
+  },
   "vue/reactivity/defineprops-watch-getter": {
     description:
       "Finds Vue reactivity code that can be written with a clearer framework-supported pattern.",
@@ -2091,6 +2140,23 @@ export const ruleDocumentationMetadata = {
           '<script setup lang="ts">\nconst props = defineProps<{ id: string }>()\nwatch(props.id, loadUser)\n</script>',
         valid:
           '<script setup lang="ts">\nconst props = defineProps<{ id: string }>()\nwatch(() => props.id, loadUser)\n</script>',
+      },
+    ],
+  },
+  "vue/reactivity/no-computed-side-effects": {
+    description:
+      "Flags computed getters that write state, sort or reverse a reactive array in place, start timers, or return a Promise.",
+    why: "Computed getters are lazy and cached, so side effects inside them run at unpredictable times, `.sort()` and `.reverse()` reorder the source array in place, and an async getter makes the computed value a Promise instead of the data.",
+    recommendedReplacement:
+      "Keep the getter pure and synchronous: sort a copy, move writes and timers into a watcher or event handler, and load async data into a ref that the computed reads.",
+    examples: [
+      {
+        title: "Sort a copy inside computed",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nconst items = ref([3, 1, 2])\nconst sorted = computed(() => items.value.sort())\n</script>',
+        valid:
+          '<script setup lang="ts">\nconst items = ref([3, 1, 2])\nconst sorted = computed(() => items.value.toSorted())\n</script>',
       },
     ],
   },
@@ -2257,6 +2323,22 @@ export const ruleDocumentationMetadata = {
         language: "vue",
         invalid: '<template>\n  <button @click="save">Save</button>\n</template>',
         valid: '<template>\n  <button type="button" @click="save">Save</button>\n</template>',
+      },
+    ],
+  },
+  "vue/template/no-v-if-with-v-for": {
+    description: "Flags `v-if` conditions that read the `v-for` variable on the same element.",
+    why: "In Vue 3, `v-if` has higher precedence than `v-for` on the same element, so the condition runs before the loop and the loop variable is undefined: the render throws or hides the whole list instead of filtering it.",
+    recommendedReplacement:
+      "Loop over a filtered computed, or move `v-for` to a wrapping `<template>` and keep `v-if` on the inner element.",
+    examples: [
+      {
+        title: "Filter before looping",
+        language: "vue",
+        invalid:
+          '<template>\n  <li v-for="item in items" :key="item.id" v-if="item.active">{{ item.name }}</li>\n</template>',
+        valid:
+          '<template>\n  <template v-for="item in items" :key="item.id">\n    <li v-if="item.active">{{ item.name }}</li>\n  </template>\n</template>',
       },
     ],
   },
