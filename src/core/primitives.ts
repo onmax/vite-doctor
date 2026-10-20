@@ -505,6 +505,121 @@ export interface FileFacts {
   templateRefs: TemplateFact[];
   macros: MacroFact[];
   diagnosticsHints: string[];
+  /** Component facts of a Vue SFC with a script or template. */
+  component?: ComponentFacts;
+}
+
+/** A component a Vue SFC template renders, and what the template passes to it. */
+export interface ComponentUsageFact {
+  /** The tag as written, such as `UserCard` or `user-card`. */
+  tag: string;
+  /** The tag name in the start tag. */
+  range: SourceRange;
+  /** Static attributes, named as written. */
+  attributes: Array<{ name: string; value?: string; range: SourceRange }>;
+  /**
+   * `:name` bindings with a static argument, named as written. `v-model` lands here as
+   * `modelValue` and `v-model:name` as `name`, both with `model: true`.
+   */
+  bindings: Array<{ name: string; expression: string; model?: boolean; range: SourceRange }>;
+  /** Object spreads, `v-bind="attrs"` and `v-on="handlers"`, and dynamic arguments such as `:[name]`. */
+  spreads: Array<{ directive: "bind" | "on"; expression: string; range: SourceRange }>;
+  /** `@event` listeners with a static argument, named as written. */
+  listeners: Array<{ event: string; expression?: string; range: SourceRange }>;
+  /** Other directives on the element, such as `if`, `show`, `slot`, `for`, or a custom directive. */
+  directives: string[];
+  /** Names that an enclosing `v-for` or `v-slot` introduces, or a `v-for` on this element. */
+  scope: string[];
+  /** Whether this element or an ancestor has `v-for`. */
+  inFor: boolean;
+}
+
+export interface ComponentPropFact {
+  name: string;
+  /** Whether the declaration gives the prop a default value. */
+  default: boolean;
+  range?: SourceRange;
+}
+
+/** What a Vue SFC declares in `<script setup>` and renders in its template. */
+export interface ComponentFacts {
+  /** Props `<script setup>` declares, or `undefined` when they cannot be read statically. */
+  props?: ComponentPropFact[];
+  /** The name `const props = defineProps()` binds. */
+  propsBinding?: string;
+  /** Destructured props, local name to prop name. */
+  propAliases?: Record<string, string>;
+  /** Events `<script setup>` declares, or `undefined` when they cannot be read statically. */
+  emits?: string[];
+  /** The name `const emit = defineEmits()` binds. */
+  emitBinding?: string;
+  /** `defineModel()` declarations, with the prop name each one adds. */
+  models: Array<{ name: string; binding?: string; default: boolean; range?: SourceRange }>;
+  /** Value imports in `<script setup>`, which its template can render as tags. */
+  imports: Array<{ local: string; imported: string; source: string }>;
+  /**
+   * Whether the component runs code of its own: `<script setup>` statements other than imports,
+   * type declarations, and macro declarations, macro defaults included, or any `<script>` code.
+   */
+  ownLogic: boolean;
+  /**
+   * Whether the template renders or controls something besides component usages, `<slot>`
+   * outlets, and slot templates: an element, text, an interpolation, or a built-in component.
+   */
+  ownMarkup: boolean;
+  /** Template root nodes, comments excluded. */
+  rootNodes: number;
+  /** Equality comparisons between two member paths as written, such as `id === props.activeId`. */
+  comparisons: Array<{ left: string; right: string; in: "script" | "template" }>;
+  /** Components the template renders, in source order. */
+  usages: ComponentUsageFact[];
+  /** Imported names the component references outside a template tag, in script code or template expressions. */
+  bindingReferences: string[];
+}
+
+/** A component usage in an SFC template, resolved to the SFC it renders when Doctor can prove it. */
+export interface ComponentUsageEdge {
+  /** The SFC whose template contains the usage. */
+  from: string;
+  usage: ComponentUsageFact;
+  /** The rendered SFC. */
+  target?: string;
+  /** How Doctor resolved `target`. */
+  resolvedBy?: "import" | "nuxt-components";
+}
+
+export interface ComponentNode {
+  file: string;
+  relativePath: string;
+  sourceKind: SourceFileHandle["sourceKind"];
+  facts: ComponentFacts;
+  /** Usages in this component's template. */
+  renders: ComponentUsageEdge[];
+  /** Resolved usages of this component in other templates. */
+  callers: ComponentUsageEdge[];
+  /**
+   * Files that import this SFC other than as a `<script setup>` tag binding: script modules,
+   * re-exports, dynamic imports, Options API `<script>` imports, or SFCs that also reference the
+   * binding in code. Usages through them are invisible to `callers`.
+   */
+  indirectImporters: string[];
+}
+
+/** Project Inventory of which Vue SFCs render which components, built from File Facts. */
+export interface ComponentUsageGraph {
+  /** Every Vue SFC in the Doctor Run with component facts, keyed by absolute path. */
+  components: ReadonlyMap<string, ComponentNode>;
+  /**
+   * Usages Doctor cannot resolve to an SFC in the run: globally registered or auto-imported
+   * components without a known registry entry, package components, and namespaced tags.
+   */
+  unresolved: ComponentUsageEdge[];
+}
+
+/** Project Inventory derived from the Doctor Run's source files. */
+export interface RuleInventory {
+  /** Available to `workspace` and `manifest` Rules, which see the whole project. */
+  componentUsage(): Promise<ComponentUsageGraph>;
 }
 
 export interface GraphEdge {
@@ -686,6 +801,8 @@ export interface RuleContext {
   fs: RuleFileSystem;
   /** Run-scoped memory shared by all Rules. Entries carry the Rule inputs read to compute them. */
   cache: RuleCache;
+  /** Project Inventory derived from the run's source files. Results that read it are not cached. */
+  inventory: RuleInventory;
   helpers: DoctorHelpers;
   range(nodeOrStart: unknown, end?: number): SourceRange | undefined;
 }

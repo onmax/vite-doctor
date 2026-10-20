@@ -26,6 +26,13 @@ export { maxProps } from "./max-props.js";
 export { noUnusedProps } from "./no-unused-props.js";
 export { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
+
+export { noMutatingProps } from "./no-mutating-props.js";
+export { noComputedSideEffects } from "./no-computed-side-effects.js";
+export { noVIfWithVFor } from "./no-v-if-with-v-for.js";
+export { noDuplicateAttrInheritance } from "./no-duplicate-attr-inheritance.js";
+export { noRequiredPropWithDefault } from "./no-required-prop-with-default.js";
+
 export { noWatchUseAttrs } from "./no-watch-use-attrs.js";
 export { noReactiveDestructure } from "./no-reactive-destructure.js";
 export { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
@@ -58,9 +65,17 @@ import { maxProps } from "./max-props.js";
 import { noUnusedProps } from "./no-unused-props.js";
 import { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
+
+import { noMutatingProps } from "./no-mutating-props.js";
+import { noComputedSideEffects } from "./no-computed-side-effects.js";
+import { noVIfWithVFor } from "./no-v-if-with-v-for.js";
+import { noDuplicateAttrInheritance } from "./no-duplicate-attr-inheritance.js";
+import { noRequiredPropWithDefault } from "./no-required-prop-with-default.js";
+
 import { noWatchUseAttrs } from "./no-watch-use-attrs.js";
 import { noReactiveDestructure } from "./no-reactive-destructure.js";
 import { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
+
 import { defineRulePack } from "../../../../core/index.js";
 
 const rules = [
@@ -91,8 +106,16 @@ const rules = [
   noIndexKeyOnStatefulList,
   noUnusedTranslations,
   noUntranslatedText,
+
   maxProps,
   noUnusedProps,
+
+
+  noMutatingProps,
+  noComputedSideEffects,
+  noVIfWithVFor,
+  noDuplicateAttrInheritance,
+  noRequiredPropWithDefault,
   noWatchUseAttrs,
   noReactiveDestructure,
   preferComputedOverWatchAssign,

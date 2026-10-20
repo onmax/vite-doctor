@@ -26,14 +26,38 @@ type DelegatedText = string | ((eslintMessage: string) => string);
 
 export const delegatedMessages: Record<string, DelegatedText> = {
   "vue/reactivity/no-ref-as-operand": "Refs used as script operands must be unwrapped with .value.",
+
   "vue/props/no-unused-props": (message) =>
     `The ${unusedPropLabel(message)} is declared but never read in this component's script, template or style v-bind(). An unread prop is dead contract: callers can pass it and nothing changes. It is usually left behind when a refactor moved or dropped its use.`,
+
+  "vue/props/no-mutating-props":
+    "Props belong to the parent. A direct write such as `props.count++` is rejected with a readonly warning in development and, in production, lasts only until the parent's next render overwrites it. A deep write such as `props.user.name = 'x'` or `v-model=\"props.user.name\"` silently changes the parent's object behind its back.",
+  "vue/reactivity/no-computed-side-effects":
+    "Computed getters are lazy and cached: Vue reruns them only when a dependency changed and the value is read, so writes, timers, or `.sort()`/`.reverse()` on a reactive array inside one run at unpredictable times, and `.sort()`/`.reverse()` reorder the source array in place. An `async` getter, or one that builds a Promise, makes the computed value a Promise instead of the data.",
+  "vue/template/no-v-if-with-v-for":
+    'In Vue 3, `v-if` has higher precedence than `v-for` on the same element, so the condition runs before the loop and cannot see the loop variable. A condition such as `v-if="item.active"` reads an undefined `item` and throws during render or hides the whole list instead of filtering it.',
+  "vue/attrs/no-duplicate-attr-inheritance":
+    'With `inheritAttrs` left on, Vue applies fallthrough attrs to the component root as well as to the inner element that binds `v-bind="$attrs"`. Classes and ids land on two elements, and bubbling listeners such as `@click` run twice: once on the inner element and again on the root.',
+  "vue/props/no-required-prop-with-default":
+    'A prop that is required and also has a default contradicts itself. Parents that omit it get a type error with type-based props and Vue\'s "Missing required prop" warning in development, yet the default still fills the value at runtime, so the declared contract and the actual behavior disagree.',
 };
 
 export const delegatedSuggestions: Record<string, DelegatedText> = {
   "vue/reactivity/no-ref-as-operand": "Use .value in script expressions.",
+
   "vue/props/no-unused-props": (message) =>
     `Remove the ${unusedPropLabel(message)} from the props declaration and from the parents that pass it, or restore the read the component lost. Once it is no longer declared, a value parents still pass falls through to the root element as an attribute. If the declaration exists to stop that, keep it and suppress this diagnostic with that reason.`,
+
+  "vue/props/no-mutating-props":
+    "Emit an event (`emit('update:count', next)`) or declare the value with `defineModel()` so the parent applies the change, or copy the prop into local state (`const draft = ref(props.count)`) when the child needs its own editable value.",
+  "vue/reactivity/no-computed-side-effects":
+    "Keep the getter pure and synchronous: sort a copy (`[...items.value].sort()` or `items.value.toSorted()`), move writes and timers into a `watch` or an event handler, and load async data into a ref from a watcher or composable that the computed then reads.",
+  "vue/template/no-v-if-with-v-for":
+    'Loop over a filtered computed (`const activeItems = computed(() => items.value.filter((item) => item.active))`), or move `v-for` to a wrapping `<template v-for="item in items">` and keep `v-if` on the inner element.',
+  "vue/attrs/no-duplicate-attr-inheritance":
+    'Add `defineOptions({ inheritAttrs: false })` (or `inheritAttrs: false` in the component options) so attrs reach only the element that binds `v-bind="$attrs"`.',
+  "vue/props/no-required-prop-with-default":
+    "Make the prop optional (`title?: string`, or `required: false`) when the default is the intended fallback, or remove the default when every parent must pass the prop.",
 };
 
 function unusedPropLabel(message: string): string {
@@ -146,6 +170,8 @@ export function createEslintVueRule(options: {
   eslintId: string | readonly string[];
   /** Maps the Doctor Rule's options to one eslint rule's options. Defaults to passing them through. */
   eslintOptions?: (ruleOptions: unknown, eslintId: string) => unknown;
+  /** Drops eslint messages that Doctor does not treat as a defect, such as a style-only variant. */
+  keepMessage?: (message: EslintMessage, ctx: RuleContext) => boolean;
   meta: DoctorRule["meta"];
   /** Set for rules that read template expressions, so TypeScript syntax in them is not lost. */
   templateReferences?: boolean;
@@ -167,6 +193,7 @@ export function createEslintVueRule(options: {
           const messages = (await Promise.all(batches.map(runEslintBatch))).flat();
           for (const message of messages) {
             if (!message.ruleId || !eslintIds.includes(message.ruleId)) continue;
+            if (options.keepMessage && !options.keepMessage(message, ctx)) continue;
             reportEslintMessage(ctx, options.doctorId, options.meta, message);
           }
         },
@@ -176,7 +203,7 @@ export function createEslintVueRule(options: {
 }
 
 type EslintRuleConfig = "error" | ["error", ...unknown[]];
-type EslintMessage = import("eslint").Linter.LintMessage;
+export type EslintMessage = import("eslint").Linter.LintMessage;
 
 interface EslintBatch {
   text: string;
@@ -203,7 +230,12 @@ function joinEslintBatches(
   // Each eslint ID is owned by one compatible batch. A multi-ID bridge can join
   // several existing batches when those IDs were split by incompatible options.
   const joined: EslintBatch[] = [];
+  const pending = new Set(Object.keys(rules));
+  // Prefer an existing batch that already owns each ID with this exact config.
+  // This prevents a later multi-ID bridge from being attached to a batch whose
+  // other IDs forced a different configuration.
   for (const [id, config] of Object.entries(rules)) {
+
     let batch = batches.find(
       (candidate) =>
         candidate.templateReferences === templateReferences &&

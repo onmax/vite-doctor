@@ -172,17 +172,28 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/worker/no-node-api-in-worker": "Node APIs",
   "vite/worker/require-worker-url-pattern": "Worker URL pattern",
 
+
   "vue/component/max-props": "Prop surface size",
+
+  "vue/attrs/no-duplicate-attr-inheritance": "Duplicate $attrs",
   "vue/attrs/no-watch-use-attrs": "Watching attrs",
+
   "vue/composables/require-use-prefix": "Composable names",
   "vue/i18n/no-untranslated-text": "Untranslated text",
   "vue/i18n/no-unused-translations": "Unused translations",
   "vue/lifecycle/no-mutation-in-onupdated": "onUpdated writes",
   "vue/lifecycle/prefer-use-event-listener": "useEventListener",
   "vue/lifecycle/require-cleanup": "Lifecycle cleanup",
+
   "vue/props/no-unused-props": "Unused props",
-  "vue/reactivity/defineprops-watch-getter": "Prop watch getters",
+
+  "vue/props/no-mutating-props": "Prop mutation",
+  "vue/props/no-required-prop-with-default": "Required defaults",  "vue/reactivity/defineprops-watch-getter": "Prop watch getters",
+
+  "vue/reactivity/no-computed-side-effects": "Computed effects",
+
   "vue/reactivity/no-reactive-destructure": "Reactive destructure",
+
   "vue/reactivity/no-ref-as-operand": "Refs as operands",
   "vue/reactivity/no-setup-props-destructure": "Props destructuring",
   "vue/reactivity/prefer-composable-ref-return": "Composable refs",
@@ -196,6 +207,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/style/prefer-props-destructure-defaults": "Props defaults",
   "vue/style/prefer-type-props": "Type-based props",
   "vue/template/html-button-has-type": "Button type",
+  "vue/template/no-v-if-with-v-for": "v-if with v-for",
   "vue/template/no-index-key-on-stateful-list": "Stateful list keys",
   "vue/template/prefer-same-name-prop-shorthand": "Prop shorthand",
   "vue/template/prefer-true-attribute-shorthand": "Boolean shorthand",
