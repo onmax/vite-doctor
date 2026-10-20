@@ -126,7 +126,11 @@ function topLevelMacroCalls(body: AnyNode[] | undefined, name: string): AnyNode[
           if (call.callee.name === name) calls.push(call);
           else if (name === "defineProps" && call.callee.name === "withDefaults") {
             const inner = call.arguments?.[0];
-            if (inner?.type === "CallExpression" && inner.callee?.type === "Identifier" && inner.callee.name === name)
+            if (
+              inner?.type === "CallExpression" &&
+              inner.callee?.type === "Identifier" &&
+              inner.callee.name === name
+            )
               calls.push(inner);
           }
         }
@@ -138,6 +142,20 @@ function topLevelMacroCalls(body: AnyNode[] | undefined, name: string): AnyNode[
       statement.expression.callee.name === name
     ) {
       calls.push(statement.expression);
+    } else if (
+      statement.type === "ExpressionStatement" &&
+      name === "defineProps" &&
+      statement.expression?.type === "CallExpression" &&
+      statement.expression.callee?.type === "Identifier" &&
+      statement.expression.callee.name === "withDefaults"
+    ) {
+      const inner = statement.expression.arguments?.[0];
+      if (
+        inner?.type === "CallExpression" &&
+        inner.callee?.type === "Identifier" &&
+        inner.callee.name === name
+      )
+        calls.push(inner);
     }
   }
   return calls;

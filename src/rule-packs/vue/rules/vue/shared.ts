@@ -204,10 +204,23 @@ function joinEslintBatches(
   // several existing batches when those IDs were split by incompatible options.
   const joined: EslintBatch[] = [];
   for (const [id, config] of Object.entries(rules)) {
-    let batch = batches.find((candidate) => candidate.templateReferences === templateReferences && sameConfig(candidate.rules[id]!, config));
-    if (!batch) batch = batches.find((candidate) => candidate.templateReferences === templateReferences && !(id in candidate.rules));
+    let batch = batches.find(
+      (candidate) =>
+        candidate.templateReferences === templateReferences &&
+        sameConfig(candidate.rules[id]!, config),
+    );
+    if (!batch)
+      batch = batches.find(
+        (candidate) =>
+          candidate.templateReferences === templateReferences && !(id in candidate.rules),
+      );
     if (!batch) {
-      batch = { text: file.text, filename: file.relativePath, rules: { [id]: config }, templateReferences };
+      batch = {
+        text: file.text,
+        filename: file.relativePath,
+        rules: { [id]: config },
+        templateReferences,
+      };
       batches.push(batch);
     } else {
       batch.rules[id] ??= config;
@@ -222,29 +235,32 @@ function sameConfig(left: EslintRuleConfig, right: EslintRuleConfig): boolean {
 }
 
 function runEslintBatch(batch: EslintBatch): Promise<EslintMessage[]> {
-  return (batch.messages ??= eslintVueRuntime(batch.templateReferences).then(({ linter, languageOptions, plugin }) =>
-    linter.verify(
-      batch.text,
-      [
-        {
-          name: "vite-doctor/eslint-plugin-vue",
-          files: ["**/*.vue"],
-          languageOptions,
-          plugins: { vue: plugin },
-          rules: batch.rules,
-        },
-      ],
-      { filename: batch.filename },
-    ),
+  return (batch.messages ??= eslintVueRuntime(batch.templateReferences).then(
+    ({ linter, languageOptions, plugin }) =>
+      linter.verify(
+        batch.text,
+        [
+          {
+            name: "vite-doctor/eslint-plugin-vue",
+            files: ["**/*.vue"],
+            languageOptions,
+            plugins: { vue: plugin },
+            rules: batch.rules,
+          },
+        ],
+        { filename: batch.filename },
+      ),
   ));
 }
 
-const eslintVueRuntimePromises = new Map<boolean, Promise<{
-      linter: import("eslint").Linter;
-      languageOptions: import("eslint").Linter.LanguageOptions;
-      plugin: any;
-    }>
-  }>>();
+const eslintVueRuntimePromises = new Map<
+  boolean,
+  Promise<{
+    linter: import("eslint").Linter;
+    languageOptions: import("eslint").Linter.LanguageOptions;
+    plugin: any;
+  }>
+>();
 
 function eslintVueRuntime(templateReferences = false) {
   let promise = eslintVueRuntimePromises.get(templateReferences);
@@ -270,14 +286,14 @@ function eslintVueRuntime(templateReferences = false) {
             jsx: tsParserRuntime,
             ts: tsParserRuntime,
             tsx: tsParserRuntime,
-            ...(templateReferences ? { "<template>": tsParserRuntime } : {}),
+            "<template>": templateReferences ? tsParserRuntime : "espree",
           },
           ecmaVersion: "latest",
           sourceType: "module",
         },
       },
     };
-  }));
+  });
   eslintVueRuntimePromises.set(templateReferences, promise);
   return promise;
 }
