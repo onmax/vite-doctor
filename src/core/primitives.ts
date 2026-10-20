@@ -521,7 +521,13 @@ export interface ComponentUsageFact {
    * `:name` bindings with a static argument, named as written. `v-model` lands here as
    * `modelValue` and `v-model:name` as `name`, both with `model: true`.
    */
-  bindings: Array<{ name: string; expression: string; model?: boolean; range: SourceRange }>;
+  bindings: Array<{
+    name: string;
+    expression: string;
+    model?: boolean;
+    modifiers?: boolean;
+    range: SourceRange;
+  }>;
   /** Object spreads, `v-bind="attrs"` and `v-on="handlers"`, and dynamic arguments such as `:[name]`. */
   spreads: Array<{ directive: "bind" | "on"; expression: string; range: SourceRange }>;
   /** `@event` listeners with a static argument, named as written. */

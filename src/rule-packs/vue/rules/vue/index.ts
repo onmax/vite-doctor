@@ -27,6 +27,9 @@ export { noUnusedProps } from "./no-unused-props.js";
 export { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
+export { noPropRelay } from "./no-prop-relay.js";
+export { noUnpassedProps } from "./no-unpassed-props.js";
+export { preferStableListProps } from "./prefer-stable-list-props.js";
 export { noMutatingProps } from "./no-mutating-props.js";
 export { noComputedSideEffects } from "./no-computed-side-effects.js";
 export { noVIfWithVFor } from "./no-v-if-with-v-for.js";
@@ -66,6 +69,9 @@ import { noUnusedProps } from "./no-unused-props.js";
 import { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
+import { noPropRelay } from "./no-prop-relay.js";
+import { noUnpassedProps } from "./no-unpassed-props.js";
+import { preferStableListProps } from "./prefer-stable-list-props.js";
 import { noMutatingProps } from "./no-mutating-props.js";
 import { noComputedSideEffects } from "./no-computed-side-effects.js";
 import { noVIfWithVFor } from "./no-v-if-with-v-for.js";
@@ -107,6 +113,9 @@ const rules = [
   noUnusedTranslations,
   noUntranslatedText,
 
+  noPropRelay,
+  noUnpassedProps,
+  preferStableListProps,
   maxProps,
   noUnusedProps,
 
@@ -137,6 +146,9 @@ const strictOnlyRules = [
   maxProps,
   noUnusedProps,
   preferComputedOverWatchAssign,
+  noPropRelay,
+  noUnpassedProps,
+  preferStableListProps,
 ];
 
 const vueRulePack = defineRulePack({
