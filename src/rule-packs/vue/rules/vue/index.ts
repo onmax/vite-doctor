@@ -82,6 +82,8 @@ const rules = [
   requireUsePrefix,
   noUnusedTranslations,
   noUntranslatedText,
+  maxProps,
+  noUnusedProps,
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,
@@ -106,12 +108,12 @@ const vueRulePack = defineRulePack({
   name: "vite-doctor/vue",
   version: "0.0.0",
   activation: { frameworks: ["vue", "nuxt"] },
-  rules: [...rules, ...strictOnlyRules],
+  rules,
   presets: {
-    recommended: [...rules, ...strictOnlyRules]
+    recommended: rules
       .map((rule) => rule.meta.id)
       .filter((id) => !strictOnlyRules.some((rule) => rule.meta.id === id)),
-    strict: [...rules, ...strictOnlyRules].map((rule) => rule.meta.id),
+    strict: rules.map((rule) => rule.meta.id),
   },
 });
 
