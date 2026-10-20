@@ -131,10 +131,7 @@ function readScriptDeclarations(
 }
 
 function isMacroCall(statement: AnyNode, name: string): boolean {
-  let call =
-    statement.type === "ExpressionStatement"
-      ? statement.expression
-      : undefined;
+  let call = statement.type === "ExpressionStatement" ? statement.expression : undefined;
   if (statement.type === "VariableDeclaration")
     return (statement.declarations ?? []).some((declarator: AnyNode) =>
       isMacroInitializer(declarator.init, name),
@@ -206,8 +203,7 @@ function readMacroStatement(
 ): boolean {
   if (statement.type === "ExpressionStatement")
     return readMacroCall(facts, statement.expression, undefined, types, rangeOf);
-  if (statement.type !== "VariableDeclaration" || !statement.declarations?.length)
-    return false;
+  if (statement.type !== "VariableDeclaration" || !statement.declarations?.length) return false;
   let recognized = false;
   let allRecognized = true;
   for (const declarator of statement.declarations) {
