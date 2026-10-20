@@ -448,20 +448,42 @@ function registersDoctorModule(appRoot: string, nuxt: NuxtProjectInfo): boolean 
     ...nuxt.appRoots,
     ...nuxt.layers.map((layer) => resolve(appRoot, layer.root)),
   ]);
-  return [...roots].some((root) => registersDoctorModuleInConfig(readNuxtConfigText(root).anyFormat));
+  return [...roots].some((root) =>
+    registersDoctorModuleInConfig(readNuxtConfigText(root).anyFormat),
+  );
 }
 
 function registersDoctorModuleInConfig(config: string | null): boolean {
   if (!config) return false;
   const ts = loadTypeScript();
   const source = ts.createSourceFile("nuxt.config.ts", config, ts.ScriptTarget.Latest, true);
+  const bindings = new Map<string, import("typescript").Expression>();
+  const collect = (node: import("typescript").Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      bindings.set(node.name.text, node.initializer);
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(source);
   let registered = false;
+  const resolving = new Set<string>();
   const visit = (node: import("typescript").Node) => {
     if (registered) return;
-    if (ts.isPropertyAssignment(node) && node.name.getText(source).replace(/["']/g, "") === "modules") {
+    if (
+      ts.isPropertyAssignment(node) &&
+      node.name.getText(source).replace(/["']/g, "") === "modules"
+    ) {
       const inspect = (value: import("typescript").Expression) => {
         if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
           registered ||= value.text === "vite-doctor/nuxt";
+        } else if (ts.isIdentifier(value)) {
+          if (resolving.has(value.text)) return;
+          const binding = bindings.get(value.text);
+          if (binding) {
+            resolving.add(value.text);
+            inspect(binding);
+            resolving.delete(value.text);
+          }
         } else if (ts.isArrayLiteralExpression(value)) {
           value.elements.forEach((element) => {
             if (ts.isSpreadElement(element)) inspect(element.expression);

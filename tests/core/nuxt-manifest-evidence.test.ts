@@ -56,3 +56,15 @@ test("a prepared manifest or an app without the module has no manifest gap", asy
     (await detectProject(withoutModule, "auto", { nuxt: "4.1.0" })).evidenceGaps,
   ).toBeUndefined();
 });
+
+test("detects the Doctor module through a static modules binding", async () => {
+  const root = nuxtApp({
+    "nuxt.config.ts": `const doctorModules = ["vite-doctor/nuxt"];
+export default defineNuxtConfig({ modules: doctorModules });
+`,
+  });
+
+  expect((await detectProject(root, "auto", { nuxt: "4.1.0" })).evidenceGaps).toEqual([
+    expect.objectContaining({ source: "vite-doctor/nuxt" }),
+  ]);
+});
