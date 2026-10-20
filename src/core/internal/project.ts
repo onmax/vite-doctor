@@ -462,11 +462,7 @@ function isNuxtLayerAppRoot(
   if (candidateRoot === appRoot) return false;
   const config = readNuxtConfigText(appRoot).anyFormat;
   if (!config) return false;
-  const extendsValues = [...config.matchAll(/\bextends\s*:\s*(?:\[([^\]]*)\]|(['"])(.*?)\2)/gs)]
-    .flatMap((match) =>
-      match[1] ? [...match[1].matchAll(/['"]([^'"]+)['"]/g)].map((item) => item[1]) : [match[3]],
-    )
-    .filter((value): value is string => Boolean(value));
+  const extendsValues = readNuxtExtendsValues(config);
   const candidatePackage = owningWorkspacePackage(
     workspacePackages,
     relative(workspaceRoot, candidateRoot),
@@ -476,6 +472,33 @@ function isNuxtLayerAppRoot(
     const resolved = resolve(appRoot, value);
     return resolved === candidateRoot || value === candidate?.name;
   });
+}
+
+function readNuxtExtendsValues(config: string): string[] {
+  const ts = loadTypeScript();
+  const source = ts.createSourceFile("nuxt.config.ts", config, ts.ScriptTarget.Latest, true);
+  const values: string[] = [];
+  const visit = (node: import("typescript").Node) => {
+    if (ts.isPropertyAssignment(node)) {
+      const name = node.name;
+      const key = ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+      if (key === "extends") {
+        const value = node.initializer;
+        if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+          values.push(value.text);
+        } else if (ts.isArrayLiteralExpression(value)) {
+          for (const element of value.elements) {
+            if (ts.isStringLiteral(element) || ts.isNoSubstitutionTemplateLiteral(element)) {
+              values.push(element.text);
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return values;
 }
 
 function registersDoctorModule(appRoot: string, nuxt: NuxtProjectInfo): boolean {

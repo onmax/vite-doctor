@@ -84,6 +84,20 @@ test("detects the Doctor module from a workspace Nuxt layer", async () => {
   ]);
 });
 
+test("ignores commented-out workspace Nuxt layer references", async () => {
+  const root = nuxtApp({
+    "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+    "nuxt.config.ts": `// extends: ["./packages/base-layer"]\nexport default defineNuxtConfig({});\n`,
+    "packages/base-layer/package.json": JSON.stringify({
+      name: "base-layer",
+      devDependencies: { nuxt: "^4.1.0" },
+    }),
+    "packages/base-layer/nuxt.config.ts": withModule,
+  });
+
+  expect((await detectProject(root, "auto", { nuxt: "4.1.0" })).evidenceGaps).toBeUndefined();
+});
+
 test("detects the Doctor module through a static modules binding", async () => {
   const root = nuxtApp({
     "nuxt.config.ts": `const doctorModules = ["vite-doctor/nuxt"];
