@@ -55,6 +55,10 @@ test.each([
   ["an object property key", '<Row v-for="(value, name) in record" :key="name" />'],
   ["a key alias named key", '<Row v-for="(value, key) in record" :key="key" />'],
   ["an object property alias named index", '<Row v-for="(value, index) in record" :key="index" />'],
+  [
+    "an inline object property alias named index",
+    '<Row v-for="(value, index) in { foo: 1 }" :key="index" />',
+  ],
   ["an array third alias", '<Row v-for="(item, key, index) in items" :key="index" />'],
   ["a numeric range", '<Row v-for="(n, i) in 5" :key="i" />'],
   ["an inline array literal", "<Row v-for=\"(label, i) in ['a', 'b']\" :key=\"i\" :label />"],

@@ -156,6 +156,7 @@ function indexAliasUsedByKey(
   if ((sourceKind === "object" || objectSource) && thirdName) candidates.add(thirdName);
   const secondName = aliasIdentifier(second);
   if (
+    sourceKind !== "object" &&
     !objectSource &&
     secondName &&
     (sourceKind === "array-like" || INDEX_LIKE_ALIAS.test(secondName))
