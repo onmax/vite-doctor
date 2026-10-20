@@ -102,6 +102,7 @@ const strictOnlyRuleIndexes = [
   "src/rule-packs/nuxt/rules/nuxt/index.ts",
   "src/rule-packs/typescript/rules/index.ts",
   "src/rule-packs/vite/rules/index.ts",
+  "src/rule-packs/vue/rules/vue/index.ts",
 ];
 let parser: typeof import("oxc-parser") | null = null;
 
