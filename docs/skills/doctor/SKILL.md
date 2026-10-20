@@ -36,6 +36,10 @@ also need a reliable exit code.
 
 The standalone CLI also works for Nuxt one-off runs, CI fallback, or monorepo scans.
 
+Never run `pnpm doctor` or `npm doctor` to run Doctor. Both commands run the package manager's own health check, which passes without running Doctor. If the project defines a `doctor` package script, run `pnpm run doctor` or `npm run doctor`. Otherwise run `pnpm vite-doctor .`.
+
+In a Nuxt project, a report that names a missing `.nuxt/doctor.manifest.json` ignored the project's `doctor` options. Run `nuxt prepare`, then rerun. Doctor does not need a build.
+
 ## Workflow
 
 1. Use `vite-doctor . --changed --format agent` for uncommitted work. Use `vite-doctor . --since <base-ref> --format agent` for a committed branch or pull request. Run Doctor without either scope flag when Git is unavailable or the user asks for a project audit.

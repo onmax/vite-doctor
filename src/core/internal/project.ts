@@ -113,13 +113,15 @@ export async function detectProject(
     inventory: { packages: deps },
   };
   const unappliedConfigs = workspaceNuxt.filter((item) => item.nuxt.doctorConfig);
-  if (unappliedConfigs.length) {
-    project.evidenceGaps = unappliedConfigs.map((item) => ({
+  const evidenceGaps: NonNullable<ProjectInfo["evidenceGaps"]> = [
+    ...(owner ? missingNuxtManifestGaps(root, owner.root, owner.nuxt) : []),
+    ...unappliedConfigs.map((item) => ({
       source: "vite-doctor/workspace-nuxt",
       message: `Doctor options from the vite-doctor/nuxt module in ${item.root} only apply when Doctor runs from that package. Run Doctor from ${item.root} to apply them.`,
       files: [relative(root, item.nuxt.manifestPath ?? join(root, item.root))],
-    }));
-  }
+    })),
+  ];
+  if (evidenceGaps.length) project.evidenceGaps = evidenceGaps;
   rememberProjectFileWalk(project, walk);
   return project;
 }
@@ -418,6 +420,29 @@ async function detectNuxtAppRoots(root: string): Promise<string[]> {
   ]);
   if (!configs.length) return [root];
   return [...new Set(configs.map((file) => resolve(file, "..")))].sort();
+}
+
+// The module hands nuxt.config `doctor` options and Nuxt's resolved inventory to the CLI only
+// through this manifest, so without it a run silently ignores the developer's configuration.
+function missingNuxtManifestGaps(
+  root: string,
+  packageRoot: string,
+  nuxt: NuxtProjectInfo,
+): NonNullable<ProjectInfo["evidenceGaps"]> {
+  const appRoot = join(root, packageRoot);
+  if (nuxt.manifestPath || !registersDoctorModule(readNuxtConfigText(appRoot).anyFormat)) return [];
+  const manifest = relative(root, join(appRoot, ".nuxt/doctor.manifest.json"));
+  return [
+    {
+      source: "vite-doctor/nuxt",
+      message: `nuxt.config registers vite-doctor/nuxt, but ${manifest} does not exist, so this Doctor Run ignored the doctor options in nuxt.config and Nuxt's resolved auto-imports, components, and server handlers. Run nuxt prepare first; it does not need a build.`,
+      files: [manifest],
+    },
+  ];
+}
+
+function registersDoctorModule(config: string | null): boolean {
+  return Boolean(config && /["'`]vite-doctor\/nuxt["'`]/.test(config));
 }
 
 function readJson<T>(file: string): T | null {
