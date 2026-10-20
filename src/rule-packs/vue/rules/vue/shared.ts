@@ -161,7 +161,7 @@ export function createEslintVueRule(options: {
         rules[eslintId] = eslintRuleConfig(
           options.eslintOptions ? options.eslintOptions(ctx.options, eslintId) : ctx.options,
         );
-      const batches = joinEslintBatches(ctx.file, rules);
+      const batches = joinEslintBatches(ctx.file, rules, Boolean(options.templateReferences));
       return {
         async SFC() {
           const messages = (await Promise.all(batches.map(runEslintBatch))).flat();
@@ -183,6 +183,7 @@ interface EslintBatch {
   filename: string;
   rules: Record<string, EslintRuleConfig>;
   messages?: Promise<EslintMessage[]>;
+  templateReferences: boolean;
 }
 
 // Doctor creates every pending Rule for a file before it runs any visitor, so each bridged Rule
@@ -192,6 +193,7 @@ const eslintBatches = new WeakMap<object, EslintBatch[]>();
 function joinEslintBatches(
   file: RuleContext["file"],
   rules: Record<string, EslintRuleConfig>,
+  templateReferences: boolean,
 ): EslintBatch[] {
   let batches = eslintBatches.get(file);
   if (!batches || batches.some((batch) => batch.messages || batch.text !== file.text)) {
@@ -202,10 +204,10 @@ function joinEslintBatches(
   // several existing batches when those IDs were split by incompatible options.
   const joined: EslintBatch[] = [];
   for (const [id, config] of Object.entries(rules)) {
-    let batch = batches.find((candidate) => sameConfig(candidate.rules[id]!, config));
-    if (!batch) batch = batches.find((candidate) => !(id in candidate.rules));
+    let batch = batches.find((candidate) => candidate.templateReferences === templateReferences && sameConfig(candidate.rules[id]!, config));
+    if (!batch) batch = batches.find((candidate) => candidate.templateReferences === templateReferences && !(id in candidate.rules));
     if (!batch) {
-      batch = { text: file.text, filename: file.relativePath, rules: { [id]: config } };
+      batch = { text: file.text, filename: file.relativePath, rules: { [id]: config }, templateReferences };
       batches.push(batch);
     } else {
       batch.rules[id] ??= config;
@@ -220,7 +222,7 @@ function sameConfig(left: EslintRuleConfig, right: EslintRuleConfig): boolean {
 }
 
 function runEslintBatch(batch: EslintBatch): Promise<EslintMessage[]> {
-  return (batch.messages ??= eslintVueRuntime().then(({ linter, languageOptions, plugin }) =>
+  return (batch.messages ??= eslintVueRuntime(batch.templateReferences).then(({ linter, languageOptions, plugin }) =>
     linter.verify(
       batch.text,
       [
@@ -237,16 +239,17 @@ function runEslintBatch(batch: EslintBatch): Promise<EslintMessage[]> {
   ));
 }
 
-let eslintVueRuntimePromise:
-  | Promise<{
+const eslintVueRuntimePromises = new Map<boolean, Promise<{
       linter: import("eslint").Linter;
       languageOptions: import("eslint").Linter.LanguageOptions;
       plugin: any;
     }>
-  | undefined;
+  }>>();
 
-function eslintVueRuntime() {
-  return (eslintVueRuntimePromise ??= Promise.all([
+function eslintVueRuntime(templateReferences = false) {
+  let promise = eslintVueRuntimePromises.get(templateReferences);
+  if (promise) return promise;
+  promise = Promise.all([
     optionalImport<typeof import("eslint")>("eslint"),
     optionalImport<typeof import("eslint-plugin-vue")>("eslint-plugin-vue"),
     optionalImport<typeof import("vue-eslint-parser")>("vue-eslint-parser"),
@@ -267,7 +270,7 @@ function eslintVueRuntime() {
             jsx: tsParserRuntime,
             ts: tsParserRuntime,
             tsx: tsParserRuntime,
-            "<template>": tsParserRuntime,
+            ...(templateReferences ? { "<template>": tsParserRuntime } : {}),
           },
           ecmaVersion: "latest",
           sourceType: "module",
@@ -275,6 +278,8 @@ function eslintVueRuntime() {
       },
     };
   }));
+  eslintVueRuntimePromises.set(templateReferences, promise);
+  return promise;
 }
 
 function reportEslintMessage(

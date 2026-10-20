@@ -57,7 +57,7 @@ const links = computed<FooterLink[]>(() => {
   <template v-if="links.length">
     <UButton
       v-for="(link, index) of links"
-      :key="index"
+      :key="link.to"
       size="sm"
       v-bind="{ color: 'neutral', variant: 'ghost', ...link }"
     />

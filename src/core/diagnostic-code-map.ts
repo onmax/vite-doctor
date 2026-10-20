@@ -77,6 +77,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0032", ruleId: "vue/attrs/no-watch-use-attrs" },
   { code: "VUE0033", ruleId: "vue/reactivity/no-reactive-destructure" },
   { code: "VUE0034", ruleId: "vue/reactivity/prefer-computed-over-watch-assign" },
+  { code: "VUE0035", ruleId: "vue/template/no-index-key-on-stateful-list" },
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },
   { code: "VITE0003", ruleId: "vite/assets/no-src-absolute-public-url" },

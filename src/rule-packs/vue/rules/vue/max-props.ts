@@ -122,12 +122,14 @@ function topLevelMacroCalls(body: AnyNode[] | undefined, name: string): AnyNode[
     if (statement.type === "VariableDeclaration") {
       for (const declaration of statement.declarations ?? []) {
         const call = declaration.init;
-        if (
-          call?.type === "CallExpression" &&
-          call.callee?.type === "Identifier" &&
-          call.callee.name === name
-        )
-          calls.push(call);
+        if (call?.type === "CallExpression" && call.callee?.type === "Identifier") {
+          if (call.callee.name === name) calls.push(call);
+          else if (name === "defineProps" && call.callee.name === "withDefaults") {
+            const inner = call.arguments?.[0];
+            if (inner?.type === "CallExpression" && inner.callee?.type === "Identifier" && inner.callee.name === name)
+              calls.push(inner);
+          }
+        }
       }
     } else if (
       statement.type === "ExpressionStatement" &&

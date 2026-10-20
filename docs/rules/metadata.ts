@@ -2397,6 +2397,31 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/template/no-index-key-on-stateful-list": {
+    description:
+      "Finds v-for lists keyed by the iteration index where the keyed element holds state: a component, an element with v-model, a native input, textarea or select, or a child of <TransitionGroup>.",
+    why: "Vue reuses DOM nodes and component instances by key. With an index key, inserting, removing or reordering items keeps each instance at its position and only patches its props, so component state, unbound input values, focus and <TransitionGroup> animations attach to a different item. Lists over number ranges, literal arrays and top-level const array literals are skipped because they never change.",
+    recommendedReplacement:
+      'Key each item by a stable, unique value from the item itself, such as :key="item.id". If the data has no id, assign one when the item is created rather than deriving it from its position.',
+    examples: [
+      {
+        title: "Key a component list by item id",
+        language: "vue",
+        invalid:
+          '<template>\n  <TodoRow v-for="(todo, index) in todos" :key="index" :todo="todo" />\n</template>',
+        valid:
+          '<template>\n  <TodoRow v-for="todo in todos" :key="todo.id" :todo="todo" />\n</template>',
+      },
+      {
+        title: "Key TransitionGroup children by item id",
+        language: "vue",
+        invalid:
+          '<template>\n  <TransitionGroup name="list" tag="ul">\n    <li v-for="(toast, i) in toasts" :key="i">{{ toast.text }}</li>\n  </TransitionGroup>\n</template>',
+        valid:
+          '<template>\n  <TransitionGroup name="list" tag="ul">\n    <li v-for="toast in toasts" :key="toast.id">{{ toast.text }}</li>\n  </TransitionGroup>\n</template>',
+      },
+    ],
+  },
   "vue/watch/no-async-watcheffect-after-await-read": {
     description: "Flags reactive dependency reads after an await in an async watchEffect callback.",
     why: "Vue tracks watchEffect dependencies during synchronous execution. Reads after await do not establish dependencies that rerun the effect; ordinary object and method accesses do not establish reactive dependencies.",

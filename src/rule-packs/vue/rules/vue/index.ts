@@ -24,6 +24,7 @@ export { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.j
 export { requireUsePrefix } from "./require-use-prefix.js";
 export { maxProps } from "./max-props.js";
 export { noUnusedProps } from "./no-unused-props.js";
+export { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 export { noWatchUseAttrs } from "./no-watch-use-attrs.js";
 export { noReactiveDestructure } from "./no-reactive-destructure.js";
@@ -55,6 +56,7 @@ import { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.j
 import { requireUsePrefix } from "./require-use-prefix.js";
 import { maxProps } from "./max-props.js";
 import { noUnusedProps } from "./no-unused-props.js";
+import { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 import { noWatchUseAttrs } from "./no-watch-use-attrs.js";
 import { noReactiveDestructure } from "./no-reactive-destructure.js";
@@ -86,6 +88,7 @@ const rules = [
   preferComposableRefReturn,
   preferSameNamePropShorthand,
   requireUsePrefix,
+  noIndexKeyOnStatefulList,
   noUnusedTranslations,
   noUntranslatedText,
   maxProps,
