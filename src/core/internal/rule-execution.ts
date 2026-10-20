@@ -11,6 +11,7 @@ import type {
   WorkspaceGraph,
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
+import { componentUsageGraph } from "./component-inventory.js";
 import { loadSourceFile, sourceFacts, sourceShape } from "./facts.js";
 import type { RuleInputFrame } from "./rule-inputs.js";
 import { projectWorkspacePackages } from "./applicability.js";
@@ -43,6 +44,8 @@ import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
 interface RuleRun {
   context: RuleContext;
   frame: RuleInputFrame;
+  /** Whether the Rule read Project Inventory derived from every source file, which no Rule input tracks. */
+  readsInventory: boolean;
 }
 
 export async function runFileRules(session: ScanSession): Promise<void> {
@@ -208,7 +211,8 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
       await visitor?.onProjectEnd?.(project);
       await visitor?.onWorkspaceEnd?.();
       if (!viewKey) continue;
-      if (projectChanged(session.project, before)) session.cache.recordUncacheable();
+      if (run.readsInventory || projectChanged(session.project, before))
+        session.cache.recordUncacheable();
       else
         session.cache.recordRuleResult(
           undefined,
@@ -343,6 +347,7 @@ function createRuleRun(
   const frame = session.ruleInputs.frame(workspaceViewRoot(project));
   const currentRuleConfig = resolvedConfigFor(session, rule.meta.id);
   const currentSeverity = currentRuleConfig.severity ?? rule.meta.severity;
+  let readsInventory = false;
   const context: RuleContext = {
     get project() {
       return project;
@@ -407,6 +412,16 @@ function createRuleRun(
     },
     fs: frame.fs,
     cache: frame.cache,
+    inventory: {
+      componentUsage() {
+        if (phase === "file")
+          throw new Error(
+            `Rule ${rule.meta.id} read the component usage graph from a file Rule. It covers every source file, so set meta.execution to "workspace".`,
+          );
+        readsInventory = true;
+        return componentUsageGraph(session);
+      },
+    },
     helpers: session.helpers,
     range(nodeOrStart, end) {
       if (nodeOrStart === undefined || nodeOrStart === null) return undefined;
@@ -418,7 +433,13 @@ function createRuleRun(
         : undefined;
     },
   };
-  return { context, frame };
+  return {
+    context,
+    frame,
+    get readsInventory() {
+      return readsInventory;
+    },
+  };
 }
 
 function createEmptySourceFileHandle(session: ScanSession): SourceFileHandle {
