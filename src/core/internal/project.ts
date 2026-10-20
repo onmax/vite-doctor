@@ -514,7 +514,8 @@ function registersDoctorModuleInConfig(config: string | null): boolean {
     if (
       ts.isParenthesizedExpression(value) ||
       ts.isAsExpression(value) ||
-      ts.isTypeAssertionExpression(value)
+      ts.isTypeAssertionExpression(value) ||
+      ts.isSatisfiesExpression(value)
     ) {
       return inspectConfig(value.expression, scope);
     }

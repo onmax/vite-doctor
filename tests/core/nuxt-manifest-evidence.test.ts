@@ -88,6 +88,7 @@ test.each([
   `const modules = ["vite-doctor/nuxt"]; export default defineNuxtConfig({ modules });`,
   `module.exports = defineNuxtConfig({ modules: ["vite-doctor/nuxt"] });`,
   `const config = { modules: ["vite-doctor/nuxt"] }; export = config;`,
+  `export default defineNuxtConfig({ modules: ["vite-doctor/nuxt"] } satisfies NuxtConfig);`,
 ])("detects supported Nuxt config export forms", async (config) => {
   const root = nuxtApp({ "nuxt.config.ts": config });
 
