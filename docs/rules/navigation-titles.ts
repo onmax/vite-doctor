@@ -172,7 +172,11 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/worker/no-node-api-in-worker": "Node APIs",
   "vite/worker/require-worker-url-pattern": "Worker URL pattern",
 
+
   "vue/attrs/no-duplicate-attr-inheritance": "Duplicate $attrs",
+
+  "vue/attrs/no-watch-use-attrs": "Watching attrs",
+
   "vue/composables/require-use-prefix": "Composable names",
   "vue/i18n/no-untranslated-text": "Untranslated text",
   "vue/i18n/no-unused-translations": "Unused translations",
@@ -182,10 +186,15 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/props/no-mutating-props": "Prop mutation",
   "vue/props/no-required-prop-with-default": "Required defaults",
   "vue/reactivity/defineprops-watch-getter": "Prop watch getters",
+
   "vue/reactivity/no-computed-side-effects": "Computed effects",
+
+  "vue/reactivity/no-reactive-destructure": "Reactive destructure",
+
   "vue/reactivity/no-ref-as-operand": "Refs as operands",
   "vue/reactivity/no-setup-props-destructure": "Props destructuring",
   "vue/reactivity/prefer-composable-ref-return": "Composable refs",
+  "vue/reactivity/prefer-computed-over-watch-assign": "Watcher-derived refs",
   "vue/security/restrict-v-html": "v-html",
   "vue/ssr/data-allow-mismatch-surgical": "allow-mismatch",
   "vue/ssr/no-browser-api-in-setup": "Browser APIs",

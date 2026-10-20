@@ -11,11 +11,17 @@ import { preferSameNamePropShorthand } from "../../src/rule-packs/vue/rules/vue/
 import { preferTrueAttributeShorthand } from "../../src/rule-packs/vue/rules/vue/prefer-true-attribute-shorthand.js";
 import { preferUseEventListener } from "../../src/rule-packs/vue/rules/vue/prefer-use-event-listener.js";
 import { requireUsePrefix } from "../../src/rule-packs/vue/rules/vue/require-use-prefix.js";
+
 import { noMutatingProps } from "../../src/rule-packs/vue/rules/vue/no-mutating-props.js";
 import { noComputedSideEffects } from "../../src/rule-packs/vue/rules/vue/no-computed-side-effects.js";
 import { noVIfWithVFor } from "../../src/rule-packs/vue/rules/vue/no-v-if-with-v-for.js";
 import { noDuplicateAttrInheritance } from "../../src/rule-packs/vue/rules/vue/no-duplicate-attr-inheritance.js";
 import { noRequiredPropWithDefault } from "../../src/rule-packs/vue/rules/vue/no-required-prop-with-default.js";
+
+import { noWatchUseAttrs } from "../../src/rule-packs/vue/rules/vue/no-watch-use-attrs.js";
+import { noReactiveDestructure } from "../../src/rule-packs/vue/rules/vue/no-reactive-destructure.js";
+import { preferComputedOverWatchAssign } from "../../src/rule-packs/vue/rules/vue/prefer-computed-over-watch-assign.js";
+
 import { diagnostics } from "../../src/rule-packs/vue/diagnostics.js";
 import { parseSync, visitorKeys } from "oxc-parser";
 
@@ -37,11 +43,17 @@ test.each([
   [preferTrueAttributeShorthand, "VUE0024"],
   [preferUseEventListener, "VUE0025"],
   [requireUsePrefix, "VUE0026"],
+
   [noMutatingProps, "VUE0027"],
   [noComputedSideEffects, "VUE0028"],
   [noVIfWithVFor, "VUE0029"],
   [noDuplicateAttrInheritance, "VUE0030"],
   [noRequiredPropWithDefault, "VUE0031"],
+
+  [noWatchUseAttrs, "VUE0032"],
+  [noReactiveDestructure, "VUE0033"],
+  [preferComputedOverWatchAssign, "VUE0034"],
+
 ] as const)("documents the constant ID in $0.meta.id", async (rule, code) => {
   const document = getRuleDocuments().find((entry) => entry.id === rule.meta.id);
   expect(document).toMatchObject({

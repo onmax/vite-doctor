@@ -23,11 +23,17 @@ export { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 export { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
 export { requireUsePrefix } from "./require-use-prefix.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
+
 export { noMutatingProps } from "./no-mutating-props.js";
 export { noComputedSideEffects } from "./no-computed-side-effects.js";
 export { noVIfWithVFor } from "./no-v-if-with-v-for.js";
 export { noDuplicateAttrInheritance } from "./no-duplicate-attr-inheritance.js";
 export { noRequiredPropWithDefault } from "./no-required-prop-with-default.js";
+
+export { noWatchUseAttrs } from "./no-watch-use-attrs.js";
+export { noReactiveDestructure } from "./no-reactive-destructure.js";
+export { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
+
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
@@ -54,11 +60,17 @@ import { preferComposableRefReturn } from "./prefer-composable-ref-return.js";
 import { preferSameNamePropShorthand } from "./prefer-same-name-prop-shorthand.js";
 import { requireUsePrefix } from "./require-use-prefix.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
+
 import { noMutatingProps } from "./no-mutating-props.js";
 import { noComputedSideEffects } from "./no-computed-side-effects.js";
 import { noVIfWithVFor } from "./no-v-if-with-v-for.js";
 import { noDuplicateAttrInheritance } from "./no-duplicate-attr-inheritance.js";
 import { noRequiredPropWithDefault } from "./no-required-prop-with-default.js";
+
+import { noWatchUseAttrs } from "./no-watch-use-attrs.js";
+import { noReactiveDestructure } from "./no-reactive-destructure.js";
+import { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
+
 import { defineRulePack } from "../../../../core/index.js";
 
 const rules = [
@@ -88,11 +100,17 @@ const rules = [
   requireUsePrefix,
   noUnusedTranslations,
   noUntranslatedText,
+
   noMutatingProps,
   noComputedSideEffects,
   noVIfWithVFor,
   noDuplicateAttrInheritance,
   noRequiredPropWithDefault,
+
+  noWatchUseAttrs,
+  noReactiveDestructure,
+  preferComputedOverWatchAssign,
+
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,
@@ -109,6 +127,7 @@ const strictOnlyRules = [
   requireUsePrefix,
   noUnusedTranslations,
   noUntranslatedText,
+  preferComputedOverWatchAssign,
 ];
 
 const vueRulePack = defineRulePack({
