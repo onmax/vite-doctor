@@ -97,10 +97,10 @@ const audiences: Audience[] = [
         title: "Verify the fix",
         description:
           "After an edit, the agent reruns only the Rule it touched, then the full Doctor Run.",
-        command: (pm) => `${pm.dlx} vite-doctor . --rules <rule> --format agent`,
+        command: (pm) =>
+          `${pm.dlx} vite-doctor . --rules nuxt/hydration/no-browser-global-in-universal-code --format agent`,
         notes: [
-          "The report's commands.verify and commands.rerun hold these templates.",
-          "commandArgs runs them without a shell.",
+          "The report's commands.verify and commands.rerun hold these templates; commandArgs runs them without a shell.",
         ],
       },
     ],
