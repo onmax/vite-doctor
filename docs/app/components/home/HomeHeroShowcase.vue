@@ -37,6 +37,7 @@ const cliFindings = [
 
 const agentReport = `{
   "schema": "vite-doctor.agent/v1",
+  "truncated": true,
   "status": "findings",
   "summary": { "blocker": 0, "error": 19, "warn": 22, "info": 3, "fixable": 2 },
   "diagnostics": [
@@ -201,7 +202,8 @@ const severityClass = {
           >
         </p>
         <p class="mt-1 text-neutral-500 dark:text-neutral-400">
-          Coding agents get this report automatically.
+          Coding agents get this report automatically. The sample is a shortened visual excerpt,
+          not a complete report contract.
         </p>
         <code
           class="mt-3 block min-h-0 flex-1 overflow-y-auto text-[0.6875rem]/5 [scrollbar-width:thin] sm:text-xs/5"
