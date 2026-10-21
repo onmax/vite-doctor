@@ -42,6 +42,8 @@ export default defineNuxtConfig({
   icon: {
     clientBundle: {
       icons: [
+        "lucide:book-open",
+        "lucide:circle-check",
         "lucide:plug",
         "lucide:plug-zap",
         "lucide:wand-sparkles",
