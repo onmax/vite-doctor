@@ -45,3 +45,36 @@
 .hero-code [role="tablist"] {
   justify-content: center;
 }
+
+/* Homepage ------------------------------------------------------------ */
+
+.home-page {
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+}
+.home-page code,
+.home-page pre,
+.home-page .font-mono {
+  font-family: "Geist Mono", ui-monospace, monospace;
+}
+.home-eyebrow {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-neutral-800);
+}
+.dark .home-eyebrow {
+  color: var(--color-neutral-200);
+}
+.home-title {
+  font-size: clamp(1.875rem, 1.4rem + 1.6vw, 2.25rem);
+  line-height: 1.25;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+  color: var(--color-neutral-950);
+}
+.dark .home-title {
+  color: var(--color-neutral-50);
+}
