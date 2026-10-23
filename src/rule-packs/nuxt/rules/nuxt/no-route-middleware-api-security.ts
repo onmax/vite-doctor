@@ -944,6 +944,15 @@ function throwsAuthError(statements: AnyNode[]): boolean {
       if (throwsAuthError([statement.consequent, statement.alternate].filter(Boolean))) return true;
       continue;
     }
+    // Authorization checks commonly reject an already identified user by role or
+    // capability (for example, `if (!who.isAdmin) throw 403`). The condition is
+    // not a missing-identity check, but an auth HTTP error on an identity-derived
+    // branch still proves that the helper is a guard.
+    if (
+      mentionsIdentity(statement.test) &&
+      throwsAuthError([statement.consequent, statement.alternate].filter(Boolean))
+    )
+      return true;
     // Common proven-identity shape: `if (who) return who; throw 401`.
     // The return establishes identity on the truthy branch, while the following
     // auth throw rejects the only path that can continue without it.

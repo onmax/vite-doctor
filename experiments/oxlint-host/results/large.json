@@ -1,0 +1,615 @@
+{
+  "corpus": "large",
+  "root": "/tmp/vd-perf-lab-198/corpora/large",
+  "framework": "nitro",
+  "node": "v24.19.0",
+  "oxlint": "1.75.0",
+  "threads": 4,
+  "cpus": 4,
+  "runs": 7,
+  "doctorRules": [
+    "typescript/boundaries/no-unvalidated-deserialization",
+    "vite/assets/no-dynamic-new-url",
+    "vite/assets/no-public-src-import",
+    "nitro/request/prefer-validated-query"
+  ],
+  "files": {
+    "doctor": 1518,
+    "oxlint": 2439,
+    "oxlintFiles": 1518
+  },
+  "inventory": {
+    "captureMs": 6390,
+    "projectPhaseMs": 278
+  },
+  "doctorProfile": {
+    "timings": {
+      "config": 0,
+      "project": 164,
+      "files": 524,
+      "parse": 6045,
+      "fileRules": 2880,
+      "manifestRules": 0,
+      "score": 1
+    },
+    "phases": {
+      "parseFileFacts": 6045,
+      "fileRules": 2880,
+      "manifestRules": 0,
+      "workspaceGraph": 246,
+      "graphRules": 0,
+      "duplication": 0,
+      "health": 0,
+      "fixPlanning": 0,
+      "cache": 0
+    },
+    "ruleTimings": [
+      {
+        "rule": "typescript/boundaries/no-unvalidated-deserialization",
+        "ms": 340,
+        "files": 1518
+      },
+      {
+        "rule": "vite/assets/no-dynamic-new-url",
+        "ms": 218,
+        "files": 1518
+      },
+      {
+        "rule": "vite/assets/no-public-src-import",
+        "ms": 75,
+        "files": 1518
+      },
+      {
+        "rule": "nitro/request/prefer-validated-query",
+        "ms": 6,
+        "files": 1518
+      }
+    ]
+  },
+  "timings": {
+    "doctor": {
+      "wallMs": 8723,
+      "cpuMs": 8163,
+      "maxRssMb": 700,
+      "wallMsAll": [8496, 8723, 10233, 7001, 10881, 7179, 9215],
+      "cpuMsAll": [8000, 8084, 8377, 8183, 8264, 8163, 8160],
+      "loadAll": ["7.1", "7.4", "7.4", "7.8", "7.4", "9.4", "9.0"]
+    },
+    "oxlint": {
+      "wallMs": 6096,
+      "cpuMs": 5194,
+      "maxRssMb": 287,
+      "wallMsAll": [5404, 4779, 6951, 5435, 6958, 6096, 6319],
+      "cpuMsAll": [5225, 5022, 5292, 5194, 5173, 4983, 5198],
+      "loadAll": ["6.9", "7.3", "7.7", "7.9", "8.3", "9.1", "9.2"]
+    },
+    "oxlint-files": {
+      "wallMs": 3039,
+      "cpuMs": 2718,
+      "maxRssMb": 199,
+      "wallMsAll": [2807, 2940, 3309, 2697, 3485, 3039, 5015],
+      "cpuMsAll": [2863, 2800, 2701, 2718, 2713, 2652, 2894],
+      "loadAll": ["6.9", "7.1", "7.8", "7.9", "8.6", "9.1", "9.2"]
+    },
+    "oxlint-files-1t": {
+      "wallMs": 3390,
+      "cpuMs": 2745,
+      "maxRssMb": 147,
+      "wallMsAll": [3170, 3105, 3390, 2872, 4527, 3616, 4972],
+      "cpuMsAll": [2734, 2605, 2748, 2745, 2840, 2733, 2776],
+      "loadAll": ["6.9", "7.1", "8.1", "7.9", "8.6", "9.1", "9.9"]
+    },
+    "oxlint-files-noop": {
+      "wallMs": 2546,
+      "cpuMs": 2553,
+      "maxRssMb": 198,
+      "wallMsAll": [2539, 2464, 2546, 2460, 3301, 2840, 3374],
+      "cpuMsAll": [2514, 2457, 2553, 2649, 2759, 2469, 2655],
+      "loadAll": ["6.9", "6.9", "8.1", "8.2", "8.9", "9.2", "10.0"]
+    },
+    "oxlint-rust-correctness": {
+      "wallMs": 382,
+      "cpuMs": 468,
+      "maxRssMb": 107,
+      "wallMsAll": [354, 287, 382, 306, 438, 401, 526],
+      "cpuMsAll": [488, 440, 452, 439, 469, 472, 468],
+      "loadAll": ["6.9", "6.9", "8.2", "8.2", "9.2", "9.2", "10.0"]
+    }
+  },
+  "parity": {
+    "doctor": 19,
+    "oxlintRaw": 22,
+    "oxlint": 20,
+    "oxlintOutsideDoctorScope": 49,
+    "droppedByFingerprint": [
+      {
+        "path": "packages/blob/src/internal/vite-build.ts",
+        "code": "TS0005",
+        "start": 24346,
+        "end": 24390,
+        "line": 484,
+        "column": 76,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/queue/src/internal/vite-build.ts",
+        "code": "TS0005",
+        "start": 21714,
+        "end": 21758,
+        "line": 414,
+        "column": 76,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      }
+    ],
+    "matched": 19,
+    "byCode": {
+      "doctor": {
+        "VITE0001": 1,
+        "TS0005": 18
+      },
+      "oxlint": {
+        "TS0005": 19,
+        "VITE0001": 1
+      }
+    },
+    "messageMismatches": [],
+    "lineColumnMismatches": [],
+    "doctorOnly": [],
+    "suppressedByDoctor": [
+      {
+        "path": "packages/blob/src/drivers/fs.ts",
+        "code": "TS0005",
+        "start": 11644,
+        "end": 11709,
+        "line": 308,
+        "column": 17,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      }
+    ],
+    "oxlintOnly": [],
+    "outsideDoctorScope": [
+      {
+        "path": "packages/workflow/test/cli.test.ts",
+        "code": "TS0005",
+        "start": 1914,
+        "end": 1970,
+        "line": 47,
+        "column": 18,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/workflow/test/published-types.test.ts",
+        "code": "TS0005",
+        "start": 2046,
+        "end": 2169,
+        "line": 43,
+        "column": 20,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/agent/test/channel-replay-cli.test.ts",
+        "code": "TS0005",
+        "start": 789,
+        "end": 846,
+        "line": 22,
+        "column": 18,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/agent/test/channel-replay-cli.test.ts",
+        "code": "TS0005",
+        "start": 4920,
+        "end": 4977,
+        "line": 84,
+        "column": 20,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/workspace/test/github-publisher.test.ts",
+        "code": "TS0005",
+        "start": 1638,
+        "end": 1831,
+        "line": 49,
+        "column": 50,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/queue/test/vite-output.test.ts",
+        "code": "TS0005",
+        "start": 13500,
+        "end": 13575,
+        "line": 264,
+        "column": 22,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/schedule/test/dev-auth.test.ts",
+        "code": "TS0005",
+        "start": 1717,
+        "end": 1803,
+        "line": 25,
+        "column": 62,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/blob/test/vite-output.test.ts",
+        "code": "TS0005",
+        "start": 32127,
+        "end": 32303,
+        "line": 722,
+        "column": 28,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/schedule/test/published-types.test.ts",
+        "code": "TS0005",
+        "start": 840,
+        "end": 928,
+        "line": 22,
+        "column": 20,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/schedule/test/provider-output.test.ts",
+        "code": "TS0005",
+        "start": 18252,
+        "end": 18361,
+        "line": 357,
+        "column": 25,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/blob/test/consumer-runtime.test.ts",
+        "code": "TS0005",
+        "start": 2077,
+        "end": 2270,
+        "line": 60,
+        "column": 32,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/blob/test/consumer-runtime.test.ts",
+        "code": "TS0005",
+        "start": 3024,
+        "end": 3156,
+        "line": 77,
+        "column": 33,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/blob/test/consumer-runtime.test.ts",
+        "code": "TS0005",
+        "start": 3621,
+        "end": 3718,
+        "line": 91,
+        "column": 32,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/blob/test/consumer-runtime.test.ts",
+        "code": "TS0005",
+        "start": 4951,
+        "end": 5080,
+        "line": 132,
+        "column": 34,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/schedule/test/optional-kv-peer.test.ts",
+        "code": "TS0005",
+        "start": 1587,
+        "end": 1674,
+        "line": 49,
+        "column": 20,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/schedule/test/optional-kv-peer.test.ts",
+        "code": "TS0005",
+        "start": 3871,
+        "end": 3919,
+        "line": 108,
+        "column": 28,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/blob/test/optional-peer.test.ts",
+        "code": "TS0005",
+        "start": 1905,
+        "end": 2109,
+        "line": 39,
+        "column": 22,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/blob/test/optional-peer.test.ts",
+        "code": "TS0005",
+        "start": 10066,
+        "end": 10194,
+        "line": 259,
+        "column": 22,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/blob/test/optional-peer.test.ts",
+        "code": "TS0005",
+        "start": 10425,
+        "end": 10553,
+        "line": 268,
+        "column": 22,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/blob/test/optional-peer.test.ts",
+        "code": "TS0005",
+        "start": 10818,
+        "end": 10983,
+        "line": 277,
+        "column": 22,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/connections/test/types-lock.test.ts",
+        "code": "TS0005",
+        "start": 7330,
+        "end": 7418,
+        "line": 166,
+        "column": 19,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/connections/test/cli.test.ts",
+        "code": "TS0005",
+        "start": 4523,
+        "end": 4596,
+        "line": 86,
+        "column": 39,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/connections/test/cli.test.ts",
+        "code": "TS0005",
+        "start": 5471,
+        "end": 5564,
+        "line": 102,
+        "column": 19,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/connections/test/vite.test.ts",
+        "code": "TS0005",
+        "start": 20960,
+        "end": 21068,
+        "line": 405,
+        "column": 24,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/connections/test/vite.test.ts",
+        "code": "TS0005",
+        "start": 32233,
+        "end": 32341,
+        "line": 601,
+        "column": 22,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/connections/test/cli-entrypoint.test.ts",
+        "code": "TS0005",
+        "start": 923,
+        "end": 1019,
+        "line": 18,
+        "column": 19,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/connections/test/cli-entrypoint.test.ts",
+        "code": "TS0005",
+        "start": 2566,
+        "end": 2638,
+        "line": 43,
+        "column": 18,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/box/test/ssh.test.ts",
+        "code": "TS0005",
+        "start": 6360,
+        "end": 6386,
+        "line": 132,
+        "column": 53,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/rate-limit/test/provider-output.test.ts",
+        "code": "TS0005",
+        "start": 5993,
+        "end": 6064,
+        "line": 135,
+        "column": 25,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/auth/test/package.test.ts",
+        "code": "TS0005",
+        "start": 203,
+        "end": 322,
+        "line": 7,
+        "column": 21,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/auth/test/published-types.test.ts",
+        "code": "TS0005",
+        "start": 3422,
+        "end": 3545,
+        "line": 99,
+        "column": 20,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/env/test/cli.test.ts",
+        "code": "TS0005",
+        "start": 15675,
+        "end": 15700,
+        "line": 297,
+        "column": 88,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/env/test/published-types.test.ts",
+        "code": "TS0005",
+        "start": 2155,
+        "end": 2233,
+        "line": 45,
+        "column": 20,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/browser/test/cdp.test.ts",
+        "code": "TS0005",
+        "start": 417,
+        "end": 468,
+        "line": 17,
+        "column": 21,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "test/consumer/vite-hub.test.ts",
+        "code": "TS0005",
+        "start": 6393,
+        "end": 6430,
+        "line": 184,
+        "column": 10,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "test/consumer/vite-hub.test.ts",
+        "code": "TS0005",
+        "start": 8253,
+        "end": 8338,
+        "line": 230,
+        "column": 20,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "test/consumer/vite-hub.test.ts",
+        "code": "TS0005",
+        "start": 10016,
+        "end": 10099,
+        "line": 276,
+        "column": 20,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/sandbox/test/entry-script.test.ts",
+        "code": "TS0005",
+        "start": 1819,
+        "end": 1944,
+        "line": 46,
+        "column": 18,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "test/consumer/deployment-presets.test.ts",
+        "code": "TS0005",
+        "start": 19694,
+        "end": 19722,
+        "line": 471,
+        "column": 98,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/vite-hub/test/console-section-icons.test.ts",
+        "code": "TS0005",
+        "start": 1162,
+        "end": 1212,
+        "line": 24,
+        "column": 50,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/agent/test/call-mcp-tool.test.ts",
+        "code": "TS0005",
+        "start": 819,
+        "end": 904,
+        "line": 19,
+        "column": 21,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/vite-hub/test/console-request.test.ts",
+        "code": "TS0005",
+        "start": 926,
+        "end": 956,
+        "line": 22,
+        "column": 55,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/vite-hub/test/published-types.test.ts",
+        "code": "TS0005",
+        "start": 2811,
+        "end": 2984,
+        "line": 59,
+        "column": 22,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/vite-hub/test/console-connections.test.ts",
+        "code": "TS0005",
+        "start": 2317,
+        "end": 2369,
+        "line": 56,
+        "column": 21,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/vite-hub/test/console-connections.test.ts",
+        "code": "TS0005",
+        "start": 3065,
+        "end": 3134,
+        "line": 67,
+        "column": 21,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/vite-hub/test/box-cli.test.ts",
+        "code": "TS0005",
+        "start": 4356,
+        "end": 4402,
+        "line": 129,
+        "column": 22,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/vite-hub/test/console-contributions.test.ts",
+        "code": "TS0005",
+        "start": 2219,
+        "end": 2298,
+        "line": 41,
+        "column": 60,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/agent/test/box.test.ts",
+        "code": "TS0005",
+        "start": 20288,
+        "end": 20531,
+        "line": 493,
+        "column": 14,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      },
+      {
+        "path": "packages/agent/test/mcp-connections.test.ts",
+        "code": "TS0005",
+        "start": 987,
+        "end": 1051,
+        "line": 16,
+        "column": 21,
+        "message": "This runtime value receives a TypeScript contract without validation."
+      }
+    ]
+  },
+  "filesParitySameAsDirectory": true
+}

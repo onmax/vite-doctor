@@ -64,6 +64,7 @@
     "test": "vp test --passWithNoTests --testTimeout=30000",
     "test:pack": "node scripts/test-packed-cli.mjs",
     "perf": "node scripts/perf-lab/lab.mjs",
+    "perf:oxlint-host": "node experiments/oxlint-host/bench.mjs",
     "check": "vp check",
     "check:doctor": "pnpm build && node dist/cli.mjs . --no-cache --max-warnings 0 --format text",
     "release:check": "vp fmt --check && pnpm build && vp lint && pnpm test && pnpm test:pack",
