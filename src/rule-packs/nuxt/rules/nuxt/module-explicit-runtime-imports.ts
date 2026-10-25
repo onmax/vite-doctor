@@ -1,6 +1,6 @@
-import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
+import { scopeDialect, scriptScope } from "../../../../core/internal/script-scope.js";
 import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
-import type { FixEdit } from "../../../../core/index.js";
+import type { FixEdit, RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule, walkScriptLocal } from "./shared.js";
 import { packageModuleRuntime } from "./module-authoring.js";
 import { MODULE_RUNTIME_AUTO_IMPORTS } from "./module-runtime-auto-imports.js";
@@ -25,7 +25,7 @@ export const moduleExplicitRuntimeImports = createRule({
         const script = ctx.file.sfc
           ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
           : { text: ctx.file.text, lang: /\.[jt]sx$/.test(ctx.file.relativePath) ? "tsx" : "ts" };
-        const unbound = unboundReferences(script.text, ctx.file.path, script.lang);
+        const unbound = unboundReferences(ctx, script.text, script.lang);
         if (!unbound) return;
         const firstCalls = new Map<string, AnyNode>();
         walkScriptLocal(node, (current) => {
@@ -75,20 +75,24 @@ function importInsertion(program: AnyNode, text: string, names: string[]): FixEd
   return { range: { start: first.start, end: first.start }, text: `${statement}\n` };
 }
 
-function unboundReferences(source: string, file: string, lang: string): Set<number> | undefined {
-  try {
-    const { scopeManager } = parseForESLint(source, {
-      sourceType: "module",
-      range: true,
-      ecmaFeatures: { jsx: lang === "jsx" || lang === "tsx" },
-      filePath: file.endsWith(".vue") ? `${file}.${lang}` : file,
-    });
-    return new Set(
-      scopeManager.globalScope?.through
-        .filter((reference) => reference.isValueReference)
-        .map((reference) => reference.identifier.range[0]),
-    );
-  } catch {
-    return undefined;
-  }
+function unboundReferences(
+  ctx: RuleContext,
+  source: string,
+  lang: string,
+): Set<number> | undefined {
+  const file = ctx.file.path;
+  const scope = scriptScope(
+    ctx,
+    source,
+    scopeDialect(
+      file.endsWith(".vue") ? `${file}.${lang}` : file,
+      lang === "jsx" || lang === "tsx",
+    ),
+  );
+  if (!scope) return undefined;
+  return new Set(
+    scope.scopeManager.globalScope?.through
+      .filter((reference) => reference.isValueReference)
+      .map((reference) => reference.identifier.range[0]),
+  );
 }

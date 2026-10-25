@@ -1,5 +1,4 @@
-import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
-import { createVueScriptForParsing } from "../../../../core/internal/sfc.js";
+import { fileScriptScope } from "../../../../core/internal/script-scope.js";
 import { AnyNode, createRule, report } from "./shared.js";
 import type { RuleContext } from "../../../../core/index.js";
 
@@ -79,22 +78,9 @@ function reactiveKind(kind: BindingKind | undefined): ReactiveKind | undefined {
 }
 
 function reactiveBindings(ctx: RuleContext): ReactiveBindings {
-  const parsedVueScript = ctx.file.sfc
-    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
-    : undefined;
-  const source = parsedVueScript?.text ?? ctx.file.text;
+  const parsed = fileScriptScope(ctx);
+  if (!parsed) return { byReference: new Map() };
   try {
-    const parsed = parseForESLint(source, {
-      range: true,
-      sourceType: "module",
-      ecmaVersion: "latest",
-      ecmaFeatures: {
-        jsx:
-          parsedVueScript?.lang === "jsx" ||
-          parsedVueScript?.lang === "tsx" ||
-          /\.[jt]sx$/.test(ctx.file.relativePath),
-      },
-    });
     const variables = parsed.scopeManager.scopes.flatMap((scope) => scope.variables);
     const kinds = new Map<object, BindingKind>();
     for (const variable of variables) {

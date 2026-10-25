@@ -1,6 +1,6 @@
-import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
 import type { SFCBlock, SFCDescriptor } from "@vue/compiler-sfc";
 import type { RuleContext } from "../../../../core/index.js";
+import { scriptScope, type ScriptScope } from "../../../../core/internal/script-scope.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
@@ -60,12 +60,12 @@ function findGlobalProcessReferences(ctx: RuleContext): Set<number> {
     if (!descriptor) {
       return new Set(
         collectGlobalProcessReferences(
-          parseForESLint(ctx.file.text, parserOptions(/\.[jt]sx$/.test(ctx.file.relativePath))),
+          parse(ctx, ctx.file.text, /\.[jt]sx$/.test(ctx.file.relativePath)),
         ),
       );
     }
-    const normal = descriptor.script ? parseVueBlock(descriptor.script) : undefined;
-    const setup = descriptor.scriptSetup ? parseVueBlock(descriptor.scriptSetup) : undefined;
+    const normal = descriptor.script ? parseVueBlock(ctx, descriptor.script) : undefined;
+    const setup = descriptor.scriptSetup ? parseVueBlock(ctx, descriptor.scriptSetup) : undefined;
     const normalHasProcessBinding = normal?.scopeManager.scopes
       .find((scope) => scope.type === "module")
       ?.variables.some((variable) => variable.name === "process");
@@ -81,24 +81,17 @@ function findGlobalProcessReferences(ctx: RuleContext): Set<number> {
   }
 }
 
-function parserOptions(jsx: boolean) {
-  return {
-    range: true,
-    sourceType: "module" as const,
-    ecmaFeatures: { jsx },
-    ecmaVersion: "latest" as const,
-    filePath: jsx ? "file.tsx" : "file.ts",
-  };
+function parse(ctx: RuleContext, text: string, jsx: boolean): ScriptScope {
+  const parsed = scriptScope(ctx, text, jsx ? "tsx" : "ts");
+  if (!parsed) throw new SyntaxError("Cannot parse the script.");
+  return parsed;
 }
 
-function parseVueBlock(block: SFCBlock) {
-  return parseForESLint(block.content, parserOptions(["jsx", "tsx"].includes(block.lang ?? "")));
+function parseVueBlock(ctx: RuleContext, block: SFCBlock) {
+  return parse(ctx, block.content, ["jsx", "tsx"].includes(block.lang ?? ""));
 }
 
-function collectGlobalProcessReferences(
-  parsed: ReturnType<typeof parseForESLint> | undefined,
-  block?: SFCBlock | null,
-) {
+function collectGlobalProcessReferences(parsed: ScriptScope | undefined, block?: SFCBlock | null) {
   if (!parsed) return [];
   const offset = block?.loc.start.offset ?? 0;
   const references =

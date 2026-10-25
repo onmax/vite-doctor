@@ -1,4 +1,5 @@
-import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
+import type { RuleContext } from "../../../core/index.js";
+import { fileTextScope } from "../../../core/internal/script-scope.js";
 import { AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 
 const clientComposables = new Set([
@@ -27,7 +28,7 @@ export const noClientComposablesInServer = createRule({
   },
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
-    const calls = appComposableCalls(ctx.file.text, ctx.file.relativePath);
+    const calls = appComposableCalls(ctx);
     return {
       CallExpression(node: AnyNode) {
         const name = calls
@@ -50,16 +51,13 @@ export const noClientComposablesInServer = createRule({
   },
 });
 
-function appComposableCalls(source: string, path: string): Map<number, string> | undefined {
+function appComposableCalls(ctx: RuleContext): Map<number, string> | undefined {
   const names = clientComposables;
   const result = new Map<number, string>();
+  const scope = fileTextScope(ctx);
+  if (!scope) return undefined;
   try {
-    const { ast, scopeManager, visitorKeys } = parseBindingSource(source, path);
-    const references = new Map(
-      scopeManager.scopes.flatMap((scope) =>
-        scope.references.map((reference) => [reference.identifier, reference] as const),
-      ),
-    );
+    const { ast, references, visitorKeys } = scope;
     const appName = (callee: AnyNode): string | undefined => {
       const namespace = callee?.type === "MemberExpression";
       const target = namespace ? callee.object : callee;
@@ -108,17 +106,4 @@ function appComposableCalls(source: string, path: string): Map<number, string> |
     return undefined;
   }
   return result;
-}
-
-function parseBindingSource(source: string, path: string) {
-  const options = {
-    range: true,
-    sourceType: "module",
-    ecmaFeatures: { jsx: /\.[jt]sx$/.test(path) },
-  } as const;
-  try {
-    return parseForESLint(source, options);
-  } catch {
-    return parseForESLint(source.replaceAll("import.source", "import_source"), options);
-  }
 }

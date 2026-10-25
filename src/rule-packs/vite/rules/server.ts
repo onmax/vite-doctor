@@ -1,5 +1,5 @@
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
-import { parseTypeScript } from "./estree.js";
+import { parseScriptScope } from "../../../core/internal/script-scope.js";
 import { isViteConfigFile, propertyName, staticString, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../../diagnostics.js";
 
@@ -97,7 +97,7 @@ function serverFsFacts(ctx: RuleContext): ServerFsFact[] {
   if (cached) return cached;
   const facts: ServerFsFact[] = [];
   try {
-    const { ast, scopeManager } = parseTypeScript(ctx.file.text, { sourceType: "module" });
+    const { ast, scopeManager } = parseScriptScope(ctx.file.text, { sourceType: "module" });
     const references = new Map(
       scopeManager.scopes.flatMap((scope) =>
         scope.references.map((reference) => [reference.identifier, reference.resolved] as const),

@@ -1,4 +1,4 @@
-import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
+import { fileTextScope } from "../../../core/internal/script-scope.js";
 import type { RuleContext } from "../../../core/index.js";
 import { AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 
@@ -44,17 +44,10 @@ export const requireEventRuntimeConfigInServer = createRule({
 });
 
 function pluginStartupCalls(ctx: RuleContext): Set<number> {
+  const scope = fileTextScope(ctx);
+  if (!scope) return new Set();
   try {
-    const { ast, scopeManager, visitorKeys } = parseForESLint(ctx.file.text, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: /\.[jt]sx$/.test(ctx.file.relativePath) },
-    });
-    const references = new Map(
-      scopeManager.scopes.flatMap((scope) =>
-        scope.references.map((reference) => [reference.identifier, reference] as const),
-      ),
-    );
+    const { ast, references, visitorKeys } = scope;
     const isPluginFactory = (node: AnyNode): boolean => {
       if (node?.type !== "Identifier") return false;
       const variable = references.get(node)?.resolved;

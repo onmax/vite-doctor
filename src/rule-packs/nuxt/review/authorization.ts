@@ -1,5 +1,5 @@
 import { parseScriptSync } from "../../../core/internal/script.js";
-import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
+import { parseScriptScope, scopeDialect } from "../../../core/internal/script-scope.js";
 import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { dirname, extname, relative, resolve } from "pathe";
 import {
@@ -571,8 +571,8 @@ function localImports(
     const specifiers: string[] = [];
     if (autoImports.size) {
       try {
-        const { scopeManager } = parseForESLint(current.text, {
-          filePath: file,
+        const { scopeManager } = parseScriptScope(current.text, {
+          dialect: scopeDialect(file),
           sourceType: "module",
         });
         for (const reference of scopeManager.globalScope!.through) {

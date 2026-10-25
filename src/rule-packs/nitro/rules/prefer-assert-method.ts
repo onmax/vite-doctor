@@ -1,4 +1,5 @@
-import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
+import type { RuleContext } from "../../../core/index.js";
+import { fileTextScope } from "../../../core/internal/script-scope.js";
 import { type AnyNode, createRule, isNitroServerFile, report, walkScriptLocal } from "./shared.js";
 import { isNitroRouteFile, singleMethodCheck } from "./request-helpers.js";
 
@@ -19,14 +20,14 @@ export const preferAssertMethod = createRule({
   create(ctx) {
     if (!isNitroServerFile(ctx)) return;
     if (isNitroRouteFile(ctx)) return;
-    const methodReferences = getMethodReferences(ctx.file.text, ctx.file.relativePath);
+    let methodReferences: { value: Set<number> | undefined } | undefined;
     return {
       IfStatement(node: AnyNode) {
         if (!isUnconditionalGuard(node)) return;
         const check = singleMethodCheck(node.test, ctx.file.text, node);
         if (
           !check?.isNegative ||
-          usesLocalGetMethod(node.test, methodReferences) ||
+          usesLocalGetMethod(node.test, (methodReferences ??= getMethodReferences(ctx)).value) ||
           !rejectsRequest(node.consequent)
         )
           return;
@@ -89,13 +90,11 @@ function usesLocalGetMethod(node: AnyNode, references: Set<number> | undefined):
   return found;
 }
 
-function getMethodReferences(source: string, path: string): Set<number> | undefined {
+function getMethodReferences(ctx: RuleContext): { value: Set<number> | undefined } {
+  const scope = fileTextScope(ctx);
+  if (!scope) return { value: undefined };
   try {
-    const { scopeManager } = parseForESLint(source, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: /\.[jt]sx$/.test(path) },
-    });
+    const { scopeManager } = scope;
     const result = new Set<number>();
     for (const scope of scopeManager.scopes) {
       for (const reference of scope.references) {
@@ -119,9 +118,9 @@ function getMethodReferences(source: string, path: string): Set<number> | undefi
           result.add(reference.identifier.range[0]);
       }
     }
-    return result;
+    return { value: result };
   } catch {
-    return undefined;
+    return { value: undefined };
   }
 }
 

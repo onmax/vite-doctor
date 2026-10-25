@@ -1,5 +1,5 @@
 import { dirname, relative, resolve } from "pathe";
-import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
+import { parseScriptScope, scopeDialect } from "../../../core/internal/script-scope.js";
 import { createRule, type RuleContext, type RuleFileSystem } from "../../../core/index.js";
 import { diagnostics } from "../../../diagnostics.js";
 import type { AnyNode } from "./shared.js";
@@ -258,10 +258,7 @@ function exportsPluginFactory(
   try {
     const text = fs.readText(file);
     if (text === undefined) return false;
-    const parsed = parseForESLint(text, {
-      filePath: file,
-      sourceType: "module",
-    });
+    const parsed = parseScriptScope(text, { dialect: scopeDialect(file), sourceType: "module" });
     program = parsed.ast;
     for (const scope of parsed.scopeManager.scopes) {
       for (const reference of scope.references) {

@@ -1,4 +1,5 @@
-import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
+import type { RuleContext } from "../../../../core/index.js";
+import { fileTextScope } from "../../../../core/internal/script-scope.js";
 import { AnyNode, createRule, isInsideExportedFunction, report } from "./shared.js";
 
 export const preferExplicitUseStateKeyInExportedComposables = createRule({
@@ -19,12 +20,7 @@ export const preferExplicitUseStateKeyInExportedComposables = createRule({
       CallExpression(node: AnyNode) {
         if (!ctx.helpers.isCall(node, "useState")) return;
         if (typeof node.arguments?.[0]?.value === "string") return;
-        if (
-          (constantKeys ??= constantStringKeys(ctx.file.text, ctx.file.relativePath)).has(
-            node.arguments?.[0]?.start,
-          )
-        )
-          return;
+        if ((constantKeys ??= constantStringKeys(ctx)).has(node.arguments?.[0]?.start)) return;
         if (!isInsideExportedFunction(ctx.file.text, node.start)) return;
         report(
           ctx,
@@ -40,19 +36,12 @@ export const preferExplicitUseStateKeyInExportedComposables = createRule({
   },
 });
 
-function constantStringKeys(source: string, path: string): Set<number> {
+function constantStringKeys(ctx: RuleContext): Set<number> {
   const result = new Set<number>();
+  const scope = fileTextScope(ctx);
+  if (!scope) return result;
   try {
-    const { ast, scopeManager, visitorKeys } = parseForESLint(source, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: /\.[jt]sx$/.test(path) },
-    });
-    const references = new Map(
-      scopeManager.scopes.flatMap((scope) =>
-        scope.references.map((reference) => [reference.identifier, reference] as const),
-      ),
-    );
+    const { ast, references, visitorKeys } = scope;
     const resolve = (node: AnyNode, seen = new Set<unknown>()): string | undefined => {
       if (!node) return;
       if (node.type === "Literal" && typeof node.value === "string") return node.value;

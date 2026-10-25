@@ -1,6 +1,5 @@
-import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
 import type { RuleContext } from "../../../core/index.js";
-import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
+import { fileScriptScope } from "../../../core/internal/script-scope.js";
 import { type AnyNode, createRule, report } from "./shared.js";
 
 export const noRemovedH3Send = createRule({
@@ -55,20 +54,10 @@ export const noRemovedH3Send = createRule({
 
 function removedNamespaceReads(ctx: RuleContext): Map<number, string> {
   const result = new Map<number, string>();
-  const script = ctx.file.sfc
-    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
-    : { text: ctx.file.text, lang: /\.[jt]sx$/.test(ctx.file.relativePath) ? "tsx" : "ts" };
+  const scope = fileScriptScope(ctx);
+  if (!scope) return result;
   try {
-    const { ast, scopeManager, visitorKeys } = parseForESLint(script.text, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: ["jsx", "tsx"].includes(script.lang) },
-    });
-    const references = new Map(
-      scopeManager.scopes.flatMap((scope) =>
-        scope.references.map((reference) => [reference.identifier, reference] as const),
-      ),
-    );
+    const { ast, references, visitorKeys } = scope;
     const visit = (node: AnyNode) => {
       if (!node?.type) return;
       if (node.type === "MemberExpression" && node.object.type === "Identifier") {

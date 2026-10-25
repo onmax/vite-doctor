@@ -1,6 +1,6 @@
 import { join, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
-import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
+import { scopeDialect, scriptScope } from "../../../../core/internal/script-scope.js";
 import { AnyNode, createRule, report } from "./shared.js";
 
 export const keyedComposableRegistrationRequired = createRule({
@@ -81,12 +81,8 @@ function withoutExtension(path: string): string {
 // cannot establish the binding.
 function isNuxtFactoryBinding(ctx: RuleContext, node: AnyNode, name: string): boolean {
   try {
-    const parsed = parseForESLint(ctx.file.text, {
-      range: true,
-      sourceType: "module",
-      ecmaVersion: "latest",
-      filePath: ctx.file.path,
-    });
+    const parsed = scriptScope(ctx, ctx.file.text, scopeDialect(ctx.file.path));
+    if (!parsed) return false;
     const callee = unwrapCallee(node.callee);
     const start = callee?.type === "Identifier" ? callee.start : undefined;
     if (start === undefined) return false;

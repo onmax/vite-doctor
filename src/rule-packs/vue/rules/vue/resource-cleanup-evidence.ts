@@ -6,7 +6,7 @@ import {
   scriptMayName,
   scriptScope,
   type ScopeVariable as Variable,
-} from "./script-scope.js";
+} from "../../../../core/internal/script-scope.js";
 import { type AnyNode, namePattern } from "./shared.js";
 
 type ResourceKind = "interval" | "timeout" | "observer" | "socket" | "listener";
@@ -108,14 +108,15 @@ function createResourceEvidence(ctx: RuleContext) {
         .map((block) => ({
           text: block.content,
           offset: block.loc.start.offset,
-          jsx: block.lang === "jsx" || block.lang === "tsx",
+          dialect:
+            block.lang === "jsx" || block.lang === "tsx" ? ("tsx" as const) : ("ts" as const),
           setup: block === descriptor.scriptSetup,
         }))
     : [
         {
           text: ctx.file.text,
           offset: 0,
-          jsx: /\.[jt]sx$/.test(ctx.file.relativePath),
+          dialect: /\.[jt]sx$/.test(ctx.file.relativePath) ? ("tsx" as const) : ("ts" as const),
           setup: false,
         },
       ];
@@ -123,8 +124,8 @@ function createResourceEvidence(ctx: RuleContext) {
   for (const block of blocks) {
     // Indexing rewrites node offsets, so SFC blocks keep private ASTs instead of shared ones.
     const analysis = descriptor
-      ? analyzeScript(block.text, block.jsx)
-      : scriptScope(ctx, block.text, block.jsx);
+      ? analyzeScript(block.text, block.dialect)
+      : scriptScope(ctx, block.text, block.dialect);
     if (!analysis) continue;
     try {
       const { ast, scopeManager } = analysis;
