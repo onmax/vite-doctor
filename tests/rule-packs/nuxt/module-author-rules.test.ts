@@ -363,6 +363,23 @@ test("explicit-runtime-imports reports auto-imported calls in module runtime fil
   );
 });
 
+test("explicit-runtime-imports still analyzes JavaScript runtime files that contain type syntax", async () => {
+  const source = `const sampleRate = 0.5 as number
+export default defineNuxtPlugin(() => {
+  useRuntimeConfig()
+})
+`;
+  const result = await run(
+    moduleExplicitRuntimeImports,
+    modulePackage({ "src/runtime/plugins/analytics.js": source }),
+  );
+
+  expect(result.diagnostics.map((item) => item.message.split("()")[0])).toEqual([
+    "defineNuxtPlugin",
+    "useRuntimeConfig",
+  ]);
+});
+
 test("explicit-runtime-imports appends after existing imports in server and SFC runtime files", async () => {
   const server = `import { z } from "zod";
 
