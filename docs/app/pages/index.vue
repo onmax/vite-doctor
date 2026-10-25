@@ -341,6 +341,43 @@ const focusRing =
             }}</span>
           </NuxtLink>
         </div>
+
+        <a
+          href="https://comark-ui.onmax.me/lint/vite-doctor/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="group mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-[0.75rem] border border-dashed border-neutral-950/15 px-4 py-3.5 transition-colors hover:border-neutral-950/25 hover:bg-white dark:border-white/15 dark:hover:border-white/25 dark:hover:bg-white/[0.02]"
+          :class="focusRing"
+        >
+          <span class="inline-flex min-w-0 items-center gap-2.5">
+            <svg
+              viewBox="0 0 208 128"
+              fill="none"
+              class="h-4 w-auto shrink-0 text-neutral-950 dark:text-neutral-50"
+              aria-hidden="true"
+            >
+              <path stroke="currentColor" stroke-width="10" d="M199 9v110H9V9h190Z" />
+              <path
+                fill="currentColor"
+                d="M128 51.25V32h19.937v19.25H128ZM128 96V76.75h19.937V96H128ZM158.063 51.25V32H178v19.25h-19.937Zm0 44.75V76.75H178V96h-19.937ZM30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39H30Z"
+              />
+            </svg>
+            <span class="font-medium text-neutral-950 dark:text-neutral-50">Comark</span>
+            <span class="text-sm text-pretty text-neutral-500 dark:text-neutral-400">
+              Markdown documents and Comark UI blocks, through the comark-linter extension
+            </span>
+          </span>
+          <span
+            class="inline-flex items-center gap-1.5 font-mono text-xs text-neutral-400 dark:text-neutral-500"
+          >
+            COMARK
+            <UIcon
+              name="i-lucide-arrow-up-right"
+              class="size-3.5 transition-colors group-hover:text-neutral-950 dark:group-hover:text-neutral-50"
+              aria-hidden="true"
+            />
+          </span>
+        </a>
       </section>
 
       <section aria-labelledby="quick-start-title" class="py-16 sm:py-24">
