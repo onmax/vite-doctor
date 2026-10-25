@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://vite-doctor.onmax.me">Docs</a>
+  <a href="https://vite-doctor.onmax.me">Docs</a> · <a href="https://comark-ui.onmax.me/lint/vite-doctor/">Comark UI extension</a>
 </p>
 
 ## Usage
@@ -180,6 +180,11 @@ with `runRuleFixture` and `runProjectFixture` from `vite-doctor/testkit`. See
 unique within a Doctor Run. Shared final slash-delimited segments require full names in
 Config Extends; registering duplicate full names fails with the internal `DOC0023`
 authoring diagnostic.
+
+[`comark-linter`](https://comark-ui.onmax.me/lint/vite-doctor/) is a published Doctor
+Extension: it checks [Comark](https://comark.dev) Markdown documents and the plugins from
+[Comark UI](https://comark-ui.onmax.me). Register `comark()` from `comark-linter/doctor` in
+`doctor.config.ts`, add `comark/recommended` to `extends`, and run with `--config`.
 
 ## Development
 

@@ -341,6 +341,57 @@ const focusRing =
             }}</span>
           </NuxtLink>
         </div>
+
+        <a
+          href="https://comark-ui.onmax.me/lint/vite-doctor/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="group mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-[0.75rem] border border-dashed border-neutral-950/15 px-4 py-3.5 transition-colors hover:border-neutral-950/25 hover:bg-white dark:border-white/15 dark:hover:border-white/25 dark:hover:bg-white/[0.02]"
+          :class="focusRing"
+        >
+          <span class="inline-flex min-w-0 items-center gap-2.5">
+            <svg
+              viewBox="0 0 32 32"
+              fill="none"
+              class="size-6 shrink-0 text-neutral-950 dark:text-neutral-50"
+              aria-hidden="true"
+            >
+              <rect
+                x="6.5"
+                y="11.4"
+                width="19"
+                height="10.2"
+                stroke="currentColor"
+                stroke-width="1.3"
+              />
+              <path
+                fill="currentColor"
+                d="M7.87 20.24V12.76H10.07L12.26 15.51 14.46 12.76H16.66V20.24H14.46V15.95L12.26 18.7 10.07 15.95V20.24ZM18.64 12.98h2.19v2.12h-2.19ZM18.64 17.9h2.19v2.12h-2.19ZM21.94 12.98h2.19v2.12h-2.19ZM21.94 17.9h2.19v2.12h-2.19Z"
+              />
+              <path
+                d="M9.3 7.3C15.3 3.7 27.1 4.5 28.7 11.5 30.4 19.1 22 26.7 12.8 27.2 5.9 27.6 2 23.5 3.5 18.1 4.8 13.3 11.1 9.7 18.1 9.6"
+                stroke="#e5484d"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span class="font-medium text-neutral-950 dark:text-neutral-50">Comark UI</span>
+            <span class="text-sm text-pretty text-neutral-500 dark:text-neutral-400">
+              Comark Markdown and Comark UI blocks, through the comark-linter extension
+            </span>
+          </span>
+          <span
+            class="inline-flex items-center gap-1.5 font-mono text-xs text-neutral-400 dark:text-neutral-500"
+          >
+            COMARK
+            <UIcon
+              name="i-lucide-arrow-up-right"
+              class="size-3.5 transition-colors group-hover:text-neutral-950 dark:group-hover:text-neutral-50"
+              aria-hidden="true"
+            />
+          </span>
+        </a>
       </section>
 
       <section aria-labelledby="quick-start-title" class="py-16 sm:py-24">
