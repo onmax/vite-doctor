@@ -50,10 +50,8 @@ export interface ScanFileEntry {
   displayPath: string;
   sourceKind: SourceFileHandle["sourceKind"];
   moduleName?: string;
-  reportEligibility?: {
-    kind: "changed-lines";
-    ranges: ChangedLineRange[];
-  };
+  /** Set on the files a scoped run reports; a scoped run reports nothing from the others. */
+  reportEligibility?: { kind: "changed-lines"; ranges: ChangedLineRange[] } | { kind: "file" };
 }
 
 /** Remembers walk selections and generated-header checks between Doctor Runs. */
@@ -78,6 +76,35 @@ export class GitChangeUnavailableError extends Error {
 }
 
 export async function selectSourceInventory(
+  root: string,
+  config: DoctorConfig,
+  options: DoctorRunOptions,
+  project: ProjectInfo,
+  memo?: SourceInventoryMemo,
+): Promise<SourceInventorySelection> {
+  const affected = options.affectedFiles
+    ? new Set(options.affectedFiles.map((file) => resolve(root, file)))
+    : undefined;
+  const selection = await selectGitOrAllFiles(root, config, options, project, memo);
+  if (!affected || selection.git?.status === "unavailable") return selection;
+  return {
+    ...selection,
+    files: selection.files.map((file) => {
+      if (!affected.has(file.path)) return omitEligibility(file);
+      // Git already narrowed this file to its changed lines.
+      if (selection.git) return file;
+      return { ...file, reportEligibility: { kind: "file" as const } };
+    }),
+  };
+}
+
+function omitEligibility(file: ScanFileEntry): ScanFileEntry {
+  if (!file.reportEligibility) return file;
+  const { reportEligibility: _, ...rest } = file;
+  return rest;
+}
+
+async function selectGitOrAllFiles(
   root: string,
   config: DoctorConfig,
   options: DoctorRunOptions,

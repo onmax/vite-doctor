@@ -57,17 +57,17 @@ export async function runFileRules(session: ScanSession): Promise<void> {
   const reported = rules.map((): Diagnostic[] => []);
   const timings = session.options.profile ? rules.map(() => ({ ms: 0, files: 0 })) : undefined;
   const workspacePackages = projectWorkspacePackages(session.project);
-  const changed = session.gitChanges
+  const reportedFiles = session.scopedReport
     ? new Set(session.files.flatMap((file) => (file.reportEligibility ? [file.path] : [])))
     : undefined;
   for (const file of session.handles) {
     const owner = session.ruleScopes.size
       ? owningWorkspacePackage(workspacePackages, file.relativePath)
       : ".";
-    // File-scoped Rules can only report into the file they analyze, so a changed-files run
-    // needs them on changed files only; project-scoped Rules keep whole-project context.
+    // File-scoped Rules can only report into the file they analyze, so a scoped run needs them on
+    // the reported files only; project-scoped Rules keep whole-project context.
     const candidates =
-      changed && !changed.has(file.path)
+      reportedFiles && !reportedFiles.has(file.path)
         ? [...rules.keys()].filter((index) => rules[index]!.meta.reportScope === "project")
         : [...rules.keys()];
     if (!candidates.length) continue;
@@ -250,9 +250,9 @@ function manifestRuleProjects(
 export async function buildGraphPhase(session: ScanSession): Promise<void> {
   const analyses = selectedAnalyses(session);
   const graphAnalyses = analyses.has("dead-code") || analyses.has("graph");
-  // A changed-files report describes the change, so it skips the project graph summary unless an
+  // A scoped report describes the reported files, so it skips the project graph summary unless an
   // analysis needs the graph.
-  if (session.gitChanges && !graphAnalyses) return;
+  if (session.scopedReport && !graphAnalyses) return;
   const key = graphKey(session);
   if (!graphAnalyses) {
     const cached = session.cache.graph(key);

@@ -38,7 +38,7 @@ interface SourceState {
   parsed?: ParsedSource;
   facts?: FileFacts;
   cachedFacts?: () => Omit<FileFacts, "fileId"> | undefined;
-  /** Undefined until a file that a changed-files run deferred is parsed. */
+  /** Undefined until a file that a scoped run deferred is parsed. */
   shape?: number;
   fileId: number;
 }
@@ -100,9 +100,9 @@ async function prepareSourceFile(
       fileId,
     });
   }
-  // A changed-files run reports nothing from an unchanged file, so it parses one only when a
+  // A scoped run reports nothing from a file outside its scope, so it parses one only when a
   // project-scoped Rule or an analysis needs it; its parser evidence would not be reported.
-  if (session.gitChanges && !file.reportEligibility)
+  if (session.scopedReport && !file.reportEligibility)
     return createSourceHandle(session, file, content.hash, {
       session,
       entry: file,
@@ -164,7 +164,7 @@ export async function loadSourceFile(handle: SourceFileHandle): Promise<void> {
 
 /**
  * Bit 1: SFC, bit 2: script AST, bit 4: template AST, known without parsing cached files.
- * Undefined for a file a changed-files run has not parsed yet.
+ * Undefined for a file a scoped run has not parsed yet.
  */
 export function sourceShape(handle: SourceFileHandle): number | undefined {
   const state = sourceStates.get(handle);
