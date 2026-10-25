@@ -121,7 +121,7 @@ class ServeDoctorRun {
       setImmediate(() => {
         if (this.closed) return;
         for (const event of WATCHED_EVENTS) this.server.watcher.on(event, this.onFileEvent);
-        void this.execute({ changed: [] });
+        void this.execute({ changed: [] }, true);
       });
     if (host && !host.listening) host.once("listening", start);
     else start();
@@ -143,8 +143,10 @@ class ServeDoctorRun {
     this.pending.changed.add(file);
     // A rerun that has not reported yet would miss this save, so it restarts with it.
     const active = this.active;
-    if (active?.affected && !active.stale) {
-      for (const affected of active.affected) this.pending.files.add(affected);
+    if (active && !active.initial && !active.stale) {
+      if (active.affected) {
+        for (const affected of active.affected) this.pending.files.add(affected);
+      } else this.pending.full = true;
       for (const changed of active.changed) this.pending.changed.add(changed);
       active.stop();
     }
@@ -164,7 +166,7 @@ class ServeDoctorRun {
     await this.execute({ affected, changed: [...changed] });
   }
 
-  private async execute(batch: RunBatch) {
+  private async execute(batch: RunBatch, initial = false) {
     const { config } = this.server;
     const base = surfaceRunInput(config, this.options);
     const input: SurfaceRunInput = batch.affected
@@ -174,6 +176,7 @@ class ServeDoctorRun {
     const done = Promise.withResolvers<void>();
     const run: ActiveRun = {
       ...batch,
+      initial,
       stale: false,
       done: done.promise,
       stop() {
@@ -255,6 +258,7 @@ interface RunBatch {
 }
 
 interface ActiveRun extends RunBatch {
+  initial: boolean;
   stale: boolean;
   worker?: Worker;
   done: Promise<void>;

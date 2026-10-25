@@ -213,6 +213,40 @@ test("a save during a rerun supersedes it and keeps its files", async () => {
   });
 });
 
+test("a save supersedes a later full rerun and preserves its full scope", async () => {
+  await withProject(async (root) => {
+    const { logger, reports, deltas } = captureLogger();
+    const gate = gatedInventory();
+    const server = await startServer(root, logger, { extensions: [gate.extension] });
+    try {
+      await vi.waitFor(() => expect(gate.entered()).toBe(1), { timeout: 15_000 });
+      gate.release(0);
+      await vi.waitFor(() => expect(reports()).toHaveLength(1), { timeout: 15_000 });
+
+      await writeFile(join(root, "other.ts"), secret);
+      await save(server, join(root, "package.json"));
+      await vi.waitFor(() => expect(gate.entered()).toBe(2), { timeout: 15_000 });
+      await save(server, join(root, "entry.ts"), secret);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(gate.entered()).toBe(2);
+
+      gate.release(1);
+      await vi.waitFor(() => expect(gate.entered()).toBe(3), { timeout: 15_000 });
+      const prematureDeltas = [...deltas()];
+      gate.release(2);
+      await settled();
+      expect(prematureDeltas).toEqual([]);
+      expect(doctorRuns).toHaveLength(3);
+      expect(doctorRuns[2]!.options.affectedFiles).toBeUndefined();
+      expect(deltas()).toHaveLength(1);
+      expect(deltas()[0]).toContain("2 new Diagnostics after changes to entry.ts, package.json");
+      expect(reports()).toHaveLength(1);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 test("a package manifest reruns the whole project and other files rerun nothing", async () => {
   await withProject(async (root) => {
     const { logger, reports } = captureLogger();
