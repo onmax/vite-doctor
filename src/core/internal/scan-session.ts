@@ -63,6 +63,11 @@ export interface ScanSession {
   project: ProjectInfo;
   files: ScanFileEntry[];
   gitChanges?: AvailableGitChangeInventory;
+  /**
+   * Set when the run reports only some files (`changed`, `since`, or `affectedFiles`), so it can
+   * skip work whose Diagnostics could only land in the files it does not report.
+   */
+  scopedReport: boolean;
   handles: SourceFileHandle[];
   handlesByPath: Map<string, SourceFileHandle>;
   sourceTexts: Map<string, string | null>;
@@ -148,6 +153,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     project,
     files,
     gitChanges: sourceInventory.git,
+    scopedReport: Boolean(sourceInventory.git || options.affectedFiles),
     handles: [],
     handlesByPath,
     sourceTexts: new Map(),
@@ -204,13 +210,13 @@ export async function runPhase(
 
 export function persistScanCache(session: ScanSession): void {
   const { options } = session;
-  // Changed-files runs and Rule subset runs skip work, so they keep the results they did not touch.
-  const subset = Boolean(options.rules) || Boolean(options.analyses) || Boolean(session.gitChanges);
+  // Scoped-report runs and Rule subset runs skip work, so they keep the results they did not touch.
+  const subset = Boolean(options.rules) || Boolean(options.analyses) || session.scopedReport;
   session.cache.persist({
     files: session.files.length,
     activeRuleKeys: subset
       ? new Set(
-          session.gitChanges || (options.analyses && !options.rules)
+          session.scopedReport || (options.analyses && !options.rules)
             ? []
             : session.ruleKeys.values(),
         )

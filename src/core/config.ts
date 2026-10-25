@@ -21,6 +21,13 @@ export interface DoctorRunOptions {
   extends?: "auto" | string[];
   changed?: boolean;
   since?: string;
+  /**
+   * Files whose Diagnostics this run reports, absolute or relative to `root`. Like `changed`, the
+   * run analyzes the whole project so cross-file Rules keep their context, but it reports only
+   * Diagnostics located in these files. Plugin Surfaces pass the files a dev server saw change.
+   * Combined with `changed` or `since`, the report narrows to changed lines in these files.
+   */
+  affectedFiles?: string[];
   format?: import("./primitives.js").DoctorReportFormat;
   baseline?: string;
   updateBaseline?: boolean;

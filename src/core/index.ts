@@ -91,7 +91,9 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
           files: session.files.filter((file) => file.reportEligibility).length,
           deletedFiles: session.gitChanges.files.filter((file) => file.kind === "deleted").length,
         }
-      : { mode: "all", files: session.files.length },
+      : options.affectedFiles
+        ? { mode: "affected", files: session.files.filter((file) => file.reportEligibility).length }
+        : { mode: "all", files: session.files.length },
   );
   result.fixes = fixes;
   result.extends = options.extends ?? session.config.extends;

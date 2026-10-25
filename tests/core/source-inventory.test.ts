@@ -9,6 +9,7 @@ import {
   GitChangeUnavailableError,
   selectScanFiles,
   selectSourceInventory,
+  type ScanFileEntry,
 } from "../../src/core/internal/source-inventory.ts";
 import { parseGitChangeHunks } from "../../src/core/internal/git-change-ranges.ts";
 
@@ -32,7 +33,7 @@ test("changed line ranges ignore Git inter-hunk context configuration", async ()
         { changed: true },
         { ...vueProject, root },
       );
-      expect(selection.files[0]?.reportEligibility?.ranges).toEqual([
+      expect(changedRanges(selection.files[0])).toEqual([
         { startLine: 1, endLine: 1 },
         { startLine: 3, endLine: 3 },
       ]);
@@ -52,7 +53,7 @@ test("changed line ranges use source text instead of Git text conversion drivers
         { changed: true },
         { ...vueProject, root },
       );
-      expect(selection.files[0]?.reportEligibility?.ranges).toEqual([{ startLine: 1, endLine: 1 }]);
+      expect(changedRanges(selection.files[0])).toEqual([{ startLine: 1, endLine: 1 }]);
     },
   );
 });
@@ -121,7 +122,7 @@ test("changed source inventory includes staged, unstaged, untracked, renamed, an
       expect(
         selection.files
           .filter((file) => file.reportEligibility)
-          .map((file) => [file.displayPath, file.reportEligibility?.ranges]),
+          .map((file) => [file.displayPath, changedRanges(file)]),
       ).toEqual([
         ["src/new-name.ts", []],
         ["src/staged file.ts", [{ startLine: 2, endLine: 2 }]],
@@ -181,7 +182,7 @@ test("since compares HEAD and the worktree with the ref merge base", async () =>
       if (selection.git?.status !== "available") throw new Error("Expected Git inventory.");
       expect(selection.git.base).toBe(mergeBase);
       expect(changedPaths(selection)).toEqual(["src/app.ts"]);
-      expect(selection.files[0]?.reportEligibility?.ranges).toEqual([{ startLine: 2, endLine: 2 }]);
+      expect(changedRanges(selection.files[0])).toEqual([{ startLine: 2, endLine: 2 }]);
       expect(selection.files[1]).toMatchObject({ displayPath: "src/comparison.ts" });
       expect(selection.files[1]?.reportEligibility).toBeUndefined();
     },
@@ -206,10 +207,51 @@ test("changed source inventory treats every file as added before the first commi
       "src/staged.ts",
       "src/untracked.ts",
     ]);
-    expect(
-      selection.files.every((file) => file.reportEligibility?.ranges[0]?.startLine === 1),
-    ).toBe(true);
+    expect(selection.files.every((file) => changedRanges(file)?.[0]?.startLine === 1)).toBe(true);
   });
+});
+
+test("affected files keep the whole inventory and report every line of each affected file", async () => {
+  await withFixture(
+    { "src/app.ts": "const app = true\n", "src/other.ts": "const other = true\n" },
+    async (root) => {
+      const selection = await selectSourceInventory(
+        root,
+        {},
+        { affectedFiles: ["src/app.ts", join(root, "src/missing.ts")] },
+        { ...vueProject, root },
+      );
+
+      expect(selection.git).toBeUndefined();
+      expect(selection.files.map((file) => file.displayPath)).toEqual([
+        "src/app.ts",
+        "src/other.ts",
+      ]);
+      expect(selection.files.map((file) => file.reportEligibility)).toEqual([
+        { kind: "file" },
+        undefined,
+      ]);
+    },
+  );
+});
+
+test("affected files combined with changed narrow to changed lines inside those files", async () => {
+  await withGitFixture(
+    { "src/app.ts": "const app = false\n", "src/other.ts": "const other = false\n" },
+    async (root) => {
+      write(root, "src/app.ts", "const app = true\n");
+      write(root, "src/other.ts", "const other = true\n");
+      const selection = await selectSourceInventory(
+        root,
+        {},
+        { changed: true, affectedFiles: ["src/other.ts"] },
+        { ...vueProject, root },
+      );
+
+      expect(changedPaths(selection)).toEqual(["src/other.ts"]);
+      expect(changedRanges(selection.files[1])).toEqual([{ startLine: 1, endLine: 1 }]);
+    },
+  );
 });
 
 test("Git-unavailable scope is explicit and cannot look like a clean file selection", async () => {
@@ -362,6 +404,12 @@ async function withFixture(files: Record<string, string>, run: (root: string) =>
 /** Changed runs analyze the whole inventory; changed files carry their report ranges. */
 function changedPaths(selection: Awaited<ReturnType<typeof selectSourceInventory>>): string[] {
   return selection.files.filter((file) => file.reportEligibility).map((file) => file.displayPath);
+}
+
+function changedRanges(file: ScanFileEntry | undefined) {
+  return file?.reportEligibility?.kind === "changed-lines"
+    ? file.reportEligibility.ranges
+    : undefined;
 }
 
 function write(root: string, file: string, source: string) {

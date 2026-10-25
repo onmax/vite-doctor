@@ -108,7 +108,7 @@ function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): voi
 // Scoped runs skip Rules or files, so a suppression can match nothing without being stale.
 function reportUnusedConfigSuppressions(session: ScanSession): void {
   const { options, root } = session;
-  if (options.changed || options.since || options.rules || options.analyses) return;
+  if (session.scopedReport || options.rules || options.analyses) return;
   const ran = new Set(session.enabledRules.map((rule) => rule.meta.id));
   const effectiveExtends = options.extends ?? session.config.extends;
   // An entry without a Rule may belong to a Rule turned off in config, which cannot prove it stale.
@@ -278,7 +278,7 @@ function suppressionEntryBounds(
 }
 
 export function applyReportEligibility(session: ScanSession): void {
-  if (!session.options.changed && !session.options.since) return;
+  if (!session.scopedReport) return;
   const eligibility = new Map(
     session.files.map((file) => [file.path, file.reportEligibility] as const),
   );
@@ -295,6 +295,7 @@ export function applyReportEligibility(session: ScanSession): void {
     return locations.some((location) => {
       const fileEligibility = eligibility.get(location.file);
       if (!fileEligibility) return false;
+      if (fileEligibility.kind === "file") return true;
       if (!location.range) return diagnostic.range === undefined;
       const endLine = diagnosticEndLine(location.range, sources.get(location.file));
       return fileEligibility.ranges.some(

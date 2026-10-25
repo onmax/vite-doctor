@@ -1,13 +1,20 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { resolve } from "pathe";
+import { basename, isAbsolute, relative, resolve } from "pathe";
 import type {
   DoctorConfig,
   DoctorExtensionInput,
   DoctorPluginApi,
   DoctorRunOptions,
 } from "./core/index.js";
+import {
+  diffStates,
+  formatDelta,
+  mergeAffectedRun,
+  stateFromRun,
+  type DiagnosticState,
+} from "./plugin-delta.js";
 import type { SurfaceRunInput, SurfaceRunOutcome } from "./plugin-run.js";
 import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
 
@@ -86,10 +93,19 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
  * A serve-mode Doctor Run belongs to one dev server and starts once that server listens, so it
  * never delays startup. Runs whose inputs can cross a thread boundary execute in a worker; Doctor
  * Extension objects cannot, so those runs stay on the main thread after listening.
+ *
+ * After the first run logs its report, saved source files rerun Doctor with them as
+ * `affectedFiles`, and only the Diagnostics that changed are logged. The dev server watcher is
+ * shared by every Vite environment and fires even with HMR off, so a save reruns Doctor once,
+ * where `hotUpdate` would fire per environment.
  */
 class ServeDoctorRun {
-  private cancelled = false;
-  private worker: Worker | undefined;
+  private closed = false;
+  private state: DiagnosticState | undefined;
+  private active: ActiveRun | undefined;
+  private pending = emptyChanges();
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private readonly onFileEvent = (file: string) => this.fileChanged(file);
 
   constructor(
     readonly server: ViteDevServer,
@@ -101,42 +117,116 @@ class ServeDoctorRun {
     const host =
       this.server.httpServer ??
       (typeof middlewareMode === "object" ? middlewareMode.server : undefined);
-    const start = () => setImmediate(() => void this.run());
+    const start = () =>
+      setImmediate(() => {
+        if (this.closed) return;
+        for (const event of WATCHED_EVENTS) this.server.watcher.on(event, this.onFileEvent);
+        void this.execute({ changed: [] });
+      });
     if (host && !host.listening) host.once("listening", start);
     else start();
   }
 
   cancel() {
-    this.cancelled = true;
-    void this.worker?.terminate();
-    this.worker = undefined;
+    this.closed = true;
+    clearTimeout(this.timer);
+    for (const event of WATCHED_EVENTS) this.server.watcher.off(event, this.onFileEvent);
+    this.active?.stop();
   }
 
-  private async run() {
-    if (this.cancelled) return;
+  private fileChanged(path: string) {
+    const file = resolve(path);
+    const kind = hotUpdateKind(surfaceRoot(this.server.config, this.options), this.options, file);
+    if (!kind) return;
+    if (kind === "inventory") this.pending.full = true;
+    else this.pending.files.add(file);
+    this.pending.changed.add(file);
+    // A rerun that has not reported yet would miss this save, so it restarts with it.
+    const active = this.active;
+    if (active?.affected && !active.stale) {
+      for (const affected of active.affected) this.pending.files.add(affected);
+      for (const changed of active.changed) this.pending.changed.add(changed);
+      active.stop();
+    }
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => void this.flush(), HOT_UPDATE_DEBOUNCE_MS);
+  }
+
+  private async flush() {
+    this.timer = undefined;
+    // A main-thread run cannot be interrupted, so the next run waits for it instead of stacking.
+    if (this.active) await this.active.done;
+    if (this.closed || this.timer || this.active) return;
+    const { files, full, changed } = this.pending;
+    this.pending = emptyChanges();
+    // Without a recorded run there is nothing an affected-files run could be compared with.
+    const affected = full || !this.state ? undefined : files;
+    await this.execute({ affected, changed: [...changed] });
+  }
+
+  private async execute(batch: RunBatch) {
     const { config } = this.server;
-    const input = surfaceRunInput(config, this.options);
+    const base = surfaceRunInput(config, this.options);
+    const input: SurfaceRunInput = batch.affected
+      ? { ...base, options: { ...base.options, affectedFiles: [...batch.affected] } }
+      : base;
     const extensions = surfaceExtensions(config, this.options);
+    const done = Promise.withResolvers<void>();
+    const run: ActiveRun = {
+      ...batch,
+      stale: false,
+      done: done.promise,
+      stop() {
+        run.stale = true;
+        void run.worker?.terminate();
+      },
+    };
+    this.active = run;
+    let outcome: SurfaceRunOutcome | undefined;
     try {
-      const outcome = canRunInWorker(input, extensions)
-        ? await this.runInWorker(input)
+      outcome = canRunInWorker(input, extensions)
+        ? await this.runInWorker(input, run)
         : await import("./plugin-run.js").then(({ runSurfaceDoctor }) =>
             runSurfaceDoctor(input, extensions),
           );
-      if (!this.cancelled && outcome) this.log(outcome);
     } catch (error) {
-      if (this.cancelled) return;
-      const message = error instanceof Error ? error.message : String(error);
-      config.logger.error(`Vite Doctor could not finish the Doctor Run: ${message}`, {
-        error: error instanceof Error ? error : undefined,
-      });
+      if (!run.stale && !this.closed) {
+        const message = error instanceof Error ? error.message : String(error);
+        config.logger.error(`Vite Doctor could not finish the Doctor Run: ${message}`, {
+          error: error instanceof Error ? error : undefined,
+        });
+      }
+    } finally {
+      if (this.active === run) this.active = undefined;
+      done.resolve();
     }
+    if (outcome && !run.stale && !this.closed) this.record(base.options.root, batch, outcome);
   }
 
-  private runInWorker(input: SurfaceRunInput) {
+  private record(root: string, batch: RunBatch, outcome: SurfaceRunOutcome) {
+    const previous = this.state;
+    const next =
+      previous && batch.affected
+        ? mergeAffectedRun(previous, batch.affected, outcome)
+        : stateFromRun(outcome);
+    this.state = next;
+    if (!previous) {
+      this.logReport(outcome);
+      return;
+    }
+    const log = formatDelta(diffStates(previous, next), next, {
+      root,
+      changed: batch.changed,
+      mode: this.options.mode ?? "error",
+      maxWarnings: this.options.maxWarnings,
+    });
+    if (log) this.server.config.logger[log.level](log.message);
+  }
+
+  private runInWorker(input: SurfaceRunInput, run: ActiveRun) {
     return new Promise<SurfaceRunOutcome | undefined>((resolvePromise, reject) => {
       const worker = new Worker(workerUrl, { workerData: input });
-      this.worker = worker;
+      run.worker = worker;
       worker.unref();
       worker.once("message", (message: { outcome?: SurfaceRunOutcome; error?: string }) => {
         if (message.error !== undefined) reject(new Error(message.error));
@@ -147,7 +237,7 @@ class ServeDoctorRun {
     });
   }
 
-  private log(outcome: SurfaceRunOutcome) {
+  private logReport(outcome: SurfaceRunOutcome) {
     const { logger } = this.server.config;
     if (!outcome.report) return;
     if (outcome.shouldFail && (this.options.mode ?? "error") === "error")
@@ -155,6 +245,62 @@ class ServeDoctorRun {
     else if (outcome.hasFindings) logger.warn(outcome.report);
     else logger.info(outcome.report);
   }
+}
+
+interface RunBatch {
+  /** Files the run reports, or undefined for a full Doctor Run. */
+  affected?: ReadonlySet<string>;
+  /** Files whose change started the run. */
+  changed: string[];
+}
+
+interface ActiveRun extends RunBatch {
+  stale: boolean;
+  worker?: Worker;
+  done: Promise<void>;
+  stop(): void;
+}
+
+function emptyChanges() {
+  return {
+    files: new Set<string>(),
+    /** A changed file feeds Project Inventory for every file, so the next run is a full run. */
+    full: false,
+    changed: new Set<string>(),
+  };
+}
+
+const WATCHED_EVENTS = ["add", "change", "unlink"] as const;
+const HOT_UPDATE_DEBOUNCE_MS = 100;
+const SOURCE_FILE = /\.(?:vue|[cm]?[jt]sx?|mdc?)$/;
+const IGNORED_DIRECTORIES = new Set(["node_modules", ".git"]);
+
+/**
+ * A saved source file reruns Doctor for itself. A package manifest feeds Project Inventory and
+ * manifest Rules, so it reruns the whole project. Other files are not Doctor Run input.
+ */
+function hotUpdateKind(
+  root: string,
+  options: ViteDoctorSurfaceOptions,
+  file: string,
+): "source" | "inventory" | undefined {
+  if (!isInside(root, file)) return undefined;
+  if (
+    relative(root, file)
+      .split("/")
+      .some((name) => IGNORED_DIRECTORIES.has(name))
+  )
+    return undefined;
+  // Doctor writes its cache during a run, which must not schedule another run.
+  if (isInside(resolve(root, options.config?.cache?.dir ?? ".vite-doctor/cache"), file))
+    return undefined;
+  if (basename(file) === "package.json") return "inventory";
+  return SOURCE_FILE.test(file) ? "source" : undefined;
+}
+
+function isInside(directory: string, file: string): boolean {
+  const path = relative(directory, file);
+  return path !== "" && !path.startsWith("../") && path !== ".." && !isAbsolute(path);
 }
 
 const workerUrl = new URL("./plugin-worker.mjs", import.meta.url);
@@ -169,10 +315,14 @@ function canRunInWorker(input: SurfaceRunInput, extensions: DoctorExtensionInput
   }
 }
 
+function surfaceRoot(config: ResolvedConfig, options: ViteDoctorSurfaceOptions) {
+  return options.root ? resolve(config.root, options.root) : config.root;
+}
+
 function surfaceRunInput(config: ResolvedConfig, options: ViteDoctorSurfaceOptions) {
   return {
     options: {
-      root: options.root ? resolve(config.root, options.root) : config.root,
+      root: surfaceRoot(config, options),
       framework: options.framework ?? "auto",
       config: options.config,
       extends: options.extends,

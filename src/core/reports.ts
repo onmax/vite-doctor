@@ -79,16 +79,7 @@ export function createTextReport(result: DoctorRunResult): string {
     const items = result.diagnostics.filter((diagnostic) => diagnostic.severity === severity);
     if (!items.length) continue;
     lines.push(pc.bold(labelSeverity(severity)));
-    for (const diagnostic of items) {
-      const path = relative(result.root, diagnostic.file) || ".";
-      const loc = diagnostic.range
-        ? `${path}:${diagnostic.range.line}:${diagnostic.range.column}`
-        : path;
-      lines.push(indent(formatDiagnostic(diagnostic.diagnostic), "  "));
-      lines.push(`    rule: ${diagnostic.ruleId}`);
-      lines.push(`    source: ${loc}`);
-      lines.push(`    confidence: ${diagnostic.confidence ?? "heuristic-medium"}`);
-    }
+    for (const diagnostic of items) lines.push(formatTextDiagnostic(result.root, diagnostic));
     lines.push("");
   }
   lines.push("Summary");
@@ -115,6 +106,22 @@ export function createTextReport(result: DoctorRunResult): string {
     );
   }
   return lines.join("\n");
+}
+
+/** One Diagnostic as the text report renders it, indented for a severity section. */
+export function formatTextDiagnostic(root: string, diagnostic: Diagnostic): string {
+  return [
+    indent(formatDiagnostic(diagnostic.diagnostic), "  "),
+    `    rule: ${diagnostic.ruleId}`,
+    `    source: ${diagnosticLocation(root, diagnostic)}`,
+    `    confidence: ${diagnostic.confidence ?? "heuristic-medium"}`,
+  ].join("\n");
+}
+
+/** `path:line:column` relative to `root`, or the path alone for an unlocated Diagnostic. */
+export function diagnosticLocation(root: string, diagnostic: Diagnostic): string {
+  const path = relative(root, diagnostic.file) || ".";
+  return diagnostic.range ? `${path}:${diagnostic.range.line}:${diagnostic.range.column}` : path;
 }
 
 function confidenceMix(result: DoctorRunResult) {

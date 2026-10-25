@@ -1029,8 +1029,13 @@ export interface DoctorRunResult {
   framework: DoctorFramework;
   root: string;
   scope: {
-    mode: "all" | "changed";
+    /**
+     * `changed` reports changed lines from Git (`changed`, `since`); `affected` reports the
+     * `affectedFiles` the caller passed. Both analyze the whole project.
+     */
+    mode: "all" | "changed" | "affected";
     base?: string | null;
+    /** Files analyzed, or in a scoped mode, files whose Diagnostics the run reports. */
     files: number;
     deletedFiles?: number;
   };
