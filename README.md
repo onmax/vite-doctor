@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://vite-doctor.onmax.me">Docs</a> · <a href="https://comark-ui.onmax.me/lint/vite-doctor/">Comark extension</a>
+  <a href="https://vite-doctor.onmax.me">Docs</a> · <a href="https://comark-ui.onmax.me/lint/vite-doctor/">Comark UI extension</a>
 </p>
 
 ## Usage

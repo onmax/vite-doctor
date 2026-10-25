@@ -351,20 +351,34 @@ const focusRing =
         >
           <span class="inline-flex min-w-0 items-center gap-2.5">
             <svg
-              viewBox="0 0 208 128"
+              viewBox="0 0 32 32"
               fill="none"
-              class="h-4 w-auto shrink-0 text-neutral-950 dark:text-neutral-50"
+              class="size-6 shrink-0 text-neutral-950 dark:text-neutral-50"
               aria-hidden="true"
             >
-              <path stroke="currentColor" stroke-width="10" d="M199 9v110H9V9h190Z" />
+              <rect
+                x="6.5"
+                y="11.4"
+                width="19"
+                height="10.2"
+                stroke="currentColor"
+                stroke-width="1.3"
+              />
               <path
                 fill="currentColor"
-                d="M128 51.25V32h19.937v19.25H128ZM128 96V76.75h19.937V96H128ZM158.063 51.25V32H178v19.25h-19.937Zm0 44.75V76.75H178V96h-19.937ZM30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39H30Z"
+                d="M7.87 20.24V12.76H10.07L12.26 15.51 14.46 12.76H16.66V20.24H14.46V15.95L12.26 18.7 10.07 15.95V20.24ZM18.64 12.98h2.19v2.12h-2.19ZM18.64 17.9h2.19v2.12h-2.19ZM21.94 12.98h2.19v2.12h-2.19ZM21.94 17.9h2.19v2.12h-2.19Z"
+              />
+              <path
+                d="M9.3 7.3C15.3 3.7 27.1 4.5 28.7 11.5 30.4 19.1 22 26.7 12.8 27.2 5.9 27.6 2 23.5 3.5 18.1 4.8 13.3 11.1 9.7 18.1 9.6"
+                stroke="#e5484d"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               />
             </svg>
-            <span class="font-medium text-neutral-950 dark:text-neutral-50">Comark</span>
+            <span class="font-medium text-neutral-950 dark:text-neutral-50">Comark UI</span>
             <span class="text-sm text-pretty text-neutral-500 dark:text-neutral-400">
-              Markdown documents and Comark UI blocks, through the comark-linter extension
+              Comark Markdown and Comark UI blocks, through the comark-linter extension
             </span>
           </span>
           <span
