@@ -1,6 +1,6 @@
 import type { SFCDescriptor } from "@vue/compiler-sfc";
 import type { RuleContext } from "../../../../core/index.js";
-import { scriptMayName, type ScopeVariable } from "./script-scope.js";
+import { scriptMayName, type ScopeVariable } from "../../../../core/internal/script-scope.js";
 import { AnyNode, bindingNames, createRule, namePattern, report } from "./shared.js";
 import {
   constBinding,

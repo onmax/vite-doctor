@@ -1,4 +1,4 @@
-import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
+import { parseScriptScope } from "../../../core/internal/script-scope.js";
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
 
 type AnyNode = any;
@@ -65,10 +65,9 @@ function piniaDefineStoreCallees(program: AnyNode, source: string): Set<number> 
     if (node.type === "JSXElement" || node.type === "JSXFragment") jsx = true;
   });
   try {
-    const { scopeManager } = parseForESLint(script.join(""), {
-      range: true,
+    const { scopeManager } = parseScriptScope(script.join(""), {
+      dialect: jsx ? "tsx" : "ts",
       sourceType: "module",
-      ecmaFeatures: { jsx },
     });
     for (const scope of scopeManager.scopes) {
       for (const reference of scope.references) {

@@ -1,4 +1,4 @@
-import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
+import { parseScriptScope } from "../../../../core/internal/script-scope.js";
 import { findTemplateDirective } from "../../../../core/rule-authoring.js";
 import { AnyNode, createRule, report } from "./shared.js";
 
@@ -35,8 +35,7 @@ export const noRouteObjectPageKey = createRule({
 
 function usesRouteObject(source: string): boolean {
   try {
-    const { ast, scopeManager, visitorKeys } = parseForESLint(`(${source})`, {
-      range: true,
+    const { ast, scopeManager, visitorKeys } = parseScriptScope(`(${source})`, {
       sourceType: "module",
     });
     if (

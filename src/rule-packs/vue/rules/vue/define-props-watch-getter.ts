@@ -1,5 +1,5 @@
 import type { SFCDescriptor } from "@vue/compiler-sfc";
-import { parseForESLint } from "../../../../core/internal/lazy-parsers.js";
+import { scriptScope } from "../../../../core/internal/script-scope.js";
 import { type RuleContext } from "../../../../core/index.js";
 import { AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -50,21 +50,19 @@ export const definePropsWatchGetter = createRule({
 
 function propWatchArguments(ctx: RuleContext, descriptor: SFCDescriptor): Set<number> {
   const setup = descriptor.scriptSetup!;
+  const setupScope = scriptScope(
+    ctx,
+    setup.content,
+    ["jsx", "tsx"].includes(setup.lang ?? "") ? "tsx" : "ts",
+  );
+  const moduleScope = descriptor.script
+    ? scriptScope(ctx, descriptor.script.content, "ts")
+    : undefined;
+  if (!setupScope || moduleScope === null) return new Set();
   try {
-    const { ast, scopeManager, visitorKeys } = parseForESLint(setup.content, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: ["jsx", "tsx"].includes(setup.lang ?? "") },
-    });
-    const references = new Map(
-      scopeManager.scopes.flatMap((scope) =>
-        scope.references.map((reference) => [reference.identifier, reference] as const),
-      ),
-    );
-    const moduleVariables = descriptor.script
-      ? parseForESLint(descriptor.script.content, {
-          sourceType: "module",
-        }).scopeManager.scopes.find((scope) => scope.type === "module")?.variables
+    const { ast, references, visitorKeys } = setupScope;
+    const moduleVariables = moduleScope
+      ? moduleScope.scopeManager.scopes.find((scope) => scope.type === "module")?.variables
       : [];
     const variableFor = (node: AnyNode) =>
       references.get(node)?.resolved ??

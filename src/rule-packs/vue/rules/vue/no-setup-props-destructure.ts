@@ -1,5 +1,5 @@
 import type { RuleContext } from "../../../../core/index.js";
-import { fileScriptScope, scriptMayName } from "./script-scope.js";
+import { fileScriptScope, scriptMayName } from "../../../../core/internal/script-scope.js";
 import { AnyNode, createRule, namePattern, report } from "./shared.js";
 
 const SETUP_NAMES = namePattern(["setup", "defineComponent"]);

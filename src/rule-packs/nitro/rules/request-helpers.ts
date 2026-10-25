@@ -1,4 +1,4 @@
-import { parseForESLint } from "../../../core/internal/lazy-parsers.js";
+import { fileTextScope } from "../../../core/internal/script-scope.js";
 import {
   type AnyNode,
   createRule,
@@ -60,7 +60,7 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
             node,
             opts.rawUtilities,
             opts.validatedUtility,
-            (bindings ??= variableReferences(ctx.file.text, ctx.file.relativePath)),
+            (bindings ??= variableReferences(ctx)),
           );
           if (!match) return;
           report(ctx, match.node, opts.id, "warn", "request", opts.message, opts.suggestion);
@@ -199,14 +199,12 @@ function rawUtilityNameFromVariableDeclarator(node: AnyNode) {
   return calleeName(unwrapAwait(node.init)) ?? "";
 }
 
-function variableReferences(source: string, path: string): Map<number, Set<number>> {
+function variableReferences(ctx: RuleContext): Map<number, Set<number>> {
   const result = new Map<number, Set<number>>();
+  const scope = fileTextScope(ctx);
+  if (!scope) return result;
   try {
-    const { scopeManager } = parseForESLint(source, {
-      range: true,
-      sourceType: "module",
-      ecmaFeatures: { jsx: /\.[jt]sx$/.test(path) },
-    });
+    const { scopeManager } = scope;
     for (const scope of scopeManager.scopes) {
       for (const variable of scope.variables) {
         const references = new Set(

@@ -1,4 +1,4 @@
-import { parseTypeScript, type ParsedTypeScript } from "./estree.js";
+import { parseScriptScope, type ScriptScope } from "../../../core/internal/script-scope.js";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
 import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { diagnostics } from "../../../diagnostics.js";
@@ -64,9 +64,9 @@ export const noUnusedDefine = createRule({
 function defineReferences(file: string, text: string): Set<string> | undefined {
   if (file.endsWith(".vue")) return undefined;
   try {
-    const { ast, scopeManager, visitorKeys } = parseTypeScript(text, {
+    const { ast, scopeManager, visitorKeys } = parseScriptScope(text, {
       sourceType: "module",
-      jsx: /\.[jt]sx$/.test(file),
+      dialect: /\.[jt]sx$/.test(file) ? "tsx" : "ts",
     });
     const parents = new Map<AnyNode, AnyNode>();
     const visit = (node: AnyNode) => {
@@ -290,9 +290,9 @@ function readAliasInitializers(source: string) {
     number,
     { range: [number, number]; getter: boolean; prefix: string }
   >();
-  let parsed: ParsedTypeScript;
+  let parsed: ScriptScope;
   try {
-    parsed = parseTypeScript(source, { sourceType: "module" });
+    parsed = parseScriptScope(source, { sourceType: "module" });
   } catch {
     return {
       initializers,
@@ -892,7 +892,7 @@ function readAliasInitializers(source: string) {
     return [start, source.length];
   }
   for (const [start, end] of syntheticObjects) {
-    const expression = parseTypeScript(`(${source.slice(start, end)})`).ast.body[0] as AnyNode;
+    const expression = parseScriptScope(`(${source.slice(start, end)})`).ast.body[0] as AnyNode;
     const move = (node: AnyNode) => {
       if (!node || typeof node !== "object") return;
       node.range = [node.range[0] + start - 1, node.range[1] + start - 1];
@@ -981,7 +981,7 @@ function readAliasInitializers(source: string) {
             for (const [position, entry] of map)
               if (position >= originalStart && position < originalEnd)
                 (map as Map<number, unknown>).set(position + shift, entry);
-          const expression = parseTypeScript(`(${source.slice(arrayStart)})`).ast
+          const expression = parseScriptScope(`(${source.slice(arrayStart)})`).ast
             .body[0] as AnyNode;
           const rest = expression.expression;
           function moveRanges(node: AnyNode) {
@@ -1205,7 +1205,7 @@ function resolvesSecretAlias(
     visited.add(identity);
     const offset = range[0] - 1;
     try {
-      const ast = parseTypeScript(`(${source.slice(...range)})`).ast;
+      const ast = parseScriptScope(`(${source.slice(...range)})`).ast;
       let node = (ast.body[0] as AnyNode).expression;
       while (node?.type.startsWith("TS") && node.expression) node = node.expression;
       if (node?.type === "Identifier" || node?.type === "ThisExpression") {
@@ -1331,9 +1331,9 @@ function resolvesSecretAlias(
   }
   while (pending.length) {
     const current = pending.pop()!;
-    let parsed: ParsedTypeScript;
+    let parsed: ScriptScope;
     try {
-      parsed = parseTypeScript(`(${current.value})`);
+      parsed = parseScriptScope(`(${current.value})`);
     } catch {
       if (SECRET_NAME_RE.test(current.value)) return true;
       continue;
@@ -1480,7 +1480,7 @@ function resolvesSecretAlias(
                   visited.add(range[0]);
                   offset = range[0] - 1;
                   try {
-                    const parsed = parseTypeScript(`(${source.slice(...range)})`);
+                    const parsed = parseScriptScope(`(${source.slice(...range)})`);
                     const statement = parsed.ast.body[0];
                     value =
                       statement?.type === "ExpressionStatement" ? statement.expression : undefined;
@@ -1737,7 +1737,7 @@ function resolvesSecretAlias(
             if (ranges?.length !== 1) break;
             offset = ranges[0]![0] - 1;
             try {
-              const ast = parseTypeScript(`(${source.slice(...ranges[0]!)})`).ast;
+              const ast = parseScriptScope(`(${source.slice(...ranges[0]!)})`).ast;
               replacer = (ast.body[0] as AnyNode).expression;
             } catch {
               break;

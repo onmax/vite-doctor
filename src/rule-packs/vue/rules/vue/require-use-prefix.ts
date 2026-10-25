@@ -5,7 +5,7 @@ import {
   fileScriptScope,
   type ScopeVariable,
   type ScriptScope,
-} from "./script-scope.js";
+} from "../../../../core/internal/script-scope.js";
 import { AnyNode, createRule, namePattern, walkScriptLocal } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
@@ -336,7 +336,8 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
   function analyzeModule(file: string): ModuleAnalysis | null {
     if (!modules.has(file)) {
       const text = ctx.fs.readText(file);
-      const scope = text === undefined ? null : analyzeScript(text, /\.[jt]sx$/.test(file));
+      const scope =
+        text === undefined ? null : analyzeScript(text, /\.[jt]sx$/.test(file) ? "tsx" : "ts");
       modules.set(
         file,
         scope ? { file, program: scope.ast, bindings: scopeBindings(scope) } : null,

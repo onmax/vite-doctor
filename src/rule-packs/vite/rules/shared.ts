@@ -1,8 +1,7 @@
 import { resolve } from "pathe";
 import { parseSync } from "oxc-parser";
 import type { RuleContext, SourceRange } from "../../../core/index.js";
-import { createVueScriptForParsing } from "../../../core/internal/sfc.js";
-import { parseTypeScript } from "./estree.js";
+import { fileScriptScope } from "../../../core/internal/script-scope.js";
 
 export type AnyNode = any;
 
@@ -10,26 +9,14 @@ export function globalReferenceStarts(
   ctx: RuleContext,
   names: ReadonlySet<string>,
 ): Set<number> | null {
-  const parsedVueScript = ctx.file.sfc
-    ? createVueScriptForParsing(ctx.file.sfc.descriptor, ctx.file.text)
-    : undefined;
-  try {
-    const { scopeManager } = parseTypeScript(parsedVueScript?.text ?? ctx.file.text, {
-      sourceType: "module",
-      jsx:
-        parsedVueScript?.lang === "jsx" ||
-        parsedVueScript?.lang === "tsx" ||
-        /\.[jt]sx$/.test(ctx.file.relativePath),
-    });
-    return new Set(
-      scopeManager.globalScope?.through
-        .filter((reference) => names.has(reference.identifier.name))
-        .map((reference) => reference.identifier.range[0]),
-    );
-  } catch {
-    // Parser disagreement leaves lexical resolution unknown, so callers remain conservative.
-    return null;
-  }
+  const scope = fileScriptScope(ctx);
+  // Parser disagreement leaves lexical resolution unknown, so callers remain conservative.
+  if (!scope) return null;
+  return new Set(
+    scope.scopeManager.globalScope?.through
+      .filter((reference) => names.has(reference.identifier.name))
+      .map((reference) => reference.identifier.range[0]),
+  );
 }
 
 export const SECRET_NAME_RE = /(SECRET|TOKEN|PASSWORD|PRIVATE|API_?KEY|ACCESS_?KEY)/i;

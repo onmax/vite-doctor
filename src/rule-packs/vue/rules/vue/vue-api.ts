@@ -1,5 +1,10 @@
 import type { RuleContext } from "../../../../core/index.js";
-import { fileScriptScope, perFile, type ScopeVariable, type ScriptScope } from "./script-scope.js";
+import {
+  fileScriptScope,
+  perFile,
+  type ScopeVariable,
+  type ScriptScope,
+} from "../../../../core/internal/script-scope.js";
 import type { AnyNode } from "./shared.js";
 
 const VUE_API_SOURCES = /^(?:vue|vue-demi|@vue\/(?:runtime-core|runtime-dom|reactivity)|#imports)$/;

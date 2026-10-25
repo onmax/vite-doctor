@@ -11,14 +11,14 @@ import {
 
 const tsParses = vi.hoisted(() => ({ count: 0 }));
 
-vi.mock("../../../src/core/internal/lazy-parsers.ts", async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import("../../../src/core/internal/lazy-parsers.ts")>();
-  const parseForESLint: typeof original.parseForESLint = (code, options) => {
-    tsParses.count++;
-    return original.parseForESLint(code, options);
+vi.mock("../../../src/core/internal/script.ts", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../../src/core/internal/script.ts")>();
+  const parseScriptSync: typeof original.parseScriptSync = (file, source, options) => {
+    // Scope analysis is the only caller that asks oxc for TS-ESTree ranges.
+    if (options?.range) tsParses.count++;
+    return original.parseScriptSync(file, source, options);
   };
-  return { ...original, parseForESLint };
+  return { ...original, parseScriptSync };
 });
 
 afterEach(() => {
@@ -34,7 +34,7 @@ const scopeRules = [
   requireLifecycleCleanup,
 ];
 
-test("scope-analysis Rules share one TypeScript parse per file", async () => {
+test("scope-analysis Rules share one scope analysis parse per file", async () => {
   const result = await runProjectFixture({
     framework: "vue",
     rules: scopeRules,

@@ -1,5 +1,5 @@
 import type { RuleContext } from "../../../../core/index.js";
-import { scriptMayName } from "./script-scope.js";
+import { scriptMayName } from "../../../../core/internal/script-scope.js";
 import { AnyNode, createRule, namePattern, report } from "./shared.js";
 import {
   constBinding,
