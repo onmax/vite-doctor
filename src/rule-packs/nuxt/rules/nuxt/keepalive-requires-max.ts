@@ -1,4 +1,5 @@
 import { resolve } from "pathe";
+import { gte, valid } from "semver";
 import { parseScriptScope } from "../../../../core/internal/script-scope.js";
 import type { DiagnosticEvidence, RuleContext } from "../../../../core/index.js";
 import { FUNCTION_TYPES, propertyName, unwrap } from "./nuxt-config-ast.js";
@@ -37,7 +38,7 @@ export const keepaliveRequiresMax = createRule({
   },
   create(ctx) {
     const pagePath = nuxtPagePath(ctx);
-    if (!pagePath || !ctx.file.isVueSfc) return;
+    if (!ctx.file.isVueSfc) return;
     return {
       CallExpression(node: AnyNode) {
         if (resolveLocalCalleeName(ctx, node) !== "definePageMeta") return;
@@ -46,7 +47,7 @@ export const keepaliveRequiresMax = createRule({
         const properties = staticProperties(meta);
         if (!properties) return;
         const keepalive = properties.get("keepalive");
-        if (!keepalive || !isUnboundedKeepalive(unwrap(keepalive.value))) return;
+        if (!keepalive || !isUnboundedKeepalive(unwrap(keepalive.value), ctx)) return;
 
         const params = routeParams(ctx, pagePath, properties.get("path")?.value);
         const routeUnbounded = params?.names.filter(
@@ -101,15 +102,25 @@ function staticProperties(object: AnyNode): Map<string, AnyNode> | null {
   return properties;
 }
 
-function isUnboundedKeepalive(value: AnyNode): boolean {
+function isUnboundedKeepalive(value: AnyNode, ctx: RuleContext): boolean {
   if (value?.type === "Literal") return value.value === true;
   if (value?.type !== "ObjectExpression") return false;
   const properties = staticProperties(value);
-  // exclude can leave this page out of the cache, so only a plain options object is proven.
-  return !!properties && !properties.has("max") && !properties.has("exclude");
+  if (!properties || properties.has("max") || properties.has("exclude")) return false;
+  // Before Nuxt 4.5, include can prevent this page from entering the cache. Only a
+  // resolved runtime version proves Nuxt adds opted-in pages to the include set.
+  if (properties.has("include")) {
+    const version = ctx.project.runtimeGraph?.packages.nuxt?.version;
+    return !!version && !!valid(version) && gte(version, "4.5.0");
+  }
+  return true;
 }
 
-function routeParams(ctx: RuleContext, pagePath: string, metaPath: AnyNode): RouteParams | null {
+function routeParams(
+  ctx: RuleContext,
+  pagePath: string | null,
+  metaPath: AnyNode,
+): RouteParams | null {
   const manifest = ctx.project.nuxt?.manifest;
   if (manifest?.isCurrent && manifest.pages?.length) {
     const routes = manifest.pages.filter(
@@ -131,6 +142,7 @@ function routeParams(ctx: RuleContext, pagePath: string, metaPath: AnyNode): Rou
       },
     };
   }
+  if (!pagePath) return null;
   if (metaPath) {
     const value = unwrap(metaPath);
     if (value?.type !== "Literal" || typeof value.value !== "string") return null;

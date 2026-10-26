@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { runProjectFixture, runRuleFixture } from "../../../src/core/testkit.ts";
 import { keepaliveRequiresMax } from "../../../src/rule-packs/nuxt/rules/nuxt/keepalive-requires-max.ts";
 
 function page(meta: string) {
@@ -37,7 +37,7 @@ test.each([
   [
     "a keepalive options object without max",
     "app/pages/product/[id].vue",
-    "{ keepalive: { include: ['Product'] } }",
+    "{ keepalive: {} }",
     ":id",
   ],
   [
@@ -157,3 +157,47 @@ test("prefers the resolved Nuxt pages from a current manifest", async () => {
   expect(reported.diagnostics[0]?.evidence?.[0]).toMatchObject({ kind: "manifest" });
   expect(notAPage.diagnostics).toEqual([]);
 });
+
+test.each(["4.1.0", "4.4.2", "4.5.0", "4.6.2", undefined])(
+  "handles include filtering with Nuxt %s",
+  async (version) => {
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      rules: [keepaliveRequiresMax],
+      run: { runtimeTarget: {} },
+      files: {
+        "app/pages/product/[id].vue": page("{ keepalive: { include: ['OtherPage'] } }"),
+        ...(version
+          ? {
+              "node_modules/nuxt/package.json": JSON.stringify({ name: "nuxt", version }),
+            }
+          : {}),
+      },
+    });
+
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "NUXT0094")).toHaveLength(
+      version === "4.5.0" || version === "4.6.2" ? 1 : 0,
+    );
+  },
+);
+
+test.each([true, false])(
+  "custom pages require a current manifest (current: %s)",
+  async (current) => {
+    const result = await run({
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "app/runtime/preview.vue": page("{ keepalive: true, path: '/preview/:id' }"),
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: current ? "2100-01-01T00:00:00.000Z" : "2000-01-01T00:00:00.000Z",
+        appDir: "app",
+        pages: [{ path: "/preview/:id", file: "app/runtime/preview.vue" }],
+      }),
+    });
+
+    expect(result.diagnostics).toHaveLength(current ? 1 : 0);
+    if (current) {
+      expect(result.diagnostics[0]?.why).toContain(":id");
+      expect(result.diagnostics[0]?.evidence?.[0]).toMatchObject({ kind: "manifest" });
+    }
+  },
+);
