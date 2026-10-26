@@ -751,6 +751,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/config/no-unhashed-build-cache-input": {
+    description:
+      "Finds local files outside every hashed srcDir that the Vue build still consumes, such as a root lib/ imported from app/, when experimental.buildCache is enabled.",
+    why: "experimental.buildCache restores the cached Vue client and SSR bundles when its key matches, and Nitro rebuilds the server either way. The key hashes each local layer's srcDir (minus server/, public/ and node_modules), a few root files (package.json, lockfiles, tsconfig.json, .npmrc, .nuxtrc) and the raw nuxt.config. With the Nuxt 4 app/ layout, srcDir is app/, so files the app imports from ~~/lib, a root utils/ or a local module's runtime plugin are not part of the key. A commit that only changes them restores stale client and SSR bundles next to a fresh server. Nuxt 4.6.2 and older also leave shared/ out of the key; nuxt/nuxt#36704 adds it on main, so Doctor reports shared/ only for those versions. Doctor reports one diagnostic per unhashed directory and skips type-only imports, server/, public/, node_modules and paths another local layer's srcDir covers.",
+    recommendedReplacement:
+      "Move code only the app uses under app/. Otherwise add the directory to the CI cache key you use for node_modules/.cache/nuxt/builds, or turn off experimental.buildCache. For shared/, upgrading to a Nuxt release with nuxt/nuxt#36704 also fixes it.",
+    examples: [
+      {
+        title: "Keep app-only helpers inside app/",
+        language: "ts",
+        invalid:
+          "// nuxt.config.ts\nexport default defineNuxtConfig({ experimental: { buildCache: true } })\n\n// app/utils/alerts.ts\nexport { formatAlert } from '~~/lib/format-alert'",
+        valid:
+          "// nuxt.config.ts\nexport default defineNuxtConfig({ experimental: { buildCache: true } })\n\n// app/utils/alerts.ts\nexport { formatAlert } from '~/lib/format-alert'",
+      },
+    ],
+  },
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",

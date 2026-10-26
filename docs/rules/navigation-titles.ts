@@ -50,6 +50,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/config/no-ignored-compatibility-config": "Ignored config",
   "nuxt/config/no-per-build-value-in-cache-key": "Build cache key",
   "nuxt/config/no-runtime-env-in-build-options": "Build-time env",
+  "nuxt/config/no-unhashed-build-cache-input": "Build cache inputs",
   "nuxt/context/no-composable-after-await": "Calls after await",
   "nuxt/context/no-legacy-process-client-server": "import.meta flags",
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": "Factory directories",
