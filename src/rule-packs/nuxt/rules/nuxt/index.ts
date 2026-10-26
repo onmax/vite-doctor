@@ -30,6 +30,7 @@ export { noLegacyProcessClientServer } from "./no-legacy-process-client-server.j
 export { noIgnoredCompatibilityConfig } from "./no-ignored-compatibility-config.js";
 export { noRuntimeEnvInBuildOptions } from "./no-runtime-env-in-build-options.js";
 export { noPerBuildValueInCacheKey } from "./no-per-build-value-in-cache-key.js";
+export { noUnhashedBuildCacheInput } from "./no-unhashed-build-cache-input.js";
 export { keepaliveRequiresMax } from "./keepalive-requires-max.js";
 export { preferAppDirectoryPlacement } from "./prefer-app-directory-placement.js";
 export { noNestedAutoimportAssumption } from "./no-nested-autoimport-assumption.js";
@@ -89,6 +90,7 @@ import { noLegacyProcessClientServer } from "./no-legacy-process-client-server.j
 import { noIgnoredCompatibilityConfig } from "./no-ignored-compatibility-config.js";
 import { noRuntimeEnvInBuildOptions } from "./no-runtime-env-in-build-options.js";
 import { noPerBuildValueInCacheKey } from "./no-per-build-value-in-cache-key.js";
+import { noUnhashedBuildCacheInput } from "./no-unhashed-build-cache-input.js";
 import { keepaliveRequiresMax } from "./keepalive-requires-max.js";
 import { preferAppDirectoryPlacement } from "./prefer-app-directory-placement.js";
 import { noNestedAutoimportAssumption } from "./no-nested-autoimport-assumption.js";
@@ -150,6 +152,7 @@ const rules = [
   noIgnoredCompatibilityConfig,
   noRuntimeEnvInBuildOptions,
   noPerBuildValueInCacheKey,
+  noUnhashedBuildCacheInput,
   keepaliveRequiresMax,
   preferAppDirectoryPlacement,
   noNestedAutoimportAssumption,
