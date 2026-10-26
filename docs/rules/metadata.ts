@@ -734,6 +734,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/config/no-per-build-value-in-cache-key": {
+    description:
+      "Finds nuxt.config values that change on every build, such as new Date().toISOString(), Date.now(), Math.random() or crypto.randomUUID(), when experimental.buildCache is enabled.",
+    why: "experimental.buildCache restores the client and server bundles when nothing that feeds the build changed. Its key hashes each local layer's raw nuxt.config, so appConfig, app.head, vite.define, routeRules and module options are all part of it. A value computed when the config loads gives every build a new key, and the cache never hits. Nuxt removes only buildId, serverDir, nitro, devServer, runtimeConfig, logLevel, devServerHandlers and devtools from the hashed config, and only at the top level: $production.runtimeConfig is still hashed. Functions are hashed by their source text, so a value computed inside a hook or plugin body does not change the key. Doctor reports only when the resolved config (or a literal experimental.buildCache: true) shows the cache is on.",
+    recommendedReplacement:
+      "Move the value to the top-level runtimeConfig, runtimeConfig.public for client code, and read it with useRuntimeConfig(). Nitro is always rebuilt, so the value stays current on every build.",
+    examples: [
+      {
+        title: "Keep the build time in runtime config",
+        language: "ts",
+        invalid:
+          "export default defineNuxtConfig({\n  experimental: { buildCache: true },\n  appConfig: { buildTime: new Date().toISOString() },\n})",
+        valid:
+          "export default defineNuxtConfig({\n  experimental: { buildCache: true },\n  runtimeConfig: { public: { buildTime: new Date().toISOString() } },\n})\n\n// app/pages/index.vue\nconst { buildTime } = useRuntimeConfig().public",
+      },
+    ],
+  },
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",

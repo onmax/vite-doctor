@@ -29,6 +29,7 @@ export { noHashSensitiveRouteFullpathInSsrMarkup } from "./no-hash-sensitive-rou
 export { noLegacyProcessClientServer } from "./no-legacy-process-client-server.js";
 export { noIgnoredCompatibilityConfig } from "./no-ignored-compatibility-config.js";
 export { noRuntimeEnvInBuildOptions } from "./no-runtime-env-in-build-options.js";
+export { noPerBuildValueInCacheKey } from "./no-per-build-value-in-cache-key.js";
 export { preferAppDirectoryPlacement } from "./prefer-app-directory-placement.js";
 export { noNestedAutoimportAssumption } from "./no-nested-autoimport-assumption.js";
 export { noVueOrNitroContextInShared } from "./no-vue-or-nitro-context-in-shared.js";
@@ -86,6 +87,7 @@ import { noHashSensitiveRouteFullpathInSsrMarkup } from "./no-hash-sensitive-rou
 import { noLegacyProcessClientServer } from "./no-legacy-process-client-server.js";
 import { noIgnoredCompatibilityConfig } from "./no-ignored-compatibility-config.js";
 import { noRuntimeEnvInBuildOptions } from "./no-runtime-env-in-build-options.js";
+import { noPerBuildValueInCacheKey } from "./no-per-build-value-in-cache-key.js";
 import { preferAppDirectoryPlacement } from "./prefer-app-directory-placement.js";
 import { noNestedAutoimportAssumption } from "./no-nested-autoimport-assumption.js";
 import { noVueOrNitroContextInShared } from "./no-vue-or-nitro-context-in-shared.js";
@@ -145,6 +147,7 @@ const rules = [
   noLegacyProcessClientServer,
   noIgnoredCompatibilityConfig,
   noRuntimeEnvInBuildOptions,
+  noPerBuildValueInCacheKey,
   preferAppDirectoryPlacement,
   noNestedAutoimportAssumption,
   noVueOrNitroContextInShared,

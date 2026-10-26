@@ -351,6 +351,7 @@ export async function writeManifest(
       }),
     ),
     localLayerAliases: nuxt.options.experimental?.localLayerAliases !== false,
+    buildCache: nuxt.options.experimental?.buildCache === true,
     aliases: Object.fromEntries(
       Object.entries(nuxt.options.alias ?? {}).map(([key, value]) => [key, String(value)]),
     ),
