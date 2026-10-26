@@ -80,6 +80,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/preview-mode-global-refresh": "Preview refresh",
   "nuxt/project/prefer-app-directory-placement": "app/ directories",
   "nuxt/review/api-authorization-coverage": "API authorization",
+  "nuxt/routing/keepalive-requires-max": "Keepalive max",
   "nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup": "route.fullPath",
   "nuxt/routing/no-route-object-page-key": "Route page keys",
   "nuxt/routing/no-router-navigation-in-setup": "Navigation in setup",
