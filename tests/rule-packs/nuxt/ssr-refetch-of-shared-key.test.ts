@@ -312,6 +312,55 @@ useAsyncData('me', () => $fetch('/api/me'), { ...(import.meta.server && { dedupe
     expect(await run(files)).toEqual([]);
   });
 
+  test("replaces mismatched cache callbacks in a partially repaired group", async () => {
+    for (const callback of ["otherCache", "(key, app) => app.payload.data[key]"]) {
+      for (const dedupe of ["", "dedupe: 'defer',"]) {
+        const diagnostics = await run({
+          "app/middleware/auth.global.ts":
+            "export default defineNuxtRouteMiddleware(() => useFetch('/api/me', { key: 'me', getCachedData: sharedCache, dedupe: 'defer' }))",
+          "app/pages/index.vue": `<script setup>
+useAsyncData('me', () => $fetch('/api/me'))
+useAsyncData('me', () => $fetch('/api/me'), { ${dedupe} getCachedData: ${callback} })
+</script>`,
+        });
+        expect(diagnostics).toHaveLength(1);
+        expect(diagnostics[0]?.suggestion).toContain(
+          "Replace the existing getCachedData value with sharedCache",
+        );
+        expect(diagnostics[0]?.suggestion).not.toContain("Keep getCachedData unchanged");
+      }
+    }
+  });
+
+  test("does not pair exiting switch cases with subsequent callers", async () => {
+    for (const exit of ["return", "throw new Error()", "{ return }"]) {
+      expect(
+        await run({
+          "app/composables/useMe.ts": useMe,
+          "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => {
+          switch (condition) { case 1: useMe(); ${exit}; default: break }
+          useMe()
+        })`,
+        }),
+      ).toEqual([]);
+    }
+  });
+
+  test("retains fallthrough, stacked-label and unaffected switch callers", async () => {
+    for (const body of [
+      "case 1: useMe(); case 2: useMe(); break;",
+      "case 1: case 2: useMe(); useMe(); break;",
+      "case 1: something(); case 2: break; case 3: useMe(); useMe(); break;",
+    ]) {
+      expect(
+        await run({
+          "app/composables/useMe.ts": useMe,
+          "app/pages/index.vue": `<script setup>switch (condition) { ${body} }</script>`,
+        }),
+      ).toHaveLength(1);
+    }
+  });
+
   test("excludes mutually exclusive JavaScript callers", async () => {
     for (const body of [
       "if (condition) useMe(); else useMe()",

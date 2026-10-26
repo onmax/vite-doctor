@@ -83,7 +83,7 @@ interface CallSite {
   file: SourceFile;
   node: AnyNode;
   role: Role;
-  branches: Map<AnyNode, boolean | number>;
+  branches: Map<AnyNode, boolean | number[]>;
   inlineMiddleware: boolean;
   label: string;
 }
@@ -582,9 +582,15 @@ class SharedKeyAnalysis {
   private async coRendered(a: CallSite, b: CallSite): Promise<string | null> {
     if (
       a.file.path === b.file.path &&
-      [...a.branches].some(
-        ([branch, side]) => b.branches.has(branch) && b.branches.get(branch) !== side,
-      )
+      [...a.branches].some(([branch, side]) => {
+        const other = b.branches.get(branch);
+        return (
+          other !== undefined &&
+          (Array.isArray(side) && Array.isArray(other)
+            ? !side.some((entry) => other.includes(entry))
+            : side !== other)
+        );
+      })
     )
       return null;
     if (a.file.path === b.file.path && (a.role !== "layout" || this.layoutsRender))
@@ -690,7 +696,7 @@ class SharedKeyAnalysis {
     const fixes = calls
       .filter((call) => {
         const verdict = call.verdict as OptionVerdict;
-        return !verdict.cached || !verdict.defer;
+        return !verdict.cached || verdict.cacheReference !== reference || !verdict.defer;
       })
       .map((call) => {
         const verdict = call.verdict as OptionVerdict;
@@ -701,7 +707,7 @@ class SharedKeyAnalysis {
           call.node.end,
         );
         const fix = verdict.cached
-          ? `Keep getCachedData unchanged and set dedupe to 'defer' on the server only${call.factory?.param ? ` (use ${call.factory.param}.dedupe ?? 'defer' in the factory)` : ""}.`
+          ? `${verdict.cacheReference === reference ? "Keep getCachedData unchanged" : `Replace the existing getCachedData value with ${reference} (do not add another property)`}${verdict.defer ? "." : ` and set dedupe to 'defer' on the server only${call.factory?.param ? ` (use ${call.factory.param}.dedupe ?? 'defer' in the factory)` : ""}.`}`
           : fixFor(call, verdict.defer, reference);
         return `${location(call.file.displayPath, at)}: ${fix}`;
       });
@@ -1008,13 +1014,19 @@ function guardOf(text: string, test: AnyNode): Guard {
 function walkServer(
   text: string,
   node: AnyNode,
-  visit: (node: AnyNode, branches: Map<AnyNode, boolean | number>) => void,
-  branches = new Map<AnyNode, boolean | number>(),
+  visit: (node: AnyNode, branches: Map<AnyNode, boolean | number[]>) => void,
+  branches = new Map<AnyNode, boolean | number[]>(),
 ) {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
     for (const statement of node) {
       walkServer(text, statement, visit, branches);
+      if (alwaysExits(statement) || statement?.type === "BreakStatement") return;
+      if (statement?.type === "SwitchStatement") {
+        const continuing = switchPaths(statement).continuing;
+        if (!continuing.length) return;
+        branches = new Map([...branches, [statement, continuing]]);
+      }
       if (
         statement?.type === "IfStatement" &&
         !statement.alternate &&
@@ -1041,15 +1053,9 @@ function walkServer(
   }
   if (node.type === "SwitchStatement") {
     walkServer(text, node.discriminant, visit, branches);
-    // Only prove paths when every non-final case terminates. Fallthrough needs
-    // entry-path analysis, so conservatively omit its case bodies for now.
-    const terminates = (statement: AnyNode): boolean =>
-      statement.type === "BreakStatement" ||
-      alwaysExits(statement) ||
-      (statement.type === "BlockStatement" && statement.body.some(terminates));
-    if (node.cases.slice(0, -1).some((item: AnyNode) => !item.consequent.some(terminates))) return;
+    const { entries } = switchPaths(node);
     node.cases.forEach((item: AnyNode, index: number) => {
-      walkServer(text, item.consequent, visit, new Map([...branches, [node, index]]));
+      walkServer(text, item.consequent, visit, new Map([...branches, [node, entries[index]!]]));
     });
     return;
   }
@@ -1076,6 +1082,32 @@ const TS_EXPRESSIONS = new Set([
   "TSTypeAssertion",
   "TSInstantiationExpression",
 ]);
+
+/** Possible switch entry labels for each body and for code after the switch. */
+function switchPaths(node: AnyNode): { entries: number[][]; continuing: number[] } {
+  const entries: number[][] = [];
+  const continuing: number[] = node.cases.some((item: AnyNode) => !item.test) ? [] : [-1];
+  let active: number[] = [];
+  const breaks = (statement: AnyNode): boolean =>
+    (statement.type === "BreakStatement" && !statement.label) ||
+    (statement.type === "BlockStatement" && statement.body.some(breaks));
+  node.cases.forEach((item: AnyNode, index: number) => {
+    active = [...active, index];
+    entries.push(active);
+    for (const statement of item.consequent) {
+      if (alwaysExits(statement)) {
+        active = [];
+        break;
+      }
+      if (breaks(statement)) {
+        continuing.push(...active);
+        active = [];
+        break;
+      }
+    }
+  });
+  return { entries, continuing: [...continuing, ...active] };
+}
 
 function alwaysExits(node: AnyNode): boolean {
   if (!node) return false;
