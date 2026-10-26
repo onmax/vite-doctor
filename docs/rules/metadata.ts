@@ -751,6 +751,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/fetch/cached-data-respects-refresh": {
+    description:
+      "Finds a getCachedData option on useFetch, useAsyncData, their lazy variants, or a createUseFetch/createUseAsyncData factory that returns nuxtApp.payload.data[key] or nuxtApp.static.data[key] without checking ctx.cause or nuxtApp.isHydrating, on data that is refreshed.",
+    why: "experimental.granularCachedData is on by default in Nuxt 4, and in Nuxt 3.17+ with compatibilityVersion 4. With it, Nuxt calls getCachedData(key, nuxtApp, ctx) for refresh(), execute(), refreshNuxtData() and watch triggers as well as the first load, and any value it returns replaces the handler call. The common Nuxt 3 snippet `(key, nuxtApp) => nuxtApp.payload.data[key] ?? nuxtApp.static.data[key]` always finds the data the last fetch stored, so every refresh resolves with that value and never refetches while the key stays the same. Doctor reports only when the same call is refreshed: it destructures or reads refresh or execute, passes watch with a key that cannot change, or its key is refreshed by refreshNuxtData() in the same file. Calls whose refresh happens in another file, factory composables refreshed outside the factory's file, and getCachedData functions that read their third argument or isHydrating anywhere are not reported. Doctor reads the flag from the Nuxt manifest, or from a literal experimental.granularCachedData in the root nuxt.config with the installed Nuxt version's default; without the manifest it does not see layers or modules that change the flag, and it stays silent when the config sets the flag in a way it cannot read.",
+    recommendedReplacement:
+      "Take the third argument and return cached data only for the first load or hydration: `if (ctx.cause !== 'initial' && !nuxtApp.isHydrating) return undefined`. Or remove getCachedData to use Nuxt's default, which already skips the cache on refresh.",
+    examples: [
+      {
+        title: "Skip the cache when the data refreshes",
+        language: "ts",
+        invalid:
+          "const { data, refresh } = await useFetch('/api/orders', {\n  getCachedData: (key, nuxtApp) => nuxtApp.payload.data[key] ?? nuxtApp.static.data[key],\n})",
+        valid:
+          "const { data, refresh } = await useFetch('/api/orders', {\n  getCachedData(key, nuxtApp, ctx) {\n    if (ctx.cause !== 'initial' && !nuxtApp.isHydrating) return undefined\n    return nuxtApp.payload.data[key] ?? nuxtApp.static.data[key]\n  },\n})",
+      },
+    ],
+  },
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",

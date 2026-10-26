@@ -354,6 +354,7 @@ export async function writeManifest(
     productionBuildCache: nuxt.options.dev
       ? undefined
       : nuxt.options.experimental?.buildCache === true,
+    granularCachedData: nuxt.options.experimental?.granularCachedData === true,
     aliases: Object.fromEntries(
       Object.entries(nuxt.options.alias ?? {}).map(([key, value]) => [key, String(value)]),
     ),

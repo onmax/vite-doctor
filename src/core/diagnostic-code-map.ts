@@ -248,6 +248,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0086", ruleId: "nuxt/hydration/require-clientonly-fallback" },
   { code: "NUXT0090", ruleId: "nuxt/config/no-runtime-env-in-build-options" },
   { code: "NUXT0091", ruleId: "nuxt/config/no-per-build-value-in-cache-key" },
+  { code: "NUXT0092", ruleId: "nuxt/fetch/cached-data-respects-refresh" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
