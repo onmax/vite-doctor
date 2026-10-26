@@ -862,6 +862,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/fetch/no-ssr-refetch-of-shared-key": {
+    description:
+      "Finds a useFetch, useAsyncData, or createUseFetch/createUseAsyncData call with a key that never changes when two or more of its callers can run in the same server render, such as global route middleware, app.vue, a layout, a page, and the components it renders.",
+    why: "Callers that share a key share one asyncData entry, but during SSR Nuxt does not reuse its data. The default getCachedData returns payload data only while the browser hydrates, so on the server every later caller with the same key fetches again. The default dedupe: 'cancel' also aborts and restarts a request that is still in flight when another caller starts. A viewer composable called from route middleware, a layout, and every sidebar row made 94 identical requests in one render of vite-hub/drop. Doctor reports only when it can show that two callers run in the same render: one runs on every request (app.vue, global middleware, a universal plugin), both are in one file (such as a page's inline middleware and its setup), a page declares the other's layout or middleware, or a page or layout renders the other's component. Calls with server: false, immediate: false, enabled: false, client-only callers, and options Doctor cannot read, such as spreads or any custom getCachedData, are not reported.",
+    recommendedReplacement:
+      "On the server, pass dedupe: 'defer' and getCachedData: (key, nuxtApp, ctx) => ctx.cause === 'initial' ? nuxtApp.payload.data[key] : undefined. Later callers then reuse the first result and concurrent callers share one request, while refresh() and refreshNuxtData() still fetch. Keep the custom getCachedData off the client: there it would also replace Nuxt's default after hydration and stop unmounted data from being purged. In a createUseFetch((defaults) => ...) factory, write dedupe: defaults.dedupe ?? 'defer' and getCachedData: defaults.getCachedData ?? (...), because options the factory returns override the caller's.",
+    examples: [
+      {
+        title: "Share the viewer request across one render",
+        language: "ts",
+        invalid:
+          "// app/composables/useMe.ts\nexport function useMe() {\n  return useFetch('/api/me', { key: 'me' })\n}\n\n// app/middleware/auth.global.ts, app/layouts/default.vue, app/components/UserMenu.vue\nconst { data: me } = await useMe()",
+        valid:
+          "// app/composables/useMe.ts\nexport function useMe() {\n  return useFetch('/api/me', {\n    key: 'me',\n    ...(import.meta.server && {\n      dedupe: 'defer',\n      getCachedData: (key, nuxtApp, ctx) =>\n        ctx.cause === 'initial' ? nuxtApp.payload.data[key] : undefined,\n    }),\n  })\n}",
+      },
+    ],
+  },
   "nuxt/fetch/prefer-create-use-fetch": {
     description:
       "Finds Nuxt fetch code that should use the supported create use fetch pattern instead.",
