@@ -413,3 +413,46 @@ test.each([
     }),
   ).toHaveLength(0);
 });
+
+test.each([false, true])(
+  "uses the last equal-priority runtime source (selected dependency: %s)",
+  async (selectedHasDependency) => {
+    const diagnostics = await run({
+      ".nuxt/doctor.manifest.json": manifest({
+        autoImports: [
+          { name: "registeredValue", from: "~/scratch/ignored" },
+          { name: "registeredValue", from: "~/scratch/selected", priority: 1 },
+        ],
+      }),
+      "app/app.vue": "<template>{{ registeredValue }}</template>",
+      "app/scratch/ignored.ts": selectedHasDependency
+        ? "export const registeredValue = 1"
+        : "import { helper } from '~~/lib/helper'; export const registeredValue = helper",
+      "app/scratch/selected.ts": selectedHasDependency
+        ? "import { helper } from '~~/lib/helper'; export const registeredValue = helper"
+        : "export const registeredValue = 1",
+      "lib/helper.ts": "export const helper = 1",
+    });
+    expect(diagnostics).toHaveLength(selectedHasDependency ? 1 : 0);
+    if (selectedHasDependency)
+      expect(diagnostics[0]).toMatchObject({ file: "app/scratch/selected.ts" });
+  },
+);
+
+test("keeps higher-priority type entries separate from runtime auto-imports", async () => {
+  const diagnostics = await run({
+    ".nuxt/doctor.manifest.json": manifest({
+      autoImports: [
+        { name: "registeredValue", from: "~/scratch/selected", priority: 1 },
+        { name: "registeredValue", from: "~~/types/value", priority: 2, type: true },
+      ],
+    }),
+    "app/app.vue": "<script setup>console.log(registeredValue)</script>",
+    "app/scratch/selected.ts":
+      "import { helper } from '~~/lib/helper'; export const registeredValue = helper",
+    "types/value.ts": "export interface registeredValue { id: string }",
+    "lib/helper.ts": "export const helper = 1",
+  });
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({ file: "app/scratch/selected.ts" });
+});

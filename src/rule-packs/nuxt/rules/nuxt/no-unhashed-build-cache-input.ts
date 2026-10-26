@@ -381,18 +381,17 @@ class InputAnalysis {
   private autoImports(): Map<string, string> {
     const byName = new Map<string, AutoImportEntry[]>();
     for (const entry of this.nuxt.autoImportEntries ?? []) {
-      if ((entry as { disabled?: boolean }).disabled) continue;
+      if (entry.type || (entry as { disabled?: boolean }).disabled) continue;
       const name = entry.as ?? entry.name;
       byName.set(name, [...(byName.get(name) ?? []), entry]);
     }
     const found = new Map<string, string>();
     for (const [name, entries] of byName) {
-      // Only the highest-priority source of a name is what Nuxt injects.
+      // Unimport selects the last highest-priority value; types occupy a separate space.
       const priority = Math.max(...entries.map((entry) => entry.priority ?? 1));
-      const targets = entries
-        .filter((entry) => (entry.priority ?? 1) === priority)
-        .map((entry) => (entry.type ? undefined : this.autoImportTarget(entry.from)));
-      if (targets.every(Boolean)) found.set(name, targets[0]!);
+      const selected = entries.findLast((entry) => (entry.priority ?? 1) === priority)!;
+      const target = this.autoImportTarget(selected.from);
+      if (target) found.set(name, target);
     }
     return found;
   }
