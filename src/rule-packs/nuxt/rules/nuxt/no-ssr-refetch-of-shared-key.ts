@@ -63,6 +63,7 @@ interface Factory {
 interface OptionVerdict {
   defer: boolean;
   cached: boolean;
+  cacheReference?: string;
 }
 
 interface FetchCall {
@@ -82,7 +83,7 @@ interface CallSite {
   file: SourceFile;
   node: AnyNode;
   role: Role;
-  branches: Map<AnyNode, boolean>;
+  branches: Map<AnyNode, boolean | number>;
   inlineMiddleware: boolean;
   label: string;
 }
@@ -678,6 +679,35 @@ class SharedKeyAnalysis {
     }
   }
 
+  private groupFix(calls: FetchCall[], location: (path: string, at: SourceRange) => string) {
+    const cached = calls.filter((call) => (call.verdict as OptionVerdict).cached);
+    const reference =
+      cached.map((call) => (call.verdict as OptionVerdict).cacheReference).find(Boolean) ??
+      "sharedSsrCachedData";
+    const introduction = cached.length
+      ? `Reuse the existing getCachedData implementation as ${reference}: export/import that same function binding wherever needed. Preserve existing cache properties; if a callback is inline, extract it to this binding and replace its value without adding another property.`
+      : `Define and export one shared binding, const ${reference} = ${CACHE_FIX}; import it wherever needed.`;
+    const fixes = calls
+      .filter((call) => {
+        const verdict = call.verdict as OptionVerdict;
+        return !verdict.cached || !verdict.defer;
+      })
+      .map((call) => {
+        const verdict = call.verdict as OptionVerdict;
+        const at = this.ctx.helpers.rangeFromOffsets(
+          call.file.path,
+          call.file.text,
+          call.node.start,
+          call.node.end,
+        );
+        const fix = verdict.cached
+          ? `Keep getCachedData unchanged and set dedupe to 'defer' on the server only${call.factory?.param ? ` (use ${call.factory.param}.dedupe ?? 'defer' in the factory)` : ""}.`
+          : fixFor(call, verdict.defer, reference);
+        return `${location(call.file.displayPath, at)}: ${fix}`;
+      });
+    return `${introduction} Apply consistent options to every same-key definition: ${fixes.join(" ")} Use the same getCachedData function reference for all definitions sharing this key, preserving Nuxt's option consistency contract.`;
+  }
+
   private reportGroup(calls: FetchCall[], sites: CallSite[], reasons: string[]) {
     sites.sort(
       (a, b) =>
@@ -720,22 +750,7 @@ class SharedKeyAnalysis {
     this.ctx.report(
       diagnostics.NUXT0095({
         why: `${name} fetches key ${primary.keyLabel}, and ${sites.length} callers can run during the same server render: ${where}${more}. During SSR, Nuxt's default getCachedData returns payload data only while hydrating in the browser, so ${mechanism}. Each caller adds a request to the render.`,
-        fix:
-          calls.length === 1
-            ? fixFor(primary, defer)
-            : `Apply consistent options to every same-key definition: ${calls
-                .map((call) => {
-                  const at = this.ctx.helpers.rangeFromOffsets(
-                    call.file.path,
-                    call.file.text,
-                    call.node.start,
-                    call.node.end,
-                  );
-                  return `${location(call.file.displayPath, at)}: ${fixFor(call, (call.verdict as OptionVerdict).defer)}`;
-                })
-                .join(
-                  " ",
-                )} Use the same getCachedData function reference for all definitions sharing this key, preserving Nuxt's option consistency contract.`,
+        fix: calls.length === 1 ? fixFor(primary, defer) : this.groupFix(calls, location),
         sources: [
           location(primary.file.displayPath, range),
           ...sites
@@ -774,16 +789,14 @@ class SharedKeyAnalysis {
 
 const ROLE_ORDER: Role[] = ["plugin", "middleware", "app", "layout", "page", "component"];
 
-function fixFor(call: FetchCall, defer: boolean): string {
-  const options = defer
-    ? `getCachedData: ${CACHE_FIX}`
-    : `dedupe: 'defer' and getCachedData: ${CACHE_FIX}`;
+function fixFor(call: FetchCall, defer: boolean, cache = CACHE_FIX): string {
+  const options = defer ? `getCachedData: ${cache}` : `dedupe: 'defer' and getCachedData: ${cache}`;
   const factory = call.factory;
   if (factory && FUNCTION_TYPES.has(factory.options?.type)) {
     const param = factory.param ?? "defaults";
-    return `Add ${defer ? "" : `dedupe: ${param}.dedupe ?? 'defer' and `}getCachedData: ${param}.getCachedData ?? (${CACHE_FIX}) to the server options this ${call.callee} factory returns${factory.param ? "" : ` (name its first parameter ${param})`}. Options a factory function returns override the caller's, so the ?? fallbacks keep caller overrides. Callers in one render then share the first request and its result; refresh() still fetches because its cause is not 'initial'.`;
+    return `Add ${defer ? "" : `dedupe: ${param}.dedupe ?? 'defer' and `}getCachedData: ${param}.getCachedData ?? (${cache}) to the server options this ${call.callee} factory returns${factory.param ? "" : ` (name its first parameter ${param})`}. Options a factory function returns override the caller's, so the ?? fallbacks keep caller overrides. Callers in one render then share the first request and its result; refresh() still fetches because its cause is not 'initial'.`;
   }
-  return `Pass ${options} on the server only, for example \`...(import.meta.server && { ${defer ? "" : "dedupe: 'defer', "}getCachedData: ${CACHE_FIX} })\`. Callers in one render then share the first request and its result, and refresh() still fetches because its cause is not 'initial'. Keeping it off the client preserves Nuxt's default caching after hydration.`;
+  return `Pass ${options} on the server only, for example \`...(import.meta.server && { ${defer ? "" : "dedupe: 'defer', "}getCachedData: ${cache} })\`. Callers in one render then share the first request and its result, and refresh() still fetches because its cause is not 'initial'. Keeping it off the client preserves Nuxt's default caching after hydration.`;
 }
 
 function siteLabel(app: AppFile, inlineMiddleware: boolean) {
@@ -920,7 +933,17 @@ function optionVerdict(
     .map((object) => property(object, "dedupe"))
     .filter(Boolean)
     .map(isDeferDedupe);
-  return { defer: dedupe.length > 0 && dedupe.every(Boolean), cached };
+  const cache = unwrap(
+    objects
+      .map((object) => property(object, "getCachedData"))
+      .filter(Boolean)
+      .at(-1),
+  );
+  return {
+    defer: dedupe.length > 0 && dedupe.every(Boolean),
+    cached,
+    cacheReference: cache?.type === "Identifier" ? cache.name : undefined,
+  };
 }
 
 function isDeferDedupe(node: AnyNode): boolean {
@@ -985,8 +1008,8 @@ function guardOf(text: string, test: AnyNode): Guard {
 function walkServer(
   text: string,
   node: AnyNode,
-  visit: (node: AnyNode, branches: Map<AnyNode, boolean>) => void,
-  branches = new Map<AnyNode, boolean>(),
+  visit: (node: AnyNode, branches: Map<AnyNode, boolean | number>) => void,
+  branches = new Map<AnyNode, boolean | number>(),
 ) {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
@@ -1014,6 +1037,20 @@ function walkServer(
       walkServer(text, node.consequent, visit, new Map([...branches, [node, true]]));
     if (guard !== "server" && guard !== "mixed")
       walkServer(text, node.alternate, visit, new Map([...branches, [node, false]]));
+    return;
+  }
+  if (node.type === "SwitchStatement") {
+    walkServer(text, node.discriminant, visit, branches);
+    // Only prove paths when every non-final case terminates. Fallthrough needs
+    // entry-path analysis, so conservatively omit its case bodies for now.
+    const terminates = (statement: AnyNode): boolean =>
+      statement.type === "BreakStatement" ||
+      alwaysExits(statement) ||
+      (statement.type === "BlockStatement" && statement.body.some(terminates));
+    if (node.cases.slice(0, -1).some((item: AnyNode) => !item.consequent.some(terminates))) return;
+    node.cases.forEach((item: AnyNode, index: number) => {
+      walkServer(text, item.consequent, visit, new Map([...branches, [node, index]]));
+    });
     return;
   }
   if (node.type === "LogicalExpression") {

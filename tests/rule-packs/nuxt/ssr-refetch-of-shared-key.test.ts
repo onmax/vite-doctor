@@ -286,11 +286,26 @@ useAsyncData('me', () => $fetch('/api/me'))
     expect(before[0]?.suggestion).toContain("auth.global.ts:");
     expect(before[0]?.suggestion).toContain("index.vue:");
     expect(before[0]?.suggestion).toContain("same getCachedData function reference");
+    expect(before[0]?.suggestion).toContain("const sharedSsrCachedData =");
+    expect(before[0]?.suggestion).not.toContain("getCachedData: (key");
     files["app/middleware/auth.global.ts"] =
       "export default defineNuxtRouteMiddleware(() => useFetch('/api/me', { key: 'me', ...(import.meta.server && { dedupe: 'defer', getCachedData: sharedCache }) }))";
     const partial = await run(files);
     expect(partial).toHaveLength(1);
     expect(partial[0]?.file).toMatch(/pages\/index.vue$/);
+    expect(partial[0]?.suggestion).toContain("getCachedData: sharedCache");
+    expect(partial[0]?.suggestion).not.toContain("auth.global.ts:");
+    expect(partial[0]?.suggestion).not.toContain("getCachedData: (key");
+    const missingDefer = await run({
+      ...files,
+      "app/middleware/auth.global.ts": files["app/middleware/auth.global.ts"].replace(
+        "dedupe: 'defer', ",
+        "",
+      ),
+    });
+    expect(missingDefer[0]?.suggestion).toContain(
+      "Keep getCachedData unchanged and set dedupe to 'defer'",
+    );
     files["app/pages/index.vue"] = `<script setup>
 useAsyncData('me', () => $fetch('/api/me'), { ...(import.meta.server && { dedupe: 'defer', getCachedData: sharedCache }) })
 </script>`;
@@ -301,6 +316,7 @@ useAsyncData('me', () => $fetch('/api/me'), { ...(import.meta.server && { dedupe
     for (const body of [
       "if (condition) useMe(); else useMe()",
       "condition ? useMe() : useMe()",
+      "switch (condition) { case 1: useMe(); break; case 2: useMe(); break; default: useMe() }",
       "if (condition) { if (other) useMe() } else { useMe() }",
     ]) {
       expect(
@@ -314,6 +330,16 @@ useAsyncData('me', () => $fetch('/api/me'), { ...(import.meta.server && { dedupe
       await run({
         "app/composables/useMe.ts": useMe,
         "app/pages/index.vue": "<script setup>if (condition) { useMe(); useMe() }</script>",
+      }),
+    ).toHaveLength(1);
+  });
+
+  test("reports repeated callers within one switch case", async () => {
+    expect(
+      await run({
+        "app/composables/useMe.ts": useMe,
+        "app/pages/index.vue":
+          "<script setup>switch (condition) { case 1: useMe(); useMe(); break; default: break }</script>",
       }),
     ).toHaveLength(1);
   });
