@@ -132,7 +132,7 @@ export default defineNuxtConfig({
   expect(result.diagnostics).toHaveLength(0);
 });
 
-function manifest(buildCache: boolean) {
+function manifest(buildCache: boolean, production = true) {
   return JSON.stringify({
     generatedAt: "2999-01-01T00:00:00.000Z",
     nuxtVersion: "4.0.0",
@@ -147,7 +147,7 @@ function manifest(buildCache: boolean) {
     aliases: {},
     routeRules: {},
     serverHandlers: [],
-    buildCache,
+    ...(production ? { productionBuildCache: buildCache } : { buildCache }),
   });
 }
 
@@ -172,3 +172,53 @@ test.each([
     expect(result.diagnostics).toHaveLength(expected);
   },
 );
+
+test.each([
+  ["toISOString().slice(0, 19)", 1],
+  ["toISOString().split('.')[0]", 1],
+  ["toISOString().slice(0, end)", 1],
+  ["toLocaleTimeString().slice(0, 10)", 1],
+  ["toISOString().substring(0, 10)", 0],
+  ["toISOString().substr(0, 10)", 0],
+  ["toISOString().split('T')[0]", 0],
+  ["toISOString().split('T')[1]", 1],
+])("checks the retained date portion: %s", async (expression, expected) => {
+  const result = await run(`appConfig: { stamp: new Date().${expression} },`);
+  expect(result.diagnostics).toHaveLength(expected);
+});
+
+test.each(["$production", "$env"])(
+  "honors %s with a development or old manifest",
+  async (scope) => {
+    for (const enabled of [true, false]) {
+      const override = `{ experimental: { buildCache: ${enabled} } }`;
+      const result = await runRuleFixture({
+        framework: "nuxt",
+        rule: noPerBuildValueInCacheKey,
+        files: {
+          ".nuxt/doctor.manifest.json": manifest(!enabled, false),
+          "nuxt.config.ts": `export default defineNuxtConfig({
+          experimental: { buildCache: ${!enabled} },
+          ${scope}: ${scope === "$env" ? `{ production: ${override} }` : override},
+          appConfig: { stamp: Date.now() },
+        })`,
+        },
+      });
+      expect(result.diagnostics).toHaveLength(enabled ? 1 : 0);
+    }
+  },
+);
+
+test.each([
+  ["$production: { experimental: { buildCache: false } },", 0],
+  ["$production: { experimental: { buildCache: process.env.CACHE } },", 0],
+  [
+    "$production: { experimental: { buildCache: false } }, $env: { production: { experimental: {} } },",
+    1,
+  ],
+])("applies production override precedence: %s", async (override, expected) => {
+  const result = await run(`appConfig: { stamp: Date.now() },`, {
+    buildCache: `experimental: { buildCache: true }, ${override}`,
+  });
+  expect(result.diagnostics).toHaveLength(expected);
+});

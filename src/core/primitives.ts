@@ -221,8 +221,8 @@ export interface NuxtProjectInfo {
     priority: number;
   }>;
   localLayerAliases?: boolean;
-  /** Resolved `experimental.buildCache`; unset when no current manifest recorded it. */
-  buildCache?: boolean;
+  /** Production-resolved `experimental.buildCache`; unset for development or old manifests. */
+  productionBuildCache?: boolean;
   routeRules?: Record<string, unknown>;
   /** `false` when the Nuxt app disables server-side rendering. */
   ssr?: boolean;
@@ -329,7 +329,7 @@ export interface NuxtDoctorManifest {
     priority: number;
   }>;
   localLayerAliases?: boolean;
-  buildCache?: boolean;
+  productionBuildCache?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
   ssr?: boolean;

@@ -51,7 +51,6 @@ const PER_RUN_DATE_METHODS = new Set([
   "getUTCSeconds",
   "getUTCMilliseconds",
 ]);
-const TRUNCATING_METHODS = new Set(["slice", "substring", "substr", "split"]);
 
 export const noPerBuildValueInCacheKey = createRule({
   meta: {
@@ -71,7 +70,11 @@ export const noPerBuildValueInCacheKey = createRule({
         const bindings = topLevelBindings(program);
         const config = exportedConfigObject(program, bindings);
         if (!config) return;
-        const enabledBy = buildCacheSource(ctx.project.nuxt?.buildCache, config, bindings);
+        const enabledBy = buildCacheSource(
+          ctx.project.nuxt?.productionBuildCache,
+          config,
+          bindings,
+        );
         if (!enabledBy) return;
         const findPerRun = perRunResolver(bindings, perRunMatcher(program, bindings));
 
@@ -117,14 +120,21 @@ function buildCacheSource(
   bindings: Map<string, AnyNode>,
 ): "manifest" | "config" | null {
   if (resolved !== undefined) return resolved ? "manifest" : null;
-  // `nuxt build` loads the production environment, so its override counts as well.
-  const scopes = [config, objectExpression(propertyValue(config, "$production"), bindings)];
-  const enabled = scopes.some((scope) => {
-    const experimental = objectExpression(propertyValue(scope, "experimental"), bindings);
+  // c12 shallowly combines the environment blocks, then merges them over the root.
+  const production = objectExpression(propertyValue(config, "$production"), bindings);
+  const env = objectExpression(propertyValue(config, "$env"), bindings);
+  const envProduction = objectExpression(propertyValue(env, "production"), bindings);
+  const override =
+    propertyValue(envProduction, "experimental") ?? propertyValue(production, "experimental");
+  if (override) {
+    const experimental = objectExpression(override, bindings);
+    if (!experimental) return null;
     const flag = unwrap(propertyValue(experimental, "buildCache"));
-    return flag?.type === "Literal" && flag.value === true;
-  });
-  return enabled ? "config" : null;
+    if (flag) return flag.type === "Literal" && flag.value === true ? "config" : null;
+  }
+  const experimental = objectExpression(propertyValue(config, "experimental"), bindings);
+  const flag = unwrap(propertyValue(experimental, "buildCache"));
+  return flag?.type === "Literal" && flag.value === true ? "config" : null;
 }
 
 function propertyValue(node: AnyNode, name: string): AnyNode {
@@ -207,14 +217,37 @@ function isPerRunDateUse(date: AnyNode): boolean {
   if (member?.type !== "MemberExpression" || member.object !== date) return true;
   const method = member.computed ? null : member.property?.name;
   if (!method || !PER_RUN_DATE_METHODS.has(method)) return false;
-  // `new Date().toISOString().slice(0, 10)` is a calendar date, stable for a day.
+  // Only ISO strings have a known calendar prefix; other formats may start with time.
+  if (method !== "toISOString" && method !== "toJSON") return true;
   const call = member.__doctorParent;
   const next = call?.type === "CallExpression" ? call.__doctorParent : null;
-  return !(
-    next?.type === "MemberExpression" &&
-    next.object === call &&
-    TRUNCATING_METHODS.has(next.property?.name)
-  );
+  if (next?.type !== "MemberExpression" || next.object !== call || next.computed) return true;
+  const truncation = next.__doctorParent;
+  if (truncation?.type !== "CallExpression" || truncation.callee !== next) return true;
+  const args = truncation.arguments ?? [];
+  if (["slice", "substring", "substr"].includes(next.property?.name)) {
+    // Starting at zero makes the end index and length equivalent for these methods.
+    return !(
+      args.length === 2 &&
+      args[0]?.type === "Literal" &&
+      args[0].value === 0 &&
+      args[1]?.type === "Literal" &&
+      Number.isInteger(args[1].value) &&
+      args[1].value >= 0 &&
+      args[1].value <= 10
+    );
+  }
+  if (next.property?.name === "split" && args.length === 1 && args[0]?.value === "T") {
+    const index = truncation.__doctorParent;
+    return !(
+      index?.type === "MemberExpression" &&
+      index.object === truncation &&
+      index.computed &&
+      index.property?.type === "Literal" &&
+      index.property.value === 0
+    );
+  }
+  return true;
 }
 
 function memberChain(node: AnyNode): string | null {
