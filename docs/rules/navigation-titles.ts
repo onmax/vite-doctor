@@ -53,6 +53,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/config/no-unhashed-build-cache-input": "Build cache inputs",
   "nuxt/context/no-composable-after-await": "Calls after await",
   "nuxt/context/no-legacy-process-client-server": "import.meta flags",
+  "nuxt/fetch/cached-data-respects-refresh": "Cached data refresh",
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": "Factory directories",
   "nuxt/fetch/forward-auth-headers-ssr": "SSR auth headers",
   "nuxt/fetch/keyed-composable-registration-required": "Keyed composables",

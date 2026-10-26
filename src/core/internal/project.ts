@@ -26,6 +26,7 @@ import { loadTypeScript } from "./lazy-parsers.js";
 import {
   applyRuntimeTarget,
   isNuxtManifestCurrent,
+  readNuxtConfigGranularCachedData,
   readNuxtConfigSsr,
   resolveNuxtCompatibility,
   resolveRuntimeGraph,
@@ -398,6 +399,10 @@ async function detectNuxt(
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
     productionBuildCache: manifestCurrent ? manifest?.productionBuildCache : undefined,
+    granularCachedData:
+      manifestCurrent && typeof manifest?.granularCachedData === "boolean"
+        ? { enabled: manifest.granularCachedData, source: "manifest" }
+        : readNuxtConfigGranularCachedData(root, configs),
     routeRules: manifest?.routeRules ?? readRouteRules(config.primary),
     ssr: (manifestCurrent ? manifest?.ssr : undefined) ?? readNuxtConfigSsr(root, configs),
     runtimeConfig: manifest?.runtimeConfig,
