@@ -397,6 +397,7 @@ async function detectNuxt(
     ),
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
+    productionBuildCache: manifestCurrent ? manifest?.productionBuildCache : undefined,
     routeRules: manifest?.routeRules ?? readRouteRules(config.primary),
     ssr: (manifestCurrent ? manifest?.ssr : undefined) ?? readNuxtConfigSsr(root, configs),
     runtimeConfig: manifest?.runtimeConfig,

@@ -1,20 +1,21 @@
+import {
+  ENVIRONMENT_OVERRIDE_KEYS,
+  FUNCTION_TYPES,
+  declaredNames,
+  exportedConfigObject,
+  isCallee,
+  isNonReference,
+  objectExpression,
+  propertyName,
+  topLevelBindings,
+  unwrap,
+  walkWhileLoading,
+} from "./nuxt-config-ast.js";
 import { type AnyNode, createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "nuxt/config/no-runtime-env-in-build-options";
 const RUNTIME_ENV_PREFIXES = ["NUXT_", "NITRO_"];
-const WRAPPER_TYPES = new Set([
-  "TSAsExpression",
-  "TSSatisfiesExpression",
-  "TSNonNullExpression",
-  "ParenthesizedExpression",
-]);
-const ENVIRONMENT_OVERRIDE_KEYS = new Set(["$production", "$development", "$test"]);
-const FUNCTION_TYPES = new Set([
-  "FunctionExpression",
-  "ArrowFunctionExpression",
-  "FunctionDeclaration",
-]);
 
 interface EnvReads {
   names: Set<string>;
@@ -78,24 +79,6 @@ export const noRuntimeEnvInBuildOptions = createRule({
   },
 });
 
-function topLevelBindings(program: AnyNode): Map<string, AnyNode> {
-  const bindings = new Map<string, AnyNode>();
-  for (const statement of program.body ?? []) {
-    const declaration =
-      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-    if (declaration?.type === "VariableDeclaration") {
-      for (const declarator of declaration.declarations) {
-        if (declarator.id?.type === "Identifier" && declarator.init) {
-          bindings.set(declarator.id.name, declarator.init);
-        }
-      }
-    } else if (declaration?.type === "FunctionDeclaration" && declaration.id?.name) {
-      bindings.set(declaration.id.name, declaration);
-    }
-  }
-  return bindings;
-}
-
 function importsLocalProcess(program: AnyNode): boolean {
   return (program.body ?? []).some((statement: AnyNode) => {
     if (statement.type !== "ImportDeclaration") return false;
@@ -107,34 +90,6 @@ function importsLocalProcess(program: AnyNode): boolean {
     }
     return false;
   });
-}
-
-function exportedConfigObject(program: AnyNode, bindings: Map<string, AnyNode>): AnyNode {
-  const exported = program.body?.find(
-    (statement: AnyNode) => statement.type === "ExportDefaultDeclaration",
-  )?.declaration;
-  let config = unwrap(exported);
-  if (config?.type === "Identifier" && isDefineNuxtConfig(unwrap(bindings.get(config.name)))) {
-    config = unwrap(bindings.get(config.name));
-  }
-  if (isDefineNuxtConfig(config)) {
-    config = unwrap(config.arguments?.[0]);
-  }
-  return objectExpression(config, bindings);
-}
-
-function isDefineNuxtConfig(node: AnyNode): boolean {
-  return node?.type === "CallExpression" && node.callee?.name === "defineNuxtConfig";
-}
-
-function objectExpression(node: AnyNode, bindings: Map<string, AnyNode>): AnyNode {
-  const value = unwrap(node);
-  if (value?.type === "ObjectExpression") return value;
-  if (value?.type === "Identifier") {
-    const bound = unwrap(bindings.get(value.name));
-    if (bound?.type === "ObjectExpression") return bound;
-  }
-  return null;
 }
 
 // Only the places Nuxt reads runtime config from: the root, environment overrides, and nitro.
@@ -278,61 +233,6 @@ function envReadsResolver(bindings: Map<string, AnyNode>) {
   return readsFor;
 }
 
-// Visits what runs while nuxt.config loads: nested functions are visited but not entered, because
-// their bodies run only when something calls them later.
-function walkWhileLoading(root: AnyNode, visit: (node: AnyNode) => void) {
-  const step = (node: AnyNode, nested: boolean) => {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) {
-      for (const child of node) step(child, true);
-      return;
-    }
-    if (typeof node.type === "string") {
-      visit(node);
-      if (nested && FUNCTION_TYPES.has(node.type)) return;
-    }
-    for (const [key, value] of Object.entries(node)) {
-      if (key !== "__doctorParent") step(value, true);
-    }
-  };
-  step(root, false);
-}
-
-function declaredNames(fn: AnyNode): Set<string> {
-  const names = new Set<string>();
-  for (const param of fn.params ?? []) patternNames(param, names);
-  walkWhileLoading(fn.body, (node) => {
-    if (node.type === "VariableDeclarator") patternNames(node.id, names);
-    else if (node.type === "FunctionDeclaration" && node.id?.name) names.add(node.id.name);
-  });
-  return names;
-}
-
-function patternNames(pattern: AnyNode, names: Set<string>) {
-  switch (pattern?.type) {
-    case "Identifier":
-      names.add(pattern.name);
-      break;
-    case "AssignmentPattern":
-      patternNames(pattern.left, names);
-      break;
-    case "RestElement":
-      patternNames(pattern.argument, names);
-      break;
-    case "TSParameterProperty":
-      patternNames(pattern.parameter, names);
-      break;
-    case "ArrayPattern":
-      for (const element of pattern.elements ?? []) patternNames(element, names);
-      break;
-    case "ObjectPattern":
-      for (const property of pattern.properties ?? []) {
-        patternNames(property.type === "RestElement" ? property : property.value, names);
-      }
-      break;
-  }
-}
-
 function isProcessEnv(node: AnyNode): boolean {
   return (
     node.type === "MemberExpression" &&
@@ -352,22 +252,6 @@ function envMemberName(parent: AnyNode, env: AnyNode): string | null {
     return property.quasis[0]?.value.cooked ?? null;
   }
   return null;
-}
-
-function isCallee(node: AnyNode): boolean {
-  const parent = node.__doctorParent;
-  return parent?.type === "CallExpression" && parent.callee === node;
-}
-
-function isNonReference(node: AnyNode): boolean {
-  const parent = node.__doctorParent;
-  if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) {
-    return true;
-  }
-  if (parent?.type === "Property" && parent.key === node && !parent.computed && !parent.shorthand) {
-    return true;
-  }
-  return false;
 }
 
 function runtimeConfigKey(
@@ -422,20 +306,4 @@ function splitByCase(value: string): string[] {
   }
   parts.push(buffer);
   return parts;
-}
-
-function propertyName(property: AnyNode): string | null {
-  const key = property.key;
-  if (!property.computed && key?.type === "Identifier") return key.name;
-  if (key?.type === "Literal" && typeof key.value === "string") return key.value;
-  if (key?.type === "TemplateLiteral" && key.expressions.length === 0) {
-    return key.quasis[0]?.value.cooked ?? null;
-  }
-  return null;
-}
-
-function unwrap(node: AnyNode): AnyNode {
-  let current = node;
-  while (current && WRAPPER_TYPES.has(current.type)) current = current.expression;
-  return current;
 }

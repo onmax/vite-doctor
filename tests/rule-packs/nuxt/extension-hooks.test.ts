@@ -240,3 +240,18 @@ test("the Nuxt manifest preserves relative and absolute layer alias overrides", 
   });
   expect(manifest.layers[0]?.aliases).toEqual(aliases);
 });
+
+test.each([true, false])(
+  "records production build-cache evidence only outside dev: %s",
+  async (dev) => {
+    const root = nuxtProject();
+    const nuxt = fakeNuxt(root, () => {});
+    for (const buildCache of [true, false]) {
+      const manifest = await writeManifest({
+        ...nuxt,
+        options: { ...nuxt.options, dev, experimental: { buildCache } },
+      });
+      expect(manifest.productionBuildCache).toBe(dev ? undefined : buildCache);
+    }
+  },
+);
