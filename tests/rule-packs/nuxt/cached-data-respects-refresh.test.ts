@@ -309,3 +309,54 @@ test("the resolved flag from a current manifest wins over nuxt.config", async ()
 test("runs in the Recommended Preset", () => {
   expect(nuxtRulePack.presets.recommended).toContain(cachedDataRespectsRefresh.meta.id);
 });
+
+test.each([
+  "function unrelated(orders) { orders.refresh() }",
+  "{ const orders = other; orders.execute() }",
+  "function unrelated() { if (true) { var orders = other }; orders.refresh() }",
+  "try {} catch (orders) { orders.refresh() }",
+])("ignores shadowed result references: %s", async (shadow) => {
+  expect(
+    await run(
+      page(`const orders = useFetch('/api/orders', { getCachedData: ${SNIPPET} })
+${shadow}`),
+    ),
+  ).toEqual([]);
+});
+
+test.each([
+  "function unrelated(useCachedData) { const { refresh } = useCachedData(() => []) }",
+  "{ const useCachedData = other; const { refresh } = useCachedData(() => []) }",
+])("ignores shadowed factory references: %s", async (shadow) => {
+  expect(
+    await run(
+      page(`const useCachedData = createUseAsyncData({ getCachedData: ${SNIPPET} })
+${shadow}`),
+    ),
+  ).toEqual([]);
+});
+
+test.each(["function loadOrders() { return [] }", "const loadOrders = () => []"])(
+  "preserves handler-binding caller overrides: %s",
+  async (handler) => {
+    expect(
+      await run(
+        page(`${handler}
+const useCachedData = createUseAsyncData({ getCachedData: ${SNIPPET} })
+const { refresh } = useCachedData(loadOrders, { getCachedData: () => undefined })`),
+      ),
+    ).toEqual([]);
+  },
+);
+
+test("recognizes unshadowed result and factory references inside closures", async () => {
+  expect(
+    await run(
+      page(`const useCachedData = createUseAsyncData({ getCachedData: ${SNIPPET} })
+function load() {
+  const orders = useCachedData('orders', () => [])
+  return () => orders.refresh()
+}`),
+    ),
+  ).toHaveLength(1);
+});

@@ -1,6 +1,6 @@
 import { lt, major, valid } from "semver";
 import type { DiagnosticEvidence, RuleContext } from "../../../../core/index.js";
-import { findStatementBinding } from "./script-index.js";
+import { findFunctionVar, findStatementBinding } from "./script-index.js";
 import { getAsyncDataCall, getObjectPropertyValue, isFalseLiteral } from "./async-data.js";
 import { FUNCTION_TYPES, isNonReference, propertyName } from "./nuxt-config-ast.js";
 import { type AnyNode, createRule, sourceForNode, walkScriptLocal } from "./shared.js";
@@ -102,7 +102,7 @@ export const cachedDataRespectsRefresh = createRule({
         if (factory) {
           const option = cachedDataOption(factory.options);
           if (!option || !factory.name) return;
-          for (const call of factoryCalls(ctx, factory.name, factory.family)) {
+          for (const call of factoryCalls(ctx, parentSkipping(node), factory.family)) {
             // A caller's own getCachedData replaces a default-mode factory option.
             if (!factory.overrides && cachedDataOption(call.options)) continue;
             check(
@@ -213,11 +213,12 @@ function returnedObject(fn: AnyNode): AnyNode {
   return value?.type === "ObjectExpression" ? value : null;
 }
 
-function factoryCalls(ctx: RuleContext, name: string, family: DataCall["family"]): DataCall[] {
+function factoryCalls(ctx: RuleContext, binding: AnyNode, family: DataCall["family"]): DataCall[] {
+  const name = binding.id.name as string;
   const calls: DataCall[] = [];
   walkScriptLocal(ctx.file.scriptAst, (node) => {
     if (node.type !== "CallExpression" || node.callee?.type !== "Identifier") return;
-    if (node.callee.name !== name) return;
+    if (node.callee.name !== name || resolveBinding(node.callee) !== binding) return;
     calls.push({ node, callee: name, family, options: dataCallOptions(family, node) });
   });
   return calls;
@@ -230,7 +231,8 @@ function dataCallOptions(family: DataCall["family"], call: AnyNode): AnyNode {
       ? typeof unwrap(args[1])?.value === "string"
         ? 2
         : 1
-      : FUNCTION_TYPES.has(unwrap(args[0])?.type)
+      : args.length < 3 &&
+          (resolveFunction(args[0], call) || unwrap(args[1])?.type === "ObjectExpression")
         ? 1
         : 2;
   const options = unwrap(args[index]);
@@ -278,19 +280,30 @@ function resolveFunction(value: AnyNode, from: AnyNode): AnyNode {
   const node = unwrap(value);
   if (FUNCTION_TYPES.has(node?.type)) return node;
   if (node?.type !== "Identifier") return null;
+  const binding = resolveBinding(node, from);
+  if (binding?.type === "FunctionDeclaration") return binding;
+  if (binding?.type !== "VariableDeclarator" || binding.__doctorParent?.kind !== "const")
+    return null;
+  const init = unwrap(binding.init);
+  return FUNCTION_TYPES.has(init?.type) ? init : null;
+}
+
+/** Resolve lexical identity, including bindings that shadow a result or factory. */
+function resolveBinding(node: AnyNode, from: AnyNode = node): AnyNode {
   for (let scope = from.__doctorParent; scope; scope = scope.__doctorParent) {
     if (FUNCTION_TYPES.has(scope.type)) {
-      if ((scope.params ?? []).some((param: AnyNode) => patternNames(param).includes(node.name)))
-        return null;
-      continue;
+      const param = (scope.params ?? []).find((param: AnyNode) =>
+        patternNames(param).includes(node.name),
+      );
+      if (param) return param;
+      if (scope.id?.name === node.name) return scope;
+      const variable = findFunctionVar(scope.body, node.name);
+      if (variable) return variable;
     }
+    if (scope.type === "CatchClause" && patternNames(scope.param).includes(node.name))
+      return scope.param;
     const binding = findStatementBinding(scope, node.name);
-    if (!binding) continue;
-    if (binding.type === "FunctionDeclaration") return binding;
-    const declaration = binding.__doctorParent;
-    if (binding.type !== "VariableDeclarator" || declaration?.kind !== "const") return null;
-    const init = unwrap(binding.init);
-    return FUNCTION_TYPES.has(init?.type) ? init : null;
+    if (binding) return binding;
   }
   return null;
 }
@@ -462,6 +475,7 @@ function refreshCommand(ctx: RuleContext, call: AnyNode): { name: string; node: 
   walkScriptLocal(ctx.file.scriptAst, (node) => {
     if (found || node.type !== "MemberExpression") return;
     if (unwrap(node.object)?.type !== "Identifier" || unwrap(node.object).name !== result) return;
+    if (resolveBinding(unwrap(node.object)) !== declarator) return;
     const name = memberName(node);
     if (name === "refresh" || name === "execute") found = { name, node };
   });
