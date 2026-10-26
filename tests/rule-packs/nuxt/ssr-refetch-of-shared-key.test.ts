@@ -346,6 +346,33 @@ useAsyncData('me', () => $fetch('/api/me'), { ${dedupe} getCachedData: ${callbac
     }
   });
 
+  test("respects nested switch completion", async () => {
+    for (const body of [
+      "case 1: useMe(); if (other) break; else break; case 2: useMe(); break;",
+      "case 1: { break; } useMe(); useMe();",
+      "case 1: useMe(); if (other) break; else return; case 2: useMe(); break;",
+      "case 1: useMe(); switch (other) { case 1: return; default: throw new Error(); } case 2: useMe(); break;",
+    ]) {
+      expect(
+        await run({
+          "app/composables/useMe.ts": useMe,
+          "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => { switch (condition) { ${body} } })`,
+        }),
+      ).toEqual([]);
+    }
+    for (const body of [
+      "case 1: useMe(); if (other) break; useMe();",
+      "case 1: useMe(); switch (other) { default: break; } useMe();",
+    ]) {
+      expect(
+        await run({
+          "app/composables/useMe.ts": useMe,
+          "app/middleware/auth.ts": `export default defineNuxtRouteMiddleware(() => { switch (condition) { ${body} } })`,
+        }),
+      ).toHaveLength(1);
+    }
+  });
+
   test("retains fallthrough, stacked-label and unaffected switch callers", async () => {
     for (const body of [
       "case 1: useMe(); case 2: useMe(); break;",

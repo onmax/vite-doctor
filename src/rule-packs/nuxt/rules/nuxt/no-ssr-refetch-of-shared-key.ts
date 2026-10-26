@@ -1021,7 +1021,7 @@ function walkServer(
   if (Array.isArray(node)) {
     for (const statement of node) {
       walkServer(text, statement, visit, branches);
-      if (alwaysExits(statement) || statement?.type === "BreakStatement") return;
+      if (!completions(statement).has("normal")) return;
       if (statement?.type === "SwitchStatement") {
         const continuing = switchPaths(statement).continuing;
         if (!continuing.length) return;
@@ -1088,25 +1088,47 @@ function switchPaths(node: AnyNode): { entries: number[][]; continuing: number[]
   const entries: number[][] = [];
   const continuing: number[] = node.cases.some((item: AnyNode) => !item.test) ? [] : [-1];
   let active: number[] = [];
-  const breaks = (statement: AnyNode): boolean =>
-    (statement.type === "BreakStatement" && !statement.label) ||
-    (statement.type === "BlockStatement" && statement.body.some(breaks));
   node.cases.forEach((item: AnyNode, index: number) => {
     active = [...active, index];
     entries.push(active);
-    for (const statement of item.consequent) {
-      if (alwaysExits(statement)) {
-        active = [];
-        break;
-      }
-      if (breaks(statement)) {
-        continuing.push(...active);
-        active = [];
-        break;
-      }
-    }
+    const outcomes = completions(item.consequent);
+    if (outcomes.has("break")) continuing.push(...active);
+    if (!outcomes.has("normal")) active = [];
   });
   return { entries, continuing: [...continuing, ...active] };
+}
+
+type Completion = "normal" | "break" | "exit";
+
+/** Possible ways a statement finishes; nested switches consume their own breaks. */
+function completions(node: AnyNode): Set<Completion> {
+  if (!node) return new Set(["normal"]);
+  if (Array.isArray(node)) {
+    const result = new Set<Completion>(["normal"]);
+    for (const statement of node) {
+      if (!result.delete("normal")) break;
+      for (const outcome of completions(statement)) result.add(outcome);
+    }
+    return result;
+  }
+  if (node.type === "ReturnStatement" || node.type === "ThrowStatement") return new Set(["exit"]);
+  if (node.type === "BreakStatement" && !node.label) return new Set(["break"]);
+  if (node.type === "BlockStatement") return completions(node.body);
+  if (node.type === "IfStatement")
+    return new Set([...completions(node.consequent), ...completions(node.alternate)]);
+  if (node.type === "SwitchStatement") {
+    const result = new Set<Completion>();
+    if (!node.cases.some((item: AnyNode) => !item.test)) result.add("normal");
+    let following = new Set<Completion>(["normal"]);
+    for (const item of [...node.cases].reverse()) {
+      const outcomes = completions(item.consequent);
+      if (outcomes.delete("normal")) for (const outcome of following) outcomes.add(outcome);
+      following = outcomes;
+      for (const outcome of outcomes) result.add(outcome === "break" ? "normal" : outcome);
+    }
+    return result;
+  }
+  return new Set(["normal"]);
 }
 
 function alwaysExits(node: AnyNode): boolean {
