@@ -57,6 +57,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/fetch/keyed-composable-registration-required": "Keyed composables",
   "nuxt/fetch/no-await-inside-custom-wrapper": "Await in wrappers",
   "nuxt/fetch/no-raw-fetch-in-setup": "Raw fetch in setup",
+  "nuxt/fetch/no-ssr-refetch-of-shared-key": "Shared keys in SSR",
   "nuxt/fetch/prefer-create-use-fetch": "Data factories",
   "nuxt/fetch/require-stable-asyncdata-key": "Stable data keys",
   "nuxt/hydration/no-browser-global-in-universal-code": "Browser globals",

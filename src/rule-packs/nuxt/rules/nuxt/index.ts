@@ -44,6 +44,7 @@ export { noPlainEnvInAppCode } from "./no-plain-env-in-app-code.js";
 export { preferCreateUseFetch } from "./prefer-create-use-fetch.js";
 export { createUseFetchMustBeExportedInScannedDir } from "./create-use-fetch-must-be-exported-in-scanned-dir.js";
 export { keyedComposableRegistrationRequired } from "./keyed-composable-registration-required.js";
+export { noSsrRefetchOfSharedKey } from "./no-ssr-refetch-of-shared-key.js";
 export { preferSeoComposables } from "./prefer-seo-composables.js";
 export { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 export { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
@@ -102,6 +103,7 @@ import { noPlainEnvInAppCode } from "./no-plain-env-in-app-code.js";
 import { preferCreateUseFetch } from "./prefer-create-use-fetch.js";
 import { createUseFetchMustBeExportedInScannedDir } from "./create-use-fetch-must-be-exported-in-scanned-dir.js";
 import { keyedComposableRegistrationRequired } from "./keyed-composable-registration-required.js";
+import { noSsrRefetchOfSharedKey } from "./no-ssr-refetch-of-shared-key.js";
 import { preferSeoComposables } from "./prefer-seo-composables.js";
 import { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 import { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
@@ -162,6 +164,7 @@ const rules = [
   preferCreateUseFetch,
   createUseFetchMustBeExportedInScannedDir,
   keyedComposableRegistrationRequired,
+  noSsrRefetchOfSharedKey,
   preferSeoComposables,
   noUnsafeUseHeadScript,
   preferUseHeadSafeForUntrustedValues,
