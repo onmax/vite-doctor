@@ -224,7 +224,7 @@ class InputAnalysis {
   ) {}
 
   async run() {
-    const autoImports = this.unhashedAutoImports();
+    const autoImports = this.autoImports();
     for (const file of this.importers()) this.enqueue(file);
     for (const plugin of this.nuxt.manifest?.pluginFiles ?? []) {
       const target = this.resolveFile(absolute(this.appRoot, plugin));
@@ -279,24 +279,25 @@ class InputAnalysis {
     }
   }
 
+  private canFollow(target: string): boolean {
+    if (this.classify(target)) return true;
+    const layer = this.owningLayer(target);
+    return !!(
+      layer?.srcDir &&
+      isInside(target, layer.srcDir) &&
+      !isInside(target, layer.serverDir) &&
+      !isInside(target, layer.publicDir) &&
+      !relative(layer.srcDir, target)
+        .split("/")
+        .some((part) => part.startsWith(".") || part === "node_modules")
+    );
+  }
+
   private async addImports(file: string, parsed: ParsedFile) {
     for (const use of importUses(parsed.program)) {
       const target = this.resolveSpecifier(use.specifier, file);
       if (!target) continue;
-      const layer = this.owningLayer(target);
-      if (
-        !this.classify(target) &&
-        !(
-          layer?.srcDir &&
-          isInside(target, layer.srcDir) &&
-          !isInside(target, layer.serverDir) &&
-          !isInside(target, layer.publicDir) &&
-          !relative(layer.srcDir, target)
-            .split("/")
-            .some((part) => part.startsWith(".") || part === "node_modules")
-        )
-      )
-        continue;
+      if (!this.canFollow(target)) continue;
       if (!(await this.loadsRuntimeCode(target, use.names))) continue;
       this.enqueue(target);
       this.add({
@@ -366,6 +367,7 @@ class InputAnalysis {
     target: string,
     [start, end]: readonly [number, number] | number[],
   ) {
+    this.enqueue(target);
     this.add({
       file,
       range: this.ctx.helpers.rangeFromOffsets(file, text, start!, end),
@@ -375,8 +377,8 @@ class InputAnalysis {
     });
   }
 
-  /** Auto-imported values whose source files the cache key does not hash. */
-  private unhashedAutoImports(): Map<string, string> {
+  /** Selected local auto-import sources, including hashed files with unhashed dependencies. */
+  private autoImports(): Map<string, string> {
     const byName = new Map<string, AutoImportEntry[]>();
     for (const entry of this.nuxt.autoImportEntries ?? []) {
       if ((entry as { disabled?: boolean }).disabled) continue;
@@ -400,7 +402,7 @@ class InputAnalysis {
     const target = isAbsolute(from)
       ? this.resolveFile(from)
       : this.resolveSpecifier(from, join(this.appRoot, "nuxt.config.ts"));
-    return target && this.classify(target) ? target : undefined;
+    return target && this.canFollow(target) ? target : undefined;
   }
 
   /**

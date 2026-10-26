@@ -387,3 +387,29 @@ test("follows explicitly registered nested plugins inside srcDir", async () => {
     }),
   ).toHaveLength(1);
 });
+
+test.each([
+  "<template>{{ registeredValue }}</template>",
+  "<script setup>console.log(registeredValue)</script>",
+])("follows used auto-imports through hashed non-convention sources: %s", async (app) => {
+  const files = {
+    ".nuxt/doctor.manifest.json": manifest({
+      autoImports: [{ name: "registeredValue", from: "~/scratch/registered" }],
+    }),
+    "app/scratch/registered.ts":
+      "import { helper } from '~~/lib/helper'; export const registeredValue = helper",
+    "lib/helper.ts": "export const helper = 1",
+  };
+  expect(await run(files)).toHaveLength(0);
+  const diagnostics = await run({ ...files, "app/app.vue": app });
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({ file: "app/scratch/registered.ts" });
+  expect(diagnostics[0]?.why).toContain("lib/ feeds the Vue build");
+  expect(
+    await run({
+      ...files,
+      "app/app.vue":
+        "<script setup>const registeredValue = 1; console.log(registeredValue)</script>",
+    }),
+  ).toHaveLength(0);
+});
