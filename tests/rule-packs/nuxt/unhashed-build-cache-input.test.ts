@@ -318,3 +318,72 @@ test("follows the auto-import source Nuxt picks by priority", async () => {
 
   expect(diagnostics).toHaveLength(0);
 });
+
+test.each(["scratch/unused.ts", "plugins/nested/unused.ts", "composables/nested/unused.ts"])(
+  "does not seed unregistered app/%s, but follows it when imported",
+  async (path) => {
+    const files = {
+      [`app/${path}`]: `import { helper } from '~~/lib/helper'; export const value = helper`,
+      "lib/helper.ts": "export const helper = 1",
+    };
+    expect(await run(files)).toHaveLength(0);
+    expect(
+      await run({
+        ...files,
+        "app/app.vue": `<script setup>import { value } from './${path}'</script>`,
+      }),
+    ).toHaveLength(1);
+  },
+);
+
+test("ignores stale manifest layout, aliases, plugins and auto-imports", async () => {
+  expect(
+    await run({
+      ".nuxt/doctor.manifest.json": manifest({
+        generatedAt: "2000-01-01T00:00:00.000Z",
+        pluginFiles: ["modules/old/plugin.ts"],
+        aliases: { "#old": "/fixture/lib" },
+        autoImports: [{ name: "oldValue", from: "~~/lib/value" }],
+      }),
+      "app/app.vue": `<script setup>import { value } from '#old/value'; console.log(oldValue)</script>`,
+      "lib/value.ts": "export const value = 1; export const oldValue = 1",
+      "modules/old/plugin.ts": "export default defineNuxtPlugin(() => {})",
+    }),
+  ).toHaveLength(0);
+});
+
+test.each(["export { Shape } from './shape'", "export * from './shape'"])(
+  "filters type-only barrel chains: %s",
+  async (barrel) => {
+    const files = {
+      "app/app.vue": `<script setup lang="ts">import { Shape } from '~~/lib'; const shape: Shape = { id: 'a' }</script>`,
+      "lib/index.ts": "export * from './barrel'",
+      "lib/barrel.ts": barrel,
+      "lib/shape.ts": "export interface Shape { id: string }",
+    };
+    expect(await run(files)).toHaveLength(0);
+    expect(
+      await run({ ...files, "lib/shape.ts": "export const Shape = { id: 'a' }" }),
+    ).toHaveLength(1);
+  },
+);
+
+test("keeps unresolved and cyclic barrel chains conservative", async () => {
+  expect(
+    await run({
+      "app/app.vue": `<script setup>import { value } from '~~/lib'</script>`,
+      "lib/index.ts": "export * from './other'",
+      "lib/other.ts": "export * from './index'",
+    }),
+  ).toHaveLength(1);
+});
+
+test("follows explicitly registered nested plugins inside srcDir", async () => {
+  expect(
+    await run({
+      ".nuxt/doctor.manifest.json": manifest({ pluginFiles: ["app/plugins/nested/custom.ts"] }),
+      "app/plugins/nested/custom.ts": `import { helper } from '~~/lib/helper'; export default defineNuxtPlugin(() => helper)`,
+      "lib/helper.ts": "export const helper = 1",
+    }),
+  ).toHaveLength(1);
+});

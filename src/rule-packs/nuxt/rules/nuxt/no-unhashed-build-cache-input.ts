@@ -128,6 +128,8 @@ export const noUnhashedBuildCacheInput = createRule({
 });
 
 async function reportUnhashedInputs(ctx: RuleContext, project: ProjectInfo, nuxt: NuxtProjectInfo) {
+  // A stale inventory cannot prove the current layout or any registered build inputs.
+  if (nuxt.manifest?.hasManifest && !nuxt.manifest.isCurrent) return;
   const appRoot = absolute(project.root, primaryLayerRoot(nuxt) ?? project.root);
   const config = readConfig(ctx, appRoot);
   const enabledBy = buildCacheSource(
@@ -210,7 +212,6 @@ async function reportUnhashedInputs(ctx: RuleContext, project: ProjectInfo, nuxt
 class InputAnalysis {
   readonly groups = new Map<string, Group>();
   private readonly parsed = new Map<string, Promise<ParsedFile | null>>();
-  private readonly exportsByFile = new Map<string, Promise<ModuleExports | null>>();
   private readonly followed = new Set<string>();
   private readonly queue: string[] = [];
 
@@ -224,23 +225,27 @@ class InputAnalysis {
 
   async run() {
     const autoImports = this.unhashedAutoImports();
-    for (const file of this.importers()) {
+    for (const file of this.importers()) this.enqueue(file);
+    for (const plugin of this.nuxt.manifest?.pluginFiles ?? []) {
+      const target = this.resolveFile(absolute(this.appRoot, plugin));
+      if (!target) continue;
+      this.add({ file: target, target, how: "plugin", name: target });
+      this.enqueue(target);
+    }
+    while (this.queue.length) {
+      const file = this.queue.shift()!;
       const parsed = await this.parse(file);
       if (!parsed) continue;
       await this.addImports(file, parsed);
       if (autoImports.size) this.addAutoImports(file, parsed, autoImports);
     }
-    for (const plugin of this.nuxt.manifest?.pluginFiles ?? []) {
-      const target = this.resolveFile(absolute(this.appRoot, plugin));
-      if (target && this.classify(target))
-        this.add({ file: target, target, how: "plugin", name: target });
-    }
-    // Code reached through an unhashed file is just as stale, so follow its imports too.
-    while (this.queue.length && this.followed.size < FOLLOW_LIMIT) {
-      const file = this.queue.shift()!;
-      const parsed = await this.parse(file);
-      if (parsed) await this.addImports(file, parsed);
-    }
+  }
+
+  private enqueue(file: string) {
+    if (this.followed.has(file) || this.followed.size >= FOLLOW_LIMIT) return;
+    if (!/\.(?:[cm]?[jt]sx?|vue)$/.test(file)) return;
+    this.followed.add(file);
+    this.queue.push(file);
   }
 
   private add(site: Site) {
@@ -252,10 +257,7 @@ class InputAnalysis {
       group.sites.push(site);
       this.groups.set(found.path, group);
     }
-    if (!this.followed.has(site.target) && /\.(?:[cm]?[jt]sx?|vue)$/.test(site.target)) {
-      this.followed.add(site.target);
-      this.queue.push(site.target);
-    }
+    this.enqueue(site.target);
   }
 
   /** Script and SFC files in each hashed srcDir that can reach the Vue build. */
@@ -270,8 +272,8 @@ class InputAnalysis {
           continue;
         if (isInside(file, layer.serverDir) || isInside(file, layer.publicDir)) continue;
         if (this.owningLayer(file) !== layer) continue;
-        // With srcDir at the layer root, scripts and tests share it with the app.
-        if (srcDir === layer.root && !isAppPath(path)) continue;
+        // Seed Nuxt conventions only; other source files must be reached through imports.
+        if (!isAppPath(path)) continue;
         yield file;
       }
     }
@@ -280,8 +282,23 @@ class InputAnalysis {
   private async addImports(file: string, parsed: ParsedFile) {
     for (const use of importUses(parsed.program)) {
       const target = this.resolveSpecifier(use.specifier, file);
-      if (!target || !this.classify(target)) continue;
+      if (!target) continue;
+      const layer = this.owningLayer(target);
+      if (
+        !this.classify(target) &&
+        !(
+          layer?.srcDir &&
+          isInside(target, layer.srcDir) &&
+          !isInside(target, layer.serverDir) &&
+          !isInside(target, layer.publicDir) &&
+          !relative(layer.srcDir, target)
+            .split("/")
+            .some((part) => part.startsWith(".") || part === "node_modules")
+        )
+      )
+        continue;
       if (!(await this.loadsRuntimeCode(target, use.names))) continue;
+      this.enqueue(target);
       this.add({
         file,
         range: this.range(file, parsed.text, use.node),
@@ -484,13 +501,18 @@ class InputAnalysis {
     return [...names].some((name) => exports.values.has(name));
   }
 
-  private exportsOf(file: string): Promise<ModuleExports | null> {
-    let found = this.exportsByFile.get(file);
-    if (!found) {
-      found = this.parse(file).then((parsed) => (parsed ? moduleExports(parsed.program) : null));
-      this.exportsByFile.set(file, found);
-    }
-    return found;
+  private async exportsOf(
+    file: string,
+    visiting = new Set<string>(),
+  ): Promise<ModuleExports | null> {
+    if (visiting.has(file) || visiting.size >= 100) return null;
+    const parsed = await this.parse(file);
+    if (!parsed) return null;
+    const next = new Set(visiting).add(file);
+    return moduleExports(parsed.program, async (specifier) => {
+      const target = this.resolveSpecifier(specifier, file);
+      return target ? this.exportsOf(target, next) : null;
+    });
   }
 
   private parse(file: string): Promise<ParsedFile | null> {
@@ -576,7 +598,10 @@ interface ModuleExports {
 
 const TYPE_DECLARATIONS = new Set(["TSTypeAliasDeclaration", "TSInterfaceDeclaration"]);
 
-function moduleExports(program: AnyNode): ModuleExports {
+async function moduleExports(
+  program: AnyNode,
+  resolveExports: (specifier: string) => Promise<ModuleExports | null>,
+): Promise<ModuleExports> {
   const types = new Set<string>();
   for (const statement of program.body ?? []) {
     const declaration =
@@ -601,7 +626,15 @@ function moduleExports(program: AnyNode): ModuleExports {
     } else if (statement.type === "TSExportAssignment") {
       values.add("default");
     } else if (statement.type === "ExportAllDeclaration") {
-      if (statement.exportKind !== "type") opaque = true;
+      if (statement.exportKind === "type") continue;
+      const source = await resolveExports(statement.source.value);
+      if (!source || source.opaque) opaque = true;
+      const namespace = moduleName(statement.exported);
+      if (namespace && source?.values.size) values.add(namespace);
+      if (!namespace)
+        for (const name of source?.values ?? []) {
+          if (name !== "default") values.add(name);
+        }
     } else if (statement.type === "ExportNamedDeclaration" && statement.exportKind !== "type") {
       const declaration = statement.declaration;
       if (declaration) {
@@ -613,7 +646,13 @@ function moduleExports(program: AnyNode): ModuleExports {
         if (item.exportKind === "type") continue;
         if (!statement.source && types.has(moduleName(item.local)!)) continue;
         const name = moduleName(item.exported);
-        if (name) values.add(name);
+        if (!name) continue;
+        if (statement.source) {
+          const source = await resolveExports(statement.source.value);
+          if (!source || source.opaque) opaque = true;
+          if (!source?.values.has(moduleName(item.local)!)) continue;
+        }
+        values.add(name);
       }
     }
   }
@@ -794,7 +833,11 @@ function primaryLayerRoot(nuxt: NuxtProjectInfo): string | undefined {
 
 function isAppPath(path: string): boolean {
   const [top, ...rest] = path.split("/");
-  if (rest.length) return NUXT_APP_DIRS.has(top!);
+  if (rest.length) {
+    if (!NUXT_APP_DIRS.has(top!)) return false;
+    if (["plugins", "composables", "utils", "middleware"].includes(top!)) return rest.length === 1;
+    return path.endsWith(".vue");
+  }
   return /^(?:app|error)\.vue$|^app\.config\.[cm]?[jt]s$/.test(path);
 }
 
