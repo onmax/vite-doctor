@@ -32,6 +32,7 @@ export { noRuntimeEnvInBuildOptions } from "./no-runtime-env-in-build-options.js
 export { noPerBuildValueInCacheKey } from "./no-per-build-value-in-cache-key.js";
 export { cachedDataRespectsRefresh } from "./cached-data-respects-refresh.js";
 export { noUnhashedBuildCacheInput } from "./no-unhashed-build-cache-input.js";
+export { keepaliveRequiresMax } from "./keepalive-requires-max.js";
 export { preferAppDirectoryPlacement } from "./prefer-app-directory-placement.js";
 export { noNestedAutoimportAssumption } from "./no-nested-autoimport-assumption.js";
 export { noVueOrNitroContextInShared } from "./no-vue-or-nitro-context-in-shared.js";
@@ -92,6 +93,7 @@ import { noRuntimeEnvInBuildOptions } from "./no-runtime-env-in-build-options.js
 import { noPerBuildValueInCacheKey } from "./no-per-build-value-in-cache-key.js";
 import { cachedDataRespectsRefresh } from "./cached-data-respects-refresh.js";
 import { noUnhashedBuildCacheInput } from "./no-unhashed-build-cache-input.js";
+import { keepaliveRequiresMax } from "./keepalive-requires-max.js";
 import { preferAppDirectoryPlacement } from "./prefer-app-directory-placement.js";
 import { noNestedAutoimportAssumption } from "./no-nested-autoimport-assumption.js";
 import { noVueOrNitroContextInShared } from "./no-vue-or-nitro-context-in-shared.js";
@@ -154,6 +156,7 @@ const rules = [
   noPerBuildValueInCacheKey,
   cachedDataRespectsRefresh,
   noUnhashedBuildCacheInput,
+  keepaliveRequiresMax,
   preferAppDirectoryPlacement,
   noNestedAutoimportAssumption,
   noVueOrNitroContextInShared,

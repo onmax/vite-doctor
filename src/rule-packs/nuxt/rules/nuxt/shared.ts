@@ -34,6 +34,7 @@ export {
   isNuxtRuntimeFile,
   isRuntimeAppFile,
   isServerRuntimeFile,
+  nuxtPagePath,
   resolveSameFile,
   toPosixPath,
   NUXT_APP_DIRS,
