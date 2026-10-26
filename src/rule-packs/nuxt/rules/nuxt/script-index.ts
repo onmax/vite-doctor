@@ -75,6 +75,7 @@ function collectFunctionVars(node: AnyNode, vars: Map<string, AnyNode>) {
 const STATEMENT_SCOPE_TYPES = new Set([
   "Program",
   "BlockStatement",
+  "StaticBlock",
   "ForStatement",
   "ForOfStatement",
   "ForInStatement",
@@ -108,7 +109,7 @@ export function findStatementBinding(scope: AnyNode, name: string): AnyNode {
 }
 
 function scopeStatements(scope: AnyNode): AnyNode[] {
-  if (scope.type === "Program" || scope.type === "BlockStatement") return scope.body;
+  if (["Program", "BlockStatement", "StaticBlock"].includes(scope.type)) return scope.body;
   if (scope.type === "ForStatement") return [scope.init].filter(Boolean);
   if (scope.type === "ForOfStatement" || scope.type === "ForInStatement") return [scope.left];
   return scope.cases.flatMap((item: AnyNode) => item.consequent);

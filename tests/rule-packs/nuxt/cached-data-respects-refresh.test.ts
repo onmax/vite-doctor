@@ -315,6 +315,7 @@ test.each([
   "{ const orders = other; orders.execute() }",
   "function unrelated() { if (true) { var orders = other }; orders.refresh() }",
   "try {} catch (orders) { orders.refresh() }",
+  "class Unrelated { static { const orders = other; orders.refresh() } }",
 ])("ignores shadowed result references: %s", async (shadow) => {
   expect(
     await run(
@@ -327,6 +328,7 @@ ${shadow}`),
 test.each([
   "function unrelated(useCachedData) { const { refresh } = useCachedData(() => []) }",
   "{ const useCachedData = other; const { refresh } = useCachedData(() => []) }",
+  "class Unrelated { static { const useCachedData = other; const { refresh } = useCachedData(() => []) } }",
 ])("ignores shadowed factory references: %s", async (shadow) => {
   expect(
     await run(
