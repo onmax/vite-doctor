@@ -273,6 +273,63 @@ await useAsyncData('me', () => $fetch('/api/me'))
     expect(shared[0]?.file).toMatch(/middleware\/auth\.global\.ts$/);
   });
 
+  test("keeps reporting a partially repaired literal-key group", async () => {
+    const files = {
+      "app/middleware/auth.global.ts":
+        "export default defineNuxtRouteMiddleware(() => useFetch('/api/me', { key: 'me' }))",
+      "app/pages/index.vue": `<script setup>
+useAsyncData('me', () => $fetch('/api/me'))
+</script>`,
+    };
+    const before = await run(files);
+    expect(before).toHaveLength(1);
+    expect(before[0]?.suggestion).toContain("auth.global.ts:");
+    expect(before[0]?.suggestion).toContain("index.vue:");
+    expect(before[0]?.suggestion).toContain("same getCachedData function reference");
+    files["app/middleware/auth.global.ts"] =
+      "export default defineNuxtRouteMiddleware(() => useFetch('/api/me', { key: 'me', ...(import.meta.server && { dedupe: 'defer', getCachedData: sharedCache }) }))";
+    const partial = await run(files);
+    expect(partial).toHaveLength(1);
+    expect(partial[0]?.file).toMatch(/pages\/index.vue$/);
+    files["app/pages/index.vue"] = `<script setup>
+useAsyncData('me', () => $fetch('/api/me'), { ...(import.meta.server && { dedupe: 'defer', getCachedData: sharedCache }) })
+</script>`;
+    expect(await run(files)).toEqual([]);
+  });
+
+  test("excludes mutually exclusive JavaScript callers", async () => {
+    for (const body of [
+      "if (condition) useMe(); else useMe()",
+      "condition ? useMe() : useMe()",
+      "if (condition) { if (other) useMe() } else { useMe() }",
+    ]) {
+      expect(
+        await run({
+          "app/composables/useMe.ts": useMe,
+          "app/pages/index.vue": `<script setup>${body}</script>`,
+        }),
+      ).toEqual([]);
+    }
+    expect(
+      await run({
+        "app/composables/useMe.ts": useMe,
+        "app/pages/index.vue": "<script setup>if (condition) { useMe(); useMe() }</script>",
+      }),
+    ).toHaveLength(1);
+  });
+
+  test("does not infer co-rendering through conditional template edges", async () => {
+    expect(
+      await run({
+        "app/composables/useMe.ts": useMe,
+        "app/components/First.vue": component,
+        "app/components/Second.vue": component,
+        "app/pages/index.vue":
+          '<template><div v-if="condition"><First /></div><Second v-else /></template>',
+      }),
+    ).toEqual([]);
+  });
+
   test("ignores two pages, which never render together", async () => {
     expect(
       await run({

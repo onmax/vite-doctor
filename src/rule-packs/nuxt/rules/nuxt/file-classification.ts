@@ -101,6 +101,15 @@ export function isExplicitPlugin(ctx: RuleContext) {
   return manifest.pluginFiles.some((file) => resolveSameFile(file, ctx.file.path));
 }
 
+/** The file's path inside its Nuxt app's `pages/` directory, or null outside one. */
+export function nuxtPagePath(ctx: RuleContext): string | null {
+  const file = toPosixPath(resolve(ctx.project.root, ctx.file.path));
+  const source = owningNuxtAppSource(ctx, file);
+  if (!source) return null;
+  const pagesDir = `${source.srcDir}/pages`;
+  return isInside(file, pagesDir) && file !== pagesDir ? relative(pagesDir, file) : null;
+}
+
 export function resolveSameFile(a: string, b: string) {
   return toPosixPath(a) === toPosixPath(b);
 }

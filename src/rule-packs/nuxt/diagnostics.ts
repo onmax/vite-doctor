@@ -94,6 +94,7 @@ export const nuxtDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0091", ruleId: "nuxt/config/no-per-build-value-in-cache-key" },
   { code: "NUXT0092", ruleId: "nuxt/fetch/cached-data-respects-refresh" },
   { code: "NUXT0093", ruleId: "nuxt/config/no-unhashed-build-cache-input" },
+  { code: "NUXT0094", ruleId: "nuxt/routing/keepalive-requires-max" },
   { code: "NUXT0095", ruleId: "nuxt/fetch/no-ssr-refetch-of-shared-key" },
 ]);
 

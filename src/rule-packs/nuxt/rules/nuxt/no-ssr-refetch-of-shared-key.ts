@@ -37,6 +37,7 @@ interface SourceFile {
   vue: boolean;
   setup?: { start: number; end: number };
   clientOnlyRanges: Array<[number, number]>;
+  conditionalRanges: Array<[number, number]>;
   imports: Map<string, { source: string; imported: string }>;
   /** Module-level names with their initializer, null for destructured names and classes. */
   moduleBindings: Map<string, { init: AnyNode; constant: boolean }>;
@@ -61,6 +62,7 @@ interface Factory {
 
 interface OptionVerdict {
   defer: boolean;
+  cached: boolean;
 }
 
 interface FetchCall {
@@ -80,6 +82,7 @@ interface CallSite {
   file: SourceFile;
   node: AnyNode;
   role: Role;
+  branches: Map<AnyNode, boolean>;
   inlineMiddleware: boolean;
   label: string;
 }
@@ -347,11 +350,12 @@ class SharedKeyAnalysis {
       if (body) contexts.push({ body, inlineMiddleware: false });
     }
     for (const context of contexts) {
-      walkServer(file.text, context.body, (node) => {
+      walkServer(file.text, context.body, (node, branches) => {
         if (node.type !== "CallExpression") return;
         const callee = calleeName(node);
         if (!callee) return;
         const site = {
+          branches,
           file,
           node,
           role: context.inlineMiddleware ? ("middleware" as const) : app.role,
@@ -532,7 +536,14 @@ class SharedKeyAnalysis {
     }
     for (const edge of callers) {
       const renderer = await this.load(edge.from);
-      if (!renderer || insideClientOnly(renderer, edge.usage.range.start)) continue;
+      if (
+        !renderer ||
+        insideClientOnly(renderer, edge.usage.range.start) ||
+        renderer.conditionalRanges.some(
+          ([start, end]) => edge.usage.range.start >= start && edge.usage.range.start < end,
+        )
+      )
+        continue;
       const app = this.appFile(edge.from);
       if (app?.role === "app") roots.add(ALL);
       else if (app?.role === "page") roots.add(`page:${edge.from}`);
@@ -568,6 +579,13 @@ class SharedKeyAnalysis {
 
   /** Why two call sites can run during the same server render, or null when Doctor cannot tell. */
   private async coRendered(a: CallSite, b: CallSite): Promise<string | null> {
+    if (
+      a.file.path === b.file.path &&
+      [...a.branches].some(
+        ([branch, side]) => b.branches.has(branch) && b.branches.get(branch) !== side,
+      )
+    )
+      return null;
     if (a.file.path === b.file.path && (a.role !== "layout" || this.layoutsRender))
       return `both run in ${a.file.displayPath}`;
     const [left, right] = [await this.rootsOf(a), await this.rootsOf(b)];
@@ -651,7 +669,11 @@ class SharedKeyAnalysis {
           if (!reasons.includes(reason)) reasons.push(reason);
         }
       }
-      if (involved.size < 2) continue;
+      if (
+        involved.size < 2 ||
+        ![...involved].some((site) => !(site.call.verdict as OptionVerdict).cached)
+      )
+        continue;
       this.reportGroup([...fetching], [...involved], reasons);
     }
   }
@@ -664,8 +686,11 @@ class SharedKeyAnalysis {
         a.node.start - b.node.start,
     );
     const primary =
-      calls.find((call) => call.composable) ??
-      calls.find((call) => call.node === sites[0]!.node) ??
+      calls.find((call) => call.composable && !(call.verdict as OptionVerdict).cached) ??
+      calls.find(
+        (call) => call.node === sites[0]!.node && !(call.verdict as OptionVerdict).cached,
+      ) ??
+      calls.find((call) => !(call.verdict as OptionVerdict).cached) ??
       calls[0]!;
     const defer = calls.every((call) => (call.verdict as OptionVerdict).defer);
     const name = primary.composable ? `${primary.composable}()` : `${primary.callee}()`;
@@ -695,7 +720,22 @@ class SharedKeyAnalysis {
     this.ctx.report(
       diagnostics.NUXT0095({
         why: `${name} fetches key ${primary.keyLabel}, and ${sites.length} callers can run during the same server render: ${where}${more}. During SSR, Nuxt's default getCachedData returns payload data only while hydrating in the browser, so ${mechanism}. Each caller adds a request to the render.`,
-        fix: fixFor(primary, defer),
+        fix:
+          calls.length === 1
+            ? fixFor(primary, defer)
+            : `Apply consistent options to every same-key definition: ${calls
+                .map((call) => {
+                  const at = this.ctx.helpers.rangeFromOffsets(
+                    call.file.path,
+                    call.file.text,
+                    call.node.start,
+                    call.node.end,
+                  );
+                  return `${location(call.file.displayPath, at)}: ${fixFor(call, (call.verdict as OptionVerdict).defer)}`;
+                })
+                .join(
+                  " ",
+                )} Use the same getCachedData function reference for all definitions sharing this key, preserving Nuxt's option consistency contract.`,
         sources: [
           location(primary.file.displayPath, range),
           ...sites
@@ -824,7 +864,7 @@ function layoutName(path: string) {
 
 /**
  * The verdict for the options a call resolves: null when the call never fetches during SSR,
- * "unknown" when a spread, a custom getCachedData, or a dynamic flag decides it.
+ * "unknown" when an unresolved spread or a dynamic flag decides it.
  */
 function optionVerdict(
   text: string,
@@ -847,9 +887,27 @@ function optionVerdict(
   if (FUNCTION_TYPES.has(factoryOptions?.type)) layers.push(own, factoryObjects);
   else layers.push(factoryObjects, own);
   const objects = layers.flat();
+  // Understand the server-only object spread prescribed by this rule.
+  for (let i = 0; i < objects.length; i++) {
+    const object = objects[i]!;
+    const properties: AnyNode[] = [];
+    for (const item of object.properties) {
+      const value = unwrap(item.argument);
+      if (
+        item.type === "SpreadElement" &&
+        value?.type === "LogicalExpression" &&
+        value.operator === "&&" &&
+        guardOf(text, value.left) === "server" &&
+        unwrap(value.right)?.type === "ObjectExpression"
+      ) {
+        objects.push(unwrap(value.right));
+      } else properties.push(item);
+    }
+    objects[i] = { ...object, properties };
+  }
   if (objects.some((object) => object.properties.some((item: AnyNode) => item.type !== "Property")))
     return "unknown";
-  if (objects.some((object) => property(object, "getCachedData"))) return "unknown";
+  const cached = objects.some((object) => property(object, "getCachedData"));
   for (const flag of ["server", "immediate", "enabled"]) {
     for (const object of objects) {
       const value = unwrap(property(object, flag));
@@ -862,7 +920,7 @@ function optionVerdict(
     .map((object) => property(object, "dedupe"))
     .filter(Boolean)
     .map(isDeferDedupe);
-  return { defer: dedupe.length > 0 && dedupe.every(Boolean) };
+  return { defer: dedupe.length > 0 && dedupe.every(Boolean), cached };
 }
 
 function isDeferDedupe(node: AnyNode): boolean {
@@ -924,11 +982,16 @@ function guardOf(text: string, test: AnyNode): Guard {
  * Visits nodes that run when the body runs during SSR. Nested functions run later or not at all,
  * and branches behind a client or mixed import.meta guard may not run on the server.
  */
-function walkServer(text: string, node: AnyNode, visit: (node: AnyNode) => void) {
+function walkServer(
+  text: string,
+  node: AnyNode,
+  visit: (node: AnyNode, branches: Map<AnyNode, boolean>) => void,
+  branches = new Map<AnyNode, boolean>(),
+) {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
     for (const statement of node) {
-      walkServer(text, statement, visit);
+      walkServer(text, statement, visit, branches);
       if (
         statement?.type === "IfStatement" &&
         !statement.alternate &&
@@ -943,27 +1006,29 @@ function walkServer(text: string, node: AnyNode, visit: (node: AnyNode) => void)
   if (typeof node.type !== "string") return;
   if (FUNCTION_TYPES.has(node.type) || node.type === "ClassBody") return;
   if (node.type.startsWith("TS") && !TS_EXPRESSIONS.has(node.type)) return;
-  visit(node);
+  visit(node, branches);
   if (node.type === "IfStatement" || node.type === "ConditionalExpression") {
     const guard = guardOf(text, node.test);
-    walkServer(text, node.test, visit);
-    if (guard !== "client" && guard !== "mixed") walkServer(text, node.consequent, visit);
-    if (guard !== "server" && guard !== "mixed") walkServer(text, node.alternate, visit);
+    walkServer(text, node.test, visit, branches);
+    if (guard !== "client" && guard !== "mixed")
+      walkServer(text, node.consequent, visit, new Map([...branches, [node, true]]));
+    if (guard !== "server" && guard !== "mixed")
+      walkServer(text, node.alternate, visit, new Map([...branches, [node, false]]));
     return;
   }
   if (node.type === "LogicalExpression") {
     const guard = guardOf(text, node.left);
-    walkServer(text, node.left, visit);
+    walkServer(text, node.left, visit, branches);
     const rightRuns =
       guard === null ||
       (node.operator === "&&" && guard === "server") ||
       (node.operator === "||" && guard === "client");
-    if (rightRuns) walkServer(text, node.right, visit);
+    if (rightRuns) walkServer(text, node.right, visit, branches);
     return;
   }
   for (const [key, value] of Object.entries(node)) {
     if (key === "__doctorParent" || key === "parent" || key === "typeAnnotation") continue;
-    if (value && typeof value === "object") walkServer(text, value, visit);
+    if (value && typeof value === "object") walkServer(text, value, visit, branches);
   }
 }
 
@@ -1132,6 +1197,14 @@ async function parseVue(path: string, text: string): Promise<SourceFile | null> 
     if (!node || typeof node !== "object") return;
     if (node.type === 1 && /^(?:ClientOnly|client-only)$/.test(node.tag))
       file.clientOnlyRanges.push([node.loc.start.offset, node.loc.end.offset]);
+    // Conditional template edges do not prove co-rendering; exclude their descendants too.
+    if (
+      node.type === 1 &&
+      node.props?.some(
+        (prop: any) => prop.type === 7 && ["if", "else-if", "else"].includes(prop.name),
+      )
+    )
+      file.conditionalRanges.push([node.loc.start.offset, node.loc.end.offset]);
     for (const child of node.children ?? []) visit(child);
   };
   visit(sfc.getTemplateAst());
@@ -1198,6 +1271,7 @@ function describe(path: string, text: string, program: AnyNode, vue: boolean): S
     program,
     vue,
     clientOnlyRanges: [],
+    conditionalRanges: [],
     imports,
     moduleBindings,
     shadowed,
