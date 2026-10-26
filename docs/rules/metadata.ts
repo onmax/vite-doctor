@@ -751,6 +751,40 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/fetch/cached-data-respects-refresh": {
+    description:
+      "Finds a getCachedData option on useFetch, useAsyncData, their lazy variants, or a createUseFetch/createUseAsyncData factory that returns nuxtApp.payload.data[key] or nuxtApp.static.data[key] without checking ctx.cause or nuxtApp.isHydrating, on data that is refreshed.",
+    why: "experimental.granularCachedData is on by default in Nuxt 4, and in Nuxt 3.17+ with compatibilityVersion 4. With it, Nuxt calls getCachedData(key, nuxtApp, ctx) for refresh(), execute(), refreshNuxtData() and watch triggers as well as the first load, and any value it returns replaces the handler call. The common Nuxt 3 snippet `(key, nuxtApp) => nuxtApp.payload.data[key] ?? nuxtApp.static.data[key]` always finds the data the last fetch stored, so every refresh resolves with that value and never refetches while the key stays the same. Doctor reports only when the same call is refreshed: it destructures or reads refresh or execute, passes watch with a key that cannot change, or its key is refreshed by refreshNuxtData() in the same file. Calls whose refresh happens in another file, factory composables refreshed outside the factory's file, and getCachedData functions that read their third argument or isHydrating anywhere are not reported. Doctor reads the flag from the Nuxt manifest, or from a literal experimental.granularCachedData in the root nuxt.config with the installed Nuxt version's default; without the manifest it does not see layers or modules that change the flag, and it stays silent when the config sets the flag in a way it cannot read.",
+    recommendedReplacement:
+      "Take the third argument and return cached data only for the first load or hydration: `if (ctx.cause !== 'initial' && !nuxtApp.isHydrating) return undefined`. Or remove getCachedData to use Nuxt's default, which already skips the cache on refresh.",
+    examples: [
+      {
+        title: "Skip the cache when the data refreshes",
+        language: "ts",
+        invalid:
+          "const { data, refresh } = await useFetch('/api/orders', {\n  getCachedData: (key, nuxtApp) => nuxtApp.payload.data[key] ?? nuxtApp.static.data[key],\n})",
+        valid:
+          "const { data, refresh } = await useFetch('/api/orders', {\n  getCachedData(key, nuxtApp, ctx) {\n    if (ctx.cause !== 'initial' && !nuxtApp.isHydrating) return undefined\n    return nuxtApp.payload.data[key] ?? nuxtApp.static.data[key]\n  },\n})",
+      },
+    ],
+  },
+  "nuxt/config/no-unhashed-build-cache-input": {
+    description:
+      "Finds local files outside every hashed srcDir that the Vue build still consumes, such as a root lib/ imported from app/, when experimental.buildCache is enabled.",
+    why: "experimental.buildCache restores the cached Vue client and SSR bundles when its key matches, and Nitro rebuilds the server either way. The key hashes each local layer's srcDir (minus server/, public/ and node_modules), a few root files (package.json, lockfiles, tsconfig.json, .npmrc, .nuxtrc) and the raw nuxt.config. With the Nuxt 4 app/ layout, srcDir is app/, so files the app imports from ~~/lib, a root utils/ or a local module's runtime plugin are not part of the key. A commit that only changes them restores stale client and SSR bundles next to a fresh server. Nuxt 4.6.2 and older also leave shared/ out of the key; nuxt/nuxt#36704 adds it on main, so Doctor reports shared/ only for those versions. Doctor reports one diagnostic per unhashed directory and skips type-only imports, server/, public/, node_modules and paths another local layer's srcDir covers.",
+    recommendedReplacement:
+      "Move code only the app uses under app/. Otherwise add the directory to the CI cache key you use for node_modules/.cache/nuxt/builds, or turn off experimental.buildCache. For shared/, upgrading to a Nuxt release with nuxt/nuxt#36704 also fixes it.",
+    examples: [
+      {
+        title: "Keep app-only helpers inside app/",
+        language: "ts",
+        invalid:
+          "// nuxt.config.ts\nexport default defineNuxtConfig({ experimental: { buildCache: true } })\n\n// app/utils/alerts.ts\nexport { formatAlert } from '~~/lib/format-alert'",
+        valid:
+          "// nuxt.config.ts\nexport default defineNuxtConfig({ experimental: { buildCache: true } })\n\n// app/utils/alerts.ts\nexport { formatAlert } from '~/lib/format-alert'",
+      },
+    ],
+  },
   "nuxt/fetch/create-usefetch-must-be-exported-in-scanned-dir": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",

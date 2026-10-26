@@ -216,6 +216,8 @@ export interface NuxtProjectInfo {
     srcDir?: string;
     appMiddlewareDir?: string;
     serverDir?: string;
+    sharedDir?: string;
+    publicDir?: string;
     aliases?: Record<string, string>;
     compilerScan?: boolean;
     priority: number;
@@ -223,6 +225,11 @@ export interface NuxtProjectInfo {
   localLayerAliases?: boolean;
   /** Production-resolved `experimental.buildCache`; unset for development or old manifests. */
   productionBuildCache?: boolean;
+  /**
+   * `experimental.granularCachedData` as the manifest resolved it or nuxt.config sets it
+   * statically. Unset when nuxt.config leaves it to the default; `null` when Doctor cannot read it.
+   */
+  granularCachedData?: { enabled: boolean; source: "manifest" | "config" } | null;
   routeRules?: Record<string, unknown>;
   /** `false` when the Nuxt app disables server-side rendering. */
   ssr?: boolean;
@@ -323,6 +330,8 @@ export interface NuxtDoctorManifest {
     srcDir?: string;
     appMiddlewareDir?: string;
     serverDir?: string;
+    sharedDir?: string;
+    publicDir?: string;
     aliases?: Record<string, string>;
     compilerScan?: boolean;
     name?: string;
@@ -330,6 +339,7 @@ export interface NuxtDoctorManifest {
   }>;
   localLayerAliases?: boolean;
   productionBuildCache?: boolean;
+  granularCachedData?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
   ssr?: boolean;

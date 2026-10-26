@@ -255,3 +255,17 @@ test.each([true, false])(
     }
   },
 );
+
+test.each([
+  [true, true],
+  [false, false],
+  [undefined, false],
+])("records the resolved granularCachedData flag: %s", async (granularCachedData, recorded) => {
+  const root = nuxtProject();
+  const nuxt = fakeNuxt(root, () => {});
+  const manifest = await writeManifest({
+    ...nuxt,
+    options: { ...nuxt.options, experimental: { granularCachedData } },
+  });
+  expect(manifest.granularCachedData).toBe(recorded);
+});
