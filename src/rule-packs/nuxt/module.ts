@@ -342,6 +342,12 @@ export async function writeManifest(
           layerDirectories[index]?.server ??
             resolve(layer.cwd ?? rootDir, layer.config?.serverDir ?? "server"),
         ),
+        sharedDir: layerDirectories[index]?.shared
+          ? resolve(layerDirectories[index].shared)
+          : undefined,
+        publicDir: layerDirectories[index]?.public
+          ? resolve(layerDirectories[index].public)
+          : undefined,
         aliases: Object.fromEntries(
           Object.entries(layer.config?.alias ?? {}).map(([key, value]) => [key, String(value)]),
         ),

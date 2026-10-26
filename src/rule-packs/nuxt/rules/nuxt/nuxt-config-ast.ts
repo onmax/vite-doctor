@@ -145,3 +145,37 @@ export function unwrap(node: AnyNode): AnyNode {
   while (current && WRAPPER_TYPES.has(current.type)) current = current.expression;
   return current;
 }
+
+/**
+ * What turns on experimental.buildCache for a production build: the resolved manifest flag when
+ * it is current, else a literal `true` in nuxt.config. A computed flag returns null.
+ */
+export function buildCacheSource(
+  resolved: boolean | undefined,
+  config: AnyNode,
+  bindings: Map<string, AnyNode>,
+): "manifest" | "config" | null {
+  if (resolved !== undefined) return resolved ? "manifest" : null;
+  // c12 shallowly combines the environment blocks, then merges them over the root.
+  const production = objectExpression(propertyValue(config, "$production"), bindings);
+  const env = objectExpression(propertyValue(config, "$env"), bindings);
+  const envProduction = objectExpression(propertyValue(env, "production"), bindings);
+  const override =
+    propertyValue(envProduction, "experimental") ?? propertyValue(production, "experimental");
+  if (override) {
+    const experimental = objectExpression(override, bindings);
+    if (!experimental) return null;
+    const flag = unwrap(propertyValue(experimental, "buildCache"));
+    if (flag) return flag.type === "Literal" && flag.value === true ? "config" : null;
+  }
+  const experimental = objectExpression(propertyValue(config, "experimental"), bindings);
+  const flag = unwrap(propertyValue(experimental, "buildCache"));
+  return flag?.type === "Literal" && flag.value === true ? "config" : null;
+}
+
+export function propertyValue(node: AnyNode, name: string): AnyNode {
+  for (const property of node?.properties ?? []) {
+    if (property.type === "Property" && propertyName(property) === name) return property.value;
+  }
+  return null;
+}

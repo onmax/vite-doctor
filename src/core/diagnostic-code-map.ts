@@ -249,6 +249,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0090", ruleId: "nuxt/config/no-runtime-env-in-build-options" },
   { code: "NUXT0091", ruleId: "nuxt/config/no-per-build-value-in-cache-key" },
   { code: "NUXT0092", ruleId: "nuxt/fetch/cached-data-respects-refresh" },
+  { code: "NUXT0093", ruleId: "nuxt/config/no-unhashed-build-cache-input" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
