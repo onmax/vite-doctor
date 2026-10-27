@@ -14,6 +14,11 @@
   <a href="https://vite-doctor.onmax.me">Docs</a> · <a href="https://comark-ui.onmax.me/lint/vite-doctor/">Comark UI extension</a>
 </p>
 
+[![npm version](https://comark-ui.onmax.me/badge.svg?source=npm-version&package=vite-doctor&icon=npm)](https://www.npmjs.com/package/vite-doctor)
+[![npm downloads](https://comark-ui.onmax.me/badge.svg?source=npm-downloads&package=vite-doctor&period=month&icon=npm)](https://www.npmjs.com/package/vite-doctor)
+[![license](https://comark-ui.onmax.me/badge.svg?label=license&value=MIT)](https://github.com/onmax/vite-doctor/blob/main/LICENSE)
+[![docs](https://comark-ui.onmax.me/badge.svg?label=docs&value=vite-doctor.onmax.me)](https://vite-doctor.onmax.me)
+
 ## Usage
 
 Run Vite Doctor from the project root:
