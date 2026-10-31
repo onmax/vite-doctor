@@ -299,7 +299,13 @@ export async function writeManifest(
       const key = JSON.stringify(dirs);
       if (evidence.composableScan?.dirs !== key)
         evidence.composableScan = { dirs: key, entries: scanImportDirs(nuxt, dirs) };
-      scannedAutoImportEntries = await evidence.composableScan.entries;
+      const scan = evidence.composableScan;
+      try {
+        scannedAutoImportEntries = await scan.entries;
+      } catch (error) {
+        if (evidence.composableScan === scan) evidence.composableScan = undefined;
+        throw error;
+      }
     }
   }
   const manifest = {
