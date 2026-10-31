@@ -59,6 +59,7 @@ type NuxtDoctorEvidence = {
   importDirs?: unknown[];
   autoImportContext?: NuxtAutoImportContext;
   autoImportEntries?: unknown[];
+  composableScan?: { dirs: string; entries: Promise<unknown[]> };
   moduleSources?: NuxtModuleSource[];
   extensions?: string[];
 };
@@ -78,6 +79,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
     autoImportEntries: undefined as unknown[] | undefined,
+    composableScan: undefined as NuxtDoctorEvidence["composableScan"],
     moduleSources: undefined as NuxtModuleSource[] | undefined,
     extensions: undefined as string[] | undefined,
   };
@@ -176,6 +178,8 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
 
   nuxt.hook?.("imports:extend", (imports: unknown) => {
     evidence.autoImportEntries = Array.isArray(imports) ? imports : [];
+    // Nuxt calls this hook right after it rescans its import directories, so rescan with it.
+    evidence.composableScan = undefined;
   });
 
   nuxt.hook?.("pages:resolved", (pages: any[]) => {
@@ -291,17 +295,17 @@ export async function writeManifest(
   if (evidence?.autoImportContext) {
     scannedAutoImportEntries = [];
     if (composableScanRoots.size && evidence.importDirs?.length) {
-      // Use Nuxt's scanner without the public dynamic-import list, which modules can mutate.
-      const { scanDirExports } = await importModule<{
-        scanDirExports: (
-          dirs: string[],
-          options: { fileFilter: (file: string) => boolean },
-        ) => Promise<unknown[]>;
-      }>("unimport", { url: new URL(import.meta.resolve("nuxt")) });
-      const isIgnored = createIsIgnored(nuxt);
-      scannedAutoImportEntries = await scanDirExports(evidence.importDirs.map(String), {
-        fileFilter: (file) => !isIgnored(file),
-      });
+      const dirs = evidence.importDirs.map(String);
+      const key = JSON.stringify(dirs);
+      if (evidence.composableScan?.dirs !== key)
+        evidence.composableScan = { dirs: key, entries: scanImportDirs(nuxt, dirs) };
+      const scan = evidence.composableScan;
+      try {
+        scannedAutoImportEntries = await scan.entries;
+      } catch (error) {
+        if (evidence.composableScan === scan) evidence.composableScan = undefined;
+        throw error;
+      }
     }
   }
   const manifest = {
@@ -422,6 +426,18 @@ const lastManifestWrite: { path: string; signature: string; generatedAt?: string
   path: "",
   signature: "",
 };
+
+// Use Nuxt's scanner without the public dynamic-import list, which modules can mutate.
+async function scanImportDirs(nuxt: any, dirs: string[]): Promise<unknown[]> {
+  const { scanDirExports } = await importModule<{
+    scanDirExports: (
+      dirs: string[],
+      options: { fileFilter: (file: string) => boolean },
+    ) => Promise<unknown[]>;
+  }>("unimport", { url: new URL(import.meta.resolve("nuxt")) });
+  const isIgnored = createIsIgnored(nuxt);
+  return scanDirExports(dirs, { fileFilter: (file) => !isIgnored(file) });
+}
 
 function nuxtConfigModifiedAt(root: string): number | undefined {
   for (const extension of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
