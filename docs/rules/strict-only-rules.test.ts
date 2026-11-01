@@ -32,36 +32,25 @@ test("Strict-only Nuxt rule commands survive combined preset discovery", async (
   }
 });
 
-test("Strict-only TypeScript, Vite, and Vue rules select their Strict Presets", async () => {
-  const cases = [
-    [
-      "typescript/performance/no-array-filter-map",
-      "pnpm vite-doctor . --extends auto,typescript/strict",
-    ],
-    [
-      "vite/define/no-unused-define",
-      "pnpm vite-doctor . --framework vite --extends auto,vite/strict",
-    ],
-    [
-      "vue/template/prefer-true-attribute-shorthand",
-      "pnpm vite-doctor . --framework vue --extends auto,vue/strict",
-    ],
-  ] as const;
-  for (const [id, prefix] of cases) {
-    const rule = getRuleDocuments().find((item) => item.id === id);
-    expect(rule, id).toBeDefined();
-    const markdown = await rulesCollectionSource.getItem(rule!.key);
-    expect(markdown, id).toContain(`${prefix} --rules ${id}`);
-  }
-});
-
-for (const [framework, pack] of [
-  ["typescript", typescriptRulePack],
-  ["vite", viteRulePack],
-  ["vue", vueRulePack],
-] as const) {
-  test(`${framework} commands match actual preset membership`, async () => {
+test.each([
+  [
+    "typescript",
+    typescriptRulePack,
+    "typescript/performance/no-array-filter-map",
+    "pnpm vite-doctor .",
+  ],
+  ["vite", viteRulePack, "vite/define/no-unused-define", "pnpm vite-doctor . --framework vite"],
+  [
+    "vue",
+    vueRulePack,
+    "vue/template/prefer-true-attribute-shorthand",
+    "pnpm vite-doctor . --framework vue",
+  ],
+] as const)(
+  "%s commands match actual preset membership",
+  async (framework, pack, strictExample, prefix) => {
     const recommended = new Set(pack.presets.recommended);
+    expect(pack.presets.strict).toContain(strictExample);
     const documents = getRuleDocuments();
     for (const id of pack.presets.strict ?? []) {
       const rule = documents.find((item) => item.id === id);
@@ -69,6 +58,8 @@ for (const [framework, pack] of [
       const markdown = await rulesCollectionSource.getItem(rule!.key);
       const command = markdown.split("## Run this rule")[1].split("```")[1];
       expect(command.includes(`--extends auto,${framework}/strict`), id).toBe(!recommended.has(id));
+      if (id === strictExample)
+        expect(command, id).toContain(`${prefix} --extends auto,${framework}/strict --rules ${id}`);
     }
-  });
-}
+  },
+);

@@ -136,42 +136,7 @@ test("CLI help states that the analysis cache is on by default", async () => {
   }
 });
 
-test("CLI prints Vite rule metadata", async () => {
-  const repoRoot = findRepoRoot();
-  const writes: string[] = [];
-  const write = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    writes.push(String(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  try {
-    await expect(main(["rules", "--format", "json"], repoRoot)).resolves.toBe(0);
-  } finally {
-    process.stdout.write = write;
-  }
-
-  expect(writes.join("")).toContain("vite/define/no-secret-define");
-});
-
-test("CLI rules report uses the public package version", async () => {
-  const repoRoot = findRepoRoot();
-  const writes: string[] = [];
-  const write = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    writes.push(String(chunk));
-    return true;
-  }) as typeof process.stdout.write;
-  try {
-    await expect(main(["rules", "--format", "json"], repoRoot)).resolves.toBe(0);
-  } finally {
-    process.stdout.write = write;
-  }
-
-  const report = JSON.parse(writes.join(""));
-  expect(report.rules[0].version).toBe(publicPackageVersion);
-});
-
-test("CLI lists only Vite rule metadata by default", async () => {
+test("CLI lists Vite rule metadata with the public package version by default", async () => {
   await withFixture(
     {
       "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
@@ -180,7 +145,12 @@ test("CLI lists only Vite rule metadata by default", async () => {
       const result = await runCli(["rules", "--format", "json"], root);
 
       expect(result.code).toBe(0);
-      expect(result.output).toContain("vite/define/no-secret-define");
+      expect(JSON.parse(result.output).rules).toContainEqual(
+        expect.objectContaining({
+          id: "vite/define/no-secret-define",
+          version: publicPackageVersion,
+        }),
+      );
       expect(result.output).not.toContain("nuxt/hydration/no-client-conditional-in-template");
     },
   );
