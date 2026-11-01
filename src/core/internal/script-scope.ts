@@ -64,16 +64,11 @@ export function parseScriptScope(
 ): ScriptScope {
   const dialect = options.dialect ?? "ts";
   const sourceType = options.sourceType ?? "script";
-  // Script-mode oxc rejects `import.meta` and other syntax the TypeScript parser accepts in
-  // expression fragments, so parse as a module and apply the source type to scope analysis.
-  const result = parseScriptSync(`source.${dialect}`, source, {
-    lang: dialect,
-    sourceType: "module",
-    astType: "ts",
-    range: true,
-    preserveParens: false,
-  });
-  const error = result.errors.find((item) => item.severity === "Error");
+  let result = parseEstree(source, dialect);
+  // TypeScript reads type syntax in JavaScript files without a parse error, so typescript-estree
+  // accepted it there. Retrying as TSX keeps those files analyzed instead of silently skipped.
+  if (dialect === "jsx" && firstError(result)) result = parseEstree(source, "tsx");
+  const error = firstError(result);
   if (error) throw new SyntaxError(error.message);
   const ast = result.program as any;
   ast.sourceType = sourceType;
@@ -95,6 +90,22 @@ export function parseScriptScope(
       ));
     },
   };
+}
+
+function parseEstree(source: string, dialect: ScopeDialect) {
+  // Script-mode oxc rejects `import.meta` and other syntax the TypeScript parser accepts in
+  // expression fragments, so parse as a module and apply the source type to scope analysis.
+  return parseScriptSync(`source.${dialect}`, source, {
+    lang: dialect,
+    sourceType: "module",
+    astType: "ts",
+    range: true,
+    preserveParens: false,
+  });
+}
+
+function firstError(result: ReturnType<typeof parseScriptSync>) {
+  return result.errors.find((item) => item.severity === "Error");
 }
 
 /** Parses a module with `parseScriptScope`, or returns null on syntax errors. Not shared. */
