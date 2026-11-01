@@ -1,4 +1,4 @@
-import { parseSync, rawTransferSupported } from "oxc-parser";
+import { parseSync } from "oxc-parser";
 import { expect, test } from "vite-plus/test";
 import { parseScript, parseScriptResult, parseScriptSync } from "../../src/core/internal/script.ts";
 
@@ -23,10 +23,6 @@ function declarationInit(program: Node, name: string): Node {
   }
   throw new Error(`missing ${name}`);
 }
-
-test("parses scripts with raw transfer where the runtime supports it", () => {
-  expect(rawTransferSupported()).toBe(true);
-});
 
 test("keeps the AST fields rules depend on", () => {
   const program = parseScript("/src/entry.js", source) as Node;

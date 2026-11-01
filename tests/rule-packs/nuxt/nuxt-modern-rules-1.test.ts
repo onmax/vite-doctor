@@ -54,6 +54,39 @@ import {
   preferTrueAttributeShorthand,
 } from "../../../src/rule-packs/vue/rules/vue/index.ts";
 
+const asyncDataCases = [
+  {
+    rule: asyncDataExplicitKeyForRefreshable,
+    id: "nuxt/async-data-explicit-key-for-refreshable",
+    source: `<script setup lang="ts">const { refresh } = useFetch('/api/settings')</script>`,
+  },
+  {
+    rule: asyncDataNoMutationMethods,
+    id: "nuxt/async-data-no-mutation-methods",
+    source: `<script setup lang="ts">useFetch('/api/settings', { method: 'PATCH' })</script>`,
+  },
+  {
+    rule: asyncDataHandlerPure,
+    id: "nuxt/async-data-handler-pure",
+    source: `<script setup lang="ts">useAsyncData('settings', () => $fetch('/api/settings', { method: 'put' }))</script>`,
+  },
+  {
+    rule: noManualActionUseFetch,
+    id: "nuxt/no-manual-action-usefetch",
+    source: `<script setup lang="ts">const { execute } = useLazyFetch('/api/settings', { method: 'PATCH', immediate: false })</script>`,
+  },
+  {
+    rule: postFetchRequiresReadonlyMarker,
+    id: "nuxt/post-fetch-requires-readonly-marker",
+    source: `<script setup lang="ts">useFetch('/api/settings/update', { method: 'POST', body })</script>`,
+  },
+  {
+    rule: noMutationToastInUseFetchCallback,
+    id: "nuxt/no-mutation-toast-in-usefetch-callback",
+    source: `<script setup lang="ts">useLazyFetch('/api/settings', { method: 'PATCH', onResponse() { toast.add({ title: 'Saved' }) } })</script>`,
+  },
+];
+
 const cases = [
   {
     rule: noBrowserGlobalInUniversalCode,
@@ -140,24 +173,6 @@ const cases = [
     source: `export function useUser() { return useAsyncData(() => $fetch('/api/user')) }`,
   },
   {
-    rule: asyncDataNoMutationMethods,
-    id: "nuxt/async-data-no-mutation-methods",
-    file: "app/pages/settings.vue",
-    source: `<script setup lang="ts">useFetch('/api/settings', { method: 'PATCH' })</script>`,
-  },
-  {
-    rule: noManualActionUseFetch,
-    id: "nuxt/no-manual-action-usefetch",
-    file: "app/pages/settings.vue",
-    source: `<script setup lang="ts">const { execute } = useLazyFetch('/api/settings', { method: 'PATCH', immediate: false })</script>`,
-  },
-  {
-    rule: asyncDataHandlerPure,
-    id: "nuxt/async-data-handler-pure",
-    file: "app/pages/settings.vue",
-    source: `<script setup lang="ts">useAsyncData('settings', () => $fetch('/api/settings', { method: 'put' }))</script>`,
-  },
-  {
     rule: previewModeGlobalRefresh,
     id: "nuxt/preview-mode-global-refresh",
     file: "app/plugins/preview.ts",
@@ -168,24 +183,6 @@ const cases = [
     id: "nuxt/no-global-refresh-without-justification",
     file: "app/plugins/refresh.ts",
     source: `export default defineNuxtPlugin(() => refreshNuxtData())`,
-  },
-  {
-    rule: asyncDataExplicitKeyForRefreshable,
-    id: "nuxt/async-data-explicit-key-for-refreshable",
-    file: "app/pages/settings.vue",
-    source: `<script setup lang="ts">const { refresh } = useFetch('/api/settings')</script>`,
-  },
-  {
-    rule: postFetchRequiresReadonlyMarker,
-    id: "nuxt/post-fetch-requires-readonly-marker",
-    file: "app/pages/settings.vue",
-    source: `<script setup lang="ts">useFetch('/api/settings/update', { method: 'POST', body })</script>`,
-  },
-  {
-    rule: noMutationToastInUseFetchCallback,
-    id: "nuxt/no-mutation-toast-in-usefetch-callback",
-    file: "app/pages/settings.vue",
-    source: `<script setup lang="ts">useLazyFetch('/api/settings', { method: 'PATCH', onResponse() { toast.add({ title: 'Saved' }) } })</script>`,
   },
   {
     rule: preferExplicitUseStateKeyInExportedComposables,
@@ -287,6 +284,28 @@ for (const item of cases) {
     expect(result.diagnostics[0]?.ruleId).toBe(item.id);
   });
 }
+
+test.each(asyncDataCases)(
+  "$id reports literal and escaped async-data calls",
+  async ({ rule, id, source }) => {
+    const result = await runRuleFixture({
+      rule,
+      framework: "nuxt",
+      files: {
+        "app/pages/literal.vue": source,
+        "app/pages/escaped.vue": source.replace(
+          /\buse(Fetch|LazyFetch|AsyncData|LazyAsyncData)\b/g,
+          String.raw`\u0075se$1`,
+        ),
+      },
+    });
+
+    expect(result.diagnostics.map((item) => [item.ruleId, item.file.split("/").at(-1)])).toEqual([
+      [id, "escaped.vue"],
+      [id, "literal.vue"],
+    ]);
+  },
+);
 
 test("nitro/server/no-browser-api reports browser globals used in object shorthand", async () => {
   const result = await runRuleFixture({
@@ -824,16 +843,8 @@ refreshNuxtData('settings')
 });
 
 test("async data rules skip files that cannot call async data", () => {
-  const rules = [
-    asyncDataExplicitKeyForRefreshable,
-    asyncDataNoMutationMethods,
-    asyncDataHandlerPure,
-    noManualActionUseFetch,
-    postFetchRequiresReadonlyMarker,
-    noMutationToastInUseFetchCallback,
-  ];
   const ctx = (text: string) => ({ file: { text }, options: {} }) as any;
-  for (const rule of rules) {
+  for (const { rule } of asyncDataCases) {
     expect(rule.create(ctx(`const data = await $fetch('/api/settings')`))).toBeUndefined();
     for (const text of [
       String.raw`const path = "C:\\temp"; const pattern = /foo\\d+/`,
@@ -844,8 +855,6 @@ test("async data rules skip files that cannot call async data", () => {
     ]) {
       expect(rule.create(ctx(text))).toBeUndefined();
     }
-    expect(rule.create(ctx(`const { refresh } = useFetch('/api/settings')`))).toBeDefined();
-    expect(rule.create(ctx(`const { refresh } = \\u0075seFetch('/api/settings')`))).toBeDefined();
   }
 });
 
