@@ -2,7 +2,11 @@ import { basename, dirname, join, resolve } from "pathe";
 import type { DiagnosticEvidence, RuleContext, SourceRange } from "../../../core/index.js";
 import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
 import { parseScript } from "../../../core/internal/script.js";
-import { parseScriptScope } from "../../../core/internal/script-scope.js";
+import {
+  parseScriptScope,
+  type ScopeReference,
+  type ScriptScope,
+} from "../../../core/internal/script-scope.js";
 // oxlint-disable-next-line no-restricted-imports -- walks the project tree, so MCP Rules declare cacheScope "none".
 import { selectScanFiles } from "../../../core/internal/source-inventory.js";
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
@@ -130,12 +134,13 @@ interface ParsedModule {
   displayPath: string;
   text: string;
   program: AnyNode;
-  /** Top-level `const` initializers by local name. */
-  constants: Map<string, AnyNode>;
+  scope: ScriptScope | null;
+  /** Value references keyed by identifier offset in the source AST. */
+  references: Map<number, ScopeReference>;
+  /** Readable `const` initializers keyed by their binding identifier offset. */
+  constants: Map<number, AnyNode>;
   /** Exported top-level `const` initializers by exported name. */
   exportedConstants: Map<string, AnyNode>;
-  /** Import bindings by local name. */
-  imports: Map<string, { source: string; imported: string }>;
 }
 
 interface ProjectModules {
@@ -186,32 +191,45 @@ function loadModule(
     modules.byPath.set(file, null);
     return null;
   }
+  let scope: ScriptScope | null = null;
+  const references = new Map<number, ScopeReference>();
+  try {
+    scope = parseScriptScope(text, {
+      dialect: /\.[cm]?ts$/.test(file) ? "ts" : "jsx",
+      sourceType: "module",
+    });
+    for (const reference of scope.references.values()) {
+      if (reference.isValueReference) references.set(reference.identifier.range[0], reference);
+    }
+  } catch {
+    // Without scope evidence, neither tool callees nor annotation bindings are readable.
+    scope = null;
+    references.clear();
+  }
   const module: ParsedModule = {
     file,
     displayPath: displayPath ?? file.slice(modules.root.length + 1),
     text,
     program,
+    scope,
+    references,
     constants: new Map(),
     exportedConstants: new Map(),
-    imports: new Map(),
   };
-  for (const statement of (program as AnyNode).body ?? []) {
-    if (statement.type === "ImportDeclaration" && statement.importKind !== "type") {
-      for (const specifier of statement.specifiers ?? []) {
-        if (specifier.type !== "ImportSpecifier" || specifier.importKind === "type") continue;
-        module.imports.set(specifier.local.name, {
-          source: statement.source.value,
-          imported: specifierName(specifier.imported),
-        });
-      }
+  walk(program, (node) => {
+    if (node.type !== "VariableDeclaration" || node.kind !== "const") return;
+    for (const declarator of node.declarations ?? []) {
+      if (declarator.id?.type === "Identifier" && declarator.init)
+        module.constants.set(declarator.id.start, declarator.init);
     }
-    const exported = statement.type === "ExportNamedDeclaration";
-    const declaration = exported ? statement.declaration : statement;
+  });
+  for (const statement of (program as AnyNode).body ?? []) {
+    if (statement.type !== "ExportNamedDeclaration") continue;
+    const declaration = statement.declaration;
     if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") continue;
     for (const declarator of declaration.declarations ?? []) {
       if (declarator.id?.type !== "Identifier" || !declarator.init) continue;
-      module.constants.set(declarator.id.name, declarator.init);
-      if (exported) module.exportedConstants.set(declarator.id.name, declarator.init);
+      module.exportedConstants.set(declarator.id.name, declarator.init);
     }
   }
   modules.byPath.set(file, module);
@@ -277,59 +295,48 @@ function bindingsByCalleeStart(
   autoImportsNuxtToolkit: boolean,
 ): Map<number, McpLibrary> {
   const found = new Map<number, McpLibrary>();
-  let scope;
-  try {
-    scope = parseScriptScope(module.text, {
-      dialect: /\.[cm]?ts$/.test(module.file) ? "ts" : "jsx",
-      sourceType: "module",
-    });
-  } catch {
-    // Without binding evidence, a call named defineTool could be anything.
-    return found;
-  }
-  for (const item of scope.scopeManager.scopes) {
-    for (const reference of item.references) {
-      if (!reference.isValueReference) continue;
-      const identifier = reference.identifier;
-      const variable = reference.resolved;
-      if (!variable) {
-        if (identifier.name === "defineMcpTool" && autoImportsNuxtToolkit)
-          found.set(identifier.range[0], "@nuxtjs/mcp-toolkit");
-        continue;
-      }
-      for (const definition of variable.defs) {
-        if (definition.type === "Variable" && definition.parent.kind === "const") {
-          const init = unwrap(definition.node.init);
-          const constructor = init?.type === "NewExpression" ? unwrap(init.callee) : undefined;
-          const imported = scope.references.get(constructor)?.resolved;
-          if (
-            imported?.defs.some(
-              (item) =>
-                item.type === "ImportBinding" &&
-                item.parent.type === "ImportDeclaration" &&
-                item.parent.importKind !== "type" &&
-                item.node.type === "ImportSpecifier" &&
-                item.node.importKind !== "type" &&
-                specifierName(item.node.imported) === "McpServer" &&
-                isSdkServerImport(item.parent.source.value),
-            )
-          )
-            found.set(identifier.range[0], "@modelcontextprotocol/sdk");
-        }
+  const scope = module.scope;
+  if (!scope) return found;
+  for (const reference of module.references.values()) {
+    const identifier = reference.identifier;
+    const variable = reference.resolved;
+    if (!variable) {
+      if (identifier.name === "defineMcpTool" && autoImportsNuxtToolkit)
+        found.set(identifier.range[0], "@nuxtjs/mcp-toolkit");
+      continue;
+    }
+    for (const definition of variable.defs) {
+      if (definition.type === "Variable" && definition.parent.kind === "const") {
+        const init = unwrap(definition.node.init);
+        const constructor = init?.type === "NewExpression" ? unwrap(init.callee) : undefined;
+        const imported = scope.references.get(constructor)?.resolved;
         if (
-          definition.type !== "ImportBinding" ||
-          definition.parent.type !== "ImportDeclaration" ||
-          definition.parent.importKind === "type" ||
-          definition.node.type !== "ImportSpecifier" ||
-          definition.node.importKind === "type"
+          imported?.defs.some(
+            (item) =>
+              item.type === "ImportBinding" &&
+              item.parent.type === "ImportDeclaration" &&
+              item.parent.importKind !== "type" &&
+              item.node.type === "ImportSpecifier" &&
+              item.node.importKind !== "type" &&
+              specifierName(item.node.imported) === "McpServer" &&
+              isSdkServerImport(item.parent.source.value),
+          )
         )
-          continue;
-        const library = libraryForImport(
-          definition.parent.source.value,
-          specifierName(definition.node.imported),
-        );
-        if (library) found.set(identifier.range[0], library);
+          found.set(identifier.range[0], "@modelcontextprotocol/sdk");
       }
+      if (
+        definition.type !== "ImportBinding" ||
+        definition.parent.type !== "ImportDeclaration" ||
+        definition.parent.importKind === "type" ||
+        definition.node.type !== "ImportSpecifier" ||
+        definition.node.importKind === "type"
+      )
+        continue;
+      const library = libraryForImport(
+        definition.parent.source.value,
+        specifierName(definition.node.imported),
+      );
+      if (library) found.set(identifier.range[0], library);
     }
   }
   return found;
@@ -418,7 +425,7 @@ function resolveObject(
   const value = unwrap(node);
   if (depth > MAX_SPREAD_DEPTH) return { reason: "The annotations spread objects too deeply." };
   if (value?.type === "Identifier") {
-    const target = resolveIdentifier(modules, module, value.name);
+    const target = resolveIdentifier(modules, module, value);
     if ("reason" in target) return target;
     const resolved = resolveObject(modules, target.module, target.node, depth + 1);
     if ("reason" in resolved) return resolved;
@@ -467,10 +474,12 @@ function resolveAnnotationValue(
   if (value.type === "UnaryExpression" && value.operator === "void")
     return { state: "resolved", value: undefined };
   if (value.type === "Identifier") {
-    const target = resolveIdentifier(modules, module, value.name);
+    const target = resolveIdentifier(modules, module, value);
     if (!("reason" in target))
       return resolveAnnotationValue(modules, target.module, target.node, depth + 1);
-    if (value.name === "undefined") return { state: "resolved", value: undefined };
+    const reference = module.references.get(value.start);
+    if (value.name === "undefined" && reference && !reference.resolved)
+      return { state: "resolved", value: undefined };
   }
   if (
     [
@@ -487,17 +496,33 @@ function resolveAnnotationValue(
 function resolveIdentifier(
   modules: ProjectModules,
   module: ParsedModule,
-  name: string,
+  identifier: AnyNode,
 ): { module: ParsedModule; node: AnyNode } | { reason: string } {
-  const local = module.constants.get(name);
-  if (local) return { module, node: local };
-  const imported = module.imports.get(name);
-  if (imported) {
-    const file = resolveRelativeModule(modules.ctx, module.file, imported.source);
-    const target = file ? loadModule(modules, file) : null;
-    const node = target?.exportedConstants.get(imported.imported);
-    if (target && node) return { module: target, node };
-    return { reason: `Doctor can't read \`${name}\` from \`${imported.source}\`.` };
+  const name = identifier.name;
+  const reference = module.references.get(identifier.start);
+  if (!reference) return { reason: `Doctor can't read the binding of \`${name}\`.` };
+  if (reference.resolved) {
+    for (const definition of reference.resolved.defs) {
+      if (definition.type === "Variable" && definition.parent.kind === "const") {
+        const local = module.constants.get(definition.name.range[0]);
+        if (local) return { module, node: local };
+      }
+      if (
+        definition.type === "ImportBinding" &&
+        definition.parent.type === "ImportDeclaration" &&
+        definition.parent.importKind !== "type" &&
+        definition.node.type === "ImportSpecifier" &&
+        definition.node.importKind !== "type"
+      ) {
+        const source = definition.parent.source.value;
+        const file = resolveRelativeModule(modules.ctx, module.file, source);
+        const target = file ? loadModule(modules, file) : null;
+        const node = target?.exportedConstants.get(specifierName(definition.node.imported));
+        if (target && node) return { module: target, node };
+        return { reason: `Doctor can't read \`${name}\` from \`${source}\`.` };
+      }
+    }
+    return { reason: `Doctor can't read the binding of \`${name}\`.` };
   }
   const candidates = autoImportedConstants(modules).get(name) ?? [];
   if (candidates.length === 1) return candidates[0]!;

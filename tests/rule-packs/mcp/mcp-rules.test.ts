@@ -131,6 +131,86 @@ describe("MCP tool annotations", () => {
     ).toEqual(["MCP0001 src/invalid.ts", "MCP0002 src/invalid.ts"]);
   });
 
+  test.each([
+    ["module constants", "const title = ''; const hint = false; const annotations = {}"],
+    ["imports", "import { title, hint, annotations } from './values'"],
+    ["auto-imports", ""],
+  ])("does not resolve parameters through same-named %s", async (_label, declarations) => {
+    expect(
+      await codes({
+        "src/values.ts":
+          "export const title = ''; export const hint = false; export const annotations = {}",
+        "server/utils/values.ts":
+          "export const title = ''; export const hint = false; export const annotations = {}",
+        "src/tool.ts": `
+import { defineMcpTool } from 'nitro-mcp-toolkit'
+${declarations}
+function register(title, hint, annotations) {
+  defineMcpTool({ name: 'values', annotations: { title, readOnlyHint: hint } })
+  defineMcpTool({ name: 'object', annotations })
+  defineMcpTool({ name: 'spread', annotations: { ...annotations } })
+}
+`,
+      }),
+    ).toEqual([]);
+  });
+
+  test.each(["{ title, readOnlyHint: hint }", "annotations", "{ ...annotations }"])(
+    "reads shadowing block-local constants in %s",
+    async (annotations) => {
+      for (const valid of [true, false]) {
+        expect(
+          await codes({
+            "src/tool.ts": `
+import { defineMcpTool } from 'nitro-mcp-toolkit'
+const title = ${valid ? "''" : "'Outer'"}
+const hint = ${!valid}
+const annotations = { title, readOnlyHint: hint }
+{
+  const title = ${valid ? "'Inner'" : "''"}
+  const hint = ${valid}
+  const annotations = { title, readOnlyHint: hint }
+  defineMcpTool({ name: 'local', annotations: ${annotations} })
+}
+`,
+          }),
+        ).toEqual(valid ? [] : ["MCP0001 src/tool.ts", "MCP0002 src/tool.ts"]);
+      }
+    },
+  );
+
+  test.each([
+    "let title = getTitle(); let hint = getHint()",
+    "const { title, hint } = getAnnotations()",
+  ])("keeps unreadable local bindings unknown: %s", async (declarations) => {
+    expect(
+      await codes({
+        "src/tool.ts": `
+import { defineMcpTool } from 'nitro-mcp-toolkit'
+const title = ''; const hint = false
+{
+  ${declarations}
+  defineMcpTool({ name: 'local', annotations: { title, readOnlyHint: hint } })
+}
+`,
+      }),
+    ).toEqual([]);
+  });
+
+  test("does not treat a shadowed undefined parameter as the global value", async () => {
+    expect(
+      await codes({
+        "src/tool.ts": `
+import { defineMcpTool } from 'nitro-mcp-toolkit'
+function register(undefined) {
+  defineMcpTool({ name: 'title', annotations: { title: undefined, readOnlyHint: true } })
+  defineMcpTool({ name: 'hint', annotations: { title: 'Hint', readOnlyHint: undefined } })
+}
+`,
+      }),
+    ).toEqual([]);
+  });
+
   test("resolves annotations spread from an imported constant", async () => {
     expect(
       await codes({
