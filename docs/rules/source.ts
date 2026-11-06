@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { ruleDocumentationMetadata } from "./metadata.js";
 import { ruleNavigationTitles } from "./navigation-titles.js";
 import { workspaceDiagnosticMetadata } from "../../src/core/diagnostic-metadata.js";
+import { mcpRecommendedRuleIds } from "../../src/rule-packs/mcp/presets.js";
 import { piniaRecommendedRuleIds } from "../../src/rule-packs/pinia/presets.js";
 
 export type RuleSeverity = "error" | "warn" | "info";
@@ -17,7 +18,8 @@ export type RuleFramework =
   | "typescript"
   | "shadcn"
   | "package"
-  | "pinia";
+  | "pinia"
+  | "mcp";
 
 export interface RuleExample {
   title: string;
@@ -122,6 +124,7 @@ export function getRuleReports() {
     package: rules.filter((rule) => rule.framework === "package"),
     shadcn: rules.filter((rule) => rule.framework === "shadcn"),
     pinia: rules.filter((rule) => rule.framework === "pinia"),
+    mcp: rules.filter((rule) => rule.framework === "mcp"),
     all: rules,
   };
 
@@ -134,7 +137,16 @@ export function getRuleReports() {
       },
     ]),
   ) as unknown as Record<
-    "vue" | "vite" | "nitro" | "nuxt" | "typescript" | "shadcn" | "package" | "pinia" | "all",
+    | "vue"
+    | "vite"
+    | "nitro"
+    | "nuxt"
+    | "typescript"
+    | "shadcn"
+    | "package"
+    | "pinia"
+    | "mcp"
+    | "all",
     RulesReport
   >;
 }
@@ -308,6 +320,7 @@ function readDiagnosticCodeMaps() {
     "src/rule-packs/typescript/diagnostics.ts",
     "src/rule-packs/shadcn/diagnostics.ts",
     "src/rule-packs/pinia/diagnostics.ts",
+    "src/rule-packs/mcp/diagnostics.ts",
   ];
   const map = new Map<string, string[]>();
   for (const file of files) {
@@ -440,6 +453,11 @@ function collectRuleDocuments() {
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
     .map((file) => join(piniaRulesDir, file));
+  const mcpRulesDir = join(root, "src/rule-packs/mcp/rules");
+  const mcpSources = readdirSync(mcpRulesDir)
+    .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
+    .sort()
+    .map((file) => join(mcpRulesDir, file));
   const shadcnSources = readdirSync(shadcnRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "shared.ts")
     .sort()
@@ -462,6 +480,7 @@ function collectRuleDocuments() {
       ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
       ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
       ...withRulePath(collectRules(piniaSources, "vite-doctor/pinia", "pinia"), "/pinia/rules"),
+      ...withRulePath(collectRules(mcpSources, "vite-doctor/mcp", "mcp"), "/mcp/rules"),
     ]),
   );
 }
@@ -1137,6 +1156,10 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "shadcn")
     return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
+  if (rule.framework === "mcp")
+    return mcpRecommendedRuleIds.includes(rule.id)
+      ? `pnpm vite-doctor . --rules ${rule.id}`
+      : `pnpm vite-doctor . --extends auto,mcp/strict --rules ${rule.id}`;
   if (rule.framework === "pinia")
     return piniaRecommendedRuleIds.includes(rule.id)
       ? `pnpm vite-doctor . --rules ${rule.id}`

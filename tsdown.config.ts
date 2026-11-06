@@ -29,6 +29,7 @@ export default defineConfig({
     "src/rule-packs/typescript/rules/index.ts",
     "src/rule-packs/shadcn/index.ts",
     "src/rule-packs/pinia/index.ts",
+    "src/rule-packs/mcp/index.ts",
   ],
   exports: {
     exclude: ["nuxt-cli", "plugin-worker", "doctor-process"],
