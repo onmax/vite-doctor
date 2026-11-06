@@ -122,6 +122,9 @@ export const ruleNavigationTitles: Record<string, string> = {
   "package/no-phantom-dependencies": "Phantom deps",
   "package/no-required-optional-peer": "Optional peers",
 
+  "mcp/tools/require-annotation-title": "Annotation titles",
+  "mcp/tools/require-safety-hint": "Safety hints",
+  "mcp/tools/valid-name": "Tool names",
   "pinia/stores/store-name-matches-id": "Store names",
   "pinia/stores/unique-store-id": "Unique store ids",
 

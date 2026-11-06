@@ -6,7 +6,8 @@ export type Framework =
   | "typescript"
   | "shadcn"
   | "package"
-  | "pinia";
+  | "pinia"
+  | "mcp";
 export type FrameworkFilter = Framework | "all";
 export type Severity = "error" | "warn" | "info";
 export type FixKind = "safe" | "suggestion" | "no";
@@ -35,6 +36,7 @@ export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; ic
   },
   shadcn: { label: "shadcn", pack: "vite-doctor/shadcn", icon: "i-simple-icons-shadcnui" },
   pinia: { label: "Pinia", pack: "vite-doctor/pinia", icon: "i-logos-pinia" },
+  mcp: { label: "MCP", pack: "vite-doctor/mcp", icon: "i-simple-icons-modelcontextprotocol" },
   typescript: {
     label: "TypeScript",
     pack: "vite-doctor/typescript",
@@ -89,6 +91,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   stores: "Stores",
   style: "Style",
   template: "Template",
+  tools: "Tools",
   ui: "UI",
   worker: "Workers",
   workers: "Workers",
@@ -109,6 +112,7 @@ export function frameworkOfPack(pack: string): Framework {
   if (pack === "vite-doctor/typescript") return "typescript";
   if (pack === "vite-doctor/shadcn") return "shadcn";
   if (pack === "vite-doctor/pinia") return "pinia";
+  if (pack === "vite-doctor/mcp") return "mcp";
   if (pack === "vite-doctor/nitro") return "nitro";
   if (pack === "vite-doctor/vue") return "vue";
   if (pack === "vite-doctor/vite") return "vite";

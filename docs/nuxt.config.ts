@@ -11,7 +11,7 @@ const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
 const contentDatabasePath = join(tempDir, `nuxt-doctor-content-${process.pid}.sqlite`);
 const contentLocalDatabasePath = join(tempDir, `nuxt-doctor-content-local-${process.pid}.sqlite`);
 const contentLocalDatabaseFile = /^nuxt-doctor-content-local-(\d+)\.sqlite(?:-journal|-shm|-wal)?$/;
-const frameworks = ["typescript", "nuxt", "vue", "vite", "nitro", "pinia", "package"];
+const frameworks = ["typescript", "nuxt", "vue", "vite", "nitro", "pinia", "mcp", "package"];
 const docsRoutes = ["/", "/cli"];
 const frameworkRoutes = frameworks.map((framework) => `/${framework}`);
 const ruleIndexRoutes = frameworks.map((framework) => `/${framework}/rules`);

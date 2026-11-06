@@ -344,6 +344,7 @@ test("rules navigation keeps framework overview pages above category groups", ()
     "Vite",
     "Nitro",
     "Pinia",
+    "MCP",
     "Package",
   ]);
 
@@ -364,6 +365,8 @@ test("rules navigation keeps framework overview pages above category groups", ()
     "Installation",
     "Pinia rules",
     "Installation",
+    "MCP rules",
+    "Installation",
     "Package rules",
   ]);
 
@@ -376,7 +379,7 @@ test("rules navigation keeps framework overview pages above category groups", ()
 
   expect(
     appendRulesNavigation([{ title: "CLI", path: "/cli" }], navigation).map((item) => item.title),
-  ).toEqual(["CLI", "TypeScript", "Nuxt", "Vue", "Vite", "Nitro", "Pinia", "Package"]);
+  ).toEqual(["CLI", "TypeScript", "Nuxt", "Vue", "Vite", "Nitro", "Pinia", "MCP", "Package"]);
 });
 
 test("rule examples do not reuse generic placeholders", () => {

@@ -27,6 +27,7 @@ import { typescriptRulePack } from "./rule-packs/typescript/index.js";
 import shadcnRulePack from "./rule-packs/shadcn/index.js";
 import { packageRulePack } from "./rule-packs/package/index.js";
 import { piniaRulePack } from "./rule-packs/pinia/index.js";
+import { mcpRulePack } from "./rule-packs/mcp/index.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
@@ -52,6 +53,7 @@ export async function viteDoctorExtensions(
     }),
     defineDoctorExtension({ name: "vite-doctor/builtin-shadcn", rulePacks: [shadcnRulePack] }),
     defineDoctorExtension({ name: "vite-doctor/builtin-pinia", rulePacks: [piniaRulePack] }),
+    defineDoctorExtension({ name: "vite-doctor/builtin-mcp", rulePacks: [mcpRulePack] }),
   ];
   if (frameworks.has("nuxt")) {
     const { nuxtDoctorExtensions } = await import("./rule-packs/nuxt/rules/index.js");
