@@ -38,7 +38,15 @@ export const requireAnnotationTitle = createRule({
         for (const tool of await collectMcpTools(ctx)) {
           const { annotations } = tool;
           if (annotations.state === "partial") continue;
-          if (annotations.state === "resolved" && annotations.keys.has("title")) continue;
+          const title =
+            annotations.state === "resolved" ? annotations.values.get("title") : undefined;
+          if (
+            title?.state === "unknown" ||
+            (title?.state === "resolved" &&
+              typeof title.value === "string" &&
+              title.value.trim().length > 0)
+          )
+            continue;
           const label = toolLabel(tool);
           const topLevel = tool.title
             ? tool.title.source === "file"
@@ -48,7 +56,7 @@ export const requireAnnotationTitle = createRule({
           const suggested = tool.title?.value ?? "<Human-readable name>";
           ctx.report(
             diagnostics.MCP0001({
-              why: `MCP tool ${label} has no \`annotations.title\`.${topLevel} Anthropic's Connectors Directory flags tools without one, and clients on the 2025-03-26 revision show only the bare name.`,
+              why: `MCP tool ${label} has no non-empty string in \`annotations.title\`.${topLevel} Anthropic's Connectors Directory flags tools without one, and clients on the 2025-03-26 revision show only the bare name.`,
               fix:
                 annotations.state === "absent"
                   ? `Add \`annotations: { title: ${JSON.stringify(suggested)}, readOnlyHint: true }\` (or \`destructiveHint: true\` for a tool that changes data).`

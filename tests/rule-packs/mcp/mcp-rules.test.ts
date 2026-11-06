@@ -73,6 +73,64 @@ describe("MCP tool annotations", () => {
     ).toEqual([]);
   });
 
+  test.each(["undefined", "false", "null", "123", "''", "'   '", "{}", "[]"])(
+    "reports an unusable annotation title: %s",
+    async (title) => {
+      expect(
+        await codes({
+          "src/tool.ts": tool(
+            `{ name: 'a', annotations: { title: ${title}, readOnlyHint: true }, handler: () => 1 }`,
+          ),
+        }),
+      ).toEqual(["MCP0001 src/tool.ts"]);
+    },
+  );
+
+  test.each(["false", "undefined", "null", "'true'", "1", "{}"])(
+    "reports safety hints that are not true: %s",
+    async (hint) => {
+      expect(
+        await codes({
+          "src/read.ts": tool(
+            `{ name: 'read', annotations: { title: 'Read', readOnlyHint: ${hint} }, handler: () => 1 }`,
+          ),
+          "src/write.ts": tool(
+            `{ name: 'write', annotations: { title: 'Write', destructiveHint: ${hint} }, handler: () => 1 }`,
+          ),
+        }),
+      ).toEqual(["MCP0002 src/read.ts", "MCP0002 src/write.ts"]);
+    },
+  );
+
+  test("keeps unresolved annotation values conservative per rule", async () => {
+    expect(
+      await codes({
+        "src/title.ts": tool(
+          "{ name: 'title', annotations: { title: getTitle(), readOnlyHint: true }, handler: () => 1 }",
+        ),
+        "src/hint.ts": tool(
+          "{ name: 'hint', annotations: { title: 'Hint', readOnlyHint: getHint(), destructiveHint: false }, handler: () => 1 }",
+        ),
+        "src/missing-title.ts": tool(
+          "{ name: 'missing_title', annotations: { readOnlyHint: getHint() }, handler: () => 1 }",
+        ),
+      }),
+    ).toEqual(["MCP0001 src/missing-title.ts"]);
+  });
+
+  test("uses final annotation values after local and imported spreads", async () => {
+    expect(
+      await codes({
+        "src/annotations.ts":
+          "export const title = 'A'\nexport const read = true\nexport const valid = { title, readOnlyHint: read, destructiveHint: false }\nexport const invalid = { title: undefined, readOnlyHint: false }\n",
+        "src/valid.ts":
+          "import { defineMcpTool } from 'nitro-mcp-toolkit'\nimport { valid, invalid } from './annotations'\nconst local = { ...invalid, ...valid } as const\nexport default defineMcpTool({ name: 'a', annotations: local, handler: () => 1 })\n",
+        "src/invalid.ts":
+          "import { defineMcpTool } from 'nitro-mcp-toolkit'\nimport { valid, invalid } from './annotations'\nexport default defineMcpTool({ name: 'b', annotations: { ...valid, ...invalid }, handler: () => 1 })\n",
+      }),
+    ).toEqual(["MCP0001 src/invalid.ts", "MCP0002 src/invalid.ts"]);
+  });
+
   test("resolves annotations spread from an imported constant", async () => {
     expect(
       await codes({
@@ -156,6 +214,39 @@ describe("MCP tool annotations", () => {
       "MCP0002 server/routes/mcp.ts",
     ]);
   });
+
+  test.each(["@modelcontextprotocol/sdk/server/mcp.js", "@modelcontextprotocol/server"])(
+    "requires SDK receiver binding evidence for %s",
+    async (source) => {
+      expect(
+        await codes(
+          {
+            "src/sdk.ts": `
+import { McpServer as Server, OtherServer } from '${source}'
+const server = new Server({ name: 's', version: '1' })
+server.registerTool('valid_sdk', {}, async () => ({}))
+const unrelated = { registerTool() {} }
+unrelated.registerTool('not an MCP tool', {}, () => ({}))
+server.unrelated.registerTool('nested unrelated receiver', {}, () => ({}))
+function shadowReceiver(server) {
+  server.registerTool('also unrelated', {}, () => ({}))
+}
+function shadowConstructor(Server) {
+  const local = new Server()
+  local.registerTool('local constructor', {}, () => ({}))
+}
+const other = new OtherServer()
+other.registerTool('other constructor', {}, () => ({}))
+let mutable = new Server({ name: 's', version: '1' })
+mutable = unrelated
+mutable.registerTool('reassigned receiver', {}, () => ({}))
+`,
+          },
+          { "@modelcontextprotocol/sdk": "^1.32.0", "@modelcontextprotocol/server": "^2.0.0" },
+        ),
+      ).toEqual(["MCP0001 src/sdk.ts", "MCP0002 src/sdk.ts"]);
+    },
+  );
 });
 
 describe("MCP tool names", () => {

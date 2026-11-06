@@ -21,12 +21,16 @@ export interface McpStaticValue {
   range: SourceRange;
 }
 
+type AnnotationValue =
+  | { state: "resolved"; value: string | boolean | number | null | undefined }
+  | { state: "invalid" | "unknown" };
+
 export type McpToolAnnotations =
   | { state: "absent" }
   | {
       state: "resolved";
       range: SourceRange;
-      keys: Set<string>;
+      values: Map<string, AnnotationValue>;
       /** Shared objects spread into the annotations, as `name (file)`. */
       spreads: string[];
     }
@@ -97,7 +101,7 @@ export function annotationsEvidence(tool: McpToolDefinition): DiagnosticEvidence
         summary: `This ${tool.library} tool definition has no annotations.`,
       },
     ];
-  const keys = [...annotations.keys];
+  const keys = [...annotations.values.keys()];
   const via = annotations.spreads.length ? `, including ${annotations.spreads.join(", ")}` : "";
   return [
     {
@@ -225,7 +229,6 @@ interface ToolCall {
 
 function findToolCalls(module: ParsedModule, autoImportsNuxtToolkit: boolean): ToolCall[] {
   const bindings = bindingsByCalleeStart(module, autoImportsNuxtToolkit);
-  const importsSdk = [...module.imports.values()].some(({ source }) => isSdkServerImport(source));
   const defaultExportCalls = new Set<number>();
   for (const statement of module.program.body ?? []) {
     if (statement.type === "ExportDefaultDeclaration")
@@ -236,7 +239,7 @@ function findToolCalls(module: ParsedModule, autoImportsNuxtToolkit: boolean): T
     if (node.type !== "CallExpression") return;
     const callee = unwrap(node.callee);
     const library = bindings.get(callee?.start);
-    if (library) {
+    if (callee?.type === "Identifier" && library && library !== "@modelcontextprotocol/sdk") {
       const options = unwrap(node.arguments?.[0]);
       if (options?.type === "ObjectExpression")
         calls.push({
@@ -248,10 +251,11 @@ function findToolCalls(module: ParsedModule, autoImportsNuxtToolkit: boolean): T
       return;
     }
     if (
-      importsSdk &&
       callee?.type === "MemberExpression" &&
       !callee.computed &&
-      callee.property?.name === "registerTool"
+      callee.property?.name === "registerTool" &&
+      unwrap(callee.object)?.type === "Identifier" &&
+      bindings.get(unwrap(callee.object)?.start) === "@modelcontextprotocol/sdk"
     ) {
       const options = unwrap(node.arguments?.[1]);
       if (options?.type === "ObjectExpression")
@@ -267,7 +271,7 @@ function findToolCalls(module: ParsedModule, autoImportsNuxtToolkit: boolean): T
   return calls;
 }
 
-/** Maps callee offsets to the library whose define helper they resolve to. */
+/** Maps helper and SDK receiver offsets to their lexically resolved library. */
 function bindingsByCalleeStart(
   module: ParsedModule,
   autoImportsNuxtToolkit: boolean,
@@ -294,6 +298,24 @@ function bindingsByCalleeStart(
         continue;
       }
       for (const definition of variable.defs) {
+        if (definition.type === "Variable" && definition.parent.kind === "const") {
+          const init = unwrap(definition.node.init);
+          const constructor = init?.type === "NewExpression" ? unwrap(init.callee) : undefined;
+          const imported = scope.references.get(constructor)?.resolved;
+          if (
+            imported?.defs.some(
+              (item) =>
+                item.type === "ImportBinding" &&
+                item.parent.type === "ImportDeclaration" &&
+                item.parent.importKind !== "type" &&
+                item.node.type === "ImportSpecifier" &&
+                item.node.importKind !== "type" &&
+                specifierName(item.node.imported) === "McpServer" &&
+                isSdkServerImport(item.parent.source.value),
+            )
+          )
+            found.set(identifier.range[0], "@modelcontextprotocol/sdk");
+        }
         if (
           definition.type !== "ImportBinding" ||
           definition.parent.type !== "ImportDeclaration" ||
@@ -367,7 +389,7 @@ function readDefinition(
         : {
             state: "resolved",
             range: range(annotationsProperty.value),
-            keys: resolved.keys,
+            values: resolved.values,
             spreads: resolved.spreads,
           };
   }
@@ -383,7 +405,9 @@ function readDefinition(
   };
 }
 
-type ResolvedObject = { keys: Set<string>; spreads: string[] } | { reason: string };
+type ResolvedObject =
+  | { values: Map<string, AnnotationValue>; spreads: string[] }
+  | { reason: string };
 
 function resolveObject(
   modules: ProjectModules,
@@ -399,19 +423,19 @@ function resolveObject(
     const resolved = resolveObject(modules, target.module, target.node, depth + 1);
     if ("reason" in resolved) return resolved;
     return {
-      keys: resolved.keys,
+      values: resolved.values,
       spreads: [`${value.name} (${target.module.displayPath})`, ...resolved.spreads],
     };
   }
   if (value?.type !== "ObjectExpression")
     return { reason: "The annotations are not an object literal Doctor can read." };
-  const keys = new Set<string>();
+  const values = new Map<string, AnnotationValue>();
   const spreads: string[] = [];
   for (const item of value.properties ?? []) {
     if (item.type === "SpreadElement") {
       const resolved = resolveObject(modules, module, item.argument, depth + 1);
       if ("reason" in resolved) return resolved;
-      for (const key of resolved.keys) keys.add(key);
+      for (const [key, value] of resolved.values) values.set(key, value);
       spreads.push(...resolved.spreads);
       continue;
     }
@@ -419,9 +443,45 @@ function resolveObject(
       return { reason: "The annotations use a computed key." };
     const key = item.key?.type === "Identifier" ? item.key.name : staticString(item.key);
     if (key === undefined) return { reason: "The annotations use a key Doctor can't read." };
-    keys.add(key);
+    values.set(
+      key,
+      item.kind === "init" && !item.method
+        ? resolveAnnotationValue(modules, module, item.value, depth)
+        : { state: "unknown" },
+    );
   }
-  return { keys, spreads };
+  return { values, spreads };
+}
+
+function resolveAnnotationValue(
+  modules: ProjectModules,
+  module: ParsedModule,
+  node: AnyNode,
+  depth: number,
+): AnnotationValue {
+  const value = unwrap(node);
+  if (!value || depth > MAX_SPREAD_DEPTH) return { state: "unknown" };
+  const string = staticString(value);
+  if (string !== undefined) return { state: "resolved", value: string };
+  if (value.type === "Literal") return { state: "resolved", value: value.value };
+  if (value.type === "UnaryExpression" && value.operator === "void")
+    return { state: "resolved", value: undefined };
+  if (value.type === "Identifier") {
+    const target = resolveIdentifier(modules, module, value.name);
+    if (!("reason" in target))
+      return resolveAnnotationValue(modules, target.module, target.node, depth + 1);
+    if (value.name === "undefined") return { state: "resolved", value: undefined };
+  }
+  if (
+    [
+      "ObjectExpression",
+      "ArrayExpression",
+      "FunctionExpression",
+      "ArrowFunctionExpression",
+    ].includes(value.type)
+  )
+    return { state: "invalid" };
+  return { state: "unknown" };
 }
 
 function resolveIdentifier(
