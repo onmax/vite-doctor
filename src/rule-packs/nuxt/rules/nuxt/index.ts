@@ -1,4 +1,5 @@
 export { noExplicitAutoImport } from "./no-explicit-auto-import.js";
+export { preferAliasOverRelativeParent } from "./prefer-alias-over-relative-parent.js";
 export { noConflictingUseFetchImport } from "./no-conflicting-use-fetch-import.js";
 export { noAutoImportCollision } from "./no-auto-import-collision.js";
 export { noRawFetchInSetup } from "./no-raw-fetch-in-setup.js";
@@ -61,6 +62,7 @@ export { moduleExplicitRuntimeImports } from "./module-explicit-runtime-imports.
 export { noModuleScopeRequestState } from "./no-module-scope-request-state.js";
 
 import { noExplicitAutoImport } from "./no-explicit-auto-import.js";
+import { preferAliasOverRelativeParent } from "./prefer-alias-over-relative-parent.js";
 import { noConflictingUseFetchImport } from "./no-conflicting-use-fetch-import.js";
 import { noAutoImportCollision } from "./no-auto-import-collision.js";
 import { noRawFetchInSetup } from "./no-raw-fetch-in-setup.js";
@@ -125,6 +127,7 @@ import { defineRulePack } from "../../../../core/index.js";
 
 const rules = [
   noExplicitAutoImport,
+  preferAliasOverRelativeParent,
   noConflictingUseFetchImport,
   noAutoImportCollision,
   noRawFetchInSetup,

@@ -21,6 +21,7 @@ import { preferServerUtils } from "./prefer-server-utils.js";
 import { noUnguardedAlsEnterWith } from "./no-unguarded-als-enter-with.js";
 import { noModuleScopeResponseCache } from "./no-module-scope-response-cache.js";
 import { requireAbsoluteGeneratedPaths } from "./require-absolute-generated-paths.js";
+import { noProcessEnvInServer } from "./no-process-env-in-server.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -45,6 +46,7 @@ export {
   noUnguardedAlsEnterWith,
   noModuleScopeResponseCache,
   requireAbsoluteGeneratedPaths,
+  noProcessEnvInServer,
 };
 
 const rules = [
@@ -68,6 +70,7 @@ const rules = [
   requireDefaultHandler,
   noUnguardedAlsEnterWith,
   requireAbsoluteGeneratedPaths,
+  noProcessEnvInServer,
 ];
 
 const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache];

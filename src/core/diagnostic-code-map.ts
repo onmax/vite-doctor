@@ -91,6 +91,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0033", ruleId: "vue/reactivity/no-reactive-destructure" },
   { code: "VUE0034", ruleId: "vue/reactivity/prefer-computed-over-watch-assign" },
   { code: "VUE0035", ruleId: "vue/template/no-index-key-on-stateful-list" },
+  { code: "VUE0041", ruleId: "vue/reactivity/no-constant-computed" },
 
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },
@@ -160,6 +161,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0023", ruleId: "nitro/cache/no-module-scope-response-cache" },
   { code: "NITRO0024", ruleId: "nitro/cloudflare/no-unguarded-als-enterwith" },
   { code: "NITRO0025", ruleId: "nitro/config/require-absolute-generated-paths" },
+  { code: "NITRO0026", ruleId: "nitro/runtime/no-process-env-in-server" },
   { code: "NUXT0001", ruleId: "docus/appconfig/no-unknown-key" },
   { code: "NUXT0002", ruleId: "docus/layers/no-empty-app-vue-shadow" },
   { code: "NUXT0003", ruleId: "nuxt-better-auth/require-standard-auth-handler-mount" },
@@ -255,6 +257,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0093", ruleId: "nuxt/config/no-unhashed-build-cache-input" },
   { code: "NUXT0094", ruleId: "nuxt/routing/keepalive-requires-max" },
   { code: "NUXT0095", ruleId: "nuxt/fetch/no-ssr-refetch-of-shared-key" },
+  { code: "NUXT0096", ruleId: "nuxt/imports/prefer-alias-over-relative-parent" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;

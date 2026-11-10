@@ -26,6 +26,7 @@ export const nitroDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0023", ruleId: "nitro/cache/no-module-scope-response-cache" },
   { code: "NITRO0024", ruleId: "nitro/cloudflare/no-unguarded-als-enterwith" },
   { code: "NITRO0025", ruleId: "nitro/config/require-absolute-generated-paths" },
+  { code: "NITRO0026", ruleId: "nitro/runtime/no-process-env-in-server" },
 ]);
 
 export const diagnostics = nitroDiagnosticRegistry.diagnostics;
