@@ -1,3 +1,5 @@
+import type { RuleContext } from "../../../core/index.js";
+import { fileTextScope } from "../../../core/internal/script-scope.js";
 import { AnyNode, createRule, isNitroServerFile, report } from "./shared.js";
 
 export const noProcessEnvInServer = createRule({
@@ -21,10 +23,16 @@ export const noProcessEnvInServer = createRule({
       ctx.project.framework === "nitro" &&
       /^(?:server\/)?(?:plugins|utils)\/.+\.[cm]?[jt]s$/.test(path);
     if (!isNitroServerFile(ctx) && !nitroUtility) return;
+    let processImports: Set<number> | undefined;
     return {
       MemberExpression(node: AnyNode) {
         if (ctx.helpers.getNodeName(node) !== "process.env") return;
-        if (ctx.helpers.isTypeOnlyContext(node) || ctx.helpers.hasLocalBinding(node.object)) return;
+        if (ctx.helpers.isTypeOnlyContext(node)) return;
+        if (
+          ctx.helpers.hasLocalBinding(node.object) &&
+          !(processImports ??= importedProcessReferences(ctx)).has(node.object.start)
+        )
+          return;
         const parent = node.parent ?? node.__doctorParent;
         const access =
           parent?.type === "MemberExpression" && parent.object === node ? parent : node;
@@ -54,6 +62,33 @@ export const noProcessEnvInServer = createRule({
     };
   },
 });
+
+function importedProcessReferences(ctx: RuleContext): Set<number> {
+  const result = new Set<number>();
+  const scope = fileTextScope(ctx);
+  if (!scope) return result;
+  try {
+    // Resolve each reference so a nested binding still shadows a built-in process import.
+    for (const reference of scope.references.values()) {
+      if (reference.identifier.name !== "process") continue;
+      if (
+        reference.resolved?.defs.some(
+          (definition) =>
+            definition.type === "ImportBinding" &&
+            definition.parent.type === "ImportDeclaration" &&
+            definition.parent.importKind !== "type" &&
+            ["node:process", "process"].includes(String(definition.parent.source.value)) &&
+            (definition.node.type === "ImportDefaultSpecifier" ||
+              definition.node.type === "ImportNamespaceSpecifier"),
+        )
+      )
+        result.add(reference.identifier.range[0]);
+    }
+  } catch {
+    return new Set();
+  }
+  return result;
+}
 
 function isWriteOnly(node: AnyNode): boolean {
   const parent = node.parent ?? node.__doctorParent;

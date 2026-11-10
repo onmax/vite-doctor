@@ -17,6 +17,33 @@ test("reports process.env reads in server routes", async () => {
   ]);
 });
 
+test.each(["node:process", "process"])(
+  "reports environment reads through default and namespace imports from %s",
+  async (source) => {
+    const result = await runRuleFixture({
+      framework: "nitro",
+      rule: noProcessEnvInServer,
+      files: {
+        "server/utils/default.ts": `import process from '${source}'
+export const from = process.env.MAIL_FROM
+export function format(process: { env: string }) { return process.env.toUpperCase() }`,
+        "server/utils/namespace.ts": `import * as process from '${source}'
+export const from = process.env.MAIL_FROM
+{ const process = { env: { MAIL_FROM: 'local' } }; console.log(process.env.MAIL_FROM) }`,
+      },
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      "NITRO0026",
+      "NITRO0026",
+    ]);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.why)).toEqual([
+      "process.env.MAIL_FROM is read directly in Nitro server code.",
+      "process.env.MAIL_FROM is read directly in Nitro server code.",
+    ]);
+  },
+);
+
 test("allows NODE_ENV and code outside the server", async () => {
   const result = await runRuleFixture({
     framework: "nitro",
@@ -69,6 +96,7 @@ test("ignores shadowed process identifiers and build-time files", async () => {
     files: {
       "server/utils/format.ts": `export function format(process: { env: string }) { return process.env.toUpperCase() }`,
       "server/utils/imported.ts": `import process from './settings'; export const from = process.env.MAIL_FROM`,
+      "server/utils/namespace.ts": `import * as process from './settings'; export const from = process.env.MAIL_FROM`,
       "nuxt.config.ts": `export default defineNuxtConfig({ runtimeConfig: { mailFrom: process.env.MAIL_FROM } })`,
       "scripts/seed.ts": `console.log(process.env.DATABASE_URL)`,
     },
