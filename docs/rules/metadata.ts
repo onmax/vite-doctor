@@ -241,6 +241,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/runtime/no-process-env-in-server": {
+    description: "Flags process.env reads in Nitro server files.",
+    why: "Nitro maps NITRO_ and NUXT_ environment variables onto runtimeConfig when the server starts, so settings have one declared place with defaults and types. process.env is empty on Cloudflare Workers and other runtimes without a Node process, and a key read straight from it skips that contract. Doctor skips process.env.NODE_ENV.",
+    recommendedReplacement:
+      "Declare the setting in runtimeConfig and read it with useRuntimeConfig(). Override it at runtime with NUXT_<KEY> (Nuxt) or NITRO_<KEY> (Nitro).",
+    examples: [
+      {
+        title: "Read the mail sender from runtime config",
+        language: "ts",
+        invalid: "const from = process.env.MAIL_FROM",
+        valid:
+          "// nuxt.config.ts: runtimeConfig: { mailFrom: '' }, set with NUXT_MAIL_FROM\nconst { mailFrom } = useRuntimeConfig()",
+      },
+    ],
+  },
   "nitro/runtime/require-event-runtime-config-in-server": {
     description: "Checks that Nitro 2 server code passes the request event to useRuntimeConfig().",
     why: "Nitro 2 resolves event-scoped runtime configuration through the handler event, so omitting it can lose request-specific overrides.",
@@ -1043,6 +1058,22 @@ export const ruleDocumentationMetadata = {
           "import { useFetch } from '@vueuse/core'\n\nconst { data } = useFetch('/api/user')",
         valid:
           "import { useFetch as useVueUseFetch } from '@vueuse/core'\n\nconst { data } = await useFetch('/api/user')",
+      },
+    ],
+  },
+  "nuxt/imports/prefer-alias-over-relative-parent": {
+    description:
+      "Flags imports in app/, server/ or shared/ that climb two or more directories with ../.",
+    why: "A chain of ../ breaks when a file moves and hides which part of the app the import reaches into. Nuxt gives every directory an alias: ~/ for app/, #server/ for server/, #shared/ for shared/ and ~~/ for the project root.",
+    recommendedReplacement:
+      "Import through ~/, #server/, #shared/ or ~~/. A single ../ to a sibling folder stays fine.",
+    examples: [
+      {
+        title: "Import shared code through #shared",
+        language: "ts",
+        invalid:
+          "// server/api/events/[slug].get.ts\nimport { toVenueTime } from '../../../shared/utils/time'",
+        valid: "import { toVenueTime } from '#shared/utils/time'",
       },
     ],
   },
@@ -2409,6 +2440,19 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: "export function useCounter() {\n  const count = ref(0)\n  return count.value\n}",
         valid: "export function useCounter() {\n  const count = ref(0)\n  return count\n}",
+      },
+    ],
+  },
+  "vue/reactivity/no-constant-computed": {
+    description: "Flags computed() getters that return a literal.",
+    why: "A computed() that reads no reactive source never recomputes. It is a constant behind a ref, so every read pays for the ref and the reader has to check the getter to learn that.",
+    recommendedReplacement: "Use the literal directly, or a plain const.",
+    examples: [
+      {
+        title: "Use a constant",
+        language: "ts",
+        invalid: "const heading = computed(() => 'Upcoming events')",
+        valid: "const heading = 'Upcoming events'",
       },
     ],
   },

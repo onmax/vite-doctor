@@ -96,6 +96,7 @@ export const nuxtDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0093", ruleId: "nuxt/config/no-unhashed-build-cache-input" },
   { code: "NUXT0094", ruleId: "nuxt/routing/keepalive-requires-max" },
   { code: "NUXT0095", ruleId: "nuxt/fetch/no-ssr-refetch-of-shared-key" },
+  { code: "NUXT0096", ruleId: "nuxt/imports/prefer-alias-over-relative-parent" },
 ]);
 
 export const diagnostics = nuxtDiagnosticRegistry.diagnostics;
