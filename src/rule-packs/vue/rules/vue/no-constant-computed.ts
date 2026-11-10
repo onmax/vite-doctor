@@ -11,7 +11,7 @@ const FUNCTION_TYPES = new Set(["ArrowFunctionExpression", "FunctionExpression"]
 export const noConstantComputed = createRule({
   meta: {
     id: RULE_ID,
-    title: "Use a constant instead of a computed() that returns one",
+    title: "Review computed() getters with no reactive dependencies",
     category: "reactivity",
     severity: "warn",
     fixable: "suggestion",
@@ -31,8 +31,8 @@ export const noConstantComputed = createRule({
           RULE_ID,
           "warn",
           "reactivity",
-          `This computed() always returns ${value}. It reads no reactive source, so it never recomputes, and every read goes through a ref for nothing.`,
-          `Use the value directly, or a plain const: const name = ${value}.`,
+          `This computed() always returns ${value}. It reads no reactive source, so it never recomputes.`,
+          "Keep computed() when consumers require a readonly ComputedRef or .value access. Use a plain const only when no ref contract is required.",
         );
       },
     };
@@ -46,7 +46,13 @@ function constantComputeds(ctx: RuleContext): Map<number, string> {
   for (const call of script.nodes("CallExpression")) {
     if (!vueApiCall(script, call.callee, COMPUTED)) continue;
     const getter = unwrapTs(call.arguments[0]);
-    if (!FUNCTION_TYPES.has(getter?.type) || getter.params.length) continue;
+    if (
+      !FUNCTION_TYPES.has(getter?.type) ||
+      getter.params.length ||
+      getter.generator ||
+      getter.async
+    )
+      continue;
     const value = returned(getter);
     if (value && isConstant(value))
       result.set(call.range[0], ctx.file.text.slice(value.range[0], value.range[1]));

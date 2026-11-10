@@ -1064,9 +1064,9 @@ export const ruleDocumentationMetadata = {
   "nuxt/imports/prefer-alias-over-relative-parent": {
     description:
       "Flags imports in app/, server/ or shared/ that climb two or more directories with ../.",
-    why: "A chain of ../ breaks when a file moves and hides which part of the app the import reaches into. Nuxt gives every directory an alias: ~/ for app/, #server/ for server/, #shared/ for shared/ and ~~/ for the project root.",
+    why: "A chain of ../ breaks when a file moves and hides which part of the app the import reaches into. Alias availability and bases depend on the Nuxt version and configuration: ~/ uses srcDir, #shared/ uses dir.shared, and #server/ is available only in newer Nuxt versions. Doctor suggests a concrete path only when resolved alias data proves it points to the same module.",
     recommendedReplacement:
-      "Import through ~/, #server/, #shared/ or ~~/. A single ../ to a sibling folder stays fine.",
+      "Use an alias from the project's resolved Nuxt configuration, such as ~/ or ~~/. A single ../ to a sibling folder stays fine.",
     examples: [
       {
         title: "Import shared code through #shared",
@@ -2445,11 +2445,12 @@ export const ruleDocumentationMetadata = {
   },
   "vue/reactivity/no-constant-computed": {
     description: "Flags computed() getters that return a literal.",
-    why: "A computed() that reads no reactive source never recomputes. It is a constant behind a ref, so every read pays for the ref and the reader has to check the getter to learn that.",
-    recommendedReplacement: "Use the literal directly, or a plain const.",
+    why: "A synchronous computed() getter that returns a literal reads no reactive source and never recomputes. Its readonly ComputedRef wrapper can still be required by exported composables, explicit types, or callers using .value.",
+    recommendedReplacement:
+      "Keep computed() when consumers require a readonly ComputedRef or .value access. Use a plain const only when no ref contract is required.",
     examples: [
       {
-        title: "Use a constant",
+        title: "Use a constant when consumers accept a plain value",
         language: "ts",
         invalid: "const heading = computed(() => 'Upcoming events')",
         valid: "const heading = 'Upcoming events'",

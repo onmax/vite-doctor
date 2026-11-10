@@ -16,15 +16,26 @@ export const noProcessEnvInServer = createRule({
     prefilter: { names: ["process"] },
   },
   create(ctx) {
-    if (!isNitroServerFile(ctx)) return;
+    const path = ctx.file.relativePath.replace(/\\/g, "/");
+    const nitroUtility =
+      ctx.project.framework === "nitro" &&
+      /^(?:server\/)?(?:plugins|utils)\/.+\.[cm]?[jt]s$/.test(path);
+    if (!isNitroServerFile(ctx) && !nitroUtility) return;
     return {
       MemberExpression(node: AnyNode) {
         if (ctx.helpers.getNodeName(node) !== "process.env") return;
-        if (ctx.helpers.isTypeOnlyContext(node)) return;
+        if (ctx.helpers.isTypeOnlyContext(node) || ctx.helpers.hasLocalBinding(node.object)) return;
         const parent = node.parent ?? node.__doctorParent;
+        const access =
+          parent?.type === "MemberExpression" && parent.object === node ? parent : node;
+        if (isWriteOnly(access)) return;
         const key =
-          parent?.type === "MemberExpression" && parent.object === node
-            ? (parent.property?.name ?? parent.property?.value)
+          access !== node
+            ? parent.computed
+              ? parent.property?.type === "Literal"
+                ? parent.property.value
+                : undefined
+              : parent.property?.name
             : undefined;
         // NODE_ENV is the build mode libraries read; import.meta.dev says the same in app code.
         if (key === "NODE_ENV") return;
@@ -43,3 +54,11 @@ export const noProcessEnvInServer = createRule({
     };
   },
 });
+
+function isWriteOnly(node: AnyNode): boolean {
+  const parent = node.parent ?? node.__doctorParent;
+  return (
+    (parent?.type === "AssignmentExpression" && parent.left === node && parent.operator === "=") ||
+    (parent?.type === "UnaryExpression" && parent.operator === "delete" && parent.argument === node)
+  );
+}
