@@ -399,7 +399,11 @@ export async function writeManifest(
     ]),
     pluginFiles: normalizePluginFiles(rootDir, toArray(nuxt.options.plugins)),
     appScanRoots: [appDir],
-    sharedScanRoots: [resolve(rootDir, "shared/utils"), resolve(rootDir, "shared/types")],
+    sharedScanRoots: [
+      resolve(rootDir, "shared/utils"),
+      resolve(rootDir, "shared/types"),
+      ...normalizeDirs(rootDir, toArray(nuxt.options.nitro?.imports?.dirs)),
+    ],
   } as NuxtDoctorManifest;
   await nuxt.callHook?.("doctor:context", { nuxt, manifest });
   const manifestPath = join(buildDir, "doctor.manifest.json");

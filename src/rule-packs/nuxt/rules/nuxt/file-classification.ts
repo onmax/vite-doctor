@@ -1,4 +1,4 @@
-import { join, relative, resolve } from "pathe";
+import { dirname, join, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
 
 export const NUXT_APP_DIRS = new Set([
@@ -81,7 +81,11 @@ export function isExplicitlyScannedByNuxt(ctx: RuleContext, kind: "imports" | "s
   if (isGeneratedFile(ctx)) return true;
   const manifest = ctx.project.nuxt?.manifest;
   if (!manifest) return false;
-  const roots = kind === "imports" ? manifest.importsDirs : manifest.sharedScanRoots;
+  // A shared folder can also be scanned through imports.dirs.
+  const roots =
+    kind === "imports"
+      ? manifest.importsDirs
+      : [...manifest.sharedScanRoots, ...manifest.importsDirs];
   if (!roots.length) return false;
   const relativePath = toPosixPath(relative(ctx.project.root, ctx.file.path));
   return roots
@@ -221,7 +225,8 @@ function normalizeScanRoot(ctx: RuleContext, root: string) {
 
 function matchesScanRoot(relativePath: string, root: string) {
   if (root.includes("*")) return globToRegExp(root).test(relativePath);
-  return relativePath === root || relativePath.startsWith(`${root}/`);
+  // Nuxt/Unimport scans only immediate files of a configured directory.
+  return relativePath === root || dirname(relativePath) === root;
 }
 
 function globToRegExp(glob: string) {
