@@ -1275,6 +1275,39 @@ test("manifest import dirs suppress configured nested composable warning", async
   );
 });
 
+test("manifest import dirs suppress configured nested shared warning", async () => {
+  await withFixture(
+    {
+      "shared/utils/errors/auth.ts": `export const authErrors = {}`,
+    },
+    {},
+    async (root) => {
+      await writeFileManifest(root, [], {
+        importsDirs: [join(root, "shared/utils/errors")],
+      });
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        extensions: [
+          defineDoctorExtension({
+            name: "fixture",
+            rulePacks: [
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules: [noNestedSharedAutoimportAssumption],
+                presets: { recommended: ["nuxt/shared/no-nested-shared-autoimport-assumption"] },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      expect(result.diagnostics).toHaveLength(0);
+    },
+  );
+});
+
 test("manifest import globs suppress configured nested composable warning", async () => {
   await withFixture(
     {
@@ -1572,6 +1605,24 @@ test("Nuxt module writes manifest and accepts context hook contributions", async
     expect(existsSync(manifestPath)).toBe(true);
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     expect(manifest.modules.some((module: any) => module.name === "fixture-module")).toBe(true);
+  });
+});
+
+test("Nuxt module records Nitro import dirs as shared scan roots", async () => {
+  await withFixture({}, {}, async (root) => {
+    const nuxt = {
+      options: {
+        rootDir: root,
+        buildDir: ".nuxt",
+        modules: [],
+        nitro: { imports: { dirs: ["shared/utils/errors"] } },
+      },
+      async callHook() {},
+    };
+
+    const manifest = await writeManifest(nuxt);
+
+    expect(manifest.sharedScanRoots).toContain(join(root, "shared/utils/errors"));
   });
 });
 
