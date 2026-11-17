@@ -2662,18 +2662,18 @@ export const ruleDocumentationMetadata = {
   },
   "vue/template/no-index-key-on-stateful-list": {
     description:
-      "Finds v-for lists keyed by the iteration index where the keyed element holds state: a component, an element with v-model, a native input, textarea or select, or a child of <TransitionGroup>.",
-    why: "Vue reuses DOM nodes and component instances by key. With an index key, inserting, removing or reordering items keeps each instance at its position and only patches its props, so component state, unbound input values, focus and <TransitionGroup> animations attach to a different item. Lists over number ranges, literal arrays and top-level const array literals are skipped because they never change.",
+      'Finds v-for lists keyed by the iteration index where the keyed element holds state: an element with v-model, a native input, textarea or select, a child of <TransitionGroup>, or a component whose source keeps local state. Doctor reads the component it resolves through a relative .vue import or the Nuxt component registry, and counts ref(), reactive(), defineModel(), Options API data(), v-model, form controls, <details>, transitions, and child components that keep state. A ref the template binds with ref="name" is a DOM handle and does not count. A component Doctor cannot read is reported, with low confidence, only when its name says it holds input or open state, such as UInput or SelectMenu.',
+    why: "Vue reuses DOM nodes and component instances by key. With an index key, inserting, removing or reordering items keeps each instance at its position and only patches its props, so component state, unbound input values, focus and <TransitionGroup> animations attach to a different item. A child that only renders its props and slots has nothing to misplace, so an index key there is fine. Lists over number ranges, literal arrays and top-level const array literals are skipped because they never change.",
     recommendedReplacement:
-      'Key each item by a stable, unique value from the item itself, such as :key="item.id". If the data has no id, assign one when the item is created rather than deriving it from its position.',
+      'Key each item by a stable, unique field of the item itself. The fix names that field, such as :key="todo.id", when the template reads it or the item\'s literal or declared type has it. If the data has no id, assign one when the item is created rather than deriving it from its position.',
     examples: [
       {
         title: "Key a component list by item id",
         language: "vue",
         invalid:
-          '<template>\n  <TodoRow v-for="(todo, index) in todos" :key="index" :todo="todo" />\n</template>',
+          '<script setup lang="ts">\nimport TodoRow from "./TodoRow.vue" // keeps a draft in ref()\n</script>\n\n<template>\n  <TodoRow v-for="(todo, index) in todos" :key="index" :todo="todo" />\n</template>',
         valid:
-          '<template>\n  <TodoRow v-for="todo in todos" :key="todo.id" :todo="todo" />\n</template>',
+          '<script setup lang="ts">\nimport TodoRow from "./TodoRow.vue" // keeps a draft in ref()\n</script>\n\n<template>\n  <TodoRow v-for="todo in todos" :key="todo.id" :todo="todo" />\n</template>',
       },
       {
         title: "Key TransitionGroup children by item id",
