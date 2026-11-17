@@ -527,6 +527,34 @@ export {};`,
     },
   );
 
+  test.each(["d.ts", "d.mts", "d.cts"])(
+    "distinguishes default assignments from declarations in %s",
+    async (extension) => {
+      const result = await runProjectFixture({
+        framework: "vite",
+        rules: [noUnvalidatedDeserialization],
+        files: {
+          "src/index.ts": `import type { Raw } from "./barrel";
+import type { Honest as ClassHonest } from "./class";
+import type { Honest as FunctionHonest } from "./function";
+const value = JSON.parse(text) as Raw;
+const classValue = JSON.parse(text) as ClassHonest;
+const functionValue = JSON.parse(text) as FunctionHonest;`,
+          "src/barrel.ts": 'export * from "./first"; export * from "./second";',
+          [`src/first.${extension}`]: `type Raw = { id: string };
+declare const other: number;
+export default other;`,
+          "src/second.ts": "export type Raw = unknown[];",
+          [`src/class.${extension}`]: `type Honest = unknown[];
+export default class Other {}`,
+          [`src/function.${extension}`]: `type Honest = unknown[];
+export default function other(): number;`,
+        },
+      });
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
+
   test.each([
     "type Raw = { id: string }; export type Other = number;",
     'import type { Raw } from "./private"; export type Other = number;',

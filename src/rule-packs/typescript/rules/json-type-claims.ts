@@ -95,6 +95,10 @@ export function createTypeScope(file: string, program: AnyNode): TypeScope {
       (statement: AnyNode) =>
         statement.type === "ExportAllDeclaration" ||
         statement.type === "TSExportAssignment" ||
+        (statement.type === "ExportDefaultDeclaration" &&
+          !["ClassDeclaration", "FunctionDeclaration", "TSDeclareFunction"].includes(
+            statement.declaration?.type,
+          )) ||
         (statement.type === "ExportNamedDeclaration" && !statement.declaration),
     );
   for (const statement of program?.body ?? []) {
