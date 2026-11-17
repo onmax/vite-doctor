@@ -382,19 +382,100 @@ export async function read(url: string): Promise<User> {
     ]);
   });
 
-  test("reports unknown-property shapes that exclude null", async () => {
+  test("accepts JSON types that claim nothing about the contents", async () => {
     const result = await runProjectFixture({
       framework: "vite",
       rules: [noUnvalidatedDeserialization],
       files: {
-        "src/index.ts": `const marker = JSON.parse(text) as { digest?: unknown }
-console.log(marker.digest)`,
+        "src/index.ts": `import type { JsonValue as FestJson } from "type-fest"
+import type { JsonValue } from "@acme/internal/config-edit"
+import type { Json as SharedJson } from "./json"
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
+const list = JSON.parse(text) as unknown[]
+const frozen = JSON.parse(text) as readonly unknown[]
+const generic = JSON.parse(text) as Array<unknown>
+const record: Record<string, unknown> = JSON.parse(text)
+const nullable = JSON.parse(text) as Record<string, unknown> | null
+const marker = JSON.parse(text) as { digest?: unknown }
+const event = JSON.parse(text) as { pull_request?: { head?: { sha?: unknown } } }
+const local = JSON.parse(text) as Json
+const workspace: JsonValue = JSON.parse(text)
+const fest = JSON.parse(text) as FestJson
+const shared: SharedJson = JSON.parse(text)
+function stored(): string | null {
+  return localStorage.getItem("dock")
+}
+const session: string | null | undefined = sessionStorage.getItem("dock")
+async function body(response: Response): Promise<Json[]> {
+  return response.json()
+}
+console.log(list, frozen, generic, record, nullable, marker, event, local, workspace, fest, shared, stored, session, body)`,
+        "src/json.ts": `export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json }`,
+        "node_modules/@acme/internal/package.json": JSON.stringify({
+          name: "@acme/internal",
+          exports: {
+            "./config-edit": {
+              types: "./dist/config-edit.d.ts",
+              import: "./dist/config-edit.js",
+            },
+          },
+        }),
+        "node_modules/@acme/internal/src/config-edit.ts": `export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue }`,
       },
     });
 
-    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
-      "typescript/boundaries/no-unvalidated-deserialization",
-    ]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("reports types that claim more than the deserialized value proves", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import type { Manifest } from "./manifest"
+import type { JsonValue } from "./fake-json"
+type Scalar = string | number
+const scalar = JSON.parse(text) as Scalar
+const names = JSON.parse(text) as string[]
+const labels = JSON.parse(text) as Record<string, string>
+const user = JSON.parse(text) as { id: string; extra?: unknown }
+const token = localStorage.getItem("token") as string
+const manifest: Manifest = JSON.parse(text)
+const fake: JsonValue = JSON.parse(text)
+async function read<T = unknown>(request: Request): Promise<T> {
+  return await request.json() as T
+}
+console.log(scalar, names, labels, user, token, manifest, fake, read)`,
+        "src/manifest.ts": `export interface Manifest { name: string }`,
+        "src/fake-json.ts": `export type JsonValue = { id: string }`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.range?.line)).toEqual([4, 5, 6, 7, 8, 9, 10, 12]);
+  });
+
+  test("names the source and the declared type in the message", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `const manifest: Manifest = JSON.parse(text)
+const token = localStorage.getItem("token") as string
+async function read(request: Request): Promise<Payload> {
+  return request.json()
+}
+console.log(manifest, token, read)`,
+      },
+    });
+
+    const messages = result.diagnostics.map((item) => item.message);
+    expect(messages[0]).toContain("`JSON.parse()`");
+    expect(messages[0]).toContain("`Manifest`");
+    expect(messages[1]).toContain("`localStorage.getItem()`");
+    expect(messages[1]).toContain("`string | null`");
+    expect(messages[1]).toContain("`string`");
+    expect(messages[2]).toContain("`request.json()`");
+    expect(messages[2]).toContain("`Payload`");
   });
 
   test("ignores json() calls without Fetch API evidence or a type claim", async () => {
