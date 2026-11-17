@@ -13,6 +13,7 @@ export const typescriptDiagnosticRegistry = defineDoctorDiagnostics([
   },
   { code: "TS0012", ruleId: "typescript/performance/no-array-filter-map" },
   { code: "TS0013", ruleId: "typescript/boundaries/no-cross-realm-web-instanceof" },
+  { code: "TS0014", ruleId: "typescript/boundaries/no-cross-realm-prototype-identity" },
   { code: "TS0011", ruleId: "typescript/evidence/no-known-value-widening" },
   { code: "TS0009", ruleId: "typescript/evidence/no-widen-then-assert" },
   { code: "TS0010", ruleId: "typescript/performance/no-reduce-accumulator-copy" },

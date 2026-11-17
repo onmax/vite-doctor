@@ -140,6 +140,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   },
   { code: "TS0012", ruleId: "typescript/performance/no-array-filter-map" },
   { code: "TS0013", ruleId: "typescript/boundaries/no-cross-realm-web-instanceof" },
+  { code: "TS0014", ruleId: "typescript/boundaries/no-cross-realm-prototype-identity" },
   { code: "NITRO0001", ruleId: "nitro/context/no-navigateto-in-nitro" },
   { code: "NITRO0002", ruleId: "nitro/context/no-usenuxtapp-in-nitro" },
   { code: "NITRO0003", ruleId: "nitro/request/prefer-assert-method" },
