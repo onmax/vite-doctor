@@ -1,4 +1,5 @@
 import { expect, test } from "vite-plus/test";
+import ts from "typescript";
 import { runProjectFixture } from "../../../src/core/testkit.js";
 import {
   noKnownValueWidening,
@@ -157,6 +158,48 @@ const cases: [string, string, number][] = [
   ],
 ];
 
+const unsafeUses: [string, string][] = [
+  ["parenthesized lookup", "const read = (key: string) => (units)[key]"],
+  ["non-null lookup", "const read = (key: string) => units![key]"],
+  ["wrapped missing key", "const read = (units!).m"],
+  ["destructured missing key", "const { m } = units"],
+  ["computed destructuring", "const key: string = 'm'; const { [key]: value } = units"],
+  ["destructuring assignment", "let m: number; ({ m } = units)"],
+  [
+    "destructuring default",
+    "const { value = units }: { value?: Record<string, number> } = {}; const { m } = value",
+  ],
+];
+for (const [name, use] of unsafeUses)
+  cases.push([name, `const units: Record<string, number> = { s: 1 }; ${use}`, 0]);
+
+for (const [name, use] of [
+  ["object", "({ id: values.id } = { id: 'next' })"],
+  ["array", "[values.id] = ['next']"],
+  ["default", "[values.id = 'next'] = []"],
+  ["rest", "[...values.id] = ['next']"],
+  ["object rest", "({...values.id} = { name: 'next' })"],
+  ["wrapped", "[(values.id)] = ['next']"],
+])
+  cases.push([
+    name + " member target",
+    `const values: Record<string, string | number | string[] | object> = { id: 1 }; ${use}`,
+    0,
+  ]);
+
+cases.push(
+  [
+    "wrapped declared key",
+    "const units: Record<string, number> = { s: 1 }; const read = (units!).s",
+    1,
+  ],
+  [
+    "pattern target object read",
+    "const units: Record<string, number> = { s: 1 }; const target: Record<number, number> = {}; [target[units.s]] = [2]",
+    1,
+  ],
+);
+
 test.each(cases)("checks %s", async (_name, source, expected) => {
   const result = await runProjectFixture({
     framework: "vite",
@@ -213,4 +256,41 @@ test("leaves Vue bindings the template reads", async () => {
     },
   });
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test("excluded reads and writes depend on their annotations under strict TypeScript", () => {
+  const probes = [
+    ...unsafeUses
+      .slice(0, 6)
+      .map(([, use]) => `const units: Record<string, number> = { s: 1 }; ${use}`),
+    "const values: Record<string, string | number> = { id: 1 }; ({ id: values.id } = { id: 'next' })",
+    "const values: Record<string, string | number> = { id: 1 }; [values.id] = ['next']",
+  ];
+  const options: ts.CompilerOptions = {
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    types: [],
+    target: ts.ScriptTarget.ESNext,
+  };
+  function diagnostics(sources: string[]) {
+    const fileName = ts.sys.resolvePath("ts0011-probes.ts");
+    const source = sources.map((item, index) => `function probe${index}() { ${item} }\n`).join("");
+    const host = ts.createCompilerHost(options);
+    const getSourceFile = host.getSourceFile.bind(host);
+    host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) =>
+      name === fileName
+        ? ts.createSourceFile(name, source, languageVersion, true)
+        : getSourceFile(name, languageVersion, onError, shouldCreateNewSourceFile);
+    return ts.createProgram([fileName], options, host).getSemanticDiagnostics();
+  }
+  expect(diagnostics(probes)).toEqual([]);
+  const converted = probes.map((source) =>
+    source.replace(/: (Record<[^>]+>) = (\{[^}]+\})/, " = $2 satisfies $1"),
+  );
+  const errors = diagnostics(converted);
+  expect(
+    new Set(errors.map((error) => error.file!.getLineAndCharacterOfPosition(error.start!).line))
+      .size,
+  ).toBe(probes.length);
 });

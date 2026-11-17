@@ -242,8 +242,11 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
     }
     return null;
   }
+  const writtenTargets = new Set<AnyNode>();
   function markWrite(node: AnyNode) {
+    node = expression(node);
     if (!node) return;
+    writtenTargets.add(node);
     if (node.type === "Identifier") {
       const target = binding(node);
       if (target && target.owner === scopes.get(node)?.owner) target.written = true;
@@ -465,7 +468,7 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
     propertyWritten,
     references,
     parent: (node: AnyNode) => parents.get(node),
-    written: (node: AnyNode) => writes.includes(node),
+    written: (node: AnyNode) => writtenTargets.has(node),
     broadType,
     globalType,
     isArray,

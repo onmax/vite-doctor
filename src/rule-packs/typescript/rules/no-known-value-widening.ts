@@ -42,10 +42,25 @@ export const noKnownValueWidening = createRule({
       if (new RegExp(`(?<![\\w$])${name}(?![\\w$])`).test(template)) return false;
       const keys = declaredKeys(initial);
       return evidence.references(id).every((reference) => {
-        const parent = evidence.parent(reference);
+        let value = reference;
+        let parent = evidence.parent(value);
+        while (parent && expression(parent) === reference) {
+          value = parent;
+          parent = evidence.parent(value);
+        }
+        if (
+          (parent?.type === "VariableDeclarator" &&
+            parent.init === value &&
+            parent.id.type !== "Identifier") ||
+          (parent?.type === "AssignmentExpression" &&
+            parent.right === value &&
+            ["ObjectPattern", "ArrayPattern"].includes(parent.left.type)) ||
+          (parent?.type === "AssignmentPattern" && parent.right === value)
+        )
+          return false;
         if (["ExportSpecifier", "ExportDefaultDeclaration"].includes(parent?.type)) return false;
         if (!["MemberExpression", "StaticMemberExpression"].includes(parent?.type)) return true;
-        if (parent.object !== reference) return true;
+        if (parent.object !== value) return true;
         const target = evidence.parent(parent);
         if (
           evidence.written(parent) ||
