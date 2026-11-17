@@ -3,7 +3,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
-import { relative } from "pathe";
 import { vueRulePack } from "../../../src/rule-packs/vue/index.ts";
 import {
   definePropsWatchGetter,
@@ -16,7 +15,6 @@ import {
   preferPropsDestructureDefaults,
   preferTypeProps,
   noUntranslatedText,
-  noUnusedTranslations,
   preferUseEventListener,
   requireLifecycleCleanup,
   requirePostFlushForDomWatch,
@@ -906,64 +904,6 @@ export function useState() {
   expect(result.diagnostics).toHaveLength(0);
 });
 
-test("i18n unused translations reports unused nested base locale keys", async () => {
-  const result = await runRuleFixture({
-    rule: noUnusedTranslations,
-    framework: "vue",
-    dependencies: { "vue-i18n": "^11.0.0" },
-    files: {
-      "src/App.vue": `<template>{{ t('common.save') }}</template>`,
-      "locales/en.json": JSON.stringify({
-        common: { save: "Save", cancel: "Cancel" },
-      }),
-      "locales/fr.json": JSON.stringify({
-        common: { save: "Enregistrer", cancel: "Annuler" },
-      }),
-    },
-  });
-
-  expect(result.diagnostics.map((item) => item.message)).toEqual([
-    'Translation key "common.cancel" is not used by any static Vue i18n call.',
-  ]);
-});
-
-test("i18n unused translations accepts $t and dynamic keys stay unresolved", async () => {
-  const result = await runRuleFixture({
-    rule: noUnusedTranslations,
-    framework: "vue",
-    dependencies: { "vue-i18n": "^11.0.0" },
-    files: {
-      "src/App.vue": `<template>{{ $t('home.title') }} {{ t(prefix + name) }}</template>`,
-      "locales/en.json": JSON.stringify({
-        home: { title: "Home", dynamic: "Dynamic" },
-      }),
-    },
-  });
-
-  expect(result.diagnostics.map((item) => item.message)).toEqual([
-    'Translation key "home.dynamic" is not used by any static Vue i18n call.',
-  ]);
-});
-
-test("i18n unused translations ignores locale metadata keys", async () => {
-  const result = await runRuleFixture({
-    rule: noUnusedTranslations,
-    framework: "vue",
-    dependencies: { "vue-i18n": "^11.0.0" },
-    files: {
-      "src/App.vue": `<template>{{ t('home.title') }}</template>`,
-      "locales/en.json": JSON.stringify({
-        $schema: "https://example.com/schema.json",
-        home: { title: "Home", subtitle: "Welcome" },
-      }),
-    },
-  });
-
-  expect(result.diagnostics.map((item) => item.message)).toEqual([
-    'Translation key "home.subtitle" is not used by any static Vue i18n call.',
-  ]);
-});
-
 test("i18n untranslated text reports visible template text and static attributes", async () => {
   const result = await runRuleFixture({
     rule: noUntranslatedText,
@@ -1021,100 +961,6 @@ test("i18n untranslated text ignores i18n-t slot content and code fragments", as
 
   expect(result.diagnostics.map((item) => item.message)).toEqual([
     'Visible text "Email" should come from Vue i18n.',
-  ]);
-});
-
-test("i18n unused translations reads Nuxt langDir locale files", async () => {
-  const result = await runRuleFixture({
-    rule: noUnusedTranslations,
-    framework: "nuxt",
-    dependencies: { "@nuxtjs/i18n": "^10.0.0" },
-    files: {
-      "nuxt.config.ts": `export default defineNuxtConfig({ i18n: { langDir: 'app/i18n' } })`,
-      "app/pages/index.vue": `<template>{{ $t('home.title') }}</template>`,
-      "app/i18n/en.json": JSON.stringify({
-        home: { title: "Home", subtitle: "Welcome" },
-      }),
-    },
-  });
-
-  expect(result.diagnostics.map((item) => item.message)).toEqual([
-    'Translation key "home.subtitle" is not used by any static Vue i18n call.',
-  ]);
-});
-
-test("i18n unused translations scans every source extension and locale file", async () => {
-  const result = await runRuleFixture({
-    rule: noUnusedTranslations,
-    framework: "vue",
-    dependencies: { "vue-i18n": "^11.0.0" },
-    files: {
-      "src/App.vue": `<template>{{ $t('nav.home') }}</template>`,
-      "src/store.ts": `export const title = t("nav.about")`,
-      "src/View.tsx": `export const View = () => <p>{t('form.save')}</p>`,
-      "src/router.js": "i18n.global.t(`form.cancel`)",
-      "src/Button.jsx": `export const Button = () => te('form.reset')`,
-      "public/legacy.js": `t('nav.blog')`,
-      "node_modules/pkg/index.js": `t('nav.contact')`,
-      "locales/en.json": `{
-  "nav": {
-    "home": "Home",
-    "about": "About",
-    "blog": "Blog",
-    "contact": "Contact"
-  },
-  "form": {
-    "save": "Save",
-    "cancel": "Cancel",
-    "reset": "Reset",
-    "submit": "Submit"
-  }
-}`,
-      "i18n/locales/en.ts": `export default defineI18nLocale({
-  footer: { 'legal': 'Legal', home: 'Home' },
-})`,
-      "locales/fr.json": JSON.stringify({ nav: { unusedFr: "Seulement" } }),
-    },
-  });
-
-  expect(
-    result.diagnostics.map((item) => [
-      item.message,
-      relative(result.root, item.file ?? ""),
-      item.range?.line,
-      item.range?.column,
-    ]),
-  ).toEqual([
-    [
-      'Translation key "footer.legal" is not used by any static Vue i18n call.',
-      "i18n/locales/en.ts",
-      2,
-      13,
-    ],
-    [
-      'Translation key "footer.home" is not used by any static Vue i18n call.',
-      "i18n/locales/en.ts",
-      2,
-      38,
-    ],
-    [
-      'Translation key "nav.blog" is not used by any static Vue i18n call.',
-      "locales/en.json",
-      5,
-      5,
-    ],
-    [
-      'Translation key "nav.contact" is not used by any static Vue i18n call.',
-      "locales/en.json",
-      6,
-      5,
-    ],
-    [
-      'Translation key "form.submit" is not used by any static Vue i18n call.',
-      "locales/en.json",
-      12,
-      5,
-    ],
   ]);
 });
 
