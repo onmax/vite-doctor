@@ -116,7 +116,8 @@ function findTopLevelInitializer(body: AnyNode[], name: string): AnyNode {
   return undefined;
 }
 
-function detectPackageModule(root: string): NuxtModuleDefinition | undefined {
+/** The Nuxt module a publishable package builds from `src/`, if it is a Nuxt module package. */
+export function detectPackageModule(root: string): NuxtModuleDefinition | undefined {
   const packageJson = readModulePackageJson(join(root, "package.json"));
   if (!packageJson) return undefined;
   const distEntries = packageEntryTargets(packageJson)

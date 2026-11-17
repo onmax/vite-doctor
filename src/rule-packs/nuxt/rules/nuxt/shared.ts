@@ -31,6 +31,7 @@ export {
   isExplicitlyScannedByNuxt,
   isExplicitPlugin,
   isGeneratedFile,
+  isNuxtRoutedAppFile,
   isNuxtRuntimeFile,
   isRuntimeAppFile,
   isServerRuntimeFile,
@@ -223,7 +224,7 @@ export function simpleTagRenameFix(text: string, node: TemplateElementNode, repl
     .replaceAll("RouterView", replacement)
     .replaceAll("router-view", replacement);
   return {
-    kind: "safe" as const,
+    kind: "suggestion" as const,
     edits: [{ range: { start, end }, text: replaced }],
   };
 }
