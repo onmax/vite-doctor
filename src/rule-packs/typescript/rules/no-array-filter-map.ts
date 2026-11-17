@@ -22,7 +22,7 @@ export const noArrayFilterMap = createRule({
       },
     ],
     category: "performance",
-    severity: "warn",
+    severity: "info",
     confidence: "proven",
     fixable: "structural-review",
     docsUrl:
