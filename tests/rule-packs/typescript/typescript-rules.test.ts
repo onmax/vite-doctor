@@ -492,6 +492,27 @@ export type Mixed = unknown[] | { id: string }`,
     ]);
   });
 
+  test.each([false, true])(
+    "resolves explicit recursive reexports before stars (reversed: %s)",
+    async (reversed) => {
+      const exports = ['export * from "./first";', 'export { B } from "./second";'];
+      const result = await runProjectFixture({
+        framework: "vite",
+        rules: [noUnvalidatedDeserialization],
+        files: {
+          "src/index.ts": `import type { B } from "./barrel";
+export type A = string | number | boolean | null | { [key: string]: unknown } | B[] | { recursive: C };
+export type C = A;
+const value = JSON.parse(text) as A;`,
+          "src/barrel.ts": (reversed ? exports.reverse() : exports).join("\n"),
+          "src/first.ts": `import type { A } from "./index"; export type B = A[];`,
+          "src/second.ts": `export type B = unknown;`,
+        },
+      });
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
+
   test("names the source and the declared type in the message", async () => {
     const result = await runProjectFixture({
       framework: "vite",

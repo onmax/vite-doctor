@@ -169,11 +169,39 @@ class TypeResolver {
       return this.honestNamed(exported, target, new Set([...seen, key]));
     };
     if (imported) return follow(imported.source, imported.name);
-    for (const reexport of scope.reexports) {
-      const exported = reexport.names ? reexport.names.get(name) : name;
-      if (exported && follow(reexport.source, exported)) return true;
+    const reexport = this.reexportBinding(name, scope);
+    return reexport ? follow(reexport.source, reexport.name) : false;
+  }
+
+  // Explicit exports override stars. Binding identity must never depend on provisional coverage.
+  private reexportBinding(
+    name: string,
+    scope: TypeScope,
+    seen = new Set<string>(),
+  ): { source: string; name: string } | undefined {
+    const key = `${scope.file}#${name}`;
+    if (seen.has(key) || seen.size >= maxImportDepth) return undefined;
+    const next = new Set([...seen, key]);
+    for (const entry of scope.reexports) {
+      const local = entry.names?.get(name);
+      if (local) return { source: entry.source, name: local };
     }
-    return false;
+    for (const entry of scope.reexports) {
+      if (entry.names) continue;
+      if (entry.source === "type-fest" && typeFestKinds[name])
+        return { source: entry.source, name };
+      const file = resolveModule(this.ctx, scope.file, entry.source);
+      const target = file && readTypeScope(this.ctx, file);
+      if (
+        target &&
+        (target.aliases.has(name) ||
+          target.imports.has(name) ||
+          target.blocked.some((binding) => binding.name === name) ||
+          this.reexportBinding(name, target, next))
+      )
+        return { source: entry.source, name };
+    }
+    return undefined;
   }
 
   private isBlocked(type: AnyNode, scope: TypeScope): boolean {
@@ -292,7 +320,8 @@ class TypeResolver {
     if (alias) {
       this.seen.add(key);
       try {
-        const result = this.kinds(alias, scope);
+        const previous = this.assumptions.get(key) ?? new Set(allKinds);
+        const result = new Set([...this.kinds(alias, scope)].filter((kind) => previous.has(kind)));
         this.assumptions.set(key, result);
         return result;
       } finally {
@@ -301,13 +330,10 @@ class TypeResolver {
     }
     const imported = scope.imports.get(name);
     if (imported) return this.importedKinds(imported.source, imported.name, scope.file, depth);
-    for (const reexport of scope.reexports) {
-      const local = reexport.names ? reexport.names.get(name) : name;
-      if (!local) continue;
-      const kinds = this.importedKinds(reexport.source, local, scope.file, depth);
-      if (kinds.size) return kinds;
-    }
-    return new Set();
+    const reexport = this.reexportBinding(name, scope);
+    return reexport
+      ? this.importedKinds(reexport.source, reexport.name, scope.file, depth)
+      : new Set();
   }
 
   private importedKinds(
