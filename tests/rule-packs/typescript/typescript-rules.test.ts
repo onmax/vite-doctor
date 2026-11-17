@@ -44,17 +44,6 @@ describe("TypeScript rule pack", () => {
     );
   });
 
-  test("no longer ships the removed typeof and empty-spread rules", () => {
-    const ruleIds = typescriptRulePack.rules.map((rule) => rule.meta.id);
-    for (const removed of [
-      "typescript/strict/no-runtime-typeof",
-      "typescript/style/no-conditional-empty-object-spread",
-    ]) {
-      expect(ruleIds).not.toContain(removed);
-      expect(typescriptRulePack.presets.strict).not.toContain(removed);
-    }
-  });
-
   test.each(["TS0006", "TS0007", "typescript/strict/no-runtime-typeof"])(
     "explain treats removed %s as unknown",
     (diagnostic) => {

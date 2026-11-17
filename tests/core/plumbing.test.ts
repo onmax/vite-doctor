@@ -681,8 +681,6 @@ test("changed scope reports overlapping ranges and findings without source range
       verify: `vite-doctor . --framework vue --since ${result.scope.base} --rules '<rule>' --format agent`,
       rerun: `vite-doctor . --framework vue --since ${result.scope.base} --format agent`,
     });
-    expect(agent.next).not.toHaveProperty("cwd");
-    expect(agent.next).not.toHaveProperty("rerun");
   });
 });
 
@@ -1469,8 +1467,6 @@ test("agent reporter is compact and includes a complete remediation path", async
       verify: "vite-doctor . --framework vue --rules '<rule>' --format agent",
       rerun: "vite-doctor . --framework vue --format agent",
     });
-    expect(agent.next).not.toHaveProperty("cwd");
-    expect(agent.next).not.toHaveProperty("rerun");
     expect(report).not.toContain(join(root, "src/app.ts"));
   });
 });

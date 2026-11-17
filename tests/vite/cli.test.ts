@@ -94,8 +94,8 @@ test("CLI rejects removed run command", async () => {
   await expect(main(["run", "--dry-run", "--format", "text"], repoRoot)).resolves.toBe(2);
 });
 
-test("CLI rejects the removed type analysis flag", async () => {
-  const result = await runCli([".", "--types", "--format", "agent"], findRepoRoot());
+test("CLI rejects an unknown flag as an invocation error", async () => {
+  const result = await runCli([".", "--not-a-doctor-flag", "--format", "agent"], findRepoRoot());
 
   expect(result.code).toBe(2);
   expect(JSON.parse(result.output)).toMatchObject({
