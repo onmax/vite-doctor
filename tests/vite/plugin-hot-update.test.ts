@@ -298,7 +298,7 @@ test("ancestor workspace catalog changes rerun package rules and resolve manifes
     const workspaceFile = join(root, "pnpm-workspace.yaml");
     const catalog = (range: string) => `packages:\n  - packages/*\ncatalog:\n  vue: '${range}'\n`;
     await writeFile(workspaceFile, catalog("^3.5.0"));
-    const { logger, reports, deltas } = captureLogger();
+    const { logger, logs, reports, deltas } = captureLogger();
     const server = await startServer(packageRoot, logger, {
       rules: "package/no-pinned-singleton",
       extends: ["package/recommended"],
@@ -311,7 +311,7 @@ test("ancestor workspace catalog changes rerun package rules and resolve manifes
       expect(doctorRuns[1]!.options.affectedFiles).toBeUndefined();
       await save(server, workspaceFile, catalog("^3.5.0"));
       await vi.waitFor(() => expect(deltas()).toHaveLength(2), { timeout: 15_000 });
-      expect(deltas()[1]).toContain("1 resolved");
+      expect(logs.info.at(-1)).toContain("1 resolved");
     } finally {
       await server.close();
     }
