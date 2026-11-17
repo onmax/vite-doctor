@@ -1,4 +1,4 @@
-import { beforeAll, bench } from "vite-plus/test";
+import { beforeAll, test } from "vite-plus/test";
 import type { SourceFileHandle } from "../../src/core/primitives.ts";
 import { createHelpers } from "../../src/core/internal/doctor-helpers.ts";
 import { parseScript } from "../../src/core/internal/script.ts";
@@ -35,8 +35,10 @@ beforeAll(async () => {
   await runVisitor({ CallExpression: (node) => calls.push(node) }, file);
 });
 
-bench("repeated client-context checks over nested calls", () => {
-  const helpers = createHelpers();
-  for (let repeat = 0; repeat < 20; repeat++)
-    for (const node of calls) helpers.isClientOnlyExecutionContext(node, file.text);
+test("repeated client-context checks over nested calls", async ({ bench }) => {
+  await bench("repeated client-context checks over nested calls", () => {
+    const helpers = createHelpers();
+    for (let repeat = 0; repeat < 20; repeat++)
+      for (const node of calls) helpers.isClientOnlyExecutionContext(node, file.text);
+  }).run();
 });
