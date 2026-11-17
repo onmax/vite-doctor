@@ -127,3 +127,15 @@ test("adds configured singletons, including scope wildcards", async () => {
       .sort((a, b) => a.localeCompare(b)),
   ).toEqual(["@ai-sdk/provider", "comark"]);
 });
+
+test("preserves alias identity in direct and catalog range suggestions", async () => {
+  for (const specifier of ["npm:@vue/compat@3.5.44", "catalog:"]) {
+    const diagnostics = await pinned(
+      { dependencies: { vue: specifier } },
+      {
+        "pnpm-workspace.yaml": "catalog:\n  vue: npm:@vue/compat@3.5.44\n",
+      },
+    );
+    expect(diagnostics[0]?.suggestion).toContain("npm:@vue/compat@^3.5.44");
+  }
+});

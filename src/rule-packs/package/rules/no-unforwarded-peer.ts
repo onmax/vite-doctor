@@ -1,6 +1,7 @@
+import { subset } from "semver";
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
-import { manifestEntryRange, packageWorkspace } from "../manifests.js";
+import { inRunScope, manifestEntryRange, packageWorkspace } from "../manifests.js";
 
 const RULE_ID = "package/no-unforwarded-peer";
 
@@ -44,7 +45,7 @@ export const noUnforwardedPeer = createRule({
         );
         for (const item of workspace.packages) {
           const manifest = item.manifest;
-          if (manifest.private) continue;
+          if (manifest.private || !inRunScope(item)) continue;
           const declared = new Set(
             Object.keys({
               ...manifest.dependencies,
@@ -53,13 +54,14 @@ export const noUnforwardedPeer = createRule({
             }),
           );
           for (const field of ["dependencies", "optionalDependencies"] as const) {
-            for (const dependencyName of Object.keys(manifest[field] ?? {})) {
+            for (const [dependencyName, target] of Object.entries(manifest[field] ?? {})) {
               const dependency = byName.get(dependencyName);
-              if (!dependency || dependency === item) continue;
+              if (!dependency || dependency === item || !target.startsWith("workspace:")) continue;
               const peers = dependency.manifest.peerDependencies ?? {};
               for (const [peer, specifier] of Object.entries(peers)) {
                 if (
                   declared.has(peer) ||
+                  suppliesDefault(dependency.manifest.dependencies?.[peer], specifier) ||
                   peer === manifest.name ||
                   dependency.manifest.peerDependenciesMeta?.[peer]?.optional === true
                 )
@@ -105,3 +107,12 @@ export const noUnforwardedPeer = createRule({
     };
   },
 });
+
+function suppliesDefault(dependency: string | undefined, peer: string): boolean {
+  if (!dependency) return false;
+  try {
+    return subset(dependency, peer);
+  } catch {
+    return false;
+  }
+}

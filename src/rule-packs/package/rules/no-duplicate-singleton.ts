@@ -91,6 +91,15 @@ export const noDuplicateSingleton = createRule({
           const { copies, linked } = resolvedCopies(lockfile, importer, isSingleton);
           for (const [key, versions] of duplicates(copies)) {
             const linkedDuplicate = linked.some((target) => {
+              if (!inScope(target)) return false;
+              // In a cycle, the lexically first importer owns the report.
+              const reciprocal = resolvedCopies(
+                lockfile,
+                target,
+                isSingleton,
+                false,
+              ).linked.includes(importer);
+              if (reciprocal && target.localeCompare(importer) >= 0) return false;
               const inherited = duplicates(publishedCopies(target)).get(key);
               return inherited && [...versions].every((version) => inherited.has(version));
             });

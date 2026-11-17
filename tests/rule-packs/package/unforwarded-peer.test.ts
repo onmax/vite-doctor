@@ -107,3 +107,59 @@ test("reports each missing peer once per workspace dependency, through optionalD
       .sort((a, b) => a.localeCompare(b)),
   ).toEqual(["@x/database", "drizzle-orm", "vue", "vue"]);
 });
+
+test("does not borrow peer contracts from uncertain registry targets or compatible default peers", async () => {
+  expect(
+    (
+      await unforwarded({
+        auth: { version: "2.0.0", peerDependencies: { vue: "^3.0.0" } },
+        registry: { dependencies: { "@x/auth": "^1.0.0" } },
+        fallback: { dependencies: { vue: "^3.5.0" }, peerDependencies: { vue: "^3.0.0" } },
+        consumer: { dependencies: { "@x/fallback": "workspace:*" } },
+      })
+    ).diagnostics,
+  ).toEqual([]);
+});
+
+test("package-local runs use sibling context without reporting sibling manifests", async () => {
+  await withPackage(
+    { private: true },
+    {
+      "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+      "packages/auth/package.json": JSON.stringify({
+        name: "auth",
+        peerDependencies: { "drizzle-orm": "^1.0.0" },
+      }),
+      "packages/vue/package.json": JSON.stringify({
+        name: "vue",
+        version: "3.6.0",
+        peerDependencies: { vite: "1.0.0" },
+      }),
+      "packages/realtime/package.json": JSON.stringify({
+        name: "realtime",
+        dependencies: { auth: "workspace:*" },
+        peerDependencies: { vue: "workspace:*" },
+      }),
+    },
+    async (root) => {
+      for (const runRoot of [root, join(root, "packages/realtime")]) {
+        const result = await runViteDoctor({
+          root: runRoot,
+          framework: "vite",
+          cache: false,
+          extends: ["package/recommended"],
+        });
+        const relevant = result.diagnostics.filter(
+          (d) =>
+            ["PKG0005", "PKG0007"].includes(d.code) &&
+            d.file === join(root, "packages/realtime/package.json"),
+        );
+        expect(relevant.map((d) => d.code).sort()).toEqual(["PKG0005", "PKG0007"]);
+        if (runRoot !== root)
+          expect(
+            result.diagnostics.filter((d) => ["PKG0005", "PKG0007"].includes(d.code)),
+          ).toHaveLength(2);
+      }
+    },
+  );
+});

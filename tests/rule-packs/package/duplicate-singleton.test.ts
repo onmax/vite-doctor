@@ -224,3 +224,48 @@ test("reports nothing without a pnpm lockfile", async () => {
   });
   expect(diagnostics).toEqual([]);
 });
+
+test("retains a deterministic reporter for workspace cycles and scoped inherited duplicates", async () => {
+  const files = workspace(
+    {
+      "packages/a": { manifest: { name: "a" }, dependencies: { b: "link:../b", vue: "3.5.44" } },
+      "packages/b": { manifest: { name: "b" }, dependencies: { a: "link:../a", vue: "3.4.0" } },
+    },
+    vueSnapshots,
+  );
+  expect((await duplicates(files)).diagnostics).toHaveLength(1);
+  await withPackage({ private: true }, files, async (root) => {
+    const result = await runViteDoctor({
+      root: join(root, "packages/b"),
+      framework: "vite",
+      cache: false,
+      extends: ["package/recommended"],
+    });
+    expect(result.diagnostics.filter((d) => d.ruleId === RULE)).toHaveLength(1);
+  });
+});
+
+test("reports inherited duplicates in a package-local run when their owner is out of scope", async () => {
+  const files = workspace(
+    {
+      "packages/app": { manifest: { name: "app" }, dependencies: { lib: "link:../lib" } },
+      "packages/lib": {
+        manifest: { name: "lib" },
+        dependencies: { vue: "3.5.44", "old-ui": "1.0.0(vue@3.4.0)" },
+      },
+    },
+    vueSnapshots,
+  );
+  expect((await duplicates(files)).diagnostics).toHaveLength(1);
+  await withPackage({ private: true }, files, async (root) => {
+    const result = await runViteDoctor({
+      root: join(root, "packages/app"),
+      framework: "vite",
+      cache: false,
+      extends: ["package/recommended"],
+    });
+    expect(result.diagnostics.filter((d) => d.ruleId === RULE).map((d) => d.file)).toEqual([
+      join(root, "packages/app/package.json"),
+    ]);
+  });
+});

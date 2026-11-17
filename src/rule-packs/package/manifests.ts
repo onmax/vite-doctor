@@ -1,4 +1,4 @@
-import { dirname, resolve } from "pathe";
+import { dirname, relative, resolve } from "pathe";
 import { valid } from "semver";
 import { parse } from "yaml";
 import type { RuleContext, SourceRange } from "../../core/primitives.js";
@@ -34,12 +34,6 @@ export function packageWorkspace(ctx: RuleContext): PackageWorkspace {
   const cached = ctx.cache.get<PackageWorkspace>(key);
   if (cached) return cached;
   const project = ctx.project;
-  const packages = (project.workspacePackages ?? [{ root: "." }]).flatMap((item) => {
-    const file = resolve(project.root, item.root, "package.json");
-    const text = ctx.fs.readText(file);
-    if (text === undefined) return [];
-    return [{ root: item.root, file, text, manifest: parsePackageManifest(JSON.parse(text)) }];
-  });
   let root = project.root;
   for (let directory = project.root; ; directory = dirname(directory)) {
     if (ctx.fs.exists(resolve(directory, "pnpm-workspace.yaml"))) {
@@ -48,6 +42,31 @@ export function packageWorkspace(ctx: RuleContext): PackageWorkspace {
     }
     if (dirname(directory) === directory) break;
   }
+  const roots = new Set((project.workspacePackages ?? [{ root: "." }]).map((item) => item.root));
+  const workspaceText = ctx.fs.readText(resolve(root, "pnpm-workspace.yaml"));
+  const config: unknown = workspaceText === undefined ? undefined : parse(workspaceText);
+  if (isRecord(config) && Array.isArray(config.packages)) {
+    const patterns = config.packages.filter(
+      (pattern): pattern is string => typeof pattern === "string",
+    );
+    const exclude = [
+      "**/node_modules/**",
+      ...patterns
+        .filter((pattern) => pattern.startsWith("!"))
+        .map((pattern) => `${pattern.slice(1)}/package.json`),
+    ];
+    for (const pattern of patterns.filter((pattern) => !pattern.startsWith("!"))) {
+      for (const file of ctx.fs.glob(`${pattern}/package.json`, { cwd: root, exclude })) {
+        roots.add(relative(project.root, dirname(file)) || ".");
+      }
+    }
+  }
+  const packages = [...roots].flatMap((packageRoot) => {
+    const file = resolve(project.root, packageRoot, "package.json");
+    const text = ctx.fs.readText(file);
+    if (text === undefined) return [];
+    return [{ root: packageRoot, file, text, manifest: parsePackageManifest(JSON.parse(text)) }];
+  });
   const workspace = { root, packages, catalogs: readCatalogs(ctx, root) };
   ctx.cache.set(key, workspace);
   return workspace;
@@ -77,6 +96,7 @@ export interface ResolvedSpecifier {
   range: string;
   /** Where a `catalog:` range came from, such as `catalogs.ui`. */
   catalog?: string;
+  alias?: string;
 }
 
 /**
@@ -96,14 +116,16 @@ export function publishedRange(
     const resolved = publishedRange(workspace, name, entry);
     return (
       resolved && {
-        range: resolved.range,
+        ...resolved,
         catalog: catalog === "default" ? "catalog" : `catalogs.${catalog}`,
       }
     );
   }
   if (specifier.startsWith("npm:")) {
     const at = specifier.lastIndexOf("@");
-    return at > "npm:".length ? { range: specifier.slice(at + 1) } : undefined;
+    return at > "npm:".length
+      ? { range: specifier.slice(at + 1), alias: specifier.slice(0, at + 1) }
+      : undefined;
   }
   if (specifier.startsWith("workspace:")) {
     const target = specifier.slice("workspace:".length);
@@ -172,4 +194,9 @@ export function singletonMatcher(options: unknown): (name: string) => boolean {
   const names = new Set([...DEFAULT_SINGLETONS, ...configured]);
   const scopes = [...names].filter((name) => name.endsWith("/*")).map((name) => name.slice(0, -1));
   return (name) => names.has(name) || scopes.some((scope) => name.startsWith(scope));
+}
+
+/** Context may include siblings, but diagnostics stay inside the requested run. */
+export function inRunScope(item: WorkspaceManifest): boolean {
+  return item.root !== ".." && !item.root.startsWith("../");
 }

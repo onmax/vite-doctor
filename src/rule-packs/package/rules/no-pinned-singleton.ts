@@ -1,6 +1,7 @@
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import {
+  inRunScope,
   exactVersion,
   manifestEntryRange,
   packageWorkspace,
@@ -44,7 +45,7 @@ export const noPinnedSingleton = createRule({
         const workspace = packageWorkspace(ctx);
         for (const item of workspace.packages) {
           const manifest = item.manifest;
-          if (manifest.private) continue;
+          if (manifest.private || !inRunScope(item)) continue;
           for (const field of [
             "peerDependencies",
             "dependencies",
@@ -63,7 +64,9 @@ export const noPinnedSingleton = createRule({
                   ? ` is published as ${version} and`
                   : "";
               const peer = field === "peerDependencies";
-              const suggested = specifier.startsWith("workspace:") ? "workspace:^" : `^${version}`;
+              const suggested = specifier.startsWith("workspace:")
+                ? "workspace:^"
+                : `${resolved.alias ?? ""}^${version}`;
               const why = peer
                 ? `${declared}${source} pins a package the app must load once. An app on any other ${name} version fails strict peer checks or installs a second ${name} next to its own.`
                 : `${declared}${source} pins a package the app must load once. When the app uses another ${name} version, installing ${manifest.name ?? item.root} adds a second copy.`;
