@@ -202,3 +202,75 @@ test.each([true, false])(
     }
   },
 );
+
+test.each([true, false])(
+  "intermediate-helper transitions preserve Plugin Surface and cache parity (cache=%s)",
+  async (cache) => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-browser-callers-"));
+    try {
+      mkdirSync(join(root, "app/utils"), { recursive: true });
+      mkdirSync(join(root, "app/pages"), { recursive: true });
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({ dependencies: { nuxt: "4.0.0" } }),
+      );
+      writeFileSync(
+        join(root, "app/utils/width.ts"),
+        `export function readWidth() { return window.innerWidth }`,
+      );
+      const page = join(root, "app/utils/layout.ts");
+      writeFileSync(join(root, "app/pages/index.vue"), `<script setup>describeWidth()</script>`);
+      const options = {
+        root,
+        framework: "nuxt" as const,
+        runtimeTarget: {
+          nuxt: "4.0.0",
+          nitro: "2.0.0",
+          h3: "1.0.0",
+          vue: "3.5.0",
+          nuxtCompatibility: 4 as const,
+        },
+        rules: noBrowserGlobalInUniversalCode.meta.id,
+        cache,
+      };
+      const surface = (result: Awaited<ReturnType<typeof runViteDoctor>>) => ({
+        diagnostics: result.diagnostics.map((diagnostic) => ({
+          id: diagnostic.message,
+          severity: diagnostic.severity,
+          files: [diagnostic.file!, ...(diagnostic.related ?? []).map((site) => site.file)],
+          summary: diagnostic.message,
+          detail: diagnostic.message,
+        })),
+        evidenceGaps: [],
+        runtimeIncomplete: false,
+      });
+      writeFileSync(page, `export function describeWidth() { onMounted(() => readWidth()) }`);
+      const initial = await runViteDoctor(options);
+      let state = stateFromRun(surface(initial));
+      expect(state.diagnostics.size).toBe(0);
+      for (const ssr of [true, false, true]) {
+        writeFileSync(
+          page,
+          ssr
+            ? `export function describeWidth() { readWidth() }`
+            : `export function describeWidth() { onMounted(() => readWidth()) }`,
+        );
+        const scoped = await runViteDoctor({ ...options, affectedFiles: [page] });
+        state = mergeAffectedRun(state, new Set([page]), surface(scoped));
+        expect(state.diagnostics.size).toBe(ssr ? 1 : 0);
+        if (ssr)
+          expect(scoped.diagnostics[0]?.related?.[1]).toMatchObject({
+            file: page,
+            range: { line: 1, column: 35, start: 34, end: 45 },
+          });
+        const full = await runViteDoctor(options);
+        expect(full.diagnostics.length).toBe(ssr ? 1 : 0);
+        expect(full.diagnostics).toEqual(
+          (await runViteDoctor({ ...options, cache: false })).diagnostics,
+        );
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

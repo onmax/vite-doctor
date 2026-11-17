@@ -40,13 +40,11 @@ export const noBrowserGlobalInUniversalCode = createRule({
           replacementForBrowserGlobal(node.name),
           undefined,
           caller
-            ? [
-                {
-                  file: caller.file,
-                  range: caller.range,
-                  message: `SSR call to ${caller.callee}()`,
-                },
-              ]
+            ? [caller, ...(caller.via ?? [])].map((site) => ({
+                file: site.file,
+                range: site.range,
+                message: `SSR call to ${site.callee}()`,
+              }))
             : undefined,
         );
       },

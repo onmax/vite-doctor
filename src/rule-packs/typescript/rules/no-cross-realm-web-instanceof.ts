@@ -145,12 +145,15 @@ function hasDuckTypedAlternative(node: AnyNode, className: string): boolean {
           : undefined;
     return undefined;
   };
-  if (
-    containsCall(chain, isGuard) &&
-    foreignResult(chain) === true &&
-    foreignResult(chain, false) !== true
-  )
-    return true;
+  for (let alternative = node; alternative; alternative = parentOf(alternative)) {
+    if (
+      containsCall(alternative, isGuard) &&
+      foreignResult(alternative) === true &&
+      foreignResult(alternative, false) !== true
+    )
+      return true;
+    if (alternative === chain) break;
+  }
   const statement = enclosingStatement(chain);
   const siblings = statementList(statement);
   if (!siblings) return false;

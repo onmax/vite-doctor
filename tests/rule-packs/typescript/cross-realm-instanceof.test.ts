@@ -215,3 +215,13 @@ test.each([
 ])("reports mandatory instanceof despite nearby guards: %s", async (body) => {
   expect(await count(`function f(value: unknown) { ${body} }`)).toBe(1);
 });
+
+test.each([
+  `!(value instanceof Response || isResponseLike(value))`,
+  `enabled && (value instanceof Response || isResponseLike(value))`,
+  `(value instanceof Response || isResponseLike(value)) && enabled`,
+])("accepts nested realm-safe alternatives: %s", async (condition) => {
+  expect(await count(`function f(value: unknown, enabled: boolean) { return ${condition} }`)).toBe(
+    0,
+  );
+});

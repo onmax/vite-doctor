@@ -34,6 +34,7 @@ export interface SsrCaller {
   line: number;
   callee: string;
   range: SourceRange;
+  via?: SsrCaller[];
 }
 
 /**
@@ -133,7 +134,8 @@ function ssrCallSite(
   const owner = topLevelFunction(fn);
   if (!owner) return null;
   if (isComposableName(owner.name)) return site();
-  return findSsrCaller(ctx, source, owner, visited, depth + 1);
+  const caller = findSsrCaller(ctx, source, owner, visited, depth + 1);
+  return caller ? { ...caller, via: [site(), ...(caller.via ?? [])] } : null;
 }
 
 function topLevelFunction(fn: AnyNode): Owner | null {
