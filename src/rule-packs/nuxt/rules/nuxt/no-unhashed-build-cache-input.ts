@@ -195,14 +195,12 @@ async function reportUnhashedInputs(ctx: RuleContext, project: ProjectInfo, nuxt
                 },
               ]
             : []),
-          ...sites.slice(0, RELATED_LIMIT + 1).map(
-            (site): DiagnosticEvidence => ({
-              kind: site.how === "import" ? "ast" : "manifest",
-              file: site.file,
-              range: site.range,
-              summary: describeSite(appRoot, site),
-            }),
-          ),
+          ...sites.slice(0, RELATED_LIMIT + 1).map((site): DiagnosticEvidence => ({
+            kind: site.how === "import" ? "ast" : "manifest",
+            file: site.file,
+            range: site.range,
+            summary: describeSite(appRoot, site),
+          })),
         ],
       },
     );
@@ -769,15 +767,13 @@ function localLayers(
       sharedDir: absolute(appRoot, sharedDir ?? "shared"),
     },
     // Their srcDir is unknown without the manifest, so their files are neither scanned nor reported.
-    ...[...extended, ...autoRegistered].map(
-      (root): Layer => ({
-        root,
-        srcDirFrom: "layout",
-        serverDir: join(root, "server"),
-        publicDir: join(root, "public"),
-        sharedDir: join(root, "shared"),
-      }),
-    ),
+    ...[...extended, ...autoRegistered].map((root): Layer => ({
+      root,
+      srcDirFrom: "layout",
+      serverDir: join(root, "server"),
+      publicDir: join(root, "public"),
+      sharedDir: join(root, "shared"),
+    })),
   ];
 }
 
