@@ -269,10 +269,11 @@ describe("pinia rule pack", () => {
     expect(piniaRulePack.name).toBe("vite-doctor/pinia");
     expect(piniaRulePack.activation).toEqual({ packages: ["pinia", "@pinia/nuxt"] });
     expect(piniaRulePack.presets.recommended).not.toContain(storeNameMatchesId.meta.id);
-    expect(piniaRulePack.presets).toEqual({
-      recommended: ["pinia/stores/unique-store-id"],
-      strict: ["pinia/stores/unique-store-id", "pinia/stores/store-name-matches-id"],
-    });
+    expect(piniaRulePack.presets.recommended).toEqual(["pinia/stores/unique-store-id"]);
+    expect(piniaRulePack.presets.strict?.toSorted()).toEqual([
+      "pinia/stores/store-name-matches-id",
+      "pinia/stores/unique-store-id",
+    ]);
   });
 
   test("runs through the Vite Doctor distribution only for Pinia projects", async () => {

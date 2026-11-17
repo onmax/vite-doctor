@@ -19,6 +19,13 @@ beforeEach(() => {
 
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
+// Input ids are opaque to callers, so expectations come from a frame that read the same path.
+function inputsOf(inputs: RuleInputs, read: (fs: ReturnType<RuleInputs["frame"]>["fs"]) => void) {
+  const frame = inputs.frame();
+  read(frame.fs);
+  return frame.readInputs();
+}
+
 test("ctx.fs records every read as a Rule input of the reading frame", () => {
   const inputs = new RuleInputs(root);
   const frame = inputs.frame();
@@ -30,26 +37,26 @@ test("ctx.fs records every read as a Rule input of the reading frame", () => {
   expect(frame.fs.readDir("src")?.map((entry) => entry.name)).toContain("nested");
   expect(frame.fs.realpath("src")).toBe(join(root, "src"));
 
-  expect(frame.readInputs()).toEqual([
-    `t:${join(root, "package.json")}`,
-    `t:${join(root, "missing.ts")}`,
-    `e:${join(root, "src")}`,
-    `e:${join(root, "src/a.ts")}`,
-    `d:${join(root, "src")}`,
-    `r:${join(root, "src")}`,
-  ]);
+  const recorded = frame.readInputs();
+  expect(recorded).toEqual(
+    ["package.json", "missing.ts", "src", "src/a.ts", "src", "src"].map((path) =>
+      expect.stringContaining(join(root, path)),
+    ),
+  );
+  expect(new Set(recorded).size).toBe(recorded.length);
   expect(inputs.frame().readInputs()).toEqual([]);
 });
 
 test("reading a file size records the size as its own Rule input", () => {
   const frame = new RuleInputs(root).frame();
   const stat = frame.fs.stat("src/a.ts")!;
-  expect(frame.readInputs()).toEqual([`e:${join(root, "src/a.ts")}`]);
+  const [entry] = frame.readInputs();
+  expect(frame.readInputs()).toEqual([entry]);
   expect(stat.size).toBe("export const a = 1;\n".length);
-  expect(frame.readInputs()).toEqual([
-    `e:${join(root, "src/a.ts")}`,
-    `z:${join(root, "src/a.ts")}`,
-  ]);
+  const [, size] = frame.readInputs();
+  expect(frame.readInputs()).toEqual([entry, size]);
+  expect(size).not.toBe(entry);
+  expect(size).toContain(join(root, "src/a.ts"));
 });
 
 test("one Doctor Run answers each read once", () => {
@@ -75,7 +82,9 @@ test("glob resolves matches and records its pattern", () => {
     join(root, "src/a.ts"),
     join(root, "src/nested/b.ts"),
   ]);
-  expect(frame.readInputs()).toEqual([`g:${root}\0src/**/*.ts\0**/deep/**`]);
+  const recorded = frame.readInputs();
+  expect(recorded).toHaveLength(1);
+  expect(recorded[0]).toContain(`${root}\0src/**/*.ts\0**/deep/**`);
 });
 
 test("remembered values carry the inputs read to compute them", () => {
@@ -91,13 +100,17 @@ test("remembered values carry the inputs read to compute them", () => {
 
   const reader = inputs.frame();
   expect(reader.cache.get("inner")).toBe("c");
-  expect(reader.readInputs()).toEqual([`t:${join(root, "src/nested/deep/c.ts")}`]);
+  expect(reader.readInputs()).toEqual(
+    inputsOf(inputs, (fs) => fs.readText("src/nested/deep/c.ts")),
+  );
   const other = inputs.frame();
   expect(other.cache.get("names")).toEqual(["b", "c"]);
-  expect(other.readInputs()).toEqual([
-    `t:${join(root, "src/nested/b.ts")}`,
-    `t:${join(root, "src/nested/deep/c.ts")}`,
-  ]);
+  expect(other.readInputs()).toEqual(
+    inputsOf(inputs, (fs) => {
+      fs.readText("src/nested/b.ts");
+      fs.readText("src/nested/deep/c.ts");
+    }),
+  );
 });
 
 test("cache sets without a pending miss do not replace remembered inputs", () => {
@@ -114,7 +127,7 @@ test("cache sets without a pending miss do not replace remembered inputs", () =>
 
   const next = inputs.frame();
   expect(next.cache.get("value")).toBe("first");
-  expect(next.readInputs()).toEqual([`t:${join(root, "src/a.ts")}`]);
+  expect(next.readInputs()).toEqual(inputsOf(inputs, (fs) => fs.readText("src/a.ts")));
 });
 
 test("scoped frames keep remembered values apart", () => {

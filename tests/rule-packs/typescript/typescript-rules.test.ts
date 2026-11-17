@@ -31,8 +31,8 @@ describe("TypeScript rule pack", () => {
   test("exports conservative recommended and opt-in strict presets", () => {
     expect(typescriptRulePack.name).toBe("vite-doctor/typescript");
     expect(typescriptRulePack.activation).toEqual({ languages: ["typescript"] });
-    expect(typescriptRulePack.presets.recommended).toEqual(
-      recommendedRules.map((rule) => rule.meta.id),
+    expect(typescriptRulePack.presets.recommended.toSorted()).toEqual(
+      recommendedRules.map((rule) => rule.meta.id).toSorted(),
     );
     expect(typescriptRulePack.presets.strict).toEqual(
       expect.arrayContaining([

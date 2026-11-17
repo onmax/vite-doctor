@@ -129,17 +129,17 @@ test("shadcn Rules share one ESLint verify per file when they run file by file",
 
 test("uses Tailwind package activation and composed presets", () => {
   expect(shadcnRulePack.activation).toEqual({ packages: ["tailwindcss"] });
-  expect(shadcnRulePack.presets.recommended).toEqual([
-    "shadcn/no-raw-colors",
+  expect(shadcnRulePack.presets.recommended.toSorted()).toEqual([
     "shadcn/no-arbitrary-values",
     "shadcn/no-inline-styles",
+    "shadcn/no-raw-colors",
   ]);
-  expect(shadcnRulePack.presets.strict).toEqual([
-    "shadcn/no-restyle",
-    "shadcn/no-raw-colors",
+  expect(shadcnRulePack.presets.strict?.toSorted()).toEqual([
     "shadcn/no-arbitrary-values",
     "shadcn/no-inline-styles",
-    "shadcn/require-static-classes",
+    "shadcn/no-raw-colors",
+    "shadcn/no-restyle",
     "shadcn/no-unknown-classes",
+    "shadcn/require-static-classes",
   ]);
 });

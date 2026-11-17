@@ -364,17 +364,19 @@ describe("MCP tool names", () => {
 describe("MCP Rule Pack", () => {
   test("activates on MCP server libraries with every Rule recommended", () => {
     expect(mcpRulePack.name).toBe("vite-doctor/mcp");
-    expect(mcpRulePack.activation).toEqual({
-      packages: [
-        "h3-mcp",
-        "okmcp",
-        "nitro-mcp-toolkit",
-        "@nuxtjs/mcp-toolkit",
-        "@modelcontextprotocol/sdk",
-        "@modelcontextprotocol/server",
-      ],
-    });
-    expect(mcpRulePack.presets.recommended).toEqual(rules.map((rule) => rule.meta.id));
+    expect(mcpRulePack.activation).toEqual({ packages: expect.any(Array) });
+    const { packages } = mcpRulePack.activation || {};
+    expect(packages?.toSorted()).toEqual([
+      "@modelcontextprotocol/sdk",
+      "@modelcontextprotocol/server",
+      "@nuxtjs/mcp-toolkit",
+      "h3-mcp",
+      "nitro-mcp-toolkit",
+      "okmcp",
+    ]);
+    expect(mcpRulePack.presets.recommended.toSorted()).toEqual(
+      rules.map((rule) => rule.meta.id).toSorted(),
+    );
   });
 
   test("runs through the Vite Doctor distribution only for MCP projects", async () => {

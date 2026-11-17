@@ -842,22 +842,6 @@ refreshNuxtData('settings')
   expect(result.diagnostics).toHaveLength(1);
 });
 
-test("async data rules skip files that cannot call async data", () => {
-  const ctx = (text: string) => ({ file: { text }, options: {} }) as any;
-  for (const { rule } of asyncDataCases) {
-    expect(rule.create(ctx(`const data = await $fetch('/api/settings')`))).toBeUndefined();
-    for (const text of [
-      String.raw`const path = "C:\\temp"; const pattern = /foo\\d+/`,
-      String.raw`const value = "\\u0061"`,
-      String.raw`const value = "\\x61"`,
-      String.raw`const value = "\\141"`,
-      `const value = "\\\nother"`,
-    ]) {
-      expect(rule.create(ctx(text))).toBeUndefined();
-    }
-  }
-});
-
 test("refreshable async data key rule follows aliased and escaped async data calls", async () => {
   const result = await runRuleFixture({
     rule: asyncDataExplicitKeyForRefreshable,

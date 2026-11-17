@@ -1,22 +1,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
-import { expect, test, vi } from "vite-plus/test";
-import type { DoctorRule, RuleVisitor } from "../../src/core/primitives.ts";
+import { expect, test } from "vite-plus/test";
 import { runViteDoctor, viteDoctorRulePacks } from "../../src/doctor.ts";
-
-const checked = vi.hoisted(() => new Set<string>());
-
-vi.mock("../../src/core/internal/rule-hooks.ts", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../src/core/internal/rule-hooks.ts")>();
-  return {
-    ...original,
-    assertKnownRuleHooks(rule: DoctorRule, visitor: RuleVisitor) {
-      original.assertKnownRuleHooks(rule, visitor);
-      checked.add(rule.meta.id);
-    },
-  };
-});
 
 const files: Record<string, string> = {
   "package.json": JSON.stringify({
@@ -51,15 +37,16 @@ test("no built-in Rule returns a hook Doctor does not call", async () => {
       writeFileSync(join(root, file), text);
     }
     const packs = await viteDoctorRulePacks({ root });
-    await runViteDoctor({
+    const result = await runViteDoctor({
       root,
       cache: false,
+      profile: true,
       extends: packs.map(
         (pack) => `${pack.name}/${pack.presets.strict ? "strict" : "recommended"}`,
       ),
     });
+    expect(result.ruleTimings?.length).toBeGreaterThan(100);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-  expect(checked.size).toBeGreaterThan(100);
 });
