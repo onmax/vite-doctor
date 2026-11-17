@@ -2,7 +2,7 @@
 
 This is the repository for Doctor, published as `vite-doctor`: framework-aware diagnostics for Vue, Vite, Nitro, Nuxt, and the projects around them. Doctor finds what a generic linter can't see and reports it in a form an agent can fix.
 
-Start with `CONTEXT.md` for vocabulary, then read the relevant ADRs in `.agents/adr/` before touching architecture, diagnosis, surface design, issue generation, or broad refactors.
+Start with `CONTEXT.md` for vocabulary before touching architecture, diagnosis, surface design, issue generation, or broad refactors.
 
 ## Current status
 
@@ -33,7 +33,7 @@ Should Doctor report an exposed env variable with the file, range, Diagnostic Co
 
 ### Fight for the obvious surface
 
-The obvious solution is whatever an agent would assume without reading the docs. If an agent would reasonably expect a report field, flag, or config option to work a certain way, make that true unless it conflicts with an ADR. Push back on us when you see a more obvious way.
+The obvious solution is whatever an agent would assume without reading the docs. If an agent would reasonably expect a report field, flag, or config option to work a certain way, make that true unless it breaks the rules below. Push back on us when you see a more obvious way.
 
 Plugin Surfaces are first-class, not thin CLI wrappers. Doctor config should feel native in `vite.config.ts`, `nuxt.config.ts`, and future host configs while still feeding the same Doctor Run. Developers should never need to know about internal workspace packages, the Nuxt bridge, or Doctor Extension plumbing to get normal usage working.
 
@@ -50,9 +50,9 @@ These are defaults, not laws. If you think one should be ignored, say so loudly 
 - keep framework details behind Doctor language unless the framework boundary is the work;
 - treat downstream workarounds as possible Doctor gaps unless they are clearly app-specific;
 - executable config is a trust boundary: loading `doctor.config.*` stays explicit on the CLI, while host configs are already trusted and can pass Doctor config in memory;
-- prefer existing libraries and modern tools when they fit; use AI tooling freely, but review the result against the ADRs;
+- prefer existing libraries and modern tools when they fit; use AI tooling freely, but review the result against `CONTEXT.md` and these rules;
 - prefer inspectable artifacts (code, tests, reports, CLI output, manifests) over dashboards and hidden state;
-- if a task contradicts an ADR, say so before changing the model;
+- if a task contradicts `CONTEXT.md` or these rules, say so before changing the model;
 - comments are rare and explain why, never what.
 
 ## Working here

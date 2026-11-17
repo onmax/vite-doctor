@@ -11,6 +11,7 @@ export const preferSeoComposables = createRule({
     title: "Use Nuxt SEO composables for metadata",
     category: "seo",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-seo-meta#usage",
     requires: { script: true, nuxt: true },

@@ -21,6 +21,7 @@ export const noClientComposablesInServer = createRule({
     recommendedReplacement: "Use event-aware Nitro utilities in server handlers.",
     category: "server",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nitro.build/guide/routing#request-handler",
     requires: { script: true, nitro: true },

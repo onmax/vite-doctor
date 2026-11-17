@@ -7,6 +7,7 @@ export const noNestedSharedAutoimportAssumption = createRule({
     title: "Only shared utils and types are auto-imported",
     category: "imports",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/directory-structure/shared#usage",
     requires: { nuxt: true },

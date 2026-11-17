@@ -8,6 +8,7 @@ export const preferUseHeadSafeForUntrustedValues = createRule({
     title: "Use useHeadSafe for untrusted head values",
     category: "security",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-head-safe#usage",
     requires: { script: true, nuxt: true },

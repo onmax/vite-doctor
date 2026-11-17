@@ -11,6 +11,7 @@ export const noNavigateToInNitro = createRule({
       "Return the redirect response supported by the installed H3 runtime from the Nitro handler.",
     category: "server",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     requires: { script: true, nitro: true },
     prefilter: { calls: ["navigateTo"] },

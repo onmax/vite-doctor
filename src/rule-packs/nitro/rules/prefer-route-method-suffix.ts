@@ -38,6 +38,7 @@ export const preferRouteMethodSuffix = createRule({
     ],
     category: "request",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nitro.build/docs/routing#specific-request-method",
     requires: { script: true, nitro: true },

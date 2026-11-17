@@ -13,6 +13,7 @@ export const noRemovedH3Send = createRule({
       "Return the response value from the handler, or throw an HTTPError for an error response.",
     category: "migration",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/migration",
     requires: { script: true, nitro: true },

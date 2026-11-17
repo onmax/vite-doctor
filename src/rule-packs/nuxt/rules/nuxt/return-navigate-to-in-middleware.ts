@@ -7,6 +7,7 @@ export const returnNavigateToInMiddleware = createRule({
     title: "Return navigateTo in route middleware",
     category: "routing",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/utils/navigate-to#within-route-middleware",
     requires: { script: true, nuxt: true },

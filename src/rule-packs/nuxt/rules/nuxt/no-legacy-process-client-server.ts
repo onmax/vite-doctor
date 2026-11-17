@@ -10,6 +10,7 @@ export const noLegacyProcessClientServer = createRule({
     title: "Use import.meta client/server flags",
     category: "context",
     severity: "warn",
+    confidence: "proven",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/advanced/import-meta#runtime-app-properties",
     requires: { script: true, nuxt: true },

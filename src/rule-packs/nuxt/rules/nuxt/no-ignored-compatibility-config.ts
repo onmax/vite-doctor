@@ -11,6 +11,7 @@ export const noIgnoredCompatibilityConfig = createRule({
       "Remove unhead.legacy and experimental.parseErrorData, then update code for the Nuxt 5 behavior.",
     category: "migration",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/getting-started/upgrade",
     requires: { script: true, nuxt: true },

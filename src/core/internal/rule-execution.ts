@@ -26,13 +26,7 @@ import {
   runHealthRules,
   runStructuralGraphRules,
 } from "./workspace-graph.js";
-import {
-  createDiagnosticFingerprint,
-  defaultConfidenceForPhase,
-  evidenceKindForPhase,
-  normalizeDiagnostic,
-  sourceTextFor,
-} from "./diagnostics.js";
+import { createDiagnosticFingerprint, normalizeDiagnostic, sourceTextFor } from "./diagnostics.js";
 import {
   markSession,
   recordRuleTiming,
@@ -396,10 +390,7 @@ function createRuleRun(
       const next = {
         ...input,
         severity,
-        confidence: input.confidence ?? defaultConfidenceForPhase(phase),
-        evidence: input.evidence ?? [
-          { kind: evidenceKindForPhase(phase), summary: `${phase} analysis` },
-        ],
+        confidence: input.confidence ?? rule.meta.confidence,
         analysisPhase: input.analysisPhase ?? phase,
         fingerprint:
           input.fingerprint ??

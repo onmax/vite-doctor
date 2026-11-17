@@ -8,6 +8,7 @@ export const noRequiredPropWithDefault = createEslintVueRule({
     title: "Do not give required props a default",
     category: "props",
     severity: "warn",
+    confidence: "proven",
     docsUrl: "https://vuejs.org/guide/components/props.html#prop-validation",
     requires: { script: true, vue: true },
   },

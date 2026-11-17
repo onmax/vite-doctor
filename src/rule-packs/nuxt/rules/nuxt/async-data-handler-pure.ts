@@ -14,6 +14,7 @@ export const asyncDataHandlerPure = createRule({
     title: "Keep async data handlers replay-safe",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-async-data#params",
     requires: { script: true, nuxt: true },
@@ -44,6 +45,7 @@ export const asyncDataHandlerPure = createRule({
               ? "This async-data handler performs a mutating $fetch() request that can replay."
               : "This async-data handler performs a side effect that can replay.",
             "Return data from the handler. Move effects to explicit event handlers, callOnce(), or guarded watchers.",
+            effect.confidence === "proven-write" ? "heuristic-high" : undefined,
           );
           break;
         }

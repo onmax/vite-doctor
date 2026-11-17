@@ -21,6 +21,7 @@ export const storeNameMatchesId = createRule({
     ],
     category: "stores",
     severity: "info",
+    confidence: "proven",
     fixable: false,
     diagnosticCodes: ["PINIA0002"],
     docsUrl: "https://pinia.vuejs.org/core-concepts/#Defining-a-Store",

@@ -7,6 +7,7 @@ export const noNonSerializableUseState = createRule({
     title: "useState values must be serializable",
     category: "hydration",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-state#usage",
     requires: { script: true, nuxt: true },

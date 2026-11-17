@@ -41,6 +41,7 @@ export const preferServerUtils = createRule({
     title: "Keep Nitro server helpers in server/utils",
     category: "imports",
     severity: "info",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     diagnosticCodes: ["NITRO0021", "NITRO0022"],
     docsUrl: "https://nuxt.com/docs/4.x/guide/directory-structure/server#server-utilities",

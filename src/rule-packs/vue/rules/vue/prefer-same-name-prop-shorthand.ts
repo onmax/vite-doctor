@@ -28,6 +28,7 @@ export const preferSameNamePropShorthand = createRule({
     ],
     category: "template",
     severity: "info",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/essentials/template-syntax.html#same-name-shorthand",
     requires: { template: true, vue: true },

@@ -12,6 +12,7 @@ export const noProcessEnvInServer = createRule({
       "Declare the setting in runtimeConfig and read it with useRuntimeConfig(); override it with NUXT_<KEY> or NITRO_<KEY> at runtime.",
     category: "runtime-config",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nitro.build/guide/configuration#runtime-configuration",
     requires: { script: true, nitro: true },

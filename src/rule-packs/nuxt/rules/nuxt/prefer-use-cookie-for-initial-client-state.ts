@@ -6,6 +6,7 @@ export const preferUseCookieForInitialClientState = createRule({
     title: "Use useCookie for SSR-visible browser preference state",
     category: "hydration",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-cookie#basic-usage",
     requires: { script: true, nuxt: true },

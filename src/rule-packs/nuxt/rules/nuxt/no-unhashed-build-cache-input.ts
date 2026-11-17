@@ -110,6 +110,7 @@ export const noUnhashedBuildCacheInput = createRule({
     title: "Keep Vue build inputs inside the Nuxt build cache key",
     category: "cache",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/going-further/experimental-features#buildcache",
     execution: "workspace",

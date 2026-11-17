@@ -6,6 +6,7 @@ export const preferUseIdForStableIds = createRule({
     title: "Use useId for SSR-stable ids",
     category: "ssr",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/composition-api-helpers.html#useid",
     requires: { script: true, vue: true },

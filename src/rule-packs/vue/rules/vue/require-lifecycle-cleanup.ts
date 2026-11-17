@@ -7,6 +7,7 @@ export const requireLifecycleCleanup = createRule({
     title: "Clean up lifecycle resources",
     category: "lifecycle",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     requires: { script: true, vue: true },
   },

@@ -7,6 +7,7 @@ export const requireWatcherCleanup = createRule({
     title: "Clean up watcher side effects",
     category: "watchers",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/essentials/watchers.html#side-effect-cleanup",
     requires: { script: true, vue: true },

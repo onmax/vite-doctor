@@ -6,6 +6,7 @@ export const restrictVHtml = createRule({
     title: "Restrict v-html to trusted HTML",
     category: "security",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/best-practices/security.html#html-injection",
     requires: { template: true, vue: true },
