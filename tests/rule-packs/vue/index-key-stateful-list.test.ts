@@ -320,3 +320,33 @@ test.each([
     await fixture.dispose();
   }
 });
+
+test.each([12, 20])("bounds stateless slot lookups at depth %i", async (depth) => {
+  let lookups = 0;
+  const rule = {
+    ...noIndexKeyOnStatefulList,
+    create(ctx: Parameters<typeof noIndexKeyOnStatefulList.create>[0]) {
+      return noIndexKeyOnStatefulList.create({
+        ...ctx,
+        cache: {
+          ...ctx.cache,
+          get<T>(key: string) {
+            if (key.startsWith("vue/component-state:")) lookups++;
+            return ctx.cache.get<T>(key);
+          },
+        },
+      });
+    },
+  };
+  const result = await project.run({
+    rule,
+    files: {
+      "app.vue": sfc(
+        `<Line v-for="(line, i) in lines" :key="i">${"<Line>".repeat(depth)}<span />${"</Line>".repeat(depth)}</Line>`,
+        "import Line from './components/Line.vue'; const lines = ref([])",
+      ),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+  expect(lookups).toBe(depth + 1);
+});

@@ -164,7 +164,11 @@ function statefulReason(
   return ownStatefulReason(ctx, element);
 }
 
-function ownStatefulReason(ctx: RuleContext, element: TemplateElementNode): Stateful | null {
+function ownStatefulReason(
+  ctx: RuleContext,
+  element: TemplateElementNode,
+  inspectSlots = true,
+): Stateful | null {
   const tag = element.tag;
   if (findTemplateDirective(element, "model")) return { reason: "model", tag };
   if (element.tagType === 0) return isStatefulControl(element) ? { reason: "control", tag } : null;
@@ -182,10 +186,13 @@ function ownStatefulReason(ctx: RuleContext, element: TemplateElementNode): Stat
   }
   const state = componentState(ctx, file);
   let slotState: Stateful | null = null;
-  walkTemplate(element, (node) => {
-    if (slotState || node === element || node.type !== TemplateNodeType.ELEMENT) return;
-    slotState = ownStatefulReason(ctx, node);
-  });
+  if (inspectSlots) {
+    // The walker already visits all descendants; each callback only classifies its own element.
+    walkTemplate(element, (node) => {
+      if (slotState || node === element || node.type !== TemplateNodeType.ELEMENT) return;
+      slotState = ownStatefulReason(ctx, node, false);
+    });
+  }
   if (slotState) return slotState;
   if (state.kind === "stateless") return null;
   const name = file.split("/").pop()!;
