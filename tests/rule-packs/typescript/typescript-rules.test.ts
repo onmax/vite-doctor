@@ -454,6 +454,44 @@ console.log(scalar, names, labels, user, token, manifest, fake, read)`,
     expect(result.diagnostics.map((item) => item.range?.line)).toEqual([4, 5, 6, 7, 8, 9, 10, 12]);
   });
 
+  test("preserves alias constraints, lexical bindings, recursion and promise contracts", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import type { Nullable, Mixed } from "./aliases"
+type Raw = unknown[] | { id: string }
+type Maybe = unknown[] | null | undefined
+type Nested = Nested[]
+type Tree = { [key: string]: Tree }
+type Payload = unknown
+type Record<K extends string, V> = { id: string; value: V }
+const a = JSON.parse(text) as Raw
+const b = JSON.parse(text) as Maybe
+const c = JSON.parse(text) as Nested
+const d = JSON.parse(text) as Tree
+function parse<Payload>(text: string): Payload { return JSON.parse(text) }
+const e = JSON.parse(text) as Record<string, unknown>
+function sync(text: string): Promise<unknown> { return JSON.parse(text) }
+const arrow = (text: string): Promise<unknown> => JSON.parse(text)
+function fetchBody(response: Response): Promise<unknown> { return response.json() }
+async function asyncBody(text: string): Promise<unknown> { return JSON.parse(text) }
+const f = JSON.parse(text) as Nullable
+const g = JSON.parse(text) as Mixed
+function local() {
+  type Payload = { id: string }
+  return JSON.parse(text) as Payload
+}
+console.log(a, b, c, d, e, f, g, parse, sync, arrow, fetchBody, asyncBody, local)`,
+        "src/aliases.ts": `export type Nullable = unknown[] | null
+export type Mixed = unknown[] | { id: string }`,
+      },
+    });
+    expect(result.diagnostics.map((item) => item.range?.line)).toEqual([
+      8, 10, 11, 12, 13, 14, 15, 19, 22,
+    ]);
+  });
+
   test("names the source and the declared type in the message", async () => {
     const result = await runProjectFixture({
       framework: "vite",

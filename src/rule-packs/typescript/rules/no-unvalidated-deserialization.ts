@@ -65,12 +65,18 @@ export const noUnvalidatedDeserialization = createRule({
       TSTypeAssertion: visitAssertion,
       ReturnStatement(node: AnyNode) {
         if (!node.argument || isTypeAssertion(node.argument)) return;
-        const claim = declaredReturnType(containingFunction(node));
+        const claim = declaredReturnType(
+          containingFunction(node),
+          untrustedSource(ctx, evidence, node.argument)?.label.endsWith(".json()") === true,
+        );
         if (claim) checkClaim(node.argument, claim);
       },
       ArrowFunctionExpression(node: AnyNode) {
         if (node.body?.type === "BlockStatement" || isTypeAssertion(node.body)) return;
-        const claim = declaredReturnType(node);
+        const claim = declaredReturnType(
+          node,
+          untrustedSource(ctx, evidence, node.body)?.label.endsWith(".json()") === true,
+        );
         if (claim) checkClaim(node.body, claim);
       },
       PropertyDefinition(node: AnyNode) {
@@ -236,10 +242,11 @@ function containingFunction(node: AnyNode): AnyNode {
   return null;
 }
 
-function declaredReturnType(node: AnyNode): AnyNode {
+function declaredReturnType(node: AnyNode, fetchPromise: boolean): AnyNode {
   let annotation = node?.returnType?.typeAnnotation;
   // `async` bodies and `.json()` both resolve the Promise, so the claim is about its contents.
   if (
+    (node?.async || fetchPromise) &&
     annotation?.type === "TSTypeReference" &&
     annotation.typeName?.type === "Identifier" &&
     annotation.typeName.name === "Promise" &&

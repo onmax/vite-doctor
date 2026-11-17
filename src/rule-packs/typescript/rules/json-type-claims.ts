@@ -7,6 +7,7 @@ type JsonKind = "null" | "boolean" | "number" | "string" | "array" | "object";
 export type TypeScope = {
   file: string;
   aliases: Map<string, AnyNode>;
+  blocked: Array<{ name: string; start: number; end: number }>;
   imports: Map<string, { source: string; name: string }>;
   reexports: Array<{ source: string; names?: Map<string, string> }>;
 };
@@ -34,27 +35,55 @@ const maxImportDepth = 4;
  */
 export function isHonestJsonType(ctx: RuleContext, scope: TypeScope, type: AnyNode): boolean {
   const resolver = new TypeResolver(ctx);
-  const members = unionMembers(type);
-  return (
-    resolver.isFull(type, scope) ||
-    (members.some((member) => !isNullish(member)) &&
-      members.every(
-        (member) =>
-          isNullish(member) ||
-          resolver.isFull(member, scope) ||
-          resolver.isHonestContainer(member, scope),
-      ))
-  );
+  return resolver.isHonest(type, scope);
 }
 
 /** Whether a type admits both results of `Storage.getItem()`. */
 export function acceptsStorageItem(ctx: RuleContext, scope: TypeScope, type: AnyNode): boolean {
-  const kinds = new TypeResolver(ctx).kinds(type, scope);
+  const kinds = new TypeResolver(ctx).storageKinds(type, scope);
   return kinds.has("string") && kinds.has("null");
 }
 
 export function createTypeScope(file: string, program: AnyNode): TypeScope {
-  const scope: TypeScope = { file, aliases: new Map(), imports: new Map(), reexports: [] };
+  const scope: TypeScope = {
+    file,
+    aliases: new Map(),
+    blocked: [],
+    imports: new Map(),
+    reexports: [],
+  };
+  const walk = (node: AnyNode, region: AnyNode = program) => {
+    if (!node || typeof node !== "object") return;
+    if (node.typeParameters?.params) {
+      for (const parameter of node.typeParameters.params) {
+        scope.blocked.push({
+          name: parameter.name?.name ?? parameter.name,
+          start: node.start,
+          end: node.end,
+        });
+      }
+    }
+    if (
+      [
+        "TSTypeAliasDeclaration",
+        "TSInterfaceDeclaration",
+        "ClassDeclaration",
+        "TSEnumDeclaration",
+        "TSModuleDeclaration",
+      ].includes(node.type)
+    ) {
+      if (region !== program || node.type !== "TSTypeAliasDeclaration" || node.typeParameters) {
+        scope.blocked.push({ name: node.id?.name, start: region.start, end: region.end });
+      }
+    }
+    const next = /Function|BlockStatement|TSModuleBlock/.test(node.type ?? "") ? node : region;
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "parent" || key.startsWith("__")) continue;
+      if (Array.isArray(value)) value.forEach((child) => walk(child, next));
+      else if (value && typeof value === "object") walk(value, next);
+    }
+  };
+  walk(program);
   for (const statement of program?.body ?? []) {
     const declaration =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
@@ -100,17 +129,95 @@ export function createTypeScope(file: string, program: AnyNode): TypeScope {
 
 class TypeResolver {
   private readonly seen = new Set<string>();
+  private readonly assumptions = new Map<string, Set<JsonKind>>();
+  private evaluating = false;
+
+  isHonest(type: AnyNode, scope: TypeScope, seen = new Set<string>()): boolean {
+    if (this.isFull(type, scope)) return true;
+    if (type?.type === "TSParenthesizedType")
+      return this.isHonest(type.typeAnnotation, scope, seen);
+    if (type?.type === "TSTypeOperator")
+      return type.operator === "readonly" && this.isHonest(type.typeAnnotation, scope, seen);
+    if (type?.type === "TSUnionType") {
+      return (
+        type.types.some((member: AnyNode) => !isNullish(member)) &&
+        type.types.every(
+          (member: AnyNode) => isNullish(member) || this.isHonest(member, scope, seen),
+        )
+      );
+    }
+    if (type?.type === "TSTypeReference" && !type.typeArguments?.params?.length) {
+      const name = type.typeName?.name;
+      if (this.isBlocked(type, scope)) return false;
+      const key = `${scope.file}#${name}`;
+      if (seen.has(key)) return false;
+      return this.honestNamed(name, scope, new Set([...seen, key]));
+    }
+    return this.isHonestContainer(type, scope);
+  }
+
+  private honestNamed(name: string, scope: TypeScope, seen: Set<string>): boolean {
+    const alias = scope.aliases.get(name);
+    if (alias) return this.isHonest(alias, scope, seen);
+    const imported = scope.imports.get(name);
+    const follow = (source: string, exported: string): boolean => {
+      if (source === "type-fest") return !!typeFestKinds[exported];
+      const file = resolveModule(this.ctx, scope.file, source);
+      const target = file && readTypeScope(this.ctx, file);
+      const key = `${file}#${exported}`;
+      if (!target || seen.has(key) || seen.size >= maxImportDepth) return false;
+      return this.honestNamed(exported, target, new Set([...seen, key]));
+    };
+    if (imported) return follow(imported.source, imported.name);
+    for (const reexport of scope.reexports) {
+      const exported = reexport.names ? reexport.names.get(name) : name;
+      if (exported && follow(reexport.source, exported)) return true;
+    }
+    return false;
+  }
+
+  private isBlocked(type: AnyNode, scope: TypeScope): boolean {
+    return scope.blocked.some(
+      (binding) =>
+        binding.name === type.typeName?.name &&
+        type.start >= binding.start &&
+        type.end <= binding.end,
+    );
+  }
 
   constructor(private readonly ctx: RuleContext) {}
 
   isFull(type: AnyNode, scope: TypeScope): boolean {
-    const kinds = this.kinds(type, scope);
+    const kinds = this.coverage(type, scope);
     return allKinds.every((kind) => kinds.has(kind));
   }
 
   isHonestContainer(type: AnyNode, scope: TypeScope): boolean {
     const kinds = this.kinds(type, scope);
     return kinds.size > 0 && [...kinds].every((kind) => kind === "array" || kind === "object");
+  }
+
+  storageKinds(type: AnyNode, scope: TypeScope): Set<JsonKind> {
+    return this.coverage(type, scope);
+  }
+
+  private coverage(type: AnyNode, scope: TypeScope): Set<JsonKind> {
+    if (this.evaluating) return this.kinds(type, scope);
+    // A recursive back-edge is provisional until all reachable aliases stop losing kinds.
+    this.evaluating = true;
+    try {
+      let previous = "";
+      for (;;) {
+        const result = this.kinds(type, scope);
+        const state = JSON.stringify(
+          [...this.assumptions].map(([key, kinds]) => [key, [...kinds]]),
+        );
+        if (state === previous) return result;
+        previous = state;
+      }
+    } finally {
+      this.evaluating = false;
+    }
   }
 
   /** The JSON kinds a type accepts whole, where containers count only with honest contents. */
@@ -161,6 +268,7 @@ class TypeResolver {
   private referenceKinds(type: AnyNode, scope: TypeScope): Set<JsonKind> {
     if (type.typeName?.type !== "Identifier") return new Set();
     const name = type.typeName.name;
+    if (this.isBlocked(type, scope)) return new Set();
     const params = type.typeArguments?.params ?? [];
     if (!scope.aliases.has(name) && !scope.imports.has(name)) {
       if ((name === "Array" || name === "ReadonlyArray") && params.length === 1) {
@@ -178,13 +286,15 @@ class TypeResolver {
 
   private namedKinds(name: string, scope: TypeScope, depth: number): Set<JsonKind> {
     const key = `${scope.file}#${name}`;
-    // A recursive alias such as `type Json = ... | Json[]` holds when every other member does.
-    if (this.seen.has(key)) return new Set(allKinds);
+    // Start recursive obligations at full coverage, then descend to a stable solution.
+    if (this.seen.has(key)) return this.assumptions.get(key) ?? new Set(allKinds);
     const alias = scope.aliases.get(name);
     if (alias) {
       this.seen.add(key);
       try {
-        return this.kinds(alias, scope);
+        const result = this.kinds(alias, scope);
+        this.assumptions.set(key, result);
+        return result;
       } finally {
         this.seen.delete(key);
       }
@@ -212,11 +322,6 @@ class TypeResolver {
     const scope = file && readTypeScope(this.ctx, file);
     return scope ? this.namedKinds(name, scope, depth + 1) : new Set();
   }
-}
-
-function unionMembers(type: AnyNode): AnyNode[] {
-  if (type?.type === "TSParenthesizedType") return unionMembers(type.typeAnnotation);
-  return type?.type === "TSUnionType" ? type.types.flatMap(unionMembers) : [type];
 }
 
 function isNullish(type: AnyNode): boolean {
