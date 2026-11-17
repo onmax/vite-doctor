@@ -30,9 +30,31 @@ export interface PackageReference {
   packageName: string;
   typeReference: boolean;
   kind: "runtime" | "types";
+  /** Loaded unconditionally by the default entrypoint. */
   required: boolean;
+  /** Set for `import()`: whether a `try` in the same function or a `.catch()` handles a missing package. */
+  dynamic?: { handlesAbsence: boolean };
+  /** Export subpaths whose JavaScript import graph reaches this reference, once per entry and requiredness. */
+  reaches: EntryReach[];
   file: string;
   range: SourceRange;
+}
+
+/** One import in a chain; `previous` leads back to the entry file. */
+export interface ImportHop {
+  file: string;
+  line: number;
+  specifier: string;
+  previous?: ImportHop;
+}
+
+export interface EntryReach {
+  /** Export subpath such as "." or "./cache"; `main`, `module`, and `browser` count as ".". */
+  entry: string;
+  /** Loading the entry loads the reference unconditionally. */
+  required: boolean;
+  /** The import of the reference itself. */
+  via: ImportHop;
 }
 
 export interface PackageArtifacts {
@@ -41,6 +63,24 @@ export interface PackageArtifacts {
   manifest: PackageManifest;
   references: PackageReference[];
   missing: string[];
+}
+
+export const defaultEntry = ".";
+
+export function importChain(hop: ImportHop): ImportHop[] {
+  const chain: ImportHop[] = [];
+  for (let current: ImportHop | undefined = hop; current; current = current.previous)
+    chain.unshift(current);
+  return chain;
+}
+
+function mergeReaches(left: EntryReach[], right: EntryReach[]): EntryReach[] {
+  const merged = new Map<string, EntryReach>();
+  for (const reach of [...left, ...right]) {
+    const key = `${reach.entry}\0${reach.required}`;
+    if (!merged.has(key)) merged.set(key, reach);
+  }
+  return [...merged.values()];
 }
 
 interface ImportEdge {
@@ -52,6 +92,12 @@ interface ImportEdge {
   typeReference?: boolean;
   probe?: boolean | "commonjs";
   resolutionOnly?: boolean;
+  dynamic?: { handlesAbsence: boolean };
+}
+
+interface Origin {
+  entry?: string;
+  via?: ImportHop;
 }
 
 const scriptExtension = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/;
@@ -136,6 +182,56 @@ export function packageArtifacts(ctx: RuleContext): PackageArtifacts[] {
   return inventory;
 }
 
+/**
+ * Artifacts of the package that Node resolves for `name` from `fromFile`, read once per Doctor Run.
+ * Undefined when the package is not installed, is private, or has no package.json.
+ */
+export function installedPackageArtifacts(
+  ctx: RuleContext,
+  name: string,
+  fromFile: string,
+): PackageArtifacts | undefined {
+  let packageRoot: string | undefined;
+  for (let directory = dirname(fromFile); ; directory = dirname(directory)) {
+    const candidate = resolve(directory, "node_modules", name);
+    if (ctx.fs.exists(resolve(candidate, "package.json"))) {
+      packageRoot = ctx.fs.realpath(candidate) ?? candidate;
+      break;
+    }
+    if (dirname(directory) === directory) return undefined;
+  }
+  const key = `package:installed:${packageRoot}`;
+  const cached = ctx.cache.get<PackageArtifacts | null>(key);
+  if (cached !== undefined) return cached ?? undefined;
+  const artifacts =
+    packageArtifacts(ctx).find((item) => item.root === packageRoot) ??
+    readPackageArtifacts(packageRoot, ctx.fs);
+  ctx.cache.set(key, artifacts);
+  return artifacts ?? undefined;
+}
+
+/**
+ * The entry that a package subpath such as "./kv" selects: the subpath itself when an exact key or
+ * a pattern key such as "./drivers/*" exports it, matching the entries artifacts record.
+ */
+export function matchExportKey(manifest: PackageManifest, subpath: string): string | undefined {
+  const exports = manifest.exports;
+  if (!isRecord(exports) || !Object.keys(exports).some((key) => key.startsWith("."))) return;
+  if (subpath.includes("*")) return;
+  if (Object.hasOwn(exports, subpath)) return subpath;
+  const exported = Object.keys(exports).some((key) => {
+    const star = key.indexOf("*");
+    return (
+      star >= 0 &&
+      star === key.lastIndexOf("*") &&
+      subpath.length >= key.length &&
+      subpath.startsWith(key.slice(0, star)) &&
+      subpath.endsWith(key.slice(star + 1))
+    );
+  });
+  return exported ? subpath : undefined;
+}
+
 export function readPackageArtifacts(
   root: string,
   fs: RuleFileSystem = new RuleInputs(root).frame().fs,
@@ -143,25 +239,33 @@ export function readPackageArtifacts(
   const active = readPackageArtifactsForMode(fs, root, true);
   if (!active) return null;
   const inactive = readPackageArtifactsForMode(fs, root, false)!;
-  const requiredInActive = new Set(
-    active.references
-      .filter((reference) => reference.required)
-      .map((reference) => reference.packageName),
-  );
+  // A peer is required by an entry only when both node-addons selections load it.
+  const requiredKeys = (artifacts: PackageArtifacts) =>
+    new Set(
+      artifacts.references.flatMap((reference) =>
+        reference.reaches
+          .filter((reach) => reach.required)
+          .map((reach) => `${reach.entry}\0${reference.packageName}`),
+      ),
+    );
+  const requiredInActive = requiredKeys(active);
   const requiredInBoth = new Set(
-    inactive.references
-      .filter((reference) => reference.required && requiredInActive.has(reference.packageName))
-      .map((reference) => reference.packageName),
+    [...requiredKeys(inactive)].filter((key) => requiredInActive.has(key)),
   );
   const references = new Map<string, PackageReference>();
   for (const reference of [...active.references, ...inactive.references]) {
     const key = `${reference.file}:${reference.range.start}:${reference.specifier}:${reference.kind}`;
     const previous = references.get(key);
+    const reaches = reference.reaches.map((reach) => ({
+      ...reach,
+      required: reach.required && requiredInBoth.has(`${reach.entry}\0${reference.packageName}`),
+    }));
     references.set(key, {
       ...reference,
       required:
         (reference.required || previous?.required === true) &&
-        requiredInBoth.has(reference.packageName),
+        requiredInBoth.has(`${defaultEntry}\0${reference.packageName}`),
+      reaches: mergeReaches(previous?.reaches ?? [], reaches),
     });
   }
   return {
@@ -191,7 +295,12 @@ function readPackageArtifactsForMode(
     kind: "runtime" | "types";
     required: boolean;
     declarationBacked?: boolean;
+    entry?: string;
+    via?: ImportHop;
   }> = [];
+  // Each entry walks its own graph, so files shared between entries are parsed once.
+  const parsedFiles = new Map<string, ParsedModule>();
+  const edgesByFile = new Map<string, ImportEdge[]>();
   const rootPath = fs.realpath(root) ?? root;
 
   function inside(path: string) {
@@ -274,6 +383,7 @@ function readPackageArtifactsForMode(
     adjacentDeclaration = false,
     sourceResolution = false,
     declarationBacked = false,
+    origin: Origin = {},
   ) {
     const path = resolve(from, target);
     if (!inside(path)) return;
@@ -282,7 +392,18 @@ function readPackageArtifactsForMode(
         .glob(path.replace("*", "**/*"))
         .filter((match) => fs.stat(match)?.isFile() === true);
       if (!matches.length) missing.add(relative(root, path));
-      for (const match of matches)
+      const star = path.indexOf("*");
+      for (const match of matches) {
+        // Each file a pattern export matches is its own subpath, such as "./drivers/redis" for
+        // "./drivers/*"; an exact export key for the same subpath takes precedence, as in Node.
+        let matchOrigin = origin;
+        if (origin.entry?.includes("*")) {
+          const suffix = path.slice(star + 1);
+          if (!match.startsWith(path.slice(0, star)) || !match.endsWith(suffix)) continue;
+          const entry = origin.entry.replace("*", match.slice(star, match.length - suffix.length));
+          if (isRecord(manifest.exports) && Object.hasOwn(manifest.exports, entry)) continue;
+          matchOrigin = { ...origin, entry };
+        }
         enqueue(
           match,
           kind,
@@ -292,7 +413,9 @@ function readPackageArtifactsForMode(
           adjacentDeclaration,
           sourceResolution,
           declarationBacked,
+          matchOrigin,
         );
+      }
       return;
     }
     const candidates = probe
@@ -342,6 +465,7 @@ function readPackageArtifactsForMode(
       declarationBacked:
         resolvedKind === "runtime" &&
         (declarationBacked || Boolean(adjacentDeclaration && declaration)),
+      ...(resolvedKind === "runtime" ? origin : {}),
     });
     if (resolvedKind === "runtime" && adjacentDeclaration && declaration)
       queue.push({ path: declaration, kind: "types", required: false });
@@ -394,12 +518,12 @@ function readPackageArtifactsForMode(
   }
 
   let typedTargets = false;
-  function addTargets(value: unknown, required: boolean, mode: "import" | "require") {
+  function addTargets(value: unknown, entry: string, mode: "import" | "require") {
     typedTargets = false;
     const selected = targets(value, "runtime", mode, addons);
     if (Array.isArray(selected))
       for (const target of selected)
-        enqueue(target, "runtime", required, root, false, true, false, typedTargets);
+        enqueue(target, "runtime", true, root, false, true, false, typedTargets, { entry });
   }
 
   const typed = (path: string) => {
@@ -433,22 +557,31 @@ function readPackageArtifactsForMode(
       Object.keys(exports).some((key) => key.startsWith("."))
     ) {
       for (const [subpath, value] of Object.entries(exports)) {
-        addTargets(value, subpath === ".", "import");
-        addTargets(value, subpath === ".", "require");
+        addTargets(value, subpath, "import");
+        addTargets(value, subpath, "require");
       }
     } else {
-      addTargets(exports, true, "import");
-      addTargets(exports, true, "require");
+      addTargets(exports, defaultEntry, "import");
+      addTargets(exports, defaultEntry, "require");
     }
   } else if (!manifest.main && !manifest.module) {
     if (fs.exists(resolve(root, "index.js")))
-      enqueue("index.js", "runtime", true, root, true, true, false, rootTyped);
+      enqueue("index.js", "runtime", true, root, true, true, false, rootTyped, {
+        entry: defaultEntry,
+      });
   }
-  if (manifest.main) enqueue(manifest.main, "runtime", true, root, "main", true, false, rootTyped);
+  if (manifest.main)
+    enqueue(manifest.main, "runtime", true, root, "main", true, false, rootTyped, {
+      entry: defaultEntry,
+    });
   if (manifest.module)
-    enqueue(manifest.module, "runtime", true, root, true, true, false, rootTyped);
+    enqueue(manifest.module, "runtime", true, root, true, true, false, rootTyped, {
+      entry: defaultEntry,
+    });
   if (typeof manifest.browser === "string")
-    enqueue(manifest.browser, "runtime", true, root, false, true, false, rootTyped);
+    enqueue(manifest.browser, "runtime", true, root, false, true, false, rootTyped, {
+      entry: defaultEntry,
+    });
   else if (manifest.browser) {
     for (const [original, entry] of Object.entries(manifest.browser))
       if (entry && entry.startsWith("."))
@@ -468,7 +601,7 @@ function readPackageArtifactsForMode(
 
   for (let i = 0; i < queue.length; i++) {
     const current = queue[i]!;
-    const key = `${current.path}:${current.kind}:${current.required}:${current.declarationBacked ?? false}`;
+    const key = `${current.path}:${current.kind}:${current.required}:${current.declarationBacked ?? false}:${current.entry ?? ""}`;
     if (visited.has(key)) continue;
     visited.add(key);
     if (current.required && manifest.browser && typeof manifest.browser === "object") {
@@ -484,6 +617,7 @@ function readPackageArtifactsForMode(
             true,
             false,
             current.declarationBacked,
+            { entry: current.entry, via: current.via },
           );
           continue;
         }
@@ -493,37 +627,66 @@ function readPackageArtifactsForMode(
         const offset = manifestText.indexOf(JSON.stringify(replacement), keyOffset);
         const start = offset < 0 ? 0 : offset;
         const before = manifestText.slice(0, start);
+        const line = before.split("\n").length;
         references.push({
           specifier: replacement,
           packageName,
           typeReference: false,
           kind: "runtime",
-          required: true,
+          required: current.entry === defaultEntry,
+          reaches: current.entry
+            ? [
+                {
+                  entry: current.entry,
+                  required: true,
+                  via: { file: manifestPath, line, specifier: replacement, previous: current.via },
+                },
+              ]
+            : [],
           file: manifestPath,
           range: {
             start,
             end: start + JSON.stringify(replacement).length,
-            line: before.split("\n").length,
+            line,
             column: start - before.lastIndexOf("\n"),
           },
         });
       }
     }
-    const text = fs.readText(current.path) ?? "";
-    const parsed = parseModule(current.path, text);
-    const commonjs =
-      commonjsModule(current.path) &&
-      (explicitCommonjsModule(current.path) || !hasRuntimeModuleSyntax(parsed.program));
+    const parsed =
+      parsedFiles.get(current.path) ?? parseModule(current.path, fs.readText(current.path) ?? "");
+    parsedFiles.set(current.path, parsed);
     const scope = packageScope(current.path);
-    for (const edge of importEdges(
-      parsed,
-      current.kind,
-      commonjs,
-      explicitCommonjsModule(current.path),
-      !current.declarationBacked && !/\.(?:[cm]?ts|tsx)$/.test(current.path),
-    )) {
+    const edgesKey = `${current.path}:${current.kind}:${current.declarationBacked ?? false}`;
+    let edges = edgesByFile.get(edgesKey);
+    if (!edges) {
+      const commonjs =
+        commonjsModule(current.path) &&
+        (explicitCommonjsModule(current.path) || !hasRuntimeModuleSyntax(parsed.program));
+      edges = importEdges(
+        parsed,
+        current.kind,
+        commonjs,
+        explicitCommonjsModule(current.path),
+        !current.declarationBacked && !/\.(?:[cm]?ts|tsx)$/.test(current.path),
+      );
+      edgesByFile.set(edgesKey, edges);
+    }
+    for (const edge of edges) {
       const required = current.required && edge.required;
       const executionRequired = required && !edge.resolutionOnly;
+      const hop = (specifier: string): Origin =>
+        current.entry
+          ? {
+              entry: current.entry,
+              via: {
+                file: current.path,
+                line: positionOf(parsed, edge.start).line + 1,
+                specifier,
+                previous: current.via,
+              },
+            }
+          : {};
       for (const { specifier, kind, required: selectedRequired } of resolvePackageImport(
         edge.specifier,
         scope.manifest.imports,
@@ -546,6 +709,7 @@ function readPackageArtifactsForMode(
             false,
             /\.(?:[cm]?ts|tsx)$/.test(current.path),
             current.declarationBacked,
+            hop(edge.specifier),
           );
           continue;
         }
@@ -586,17 +750,25 @@ function readPackageArtifactsForMode(
                 true,
                 false,
                 current.declarationBacked,
+                hop(edge.specifier),
               );
           }
           continue;
         }
         const position = positionOf(parsed, edge.start);
+        const referenceRequired = required && selectedRequired && kind === "runtime";
+        const reach = hop(edge.specifier);
         references.push({
           specifier,
           packageName,
           typeReference: edge.typeReference ?? false,
           kind,
-          required: required && selectedRequired && kind === "runtime",
+          required: referenceRequired && current.entry === defaultEntry,
+          ...(edge.dynamic ? { dynamic: edge.dynamic } : {}),
+          reaches:
+            kind === "runtime" && reach.entry && reach.via
+              ? [{ entry: reach.entry, required: referenceRequired, via: reach.via }]
+              : [],
           file: current.path,
           range: {
             start: edge.start,
@@ -612,7 +784,11 @@ function readPackageArtifactsForMode(
   for (const reference of references) {
     const key = `${reference.file}:${reference.range.start}:${reference.packageName}:${reference.kind}`;
     const previous = unique.get(key);
-    unique.set(key, { ...reference, required: reference.required || Boolean(previous?.required) });
+    unique.set(key, {
+      ...reference,
+      required: reference.required || Boolean(previous?.required),
+      reaches: mergeReaches(previous?.reaches ?? [], reference.reaches),
+    });
   }
   return { root, manifest, references: [...unique.values()], missing: [...missing] };
 }
@@ -1097,6 +1273,32 @@ function hasRuntimeModuleSyntax(program: Node): boolean {
   });
 }
 
+// Mirrors esbuild, which keeps an unresolvable `import()` for run time instead of failing the
+// build only inside a `try` body of the same function or with a `.catch()` or two-argument `.then()`.
+function handlesAbsence(node: Node): boolean {
+  let target = node;
+  while (true) {
+    while (target.parent?.type === "ParenthesizedExpression") target = target.parent;
+    const member = target.parent;
+    const name = accessName(member);
+    const call = member?.parent;
+    if (member?.object !== target || call?.type !== "CallExpression" || call.callee !== member)
+      break;
+    if (
+      (name === "catch" && call.arguments.length) ||
+      (name === "then" && call.arguments.length > 1)
+    )
+      return true;
+    if (name !== "then" && name !== "finally") break;
+    target = call;
+  }
+  for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+    if (isFunctionLike(parent) || parent.type === "StaticBlock") return false;
+    if (parent.type === "TryStatement" && parent.block === child && parent.handler) return true;
+  }
+  return false;
+}
+
 function hasAncestor(node: Node, predicate: (node: Node) => boolean): boolean {
   for (let current = node; current; current = current.parent) if (predicate(current)) return true;
   return false;
@@ -1157,6 +1359,8 @@ function importEdges(
       add(node.source, true, false);
     } else if (node.type === "ImportExpression") {
       add(node.source, false, isUnconditional(node, true));
+      if (edges.at(-1)?.start === unwrapParens(node.source).start)
+        edges.at(-1)!.dynamic = { handlesAbsence: handlesAbsence(node) };
     } else if (node.type === "CallExpression") {
       const member = node.callee;
       const memberName =
@@ -2140,4 +2344,42 @@ function shadowsName(node: Node, identifier: string): boolean {
     if (found) return true;
   }
   return false;
+}
+
+/** An optional peer that the package does not also install as a dependency. */
+export function optionalPeer(manifest: PackageManifest, name: string): boolean {
+  return Boolean(
+    manifest.peerDependencies?.[name] &&
+    manifest.peerDependenciesMeta?.[name]?.optional === true &&
+    !manifest.dependencies?.[name],
+  );
+}
+
+/**
+ * Labels files in this package relative to the project root, and files in an installed package
+ * as `<name>/<path>`, so an import chain reads the same in every package manager layout.
+ */
+export function chainLabeler(ctx: RuleContext, artifacts: PackageArtifacts) {
+  const projectRoot = ctx.fs.realpath(ctx.project.root) ?? ctx.project.root;
+  const own = relative(projectRoot, artifacts.root);
+  const installed = own.startsWith("..") || own.split("/").includes("node_modules");
+  return (file: string) =>
+    installed
+      ? `${artifacts.manifest.name ?? basename(artifacts.root)}/${relative(artifacts.root, file)}`
+      : relative(projectRoot, file);
+}
+
+export function describeChain(hop: ImportHop, label: (file: string) => string): string {
+  return importChain(hop)
+    .map((item) => `${label(item.file)}:${item.line} "${item.specifier}"`)
+    .join(" → ");
+}
+
+/** Installing a package with this manifest also installs `name`, or makes its absence a peer warning. */
+export function installedWith(manifest: PackageManifest, name: string): boolean {
+  return Boolean(
+    manifest.dependencies?.[name] ||
+    manifest.optionalDependencies?.[name] ||
+    (manifest.peerDependencies?.[name] && !optionalPeer(manifest, name)),
+  );
 }

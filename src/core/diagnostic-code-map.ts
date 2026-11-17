@@ -4,6 +4,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "PKG0001", ruleId: "package/no-phantom-dependencies" },
   { code: "PKG0002", ruleId: "package/no-phantom-dependencies" },
   { code: "PKG0003", ruleId: "package/no-required-optional-peer" },
+  { code: "PKG0004", ruleId: "package/optional-peer-import-in-try" },
   { code: "MCP0001", ruleId: "mcp/tools/require-annotation-title" },
   { code: "MCP0002", ruleId: "mcp/tools/require-safety-hint" },
   { code: "MCP0003", ruleId: "mcp/tools/valid-name" },

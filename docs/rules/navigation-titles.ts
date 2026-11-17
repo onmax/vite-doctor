@@ -123,6 +123,7 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "package/no-phantom-dependencies": "Phantom deps",
   "package/no-required-optional-peer": "Optional peers",
+  "package/optional-peer-import-in-try": "Optional import()",
 
   "mcp/tools/require-annotation-title": "Annotation titles",
   "mcp/tools/require-safety-hint": "Safety hints",
