@@ -4,16 +4,19 @@ import { noPhantomDependencies } from "./rules/no-phantom-dependencies.js";
 import { noPinnedSingleton } from "./rules/no-pinned-singleton.js";
 import { noRequiredOptionalPeer } from "./rules/no-required-optional-peer.js";
 import { noUnforwardedPeer } from "./rules/no-unforwarded-peer.js";
+import { optionalPeerImportInTry } from "./rules/optional-peer-import-in-try.js";
 
 export { noDuplicateSingleton } from "./rules/no-duplicate-singleton.js";
 export { noPhantomDependencies } from "./rules/no-phantom-dependencies.js";
 export { noPinnedSingleton } from "./rules/no-pinned-singleton.js";
 export { noRequiredOptionalPeer } from "./rules/no-required-optional-peer.js";
 export { noUnforwardedPeer } from "./rules/no-unforwarded-peer.js";
+export { optionalPeerImportInTry } from "./rules/optional-peer-import-in-try.js";
 
 const rules = [
   noPhantomDependencies,
   noRequiredOptionalPeer,
+  optionalPeerImportInTry,
   noPinnedSingleton,
   noUnforwardedPeer,
   noDuplicateSingleton,

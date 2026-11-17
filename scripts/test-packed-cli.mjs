@@ -81,13 +81,16 @@ try {
       name: "packed-library-fixture",
       main: "dist/index.js",
       types: "dist/index.d.ts",
-      peerDependencies: { "optional-peer": "*" },
-      peerDependenciesMeta: { "optional-peer": { optional: true } },
+      peerDependencies: { "optional-peer": "*", "lazy-peer": "*" },
+      peerDependenciesMeta: {
+        "optional-peer": { optional: true },
+        "lazy-peer": { optional: true },
+      },
     }),
   );
   writeFileSync(
     join(library, "dist/index.js"),
-    'import "optional-peer"; import "phantom-runtime";',
+    'import "optional-peer"; import "phantom-runtime"; export const load = () => import("lazy-peer");',
   );
   writeFileSync(
     join(library, "dist/index.d.ts"),
@@ -114,6 +117,7 @@ try {
     "PKG0001",
     "PKG0002",
     "PKG0003",
+    "PKG0004",
   ]);
   assert.match(packageReport.commands.verify, /--extends package\/recommended/);
   process.stdout.write(

@@ -1,5 +1,11 @@
 import { expect, test } from "vite-plus/test";
-import { diagnose } from "./fixture.js";
+import { diagnose as diagnosePackage } from "./fixture.js";
+
+// Unguarded import() calls in these fixtures belong to PKG0004, which has its own tests.
+const diagnose = async (...args: Parameters<typeof diagnosePackage>) =>
+  (await diagnosePackage(...args)).filter(
+    (diagnostic) => diagnostic.ruleId !== "package/optional-peer-import-in-try",
+  );
 
 const optionalPeer = {
   peerDependencies: { peer: "*" },
@@ -1241,4 +1247,182 @@ test.each([
   expect(
     await diagnose({ main: "index.cjs", ...optionalPeer }, { "index.cjs": source }),
   ).toHaveLength(count);
+});
+
+test("names the export subpath and the import chain from its entry to the optional peer", async () => {
+  const [diagnostic, ...rest] = await diagnose(
+    { exports: { ".": "./dist/index.js" }, ...optionalPeer },
+    {
+      "dist/index.js": 'export * from "./chunk.js";',
+      "dist/chunk.js": '\nimport "peer";',
+    },
+  );
+  expect(rest).toEqual([]);
+  expect(diagnostic).toMatchObject({ code: "PKG0003" });
+  expect(diagnostic?.why).toContain('"." export');
+  expect(diagnostic?.why).toContain('dist/index.js:1 "./chunk.js" → dist/chunk.js:2 "peer"');
+});
+
+const host = {
+  "node_modules/host/package.json": JSON.stringify({
+    name: "host",
+    exports: { ".": "./index.js", "./kv": "./kv.js", "./cache": "./cache.js" },
+    peerDependencies: { store: "*" },
+    peerDependenciesMeta: { store: { optional: true } },
+  }),
+  "node_modules/host/index.js": 'import "store";',
+  "node_modules/host/kv.js": 'export * from "./kv-driver.js";',
+  "node_modules/host/kv-driver.js": 'import { createStorage } from "store";',
+  "node_modules/host/cache.js": 'export const load = () => import("store").catch(() => null);',
+};
+const hostPeer = {
+  exports: { ".": "./index.js", "./cache": "./cache.js" },
+  peerDependencies: { host: "*" },
+  peerDependenciesMeta: { host: { optional: true } },
+};
+
+test("follows a peer subpath into the optional peers that subpath loads", async () => {
+  const [diagnostic, ...rest] = await diagnose(hostPeer, {
+    ...host,
+    "index.js": "export const ready = true;",
+    "cache.js": 'import "host/cache";\nimport { useKV } from "host/kv";',
+  });
+  expect(rest).toEqual([]);
+  expect(diagnostic).toMatchObject({ code: "PKG0003", range: { line: 2 } });
+  expect(diagnostic?.file).toMatch(/cache\.js$/);
+  expect(diagnostic?.why).toContain('"./cache" export');
+  expect(diagnostic?.why).toContain('"store"');
+  expect(diagnostic?.why).toContain(
+    'cache.js:2 "host/kv" → host/kv.js:1 "./kv-driver.js" → host/kv-driver.js:1 "store"',
+  );
+  expect(diagnostic?.diagnostic.fix).toContain("store");
+});
+
+test.each([
+  { dependencies: { store: "*" } },
+  { peerDependencies: { ...hostPeer.peerDependencies, store: "*" } },
+  { optionalDependencies: { store: "*" } },
+])("does not report a peer subpath whose optional peer the package declares: %j", async (extra) => {
+  expect(
+    await diagnose(
+      { ...hostPeer, ...extra },
+      { ...host, "index.js": "export {};", "cache.js": 'import "host/kv";' },
+    ),
+  ).toEqual([]);
+});
+
+test("leaves a peer's default entrypoint to that peer's own diagnostics", async () => {
+  expect(
+    await diagnose(hostPeer, { ...host, "index.js": "export {};", "cache.js": 'import "host";' }),
+  ).toEqual([]);
+});
+
+test("does not follow peer subpaths loaded lazily", async () => {
+  expect(
+    await diagnose(hostPeer, {
+      ...host,
+      "index.js": "export {};",
+      "cache.js":
+        'export async function kv() { try { return await import("host/kv"); } catch { return undefined; } }',
+    }),
+  ).toEqual([]);
+});
+
+test("follows a peer subpath matched by a wildcard export", async () => {
+  const diagnostics = await diagnose(hostPeer, {
+    ...host,
+    "node_modules/host/package.json": JSON.stringify({
+      name: "host",
+      exports: { "./drivers/*": "./drivers/*.js" },
+      peerDependencies: { store: "*" },
+      peerDependenciesMeta: { store: { optional: true } },
+    }),
+    "node_modules/host/drivers/redis.js": 'import "store";',
+    "index.js": "export {};",
+    "cache.js": 'import "host/drivers/redis";',
+  });
+  expect(diagnostics).toMatchObject([{ code: "PKG0003" }]);
+  expect(diagnostics[0]?.why).toContain(
+    'cache.js:1 "host/drivers/redis" → host/drivers/redis.js:1 "store"',
+  );
+});
+
+test("follows a peer subpath into packages that peer only lists as devDependencies", async () => {
+  const diagnostics = await diagnose(
+    { exports: { "./cache": "./cache.js" }, peerDependencies: { host: "*" } },
+    {
+      "node_modules/host/package.json": JSON.stringify({
+        name: "host",
+        exports: { "./kv": "./kv.js", "./h3": "./h3.js" },
+        dependencies: { router: "*" },
+        devDependencies: { store: "*" },
+      }),
+      "node_modules/host/kv.js": 'import "store";',
+      "node_modules/host/h3.js": 'import "router";',
+      "cache.js": 'import "host/h3";\nimport "host/kv";',
+    },
+  );
+  expect(diagnostics).toMatchObject([{ code: "PKG0003", range: { line: 2 } }]);
+  expect(diagnostics[0]?.why).toContain("only a devDependency of host");
+});
+
+test("treats each file a pattern export matches as its own subpath", async () => {
+  expect(
+    await diagnose(hostPeer, {
+      ...host,
+      "node_modules/host/package.json": JSON.stringify({
+        name: "host",
+        exports: { "./drivers/*": "./drivers/*.js" },
+        peerDependencies: { store: "*" },
+        peerDependenciesMeta: { store: { optional: true } },
+      }),
+      "node_modules/host/drivers/redis.js": 'import "store";',
+      "node_modules/host/drivers/memory.js": "export {};",
+      "index.js": "export {};",
+      "cache.js": 'import "host/drivers/memory";',
+    }),
+  ).toEqual([]);
+});
+
+test.each([
+  'module.exports = require.resolve("host/kv");',
+  'export const path = import.meta.resolve("host/kv");',
+  'import "host/kv";',
+])("preserves external resolution and conditional branches: %s", async (source) => {
+  const entry = source.startsWith("module.exports") ? "index.cjs" : "index.mjs";
+  const result = await diagnose(
+    { main: entry, type: "module", dependencies: { host: "*" } },
+    {
+      [entry]: source,
+      "node_modules/host/package.json": JSON.stringify({
+        name: "host",
+        type: "module",
+        exports: { "./kv": { import: "./safe.js", require: "./kv.cjs" } },
+        peerDependencies: { store: "*" },
+        peerDependenciesMeta: { store: { optional: true } },
+      }),
+      "node_modules/host/safe.js": "export {};",
+      "node_modules/host/kv.cjs": 'require("store");',
+    },
+  );
+  expect(result.filter((d) => d.code === "PKG0003")).toEqual([]);
+});
+
+test.each(["./safe/*.js", null])("honors narrower export patterns: %s", async (target) => {
+  const result = await diagnose(
+    { main: "index.js", dependencies: { host: "*" } },
+    {
+      "index.js": 'import "host/feature/x";',
+      "node_modules/host/package.json": JSON.stringify({
+        name: "host",
+        type: "module",
+        exports: { "./*": "./dist/*.js", "./feature/*": target },
+        peerDependencies: { store: "*" },
+        peerDependenciesMeta: { store: { optional: true } },
+      }),
+      "node_modules/host/dist/feature/x.js": 'import "store";',
+      "node_modules/host/safe/x.js": "export {};",
+    },
+  );
+  expect(result.filter((d) => d.code === "PKG0003")).toEqual([]);
 });
