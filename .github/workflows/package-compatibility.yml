@@ -35,5 +35,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - run: pnpm --dir docs exec nuxt prepare
       - run: node dist/cli.mjs . --no-cache --max-warnings 0 --format text
       - run: pnpm test:pack

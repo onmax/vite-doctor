@@ -14,6 +14,7 @@ export const noTimeDependentRenderWithoutNuxtTimeOrClientOnly = createRule({
     title: "Use NuxtTime or ClientOnly for time-dependent rendering",
     category: "hydration",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/best-practices/hydration#dynamic-content-based-on-time",

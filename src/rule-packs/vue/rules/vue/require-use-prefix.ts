@@ -97,6 +97,7 @@ export const requireUsePrefix = createRule({
     title: "Name setup-bound composables with use",
     category: "composables",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/reusability/composables.html#conventions-and-best-practices",
     requires: { script: true, vue: true },

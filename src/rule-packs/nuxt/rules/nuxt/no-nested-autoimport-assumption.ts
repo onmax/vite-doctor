@@ -7,6 +7,7 @@ export const noNestedAutoimportAssumption = createRule({
     title: "Nested composables are not auto-imported by default",
     category: "imports",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/directory-structure/app/composables#how-files-are-scanned",

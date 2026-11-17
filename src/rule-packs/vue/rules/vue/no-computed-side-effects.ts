@@ -13,6 +13,7 @@ export const noComputedSideEffects = createEslintVueRule({
     title: "Keep computed getters pure and synchronous",
     category: "reactivity",
     severity: "error",
+    confidence: "heuristic-high",
     docsUrl: "https://vuejs.org/guide/essentials/computed.html#getters-should-be-side-effect-free",
     requires: { script: true, vue: true },
   },

@@ -70,6 +70,7 @@ export const pluginPackageNamingConventions = createRule({
     title: "Follow Vite plugin package naming conventions",
     category: "plugins",
     severity: "warn",
+    confidence: "manifest-backed",
     execution: "manifest",
     cacheScope: "run",
     consumesEvidence: ["manifest", "ast"],

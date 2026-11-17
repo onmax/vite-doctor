@@ -10,7 +10,7 @@ import {
 } from "./shared.js";
 export { isNitroRouteFile } from "./shared.js";
 
-import type { RuleContext } from "../../../core/index.js";
+import type { Confidence, RuleContext } from "../../../core/index.js";
 
 export interface RawInputMatch {
   node: AnyNode;
@@ -27,6 +27,7 @@ export interface ValidatedInputRuleOptions {
   validatedUtility: string;
   message: string;
   suggestion: string;
+  confidence: Confidence;
   docsUrl?: string;
 }
 
@@ -45,6 +46,7 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
       recommendedReplacement: `Use ${opts.validatedUtility}(event, validator) instead of ${opts.rawUtilities[0]}(event) followed by separate validation.`,
       category: "request",
       severity: "warn",
+      confidence: opts.confidence,
       fixable: "suggestion",
       docsUrl: opts.docsUrl,
       requires: { script: true, nitro: true },

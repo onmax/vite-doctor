@@ -19,6 +19,7 @@ export const noComposableAfterAwait = createRule({
     title: "Call Nuxt composables before await",
     category: "context",
     severity: "error",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/api/composables/use-nuxt-app#a-deeper-explanation-of-context",

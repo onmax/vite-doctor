@@ -26,6 +26,7 @@ export const noPropRelay = createRule({
     title: "Avoid components that only relay props",
     category: "architecture",
     severity: "info",
+    confidence: "heuristic-high",
     fixable: false,
     execution: "workspace",
     requires: { vue: true, crossFile: true },

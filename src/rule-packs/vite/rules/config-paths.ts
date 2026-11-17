@@ -22,6 +22,7 @@ export const noUrlPathnameAsFsPath = createRule({
     title: "Convert import.meta.url URLs with fileURLToPath",
     category: "config",
     severity: "warn",
+    confidence: "heuristic-high",
     docsUrl: "https://nodejs.org/api/url.html#urlfileurltopathurl-options",
     requires: { script: true },
     prefilter: { names: ["pathname"] },

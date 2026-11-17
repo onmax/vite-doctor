@@ -22,6 +22,7 @@ export const noRequiredOptionalPeer = createRule({
     ],
     category: "dependencies",
     severity: "warn",
+    confidence: "manifest-backed",
     fixable: "suggestion",
     diagnosticCodes: ["PKG0003"],
     execution: "manifest",

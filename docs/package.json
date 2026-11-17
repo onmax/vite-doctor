@@ -16,6 +16,7 @@
     "check": "vp check"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "catalog:deploy",
     "@nuxt/content": "catalog:frontend",
     "@nuxt/fonts": "catalog:frontend",
     "@nuxt/kit": "catalog:frontend",

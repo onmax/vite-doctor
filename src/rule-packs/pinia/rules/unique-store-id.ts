@@ -32,6 +32,7 @@ export const uniqueStoreId = createRule({
     ],
     category: "stores",
     severity: "error",
+    confidence: "heuristic-medium",
     fixable: false,
     diagnosticCodes: ["PINIA0001"],
     docsUrl: "https://pinia.vuejs.org/core-concepts/#Defining-a-Store",

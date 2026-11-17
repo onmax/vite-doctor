@@ -477,7 +477,7 @@ async function writeCliError(
     process.stdout.write(
       `${JSON.stringify(
         {
-          schema: format === "agent" ? "vite-doctor.agent/v1" : "vite-doctor.report/v3",
+          schema: format === "agent" ? "vite-doctor.agent/v2" : "vite-doctor.report/v4",
           status: "failed",
           error: { kind: failure.kind, message, file: failure.file, code: failure.code },
           next:

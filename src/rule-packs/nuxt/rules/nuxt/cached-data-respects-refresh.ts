@@ -49,6 +49,7 @@ export const cachedDataRespectsRefresh = createRule({
     title: "Let getCachedData skip the cache when async data refreshes",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/going-further/experimental-features#granularcacheddata",

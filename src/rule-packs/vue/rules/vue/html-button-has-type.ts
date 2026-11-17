@@ -21,6 +21,7 @@ export const htmlButtonHasType = createRule({
     ],
     category: "template",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/button#type",
     requires: { template: true, vue: true },

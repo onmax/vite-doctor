@@ -35,6 +35,7 @@ export const requireDefaultHandler = createRule({
     title: "Default-export a handler from every Nitro route file",
     category: "routing",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     diagnosticCodes: ["NITRO0019", "NITRO0020"],
     docsUrl: "https://nitro.build/docs/routing",

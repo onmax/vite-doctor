@@ -33,6 +33,7 @@ export const noConfigHookArrayEcho = createRule({
     title: "Return only new array entries from Vite config hooks",
     category: "plugins",
     severity: "warn",
+    confidence: "heuristic-high",
     docsUrl: "https://vite.dev/guide/api-plugin.html#config",
     requires: { script: true },
     prefilter: { names: ["config", "configEnvironment"] },

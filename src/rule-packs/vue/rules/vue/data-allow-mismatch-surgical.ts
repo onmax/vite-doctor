@@ -6,6 +6,7 @@ export const dataAllowMismatchSurgical = createRule({
     title: "Use data-allow-mismatch only surgically",
     category: "ssr",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/scaling-up/ssr.html#suppressing-hydration-mismatches",
     requires: { template: true, vue: true },

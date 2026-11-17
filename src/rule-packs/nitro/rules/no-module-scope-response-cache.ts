@@ -49,6 +49,7 @@ export const noModuleScopeResponseCache = createRule({
     title: "Cache upstream responses with defineCachedFunction",
     category: "cache",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nitro.build/docs/cache",
     requires: { script: true, nitro: true },

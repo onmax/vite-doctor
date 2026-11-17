@@ -17,6 +17,7 @@ export const noBrowserApiInServer = createRule({
       "Use request/event data, server utilities, or move browser work to app client code.",
     category: "server",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nitro.build/guide/routing#request-handler",
     requires: { script: true, nitro: true },

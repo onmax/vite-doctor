@@ -107,6 +107,13 @@ export interface RuleMeta {
   examples?: RuleExample[];
   category: string;
   severity: DoctorSeverity;
+  /**
+   * How far the Rule's Diagnostics can be trusted, from the evidence it actually reads: `proven`
+   * for syntax facts, `type-backed`, `manifest-backed`, or `runtime-backed` when that evidence
+   * decides the finding, a heuristic level otherwise. `ctx.report` can override it per Diagnostic.
+   * Without either, Diagnostics carry no confidence.
+   */
+  confidence?: Confidence;
   fixable?: FixSafety | false;
   docsUrl?: string;
   diagnosticCodes?: string[];
@@ -147,6 +154,13 @@ export interface RuleMeta {
    * the Rule report on any file. Manifest and workspace Rules are always project-scoped.
    */
   reportScope?: "file" | "project";
+  /**
+   * Which files an activated Rule Pack runs this Rule on. `"package"` (the default) means the
+   * files of the workspace packages that activate the pack. `"workspace"` means every workspace
+   * package once any of them activates it, for Rules about integration code, such as a Vite
+   * plugin that registers Nitro handlers, which lives outside the packages that run the framework.
+   */
+  activationScope?: "package" | "workspace";
   sourceKinds?: Array<"app" | "layer" | "module">;
   execution?: ExecutionKind;
   cost?: RuleCost;
@@ -396,6 +410,11 @@ export interface WorkspacePackage {
   root: string;
   name?: string;
   framework: DoctorFramework;
+  /**
+   * The package ships a Nuxt module (`@nuxt/kit` or a `./nuxt` export) without being a Nuxt app,
+   * so its Vue, Nitro and module code runs inside other Nuxt apps.
+   */
+  nuxtIntegration?: true;
   packages: Record<string, string>;
 }
 
@@ -413,13 +432,18 @@ export interface WorkspacePackageActivation {
   root: string;
   name?: string;
   framework: DoctorFramework;
+  nuxtIntegration?: true;
   rulePacks: string[];
 }
 
-/** The Rule Packs whose Activation matched, and the Rule Packs whose Presets Config Extends selected. */
-export interface RulePackSelection {
-  activated: string[];
-  selected: string[];
+/**
+ * A Rule Pack in a Doctor Run: whether Config Extends selected its Presets, and the roots of the
+ * workspace packages whose Project Inventory activates it.
+ */
+export interface RulePackActivation {
+  name: string;
+  selected: boolean;
+  activatedBy: string[];
 }
 
 export interface RuntimePackageInstance {
@@ -1037,8 +1061,9 @@ export interface RulePack {
 
 export interface DoctorRunResult {
   version: string;
-  reportVersion?: 3;
+  reportVersion?: 4;
   extends?: DoctorSerializableConfig["extends"];
+  /** The workspace root's own framework. `workspacePackages` lists each package's framework. */
   framework: DoctorFramework;
   root: string;
   scope: {
@@ -1072,7 +1097,7 @@ export interface DoctorRunResult {
   phases?: Record<string, number>;
   ruleTimings?: Array<{ rule: string; ms: number; files: number }>;
   workspacePackages?: WorkspacePackageActivation[];
-  rulePacks?: RulePackSelection;
+  rulePacks?: RulePackActivation[];
   graph?: {
     files: number;
     importEdges: number;

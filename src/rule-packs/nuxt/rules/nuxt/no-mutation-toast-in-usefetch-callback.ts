@@ -18,6 +18,7 @@ export const noMutationToastInUseFetchCallback = createRule({
     title: "Keep useFetch lifecycle callbacks replay-safe",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-fetch#usage",
     requires: { script: true, nuxt: true },

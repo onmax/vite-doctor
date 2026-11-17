@@ -20,6 +20,7 @@ export const noDuplicateAttrInheritance = createEslintVueRule({
     title: "Disable inheritAttrs when binding $attrs",
     category: "attrs",
     severity: "warn",
+    confidence: "proven",
     docsUrl: "https://vuejs.org/guide/components/attrs.html#disabling-attribute-inheritance",
     requires: { template: true, vue: true },
   },

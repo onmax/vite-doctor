@@ -23,6 +23,7 @@ export const noObjectParameters = createRule({
     ],
     category: "evidence",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://github.com/dmmulroy/anti-slop#no-object-parameters",
     requires: { script: true },

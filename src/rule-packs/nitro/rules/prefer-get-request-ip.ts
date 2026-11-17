@@ -11,6 +11,7 @@ export const preferGetRequestIp = createRule({
       "Use the H3/Nitro request IP utility and centralize trusted proxy handling instead of reading IP headers directly.",
     category: "request",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/utils/request#getrequestipevent",
     requires: { script: true, nitro: true },

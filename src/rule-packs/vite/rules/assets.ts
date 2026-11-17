@@ -14,6 +14,7 @@ export const noPublicSrcImport = createRule({
     title: "Do not import public media assets",
     category: "assets",
     severity: "warn",
+    confidence: "heuristic-high",
     docsUrl: "https://vite.dev/guide/assets.html#the-public-directory",
     requires: { script: true },
   },
@@ -46,6 +47,7 @@ export const noSrcAbsolutePublicUrl = createRule({
     title: "Do not URL-reference source files as public assets",
     category: "assets",
     severity: "warn",
+    confidence: "heuristic-high",
     docsUrl: "https://vite.dev/guide/assets.html#static-asset-handling",
   },
   create(ctx) {
@@ -112,6 +114,7 @@ export const noDynamicNewUrl = createRule({
     title: "Keep new URL asset paths analyzable",
     category: "assets",
     severity: "warn",
+    confidence: "heuristic-medium",
     docsUrl: "https://vite.dev/guide/assets.html#new-url-url-import-meta-url",
     requires: { script: true },
   },

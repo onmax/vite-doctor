@@ -15,6 +15,7 @@ export const noManualActionUseFetch = createRule({
     title: "Do not treat immediate:false async data as manual-only",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/getting-started/data-fetching#refresh-and-execute",
     requires: { script: true, nuxt: true },

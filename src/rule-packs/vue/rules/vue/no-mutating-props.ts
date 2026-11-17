@@ -8,6 +8,7 @@ export const noMutatingProps = createEslintVueRule({
     title: "Do not mutate props",
     category: "props",
     severity: "error",
+    confidence: "proven",
     docsUrl: "https://vuejs.org/guide/components/props.html#one-way-data-flow",
     requires: { script: true, vue: true },
   },

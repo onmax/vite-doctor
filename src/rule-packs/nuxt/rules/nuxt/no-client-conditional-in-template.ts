@@ -7,6 +7,7 @@ export const noClientConditionalInTemplate = createRule({
     title: "Avoid client-only conditionals in SSR templates",
     category: "hydration",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/best-practices/hydration#conditional-rendering-based-on-client-state",

@@ -6,6 +6,7 @@ export const preferValidatedQuery = createValidatedInputRule({
   description:
     "When a Nitro handler validates query input, read and validate it through the H3 utility.",
   rawUtilities: ["getQuery"],
+  confidence: "heuristic-medium",
   validatedUtility: "getValidatedQuery",
   docsUrl: "https://h3.dev/utils/request#getvalidatedqueryevent-validate",
   message: "This query object is read raw and validated separately.",

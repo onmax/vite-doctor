@@ -8,6 +8,7 @@ export const previewModeGlobalRefresh = createRule({
     title: "Make preview mode refresh behavior explicit",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/api/composables/use-preview-mode#customize-the-onenable-and-ondisable-callbacks",

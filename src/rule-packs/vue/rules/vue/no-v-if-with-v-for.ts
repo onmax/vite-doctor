@@ -11,6 +11,7 @@ export const noVIfWithVFor = createEslintVueRule({
     title: "Do not read v-for variables in v-if on the same element",
     category: "template",
     severity: "error",
+    confidence: "proven",
     docsUrl: "https://vuejs.org/guide/essentials/list.html#v-for-with-v-if",
     requires: { template: true, vue: true },
   },
