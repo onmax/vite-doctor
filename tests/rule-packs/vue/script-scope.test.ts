@@ -90,15 +90,17 @@ export function formatLabel(value: string) {
   expect(tsParses.count).toBe(1);
 });
 
-test("setup props Rule reads only script blocks when it decides to skip an SFC", () => {
-  const ctx = {
-    file: {
-      text: `<script setup lang="ts">\nconst count = 1\n</script>`,
-      sfc: { descriptor: { scriptSetup: { content: "\nconst count = 1\n" }, script: null } },
+test("setup props Rules skip an SFC whose script blocks never name their APIs", async () => {
+  const result = await runProjectFixture({
+    framework: "vue",
+    rules: [noSetupPropsDestructure, noAsyncWatchEffectAfterAwaitRead],
+    files: {
+      "src/Counter.vue": `<script setup lang="ts">\nconst count = 1\n</script>\n<template>{{ count }}</template>\n`,
     },
-  } as any;
-  expect(noSetupPropsDestructure.create(ctx)).toBeUndefined();
-  expect(noAsyncWatchEffectAfterAwaitRead.create(ctx)).toBeUndefined();
+  });
+
+  expect(result.diagnostics).toEqual([]);
+  expect(tsParses.count).toBe(0);
 });
 
 test("scope-analysis Rules still analyze names spelled with escapes", async () => {

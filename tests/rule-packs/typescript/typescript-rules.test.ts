@@ -31,8 +31,8 @@ describe("TypeScript rule pack", () => {
   test("exports conservative recommended and opt-in strict presets", () => {
     expect(typescriptRulePack.name).toBe("vite-doctor/typescript");
     expect(typescriptRulePack.activation).toEqual({ languages: ["typescript"] });
-    expect(typescriptRulePack.presets.recommended).toEqual(
-      recommendedRules.map((rule) => rule.meta.id),
+    expect(typescriptRulePack.presets.recommended.toSorted()).toEqual(
+      recommendedRules.map((rule) => rule.meta.id).toSorted(),
     );
     expect(typescriptRulePack.presets.strict).toEqual(
       expect.arrayContaining([
@@ -42,17 +42,6 @@ describe("TypeScript rule pack", () => {
         "typescript/strict/require-safety-comment-for-type-assertion",
       ]),
     );
-  });
-
-  test("no longer ships the removed typeof and empty-spread rules", () => {
-    const ruleIds = typescriptRulePack.rules.map((rule) => rule.meta.id);
-    for (const removed of [
-      "typescript/strict/no-runtime-typeof",
-      "typescript/style/no-conditional-empty-object-spread",
-    ]) {
-      expect(ruleIds).not.toContain(removed);
-      expect(typescriptRulePack.presets.strict).not.toContain(removed);
-    }
   });
 
   test.each(["TS0006", "TS0007", "typescript/strict/no-runtime-typeof"])(

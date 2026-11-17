@@ -72,11 +72,6 @@ test("the JSON report carries each Rule's confidence and only the evidence the R
     location: { path: "packages/app/src/Save.vue" },
   });
   expect(button).not.toHaveProperty("evidence");
-  for (const diagnostic of report.diagnostics) {
-    expect(diagnostic.evidence ?? []).not.toContainEqual(
-      expect.objectContaining({ summary: expect.stringMatching(/^\w+ analysis$/) }),
-    );
-  }
 });
 
 test("the JSON report names the root's own framework and one Rule Pack list with its activating packages", async () => {

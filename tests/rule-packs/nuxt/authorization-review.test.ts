@@ -1049,9 +1049,10 @@ test.each([
     const middleware = source.includes("defineNuxtRouteMiddleware");
     const policy = middleware ? "app/utils/policy.ts" : "server/api/policy.ts";
     let calls = 0;
+    let sources: string[] = [];
     const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
       calls++;
-      expect(candidate.sources.map((item) => item.path)).toContain(policy);
+      sources = candidate.sources.map((item) => item.path);
       return { status: "unknown", reason: "Evidence collected", citations: [] };
     });
     const result = await runProjectFixture({
@@ -1071,6 +1072,7 @@ test.each([
       rules: extension.rulePacks![0]!.rules,
     });
     expect(calls).toBe(availability === "present" ? 1 : 0);
+    expect(sources).toEqual(availability === "present" ? expect.arrayContaining([policy]) : []);
     if (availability !== "present")
       expect(JSON.parse(createAgentReport(result)).status).toBe("incomplete");
   }
@@ -1252,9 +1254,10 @@ test.each([
   "{ const enforceAccountAccess = () => {}; } enforceAccountAccess(event)",
 ])("collects unbound auto-import references: %s", async (source) => {
   let calls = 0;
+  let sources: string[] = [];
   const extension = createNuxtAuthorizationReviewExtension(async (candidate) => {
     calls++;
-    expect(candidate.sources.map((item) => item.path)).toContain("server/utils/access.ts");
+    sources = candidate.sources.map((item) => item.path);
     return { status: "unknown", reason: "Evidence collected", citations: [] };
   });
   await runProjectFixture({
@@ -1277,6 +1280,7 @@ test.each([
     rules: extension.rulePacks![0]!.rules,
   });
   expect(calls).toBe(1);
+  expect(sources).toContain("server/utils/access.ts");
 });
 
 test.each(["analytics.ts", "auth.ts", "admin/access.ts"])(

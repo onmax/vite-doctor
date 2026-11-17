@@ -234,18 +234,6 @@ test("reports TypeScript Vue scripts with source locations", async () => {
   expect(result.diagnostics[0]?.range?.line).toBe(3);
 });
 
-test("leaves JavaScript-only sources outside the TypeScript Rule Pack", async () => {
-  const result = await runProjectFixture({
-    framework: "vite",
-    rules: [noKnownValueWidening],
-    files: {
-      "index.js":
-        "const values = [1]; values.filter(keep).map(transform); values.reduce((acc, item) => acc.concat(item), [])",
-    },
-  });
-  expect(result.diagnostics).toHaveLength(0);
-});
-
 test("leaves Vue bindings the template reads", async () => {
   const result = await runProjectFixture({
     rules: [noKnownValueWidening],

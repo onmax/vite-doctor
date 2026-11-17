@@ -234,18 +234,18 @@ test("pins the workspace graph for a monorepo with aliases and workspace package
       ]
     `);
     expect(
-      [...graph.reverseIndex.importersByFile].map(
-        ([file, importers]) => `${name(file)} <- ${importers.map(name).join(", ")}`,
-      ),
+      [...graph.reverseIndex.importersByFile]
+        .map(([file, importers]) => `${name(file)} <- ${importers.map(name).toSorted().join(", ")}`)
+        .toSorted(),
     ).toMatchInlineSnapshot(`
       [
+        "apps/web/app/components/Card.vue <- apps/web/app/pages/index.vue",
         "apps/web/app/composables/thing.ts <- apps/web/app/app.vue",
         "apps/web/app/utils/shared.ts <- apps/web/app/app.vue",
-        "apps/web/server/utils/config.ts <- apps/web/app/app.vue",
         "apps/web/handlers/ping.ts <- apps/web/app/app.vue",
-        "apps/web/app/components/Card.vue <- apps/web/app/pages/index.vue",
-        "packages/core/src/math.ts <- packages/core/src/helper.ts, packages/core/src/lazy.ts, packages/core/src/index.ts",
-        "packages/core/src/helper.ts <- packages/core/src/math.ts, packages/core/src/index.ts",
+        "apps/web/server/utils/config.ts <- apps/web/app/app.vue",
+        "packages/core/src/helper.ts <- packages/core/src/index.ts, packages/core/src/math.ts",
+        "packages/core/src/math.ts <- packages/core/src/helper.ts, packages/core/src/index.ts, packages/core/src/lazy.ts",
       ]
     `);
     expect(graph.sccs.filter((item) => item.length > 1).map((item) => item.map(name)))
