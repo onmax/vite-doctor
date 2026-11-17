@@ -169,6 +169,35 @@ const cases: [string, string, number][] = [
   ["semicolon after code", "// SAFETY: validated\nstart(); const value = input as User", 1],
 ];
 
+const attachmentRegressions: [string, string, number][] = [
+  [
+    "trailing declaration comment",
+    "const other = 1; // SAFETY: about other.\nconst read = () => { return input as User; }",
+    1,
+  ],
+  [
+    "trailing chain comment",
+    "const values = keys // SAFETY: about keys.\n.map(() => input as User)",
+    1,
+  ],
+  [
+    "multiline else",
+    "function read() { if (ready) return;\n// SAFETY: schema validated input.\nelse\n return input as User; }",
+    0,
+  ],
+  [
+    "blank line after else",
+    "function read() { if (ready) return;\n// SAFETY: schema validated input.\nelse\n\n return input as User; }",
+    1,
+  ],
+  [
+    "blank line before else",
+    "function read() { if (ready) return;\n// SAFETY: schema validated input.\n\nelse\n return input as User; }",
+    1,
+  ],
+];
+cases.push(...attachmentRegressions);
+
 test.each(cases)("checks %s", async (_name, source, expected) => {
   expect(parseSync("index.ts", source).errors).toEqual([]);
   const result = await runProjectFixture({
@@ -211,6 +240,29 @@ const propTypeCases: [string, string, number][] = [
     1,
   ],
 ];
+
+propTypeCases.push(
+  [
+    "shadowed alias",
+    'import type { PropType } from "vue"; function read(input: unknown) { type PropType<T> = T; return input as PropType<string>; }',
+    1,
+  ],
+  [
+    "shadowed generic",
+    'import type { PropType as Prop } from "vue"; function read<Prop>(input: unknown) { return input as Prop; }',
+    1,
+  ],
+  [
+    "shadowed namespace",
+    'import type * as Vue from "vue"; namespace Local { namespace Vue { export type PropType<T> = T; } const read = input as Vue.PropType<string>; }',
+    1,
+  ],
+  [
+    "unrelated scope",
+    'import type { PropType } from "vue"; function other() { type PropType<T> = T; } const read = input as PropType<string>;',
+    0,
+  ],
+);
 
 test.each(propTypeCases)("exempts Vue runtime prop types: %s", async (_name, source, expected) => {
   expect(parseSync("index.ts", source).errors).toEqual([]);
@@ -257,6 +309,14 @@ const chainCases: [string, string, number][] = [
     1,
   ],
 ];
+
+chainCases.push(
+  ...attachmentRegressions.map(([name, source, expected]): [string, string, number] => [
+    name,
+    source.replace("input as User", "input as unknown as User"),
+    expected,
+  ]),
+);
 
 test.each(chainCases)("TS0001 checks %s", async (_name, source, expected) => {
   expect(parseSync("index.ts", source).errors).toEqual([]);

@@ -1,4 +1,5 @@
 import type { RuleContext } from "../../../core/index.js";
+import { createTypeAliasResolver } from "./type-aliases.js";
 import { parentOf, type AnyNode } from "./shared.js";
 
 const commentOwners = new Set([
@@ -17,6 +18,8 @@ const loops = new Set([
   "ForStatement",
   "WhileStatement",
 ]);
+
+const typeResolvers = new WeakMap<object, ReturnType<typeof createTypeAliasResolver>>();
 
 const vueModules = new Set(["vue", "@vue/runtime-core"]);
 
@@ -63,7 +66,7 @@ function hasSafetyCommentAboveLine(source: string, comments: AnyNode[], node: An
   const lineStart = source.lastIndexOf("\n", node.start - 1) + 1;
   const lineCode =
     lineStart + /^[ \t]*(?:;[ \t]*)?/.exec(source.slice(lineStart, node.start))![0].length;
-  if (!hasSafetyCommentBefore(source, comments, lineCode, plainGap)) return false;
+  if (!hasSafetyCommentBefore(source, comments, lineCode, plainGap, true)) return false;
   let current = node;
   while (current.start > lineCode) {
     const parent = parentOf(current);
@@ -96,6 +99,7 @@ function hasSafetyCommentBefore(
   comments: AnyNode[],
   start: number,
   firstGap: RegExp,
+  standalone = false,
 ): boolean {
   let before = start;
   let low = 0;
@@ -110,7 +114,14 @@ function hasSafetyCommentBefore(
   for (let index = low - 1; index >= 0; index--) {
     const comment = comments[index]!;
     const gap = source.slice(comment.end, before);
-    if (!gapPattern.test(gap) || (gap.match(/\r\n|\r|\n/g)?.length ?? 0) > 1) return false;
+    if (!gapPattern.test(gap)) return false;
+    // The branch token can occupy its own line, but neither side may contain a blank line.
+    const gaps = gapPattern === branchToken ? gap.split(/;|\?\?|\?|:|&&|\|\||else\b/) : [gap];
+    if (gaps.some((part) => (part.match(/\r\n|\r|\n/g)?.length ?? 0) > 1)) return false;
+    if (standalone) {
+      const lineStart = source.lastIndexOf("\n", comment.start - 1) + 1;
+      if (!/^\s*$/.test(source.slice(lineStart, comment.start))) return false;
+    }
     value = `${comment.value.replace(/^[ \t]*\*[ \t]?/gm, "")}\n${value}`;
     if (/(?:^|[^\p{L}\p{N}_])SAFETY\s*:\s*\S/u.test(value)) return true;
     before = comment.start;
@@ -123,12 +134,24 @@ export function isVuePropTypeAssertion(ctx: RuleContext, node: AnyNode): boolean
   const annotation = node?.typeAnnotation;
   if (annotation?.type !== "TSTypeReference") return false;
   const name = annotation.typeName;
-  const body = (ctx.file.scriptAst?.body as AnyNode[] | undefined) ?? [];
+  const program = ctx.file.scriptAst;
+  if (!program) return false;
+  let resolver = typeResolvers.get(program);
+  if (!resolver) {
+    resolver = createTypeAliasResolver(program);
+    typeResolvers.set(program, resolver);
+  }
+  const namespace = name?.type === "TSQualifiedName";
+  const referenced = namespace ? name.left : name;
+  if (referenced?.type !== "Identifier") return false;
+  const binding = resolver.rootBinding(annotation, referenced.name, namespace);
+  const body = (program.body as AnyNode[] | undefined) ?? [];
   for (const statement of body) {
     if (statement.type !== "ImportDeclaration" || !vueModules.has(statement.source?.value)) {
       continue;
     }
     for (const specifier of statement.specifiers ?? []) {
+      if (specifier !== binding) continue;
       if (
         name?.type === "Identifier" &&
         specifier.type === "ImportSpecifier" &&

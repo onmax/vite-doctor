@@ -172,5 +172,14 @@ export function createTypeAliasResolver(program: AnyNode) {
     }
     return resolve(node, new Map());
   }
-  return { aliases, resolvesToKeyword };
+  function rootBinding(node: AnyNode, name: string, namespace: boolean): AnyNode {
+    for (let scope = scopes.get(node); scope; scope = scope.parent) {
+      const found = scope.bindings
+        .get(name)
+        ?.filter((declaration) => namespace || declaration.type !== "TSModuleDeclaration");
+      if (found?.length) return found.length === 1 ? found[0] : null;
+    }
+    return null;
+  }
+  return { aliases, resolvesToKeyword, rootBinding };
 }
