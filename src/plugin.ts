@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { basename, isAbsolute, relative, resolve } from "pathe";
+import { basename, dirname, isAbsolute, relative, resolve } from "pathe";
 import type {
   DoctorConfig,
   DoctorExtensionInput,
@@ -120,6 +120,7 @@ class ServeDoctorRun {
     const start = () =>
       setImmediate(() => {
         if (this.closed) return;
+        this.server.watcher.add(packageInputs(surfaceRoot(this.server.config, this.options)));
         for (const event of WATCHED_EVENTS) this.server.watcher.on(event, this.onFileEvent);
         void this.execute({ changed: [] }, true);
       });
@@ -288,6 +289,7 @@ function hotUpdateKind(
   options: ViteDoctorSurfaceOptions,
   file: string,
 ): "source" | "inventory" | undefined {
+  if (packageInputs(root).includes(file)) return "inventory";
   if (!isInside(root, file)) return undefined;
   if (
     relative(root, file)
@@ -305,6 +307,16 @@ function hotUpdateKind(
 function isInside(directory: string, file: string): boolean {
   const path = relative(directory, file);
   return path !== "" && !path.startsWith("../") && path !== ".." && !isAbsolute(path);
+}
+
+function packageInputs(root: string): string[] {
+  for (let directory = root; ; directory = dirname(directory)) {
+    if (existsSync(resolve(directory, "pnpm-workspace.yaml"))) {
+      return [resolve(directory, "pnpm-workspace.yaml"), resolve(directory, "pnpm-lock.yaml")];
+    }
+    if (dirname(directory) === directory)
+      return [resolve(root, "pnpm-workspace.yaml"), resolve(root, "pnpm-lock.yaml")];
+  }
 }
 
 const workerUrl = new URL("./plugin-worker.mjs", import.meta.url);

@@ -286,3 +286,34 @@ test("closing the dev server stops listening for saves", async () => {
     expect(doctorRuns).toHaveLength(1);
   });
 });
+
+test("ancestor workspace catalog changes rerun package rules and resolve manifest diagnostics", async () => {
+  await withProject(async (root) => {
+    const packageRoot = join(root, "packages/lib");
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "lib", peerDependencies: { vue: "catalog:" } }),
+    );
+    const workspaceFile = join(root, "pnpm-workspace.yaml");
+    const catalog = (range: string) => `packages:\n  - packages/*\ncatalog:\n  vue: '${range}'\n`;
+    await writeFile(workspaceFile, catalog("^3.5.0"));
+    const { logger, logs, reports, deltas } = captureLogger();
+    const server = await startServer(packageRoot, logger, {
+      rules: "package/no-pinned-singleton",
+      extends: ["package/recommended"],
+    });
+    try {
+      await vi.waitFor(() => expect(reports()).toHaveLength(1), { timeout: 15_000 });
+      await save(server, workspaceFile, catalog("3.5.44"));
+      await vi.waitFor(() => expect(deltas()).toHaveLength(1), { timeout: 15_000 });
+      expect(deltas()[0]).toContain("1 new Diagnostic");
+      expect(doctorRuns[1]!.options.affectedFiles).toBeUndefined();
+      await save(server, workspaceFile, catalog("^3.5.0"));
+      await vi.waitFor(() => expect(deltas()).toHaveLength(2), { timeout: 15_000 });
+      expect(logs.info.at(-1)).toContain("1 resolved");
+    } finally {
+      await server.close();
+    }
+  });
+});

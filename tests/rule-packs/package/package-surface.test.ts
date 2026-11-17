@@ -23,6 +23,13 @@ const manifest = {
 };
 const files = { "dist/index.js": 'import "peer"; import "phantom";' };
 
+function packageCodes(result: Awaited<ReturnType<typeof runViteDoctor>>) {
+  return result.diagnostics
+    .filter((d) => d.ruleId.startsWith("package/"))
+    .map((d) => d.code)
+    .sort();
+}
+
 test("is available in the distribution but only runs when explicitly selected", async () => {
   await withPackage(manifest, files, async (root) => {
     const automatic = await runViteDoctor({ root, framework: "vite", cache: false });
@@ -33,9 +40,7 @@ test("is available in the distribution but only runs when explicitly selected", 
       cache: false,
       extends: ["auto", "package/recommended"],
     });
-    expect(selected.diagnostics.filter((d) => d.ruleId.startsWith("package/"))).toHaveLength(
-      packageRulePack.rules.length,
-    );
+    expect(packageCodes(selected)).toEqual(["PKG0001", "PKG0003"]);
     const disabled = await runViteDoctor({
       root,
       framework: "vite",
@@ -67,9 +72,7 @@ test("rereads artifacts on each Doctor Run and exposes missing output in invento
     writeFileSync(join(root, "package.json"), JSON.stringify({ ...manifest, main: "index.js" }));
     writeFileSync(join(root, "index.js"), files["dist/index.js"]);
     const built = await runViteDoctor(options);
-    expect(built.diagnostics.filter((d) => d.ruleId.startsWith("package/"))).toHaveLength(
-      packageRulePack.rules.length,
-    );
+    expect(packageCodes(built)).toEqual(["PKG0001", "PKG0003"]);
     writeFileSync(join(root, "index.js"), "export const ready = true;");
     const rebuilt = await runViteDoctor(options);
     expect(rebuilt.diagnostics.filter((d) => d.ruleId.startsWith("package/"))).toEqual([]);
