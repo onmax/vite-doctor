@@ -268,3 +268,61 @@ export type DatabasePlugin = Plugin;
     { framework: "vite", rulePacks: expect.arrayContaining(["vite-doctor/nitro"]) },
   );
 });
+
+for (const [path, source] of Object.entries({
+  "app/utils/comment.ts": "// import { createRouter } from 'vue-router'\nexport const value = 1",
+  "app/utils/string.ts": `export const text = "import { createRouter } from 'vue-router'"`,
+  "app/utils/unused.ts": "import { createRouter } from 'vue-router'",
+  "fixtures/main.ts": "import { createRouter } from 'vue-router'; createRouter({ routes: [] })",
+})) {
+  test(`router evidence ignores ${path}`, async () => {
+    const root = fixture({
+      "package.json": JSON.stringify({ dependencies: { nuxt: "^4" } }),
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "app/app.vue": routerShell,
+      [path]: source,
+    });
+    const result = await runViteDoctor({ root, cache: false, rules: routingRules.join(",") });
+    expect(routingDiagnostics(result, root)).toEqual([
+      "nuxt/routing/prefer-nuxtpage-over-routerview:app/app.vue",
+    ]);
+  });
+}
+
+test("nuxt/kit modules with only a Nuxt devDependency retain module diagnostics", async () => {
+  const root = fixture({
+    "package.json": JSON.stringify({
+      devDependencies: { nuxt: "^4" },
+      exports: { ".": "./dist/module.mjs" },
+    }),
+    "src/module.ts":
+      "import { defineNuxtModule } from 'nuxt/kit'; export default defineNuxtModule({ setup() {} })",
+  });
+  const result = await runViteDoctor({ root, cache: false, rules: "nuxt/module/require-meta" });
+  expect(result.diagnostics.some((item) => item.ruleId === "nuxt/module/require-meta")).toBe(true);
+});
+
+test("integration-only projects execute Nuxt security rules", async () => {
+  const root = fixture({
+    "package.json": JSON.stringify({
+      dependencies: { "@nuxt/kit": "^4" },
+      exports: { ".": "./dist/index.mjs", "./nuxt": "./dist/nuxt.mjs" },
+    }),
+    "src/nuxt.ts": nuxtModule,
+    "src/runtime/plugins/head.ts":
+      "import { useHead } from '#imports'; useHead({ script: [{ innerHTML: 'alert(1)' }] })",
+  });
+  const rule = "nuxt/security/no-unsafe-usehead-script";
+  const result = await runViteDoctor({ root, cache: false, rules: rule });
+  expect(result.diagnostics.some((item) => item.ruleId === rule)).toBe(true);
+});
+
+test("explicit Vue selection applies to dependency-free workspace packages", async () => {
+  const root = fixture({
+    "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+    "packages/lib/package.json": JSON.stringify({ name: "lib" }),
+    "packages/lib/src/Button.vue": button,
+  });
+  const result = await runViteDoctor({ root, framework: "vue", cache: false, rules: buttonRule });
+  expect(result.diagnostics.filter((item) => item.ruleId === buttonRule)).toHaveLength(1);
+});

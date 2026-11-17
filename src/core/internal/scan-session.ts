@@ -386,6 +386,7 @@ function selectRules(
     options.extends ?? config.extends,
     activations,
     projectWorkspacePackages(project).map((item) => item.root),
+    options.framework !== undefined && options.framework !== "auto",
   );
   const frameworks = new Set([
     project.framework,
@@ -394,7 +395,7 @@ function selectRules(
 
   const candidates = registry.rules
     .filter((rule) => selected.ruleIds.has(rule.meta.id))
-    .filter((rule) => !rule.meta.requires?.nuxt || project.framework === "nuxt")
+    .filter((rule) => !rule.meta.requires?.nuxt || frameworks.has("nuxt"))
     .filter(
       (rule) => !rule.meta.requires?.nitro || frameworks.has("nitro") || frameworks.has("nuxt"),
     )
@@ -461,6 +462,7 @@ function resolveExtends(
   requested: DoctorRunOptions["extends"] = "auto",
   activations: ReadonlyMap<RulePack, string[]>,
   workspaceRoots: readonly string[],
+  explicitFramework = false,
 ): { ruleIds: Set<string>; scopes: Map<string, Set<string>>; packs: Set<RulePack> } {
   const ruleIds = new Set<string>();
   const selectedPacks = new Set<RulePack>();
@@ -501,7 +503,10 @@ function resolveExtends(
           .map((rule) => rule.meta.id),
       );
       for (const ruleId of pack.presets.recommended) {
-        const covered = roots.length === workspaceRoots.length || workspaceRules.has(ruleId);
+        const covered =
+          (explicitFramework && roots.includes(".")) ||
+          roots.length === workspaceRoots.length ||
+          workspaceRules.has(ruleId);
         select(ruleId, covered ? undefined : roots);
       }
     }

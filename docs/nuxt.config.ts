@@ -32,6 +32,13 @@ export default defineNuxtConfig({
 
   modules: ["vite-doctor/nuxt"],
 
+  doctor: {
+    rules: {
+      // Keep explicit imports so docs composables also run in standalone unit tests.
+      "nuxt/imports/no-explicit-auto-import": "off",
+    },
+  },
+
   css: ["~/assets/css/main.css"],
 
   site: {

@@ -134,7 +134,10 @@ function detectPackageFramework(
   packages: Record<string, string | undefined>,
 ): DoctorFramework {
   if (isNuxtApp(directory, manifest, packages)) return "nuxt";
-  if ((packages["@nuxt/kit"] || packages["@nuxt/module-builder"]) && detectPackageModule(directory))
+  if (
+    (packages.nuxt || packages["@nuxt/kit"] || packages["@nuxt/module-builder"]) &&
+    detectPackageModule(directory)
+  )
     return "nuxt";
   if (packages.nitro || packages.nitropack || hasConfig(directory, "nitro.config")) return "nitro";
   if (

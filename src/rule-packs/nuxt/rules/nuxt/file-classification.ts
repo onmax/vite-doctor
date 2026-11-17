@@ -1,3 +1,8 @@
+import { parseScript } from "../../../../core/internal/script.js";
+import { parseSfcFile } from "../../../../core/internal/sfc.js";
+// oxlint-disable-next-line no-restricted-imports -- uses the authored source boundary; routing Rules disable caching.
+import { selectScanFiles } from "../../../../core/internal/source-inventory.js";
+import { walkScriptLocal, type AnyNode } from "../../../../core/rule-authoring.js";
 import { dirname, join, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
 import { projectWorkspacePackages } from "../../../../core/internal/applicability.js";
@@ -68,12 +73,12 @@ export function isRuntimeAppFile(ctx: RuleContext) {
  * code, in a workspace package that does not create its own vue-router instance, as a Vue SPA
  * shipped next to a Nuxt module does.
  */
-export function isNuxtRoutedAppFile(ctx: RuleContext) {
+export async function isNuxtRoutedAppFile(ctx: RuleContext) {
   const file = toPosixPath(resolve(ctx.project.root, ctx.file.path));
   const appFile =
     isRuntimeAppFile(ctx) ||
     (ctx.file.sourceKind !== "module" && isModuleRuntimeAppFile(ctx, file));
-  return appFile && !createsVueRouter(ctx);
+  return appFile && !(await createsVueRouter(ctx));
 }
 
 export function isServerRuntimeFile(ctx: RuleContext) {
@@ -146,37 +151,55 @@ function isModuleRuntimeAppFile(ctx: RuleContext, file: string): boolean {
   });
 }
 
-const VUE_ROUTER_SETUP_RE = /import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']vue-router["']/;
-const ROUTER_SCAN_EXCLUDE = [
-  "**/node_modules/**",
-  "**/dist/**",
-  "**/.nuxt/**",
-  "**/.output/**",
-  "**/coverage/**",
-  "**/{test,tests,__tests__}/**",
-  "**/*.{test,spec}.*",
-];
-
-function createsVueRouter(ctx: RuleContext): boolean {
+async function createsVueRouter(ctx: RuleContext): Promise<boolean> {
   const packages = projectWorkspacePackages(ctx.project);
   const owner = owningWorkspacePackage(packages, toPosixPath(ctx.file.relativePath));
   const key = `nuxt:creates-vue-router:${owner}`;
   const cached = ctx.cache.get<boolean>(key);
   if (cached !== undefined) return cached;
-  const nested = packages
-    .filter((item) => item.root !== owner && (owner === "." || item.root.startsWith(`${owner}/`)))
-    .map((item) => `${owner === "." ? item.root : item.root.slice(owner.length + 1)}/**`);
-  const found = ctx.fs
-    .glob("**/*.{ts,mts,cts,js,mjs,cjs,vue}", {
-      cwd: resolve(ctx.project.root, owner),
-      exclude: [...ROUTER_SCAN_EXCLUDE, ...nested],
-    })
-    .some((path) => {
-      const text = ctx.fs.readText(path);
-      return text !== undefined && text.includes("createRouter") && VUE_ROUTER_SETUP_RE.test(text);
+  const entries = await selectScanFiles(ctx.project.root, {}, {}, ctx.project);
+  for (const entry of entries) {
+    if (
+      entry.sourceKind === "module" ||
+      owningWorkspacePackage(packages, toPosixPath(relative(ctx.project.root, entry.path))) !==
+        owner
+    )
+      continue;
+    const text = ctx.fs.readText(entry.path);
+    if (!text || !text.includes("vue-router")) continue;
+    const ast = entry.path.endsWith(".vue")
+      ? (await parseSfcFile(entry.path, text)).getScriptAst()
+      : parseScript(entry.path, text);
+    if (!ast) continue;
+    const bindings = new Set<string>();
+    for (const node of (ast.body ?? []) as AnyNode[]) {
+      if (
+        node.type !== "ImportDeclaration" ||
+        node.source?.value !== "vue-router" ||
+        node.importKind === "type"
+      )
+        continue;
+      for (const specifier of node.specifiers ?? []) {
+        if (specifier.importKind !== "type" && specifier.imported?.name === "createRouter")
+          bindings.add(specifier.local.name);
+      }
+    }
+    let found = false;
+    walkScriptLocal(ast, (node) => {
+      if (
+        node.type === "CallExpression" &&
+        node.callee?.type === "Identifier" &&
+        bindings.has(node.callee.name)
+      )
+        found = true;
     });
-  ctx.cache.set(key, found);
-  return found;
+    if (found) {
+      ctx.cache.set(key, true);
+      return true;
+    }
+  }
+  ctx.cache.set(key, false);
+  return false;
 }
 
 function owningNuxtAppSource(ctx: RuleContext, file: string) {

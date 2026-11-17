@@ -9,13 +9,15 @@ export const preferNuxtLink = createRule({
   meta: {
     id: "nuxt/routing/prefer-nuxtlink",
     title: "Use NuxtLink for internal navigation",
+    cacheScope: "none",
     category: "routing",
     severity: "warn",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/components/nuxt-link#nuxtlink",
     requires: { template: true, nuxt: true },
   },
-  create(ctx) {
+  async create(ctx) {
+    const routed = await isNuxtRoutedAppFile(ctx);
     return {
       template: {
         element(node) {
@@ -26,7 +28,7 @@ export const preferNuxtLink = createRule({
           const href = findTemplateAttribute(node, "href");
           const hrefValue = href?.value?.content;
           if (!href || hrefValue === undefined || !isInternalNavigationHref(hrefValue)) return;
-          if (!isNuxtRoutedAppFile(ctx)) return;
+          if (!routed) return;
 
           ctx.report(
             diagnostics.NUXT0050({
