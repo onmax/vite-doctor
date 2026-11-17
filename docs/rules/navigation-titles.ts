@@ -147,9 +147,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "typescript/evidence/no-widen-then-assert": "Widen then assert",
   "typescript/performance/no-array-filter-map": "filter().map()",
   "typescript/performance/no-reduce-accumulator-copy": "Reducer copies",
-  "typescript/strict/no-runtime-typeof": "Runtime typeof",
   "typescript/strict/require-safety-comment-for-type-assertion": "Assertion notes",
-  "typescript/style/no-conditional-empty-object-spread": "Conditional spreads",
 
   "vite/assets/no-dynamic-new-url": "Dynamic new URL",
   "vite/assets/no-public-src-import": "Public asset imports",
