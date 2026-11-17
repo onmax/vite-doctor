@@ -57,8 +57,6 @@ export async function runFileRules(session: ScanSession): Promise<void> {
   // Buffering per rule keeps report order rule-major, as it was when rules ran one at a time.
   const reported = rules.map((): Diagnostic[] => []);
   const timings = session.options.profile ? rules.map(() => ({ ms: 0, files: 0 })) : undefined;
-  // A Rule's hook names come from its code, not the file, so one check per Doctor Run is enough.
-  const hooksChecked = rules.map(() => false);
   const workspacePackages = projectWorkspacePackages(session.project);
   const reportedFiles = session.scopedReport
     ? new Set(session.files.flatMap((file) => (file.reportEligibility ? [file.path] : [])))
@@ -110,10 +108,7 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         timing.files += 1;
       }
       if (!visitor) continue;
-      if (!hooksChecked[index]) {
-        assertKnownRuleHooks(rule, visitor);
-        hooksChecked[index] = true;
-      }
+      assertKnownRuleHooks(rule, visitor);
       visitors.push(timing ? timeVisitor(visitor, timing) : visitor);
     }
     if (visitors.length > 0) await runVisitors(visitors, file);
