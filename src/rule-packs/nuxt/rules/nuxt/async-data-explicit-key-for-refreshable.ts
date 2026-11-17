@@ -14,6 +14,7 @@ export const asyncDataExplicitKeyForRefreshable = createRule({
     title: "Use explicit keys for refreshable async data",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-async-data#params",
     requires: { script: true, nuxt: true },

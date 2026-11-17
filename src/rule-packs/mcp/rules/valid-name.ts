@@ -24,6 +24,7 @@ export const validName = createRule({
     ],
     category: "tools",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: false,
     diagnosticCodes: ["MCP0003"],
     docsUrl: "https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names",

@@ -23,6 +23,7 @@ export const noHttpErrorMasking = createRule({
     title: "Preserve intentional HTTP errors in Nitro handlers",
     category: "request",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/guide/api/error",
     requires: { script: true, nitro: true },

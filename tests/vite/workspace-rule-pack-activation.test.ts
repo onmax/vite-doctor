@@ -103,7 +103,8 @@ test("a Nuxt workspace package selects the Nuxt run and scopes Nuxt Rule Packs t
 
   const result = await runViteDoctor({ root, cache: false });
 
-  expect(result.framework).toBe("nuxt");
+  expect(result.framework).toBe("nitro");
+  expect(result.project.framework).toBe("nuxt");
   const activations = new Map(
     result.workspacePackages?.map((item) => [item.root, item.rulePacks] as const),
   );
@@ -295,7 +296,7 @@ test("a workspace with several Nuxt apps runs Nuxt Rules on each app with its in
 
   const result = await runViteDoctor({ root, cache: false, runtimeTarget: { nuxt: "4.1.0" } });
 
-  expect(result.framework).toBe("nuxt");
+  expect(result.project.framework).toBe("nuxt");
   expect(
     result.diagnostics
       .filter((diagnostic) => diagnostic.ruleId === plainEnvRule)

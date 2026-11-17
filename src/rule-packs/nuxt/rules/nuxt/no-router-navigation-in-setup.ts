@@ -7,6 +7,7 @@ export const noRouterNavigationInSetup = createRule({
     title: "Do not navigate with router.push/replace during setup",
     category: "routing",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/utils/navigate-to#usage",
     requires: { script: true, nuxt: true },

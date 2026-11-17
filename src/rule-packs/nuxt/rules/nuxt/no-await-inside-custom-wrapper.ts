@@ -6,6 +6,7 @@ export const noAwaitInsideCustomWrapper = createRule({
     title: "Do not await inside custom useFetch/useAsyncData wrappers",
     category: "fetching",
     severity: "error",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-fetch#usage",
     requires: { script: true, nuxt: true },

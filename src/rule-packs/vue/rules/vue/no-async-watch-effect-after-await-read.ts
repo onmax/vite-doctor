@@ -10,6 +10,7 @@ export const noAsyncWatchEffectAfterAwaitRead = createRule({
     title: "Do not read watchEffect dependencies after await",
     category: "watchers",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/essentials/watchers.html#watcheffect",
     requires: { script: true, vue: true },

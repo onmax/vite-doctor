@@ -6,6 +6,7 @@ export const noHashSensitiveRouteFullpathInSsrMarkup = createRule({
     title: "Avoid route.fullPath in SSR markup",
     category: "routing",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/api/composables/use-route#hydration-issues-with-routefullpath",

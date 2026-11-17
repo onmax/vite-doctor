@@ -16,6 +16,7 @@ export const noUnpassedProps = createRule({
     title: "Remove props no caller passes",
     category: "architecture",
     severity: "info",
+    confidence: "heuristic-medium",
     fixable: false,
     execution: "workspace",
     requires: { vue: true, crossFile: true },

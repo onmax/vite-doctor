@@ -24,6 +24,7 @@ export const preferUseEventListener = createRule({
     title: "Prefer VueUse event listener cleanup",
     category: "lifecycle",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vueuse.org/core/useeventlistener/",
     requires: { script: true, vue: true },

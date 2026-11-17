@@ -9,6 +9,7 @@ export const keyedComposableRegistrationRequired = createRule({
     title: "Register custom keyed data composables",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/create-use-fetch#usage",
     requires: { script: true, nuxt: true },

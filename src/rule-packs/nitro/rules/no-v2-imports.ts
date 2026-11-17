@@ -10,6 +10,7 @@ export const noV2Imports = createRule({
       "Import from nitro and its documented Nitro 3 public subpaths. Use nitro/builder for the old builder entry points.",
     category: "migration",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://nitro.build/docs/migration",
     requires: { script: true, nitro: true },

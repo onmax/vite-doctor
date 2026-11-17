@@ -8,6 +8,7 @@ export const requireStaticGlobPattern = createRule({
     title: "Use literal patterns in import.meta.glob",
     category: "imports",
     severity: "error",
+    confidence: "proven",
     docsUrl: "https://vite.dev/guide/features#glob-import-caveats",
     requires: { script: true },
   },

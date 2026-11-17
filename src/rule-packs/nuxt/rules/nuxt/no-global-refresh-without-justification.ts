@@ -7,6 +7,7 @@ export const noGlobalRefreshWithoutJustification = createRule({
     title: "Avoid unscoped refreshNuxtData calls",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/utils/refresh-nuxt-data#refresh-all-data",
     requires: { script: true, nuxt: true },

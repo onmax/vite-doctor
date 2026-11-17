@@ -6,6 +6,7 @@ export const noBrowserSideEffectsInSetup = createRule({
     title: "Avoid browser side effects in universal setup",
     category: "hydration",
     severity: "error",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/best-practices/hydration#third-party-libraries-with-side-effects",

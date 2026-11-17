@@ -12,6 +12,7 @@ export const preferNuxtLink = createRule({
     cacheScope: "none",
     category: "routing",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/components/nuxt-link#nuxtlink",
     requires: { template: true, nuxt: true },

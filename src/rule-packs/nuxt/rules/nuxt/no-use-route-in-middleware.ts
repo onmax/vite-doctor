@@ -6,6 +6,7 @@ export const noUseRouteInMiddleware = createRule({
     title: "Use middleware to/from arguments instead of useRoute",
     category: "routing",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/directory-structure/app/middleware#accessing-route-in-middleware",

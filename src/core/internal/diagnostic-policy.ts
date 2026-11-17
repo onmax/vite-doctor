@@ -185,7 +185,8 @@ function readBaseline(root: string, baseline?: string): Baseline | undefined {
       throw invalid('Expected "fingerprintScheme" to be a number.');
     fingerprintScheme = scheme;
     if ("reportVersion" in json) {
-      if (json.reportVersion !== 3) throw invalid("Expected Doctor JSON report version 3.");
+      if (json.reportVersion !== 3 && json.reportVersion !== 4)
+        throw invalid("Expected Doctor JSON report version 3 or 4.");
       if ("version" in json && typeof json.version === "string") doctorVersion = json.version;
     } else if ("version" in json && json.version === 2) {
       if (scheme === undefined) throw invalid('Baseline version 2 requires "fingerprintScheme".');

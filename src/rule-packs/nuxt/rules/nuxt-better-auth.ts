@@ -34,6 +34,7 @@ export const requireStandardAuthHandlerMount = createRule({
     title: "Mount Better Auth at the standard catch-all route",
     category: "auth",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     execution: "manifest",
     requires: { nuxt: true, crossFile: true },

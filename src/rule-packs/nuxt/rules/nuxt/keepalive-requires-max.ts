@@ -31,6 +31,7 @@ export const keepaliveRequiresMax = createRule({
     title: "Bound keepalive caches on pages with route params",
     category: "performance",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/built-ins/keep-alive.html#max-cached-instances",
     requires: { script: true, nuxt: true },

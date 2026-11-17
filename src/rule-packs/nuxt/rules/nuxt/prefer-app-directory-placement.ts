@@ -7,6 +7,7 @@ export const preferAppDirectoryPlacement = createRule({
     title: "Place app directories under app/",
     category: "architecture",
     severity: "info",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/directory-structure/app",
     requires: { nuxt: true },

@@ -17,6 +17,7 @@ export const exportNameMatchesFile = createRule({
     title: "Match composable exports to their file name",
     category: "composables",
     severity: "info",
+    confidence: "manifest-backed",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/directory-structure/app/composables#how-files-are-scanned",

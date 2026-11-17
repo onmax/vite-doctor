@@ -8,6 +8,7 @@ export const preferNuxtUseRoute = createRule({
     cacheScope: "none",
     category: "routing",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-route#route-synchronization-issues",
     requires: { script: true, nuxt: true },

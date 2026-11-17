@@ -6,6 +6,7 @@ export const noBrowserApiInSetup = createRule({
     title: "Do not read browser APIs in SSR setup paths",
     category: "ssr",
     severity: "error",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/scaling-up/ssr.html#writing-ssr-friendly-code",
     requires: { script: true, vue: true },

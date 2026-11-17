@@ -15,6 +15,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
     title: "Route middleware does not secure API routes",
     category: "middleware",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/directory-structure/app/middleware#when-middleware-runs",

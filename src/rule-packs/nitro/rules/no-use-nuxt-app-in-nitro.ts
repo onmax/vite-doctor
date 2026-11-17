@@ -10,6 +10,7 @@ export const noUseNuxtAppInNitro = createRule({
       "Use event-aware Nitro, h3, or server utilities that receive the request event.",
     category: "server",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     requires: { script: true, nitro: true },
     prefilter: { calls: ["useNuxtApp"] },

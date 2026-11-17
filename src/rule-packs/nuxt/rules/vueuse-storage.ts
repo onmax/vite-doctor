@@ -47,6 +47,7 @@ export const requireInitOnMountedStorage = createRule({
     title: "Initialize VueUse browser storage on mount in SSR apps",
     category: "hydration",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vueuse.org/core/useStorage/#initonmounted",
     requires: { script: true, nuxt: true },

@@ -13,6 +13,7 @@ export const noBrowserGlobalInUniversalCode = createRule({
     title: "Avoid browser globals in universal code",
     category: "hydration",
     severity: "error",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/best-practices/hydration#browser-only-apis-in-server-context",

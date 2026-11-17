@@ -8,6 +8,7 @@ export const preferNuxtPageOverRouterView = createRule({
     cacheScope: "none",
     category: "routing",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/components/nuxt-page#props",
     requires: { template: true, nuxt: true },

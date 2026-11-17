@@ -8,6 +8,7 @@ export const noRefAsOperand = createEslintVueRule({
     title: "Use .value when refs are operands",
     category: "reactivity",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/reactivity-core.html#ref",
     requires: { script: true, vue: true },

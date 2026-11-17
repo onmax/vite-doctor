@@ -19,6 +19,7 @@ export const noMutationInOnUpdated = createRule({
     title: "Do not mutate state in onUpdated",
     category: "lifecycle",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/composition-api-lifecycle.html#onupdated",
     requires: { script: true, vue: true },

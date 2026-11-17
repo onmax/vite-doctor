@@ -14,6 +14,7 @@ export const noUnsafeUseHeadScript = createRule({
     title: "Avoid unsafe scripts in useHead",
     category: "security",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-head-safe#usage",
     requires: { script: true, nuxt: true },
