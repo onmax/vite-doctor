@@ -75,7 +75,7 @@ const TRANSLATION_COMPONENTS = new Map([
   ["i18n", "path"],
 ]);
 const MAX_KEY_CANDIDATES = 16;
-const I18N_HINT = /(?<![\w$])\$?(?:t|te|tc|tm)\s*\(|keypath|\bpath=|v-t\b|i18n/i;
+const I18N_HINT = /(?<![\w$])\$?(?:t|te|tc|tm)\s*(?:\?\.\s*)?\(|keypath|\bpath=|v-t\b|i18n/i;
 
 export function collectTranslationUsage(
   fs: RuleFileSystem,
@@ -161,12 +161,13 @@ function scanTemplate(
         } else if (
           prop.type === TemplateNodeType.DIRECTIVE &&
           prop.name === "bind" &&
-          prop.arg?.isStatic &&
-          prop.arg.content === keyAttribute &&
+          (!prop.arg || (prop.arg.isStatic && prop.arg.content === keyAttribute)) &&
           prop.exp
         ) {
           const expression = parseTemplateExpression(prop.exp);
-          recordKeyArgument(expression, file, expressionLocation(expression, prop.exp), "t", usage);
+          const location = expressionLocation(expression, prop.exp);
+          if (!prop.arg) recordObjectBinding(expression, keyAttribute, file, location, usage);
+          else recordKeyArgument(expression, file, location, "t", usage);
         }
       }
       return;
@@ -190,6 +191,31 @@ function scanTemplate(
     const expression = node.name === "for" ? node.forParseResult?.source : node.exp;
     if (expression) scanTemplateExpression(expression, file, scope, usage);
   });
+}
+
+function recordObjectBinding(
+  expression: AnyNode,
+  key: string,
+  file: string,
+  location: { start: number; end: number },
+  usage: TranslationUsage,
+) {
+  expression = unwrap(expression);
+  if (expression?.type !== "ObjectExpression") {
+    recordKeyArgument(null, file, location, "t", usage);
+    return;
+  }
+  for (const property of expression.properties ?? []) {
+    if (property.type === "SpreadElement")
+      recordObjectBinding(property.argument, key, file, location, usage);
+    else if (
+      (!property.computed && staticName(property.key) === key) ||
+      (property.computed && property.key?.value === key)
+    )
+      recordKeyArgument(property.value, file, location, "t", usage);
+    else if (property.computed && typeof property.key?.value !== "string")
+      recordKeyArgument(null, file, location, "t", usage);
+  }
 }
 
 function scanTemplateExpression(
@@ -347,11 +373,11 @@ function emptyScope(): FileScope {
 function scanUnparsed(file: string, text: string, usage: TranslationUsage) {
   usage.unparsedFiles.push(file);
   for (const match of text.matchAll(
-    /(?<![\w$])\$?(?:t|te|tc|tm)\s*\(\s*(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g,
+    /(?<![\w$])\$?(?:t|te|tc|tm)\s*(?:\?\.\s*)?\(\s*(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g,
   )) {
     usage.references++;
     if (match[1] === "`" && match[2]!.includes("${")) continue;
-    usage.keys.add(unescapeString(match[2]!));
+    usage.keys.add(unescapeString(match[2]!, match[1]!));
   }
   for (const match of text.matchAll(/\b(?:keypath|path)\s*=\s*(['"])([^'"]+)\1/g))
     usage.keys.add(match[2]!);
@@ -362,7 +388,7 @@ function scanUnparsed(file: string, text: string, usage: TranslationUsage) {
 function collectStringLiterals(text: string, literals: Set<string>) {
   for (const match of text.matchAll(/(?=(['"`])((?:\\.|(?!\1)[^\\\n])*)\1)/g)) {
     const value = match[2]!;
-    if (value && value.length <= 200) literals.add(unescapeString(value));
+    if (value && value.length <= 200) literals.add(unescapeString(value, match[1]!));
   }
 }
 
@@ -436,8 +462,17 @@ function walk(node: unknown, visit: (node: AnyNode) => void) {
   }
 }
 
-function unescapeString(value: string): string {
-  return value.includes("\\") ? value.replace(/\\(.)/g, "$1") : value;
+function unescapeString(value: string, quote: string): string {
+  if (!value.includes("\\")) return value;
+  // Let the parser decode escapes without evaluating any source expression.
+  const parsed = parseScriptResult("literal.js", `${quote}${value}${quote}`);
+  if (!parsed.ast || parsed.errors.length) return value;
+  const statement = (parsed.ast as AnyNode).body?.[0];
+  const expression = statement?.expression;
+  if (typeof expression?.value === "string") return expression.value;
+  if (expression?.type === "TemplateLiteral" && expression.expressions.length === 0)
+    return expression.quasis[0]?.value.cooked ?? value;
+  return value;
 }
 
 function escapeRegExp(value: string): string {

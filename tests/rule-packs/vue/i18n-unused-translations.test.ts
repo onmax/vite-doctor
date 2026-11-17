@@ -424,3 +424,55 @@ const { t } = useI18n()
 
   expect(result.diagnostics).toEqual([]);
 });
+
+test("translation component object bindings retain patterns and opaque uncertainty", async () => {
+  for (const tag of ["i18n-t", "i18n"]) {
+    const path = tag === "i18n" ? "path" : "keypath";
+    const known = await runVue({
+      "src/App.vue": `<script setup>const section = 'title'</script><template><${tag} v-bind="{ ${path}: 'home.' + section }" /></template>`,
+      "locales/en.json": JSON.stringify({ home: { title: "Home" }, unused: "Unused" }),
+    });
+    expect(reportedKeys(known)).toEqual(["unused"]);
+    const opaque = await runVue({
+      "src/App.vue": `<template><${tag} v-bind="translationProps" /></template>`,
+      "locales/en.json": JSON.stringify({ unused: "Unused" }),
+    });
+    expect(opaque.diagnostics[0]!.confidence).toBe("heuristic-medium");
+  }
+});
+
+test("shared declared files preserve every locale membership and nested paths", async () => {
+  for (const path of ["fr.json", "messages/fr.json", "fr/pages/home.json"]) {
+    const result = await runNuxt({
+      "nuxt.config.ts": `export default defineNuxtConfig({ i18n: { defaultLocale: 'fr', locales: [{ code: 'fr', file: '${path}' }, { code: 'fr-CA', files: ['${path}', 'fr-CA.json'] }, { code: 'en', file: 'en.json' }] } })`,
+      [`i18n/locales/${path}`]: JSON.stringify({ home: { frOnly: "French" } }),
+      "i18n/locales/fr-CA.json": JSON.stringify({ regional: "Regional" }),
+      "i18n/locales/en.json": JSON.stringify({ enOnly: "English" }),
+    });
+    expect(reportedLocations(result)).toEqual([["home.frOnly", `i18n/locales/${path}`]]);
+    expect(result.diagnostics[0]!.message).toContain('in base locale "fr"');
+  }
+});
+
+test("template-only optional translation calls retain subtree and dynamic evidence", async () => {
+  const subtree = await runVue({
+    "src/App.vue": `<template>{{ $tm?.('home') }}</template>`,
+    "locales/en.json": JSON.stringify({ home: { title: "Home" } }),
+  });
+  expect(subtree.diagnostics).toEqual([]);
+  const dynamic = await runVue({
+    "src/App.vue": `<template>{{ $t?.(key) }}</template>`,
+    "locales/en.json": JSON.stringify({ unused: "Unused" }),
+  });
+  expect(dynamic.diagnostics[0]!.confidence).toBe("heuristic-medium");
+});
+
+test("indirect source literals decode JavaScript escapes", async () => {
+  const result = await runVue({
+    "src/main.ts": String.raw`const items = ['\u0068ome.title', '\x68ome.hex', 'home.\nline', '\u{68}ome.point']; items.map(key => t(key))`,
+    "locales/en.json": JSON.stringify({
+      home: { title: "Home", hex: "Hex", "\nline": "Line", point: "Point" },
+    }),
+  });
+  expect(result.diagnostics).toEqual([]);
+});

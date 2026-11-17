@@ -70,7 +70,7 @@ export function collectLocaleInventory(fs: RuleFileSystem, root: string): Locale
     }
   }
   return {
-    files: sources.map((source) => source.path),
+    files: [...new Set(sources.map((source) => source.path))],
     messages,
     baseLocale: selectBaseLocale(messages, options?.defaultLocale),
   };
@@ -99,25 +99,29 @@ function collectLocaleSources(
   const sources = new Map<string, LocaleSource>();
   for (const dir of new Set(dirs)) {
     if (!fs.stat(dir)?.isDirectory()) continue;
-    const declared = new Map<string, string>();
+    const declared = new Set<string>();
     for (const locale of options?.locales ?? [])
-      for (const file of locale.files) declared.set(resolve(dir, file), locale.code);
+      for (const file of locale.files) {
+        const path = resolve(dir, file);
+        if (!fs.stat(path)?.isFile() || !isLocaleFileName(path)) continue;
+        declared.add(path);
+        sources.set(`${locale.code}:${path}`, { path, locale: locale.code });
+      }
     for (const entry of fs.readDir(dir) ?? []) {
       const path = resolve(dir, entry.name);
       if (entry.isDirectory() && LOCALE_DIR_NAME.test(entry.name)) {
         for (const nested of fs.readDir(path) ?? []) {
           const nestedPath = resolve(path, nested.name);
           if (!nested.isFile() || !isLocaleFileName(nested.name)) continue;
-          const code = declared.get(nestedPath);
-          sources.set(
-            nestedPath,
-            code
-              ? { path: nestedPath, locale: code }
-              : { path: nestedPath, locale: entry.name, namespace: stripExtension(nested.name) },
-          );
+          if (declared.has(nestedPath)) continue;
+          sources.set(nestedPath, {
+            path: nestedPath,
+            locale: entry.name,
+            namespace: stripExtension(nested.name),
+          });
         }
       } else if (entry.isFile() && isLocaleFileName(entry.name)) {
-        sources.set(path, { path, locale: declared.get(path) ?? stripExtension(entry.name) });
+        if (!declared.has(path)) sources.set(path, { path, locale: stripExtension(entry.name) });
       }
     }
   }
