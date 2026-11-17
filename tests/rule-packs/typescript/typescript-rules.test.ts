@@ -180,7 +180,7 @@ console.log(singleton, factory, callbackFactory, objectFactory)`,
     ]);
   });
 
-  test("distinguishes callback producers from callback consumers", async () => {
+  test("infers type parameters from callback parameters and results", async () => {
     const result = await runProjectFixture({
       framework: "vite",
       rules: [noCallerChosenResultType],
@@ -188,12 +188,32 @@ console.log(singleton, factory, callbackFactory, objectFactory)`,
         "src/index.ts": `declare function consume<T>(callback: (value: T) => void): T
 declare function produce<T>(factory: () => T): T
 declare function parse<T>(text: string, schema: { parse(value: unknown): T }): T
+type Rule<Args extends unknown[], V> = (user: unknown, ...args: Args) => V
+export function guest<Args extends unknown[], Verdict extends boolean>(
+  rule: (user: unknown, ...args: Args) => Verdict,
+): Rule<Args, Verdict> {
+  return (user, ...args) => rule(user, ...args)
+}
 console.log(consume, produce, parse)`,
       },
     });
 
-    expect(result.diagnostics.map((item) => [item.ruleId, item.range?.line])).toEqual([
-      ["typescript/evidence/no-caller-chosen-result-type", 1],
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("reports a caller-chosen result type as a warning (vitehub forms database.ts:46)", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noCallerChosenResultType],
+      files: {
+        "src/index.ts": `export function parse<T>(value: string | null): T | null {
+  return value === null ? null : JSON.parse(value) as T
+}`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => [item.code, item.severity, item.range?.line])).toEqual([
+      ["TS0004", "warn", 1],
     ]);
   });
 
