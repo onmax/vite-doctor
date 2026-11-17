@@ -16,6 +16,7 @@ import { collectRulePacks, resolveProjectDoctorConfig } from "./core/internal/sc
 import {
   detectWorkspacePackages,
   nuxtInventoryOwner,
+  packageFrameworks,
   workspaceFramework,
 } from "./core/internal/workspace-packages.js";
 import { readFileSync } from "node:fs";
@@ -183,7 +184,7 @@ async function requestedFrameworks(
   const packages = await detectWorkspacePackages(options.root ?? process.cwd());
   return {
     framework: workspaceFramework(packages),
-    frameworks: new Set(packages.map((item) => item.framework)),
+    frameworks: new Set(packages.flatMap(packageFrameworks)),
   };
 }
 

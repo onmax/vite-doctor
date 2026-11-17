@@ -154,6 +154,13 @@ export interface RuleMeta {
    * the Rule report on any file. Manifest and workspace Rules are always project-scoped.
    */
   reportScope?: "file" | "project";
+  /**
+   * Which files an activated Rule Pack runs this Rule on. `"package"` (the default) means the
+   * files of the workspace packages that activate the pack. `"workspace"` means every workspace
+   * package once any of them activates it, for Rules about integration code, such as a Vite
+   * plugin that registers Nitro handlers, which lives outside the packages that run the framework.
+   */
+  activationScope?: "package" | "workspace";
   sourceKinds?: Array<"app" | "layer" | "module">;
   execution?: ExecutionKind;
   cost?: RuleCost;
@@ -403,6 +410,11 @@ export interface WorkspacePackage {
   root: string;
   name?: string;
   framework: DoctorFramework;
+  /**
+   * The package ships a Nuxt module (`@nuxt/kit` or a `./nuxt` export) without being a Nuxt app,
+   * so its Vue, Nitro and module code runs inside other Nuxt apps.
+   */
+  nuxtIntegration?: true;
   packages: Record<string, string>;
 }
 
@@ -420,6 +432,7 @@ export interface WorkspacePackageActivation {
   root: string;
   name?: string;
   framework: DoctorFramework;
+  nuxtIntegration?: true;
   rulePacks: string[];
 }
 

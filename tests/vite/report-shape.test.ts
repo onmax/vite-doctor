@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
 import { createAgentReport, createJsonReport } from "../../src/core/index.ts";
+import { runRuleFixture } from "../../src/core/testkit.ts";
+import { noConstantComputed } from "../../src/rule-packs/vue/rules/vue/no-constant-computed.ts";
+import { noReactiveDestructure } from "../../src/rule-packs/vue/rules/vue/no-reactive-destructure.ts";
+import { noWatchUseAttrs } from "../../src/rule-packs/vue/rules/vue/no-watch-use-attrs.ts";
 import { runViteDoctor, viteDoctorExtensions } from "../../src/doctor.ts";
 import { nuxtDoctorExtensions } from "../../src/rule-packs/nuxt/rules/index.ts";
 
@@ -107,4 +111,22 @@ test("the JSON report names the root's own framework and one Rule Pack list with
   expect(agent.schema).toBe("vite-doctor.agent/v2");
   expect(agent.project.framework).toBe("nitro");
   expect(agent.rulePacks).toEqual(report.rulePacks);
+});
+
+test.each([
+  [noConstantComputed, "const heading = computed(() => 'Events')"],
+  [noReactiveDestructure, "const state = reactive({ count: 0 }); const { count } = state"],
+  [noWatchUseAttrs, "const attrs = useAttrs(); watch(attrs, () => {})"],
+  [
+    noReactiveDestructure,
+    "import { reactive } from 'vue'; const state = reactive({ child: null, ...loadState() }); const { child } = state",
+  ],
+])("unresolved Vue semantics stay heuristic for $meta.id", async (rule, source) => {
+  const result = await runRuleFixture({
+    framework: "vue",
+    rule,
+    files: { "src/App.vue": `<script setup>${source}</script><template><div /></template>` },
+  });
+  expect(result.diagnostics.length).toBeGreaterThan(0);
+  expect(result.diagnostics.every((item) => item.confidence === "heuristic-high")).toBe(true);
 });

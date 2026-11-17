@@ -17,7 +17,7 @@ export const moduleRequireMeta = createRule({
     title: "Declare Nuxt module meta",
     category: "modules",
     severity: "warn",
-    confidence: "proven",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/modules/module-anatomy#define-your-module",
     requires: { script: true, nuxt: true },

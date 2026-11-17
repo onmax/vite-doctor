@@ -634,3 +634,22 @@ function applyEdits(source: string, diagnostics: Array<{ fix?: { edits: any[] } 
     text = text.slice(0, edit.range.start) + edit.text + text.slice(edit.range.end);
   return text;
 }
+
+test.each([
+  [
+    moduleRequireMeta,
+    `import { nameKey } from './key'; import { defineNuxtModule } from '@nuxt/kit'; export default defineNuxtModule({ meta: { [nameKey]: 'myModule', compatibility: { nuxt: '>=4.0.0' } }, setup() {} })`,
+  ],
+  [
+    moduleResolveRuntimePaths,
+    `${completeModule}
+function keepRelative(addPlugin: (path: string) => string) { return addPlugin('./runtime/plugin') }`,
+  ],
+])("unresolved module semantics stay heuristic for $meta.id", async (rule, source) => {
+  const result = await run(
+    rule,
+    modulePackage({ "src/module.ts": source, "src/key.ts": "export const nameKey = 'name'" }),
+  );
+  expect(result.diagnostics.length).toBeGreaterThan(0);
+  expect(result.diagnostics.every((item) => item.confidence === "heuristic-high")).toBe(true);
+});

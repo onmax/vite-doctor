@@ -24,7 +24,6 @@ function fixture(manifest: Record<string, unknown>, files: Record<string, string
 
 for (const [name, framework] of [
   ["nuxt", "nuxt"],
-  ["@nuxt/kit", "nuxt"],
   ["nitro", "nitro"],
   ["nitropack", "nitro"],
   ["vue", "vue"],
@@ -43,6 +42,18 @@ for (const [name, framework] of [
     expect(result.project.framework).toBe(framework);
   });
 }
+
+test("optional @nuxt/kit without a Nuxt app or module entry marks a Nuxt integration", async () => {
+  const root = fixture({ optionalDependencies: { "@nuxt/kit": "*" } });
+  expect((await viteDoctorExtensions({ root })).map((extension) => extension.name)).toContain(
+    "vite-doctor/builtin-nuxt",
+  );
+  const result = await runViteDoctor({ root, cache: false });
+  expect(result.framework).toBe("vite");
+  expect(result.workspacePackages).toEqual([
+    expect.objectContaining({ root: ".", framework: "vite", nuxtIntegration: true }),
+  ]);
+});
 
 test("an explicit framework still overrides optional framework declarations", async () => {
   const root = fixture({ optionalDependencies: { nuxt: "^4.0.0" } });

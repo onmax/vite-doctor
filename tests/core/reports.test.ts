@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import {
+  type ProjectInfo,
   allDiagnostics,
   createAgentReport,
   createJsonReport,
@@ -186,4 +187,34 @@ test("every report format keeps the confidence and evidence a Rule gave", () => 
     confidence: "manifest-backed",
     evidenceKinds: ["manifest"],
   });
+});
+
+test("workspace root heading omits the nested Nuxt owner's runtime versions", () => {
+  const project: ProjectInfo = {
+    ...docsProject,
+    framework: "nuxt" as const,
+    vueVersion: "3.5.13",
+    nuxtVersion: "4.0.0",
+    workspacePackages: [
+      { root: ".", framework: "vue" as const, packages: { vue: "3.4.21" } },
+      {
+        root: "packages/site",
+        framework: "nuxt" as const,
+        packages: { vue: "3.5.13", nuxt: "4.0.0" },
+      },
+    ],
+  };
+  const result = createResult(project, project.root, [], [], {});
+  result.framework = "vue";
+  result.workspacePackages = [
+    { root: ".", framework: "vue", rulePacks: [] },
+    {
+      root: "packages/site",
+      framework: "nuxt",
+      rulePacks: [],
+    },
+  ];
+  const text = createReport(result, "text");
+  expect(text).toContain("Vue at the root");
+  expect(text).not.toContain("Vue 3.5.13 at the root");
 });

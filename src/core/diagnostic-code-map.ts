@@ -49,6 +49,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0030", ruleId: "doctor/rule/undeclared-cross-file-report", docs: false },
   { code: "DOC0031", ruleId: "doctor/config/unused-suppression" },
   { code: "DOC0033", ruleId: "doctor/inventory/empty-sfc" },
+  { code: "DOC0034", ruleId: "doctor/rule/unknown-hook", docs: false },
   { code: "VUE0001", ruleId: "vue/i18n/no-untranslated-text" },
   { code: "VUE0002", ruleId: "vue/i18n/no-unused-translations" },
   { code: "VUE0003", ruleId: "vue/lifecycle/no-mutation-in-onupdated" },

@@ -15,6 +15,7 @@ import { componentUsageGraph } from "./component-inventory.js";
 import { loadSourceFile, sourceFacts, sourceShape } from "./facts.js";
 import type { RuleInputFrame } from "./rule-inputs.js";
 import { projectWorkspacePackages } from "./applicability.js";
+import { assertKnownRuleHooks } from "./rule-hooks.js";
 import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
 import { canMatchPrefilter } from "./rule-prefilter.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
@@ -93,17 +94,16 @@ export async function runFileRules(session: ScanSession): Promise<void> {
       const rule = rules[index]!;
       const run = createRuleRun(session, file, rule, "file", reported[index]);
       runs.push({ index, run, reportedBefore: reported[index]!.length });
-      if (!timings) {
-        const visitor = await rule.create(run.context);
-        if (visitor) visitors.push(visitor);
-        continue;
-      }
-      const timing = timings[index]!;
-      const createStarted = performance.now();
+      const timing = timings?.[index];
+      const createStarted = timing && performance.now();
       const visitor = await rule.create(run.context);
-      timing.ms += performance.now() - createStarted;
-      timing.files += 1;
-      if (visitor) visitors.push(timeVisitor(visitor, timing));
+      if (timing) {
+        timing.ms += performance.now() - createStarted!;
+        timing.files += 1;
+      }
+      if (!visitor) continue;
+      assertKnownRuleHooks(rule, visitor);
+      visitors.push(timing ? timeVisitor(visitor, timing) : visitor);
     }
     if (visitors.length > 0) await runVisitors(visitors, file);
     const mutated = projectChanged(session.project, before);
@@ -199,6 +199,7 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
       const reportedBefore = session.diagnostics.length;
       const run = createRuleRun(session, file, rule, rule.meta.execution, undefined, project);
       const visitor = await rule.create(run.context);
+      if (visitor) assertKnownRuleHooks(rule, visitor);
       await visitor?.onWorkspaceStart?.();
       await visitor?.onProjectStart?.(project);
       if (project.nuxt) visitor?.NuxtManifest?.(project.nuxt);

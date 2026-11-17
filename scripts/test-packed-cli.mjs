@@ -139,7 +139,7 @@ function verifyDoctor(args, expectedStatuses = [0], expectedCode, expectedFramew
   assert.doesNotMatch(result.stderr, /\n\s+at .+\(.+:\d+:\d+\)/);
   const reportLine = output
     .split("\n")
-    .find((line) => line.startsWith('{"schema":"vite-doctor.agent/v1"'));
+    .find((line) => line.startsWith('{"schema":"vite-doctor.agent/v2"'));
   if (!reportLine) throw new Error(`Doctor report missing from: ${output}`);
   const report = JSON.parse(reportLine);
   if (report.project?.framework !== expectedFramework) {

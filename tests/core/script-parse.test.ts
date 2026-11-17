@@ -94,3 +94,12 @@ test("reports parse errors like the JSON transfer path", () => {
   );
   expect(result.errors.length).toBeGreaterThan(0);
 });
+
+test("infers module syntax independently of the file extension", () => {
+  for (const file of ["/src/guard.cjs", "/src/guard/index.cjs", "/src/guard.cts"]) {
+    expect(parseScriptSync(file, "export default () => ({ private: true })").errors).toEqual([]);
+  }
+  expect(
+    parseScriptSync("/src/guard.js", "export default 1", { sourceType: "script" }).errors,
+  ).not.toHaveLength(0);
+});

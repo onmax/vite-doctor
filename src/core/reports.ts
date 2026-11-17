@@ -609,15 +609,21 @@ function diagnosticReferenceUrl(code: string) {
 }
 
 function frameworkLabel(result: DoctorRunResult): string {
+  const packages = result.workspacePackages ?? [];
+  // Run runtime versions can belong to a nested Nuxt owner.
+  const showVersions = packages.length <= 1;
   const label =
     result.framework === "nuxt"
-      ? `Nuxt ${result.project.nuxtVersion ?? "4"} + Vue ${result.project.vueVersion}`
+      ? showVersions
+        ? `Nuxt ${result.project.nuxtVersion ?? "4"} + Vue ${result.project.vueVersion}`
+        : "Nuxt + Vue"
       : result.framework === "vite"
         ? "Vite"
         : result.framework === "nitro"
           ? "Nitro"
-          : `Vue ${result.project.vueVersion}`;
-  const packages = result.workspacePackages ?? [];
+          : showVersions
+            ? `Vue ${result.project.vueVersion}`
+            : "Vue";
   if (packages.length <= 1) return label;
   const counts = new Map<string, number>();
   for (const item of packages) counts.set(item.framework, (counts.get(item.framework) ?? 0) + 1);

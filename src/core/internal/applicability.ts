@@ -8,6 +8,7 @@ import type {
   WorkspacePackage,
 } from "../primitives.js";
 import { workspaceProjectView } from "./workspace-nuxt.js";
+import { packageFrameworks } from "./workspace-packages.js";
 
 export interface ApplicabilityResult {
   state: ApplicabilityState;
@@ -84,7 +85,12 @@ function evaluateWorkspacePackageActivation(
 ): ApplicabilityResult {
   const activation = pack.activation;
   if (!activation) return active();
-  if (activation.frameworks && !activation.frameworks.includes(workspacePackage.framework)) {
+  if (
+    activation.frameworks &&
+    !packageFrameworks(workspacePackage).some((framework) =>
+      activation.frameworks!.includes(framework),
+    )
+  ) {
     return inactive(
       `Rule Pack ${pack.name} requires a ${activation.frameworks.join(" or ")} workspace package.`,
     );
