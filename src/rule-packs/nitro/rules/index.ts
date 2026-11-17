@@ -22,6 +22,8 @@ import { noUnguardedAlsEnterWith } from "./no-unguarded-als-enter-with.js";
 import { noModuleScopeResponseCache } from "./no-module-scope-response-cache.js";
 import { requireAbsoluteGeneratedPaths } from "./require-absolute-generated-paths.js";
 import { noProcessEnvInServer } from "./no-process-env-in-server.js";
+import { preferNitroH3Import } from "./prefer-nitro-h3-import.js";
+import { declareNitroDependency } from "./declare-nitro-dependency.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -47,6 +49,8 @@ export {
   noModuleScopeResponseCache,
   requireAbsoluteGeneratedPaths,
   noProcessEnvInServer,
+  preferNitroH3Import,
+  declareNitroDependency,
 };
 
 const rules = [
@@ -71,6 +75,8 @@ const rules = [
   noUnguardedAlsEnterWith,
   requireAbsoluteGeneratedPaths,
   noProcessEnvInServer,
+  preferNitroH3Import,
+  declareNitroDependency,
 ];
 
 const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache];

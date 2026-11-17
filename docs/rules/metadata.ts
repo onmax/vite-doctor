@@ -285,6 +285,37 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/h3/prefer-nitro-h3": {
+    description:
+      "Flags value imports and re-exports from h3 in Nitro 3 server code and in packages that declare nitro as a runtime dependency.",
+    why: "Nitro 3 imports every H3 utility from nitro/h3, which re-exports the h3 Nitro runs. In a Nuxt 5 app, server code from a package that imports values from h3 makes Nuxt treat it as Nitro v2 code, apply its Nitro v2 compatibility layer to the whole app, and warn NUXT_B9003 naming the package. In app server code, a bare h3 import resolves the h3 the app installs, which matches Nitro's only while the two ranges stay in step. Doctor runs this rule when the resolved Nitro is 3 or later, on server directories, and on packages whose dependencies, peerDependencies, or optionalDependencies declare a nitro range that excludes Nitro 2. It skips type-only imports, tests, and packages that only install nitro as a devDependency. The fix is safe when the installed nitro/h3 exports every imported name.",
+    recommendedReplacement:
+      'Import H3 values from "nitro/h3". Type-only imports from "h3" can stay.',
+    examples: [
+      {
+        title: "Import H3 through Nitro",
+        language: "ts",
+        invalid: 'import { HTTPError, defineHandler } from "h3"',
+        valid: 'import { HTTPError, defineHandler } from "nitro/h3"',
+      },
+    ],
+  },
+  "nitro/dependencies/declare-nitro": {
+    description:
+      "Flags published packages whose source imports nitro or a nitro/* subpath without declaring nitro in dependencies, peerDependencies, or optionalDependencies.",
+    why: "Consumers do not install a package's devDependencies, so a package that imports nitro/h3 without declaring nitro works in its own workspace but cannot resolve it under a strict install. Doctor skips private packages, tests, type-only imports, and packages that declare nuxt or @nuxt/kit, which run inside a Nuxt app that installs Nitro.",
+    recommendedReplacement:
+      "Declare nitro in peerDependencies with the Nitro 3 range the package supports, and keep it in devDependencies for the package's own build and tests.",
+    examples: [
+      {
+        title: "Declare the Nitro the package runs on",
+        language: "json",
+        invalid: '{ "name": "@acme/blob", "devDependencies": { "nitro": "^3.0.0" } }',
+        valid:
+          '{ "name": "@acme/blob", "peerDependencies": { "nitro": "^3.0.0" }, "devDependencies": { "nitro": "^3.0.0" } }',
+      },
+    ],
+  },
   "nitro/migration/no-v2-imports": {
     description: "Flags Nitro 2 package names and public subpaths that Nitro 3 removed.",
     why: "Nitro 3 publishes the nitro package with a smaller export map, so old package names and subpaths fail after the upgrade.",
