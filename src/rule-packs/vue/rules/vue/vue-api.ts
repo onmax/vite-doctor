@@ -104,7 +104,7 @@ export function memberName(node: AnyNode): string | undefined {
  * namespace import, or an unbound name such as a Nuxt or unplugin-auto-import auto-import.
  */
 export function vueApiCall(
-  script: IndexedScript,
+  script: ScriptScope,
   callee: AnyNode,
   names: ReadonlySet<string>,
 ): string | undefined {

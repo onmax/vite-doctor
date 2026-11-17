@@ -230,3 +230,46 @@ test("watcher reports the acquisition that a later write in the same run overwri
   const offset = '<script setup lang="ts">'.length + source.indexOf("setTimeout(() => {}, 1)");
   expect(result.diagnostics[0]?.range?.start).toBe(offset);
 });
+
+test.each([
+  `const live = useLive(); if (live) { let joinTimer; watch(room, (value) => { clearTimeout(joinTimer); if (value) joinTimer = setTimeout(() => {}, 8000) }, { immediate: true }); onBeforeUnmount(() => clearTimeout(joinTimer)) }`,
+  `let timer; watch(running, (row) => { if (row && !timer) timer = setInterval(() => {}, 100); if (!row && timer) { clearInterval(timer); timer = undefined } }, { immediate: true }); onBeforeUnmount(() => { if (timer) clearInterval(timer) })`,
+  `let timer; watch(running, (row) => { if (timer === undefined) timer = setTimeout(() => { timer = undefined }, 100) }); onBeforeUnmount(() => clearTimeout(timer))`,
+  `let timer; watch(() => props.status, (status, previous) => { if (status === "connected") { clearTimeout(timer) } else if (previous === "connected") { timer = setTimeout(() => {}, 1500) } }); onBeforeUnmount(() => clearTimeout(timer))`,
+])(
+  "watcher accepts teardown in the watcher's block and handles that cannot hold a live resource: %s",
+  async (source) => {
+    const result = await diagnose(source);
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
+test.each([
+  `let timer; if (a) { watch(s, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1) }) } if (b) onBeforeUnmount(() => clearTimeout(timer))`,
+  `if (live) { let timer; watch(s, () => { clearTimeout(timer); timer = setTimeout(() => {}, 1) }); if (other) onBeforeUnmount(() => clearTimeout(timer)) }`,
+  `let timer; watch(s, (on) => { if (!timer) timer = setInterval(() => {}, 100); if (!on) timer = undefined }); onBeforeUnmount(() => clearInterval(timer))`,
+  `let timer; watch(s, () => { if (!timer) timer = setInterval(() => {}, 100) })`,
+  `let timer; watch(s, () => { if (!timer) timer = setInterval(() => { timer = undefined }, 100) }); onBeforeUnmount(() => clearInterval(timer))`,
+  `let timer; watch(s, (status, previous) => { if (status === "idle") clearTimeout(timer); else if (previous === "connected") timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
+  `let timer; watch(s, (status, previous) => { if (status === "connected") clearTimeout(timer); else if (previous === "connected") timer = setTimeout(() => {}, 1500) }); function restart() { timer = setTimeout(() => {}, 1) }; onBeforeUnmount(() => clearTimeout(timer))`,
+  `let timer; watch(s, (status, previous) => { if (status === "connected" && flag) clearTimeout(timer); else if (previous === "connected") timer = setTimeout(() => {}, 1500) }); onBeforeUnmount(() => clearTimeout(timer))`,
+])("watcher still reports a handle teardown or reuse cannot reach: %s", async (source) => {
+  const result = await diagnose(source);
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.code).toBe("VUE0021");
+});
+
+test.each([
+  `watch(status, async () => { if (!timer) { await gate(); timer = setInterval(() => {}, 60000) } })`,
+  `watch(status, async (current, previous) => { if (current === 'connected') clearTimeout(timer); else if (previous === 'connected') { await gate(); timer = setTimeout(() => {}, 60000) } })`,
+  `function update(current, previous) { if (current === 'connected') clearTimeout(timer); else if (previous === 'connected') timer = setTimeout(() => {}, 60000) }; watch(a, update); watch(b, update)`,
+])("rejects unsafe watcher no-reuse proofs: %s", async (source) => {
+  const result = await runRuleFixture({
+    rule: requireWatcherCleanup,
+    framework: "vue",
+    files: {
+      "src/Component.vue": `<script setup>let timer; ${source}; onScopeDispose(() => { clearInterval(timer); clearTimeout(timer) })</script>`,
+    },
+  });
+  expect(result.diagnostics.length).toBeGreaterThan(0);
+});

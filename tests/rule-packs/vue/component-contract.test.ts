@@ -199,3 +199,65 @@ console.log(a.value)
     expect.stringContaining('prop "b"'),
   ]);
 });
+
+test("no-unused-props keeps props that stop a fallthrough attribute on the single root", async () => {
+  const result = await runProjectFixture({
+    framework: "vue",
+    rules: [noUnusedProps],
+    files: {
+      "title.vue": `<script setup lang="ts">\ndefineProps<{ id?: string; title?: string }>()\n</script>\n<template>\n  <section :id="id"><slot /></section>\n</template>`,
+      "object.vue": `<script setup lang="ts">\ndefineProps<{ html: string; blockProps?: Record<string, unknown> }>()\n</script>\n<template><div v-html="html" /></template>`,
+      "array.vue": `<script setup lang="ts">\ndefineProps<{ text: string; highlights?: number[] }>()\n</script>\n<template><pre>{{ text }}</pre></template>`,
+      "branches.vue": `<script setup lang="ts">\ndefineProps<{ inline?: boolean; title?: string }>()\n</script>\n<template>\n  <!-- one root at a time -->\n  <span v-if="inline" />\n  <div v-else />\n</template>`,
+      "element.vue": `<script setup lang="ts">\ndefineProps<{ src: string; alt?: string }>()\n</script>\n<template><img :src="src"></template>`,
+      "runtime.vue": `<script setup lang="ts">\ndefineProps({ label: String, options: { type: Object } })\n</script>\n<template><p>{{ label }}</p></template>`,
+      "interface.vue": `<script setup lang="ts">\ninterface Item { id: string }\ninterface Props { label: string; item?: Item }\ndefineProps<Props>()\n</script>\n<template><p>{{ label }}</p></template>`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("no-unused-props skips components Markdown renders", async () => {
+  const result = await runProjectFixture({
+    framework: "vue",
+    rules: [noUnusedProps],
+    files: {
+      "components/content/Example.vue": `<script setup lang="ts">\ndefineProps<{ label?: string; name?: string }>()\n</script>\n<template><p>{{ name }}</p><p /></template>`,
+      "components/ProseCode.vue": `<script setup lang="ts">\ndefineProps<{ code: string; meta?: string }>()\n</script>\n<template><p>{{ code }}</p><p /></template>`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  [
+    "a component root",
+    `<script setup lang="ts">\ndefineProps<{ title: string; cost?: string; tokens?: string }>()\n</script>\n<template><UNavbar :title="title" /></template>`,
+    ['prop "cost"', 'prop "tokens"'],
+  ],
+  [
+    "a native root and a name that is no attribute there",
+    `<script setup lang="ts">\ndefineProps<{ title: string; meta?: string }>()\n</script>\n<template><div>{{ title }}</div></template>`,
+    ['prop "meta"'],
+  ],
+  [
+    "inheritAttrs: false",
+    `<script setup lang="ts">\ndefineOptions({ inheritAttrs: false })\ndefineProps<{ label: string; title?: string }>()\n</script>\n<template><div>{{ label }}</div></template>`,
+    ['prop "title"'],
+  ],
+  [
+    "several roots",
+    `<script setup lang="ts">\ndefineProps<{ label: string; title?: string }>()\n</script>\n<template><p>{{ label }}</p><p /></template>`,
+    ['prop "title"'],
+  ],
+  [
+    "an attribute of another element",
+    `<script setup lang="ts">\ndefineProps<{ label: string; alt?: string }>()\n</script>\n<template><div>{{ label }}</div></template>`,
+    ['prop "alt"'],
+  ],
+])("no-unused-props still reports an unread prop with %s", async (_name, source, props) => {
+  const result = await runVueSfcRuleFixture(noUnusedProps, source);
+  expect(result.diagnostics.map((diagnostic) => diagnostic.why)).toEqual(
+    props.map((prop) => expect.stringContaining(prop)),
+  );
+});
