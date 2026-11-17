@@ -86,10 +86,21 @@ export function createTypeScope(file: string, program: AnyNode): TypeScope {
     }
   };
   walk(program);
+  // Declaration modules implicitly export top-level declarations unless an export
+  // declaration/assignment supplies an explicit export list. Export modifiers alone
+  // do not disable this TypeScript declaration-file behavior.
+  const implicitExports =
+    /\.d\.[cm]?ts$/.test(file) &&
+    !(program?.body ?? []).some(
+      (statement: AnyNode) =>
+        statement.type === "ExportAllDeclaration" ||
+        statement.type === "TSExportAssignment" ||
+        (statement.type === "ExportNamedDeclaration" && !statement.declaration),
+    );
   for (const statement of program?.body ?? []) {
     const declaration =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-    if (statement.type === "ExportNamedDeclaration" && declaration?.id?.name) {
+    if ((implicitExports || statement.type === "ExportNamedDeclaration") && declaration?.id?.name) {
       scope.exports.set(declaration.id.name, declaration.id.name);
     }
     if (declaration?.type === "TSTypeAliasDeclaration" && !declaration.typeParameters) {

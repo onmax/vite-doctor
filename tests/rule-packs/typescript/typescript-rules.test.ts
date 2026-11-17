@@ -492,6 +492,41 @@ export type Mixed = unknown[] | { id: string }`,
     ]);
   });
 
+  test.each(["d.ts", "d.mts", "d.cts"])(
+    "resolves implicit package declaration exports in %s",
+    async (extension) => {
+      const result = await runProjectFixture({
+        framework: "vite",
+        rules: [noUnvalidatedDeserialization],
+        files: {
+          "src/index.ts": `import type { JsonValue, Raw } from "honest-json";
+import type { JsonValue as ViaBarrel, Raw as BarrelRaw } from "./barrel";
+import type { Hidden } from "private-json";
+const direct = JSON.parse(text) as JsonValue;
+const barrel = JSON.parse(text) as ViaBarrel;
+const container = JSON.parse(text) as Raw;
+const barrelContainer = JSON.parse(text) as BarrelRaw;
+const hidden = JSON.parse(text) as Hidden;`,
+          "src/barrel.ts": 'export * from "honest-json";',
+          "node_modules/honest-json/package.json": JSON.stringify({
+            name: "honest-json",
+            types: `index.${extension}`,
+          }),
+          [`node_modules/honest-json/index.${extension}`]: `type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type Raw = unknown[] | null;
+export type Other = number;`,
+          "node_modules/private-json/package.json": JSON.stringify({
+            name: "private-json",
+            types: `index.${extension}`,
+          }),
+          [`node_modules/private-json/index.${extension}`]: `type Hidden = unknown;
+export {};`,
+        },
+      });
+      expect(result.diagnostics.map((item) => item.range?.line)).toEqual([8]);
+    },
+  );
+
   test.each([
     "type Raw = { id: string }; export type Other = number;",
     'import type { Raw } from "./private"; export type Other = number;',
