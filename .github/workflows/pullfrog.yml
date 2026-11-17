@@ -44,7 +44,7 @@ jobs:
             "$OPENAI_COMPATIBLE_BASE_URL/chat/completions")
           jq -e '.choices[0].message.content | contains("PROXY_OK")' <<< "$response" > /dev/null
       - name: Run agent
-        uses: pullfrog/pullfrog@3c58d31073422cc1b9573f58b5dbadb7a4914715 # v0.1.123
+        uses: pullfrog/pullfrog@44b58efe7fe431053c58aafa05e51e190f969685 # v0.1.130
         with:
           prompt: ${{ inputs.prompt }}
           model: openai-compatible/byok
