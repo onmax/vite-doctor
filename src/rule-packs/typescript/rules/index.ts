@@ -4,6 +4,7 @@ export { noWidenThenAssert } from "./no-widen-then-assert.js";
 export { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 export { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 export { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
+export { noCrossRealmPrototypeIdentity } from "./no-cross-realm-prototype-identity.js";
 export { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
 export { noObjectParameters } from "./no-object-parameters.js";
 export { noUnknownTypeAliases } from "./no-unknown-type-aliases.js";
@@ -13,6 +14,7 @@ export { requireSafetyCommentForTypeAssertion } from "./require-safety-comment-f
 import { defineRulePack } from "../../../core/index.js";
 import { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 import { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
+import { noCrossRealmPrototypeIdentity } from "./no-cross-realm-prototype-identity.js";
 import { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
 import { noObjectParameters } from "./no-object-parameters.js";
 import { noUnknownTypeAliases } from "./no-unknown-type-aliases.js";
@@ -34,6 +36,7 @@ const strictRules = [
   noCallerChosenResultType,
   ...recommendedRules,
   noCrossRealmWebInstanceof,
+  noCrossRealmPrototypeIdentity,
   noObjectParameters,
   noUnknownTypeAliases,
   requireSafetyCommentForTypeAssertion,

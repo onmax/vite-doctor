@@ -100,6 +100,32 @@ test.each([
     "function f(value: unknown, other: unknown) { if (value instanceof Response) return value; if (isResponseLike(other)) return other }",
   ],
   [
+    "byte array check (vitehub kv inspect-value.ts, fixed in 58f09e24ae)",
+    "export function kvValueType(value: unknown): string { if (value instanceof Uint8Array) return 'bytes'; return typeof value }",
+  ],
+  ["DataView", "export const f = (value: unknown) => value instanceof DataView"],
+  ["other typed array", "export const f = (value: unknown) => value instanceof Float64Array"],
+  ["SharedArrayBuffer", "export const f = (value: unknown) => value instanceof SharedArrayBuffer"],
+  [
+    "Error message read with a literal fallback (vitehub source server.ts:65)",
+    "export const message = (cause: unknown) => cause instanceof Error ? cause.message : 'Invalid request.'",
+  ],
+  [
+    "Error code read (vitehub blob, fixed in 123883116d)",
+    "export const missing = (error: unknown) => error instanceof Error && 'code' in error && error.code === 'ENOENT'",
+  ],
+  ["Error subclass", "export const f = (error: unknown) => error instanceof AggregateError"],
+  ["Map", "export const f = (value: unknown) => value instanceof Map"],
+  ["Set", "export const f = (value: unknown) => value instanceof Set"],
+  ["RegExp", "export const f = (value: unknown) => value instanceof RegExp"],
+  ["Promise", "export const f = (value: unknown) => value instanceof Promise"],
+  ["Array", "export const f = (value: unknown) => value instanceof Array"],
+  [
+    "Function (vitehub console, fixed in f192a0b09e)",
+    "export function f(authorize: unknown) { if (!(authorize instanceof Function)) throw new TypeError('function') }",
+  ],
+  ["Object", "export const f = (value: any) => value instanceof Object"],
+  [
     "guard two statements away",
     "function f(value: unknown) { if (value instanceof Response) return value; log(); if (isResponseLike(value)) return value }",
   ],
@@ -113,11 +139,39 @@ test.each([
     "union parameter",
     "function f(value: Request | { url: string }) { return value instanceof Request }",
   ],
-  [
-    "Error is left out",
-    "function f(error: unknown) { return error instanceof Error ? error.message : String(error) }",
-  ],
   ["catch parameter", "try { run() } catch (error) { if (error instanceof Response) throw error }"],
+  [
+    "Error message with a String() fallback that keeps the text (vitehub browser errors.ts before 8142b1b78e)",
+    "export const message = (error: unknown) => error instanceof Error ? error.message : String(error)",
+  ],
+  [
+    "Error in a catch parameter",
+    "try { run() } catch (error) { console.log(error instanceof Error ? error.message : error) }",
+  ],
+  [
+    "local byte array",
+    "const bytes = new Uint8Array(4); export const ok = bytes instanceof Uint8Array",
+  ],
+  [
+    "typed byte array parameter",
+    "export const f = (value: Uint8Array | string) => value instanceof Uint8Array",
+  ],
+  [
+    "method on a typed Map",
+    "export const f = (values: Map<string, unknown>) => values.get('at') instanceof Date",
+  ],
+  [
+    "Node util.types guard (realm-safe)",
+    "import { types } from 'node:util'; export const f = (value: unknown) => value instanceof Uint8Array || types.isUint8Array(value)",
+  ],
+  [
+    "fast path in a brand-checking guard (vitehub runtime response.ts:124)",
+    "export function isResponse(value: unknown): value is Response { if (value instanceof Response) return true; if (typeof value !== 'object' || value === null) return false; return Object.prototype.toString.call(value) === '[object Response]' }",
+  ],
+  [
+    "Array.isArray alternative",
+    "export const f = (value: unknown) => Array.isArray(value) || value instanceof Array",
+  ],
   [
     "local class",
     "class Response {} function f(value: unknown) { return value instanceof Response }",
@@ -147,7 +201,10 @@ test.each([
     "imported function result",
     "import { load } from './load'; export const ok = load() instanceof Response",
   ],
-  ["non-web class", "function f(value: unknown) { return value instanceof Map }"],
+  [
+    "class outside the built-ins",
+    "function f(value: unknown) { return value instanceof WorkspaceError }",
+  ],
   [
     "import() method that does not load modules",
     "async function f(plugin: { import(id: string): Promise<any> }) { const data = await plugin.import('x'); return data.body instanceof Blob }",
@@ -198,6 +255,30 @@ test.each([
     "Blob",
     "Replace instanceof Blob with a guard helper, isBlobLike(value): value is Blob, that checks the members you use, such as arrayBuffer(), size and type.",
   ],
+  [
+    "Uint8Array",
+    "Replace instanceof Uint8Array with a guard helper, isUint8Array(value): value is Uint8Array, that returns ArrayBuffer.isView(value) && Object.prototype.toString.call(value) === '[object Uint8Array]'.",
+  ],
+  [
+    "Map",
+    "Replace instanceof Map with a guard helper, isMap(value): value is Map, that returns Object.prototype.toString.call(value) === '[object Map]'.",
+  ],
+  [
+    "Error",
+    "Replace instanceof Error with a guard helper, isError(value): value is Error, that returns Error.isError(value) where the runtime has it, or Object.prototype.toString.call(value) === '[object Error]'.",
+  ],
+  [
+    "TypeError",
+    "Replace instanceof TypeError with a guard helper, isTypeError(value): value is TypeError, that checks isError(value) and value.name === 'TypeError'.",
+  ],
+  [
+    "Array",
+    "Replace instanceof Array with Array.isArray(value), which is true for arrays from any realm.",
+  ],
+  [
+    "Function",
+    "Replace instanceof Function with typeof value === 'function', which is true for functions from any realm.",
+  ],
 ])("suggests a %s guard helper that keeps the original meaning", async (name, suggestion) => {
   const result = await project.run({
     rule: noCrossRealmWebInstanceof,
@@ -212,6 +293,9 @@ test.each([
   `console.log(isResponseLike(value)); if (!(value instanceof Response)) throw new Error()`,
   `if (isResponseLike(value)) console.log(value); if (!(value instanceof Response)) throw new Error()`,
   `if (value instanceof Response) return value; if (ready) log(isResponseLike(value));`,
+  `if (value instanceof Response) return value; return () => Object.prototype.toString.call(value) === '[object Response]'`,
+  `if (value instanceof Response) return value; return { tag: Object.prototype.toString.call(value) }`,
+  `if (value instanceof Response) return value; return Object.prototype.toString.call(value) === '[object Request]'`,
 ])("reports mandatory instanceof despite nearby guards: %s", async (body) => {
   expect(await count(`function f(value: unknown) { ${body} }`)).toBe(1);
 });
@@ -224,4 +308,16 @@ test.each([
   expect(await count(`function f(value: unknown, enabled: boolean) { return ${condition} }`)).toBe(
     0,
   );
+});
+
+test.each([
+  ["Uint8Array", "a Uint8Array"],
+  ["ArrayBuffer", "an ArrayBuffer"],
+  ["URL", "a URL"],
+])("names the %s class with its article", async (name, phrase) => {
+  const result = await project.run({
+    rule: noCrossRealmWebInstanceof,
+    files: { "src/article.ts": `export const is = (value: unknown) => value instanceof ${name}` },
+  });
+  expect(result.diagnostics[0]!.message).toContain(`can hold ${phrase} created`);
 });
