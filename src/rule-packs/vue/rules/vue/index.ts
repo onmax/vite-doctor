@@ -40,6 +40,7 @@ export { noWatchUseAttrs } from "./no-watch-use-attrs.js";
 export { noReactiveDestructure } from "./no-reactive-destructure.js";
 export { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
 export { noConstantComputed } from "./no-constant-computed.js";
+export { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
@@ -83,6 +84,7 @@ import { noWatchUseAttrs } from "./no-watch-use-attrs.js";
 import { noReactiveDestructure } from "./no-reactive-destructure.js";
 import { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
 import { noConstantComputed } from "./no-constant-computed.js";
+import { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
 
 import { defineRulePack } from "../../../../core/index.js";
 
@@ -130,6 +132,7 @@ const rules = [
   noReactiveDestructure,
   preferComputedOverWatchAssign,
   noConstantComputed,
+  noSetupStateFromBrowserRead,
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,

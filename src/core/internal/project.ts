@@ -12,7 +12,9 @@ import type {
   WorkspacePackage,
 } from "../primitives.js";
 import {
+  addConsumerSsrEvidence,
   detectWorkspacePackages,
+  manifestSsrEvidence,
   nuxtInventoryOwner,
   owningWorkspacePackage,
   runtimeGraphPackage,
@@ -44,6 +46,8 @@ export async function detectProject(
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
     optionalDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    exports?: unknown;
   }>(join(root, "package.json"));
   const deps = {
     ...packageJson?.dependencies,
@@ -62,7 +66,8 @@ export async function detectProject(
     framework !== "nuxt"
       ? undefined
       : (detectedOwner?.root ?? (requested === "nuxt" ? "." : undefined));
-  const ssr = framework === "nuxt" || framework === "nitro" || hasVueSsrEvidence(packageJson, deps);
+  const ssr =
+    framework === "nuxt" || framework === "nitro" || manifestSsrEvidence(packageJson) !== undefined;
   const isMonorepo =
     workspacePackages.length > 1 ||
     existsSync(join(root, "pnpm-workspace.yaml")) ||
@@ -94,6 +99,14 @@ export async function detectProject(
             ),
         )
       : [];
+  const nuxtRenders = new Map(
+    [...(owner ? [owner] : []), ...workspaceNuxt].map((item) => [item.root, item.nuxt.ssr]),
+  );
+  addConsumerSsrEvidence(root, workspacePackages, (item) =>
+    nuxtRenders.has(item.root)
+      ? nuxtRenders.get(item.root) !== false
+      : readNuxtConfigSsr(join(root, item.root), new Map()) !== false,
+  );
   const tsconfigPath = existsSync(join(root, "tsconfig.json"))
     ? join(root, "tsconfig.json")
     : undefined;
@@ -331,24 +344,6 @@ function skipVueTemplate(source: string, start: number): number {
     index = cursor;
   }
   return source.length;
-}
-
-function hasVueSsrEvidence(
-  packageJson: { scripts?: Record<string, string> } | null,
-  deps: Record<string, string | undefined>,
-): boolean {
-  const packageNames = Object.keys(deps);
-  if (
-    packageNames.some((name) =>
-      /^(vitepress|vuepress|@vuepress\/|@vue\/server-renderer|vite-ssg|vite-plugin-ssr|vike|nuxt)$/.test(
-        name,
-      ),
-    )
-  )
-    return true;
-  return Object.values(packageJson?.scripts ?? {}).some((script) =>
-    /\b(vitepress|vuepress|vite-ssg|vike|vite\s+build\s+--ssr)\b/.test(script),
-  );
 }
 
 interface NuxtRunFacts {

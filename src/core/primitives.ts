@@ -416,6 +416,12 @@ export interface WorkspacePackage {
    */
   nuxtIntegration?: true;
   packages: Record<string, string>;
+  /**
+   * Why Doctor treats the package's Vue components as server-rendered, such as a `./nuxt` export or
+   * a server-rendered workspace package that depends on it. Unset for Nuxt packages, whose own
+   * Project Inventory says whether they render on the server, and for packages without evidence.
+   */
+  ssr?: string;
 }
 
 export interface WorkspaceNuxtInventory extends Pick<
@@ -433,6 +439,8 @@ export interface WorkspacePackageActivation {
   name?: string;
   framework: DoctorFramework;
   nuxtIntegration?: true;
+  /** Why Doctor treats the package's Vue components as server-rendered. */
+  ssr?: string;
   rulePacks: string[];
 }
 

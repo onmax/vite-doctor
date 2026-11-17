@@ -454,6 +454,7 @@ function workspacePackageActivations(
     ...(item.name ? { name: item.name } : {}),
     framework: item.framework,
     ...(item.nuxtIntegration ? { nuxtIntegration: true as const } : {}),
+    ...(item.ssr ? { ssr: item.ssr } : {}),
     rulePacks: [...activations]
       .filter(([, roots]) => roots.includes(item.root))
       .map(([pack]) => pack.name),

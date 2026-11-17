@@ -1,0 +1,466 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "pathe";
+import { afterEach, expect, test } from "vite-plus/test";
+import { detectProject } from "../../../src/core/index.ts";
+import { runViteDoctor } from "../../../src/doctor.ts";
+
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+function fixture(files: Record<string, string>) {
+  const root = mkdtempSync(join(tmpdir(), "doctor-vue-ssr-library-"));
+  roots.push(root);
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), text);
+  }
+  return root;
+}
+
+// A component library that ships a Nuxt module, a Vue composable package it depends on, a Nuxt
+// app that renders the library, and a Vue package nothing server-renders.
+function libraryWorkspace(members: Record<string, string> = {}) {
+  return fixture({
+    "package.json": JSON.stringify({ name: "workspace", private: true }),
+    "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n  - "apps/*"\n',
+    "packages/ui/package.json": JSON.stringify({
+      name: "@acme/ui",
+      exports: { ".": "./dist/index.js", "./nuxt": "./dist/nuxt.js" },
+      dependencies: { "@acme/container": "workspace:*" },
+      peerDependencies: { vue: "^3.5.0" },
+      devDependencies: { vue: "^3.5.0" },
+    }),
+    "packages/container/package.json": JSON.stringify({
+      name: "@acme/container",
+      exports: { ".": "./dist/index.js", "./vue": "./dist/vue.js" },
+      peerDependencies: { vue: "^3.5.0" },
+      devDependencies: { vue: "^3.5.0" },
+    }),
+    "packages/charts/package.json": JSON.stringify({
+      name: "@acme/charts",
+      dependencies: { vue: "^3.5.0" },
+    }),
+    "packages/widgets/package.json": JSON.stringify({
+      name: "@acme/widgets",
+      peerDependencies: { vue: "^3.5.0" },
+      devDependencies: { vue: "^3.5.0" },
+    }),
+    "packages/console/package.json": JSON.stringify({
+      name: "@acme/console",
+      exports: { ".": "./dist/index.js", "./nuxt": "./dist/nuxt.js" },
+      dependencies: { vue: "^3.5.0" },
+    }),
+    "packages/console/src/client/main.ts": `import { createApp } from "vue";
+import App from "./app.vue";
+createApp(App).mount("#console");
+`,
+    "packages/server-utils/package.json": JSON.stringify({ name: "@acme/server-utils" }),
+    "apps/site/package.json": JSON.stringify({
+      name: "site",
+      dependencies: {
+        nuxt: "^4.0.0",
+        vue: "^3.5.0",
+        "@acme/widgets": "workspace:*",
+        "@acme/console": "workspace:*",
+        "@acme/server-utils": "workspace:*",
+      },
+    }),
+    "apps/site/nuxt.config.ts": "export default defineNuxtConfig({})\n",
+    "apps/site/app/app.vue": "<template><NuxtPage /></template>\n",
+    ...members,
+  });
+}
+
+const ssrRules = "vue/ssr/*";
+
+async function ssrDiagnostics(root: string) {
+  const result = await runViteDoctor({
+    root,
+    cache: false,
+    extends: ["vite-doctor/vue/strict", "vite-doctor/nuxt/strict"],
+    runtimeTarget: { nuxt: "4.1.0" },
+  });
+  return result.diagnostics
+    .filter((item) => /^(vue\/ssr\/|nuxt\/hydration\/)/.test(item.ruleId))
+    .map((item) => `${item.ruleId}:${item.file.slice(root.length + 1)}:${item.range?.line}`)
+    .sort();
+}
+
+test("Project Inventory records why a workspace package renders on the server", async () => {
+  const root = libraryWorkspace();
+
+  const project = await detectProject(root);
+
+  expect(
+    Object.fromEntries((project.workspacePackages ?? []).map((item) => [item.root, item.ssr])),
+  ).toEqual({
+    ".": undefined,
+    "apps/site": undefined,
+    "packages/charts": undefined,
+    "packages/console": undefined,
+    "packages/container": "the server-rendered package packages/ui depends on it",
+    "packages/ui": "its package.json exports ./nuxt, and Nuxt server-renders components by default",
+    "packages/server-utils": undefined,
+    "packages/widgets": "the Nuxt app apps/site depends on it",
+  });
+});
+
+test("a Nuxt app with ssr: false does not make its dependencies server-rendered", async () => {
+  const root = libraryWorkspace({
+    "apps/site/nuxt.config.ts": "export default defineNuxtConfig({ ssr: false })\n",
+  });
+
+  const project = await detectProject(root);
+
+  expect(project.workspacePackages?.find((item) => item.root === "packages/widgets")?.ssr).toBe(
+    undefined,
+  );
+});
+
+const agentSession = `import { defineComponent, h, ref } from "vue";
+
+interface StoredLayout { panelOpen?: boolean; width?: number }
+
+function readLayout(key: string | undefined): StoredLayout {
+  if (!key || typeof localStorage === "undefined") return {};
+  return JSON.parse(localStorage.getItem(key) ?? "{}") as StoredLayout;
+}
+
+export const AgentSession = defineComponent({
+  props: { storageKey: String, defaultWidth: { type: Number, default: 320 } },
+  setup(props) {
+    const stored = readLayout(props.storageKey);
+    const panelOpen = ref(stored.panelOpen ?? false);
+    const width = ref(stored.width ?? props.defaultWidth);
+    return () => h("div", { style: { width: \`\${width.value}px\` } }, panelOpen.value ? "open" : "closed");
+  },
+});
+`;
+
+const agentSessionFixed = `import { defineComponent, h, onMounted, ref } from "vue";
+
+interface StoredLayout { panelOpen?: boolean; width?: number }
+
+function readLayout(key: string | undefined): StoredLayout {
+  if (!key || typeof localStorage === "undefined") return {};
+  return JSON.parse(localStorage.getItem(key) ?? "{}") as StoredLayout;
+}
+
+export const AgentSession = defineComponent({
+  props: { storageKey: String, defaultWidth: { type: Number, default: 320 } },
+  setup(props) {
+    const panelOpen = ref(false);
+    const width = ref(props.defaultWidth);
+    onMounted(() => {
+      const stored = readLayout(props.storageKey);
+      panelOpen.value = stored.panelOpen ?? panelOpen.value;
+      width.value = stored.width ?? width.value;
+    });
+    return () => h("div", { style: { width: \`\${width.value}px\` } }, panelOpen.value ? "open" : "closed");
+  },
+});
+`;
+
+const useContainer = `import { ref } from "vue";
+
+function browserWindow(): Window | undefined {
+  return typeof window === "undefined" ? undefined : window;
+}
+
+export function useContainer() {
+  const online = ref(browserWindow()?.navigator.onLine ?? true);
+  return { online };
+}
+`;
+
+const connectStore = `import { ref } from "vue";
+
+function browserStorage(): Storage | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window.sessionStorage;
+}
+
+function read(storage: Storage | undefined, key: string): Record<string, string> {
+  return JSON.parse(storage?.getItem(key) ?? "{}");
+}
+
+export function useConnectStore(key = "connect") {
+  const storage = browserStorage();
+  const credentials = ref<Record<string, string>>(read(storage, key));
+  return { credentials };
+}
+`;
+
+test("reports setup state initialized from a browser read through a guarded helper", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/agent-session.ts": agentSession,
+    "packages/ui/src/connect-store.ts": connectStore,
+    "packages/container/src/vue.ts": useContainer,
+  });
+
+  expect(
+    (await ssrDiagnostics(root)).filter((item) =>
+      item.startsWith("vue/ssr/no-setup-state-from-browser-read"),
+    ),
+  ).toEqual([
+    "vue/ssr/no-setup-state-from-browser-read:packages/container/src/vue.ts:8",
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/agent-session.ts:14",
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/agent-session.ts:15",
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/connect-store.ts:14",
+  ]);
+});
+
+test("reports guarded reads in computed() getters once, where the state is created", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/margin.ts": `import { computed, ref } from "vue";
+export function useMargin(placement: string) {
+  const screenWidth = ref(typeof window === "undefined" ? 0 : window.innerWidth);
+  const inMargin = computed(() => placement === "margin" && screenWidth.value >= 1200);
+  const dark = computed(() => {
+    if (typeof matchMedia === "undefined") return false;
+    return matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+  return { inMargin, dark };
+}
+`,
+  });
+
+  expect(await ssrDiagnostics(root)).toEqual([
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/margin.ts:3",
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/margin.ts:5",
+  ]);
+});
+
+test("names the browser global and the helper that reads it", async () => {
+  const root = libraryWorkspace({ "packages/container/src/vue.ts": useContainer });
+
+  const result = await runViteDoctor({
+    root,
+    cache: false,
+    extends: ["vite-doctor/vue/strict"],
+    rules: "vue/ssr/no-setup-state-from-browser-read",
+  });
+  const diagnostics = result.diagnostics.filter((item) => item.ruleId.startsWith("vue/"));
+
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]?.why).toContain("browserWindow() reads window");
+  expect(diagnostics[0]?.why).toContain("the server-rendered package packages/ui depends on it");
+});
+
+test("accepts state from a composable that touches the browser without returning what it read", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/store.ts": `import { ref } from "vue";
+
+function browserStorage(): Storage | undefined {
+  return typeof window === "undefined" ? undefined : window.sessionStorage;
+}
+
+export function useStore() {
+  const storage = browserStorage();
+  const items = ref<string[]>([]);
+  function save() {
+    storage?.setItem("items", JSON.stringify(items.value));
+  }
+  return { items, save };
+}
+`,
+    "packages/ui/src/panel.ts": `import { defineComponent, h, ref } from "vue";
+import { useStore } from "./store";
+
+export const Panel = defineComponent({
+  setup() {
+    const store = useStore();
+    const count = ref(store.items.value.length);
+    return () => h("span", count.value);
+  },
+});
+`,
+  });
+
+  expect(await ssrDiagnostics(root)).toEqual([]);
+});
+
+test("accepts state that reads the browser after mount", async () => {
+  const root = libraryWorkspace({ "packages/ui/src/agent-session.ts": agentSessionFixed });
+
+  expect(await ssrDiagnostics(root)).toEqual([]);
+});
+
+test("does not report packages without server-rendering evidence", async () => {
+  const root = libraryWorkspace({
+    "packages/charts/src/agent-session.ts": agentSession,
+    "packages/charts/src/clock.ts": `import { defineComponent, h } from "vue";
+export const Clock = defineComponent({ setup: () => () => h("time", Date.now()) });
+`,
+  });
+
+  expect(await ssrDiagnostics(root)).toEqual([]);
+});
+
+test("the Rule option ssr marks a package with no workspace consumer as server-rendered", async () => {
+  const root = libraryWorkspace({ "packages/charts/src/agent-session.ts": agentSession });
+
+  const result = await runViteDoctor({
+    root,
+    cache: false,
+    extends: ["vite-doctor/vue/strict"],
+    config: { rules: { "vue/ssr/no-setup-state-from-browser-read": ["warn", { ssr: true }] } },
+  });
+
+  expect(
+    result.diagnostics
+      .filter((item) => item.ruleId === "vue/ssr/no-setup-state-from-browser-read")
+      .map((item) => item.range?.line),
+  ).toEqual([14, 15]);
+});
+
+test("leaves Nuxt app files to the Nuxt hydration Rules", async () => {
+  const root = libraryWorkspace({
+    "apps/site/app/components/Layout.vue": `<script setup lang="ts">
+const width = ref(Number(localStorage.getItem("width") ?? 320))
+const now = Date.now()
+</script>
+<template><div :style="{ width: width + 'px' }">{{ now }}</div></template>
+`,
+  });
+
+  const diagnostics = await ssrDiagnostics(root);
+
+  expect(diagnostics.filter((item) => item.startsWith("vue/ssr/"))).toEqual([]);
+  expect(diagnostics.some((item) => item.startsWith("nuxt/hydration/"))).toBe(true);
+});
+
+const commentRow = `import { h } from "vue";
+import { timeAgo } from "./format";
+
+export function threadRow(thread: { updatedAt: number; author: string }, now?: number) {
+  return [
+    h("span", thread.author),
+    h("span", timeAgo(thread.updatedAt)),
+    h("span", timeAgo(thread.updatedAt, now ?? 0)),
+  ];
+}
+`;
+
+const format = `/** "5 minutes ago", or "now" for under a minute. */
+export function timeAgo(at: number, now: number = Date.now()): string {
+  const minutes = Math.round((at - now) / 60_000);
+  return minutes ? new Intl.RelativeTimeFormat("en").format(minutes, "minute") : "now";
+}
+
+export function formatBytes(bytes: number): string {
+  console.debug("formatted at", Date.now());
+  return \`\${Math.round(bytes / 1024)} KB\`;
+}
+`;
+
+const commentReply = `import { defineComponent, h } from "vue";
+import { formatBytes } from "./format";
+
+export const CommentReply = defineComponent({
+  props: { createdAt: { type: Number, required: true }, size: { type: Number, default: 0 } },
+  setup(props) {
+    const onCopy = () => navigator.clipboard.writeText(new Date().toLocaleString());
+    return () => h("div", [
+      h("time", {
+        datetime: new Date(props.createdAt).toISOString(),
+        title: new Date(props.createdAt).toLocaleString(),
+      }, formatBytes(props.size)),
+      h("span", new Intl.DateTimeFormat(undefined, { dateStyle: "short" }).format(props.createdAt)),
+      h("span", new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }).format(props.createdAt)),
+      h("span", props.size.toLocaleString("en-US")),
+      h("button", { onClick: onCopy }, "Copy"),
+    ]);
+  },
+});
+`;
+
+const legacyClock = `import { defineComponent, h } from "vue";
+
+export const LegacyClock = defineComponent({
+  render() {
+    return h("span", Math.random());
+  },
+});
+`;
+
+test("reports random, current-time and locale-dependent values in render functions", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/comment-row.ts": commentRow,
+    "packages/ui/src/format.ts": format,
+    "packages/ui/src/comment-reply.ts": commentReply,
+    "packages/ui/src/legacy-clock.ts": legacyClock,
+    // threadRow() reports the time it renders itself, so its callers do not report it again.
+    "packages/ui/src/comment-list.ts": `import { defineComponent, h, type PropType } from "vue";
+import { threadRow } from "./comment-row";
+
+export const CommentList = defineComponent({
+  props: { threads: { type: Array as PropType<Array<{ updatedAt: number; author: string }>>, required: true } },
+  setup: (props) => () => h("ul", props.threads.map((thread) => h("li", threadRow(thread)))),
+});
+`,
+  });
+
+  expect(
+    (await ssrDiagnostics(root)).filter((item) =>
+      item.startsWith("vue/ssr/no-random-or-local-time-render"),
+    ),
+  ).toEqual([
+    "vue/ssr/no-random-or-local-time-render:packages/ui/src/comment-reply.ts:11",
+    "vue/ssr/no-random-or-local-time-render:packages/ui/src/comment-reply.ts:13",
+    "vue/ssr/no-random-or-local-time-render:packages/ui/src/comment-row.ts:7",
+    "vue/ssr/no-random-or-local-time-render:packages/ui/src/legacy-clock.ts:5",
+  ]);
+});
+
+test("explains which helper reads the clock", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/comment-row.ts": commentRow,
+    "packages/ui/src/format.ts": format,
+  });
+
+  const result = await runViteDoctor({
+    root,
+    cache: false,
+    extends: ["vite-doctor/vue/strict"],
+    rules: "vue/ssr/no-random-or-local-time-render",
+  });
+
+  expect(
+    result.diagnostics.filter((item) => item.ruleId.startsWith("vue/")).map((item) => item.why),
+  ).toEqual([expect.stringContaining("timeAgo() reads Date.now()")]);
+});
+
+test("leaves unguarded browser reads alone: they fail the server render, so the component cannot be server-rendered", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/viewport.ts": `import { ref } from "vue";
+export function useViewport() {
+  const width = ref(window.innerWidth);
+  return { width };
+}
+`,
+  });
+
+  expect(await ssrDiagnostics(root)).toEqual([]);
+});
+
+test(`the ${ssrRules} Rules keep running in a single-package Vue SSR project`, async () => {
+  const root = fixture({
+    "package.json": JSON.stringify({
+      name: "ssr-app",
+      dependencies: { vue: "^3.5.0", "@vue/server-renderer": "^3.5.0" },
+    }),
+    "src/clock.ts": legacyClock,
+  });
+
+  const result = await runViteDoctor({ root, cache: false, extends: ["vite-doctor/vue/strict"] });
+
+  expect(
+    result.diagnostics
+      .filter((item) => item.ruleId === "vue/ssr/no-random-or-local-time-render")
+      .map((item) => item.file.slice(root.length + 1)),
+  ).toEqual(["src/clock.ts"]);
+});
