@@ -73,7 +73,7 @@ catalogs:
     "@nuxt/test-utils": ^4.1.0
     "@testing-library/vue": ^8.1.0
     "@vue/test-utils": ^2.4.11
-    happy-dom: ^20.11.1
+    happy-dom: ^21.0.4
 overrides:
   "@cloudflare/workers-types": "catalog:deploy"
   "@nuxt/content": "catalog:frontend"
