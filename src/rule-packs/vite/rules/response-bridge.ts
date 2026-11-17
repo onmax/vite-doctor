@@ -8,6 +8,7 @@ export const noLossySetCookieBridge = createRule({
     title: "Keep every Set-Cookie when copying Fetch response headers",
     category: "plugins",
     severity: "warn",
+    confidence: "heuristic-high",
     docsUrl: "https://developer.mozilla.org/docs/Web/API/Headers/getSetCookie",
     requires: { script: true },
     prefilter: { names: ["setHeader"] },

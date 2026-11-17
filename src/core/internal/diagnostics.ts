@@ -19,6 +19,7 @@ import type {
   DoctorRunResult,
   DoctorSeverity,
   FixEdit,
+  DoctorFramework,
   ProjectInfo,
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
@@ -434,8 +435,8 @@ export function createResult(
   const scoring = scoreDiagnostics(diagnostics, config);
   return {
     version: VERSION,
-    reportVersion: 3,
-    framework: project.framework,
+    reportVersion: 4,
+    framework: rootFramework(project),
     root,
     scope,
     score: scoring.score,
@@ -448,6 +449,14 @@ export function createResult(
     graph,
     project,
   };
+}
+
+// A single-package run's framework is the root's own, including a caller's override. In a
+// workspace the run framework is a pick across packages, so the root reports its own entry.
+function rootFramework(project: ProjectInfo): DoctorFramework {
+  const packages = project.workspacePackages ?? [];
+  if (packages.length <= 1) return project.framework;
+  return packages.find((item) => item.root === ".")?.framework ?? project.framework;
 }
 
 export function createDiagnosticFingerprint(
@@ -651,21 +660,6 @@ function reportUnresolvedRuntime(
     confidence: "manifest-backed",
     analysisPhase: "manifest",
   });
-}
-
-export function defaultConfidenceForPhase(phase: Diagnostic["analysisPhase"]) {
-  if (phase === "graph") return "proven";
-  if (phase === "manifest") return "manifest-backed";
-  if (phase === "duplication" || phase === "health") return "heuristic-high";
-  return "heuristic-medium";
-}
-
-export function evidenceKindForPhase(phase: Diagnostic["analysisPhase"]) {
-  if (phase === "file") return "ast";
-  if (phase === "manifest") return "manifest";
-  if (phase === "graph" || phase === "workspace") return "graph";
-  if (phase === "duplication" || phase === "health") return "facts";
-  return "facts";
 }
 
 function isPathInside(root: string, path: string): boolean {

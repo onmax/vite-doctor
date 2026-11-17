@@ -36,6 +36,7 @@ export const noUnguardedAlsEnterWith = createRule({
     title: "Guard AsyncLocalStorage#enterWith on Cloudflare",
     category: "runtime",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://developers.cloudflare.com/workers/runtime-apis/nodejs/asynclocalstorage/",
     requires: { script: true, nitro: true },

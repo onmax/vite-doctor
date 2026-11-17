@@ -52,6 +52,7 @@ export const moduleResolveRuntimePaths = createRule({
     title: "Resolve module runtime paths with createResolver",
     category: "modules",
     severity: "error",
+    confidence: "proven",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/kit/resolving#createresolver",
     requires: { script: true, nuxt: true },

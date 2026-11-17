@@ -19,6 +19,7 @@ export const requireClientOnlyFallback = createRule({
     title: "Give ClientOnly a server fallback",
     category: "hydration",
     severity: "info",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/components/client-only",
     requires: { template: true, nuxt: true },

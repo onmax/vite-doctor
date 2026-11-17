@@ -74,6 +74,7 @@ export const noModuleScopeRequestState = createRule({
     title: "Keep request state out of module scope",
     category: "ssr",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/getting-started/state-management#best-practices",
     requires: { script: true, nuxt: true },

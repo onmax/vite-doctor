@@ -6,6 +6,7 @@ export const noOnWatcherCleanupAfterAwait = createRule({
     title: "Call onWatcherCleanup synchronously",
     category: "watchers",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/essentials/watchers.html#side-effect-cleanup",
     requires: { script: true, vue: true },

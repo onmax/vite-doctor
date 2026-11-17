@@ -59,6 +59,7 @@ export const noPerBuildValueInCacheKey = createRule({
     title: "Keep per-build values out of the Nuxt build cache key",
     category: "performance",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/going-further/experimental-features#buildcache",
     requires: { script: true, nuxt: true },

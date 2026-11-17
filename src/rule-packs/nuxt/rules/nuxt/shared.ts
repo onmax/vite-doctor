@@ -2,6 +2,7 @@ import {
   codeForRuleId,
   createRule,
   diagnosticForCode,
+  type Confidence,
   type RuleContext,
   type TemplateElementNode,
 } from "../../../../core/index.js";
@@ -96,6 +97,7 @@ export function report(
   category: string,
   message: string,
   suggestion: string,
+  confidence?: Confidence,
 ) {
   const code = codeForRuleId(diagnosticCodesByRuleId, ruleId);
   if (!code) throw doctorInternalDiagnostics.DOC0013({ ruleId });
@@ -105,6 +107,7 @@ export function report(
     ruleId,
     severity,
     category,
+    ...(confidence && { confidence }),
   });
 }
 

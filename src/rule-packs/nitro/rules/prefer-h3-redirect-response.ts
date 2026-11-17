@@ -9,6 +9,7 @@ export const preferH3RedirectResponse = createRule({
     recommendedReplacement: "Return redirect(location, status) from the handler.",
     category: "migration",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/migration",
     requires: { script: true, nitro: true },

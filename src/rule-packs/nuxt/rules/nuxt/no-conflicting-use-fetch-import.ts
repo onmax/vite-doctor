@@ -7,6 +7,7 @@ export const noConflictingUseFetchImport = createRule({
     title: "Do not shadow Nuxt useFetch",
     category: "imports",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-fetch#usage",
     requires: { script: true, nuxt: true },

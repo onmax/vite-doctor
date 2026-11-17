@@ -57,17 +57,15 @@ export function createTextReport(result: DoctorRunResult): string {
       `Evidence used: manifest ${result.project.nuxt.manifest.hasManifest ? "present" : "missing"}, route graph ${evidence?.routeGraph ? "present" : "missing"}, build manifest ${evidence?.buildManifest ? "present" : "missing"}, ${evidence?.prerenderRoutes ?? 0} prerender routes, ${evidence?.serverRoutes ?? 0} server routes`,
     );
   }
-  const unselected = result.rulePacks?.activated.filter(
-    (pack) => !result.rulePacks?.selected.includes(pack),
-  );
+  const unselected = result.rulePacks?.filter((pack) => !pack.selected && pack.activatedBy.length);
   if (unselected?.length) {
     lines.push(
-      `Rule Packs not selected by extends: ${unselected.join(", ")} (add "auto" to extends to select their recommended presets)`,
+      `Rule Packs not selected by extends: ${unselected.map((pack) => pack.name).join(", ")} (add "auto" to extends to select their recommended presets)`,
     );
   }
   const confidence = confidenceMix(result);
   lines.push(
-    `Confidence mix: ${confidence.proven} proven, ${confidence.probable} probable, ${confidence.sourceOnly} source-only`,
+    `Confidence mix: ${confidence.proven} proven, ${confidence.probable} probable, ${confidence.sourceOnly} source-only${confidence.undeclared ? `, ${confidence.undeclared} undeclared` : ""}`,
   );
   if (result.fixes && (result.fixes.edits || result.fixes.skipped)) {
     lines.push(
@@ -114,7 +112,8 @@ export function formatTextDiagnostic(root: string, diagnostic: Diagnostic): stri
     indent(formatDiagnostic(diagnostic.diagnostic), "  "),
     `    rule: ${diagnostic.ruleId}`,
     `    source: ${diagnosticLocation(root, diagnostic)}`,
-    `    confidence: ${diagnostic.confidence ?? "heuristic-medium"}`,
+    ...(diagnostic.confidence ? [`    confidence: ${diagnostic.confidence}`] : []),
+    ...(diagnostic.evidence ?? []).map((item) => `    evidence: ${item.kind}: ${item.summary}`),
   ].join("\n");
 }
 
@@ -125,10 +124,11 @@ export function diagnosticLocation(root: string, diagnostic: Diagnostic): string
 }
 
 function confidenceMix(result: DoctorRunResult) {
-  const mix = { proven: 0, probable: 0, sourceOnly: 0 };
+  const mix = { proven: 0, probable: 0, sourceOnly: 0, undeclared: 0 };
   for (const diagnostic of result.diagnostics) {
-    const confidence = diagnostic.confidence ?? "heuristic-medium";
-    if (isEvidenceBacked(confidence)) mix.proven++;
+    const confidence = diagnostic.confidence;
+    if (!confidence) mix.undeclared++;
+    else if (isEvidenceBacked(confidence)) mix.proven++;
     else if (confidence === "heuristic-high") mix.probable++;
     else mix.sourceOnly++;
   }
@@ -148,7 +148,7 @@ export function createJsonReport(result: DoctorRunResult): string {
   return `${JSON.stringify(
     {
       version: result.version,
-      reportVersion: result.reportVersion ?? 3,
+      reportVersion: result.reportVersion ?? 4,
       fingerprintScheme: FINGERPRINT_SCHEME,
       status: reportStatus(result),
       framework: result.framework,
@@ -199,7 +199,7 @@ export function createAgentReport(
     rerun: agentRunArguments(result, context),
   };
   return `${JSON.stringify({
-    schema: "vite-doctor.agent/v1",
+    schema: "vite-doctor.agent/v2",
     status,
     project: {
       cwd: result.root,
@@ -302,7 +302,9 @@ export function createSarifReport(result: DoctorRunResult): string {
               confidence: diagnostic.confidence,
               diagnosticCode: diagnostic.code,
               docs: diagnostic.docs,
-              evidenceKinds: diagnostic.evidence?.map((item) => item.kind),
+              evidenceKinds: diagnostic.evidence?.length
+                ? diagnostic.evidence.map((item) => item.kind)
+                : undefined,
               analysisPhase: diagnostic.analysisPhase,
             },
             locations: [
@@ -473,11 +475,11 @@ export function explainRule(
 export function reportStatus(result: DoctorRunResult): "clean" | "findings" | "incomplete" {
   if (result.project.evidenceGaps?.length) return "incomplete";
   const expectedRuntimes =
-    result.framework === "nuxt"
+    result.project.framework === "nuxt"
       ? (["nuxt", "nitro", "h3"] as const)
-      : result.framework === "nitro"
+      : result.project.framework === "nitro"
         ? (["nitro", "h3"] as const)
-        : result.framework === "vue"
+        : result.project.framework === "vue"
           ? (["vue"] as const)
           : [];
   const unresolvedRuntime = expectedRuntimes.some(
@@ -495,7 +497,7 @@ function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
     code: diagnostic.code,
     rule: diagnostic.ruleId,
     severity: diagnostic.severity,
-    confidence: diagnostic.confidence ?? "heuristic-medium",
+    confidence: diagnostic.confidence,
     category: diagnostic.category,
     message: diagnostic.why,
     remediation: diagnostic.diagnostic.fix,
@@ -511,13 +513,7 @@ function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
           }
         : {}),
     },
-    evidence: diagnostic.evidence?.map((item) => ({
-      kind: item.kind,
-      summary: item.summary,
-      path: item.file ? relative(result.root, item.file) : undefined,
-      range: item.range,
-      relatedId: item.relatedId,
-    })),
+    evidence: serializeEvidence(result, diagnostic),
     editPlan: diagnostic.fix,
     related: diagnostic.related?.map((item) => ({
       path: relative(result.root, item.file),
@@ -532,21 +528,12 @@ function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
 }
 
 function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
-  const evidence = diagnostic.evidence
-    ?.filter((item) => item.summary !== "file analysis")
-    .map((item) => ({
-      kind: item.kind,
-      summary: item.summary,
-      path: item.file ? relative(result.root, item.file) : undefined,
-      range: item.range,
-      relatedId: item.relatedId,
-    }));
   return {
     fingerprint: diagnostic.fingerprint,
     code: diagnostic.code,
     rule: diagnostic.ruleId,
     severity: diagnostic.severity,
-    confidence: diagnostic.confidence ?? "heuristic-medium",
+    confidence: diagnostic.confidence,
     location: {
       path: relative(result.root, diagnostic.file),
       line: diagnostic.range?.line,
@@ -555,7 +542,7 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
     message: diagnostic.why,
     remediation: diagnostic.diagnostic.fix,
     docs: diagnostic.docs,
-    evidence: evidence?.length ? evidence : undefined,
+    evidence: serializeEvidence(result, diagnostic),
     editPlan: diagnostic.fix,
     related: diagnostic.related?.map((item) => ({
       path: relative(result.root, item.file),
@@ -564,6 +551,17 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
       message: item.message,
     })),
   };
+}
+
+function serializeEvidence(result: DoctorRunResult, diagnostic: Diagnostic) {
+  if (!diagnostic.evidence?.length) return undefined;
+  return diagnostic.evidence.map((item) => ({
+    kind: item.kind,
+    summary: item.summary,
+    path: item.file ? relative(result.root, item.file) : undefined,
+    range: item.range,
+    relatedId: item.relatedId,
+  }));
 }
 
 function agentRunArguments(
@@ -611,11 +609,19 @@ function diagnosticReferenceUrl(code: string) {
 }
 
 function frameworkLabel(result: DoctorRunResult): string {
-  if (result.project.framework === "nuxt")
-    return `Nuxt ${result.project.nuxtVersion ?? "4"} + Vue ${result.project.vueVersion}`;
-  if (result.project.framework === "vite") return "Vite";
-  if (result.project.framework === "nitro") return "Nitro";
-  return `Vue ${result.project.vueVersion}`;
+  const label =
+    result.framework === "nuxt"
+      ? `Nuxt ${result.project.nuxtVersion ?? "4"} + Vue ${result.project.vueVersion}`
+      : result.framework === "vite"
+        ? "Vite"
+        : result.framework === "nitro"
+          ? "Nitro"
+          : `Vue ${result.project.vueVersion}`;
+  const packages = result.workspacePackages ?? [];
+  if (packages.length <= 1) return label;
+  const counts = new Map<string, number>();
+  for (const item of packages) counts.set(item.framework, (counts.get(item.framework) ?? 0) + 1);
+  return `${label} at the root; workspace packages: ${[...counts].map(([framework, count]) => `${count} ${framework}`).join(", ")}`;
 }
 
 function sarifLevel(severity: Diagnostic["severity"]) {

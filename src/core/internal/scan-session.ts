@@ -14,7 +14,7 @@ import {
   type ProjectInfo,
   type RuntimeEvidenceContributor,
   type RulePack,
-  type RulePackSelection,
+  type RulePackActivation,
   type SourceFileHandle,
   type WorkspaceGraph,
   type WorkspacePackageActivation,
@@ -86,7 +86,7 @@ export interface ScanSession {
   enabledRules: DoctorRule[];
   ruleScopes: Map<string, ReadonlySet<string>>;
   workspaceActivations: WorkspacePackageActivation[];
-  rulePacks: RulePackSelection;
+  rulePacks: RulePackActivation[];
   ruleConfigs: Map<string, ResolvedRuleConfig>;
   timings: Record<string, number>;
   phases: Record<string, number>;
@@ -168,10 +168,13 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     enabledRules: selection.rules,
     ruleScopes: selection.scopes,
     workspaceActivations: workspacePackageActivations(project, activations),
-    rulePacks: {
-      activated: [...activations].filter(([, roots]) => roots.length).map(([pack]) => pack.name),
-      selected: registry.packs.filter((pack) => selection.packs.has(pack)).map((pack) => pack.name),
-    },
+    rulePacks: registry.packs
+      .map((pack) => ({
+        name: pack.name,
+        selected: selection.packs.has(pack),
+        activatedBy: activations.get(pack) ?? [],
+      }))
+      .filter((pack) => pack.selected || pack.activatedBy.length),
     ruleConfigs,
     phases,
     ruleTimings: new Map(),

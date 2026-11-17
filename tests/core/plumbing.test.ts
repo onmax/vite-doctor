@@ -290,13 +290,10 @@ test("workspace diagnostics use workspace phase metadata", async () => {
     });
 
     expect(result.diagnostics).toEqual([
-      expect.objectContaining({
-        ruleId: "test/workspace-phase",
-        analysisPhase: "workspace",
-        confidence: "heuristic-medium",
-        evidence: [{ kind: "graph", summary: "workspace analysis" }],
-      }),
+      expect.objectContaining({ ruleId: "test/workspace-phase", analysisPhase: "workspace" }),
     ]);
+    expect(result.diagnostics[0]?.confidence).toBeUndefined();
+    expect(result.diagnostics[0]?.evidence).toBeUndefined();
   });
 });
 
@@ -1319,12 +1316,26 @@ test("explicit extends can select an inactive pack exactly", async () => {
 });
 
 test.each([
-  [["inactive/recommended"], ["test/inactive"], ["test/base"]],
-  [["auto", "inactive/recommended"], ["test/base", "test/inactive"], []],
-  ["auto" as const, ["test/base"], []],
+  [
+    ["inactive/recommended"],
+    [
+      { name: "test/base", selected: false, activatedBy: ["."] },
+      { name: "test/inactive", selected: true, activatedBy: [] },
+    ],
+    ["test/base"],
+  ],
+  [
+    ["auto", "inactive/recommended"],
+    [
+      { name: "test/base", selected: true, activatedBy: ["."] },
+      { name: "test/inactive", selected: true, activatedBy: [] },
+    ],
+    [],
+  ],
+  ["auto" as const, [{ name: "test/base", selected: true, activatedBy: ["."] }], []],
 ])(
   "reports activated Rule Packs that extends %j did not select",
-  async (selection, selected, unselected) => {
+  async (selection, rulePacks, unselected) => {
     await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
       const result = await runDoctor({
         root,
@@ -1347,7 +1358,7 @@ test.each([
         ],
       });
 
-      expect(result.rulePacks).toEqual({ activated: ["test/base"], selected });
+      expect(result.rulePacks).toEqual(rulePacks);
       expect(JSON.parse(createJsonReport(result)).rulePacks).toEqual(result.rulePacks);
       expect(JSON.parse(createAgentReport(result)).rulePacks).toEqual(result.rulePacks);
       const note = createTextReport(result)
@@ -1416,7 +1427,7 @@ test("agent reporter is compact and includes a complete remediation path", async
     const report = createAgentReport(result);
     const agent = JSON.parse(report);
 
-    expect(agent.schema).toBe("vite-doctor.agent/v1");
+    expect(agent.schema).toBe("vite-doctor.agent/v2");
     expect(agent.diagnostics[0]).toMatchObject({
       rule: "test/report-program",
       location: { path: "src/app.ts" },

@@ -8,6 +8,7 @@ export const noRouteObjectPageKey = createRule({
     title: "Do not use route objects as NuxtPage page keys",
     category: "routing",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     requires: { template: true, nuxt: true },
   },

@@ -14,6 +14,7 @@ export const noConstantComputed = createRule({
     title: "Review computed() getters with no reactive dependencies",
     category: "reactivity",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/essentials/computed.html",
     requires: { script: true, vue: true },

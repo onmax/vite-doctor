@@ -7,6 +7,7 @@ export const preferNuxtUseRoute = createRule({
     title: "Use Nuxt's useRoute in Nuxt app code",
     category: "routing",
     severity: "error",
+    confidence: "proven",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-route#route-synchronization-issues",
     requires: { script: true, nuxt: true },

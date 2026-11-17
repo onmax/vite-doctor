@@ -14,6 +14,7 @@ export const preferStableListProps = createRule({
     title: "Pass list items a computed comparison",
     category: "performance",
     severity: "info",
+    confidence: "heuristic-high",
     fixable: false,
     execution: "workspace",
     requires: { vue: true, crossFile: true },

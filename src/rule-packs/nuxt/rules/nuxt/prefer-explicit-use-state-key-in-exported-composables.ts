@@ -8,6 +8,7 @@ export const preferExplicitUseStateKeyInExportedComposables = createRule({
     title: "Use explicit useState keys in exported composables",
     category: "hydration",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-state#usage",
     requires: { script: true, nuxt: true },

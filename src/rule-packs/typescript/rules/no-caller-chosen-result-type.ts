@@ -35,6 +35,7 @@ export const noCallerChosenResultType = createRule({
     ],
     category: "evidence",
     severity: "error",
+    confidence: "proven",
     fixable: "structural-review",
     docsUrl: "https://www.typescriptlang.org/docs/handbook/2/generics.html",
     requires: { script: true },

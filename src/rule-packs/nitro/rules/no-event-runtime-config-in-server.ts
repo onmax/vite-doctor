@@ -9,6 +9,7 @@ export const noEventRuntimeConfigInServer = createRule({
     recommendedReplacement: "Use useRuntimeConfig() in Nitro 3 server code.",
     category: "runtime-config",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nitro.build/docs/migration",
     requires: { script: true, nitro: true },

@@ -25,6 +25,7 @@ export const noReactiveDestructure = createRule({
     title: "Do not destructure primitives from reactive()",
     category: "reactivity",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl:
       "https://vuejs.org/guide/essentials/reactivity-fundamentals.html#limitations-of-reactive",

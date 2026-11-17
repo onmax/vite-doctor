@@ -7,6 +7,7 @@ export const preferNuxtPageOverRouterView = createRule({
     title: "Use NuxtPage instead of RouterView",
     category: "routing",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/components/nuxt-page#props",
     requires: { template: true, nuxt: true },

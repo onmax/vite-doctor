@@ -6,6 +6,7 @@ export const createUseFetchMustBeExportedInScannedDir = createRule({
     title: "Export data factories from scanned composable directories",
     category: "fetching",
     severity: "error",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/create-use-fetch#usage",
     requires: { script: true, nuxt: true },

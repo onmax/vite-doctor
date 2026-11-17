@@ -7,6 +7,7 @@ export const noPlainEnvInAppCode = createRule({
     title: "Use runtimeConfig instead of process.env in app code",
     category: "runtime-config",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/going-further/runtime-config#environment-variables",
     requires: { script: true, nuxt: true },

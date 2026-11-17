@@ -7,6 +7,7 @@ export const noAutoImportCollision = createRule({
     title: "Avoid auto-import name collisions",
     category: "imports",
     severity: "warn",
+    confidence: "manifest-backed",
     fixable: "suggestion",
     execution: "manifest",
     docsUrl: "https://nuxt.com/docs/4.x/guide/concepts/auto-imports#directory-based-auto-imports",

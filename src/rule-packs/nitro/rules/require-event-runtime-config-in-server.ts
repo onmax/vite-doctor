@@ -11,6 +11,7 @@ export const requireEventRuntimeConfigInServer = createRule({
     recommendedReplacement: "Use useRuntimeConfig(event).",
     category: "runtime-config",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://v2.nitro.build/guide/configuration#runtime-configuration",
     requires: { script: true, nitro: true },

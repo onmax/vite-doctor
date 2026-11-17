@@ -11,6 +11,7 @@ export const preferNuxtLink = createRule({
     title: "Use NuxtLink for internal navigation",
     category: "routing",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/api/components/nuxt-link#nuxtlink",
     requires: { template: true, nuxt: true },

@@ -38,6 +38,7 @@ export const preferComputedOverWatchAssign = createRule({
     title: "Derive state with computed() instead of a watcher",
     category: "reactivity",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/essentials/computed.html",
     requires: { script: true, vue: true },

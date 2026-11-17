@@ -22,6 +22,7 @@ export const noUnusedTranslations = createRule({
     title: "Disallow unused translations",
     category: "i18n",
     severity: "warn",
+    confidence: "heuristic-medium",
     requires: { vue: true, crossFile: true },
     requiresContext: ["cross-file"],
     execution: "manifest",
@@ -129,6 +130,7 @@ export const noUntranslatedText = createRule({
     title: "Disallow untranslated visible text",
     category: "i18n",
     severity: "warn",
+    confidence: "heuristic-medium",
     requires: { template: true, vue: true },
   },
   create(ctx) {

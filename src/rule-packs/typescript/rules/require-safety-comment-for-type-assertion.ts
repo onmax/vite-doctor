@@ -22,6 +22,7 @@ export const requireSafetyCommentForTypeAssertion = createRule({
     ],
     category: "strict",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://github.com/dmmulroy/anti-slop#require-safety-comment-for-type-assertion",
     requires: { script: true },

@@ -51,6 +51,7 @@ export const noIndexKeyOnStatefulList = createRule({
     ],
     category: "template",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: false,
     docsUrl: "https://vuejs.org/guide/essentials/list.html#maintaining-state-with-key",
     requires: { template: true, vue: true },

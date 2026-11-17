@@ -6,6 +6,7 @@ export const noRandomOrLocalTimeRender = createRule({
     title: "Avoid random or local-time SSR render values",
     category: "ssr",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/scaling-up/ssr.html#hydration-mismatch",
     requires: { sfc: true, script: true, vue: true },

@@ -23,6 +23,7 @@ export const noWatchUseAttrs = createRule({
     title: "Do not watch the useAttrs() object",
     category: "attrs",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl:
       "https://vuejs.org/guide/components/attrs.html#accessing-fallthrough-attributes-in-javascript",

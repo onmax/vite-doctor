@@ -99,6 +99,7 @@ export const noSsrRefetchOfSharedKey = createRule({
     title: "Share data fetched by several callers in one server render",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-async-data#params",
     execution: "workspace",

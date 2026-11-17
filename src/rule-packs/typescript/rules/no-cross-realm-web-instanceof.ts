@@ -63,6 +63,7 @@ export const noCrossRealmWebInstanceof = createRule({
     ],
     category: "boundaries",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "structural-review",
     docsUrl:
       "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/instanceof#instanceof_and_multiple_realms",

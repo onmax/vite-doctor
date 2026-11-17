@@ -107,6 +107,13 @@ export interface RuleMeta {
   examples?: RuleExample[];
   category: string;
   severity: DoctorSeverity;
+  /**
+   * How far the Rule's Diagnostics can be trusted, from the evidence it actually reads: `proven`
+   * for syntax facts, `type-backed`, `manifest-backed`, or `runtime-backed` when that evidence
+   * decides the finding, a heuristic level otherwise. `ctx.report` can override it per Diagnostic.
+   * Without either, Diagnostics carry no confidence.
+   */
+  confidence?: Confidence;
   fixable?: FixSafety | false;
   docsUrl?: string;
   diagnosticCodes?: string[];
@@ -416,10 +423,14 @@ export interface WorkspacePackageActivation {
   rulePacks: string[];
 }
 
-/** The Rule Packs whose Activation matched, and the Rule Packs whose Presets Config Extends selected. */
-export interface RulePackSelection {
-  activated: string[];
-  selected: string[];
+/**
+ * A Rule Pack in a Doctor Run: whether Config Extends selected its Presets, and the roots of the
+ * workspace packages whose Project Inventory activates it.
+ */
+export interface RulePackActivation {
+  name: string;
+  selected: boolean;
+  activatedBy: string[];
 }
 
 export interface RuntimePackageInstance {
@@ -1037,8 +1048,9 @@ export interface RulePack {
 
 export interface DoctorRunResult {
   version: string;
-  reportVersion?: 3;
+  reportVersion?: 4;
   extends?: DoctorSerializableConfig["extends"];
+  /** The workspace root's own framework. `workspacePackages` lists each package's framework. */
   framework: DoctorFramework;
   root: string;
   scope: {
@@ -1072,7 +1084,7 @@ export interface DoctorRunResult {
   phases?: Record<string, number>;
   ruleTimings?: Array<{ rule: string; ms: number; files: number }>;
   workspacePackages?: WorkspacePackageActivation[];
-  rulePacks?: RulePackSelection;
+  rulePacks?: RulePackActivation[];
   graph?: {
     files: number;
     importEdges: number;

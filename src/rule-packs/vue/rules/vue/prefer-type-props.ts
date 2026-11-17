@@ -35,6 +35,7 @@ const props = defineProps<Props>()
     ],
     category: "style",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/sfc-script-setup.html#type-only-props-emit-declarations",
     requires: { sfc: true, script: true, vue: true },

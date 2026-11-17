@@ -23,6 +23,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
     title: "Register Nitro handlers and plugins with absolute paths",
     category: "modules",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nitro.build/config#handlers",
     requires: { script: true },

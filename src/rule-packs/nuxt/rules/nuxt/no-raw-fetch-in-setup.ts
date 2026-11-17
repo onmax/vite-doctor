@@ -6,6 +6,7 @@ export const noRawFetchInSetup = createRule({
     title: "Use Nuxt data fetching primitives for SSR render data",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: false,
     docsUrl:
       "https://nuxt.com/docs/4.x/getting-started/data-fetching#the-need-for-usefetch-and-useasyncdata",
