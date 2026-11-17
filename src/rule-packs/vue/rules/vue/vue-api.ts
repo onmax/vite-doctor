@@ -32,37 +32,40 @@ export interface IndexedScript extends ScriptScope {
 export function indexedScript(ctx: RuleContext): IndexedScript | null {
   return perFile(ctx, "vue-indexed-script", () => {
     const scope = fileScriptScope(ctx);
-    if (!scope) return null;
-    const parents = new Map<AnyNode, AnyNode>();
-    const owners = new Map<AnyNode, AnyNode>();
-    const byType = new Map<string, AnyNode[]>();
-    const visit = (node: AnyNode, parent: AnyNode, owner: AnyNode) => {
-      if (!node?.type) return;
-      parents.set(node, parent);
-      owners.set(node, owner);
-      let list = byType.get(node.type);
-      if (!list) byType.set(node.type, (list = []));
-      list.push(node);
-      const childOwner = FUNCTION_TYPES.has(node.type) ? node : owner;
-      for (const key of scope.visitorKeys[node.type] ?? []) {
-        const value = node[key];
-        if (Array.isArray(value)) for (const child of value) visit(child, node, childOwner);
-        else visit(value, node, childOwner);
-      }
-    };
-    visit(scope.ast, undefined, undefined);
-    return {
-      ast: scope.ast,
-      scopeManager: scope.scopeManager,
-      visitorKeys: scope.visitorKeys,
-      get references() {
-        return scope.references;
-      },
-      parent: (node) => parents.get(node),
-      owner: (node) => owners.get(node),
-      nodes: (type) => byType.get(type) ?? [],
-    };
+    return scope ? indexScriptScope(scope) : null;
   });
+}
+
+export function indexScriptScope(scope: ScriptScope): IndexedScript {
+  const parents = new Map<AnyNode, AnyNode>();
+  const owners = new Map<AnyNode, AnyNode>();
+  const byType = new Map<string, AnyNode[]>();
+  const visit = (node: AnyNode, parent: AnyNode, owner: AnyNode) => {
+    if (!node?.type) return;
+    parents.set(node, parent);
+    owners.set(node, owner);
+    let list = byType.get(node.type);
+    if (!list) byType.set(node.type, (list = []));
+    list.push(node);
+    const childOwner = FUNCTION_TYPES.has(node.type) ? node : owner;
+    for (const key of scope.visitorKeys[node.type] ?? []) {
+      const value = node[key];
+      if (Array.isArray(value)) for (const child of value) visit(child, node, childOwner);
+      else visit(value, node, childOwner);
+    }
+  };
+  visit(scope.ast, undefined, undefined);
+  return {
+    ast: scope.ast,
+    scopeManager: scope.scopeManager,
+    visitorKeys: scope.visitorKeys,
+    get references() {
+      return scope.references;
+    },
+    parent: (node) => parents.get(node),
+    owner: (node) => owners.get(node),
+    nodes: (type) => byType.get(type) ?? [],
+  };
 }
 
 export function unwrapTs(node: AnyNode): AnyNode {
@@ -101,7 +104,7 @@ export function memberName(node: AnyNode): string | undefined {
  * namespace import, or an unbound name such as a Nuxt or unplugin-auto-import auto-import.
  */
 export function vueApiCall(
-  script: IndexedScript,
+  script: ScriptScope,
   callee: AnyNode,
   names: ReadonlySet<string>,
 ): string | undefined {

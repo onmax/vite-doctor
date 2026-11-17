@@ -318,7 +318,14 @@ test("does not treat a local use* API without Vue evidence as a composable", asy
 });
 
 test.each([
-  ["imports Vue", `import { ref } from 'vue'\nexport function useWorkspace() { return ref(null) }`],
+  [
+    "calls a Vue lifecycle hook",
+    `import { onUnmounted, ref } from 'vue'\nexport function useWorkspace() { const state = ref(null); onUnmounted(() => {}); return state }`,
+  ],
+  [
+    "injects",
+    `import { inject } from 'vue'\nexport function useWorkspace() { return inject('workspace') }`,
+  ],
   [
     "imports VueUse",
     `import { useMounted } from '@vueuse/core'\nexport function useWorkspace() { return useMounted() }`,
@@ -336,6 +343,24 @@ test.each([
       "src/server.ts": caller,
       "src/core/use.ts": module,
       "src/core/impl.ts": `import { inject } from 'vue'\nexport function useWorkspace() { return inject('workspace') }`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0026"]);
+});
+
+test.each([
+  ["@vueuse/core", "provideLocal", "'theme', 'dark'"],
+  ["@vueuse/shared", "injectLocal", "'theme'"],
+  ["@vueuse/core", "computedInject", "'theme'"],
+  ["vue", "resolveComponent", "'Theme'"],
+  ["vue", "resolveDirective", "'theme'"],
+])("preserves local composable evidence from %s %s", async (source, api, args) => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/register.ts": `import { useTheme } from './theme'\nexport function registerTheme() { return useTheme() }`,
+      "src/theme.ts": `import { ${api} as contextApi } from '${source}'\nexport function useTheme() { return contextApi(${args}) }`,
     },
   });
   expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0026"]);
@@ -384,7 +409,15 @@ test.each([
   ],
   [
     "calls Vue only from another export",
-    `import { ref } from 'vue'\nexport const counter = () => ref(0)\nexport function useWorkspace() { return { ready: true } }`,
+    `import { onMounted } from 'vue'\nexport const useCounter = () => onMounted(() => {})\nexport function useWorkspace() { return { ready: true } }`,
+  ],
+  [
+    "only creates reactive state",
+    `import { computed, reactive, ref, shallowRef, watch } from 'vue'\nexport function useWorkspace() {\n  const name = ref('')\n  const files = shallowRef([])\n  const state = reactive({ open: false })\n  watch(name, () => {})\n  return { name, files, state, label: computed(() => name.value) }\n}`,
+  ],
+  [
+    "auto-imports only reactivity APIs",
+    `export function useWorkspace() { const state = ref(null); watchEffect(() => {}); return { state, ready: computed(() => !!state.value) } }`,
   ],
 ])("does not treat a local use* API as a composable when its module %s", async (_label, module) => {
   const result = await runRuleFixture({
@@ -396,8 +429,13 @@ test.each([
 });
 
 test.each([
-  ["Vue evidence", "import { ref } from 'vue'\nexport function useState() { return ref(0) }", 1],
+  [
+    "Vue evidence",
+    "import { inject } from 'vue'\nexport function useState() { return inject('state') }",
+    1,
+  ],
   ["no Vue evidence", "export function useState() { return { value: 0 } }", 0],
+  ["only a ref", "import { ref } from 'vue'\nexport function useState() { return ref(0) }", 0],
 ])("traces aliased local dependencies with %s", async (_label, state, count) => {
   const result = await runRuleFixture({
     rule: requireUsePrefix,
@@ -415,7 +453,7 @@ test.each([
   [
     "a default export",
     `import useWorkspace from './core/use'\nexport function run() { return useWorkspace() }`,
-    `import { ref } from 'vue'\nexport default function () { return ref(0) }`,
+    `import { onMounted } from 'vue'\nexport default function () { onMounted(() => {}) }`,
   ],
   [
     "a destructured export",
@@ -512,9 +550,55 @@ test("follows imported local composable dependencies", async () => {
     framework: "vue",
     files: {
       "src/runner.ts": `import { useWorkspaceState } from './state'; export function workspace() { return useWorkspaceState() }`,
-      "src/state.ts": `import { ref } from 'vue'; export function useWorkspaceState() { return ref(0) }`,
+      "src/state.ts": `import { ref, inject } from 'vue'; export function useWorkspaceState() { return inject('workspace', ref(0)) }`,
     },
   });
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.why).toContain("workspace()");
+});
+
+test("does not treat a module singleton that creates refs once as a composable", async () => {
+  const result = await runVue(
+    `import { ref, shallowRef } from 'vue'
+import { setTransport } from './transport'
+let state: State | undefined
+function useState(): State {
+  if (state) return state
+  return startProjects({ mode: 'embedded' })
+}
+export function startProjects(options: Options): State {
+  state = { current: shallowRef(), open: ref(false), mode: options.mode }
+  setTransport(state.mode)
+  return state
+}
+export function openProject(): void { useState().open.value = true }
+export function projectName(id: string): string { return useState().current.value?.name ?? id }`,
+    "src/console/project-session.ts",
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("does not treat a factory that only creates reactive state per call as a composable", async () => {
+  const result = await runVue(
+    `import { computed, ref } from 'vue'
+function useCounter(initial = 0) {
+  const count = ref(initial)
+  return { count, doubled: computed(() => count.value * 2), inc: () => count.value++ }
+}
+export function createCounters() { return [useCounter(), useCounter(1)] }
+export function counterTotal() { return useCounter().doubled.value }`,
+  );
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("still reports a function whose same-file use* helper reaches a lifecycle hook through a factory", async () => {
+  const result = await runVue(
+    `import { onUnmounted, ref } from 'vue'
+function startPolling() { const timer = ref(0); onUnmounted(() => clearInterval(timer.value)); return timer }
+function usePolling() { return startPolling() }
+export function pollStatus() { return usePolling() }`,
+  );
+  expect(result.diagnostics.map((diagnostic) => diagnostic.why)).toEqual([
+    expect.stringContaining("pollStatus()"),
+  ]);
 });

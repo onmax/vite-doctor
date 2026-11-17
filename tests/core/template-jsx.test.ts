@@ -78,9 +78,9 @@ test.each(scripts)("keeps template diagnostics for %s", async (script) => {
 });
 
 test.each([
-  '<script setup>const html = "hello";</script>',
-  '<script setup lang="ts">const html: string = "hello";</script>',
-  '<script setup lang="ts">const html = <string>"hello";</script>',
+  '<script setup>const html = localStorage.getItem("html");</script>',
+  '<script setup lang="ts">const html: string = localStorage.getItem("html") ?? "";</script>',
+  '<script setup lang="ts">const html = <string>localStorage.getItem("html");</script>',
 ])("preserves existing template diagnostics for %s", async (script) => {
   const source = `${script}\n<template><div v-html="html" /></template>`;
   const result = await runVueSfcRuleFixture(restrictVHtml, source);
