@@ -348,6 +348,24 @@ test.each([
   expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0026"]);
 });
 
+test.each([
+  ["@vueuse/core", "provideLocal", "'theme', 'dark'"],
+  ["@vueuse/shared", "injectLocal", "'theme'"],
+  ["@vueuse/core", "computedInject", "'theme'"],
+  ["vue", "resolveComponent", "'Theme'"],
+  ["vue", "resolveDirective", "'theme'"],
+])("preserves local composable evidence from %s %s", async (source, api, args) => {
+  const result = await runRuleFixture({
+    rule: requireUsePrefix,
+    framework: "vue",
+    files: {
+      "src/register.ts": `import { useTheme } from './theme'\nexport function registerTheme() { return useTheme() }`,
+      "src/theme.ts": `import { ${api} as contextApi } from '${source}'\nexport function useTheme() { return contextApi(${args}) }`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0026"]);
+});
+
 test("treats Nuxt app modules as composables and skips use* names Nuxt does not auto-import", async () => {
   const result = await runRuleFixture({
     rule: requireUsePrefix,

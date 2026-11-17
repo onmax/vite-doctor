@@ -59,7 +59,16 @@ const NON_COMPOSABLE_SOURCES = /^(@nuxt\/kit|nuxt\/kit|h3|nitropack|nitro|unstor
 const VUE_COMPOSABLE_SOURCES = /^(?:@vueuse\/|@pinia\/|pinia(?:\/|$)|vue-demi(?:\/|$))/;
 // The APIs that need the current component instance. Reactivity (ref, computed, watch) works
 // in any scope, so creating state is not evidence that a function only works during setup.
-const SETUP_BOUND_APIS = new Set([...LIFECYCLE_HOOKS, ...INJECTION_APIS, "getCurrentInstance"]);
+const SETUP_BOUND_APIS = new Set([
+  ...LIFECYCLE_HOOKS,
+  ...INJECTION_APIS,
+  "getCurrentInstance",
+  "resolveComponent",
+  "resolveDirective",
+  "provideLocal",
+  "injectLocal",
+  "computedInject",
+]);
 // VueUse's createInjectionState returns a composable that calls inject().
 const COMPOSABLE_FACTORIES = new Set(["createInjectionState"]);
 const EXEMPT_NAME =
