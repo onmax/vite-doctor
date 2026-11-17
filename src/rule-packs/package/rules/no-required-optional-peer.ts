@@ -97,7 +97,9 @@ export const noRequiredOptionalPeer = createRule({
             }
             const subpath = `.${reference.specifier.slice(name.length)}`;
             if (subpath === defaultEntry || name === manifest.name) continue;
-            const requiredReaches = reference.reaches.filter((reach) => reach.required);
+            const requiredReaches = reference.reaches.filter(
+              (reach) => reach.required && reach.executionRequired !== false,
+            );
             if (!requiredReaches.length) continue;
             const peer = installedPackageArtifacts(ctx, name, reference.file);
             const peerEntry = peer && matchExportKey(peer.manifest, subpath);
@@ -107,7 +109,10 @@ export const noRequiredOptionalPeer = createRule({
             for (const loaded of peer.references) {
               const transitive = loaded.packageName;
               const peerReach = loaded.reaches.find(
-                (reach) => reach.entry === peerEntry && reach.required,
+                (reach) =>
+                  reach.entry === peerEntry &&
+                  reach.required &&
+                  (!reach.mode || reach.mode === reference.loadMode),
               );
               if (
                 !peerReach ||

@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { expect, test } from "vite-plus/test";
 import { diagnose } from "./fixture.js";
 
@@ -14,7 +16,6 @@ test.each([
   'export async function load() { return await import("peer"); }',
   'export async function load() { try { await setup(); } catch {} return import("peer"); }',
   'export async function load() { try { return await run(() => import("peer")); } catch { return undefined; } }',
-  'export async function load() { try { return await import("peer"); } finally { done(); } }',
   'export async function load() { try { await setup(); } catch { return await import("peer"); } }',
   'export const load = () => import("peer").then((module) => module.default);',
   'export const load = () => import("peer/subpath");',
@@ -28,6 +29,8 @@ test.each([
 });
 
 test.each([
+  'export async function load() { try { return await import("peer"); } finally { done(); } }',
+
   'export async function load() { try { return await import("peer"); } catch (error) { throw new Error("Install peer", { cause: error }); } }',
   'export async function load() { try { const { run } = await import("peer"); return run(); } catch { return undefined; } }',
   'export const load = () => import("peer").catch(() => undefined);',
@@ -129,4 +132,45 @@ test.each([
       ),
     ),
   ).toEqual([]);
+});
+
+test.each([
+  ['try { return import("peer"); } catch {}', false],
+  ['try { return await Promise.all([import("peer")]); } catch {}', false],
+  ['try { return await import("peer").then(x => x); } catch {}', false],
+  ['return import("peer").finally(cleanup).catch(handleMissing);', false],
+  ['try { return await import("peer"); } finally { cleanup(); }', true],
+  ['return (import("peer").catch)(handleMissing);', true],
+  ['return import("peer").catch().catch(handleMissing);', true],
+  ['return import("peer").catch();', true],
+])("matches esbuild import resolution: %s", async (body, accepted) => {
+  const { build } = createRequire(createRequire(import.meta.url).resolve("vite"))("esbuild");
+  const source = `export async function load() { ${body} }`;
+  const built = await build({
+    stdin: { contents: source, resolveDir: tmpdir() },
+    bundle: true,
+    write: false,
+    logLevel: "silent",
+  }).then(
+    () => true,
+    () => false,
+  );
+  expect(built).toBe(accepted);
+  expect(
+    unguarded(await diagnose({ main: "index.js", ...optionalPeer }, { "index.js": source })),
+  ).toHaveLength(accepted ? 0 : 1);
+});
+
+test("keeps optional loaders separate from required and tooling branches", async () => {
+  expect(
+    unguarded(
+      await diagnose(
+        { exports: { "./adapter": { import: "./esm.js", require: "./cjs.cjs" } }, ...optionalPeer },
+        {
+          "esm.js": 'export const load = () => import("peer");',
+          "cjs.cjs": 'require("peer"); require("vite");',
+        },
+      ),
+    ),
+  ).toHaveLength(1);
 });

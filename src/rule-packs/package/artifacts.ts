@@ -34,6 +34,7 @@ export interface PackageReference {
   required: boolean;
   /** Set for `import()`: whether a `try` in the same function or a `.catch()` handles a missing package. */
   dynamic?: { handlesAbsence: boolean };
+  loadMode?: "import" | "require";
   /** Export subpaths whose JavaScript import graph reaches this reference, once per entry and requiredness. */
   reaches: EntryReach[];
   file: string;
@@ -49,6 +50,9 @@ export interface ImportHop {
 }
 
 export interface EntryReach {
+  branch?: string;
+  mode?: "import" | "require";
+  executionRequired?: boolean;
   /** Export subpath such as "." or "./cache"; `main`, `module`, and `browser` count as ".". */
   entry: string;
   /** Loading the entry loads the reference unconditionally. */
@@ -77,7 +81,7 @@ export function importChain(hop: ImportHop): ImportHop[] {
 function mergeReaches(left: EntryReach[], right: EntryReach[]): EntryReach[] {
   const merged = new Map<string, EntryReach>();
   for (const reach of [...left, ...right]) {
-    const key = `${reach.entry}\0${reach.required}`;
+    const key = `${reach.entry}\0${reach.branch}\0${reach.mode}\0${reach.executionRequired}\0${reach.required}`;
     if (!merged.has(key)) merged.set(key, reach);
   }
   return [...merged.values()];
@@ -96,6 +100,8 @@ interface ImportEdge {
 }
 
 interface Origin {
+  branch?: string;
+  mode?: "import" | "require";
   entry?: string;
   via?: ImportHop;
 }
@@ -214,22 +220,28 @@ export function installedPackageArtifacts(
  * The entry that a package subpath such as "./kv" selects: the subpath itself when an exact key or
  * a pattern key such as "./drivers/*" exports it, matching the entries artifacts record.
  */
+function winningExportKey(exports: Record<string, unknown>, subpath: string): string | undefined {
+  if (Object.hasOwn(exports, subpath)) return subpath;
+  return Object.keys(exports)
+    .filter((key) => {
+      const star = key.indexOf("*");
+      return (
+        star >= 0 &&
+        star === key.lastIndexOf("*") &&
+        subpath.length >= key.length &&
+        subpath.startsWith(key.slice(0, star)) &&
+        subpath.endsWith(key.slice(star + 1))
+      );
+    })
+    .sort((a, b) => b.indexOf("*") - a.indexOf("*") || b.length - a.length)[0];
+}
+
 export function matchExportKey(manifest: PackageManifest, subpath: string): string | undefined {
   const exports = manifest.exports;
   if (!isRecord(exports) || !Object.keys(exports).some((key) => key.startsWith("."))) return;
   if (subpath.includes("*")) return;
-  if (Object.hasOwn(exports, subpath)) return subpath;
-  const exported = Object.keys(exports).some((key) => {
-    const star = key.indexOf("*");
-    return (
-      star >= 0 &&
-      star === key.lastIndexOf("*") &&
-      subpath.length >= key.length &&
-      subpath.startsWith(key.slice(0, star)) &&
-      subpath.endsWith(key.slice(star + 1))
-    );
-  });
-  return exported ? subpath : undefined;
+  const key = winningExportKey(exports, subpath);
+  return key && exports[key] !== null ? subpath : undefined;
 }
 
 export function readPackageArtifacts(
@@ -296,6 +308,8 @@ function readPackageArtifactsForMode(
     required: boolean;
     declarationBacked?: boolean;
     entry?: string;
+    branch?: string;
+    mode?: "import" | "require";
     via?: ImportHop;
   }> = [];
   // Each entry walks its own graph, so files shared between entries are parsed once.
@@ -401,8 +415,12 @@ function readPackageArtifactsForMode(
           const suffix = path.slice(star + 1);
           if (!match.startsWith(path.slice(0, star)) || !match.endsWith(suffix)) continue;
           const entry = origin.entry.replace("*", match.slice(star, match.length - suffix.length));
-          if (isRecord(manifest.exports) && Object.hasOwn(manifest.exports, entry)) continue;
-          matchOrigin = { ...origin, entry };
+          if (
+            isRecord(manifest.exports) &&
+            winningExportKey(manifest.exports, entry) !== origin.entry
+          )
+            continue;
+          matchOrigin = { ...origin, entry, branch: `${origin.branch}\0${entry}` };
         }
         enqueue(
           match,
@@ -465,7 +483,9 @@ function readPackageArtifactsForMode(
       declarationBacked:
         resolvedKind === "runtime" &&
         (declarationBacked || Boolean(adjacentDeclaration && declaration)),
-      ...(resolvedKind === "runtime" ? origin : {}),
+      ...(resolvedKind === "runtime"
+        ? { ...origin, branch: origin.branch ?? `${origin.entry}\0${file}` }
+        : {}),
     });
     if (resolvedKind === "runtime" && adjacentDeclaration && declaration)
       queue.push({ path: declaration, kind: "types", required: false });
@@ -523,7 +543,11 @@ function readPackageArtifactsForMode(
     const selected = targets(value, "runtime", mode, addons);
     if (Array.isArray(selected))
       for (const target of selected)
-        enqueue(target, "runtime", true, root, false, true, false, typedTargets, { entry });
+        enqueue(target, "runtime", true, root, false, true, false, typedTargets, {
+          entry,
+          branch: `${entry}\0${target}\0${mode}`,
+          mode,
+        });
   }
 
   const typed = (path: string) => {
@@ -601,7 +625,7 @@ function readPackageArtifactsForMode(
 
   for (let i = 0; i < queue.length; i++) {
     const current = queue[i]!;
-    const key = `${current.path}:${current.kind}:${current.required}:${current.declarationBacked ?? false}:${current.entry ?? ""}`;
+    const key = `${current.path}:${current.kind}:${current.required}:${current.declarationBacked ?? false}:${current.entry ?? ""}:${current.branch ?? ""}`;
     if (visited.has(key)) continue;
     visited.add(key);
     if (current.required && manifest.browser && typeof manifest.browser === "object") {
@@ -617,7 +641,7 @@ function readPackageArtifactsForMode(
             true,
             false,
             current.declarationBacked,
-            { entry: current.entry, via: current.via },
+            { entry: current.entry, branch: current.branch, mode: current.mode, via: current.via },
           );
           continue;
         }
@@ -638,6 +662,9 @@ function readPackageArtifactsForMode(
             ? [
                 {
                   entry: current.entry,
+                  branch: current.branch,
+                  mode: current.mode,
+                  executionRequired: true,
                   required: true,
                   via: { file: manifestPath, line, specifier: replacement, previous: current.via },
                 },
@@ -679,6 +706,8 @@ function readPackageArtifactsForMode(
         current.entry
           ? {
               entry: current.entry,
+              branch: current.branch,
+              mode: current.mode,
               via: {
                 file: current.path,
                 line: positionOf(parsed, edge.start).line + 1,
@@ -760,6 +789,7 @@ function readPackageArtifactsForMode(
         const reach = hop(edge.specifier);
         references.push({
           specifier,
+          loadMode: edge.probe === "commonjs" ? "require" : "import",
           packageName,
           typeReference: edge.typeReference ?? false,
           kind,
@@ -767,7 +797,16 @@ function readPackageArtifactsForMode(
           ...(edge.dynamic ? { dynamic: edge.dynamic } : {}),
           reaches:
             kind === "runtime" && reach.entry && reach.via
-              ? [{ entry: reach.entry, required: referenceRequired, via: reach.via }]
+              ? [
+                  {
+                    entry: reach.entry,
+                    branch: reach.branch,
+                    mode: reach.mode,
+                    executionRequired: executionRequired && selectedRequired && kind === "runtime",
+                    required: referenceRequired,
+                    via: reach.via,
+                  },
+                ]
               : [],
           file: current.path,
           range: {
@@ -1274,27 +1313,32 @@ function hasRuntimeModuleSyntax(program: Node): boolean {
 }
 
 // Mirrors esbuild, which keeps an unresolvable `import()` for run time instead of failing the
-// build only inside a `try` body of the same function or with a `.catch()` or two-argument `.then()`.
+// build only when directly awaited inside a `try` body of the same function or with a `.catch()` or two-argument `.then()`.
 function handlesAbsence(node: Node): boolean {
   let target = node;
   while (true) {
     while (target.parent?.type === "ParenthesizedExpression") target = target.parent;
     const member = target.parent;
     const name = accessName(member);
-    const call = member?.parent;
-    if (member?.object !== target || call?.type !== "CallExpression" || call.callee !== member)
+    let callee = member;
+    while (callee?.parent?.type === "ParenthesizedExpression") callee = callee.parent;
+    const call = callee?.parent;
+    if (member?.object !== target || call?.type !== "CallExpression" || call.callee !== callee)
       break;
-    if (
-      (name === "catch" && call.arguments.length) ||
-      (name === "then" && call.arguments.length > 1)
-    )
-      return true;
-    if (name !== "then" && name !== "finally") break;
+    if (name === "catch" || (name === "then" && call.arguments.length > 1)) return true;
+    if (name !== "then") break;
     target = call;
   }
-  for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+  let awaited = node;
+  while (awaited.parent?.type === "ParenthesizedExpression") awaited = awaited.parent;
+  if (awaited.parent?.type !== "AwaitExpression") return false;
+  for (
+    let child = awaited, parent = awaited.parent;
+    parent;
+    child = parent, parent = parent.parent
+  ) {
     if (isFunctionLike(parent) || parent.type === "StaticBlock") return false;
-    if (parent.type === "TryStatement" && parent.block === child && parent.handler) return true;
+    if (parent.type === "TryStatement" && parent.block === child) return true;
   }
   return false;
 }

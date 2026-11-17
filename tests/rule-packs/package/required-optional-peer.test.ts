@@ -1383,3 +1383,46 @@ test("treats each file a pattern export matches as its own subpath", async () =>
     }),
   ).toEqual([]);
 });
+
+test.each([
+  'module.exports = require.resolve("host/kv");',
+  'export const path = import.meta.resolve("host/kv");',
+  'import "host/kv";',
+])("preserves external resolution and conditional branches: %s", async (source) => {
+  const entry = source.startsWith("module.exports") ? "index.cjs" : "index.mjs";
+  const result = await diagnose(
+    { main: entry, type: "module", dependencies: { host: "*" } },
+    {
+      [entry]: source,
+      "node_modules/host/package.json": JSON.stringify({
+        name: "host",
+        type: "module",
+        exports: { "./kv": { import: "./safe.js", require: "./kv.cjs" } },
+        peerDependencies: { store: "*" },
+        peerDependenciesMeta: { store: { optional: true } },
+      }),
+      "node_modules/host/safe.js": "export {};",
+      "node_modules/host/kv.cjs": 'require("store");',
+    },
+  );
+  expect(result.filter((d) => d.code === "PKG0003")).toEqual([]);
+});
+
+test.each(["./safe/*.js", null])("honors narrower export patterns: %s", async (target) => {
+  const result = await diagnose(
+    { main: "index.js", dependencies: { host: "*" } },
+    {
+      "index.js": 'import "host/feature/x";',
+      "node_modules/host/package.json": JSON.stringify({
+        name: "host",
+        type: "module",
+        exports: { "./*": "./dist/*.js", "./feature/*": target },
+        peerDependencies: { store: "*" },
+        peerDependenciesMeta: { store: { optional: true } },
+      }),
+      "node_modules/host/dist/feature/x.js": 'import "store";',
+      "node_modules/host/safe/x.js": "export {};",
+    },
+  );
+  expect(result.filter((d) => d.code === "PKG0003")).toEqual([]);
+});
