@@ -124,6 +124,9 @@ export const ruleNavigationTitles: Record<string, string> = {
   "package/no-phantom-dependencies": "Phantom deps",
   "package/no-required-optional-peer": "Optional peers",
   "package/optional-peer-import-in-try": "Optional import()",
+  "package/no-pinned-singleton": "Pinned singletons",
+  "package/no-unforwarded-peer": "Forwarded peers",
+  "package/no-duplicate-singleton": "Duplicate singletons",
 
   "mcp/tools/require-annotation-title": "Annotation titles",
   "mcp/tools/require-safety-hint": "Safety hints",

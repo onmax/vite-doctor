@@ -7,6 +7,7 @@ import { RuleInputs } from "../../core/internal/rule-inputs.js";
 
 export interface PackageManifest {
   name?: string;
+  version?: string;
   type?: string;
   private?: boolean;
   main?: string;
@@ -109,7 +110,7 @@ interface Origin {
 const scriptExtension = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/;
 const declarationExtension = /\.d\.[cm]?ts$/;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -121,7 +122,7 @@ function recordOf(value: unknown, accepts: (entry: unknown) => boolean): boolean
   return isRecord(value) && Object.values(value).every(accepts);
 }
 
-function parsePackageManifest(value: unknown): PackageManifest {
+export function parsePackageManifest(value: unknown): PackageManifest {
   if (!isRecord(value)) throw new TypeError("package.json must contain an object");
   const fields: Record<string, (entry: unknown) => boolean> = {
     name: isString,
