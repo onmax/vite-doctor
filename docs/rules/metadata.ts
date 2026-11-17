@@ -2191,10 +2191,10 @@ export const ruleDocumentationMetadata = {
   },
   "vue/i18n/no-unused-translations": {
     description:
-      "Flags unused translations in Vue i18n code before it leaks into runtime behavior.",
-    why: "Vue gives this pattern a specific contract. Staying inside that contract makes the code easier to test, refactor, and run across server and client runtimes.",
+      "Flags keys in the base locale file that no source file references. A key counts as used when a t(), $t(), tc(), te() or tm() call, an <i18n-t> keypath, a v-t value, or a linked message (@:key) names it, when a template literal or concatenation with a static prefix can build it, or when a source string literal equals the full key. The base locale is the Nuxt i18n defaultLocale, or English when none is set.",
+    why: "Every unused key is copy that translators keep paying for and that drifts out of date, and a large locale file hides which messages the UI still shows. Keys built entirely at runtime, such as t(key), can reach any message, so when Doctor finds such calls it still reports the key but lowers the confidence to heuristic-medium and names the first dynamic call in the evidence.",
     recommendedReplacement:
-      "Remove unused translations, or move it to the Vue runtime/API that owns that behavior.",
+      "Delete the key from every locale file. If the report has heuristic-medium confidence, first check that no runtime-built key resolves to it. If the key is still needed, reference it with a literal such as t('home.title') so Doctor and readers can see the use.",
     examples: [
       {
         title: "Remove unused translations",

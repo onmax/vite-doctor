@@ -1,37 +1,17 @@
-import { resolve } from "pathe";
+import { relative, resolve } from "pathe";
 import type {
+  DiagnosticEvidence,
+  RuleContext,
   RuleFileSystem,
   TemplateAttributeNode,
   TemplateElementNode,
   TemplateTextNode,
 } from "../../../../core/index.js";
-import { AnyNode, createRule } from "./shared.js";
-import { parseScript } from "./script.js";
+import { createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
-
-interface LocaleFile {
-  path: string;
-  text: string;
-  quotedKeyOffsets?: Map<string, number>;
-}
-
-interface LocaleMessage {
-  key: string;
-  value: string;
-  file: LocaleFile;
-  locale: string;
-}
-
-const SOURCE_EXTENSIONS = [".vue", ".ts", ".tsx", ".js", ".jsx"];
-const SOURCE_IGNORED_ENTRIES = new Set([
-  "node_modules",
-  ".nuxt",
-  ".output",
-  "dist",
-  "coverage",
-  "public",
-]);
-const LOCALE_EXTENSIONS = [".json", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"];
+import { collectLocaleInventory, findKeyOffset, hasLocaleFiles } from "./i18n-locales.js";
+import type { LocaleMessage } from "./i18n-locales.js";
+import { collectTranslationUsage, isKeyUsed, type TranslationUsage } from "./i18n-usage.js";
 
 const I18N_PACKAGE_NAMES = new Set(["vue-i18n", "@nuxtjs/i18n"]);
 const STATIC_TEXT_ATTRIBUTES = new Set(["alt", "aria-label", "label", "placeholder", "title"]);
@@ -50,39 +30,98 @@ export const noUnusedTranslations = createRule({
   create(ctx) {
     return {
       onProjectEnd() {
-        const inventory = collectI18nInventory(ctx.fs, ctx.project.root);
-        if (!inventory.hasI18n) return;
-        const usedKeys = collectUsedTranslationKeys(ctx.fs, ctx.project.root);
-        const baseLocale = selectBaseLocale(inventory.messages);
+        const root = ctx.project.root;
+        const inventory = collectLocaleInventory(ctx.fs, root);
+        if (inventory.messages.length === 0) return;
+        const usage = collectTranslationUsage(
+          ctx.fs,
+          root,
+          new Set(inventory.files),
+          inventory.messages,
+        );
         for (const message of inventory.messages) {
           if (
-            message.locale !== baseLocale ||
-            usedKeys.has(message.key) ||
-            isLocaleMetadataKey(message.key)
+            message.locale !== inventory.baseLocale ||
+            isLocaleMetadataKey(message.key) ||
+            [message.key, ...message.aliases].some((key) => isKeyUsed(usage, key))
           )
             continue;
-          ctx.report(
-            diagnostics.VUE0002({
-              why: `Translation key "${message.key}" is not used by any static Vue i18n call.`,
-              fix: "Remove the unused key or add a static t()/$t() reference if it is still needed.",
-            }),
-            {
-              ruleId: "vue/i18n/no-unused-translations",
-              severity: "warn",
-              category: "i18n",
-              file: message.file.path,
-              range: ctx.helpers.rangeFromOffsets(
-                message.file.path,
-                message.file.text,
-                findKeyOffset(message.file, message.key, message.value),
-              ),
-            },
-          );
+          reportUnusedTranslation(ctx, message, inventory.baseLocale, usage);
         }
       },
     };
   },
 });
+
+function reportUnusedTranslation(
+  ctx: RuleContext,
+  message: LocaleMessage,
+  baseLocale: string,
+  usage: TranslationUsage,
+) {
+  const root = ctx.project.root;
+  const subject = `Translation key "${message.key}" in base locale "${baseLocale}"`;
+  const evidence: DiagnosticEvidence[] = [
+    {
+      kind: "facts",
+      summary: `Scanned ${count(usage.sourceFiles, "source file")} and ${count(usage.references, "translation reference")}; none uses this key, its prefix, or a linked message that points to it.`,
+    },
+  ];
+  const [firstDynamic] = usage.dynamic;
+  if (firstDynamic) {
+    const text = ctx.fs.readText(firstDynamic.file) ?? "";
+    evidence.push({
+      kind: "facts",
+      summary: `${count(usage.dynamic.length, "translation call")} ${usage.dynamic.length === 1 ? "passes" : "pass"} a key that is only known at runtime, so usage is partial evidence.`,
+      file: firstDynamic.file,
+      range: ctx.helpers.rangeFromOffsets(
+        firstDynamic.file,
+        text,
+        firstDynamic.start,
+        firstDynamic.end,
+      ),
+    });
+  }
+  const [firstUnparsed] = usage.unparsedFiles;
+  if (firstUnparsed) {
+    evidence.push({
+      kind: "facts",
+      summary: `${count(usage.unparsedFiles.length, "source file")} could not be parsed and ${usage.unparsedFiles.length === 1 ? "was" : "were"} scanned with a fallback pattern, so usage is partial evidence.`,
+      file: firstUnparsed,
+    });
+  }
+  const why = firstDynamic
+    ? `${subject} has no static reference, but ${count(usage.dynamic.length, "dynamic translation call")} (first in ${relative(root, firstDynamic.file)}) build keys Doctor cannot resolve and could reach it.`
+    : firstUnparsed
+      ? `${subject} has no static reference, but Doctor could only pattern-scan ${count(usage.unparsedFiles.length, "source file")} (first ${relative(root, firstUnparsed)}), so a reference there may be missed.`
+      : `${subject} has no reference: no translation call, <i18n-t>, v-t, linked message, or string literal in ${count(usage.sourceFiles, "scanned source file")} uses it.`;
+  const partial = Boolean(firstDynamic || firstUnparsed);
+  ctx.report(
+    diagnostics.VUE0002({
+      why,
+      fix: partial
+        ? `Check that no runtime-built key resolves to "${message.key}", then delete it from every locale file.`
+        : `Delete "${message.key}" from every locale file, or reference it with t('${message.key}') if the UI still needs it.`,
+    }),
+    {
+      ruleId: "vue/i18n/no-unused-translations",
+      severity: "warn",
+      category: "i18n",
+      file: message.file.path,
+      range: ctx.helpers.rangeFromOffsets(
+        message.file.path,
+        message.file.text,
+        findKeyOffset(message.file, message.key, message.value),
+      ),
+      confidence: partial ? "heuristic-medium" : "heuristic-high",
+      evidence,
+    },
+  );
+}
+
+function count(value: number, noun: string): string {
+  return `${value} ${noun}${value === 1 ? "" : "s"}`;
+}
 
 export const noUntranslatedText = createRule({
   meta: {
@@ -140,229 +179,14 @@ export const noUntranslatedText = createRule({
   },
 });
 
-function collectI18nInventory(
-  fs: RuleFileSystem,
-  root: string,
-): { hasI18n: boolean; messages: LocaleMessage[] } {
-  const messages = collectLocaleMessages(fs, root);
-  return { hasI18n: messages.length > 0 || projectHasI18nPackage(fs, root), messages };
-}
-
 function projectHasI18n(fs: RuleFileSystem, root: string): boolean {
-  return collectLocaleFiles(fs, root).length > 0 || projectHasI18nPackage(fs, root);
+  return hasLocaleFiles(fs, root) || projectHasI18nPackage(fs, root);
 }
 
 function projectHasI18nPackage(fs: RuleFileSystem, root: string): boolean {
   const pkg: any = fs.readJson(resolve(root, "package.json"));
   const deps = { ...pkg?.dependencies, ...pkg?.devDependencies, ...pkg?.peerDependencies };
   return Object.keys(deps).some((name) => I18N_PACKAGE_NAMES.has(name));
-}
-
-function collectLocaleMessages(fs: RuleFileSystem, root: string): LocaleMessage[] {
-  const messages: LocaleMessage[] = [];
-  for (const path of collectLocaleFiles(fs, root)) {
-    const text = fs.readText(path);
-    if (text === undefined) continue;
-    const object = path.endsWith(".json") ? parseJsonObject(text) : parseModuleMessages(path, text);
-    if (!object) continue;
-    const file: LocaleFile = { path, text };
-    const locale = localeNameFromFile(path);
-    for (const [key, value] of flattenMessages(object)) {
-      messages.push({ key, value, file, locale });
-    }
-  }
-  return messages;
-}
-
-function collectLocaleFiles(fs: RuleFileSystem, root: string): string[] {
-  const dirs = [
-    "locales",
-    "i18n/locales",
-    ...collectNuxtI18nLangDirs(fs, root).map((dir) => dir.replace(/^\.\//, "")),
-  ];
-  const files = new Set<string>();
-  for (const dir of dirs) {
-    const absoluteDir = resolve(root, dir);
-    if (!fs.stat(absoluteDir)?.isDirectory()) continue;
-    for (const { name: entry } of fs.readDir(absoluteDir) ?? []) {
-      if (!LOCALE_EXTENSIONS.some((extension) => entry.endsWith(extension))) continue;
-      const file = resolve(absoluteDir, entry);
-      if (fs.stat(file)?.isFile()) files.add(file);
-    }
-  }
-  return [...files].sort();
-}
-
-function collectNuxtI18nLangDirs(fs: RuleFileSystem, root: string): string[] {
-  const dirs = new Set<string>();
-  for (const configName of ["nuxt.config.ts", "nuxt.config.js", "nuxt.config.mjs"]) {
-    const file = resolve(root, configName);
-    const text = fs.readText(file);
-    if (text === undefined) continue;
-    for (const match of text.matchAll(/\blangDir\s*:\s*["'`]([^"'`]+)["'`]/g)) {
-      dirs.add(match[1]!);
-    }
-  }
-  return [...dirs];
-}
-
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-function parseModuleMessages(file: string, text: string): Record<string, unknown> | null {
-  const ast = parseScript(file, text);
-  let found: Record<string, unknown> | null = null;
-  walkAny(ast, (node: AnyNode) => {
-    if (node.type === "ExportDefaultDeclaration") {
-      found = evaluateStaticObject(node.declaration);
-    }
-    if (
-      node.type === "CallExpression" &&
-      ["defineI18nLocale", "defineI18nConfig"].includes(node.callee?.name)
-    ) {
-      const argument = node.arguments?.[0];
-      found = evaluateStaticObject(argument);
-    }
-    return found !== null;
-  });
-  return found;
-}
-
-function evaluateStaticObject(node: AnyNode): Record<string, unknown> | null {
-  if (!node) return null;
-  if (node.type === "ObjectExpression") {
-    const object: Record<string, unknown> = {};
-    for (const property of node.properties ?? []) {
-      if (property.type !== "Property") continue;
-      const key = staticPropertyKey(property.key);
-      if (!key) continue;
-      object[key] = evaluateStaticValue(property.value);
-    }
-    return object;
-  }
-  if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression") {
-    return evaluateStaticObject(node.body);
-  }
-  return null;
-}
-
-function evaluateStaticValue(node: AnyNode): unknown {
-  if (!node) return undefined;
-  if (node.type === "StringLiteral" || node.type === "Literal") return node.value;
-  if (node.type === "TemplateLiteral" && node.expressions?.length === 0)
-    return node.quasis?.[0]?.value?.cooked ?? node.quasis?.[0]?.value?.raw;
-  if (node.type === "ObjectExpression") return evaluateStaticObject(node);
-  return undefined;
-}
-
-function staticPropertyKey(node: AnyNode): string | null {
-  if (!node) return null;
-  if (node.type === "Identifier") return node.name;
-  if (node.type === "StringLiteral" || node.type === "Literal") return String(node.value);
-  return null;
-}
-
-function flattenMessages(
-  object: Record<string, unknown>,
-  prefix = "",
-): Array<[key: string, value: string]> {
-  const entries: Array<[string, string]> = [];
-  for (const [key, value] of Object.entries(object)) {
-    const path = prefix ? `${prefix}.${key}` : key;
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      entries.push(...flattenMessages(value as Record<string, unknown>, path));
-    } else if (typeof value === "string") {
-      entries.push([path, value]);
-    }
-  }
-  return entries;
-}
-
-function collectUsedTranslationKeys(fs: RuleFileSystem, root: string): Set<string> {
-  const used = new Set<string>();
-  for (const file of collectSourceFiles(fs, root)) {
-    const text = fs.readText(file);
-    if (text === undefined) continue;
-    for (const match of text.matchAll(
-      /(?<![\w$])(?:\$t|\$te|t|te)\s*\(\s*(['"`])([A-Za-z0-9_.:-]+)\1/g,
-    )) {
-      used.add(match[2]!);
-    }
-    for (const match of text.matchAll(
-      /\bi18n\.global\.(?:t|te)\s*\(\s*(['"`])([A-Za-z0-9_.:-]+)\1/g,
-    )) {
-      used.add(match[2]!);
-    }
-  }
-  return used;
-}
-
-function collectSourceFiles(fs: RuleFileSystem, root: string): string[] {
-  const files: string[] = [];
-  const visit = (dir: string) => {
-    for (const entry of fs.readDir(dir) ?? []) {
-      if (SOURCE_IGNORED_ENTRIES.has(entry.name)) continue;
-      const absolute = resolve(dir, entry.name);
-      if (entry.isDirectory()) visit(absolute);
-      else if (
-        entry.isFile() &&
-        SOURCE_EXTENSIONS.some((extension) => absolute.endsWith(extension))
-      )
-        files.push(absolute);
-    }
-  };
-  visit(root);
-  return files;
-}
-
-function selectBaseLocale(messages: LocaleMessage[]): string {
-  const locales = [...new Set(messages.map((message) => message.locale))].sort();
-  return locales.find((locale) => /^en(?:[-_]|$)/i.test(locale)) ?? locales[0] ?? "";
-}
-
-function localeNameFromFile(file: string): string {
-  return file
-    .split("/")
-    .pop()!
-    .replace(/\.(json|[cm]?[jt]s)$/, "");
-}
-
-function findKeyOffset(file: LocaleFile, key: string, value: string): number {
-  const leaf = key.split(".").at(-1) ?? key;
-  const keyIndex = /["'`]/.test(leaf)
-    ? file.text.search(new RegExp(`["'\`]${escapeRegExp(leaf)}["'\`]\\s*:`))
-    : ((file.quotedKeyOffsets ??= indexQuotedKeys(file.text)).get(leaf) ?? -1);
-  if (keyIndex >= 0) return keyIndex;
-  if (value) {
-    const valueIndex = file.text.indexOf(value);
-    if (valueIndex >= 0) return valueIndex;
-  }
-  return 0;
-}
-
-// Matches what /["'`]<leaf>["'`]\s*:/ finds for every quote-free leaf in one pass: such a match
-// always closes on the first quote after its opening quote.
-function indexQuotedKeys(text: string): Map<string, number> {
-  const offsets = new Map<string, number>();
-  const quote = /["'`]/g;
-  const colon = /\s*:/y;
-  let open = quote.exec(text)?.index;
-  while (open !== undefined) {
-    const close = quote.exec(text)?.index;
-    if (close === undefined) break;
-    colon.lastIndex = close + 1;
-    if (colon.test(text)) {
-      const leaf = text.slice(open + 1, close);
-      if (!offsets.has(leaf)) offsets.set(leaf, open);
-    }
-    open = close;
-  }
-  return offsets;
 }
 
 function normalizeVisibleText(value: string): string {
@@ -390,23 +214,4 @@ function isLocaleMetadataKey(key: string): boolean {
 
 function truncate(value: string): string {
   return value.length > 60 ? `${value.slice(0, 57)}...` : value;
-}
-
-function walkAny(node: unknown, visit: (node: AnyNode) => boolean): boolean {
-  if (!node || typeof node !== "object") return false;
-  const typed = node as AnyNode;
-  if (typeof typed.type === "string" && visit(typed)) return true;
-  for (const [key, value] of Object.entries(typed)) {
-    if (key === "__doctorParent") continue;
-    if (Array.isArray(value)) {
-      for (const child of value) if (walkAny(child, visit)) return true;
-    } else if (value && typeof value === "object" && walkAny(value, visit)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
