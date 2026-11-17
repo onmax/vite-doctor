@@ -10,6 +10,7 @@ export const preferH3WithBase = createRule({
       "Import withBase and replace useBase(base, handler) with withBase(base, handler).",
     category: "migration",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/migration",
     requires: { script: true, nitro: true },

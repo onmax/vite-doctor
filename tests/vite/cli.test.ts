@@ -592,7 +592,7 @@ test("CLI rejects repeated report formats without silently switching presentatio
   );
   expect(result.code).toBe(2);
   expect(JSON.parse(result.output)).toMatchObject({
-    schema: "vite-doctor.report/v3",
+    schema: "vite-doctor.report/v4",
     status: "failed",
     error: { kind: "invocation", message: "Option --format may only be provided once." },
   });
@@ -626,10 +626,10 @@ test("CLI and Vite plugin report the Rule Packs an explicit extends left out", a
         root,
         "build",
       );
-      expect(JSON.parse(cli.output).rulePacks).toEqual({
-        activated: ["vite-doctor/vite", "vite-doctor/typescript"],
-        selected: ["vite-doctor/typescript"],
-      });
+      expect(JSON.parse(cli.output).rulePacks).toEqual([
+        { name: "vite-doctor/vite", selected: false, activatedBy: ["."] },
+        { name: "vite-doctor/typescript", selected: true, activatedBy: ["."] },
+      ]);
       expect(logs).toHaveLength(1);
       expect(JSON.parse(logs[0]!).rulePacks).toEqual(JSON.parse(cli.output).rulePacks);
       const text = await runCli(
@@ -670,7 +670,7 @@ test("CLI returns structured failures for unknown Diagnostic Codes", async () =>
   );
   expect(result.code).toBe(2);
   expect(JSON.parse(result.output)).toMatchObject({
-    schema: "vite-doctor.agent/v1",
+    schema: "vite-doctor.agent/v2",
     status: "failed",
     next: { action: "correct-invocation" },
   });
@@ -1183,7 +1183,7 @@ test("migrate rejects Nuxt targets outside Nuxt projects", async () => {
 
       expect(result.code).toBe(2);
       expect(JSON.parse(result.output)).toMatchObject({
-        schema: "vite-doctor.report/v3",
+        schema: "vite-doctor.report/v4",
         status: "failed",
       });
     },
@@ -1200,7 +1200,7 @@ test("migrate rejects Nitro targets outside Nuxt and Nitro projects", async () =
 
       expect(result.code).toBe(2);
       expect(JSON.parse(result.output)).toMatchObject({
-        schema: "vite-doctor.report/v3",
+        schema: "vite-doctor.report/v4",
         status: "failed",
       });
     },

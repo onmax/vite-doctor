@@ -11,6 +11,7 @@ export const preferComposableRefReturn = createRule({
     title: "Prefer refs from reusable composables",
     category: "reactivity",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/reusability/composables.html#return-values",
     requires: { script: true, vue: true },

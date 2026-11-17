@@ -29,6 +29,7 @@ export const noRuntimeEnvInBuildOptions = createRule({
     title: "Do not freeze runtime config environment variables into build options",
     category: "runtime-config",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/going-further/runtime-config#environment-variables",
     requires: { script: true, nuxt: true },

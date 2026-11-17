@@ -14,6 +14,7 @@ export const moduleExplicitRuntimeImports = createRule({
     title: "Import Nuxt helpers explicitly in module runtime files",
     category: "modules",
     severity: "error",
+    confidence: "proven",
     fixable: "safe",
     docsUrl: "https://nuxt.com/docs/4.x/guide/modules/module-anatomy#add-runtime-code",
     requires: { script: true, nuxt: true },

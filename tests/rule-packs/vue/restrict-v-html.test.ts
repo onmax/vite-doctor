@@ -259,3 +259,42 @@ custom.use(plugin)
   });
   expect(diagnostics.map(({ severity }) => severity)).toEqual(["error", "error", "warn"]);
 });
+
+test("traces indexed collections and mapped results without tainting safe siblings", async () => {
+  const diagnostics = await vHtml({
+    "src/Indexed.vue": `<script setup>
+import { useRoute } from "vue-router"
+import DOMPurify from "dompurify"
+const route = useRoute()
+const items = [{ html: String(route.query.html), safe: DOMPurify.sanitize(String(route.query.html)) }]
+function firstHtml(items) { return items[0].html }
+const mapped = [String(route.query.html)].map(html => ({ html }))
+const nested = [[{ html: String(route.query.html) }]]
+</script>
+<template>
+<div v-html="items[0].html" />
+<div v-html="firstHtml(items)" />
+<div v-html="mapped[0].html" />
+<div v-html="nested[0][0].html" />
+<div v-html="items[0].safe" />
+<div v-for="item in items" v-html="item.safe" />
+</template>`,
+  });
+  expect(diagnostics.map(({ severity }) => severity)).toEqual(["error", "error", "error", "error"]);
+  for (const diagnostic of diagnostics) expect(diagnostic.why).toContain("`useRoute()`");
+});
+
+test("computed write keys keep their original provenance", async () => {
+  const diagnostics = await vHtml({
+    "src/Keys.vue": `<script setup>
+import { useRoute } from "vue-router"
+const route = useRoute()
+const label = '<b>Static label</b>'
+const cache = {}
+cache[label] = String(route.query.html)
+</script>
+<template><div v-html="label" /><div v-html="cache[label]" /></template>`,
+  });
+  expect(diagnostics.map(({ severity }) => severity)).toEqual(["error"]);
+  expect(diagnostics[0]!.why).toContain("`useRoute()`");
+});

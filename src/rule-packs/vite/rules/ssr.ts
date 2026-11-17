@@ -8,6 +8,7 @@ export const noBrowserGlobalInSsrEntry = createRule({
     title: "Avoid browser globals in Vite SSR entries",
     category: "ssr",
     severity: "error",
+    confidence: "heuristic-medium",
     docsUrl: "https://vite.dev/guide/ssr.html#conditional-logic",
     requires: { script: true },
   },

@@ -1,6 +1,7 @@
 import type { Linter, SourceCode } from "eslint";
 import {
   codeForRuleId,
+  type Confidence,
   createRule,
   diagnosticForCode,
   type DoctorRule,
@@ -19,6 +20,7 @@ export function createShadcnRule(options: {
   rule: string;
   docsUrl: string;
   severity?: "error" | "warn" | "info";
+  confidence: Confidence;
 }): DoctorRule {
   return createRule({
     meta: {
@@ -27,6 +29,7 @@ export function createShadcnRule(options: {
       description: options.description,
       category: "ui",
       severity: options.severity ?? "warn",
+      confidence: options.confidence,
       fixable: "suggestion",
       docsUrl: options.docsUrl,
       requires: { script: true },

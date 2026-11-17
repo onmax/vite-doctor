@@ -250,7 +250,7 @@ export class HtmlSourceTracer {
           node.elements.map((element: AnyNode) =>
             element?.type === "SpreadElement" ? element.argument : element,
           ),
-          path,
+          collectionElementPath(path),
           where,
         );
       case "ThisExpression":
@@ -288,7 +288,7 @@ export class HtmlSourceTracer {
       const local = where.template.get(name);
       if (local)
         return local.list
-          ? this.classify(local.list, path, { unit: this.sfc, template: local.locals })
+          ? this.classify(local.list, ["*", ...path], { unit: this.sfc, template: local.locals })
           : unknown(`the slot prop \`${name}\``);
       if (name === "$route") return untrusted("`$route`");
       if (name === "$props" || name === "$attrs")
@@ -407,7 +407,10 @@ export class HtmlSourceTracer {
       }
       let member = script.parent(reference.identifier);
       const written: string[] = [];
-      while (member?.type === "MemberExpression") {
+      while (
+        member?.type === "MemberExpression" &&
+        (written.length > 0 || member.object === reference.identifier)
+      ) {
         written.push(memberKey(member));
         const parent = script.parent(member);
         if (parent?.type !== "MemberExpression" || parent.object !== member) break;
@@ -465,7 +468,8 @@ export class HtmlSourceTracer {
       const method = memberName(callee);
       if (method === "then" && call.arguments[0] === fn)
         return this.classify(callee.object, path, where);
-      if (method && ARRAY_CALLBACKS.has(method)) return this.classify(callee.object, path, where);
+      if (method && ARRAY_CALLBACKS.has(method))
+        return this.classify(callee.object, ["*", ...path], where);
       if (call.arguments[1] === fn && vueApiCall(script, callee, WATCH))
         return this.watchSource(call.arguments[0], where);
     }
@@ -542,7 +546,7 @@ export class HtmlSourceTracer {
     }
     if (ARRAY_PASSTHROUGH.has(method)) return this.classify(object, path, where);
     if ((method === "map" || method === "flatMap") && FUNCTION_TYPES.has(unwrap(args[0])?.type))
-      return this.returns(args[0], path, where);
+      return this.returns(args[0], collectionElementPath(path), where);
     if (object.type === "Identifier" && object.name === "JSON" && !this.resolves(object, where))
       return method === "stringify" ? this.classify(args[0], [], where) : unknown("`JSON.parse()`");
     const receiver = this.classify(object, [], where);
@@ -977,4 +981,9 @@ function unwrap(node: AnyNode): AnyNode {
     node = unwrapTs(node.expression);
   }
   return node;
+}
+
+/** Remove the collection selection before projecting a property of an element. */
+function collectionElementPath(path: string[]): string[] {
+  return path[0] === "*" || /^(0|[1-9]\d*)$/.test(path[0] ?? "") ? path.slice(1) : path;
 }

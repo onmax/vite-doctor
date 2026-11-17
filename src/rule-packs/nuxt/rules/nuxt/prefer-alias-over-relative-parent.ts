@@ -17,6 +17,7 @@ export const preferAliasOverRelativeParent = createRule({
       "Use an alias from the project's resolved Nuxt configuration. Concrete replacements are suggested only when the alias base is known.",
     category: "imports",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/directory-structure/shared#how-files-are-imported",
     requires: { script: true, nuxt: true },

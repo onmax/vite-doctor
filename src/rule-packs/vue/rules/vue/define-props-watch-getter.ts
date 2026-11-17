@@ -10,6 +10,7 @@ export const definePropsWatchGetter = createRule({
     title: "Watch destructured props with a getter",
     category: "reactivity",
     severity: "error",
+    confidence: "proven",
     fixable: "safe",
     docsUrl: "https://vuejs.org/api/sfc-script-setup.html#reactive-props-destructure",
     requires: { script: true, vue: true },

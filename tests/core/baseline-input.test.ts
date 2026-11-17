@@ -56,7 +56,7 @@ test.each([
   ["version 2 without a fingerprint scheme", '{"version":2,"diagnostics":[]}'],
   ["non-numeric fingerprint scheme", '{"version":2,"fingerprintScheme":"2","diagnostics":[]}'],
   ["string version", '{"version":"1","diagnostics":[]}'],
-  ["unsupported report version", '{"version":"0.0.12","reportVersion":4,"diagnostics":[]}'],
+  ["unsupported report version", '{"version":"0.0.12","reportVersion":5,"diagnostics":[]}'],
   ["string report version", '{"version":"0.0.12","reportVersion":"3","diagnostics":[]}'],
   ["malformed report entry", '{"version":"0.0.12","reportVersion":3,"diagnostics":[null]}'],
   ["null entry", "[null]"],

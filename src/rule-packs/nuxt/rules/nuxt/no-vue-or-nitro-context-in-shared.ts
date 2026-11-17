@@ -6,6 +6,7 @@ export const noVueOrNitroContextInShared = createRule({
     title: "Keep shared code runtime-neutral",
     category: "architecture",
     severity: "error",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/directory-structure/shared#usage",
     requires: { script: true, nuxt: true },

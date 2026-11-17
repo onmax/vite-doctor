@@ -69,6 +69,11 @@ export default defineConfig({
     cache: true,
   },
   test: {
+    // Nuxt test utils must register hooks with the same Vitest instance as Vite+.
+    alias: [
+      { find: /^vitest$/, replacement: fileURLToPath(import.meta.resolve("vite-plus/test")) },
+    ],
+    server: { deps: { inline: ["@nuxt/test-utils"] } },
     // Agent worktrees under .claude/ are full repo checkouts; collecting them duplicates and breaks the suite.
     exclude: [...configDefaults.exclude, "**/.claude/**"],
     setupFiles: [fileURLToPath(new URL("./tests/setup.ts", import.meta.url))],

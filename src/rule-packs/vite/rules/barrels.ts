@@ -39,6 +39,7 @@ export const noBarrelFiles = createRule({
     title: "Import from defining modules instead of barrel files",
     category: "imports",
     severity: "info",
+    confidence: "heuristic-high",
     docsUrl: "https://vite.dev/guide/performance#avoid-barrel-files",
     requires: { script: true },
   },

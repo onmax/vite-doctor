@@ -22,6 +22,7 @@ export const requireAnnotationTitle = createRule({
     ],
     category: "tools",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     diagnosticCodes: ["MCP0001"],
     docsUrl: "https://claude.com/docs/connectors/building/review-criteria#provide-tool-annotations",

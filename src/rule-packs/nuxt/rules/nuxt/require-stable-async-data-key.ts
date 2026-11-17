@@ -13,6 +13,7 @@ export const requireStableAsyncDataKey = createRule({
     title: "Use stable keys for async data payload entries",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-async-data#params",
     requires: { script: true, nuxt: true },

@@ -20,6 +20,7 @@ export const noPhantomDependencies = createRule({
     ],
     category: "dependencies",
     severity: "warn",
+    confidence: "manifest-backed",
     fixable: "suggestion",
     diagnosticCodes: ["PKG0001", "PKG0002"],
     execution: "manifest",

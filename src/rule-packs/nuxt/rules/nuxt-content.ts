@@ -9,6 +9,7 @@ export const noQueryContentLegacyApi = createRule({
     title: "Use queryCollection instead of queryContent",
     category: "content",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://content.nuxt.com/docs/utils/query-collection#usage",
     requires: { script: true, nuxt: true },

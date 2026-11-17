@@ -49,6 +49,7 @@ export const preferTrueAttributeShorthand = createRule({
     ],
     category: "template",
     severity: "info",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://eslint.vuejs.org/rules/prefer-true-attribute-shorthand.html",
     requires: { template: true, vue: true },

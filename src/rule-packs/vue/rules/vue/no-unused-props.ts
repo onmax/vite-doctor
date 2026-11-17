@@ -16,6 +16,7 @@ export const noUnusedProps = withCompleteReferences(
       title: "Remove props the component never reads",
       category: "props",
       severity: "warn",
+      confidence: "heuristic-high",
       fixable: false,
       docsUrl: "https://eslint.vuejs.org/rules/no-unused-properties.html",
       requires: { sfc: true, vue: true },

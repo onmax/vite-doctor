@@ -9,6 +9,7 @@ export function parseScriptSync(
   source: string,
   options: ParserOptions = {},
 ): ParseResult {
+  options = { sourceType: "unambiguous", ...options };
   if (rawTransfer) {
     try {
       return parseSync(file, source, {

@@ -14,7 +14,7 @@ import {
   type ProjectInfo,
   type RuntimeEvidenceContributor,
   type RulePack,
-  type RulePackSelection,
+  type RulePackActivation,
   type SourceFileHandle,
   type WorkspaceGraph,
   type WorkspacePackageActivation,
@@ -37,6 +37,7 @@ import {
   type GraphSummary,
 } from "./cache-store.js";
 import { nativeMatch, sha256 } from "./utils.js";
+import { packageFrameworks } from "./workspace-packages.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import {
   activatingWorkspacePackages,
@@ -86,7 +87,7 @@ export interface ScanSession {
   enabledRules: DoctorRule[];
   ruleScopes: Map<string, ReadonlySet<string>>;
   workspaceActivations: WorkspacePackageActivation[];
-  rulePacks: RulePackSelection;
+  rulePacks: RulePackActivation[];
   ruleConfigs: Map<string, ResolvedRuleConfig>;
   timings: Record<string, number>;
   phases: Record<string, number>;
@@ -168,10 +169,13 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     enabledRules: selection.rules,
     ruleScopes: selection.scopes,
     workspaceActivations: workspacePackageActivations(project, activations),
-    rulePacks: {
-      activated: [...activations].filter(([, roots]) => roots.length).map(([pack]) => pack.name),
-      selected: registry.packs.filter((pack) => selection.packs.has(pack)).map((pack) => pack.name),
-    },
+    rulePacks: registry.packs
+      .map((pack) => ({
+        name: pack.name,
+        selected: selection.packs.has(pack),
+        activatedBy: activations.get(pack) ?? [],
+      }))
+      .filter((pack) => pack.selected || pack.activatedBy.length),
     ruleConfigs,
     phases,
     ruleTimings: new Map(),
@@ -380,15 +384,21 @@ function selectRules(
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const selected = resolveExtends(registry.packs, options.extends ?? config.extends, activations);
+  const selected = resolveExtends(
+    registry.packs,
+    options.extends ?? config.extends,
+    activations,
+    projectWorkspacePackages(project).map((item) => item.root),
+    options.framework !== undefined && options.framework !== "auto",
+  );
   const frameworks = new Set([
     project.framework,
-    ...projectWorkspacePackages(project).map((item) => item.framework),
+    ...projectWorkspacePackages(project).flatMap(packageFrameworks),
   ]);
 
   const candidates = registry.rules
     .filter((rule) => selected.ruleIds.has(rule.meta.id))
-    .filter((rule) => !rule.meta.requires?.nuxt || project.framework === "nuxt")
+    .filter((rule) => !rule.meta.requires?.nuxt || frameworks.has("nuxt"))
     .filter(
       (rule) => !rule.meta.requires?.nitro || frameworks.has("nitro") || frameworks.has("nuxt"),
     )
@@ -443,6 +453,7 @@ function workspacePackageActivations(
     root: item.root,
     ...(item.name ? { name: item.name } : {}),
     framework: item.framework,
+    ...(item.nuxtIntegration ? { nuxtIntegration: true as const } : {}),
     rulePacks: [...activations]
       .filter(([, roots]) => roots.includes(item.root))
       .map(([pack]) => pack.name),
@@ -453,6 +464,8 @@ function resolveExtends(
   packs: RulePack[],
   requested: DoctorRunOptions["extends"] = "auto",
   activations: ReadonlyMap<RulePack, string[]>,
+  workspaceRoots: readonly string[],
+  explicitFramework = false,
 ): { ruleIds: Set<string>; scopes: Map<string, Set<string>>; packs: Set<RulePack> } {
   const ruleIds = new Set<string>();
   const selectedPacks = new Set<RulePack>();
@@ -481,14 +494,23 @@ function resolveExtends(
     if (unscoped) return;
     scopes.set(ruleId, new Set([...(scopes.get(ruleId) ?? []), ...scope]));
   };
-  // Activation by the workspace root covers the whole workspace, so only Rule Packs that
-  // workspace packages alone activate are scoped to those packages' files.
+  // Each workspace package activates Rule Packs from its own Project Inventory, so a Rule Pack
+  // the workspace root activates covers the root's own files, not every package below it.
   const selectActivated = () => {
     for (const [pack, roots] of activations) {
       if (!roots.length) continue;
       selectedPacks.add(pack);
+      const workspaceRules = new Set(
+        pack.rules
+          .filter((rule) => rule.meta.activationScope === "workspace")
+          .map((rule) => rule.meta.id),
+      );
       for (const ruleId of pack.presets.recommended) {
-        select(ruleId, roots.includes(".") ? undefined : roots);
+        const covered =
+          (explicitFramework && roots.includes(".")) ||
+          roots.length === workspaceRoots.length ||
+          workspaceRules.has(ruleId);
+        select(ruleId, covered ? undefined : roots);
       }
     }
   };

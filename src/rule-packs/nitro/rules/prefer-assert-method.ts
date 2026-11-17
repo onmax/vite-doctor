@@ -13,6 +13,7 @@ export const preferAssertMethod = createRule({
       'Use assertMethod(event, "POST") for handlers that accept one HTTP method.',
     category: "request",
     severity: "info",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/utils/request#assertmethodevent-expected-allowhead",
     requires: { script: true, nitro: true },

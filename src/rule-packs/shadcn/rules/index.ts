@@ -5,6 +5,7 @@ export const noRestyle = createShadcnRule({
   title: "Avoid restyling design-system components",
   description: "Keep component-owned visual styles inside the component contract.",
   rule: "no-restyle",
+  confidence: "heuristic-medium",
   docsUrl: "https://github.com/shadcn-ui/lint/blob/main/docs/rules/no-restyle.md",
 });
 export const noRawColors = createShadcnRule({
@@ -12,6 +13,7 @@ export const noRawColors = createShadcnRule({
   title: "Use design-system color tokens",
   description: "Prefer theme colors over raw color values.",
   rule: "no-raw-colors",
+  confidence: "heuristic-medium",
   docsUrl: "https://github.com/shadcn-ui/lint/blob/main/docs/rules/no-raw-colors.md",
 });
 export const noArbitraryValues = createShadcnRule({
@@ -19,6 +21,7 @@ export const noArbitraryValues = createShadcnRule({
   title: "Avoid arbitrary Tailwind values",
   description: "Use the design system's existing values instead of arbitrary utilities.",
   rule: "no-arbitrary-values",
+  confidence: "heuristic-high",
   docsUrl: "https://github.com/shadcn-ui/lint/blob/main/docs/rules/no-arbitrary-values.md",
 });
 export const noInlineStyles = createShadcnRule({
@@ -26,6 +29,7 @@ export const noInlineStyles = createShadcnRule({
   title: "Avoid inline styles",
   description: "Keep styling in the design system rather than component call sites.",
   rule: "no-inline-styles",
+  confidence: "heuristic-high",
   docsUrl: "https://github.com/shadcn-ui/lint/blob/main/docs/rules/no-inline-styles.md",
 });
 export const requireStaticClasses = createShadcnRule({
@@ -33,6 +37,7 @@ export const requireStaticClasses = createShadcnRule({
   title: "Keep component classes statically analyzable",
   description: "Use class values that the design-system analyzer can resolve.",
   rule: "require-static-classes",
+  confidence: "heuristic-high",
   docsUrl: "https://github.com/shadcn-ui/lint/blob/main/docs/rules/require-static-classes.md",
 });
 export const noUnknownClasses = createShadcnRule({
@@ -40,6 +45,7 @@ export const noUnknownClasses = createShadcnRule({
   title: "Use known design-system classes",
   description: "Avoid classes that are not declared by the project's Tailwind theme.",
   rule: "no-unknown-classes",
+  confidence: "heuristic-medium",
   docsUrl: "https://github.com/shadcn-ui/lint/blob/main/docs/rules/no-unknown-classes.md",
 });
 

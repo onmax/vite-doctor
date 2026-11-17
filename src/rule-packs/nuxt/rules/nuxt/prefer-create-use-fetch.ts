@@ -6,6 +6,7 @@ export const preferCreateUseFetch = createRule({
     title: "Prefer Nuxt data factories for custom data composables",
     category: "fetching",
     severity: "info",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/create-use-fetch#usage",
     requires: { script: true, nuxt: true },

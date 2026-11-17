@@ -11,6 +11,7 @@ export const preferDefineModel = createRule({
     title: "Prefer defineModel for component v-model",
     category: "style",
     severity: "warn",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/sfc-script-setup.html#definemodel",
     requires: { sfc: true, script: true, vue: true },

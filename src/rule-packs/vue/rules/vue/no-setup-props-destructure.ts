@@ -14,6 +14,7 @@ export const noSetupPropsDestructure = createRule({
       "Use props.foo, toRefs(props), or <script setup> reactive props destructuring.",
     category: "reactivity",
     severity: "error",
+    confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/composition-api-setup.html#accessing-props",
     requires: { script: true, vue: true },

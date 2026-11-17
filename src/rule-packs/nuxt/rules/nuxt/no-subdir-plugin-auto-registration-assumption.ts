@@ -7,6 +7,7 @@ export const noSubdirPluginAutoRegistrationAssumption = createRule({
     title: "Nested plugins are not auto-registered by default",
     category: "plugins",
     severity: "warn",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/directory-structure/app/plugins#registered-plugins",
     requires: { nuxt: true },
@@ -31,6 +32,7 @@ export const noSubdirPluginAutoRegistrationAssumption = createRule({
           severity: "warn",
           category: "plugins",
           file: ctx.file.path,
+          ...(ctx.project.nuxt?.manifest?.isCurrent && { confidence: "manifest-backed" }),
         },
       );
     };

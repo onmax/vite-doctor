@@ -26,6 +26,7 @@ export const maxProps = createRule({
     title: "Review components with a large prop surface",
     category: "component",
     severity: "info",
+    confidence: "proven",
     fixable: false,
     docsUrl: "https://github.com/vuejs-ai/skills/pull/54",
     requires: { sfc: true, script: true, vue: true },

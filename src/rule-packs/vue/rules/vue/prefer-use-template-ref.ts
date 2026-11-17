@@ -7,6 +7,7 @@ export const preferUseTemplateRef = createRule({
     title: "Prefer useTemplateRef for template refs",
     category: "template",
     severity: "info",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/guide/essentials/template-refs.html#accessing-the-refs",
     requires: { sfc: true, template: true, script: true, vue: true },

@@ -13,6 +13,7 @@ export const noSecretInPublicConfig = createRule({
     title: "Do not expose secrets in runtimeConfig.public",
     category: "runtime-config",
     severity: "error",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/going-further/runtime-config#exposing",
     requires: { script: true, nuxt: true },

@@ -1,5 +1,12 @@
+import { parseScript } from "../../../../core/internal/script.js";
+import { parseSfcFile } from "../../../../core/internal/sfc.js";
+// oxlint-disable-next-line no-restricted-imports -- uses the authored source boundary; routing Rules disable caching.
+import { selectScanFiles } from "../../../../core/internal/source-inventory.js";
+import { walkScriptLocal, type AnyNode } from "../../../../core/rule-authoring.js";
 import { dirname, join, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
+import { projectWorkspacePackages } from "../../../../core/internal/applicability.js";
+import { owningWorkspacePackage } from "../../../../core/internal/workspace-packages.js";
 
 export const NUXT_APP_DIRS = new Set([
   "assets",
@@ -61,6 +68,19 @@ export function isRuntimeAppFile(ctx: RuleContext) {
   return classifyNuxtFile(ctx) === "runtime-app";
 }
 
+/**
+ * App code whose routes Nuxt owns: a Nuxt app file, or a file in a Nuxt module's `runtime/` app
+ * code, in a workspace package that does not create its own vue-router instance, as a Vue SPA
+ * shipped next to a Nuxt module does.
+ */
+export async function isNuxtRoutedAppFile(ctx: RuleContext) {
+  const file = toPosixPath(resolve(ctx.project.root, ctx.file.path));
+  const appFile =
+    isRuntimeAppFile(ctx) ||
+    (ctx.file.sourceKind !== "module" && isModuleRuntimeAppFile(ctx, file));
+  return appFile && !(await createsVueRouter(ctx));
+}
+
 export function isServerRuntimeFile(ctx: RuleContext) {
   return classifyNuxtFile(ctx) === "server-runtime";
 }
@@ -120,6 +140,66 @@ export function resolveSameFile(a: string, b: string) {
 
 export function toPosixPath(path: string) {
   return path.replace(/\\/g, "/");
+}
+
+// Nuxt loads a module's runtime directory into the apps that install it; `runtime/server` is Nitro.
+function isModuleRuntimeAppFile(ctx: RuleContext, file: string): boolean {
+  return (ctx.project.nuxtModuleDefinitions ?? []).some((definition) => {
+    if (!definition.runtimeDir) return false;
+    const dir = toPosixPath(definition.runtimeDir);
+    return isInside(file, dir) && !isInside(file, `${dir}/server`);
+  });
+}
+
+async function createsVueRouter(ctx: RuleContext): Promise<boolean> {
+  const packages = projectWorkspacePackages(ctx.project);
+  const owner = owningWorkspacePackage(packages, toPosixPath(ctx.file.relativePath));
+  const key = `nuxt:creates-vue-router:${owner}`;
+  const cached = ctx.cache.get<boolean>(key);
+  if (cached !== undefined) return cached;
+  const entries = await selectScanFiles(ctx.project.root, {}, {}, ctx.project);
+  for (const entry of entries) {
+    if (
+      entry.sourceKind === "module" ||
+      owningWorkspacePackage(packages, toPosixPath(relative(ctx.project.root, entry.path))) !==
+        owner
+    )
+      continue;
+    const text = ctx.fs.readText(entry.path);
+    if (!text || !text.includes("vue-router")) continue;
+    const ast = entry.path.endsWith(".vue")
+      ? (await parseSfcFile(entry.path, text)).getScriptAst()
+      : parseScript(entry.path, text);
+    if (!ast) continue;
+    const bindings = new Set<string>();
+    for (const node of (ast.body ?? []) as AnyNode[]) {
+      if (
+        node.type !== "ImportDeclaration" ||
+        node.source?.value !== "vue-router" ||
+        node.importKind === "type"
+      )
+        continue;
+      for (const specifier of node.specifiers ?? []) {
+        if (specifier.importKind !== "type" && specifier.imported?.name === "createRouter")
+          bindings.add(specifier.local.name);
+      }
+    }
+    let found = false;
+    walkScriptLocal(ast, (node) => {
+      if (
+        node.type === "CallExpression" &&
+        node.callee?.type === "Identifier" &&
+        bindings.has(node.callee.name)
+      )
+        found = true;
+    });
+    if (found) {
+      ctx.cache.set(key, true);
+      return true;
+    }
+  }
+  ctx.cache.set(key, false);
+  return false;
 }
 
 function owningNuxtAppSource(ctx: RuleContext, file: string) {

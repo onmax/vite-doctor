@@ -1,7 +1,10 @@
 import { parseSync } from "oxc-parser";
 import { expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.js";
-import { requireSafetyCommentForTypeAssertion } from "../../../src/rule-packs/typescript/index.js";
+import {
+  noChainedTypeAssertions,
+  requireSafetyCommentForTypeAssertion,
+} from "../../../src/rule-packs/typescript/index.js";
 
 const cases: [string, string, number][] = [
   ["empty multiline block", "/* SAFETY:\n *\n */ const value = input as User", 1],
@@ -83,7 +86,117 @@ const cases: [string, string, number][] = [
     0,
   ],
   ["CRLF", "// SAFETY: schema validated this input.\r\nconst value = input as User", 0],
+  [
+    "ternary branch",
+    "const value = ready\n  // SAFETY: schema validated this input.\n  ? input as User\n  : undefined",
+    0,
+  ],
+  [
+    "ternary branch covers only its line",
+    "const value = ready\n  // SAFETY: schema validated this input.\n  ? input as User\n  : other as User",
+    1,
+  ],
+  [
+    "ternary branch after a blank line",
+    "const value = ready\n  // SAFETY: schema validated this input.\n\n  ? input as User\n  : undefined",
+    1,
+  ],
+  [
+    "logical and branch",
+    "const value = ready\n  // SAFETY: schema validated this input.\n  && input as User",
+    0,
+  ],
+  [
+    "logical or branch",
+    "const value = fallback\n  // SAFETY: schema validated this input.\n  || input as User",
+    0,
+  ],
+  [
+    "single-statement if body",
+    "function get() {\n// SAFETY: schema validated this input.\nif (ready) return input as User\n}",
+    0,
+  ],
+  [
+    "single-statement if body on the next line",
+    "function get() {\n// SAFETY: schema validated this input.\nif (ready)\n  return input as User\n}",
+    0,
+  ],
+  [
+    "single-statement else body",
+    "function get() {\nif (ready) return undefined\n// SAFETY: schema validated this input.\nelse return input as User\n}",
+    0,
+  ],
+  [
+    "else if body",
+    "function get() {\nif (ready) return undefined\n// SAFETY: schema validated this input.\nelse if (input) return input as User\n}",
+    0,
+  ],
+  [
+    "braced if body",
+    "function get() {\n// SAFETY: schema validated this input.\nif (ready) {\n  return input as User\n}\n}",
+    1,
+  ],
+  [
+    "leading semicolon",
+    "const timer = start()\n// SAFETY: Node timers expose unref.\n;(timer as Timer).unref()",
+    0,
+  ],
+  [
+    "continued call arguments",
+    "run(() => {\n  start()\n// SAFETY: the registry stored this input.\n}, input as never)",
+    0,
+  ],
+  [
+    "member chain line",
+    "const values = keys\n  // SAFETY: the route is a record.\n  .map((key) => (route as Record<string, unknown>)[key])",
+    0,
+  ],
+  [
+    "switch case line",
+    "switch (kind) {\n// SAFETY: only the driver field is read.\ndefault: throw fail((store as Store).driver)\n}",
+    0,
+  ],
+  [
+    "object property line",
+    "const handlers = {\n// SAFETY: toggle events come from this details element.\nonToggle: (event: Event) => { open = (event.target as HTMLDetailsElement).open },\n}",
+    0,
+  ],
+  [
+    "line above an unrelated case",
+    "switch (kind) {\ncase 1: break\n// SAFETY: only the driver field is read.\ncase 2: stop(); throw fail((store as Store).driver)\n}",
+    1,
+  ],
+  ["semicolon after code", "// SAFETY: validated\nstart(); const value = input as User", 1],
 ];
+
+const attachmentRegressions: [string, string, number][] = [
+  [
+    "trailing declaration comment",
+    "const other = 1; // SAFETY: about other.\nconst read = () => { return input as User; }",
+    1,
+  ],
+  [
+    "trailing chain comment",
+    "const values = keys // SAFETY: about keys.\n.map(() => input as User)",
+    1,
+  ],
+  [
+    "multiline else",
+    "function read() { if (ready) return;\n// SAFETY: schema validated input.\nelse\n return input as User; }",
+    0,
+  ],
+  [
+    "blank line after else",
+    "function read() { if (ready) return;\n// SAFETY: schema validated input.\nelse\n\n return input as User; }",
+    1,
+  ],
+  [
+    "blank line before else",
+    "function read() { if (ready) return;\n// SAFETY: schema validated input.\n\nelse\n return input as User; }",
+    1,
+  ],
+];
+cases.push(...attachmentRegressions);
 
 test.each(cases)("checks %s", async (_name, source, expected) => {
   expect(parseSync("index.ts", source).errors).toEqual([]);
@@ -93,6 +206,146 @@ test.each(cases)("checks %s", async (_name, source, expected) => {
     files: { "index.ts": source },
   });
   expect(result.diagnostics).toHaveLength(expected);
+});
+
+const propTypeCases: [string, string, number][] = [
+  [
+    "PropType from vue",
+    'import { type PropType } from "vue"\nexport const props = { variant: { type: String as PropType<Variant> } }',
+    0,
+  ],
+  [
+    "aliased PropType from @vue/runtime-core",
+    'import type { PropType as Prop } from "@vue/runtime-core"\nexport const props = { variant: { type: String as Prop<Variant> } }',
+    0,
+  ],
+  [
+    "PropType through a vue namespace",
+    'import type * as Vue from "vue"\nexport const props = { variant: { type: String as Vue.PropType<Variant> } }',
+    0,
+  ],
+  [
+    "local type named PropType",
+    "type PropType<T> = T\nexport const props = { variant: { type: String as PropType<Variant> } }",
+    1,
+  ],
+  [
+    "PropType from another module",
+    'import type { PropType } from "./types"\nexport const props = { variant: { type: String as PropType<Variant> } }',
+    1,
+  ],
+  [
+    "other vue type",
+    'import type { Ref } from "vue"\nexport const value = input as Ref<string>',
+    1,
+  ],
+];
+
+propTypeCases.push(
+  [
+    "shadowed alias",
+    'import type { PropType } from "vue"; function read(input: unknown) { type PropType<T> = T; return input as PropType<string>; }',
+    1,
+  ],
+  [
+    "shadowed generic",
+    'import type { PropType as Prop } from "vue"; function read<Prop>(input: unknown) { return input as Prop; }',
+    1,
+  ],
+  [
+    "shadowed namespace",
+    'import type * as Vue from "vue"; namespace Local { namespace Vue { export type PropType<T> = T; } const read = input as Vue.PropType<string>; }',
+    1,
+  ],
+  [
+    "unrelated scope",
+    'import type { PropType } from "vue"; function other() { type PropType<T> = T; } const read = input as PropType<string>;',
+    0,
+  ],
+);
+
+test.each(propTypeCases)("exempts Vue runtime prop types: %s", async (_name, source, expected) => {
+  expect(parseSync("index.ts", source).errors).toEqual([]);
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [requireSafetyCommentForTypeAssertion],
+    files: { "index.ts": source },
+  });
+  expect(result.diagnostics).toHaveLength(expected);
+});
+
+test("exempts PropType imported in a Vue SFC", async () => {
+  const result = await runProjectFixture({
+    rules: [requireSafetyCommentForTypeAssertion],
+    files: {
+      "App.vue":
+        '<script setup lang="ts">\nimport type { PropType } from "vue"\ndefineProps({ variant: { type: String as PropType<Variant> } })\n</script>',
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  ["named", 'import type { PropType } from "vue";', "PropType<string>"],
+  ["namespace", 'import type * as Vue from "vue";', "Vue.PropType<string>"],
+])("exempts equivalent %s imports across SFC script blocks", async (_name, imports, type) => {
+  const result = await runProjectFixture({
+    rules: [requireSafetyCommentForTypeAssertion],
+    files: {
+      "App.vue": `<script lang="ts">
+${imports}
+export const textProp = String as ${type};
+</script>
+<script setup lang="ts">
+${imports}
+defineProps({ label: { type: String as ${type} } });
+</script>`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+const chainCases: [string, string, number][] = [
+  ["undocumented chain", "const value = input as unknown as User", 1],
+  [
+    "documented chain",
+    "// SAFETY: schema validated this input.\nconst value = input as unknown as User",
+    0,
+  ],
+  [
+    "documented chain in a ternary branch",
+    "const value = ready\n  // SAFETY: schema validated this input.\n  ? input as unknown as User\n  : undefined",
+    0,
+  ],
+  [
+    "documented chain in an if body",
+    "function get() {\n// SAFETY: schema validated this input.\nif (ready) return input as unknown as User\n}",
+    0,
+  ],
+  ["empty marker on a chain", "// SAFETY:\nconst value = input as unknown as User", 1],
+  [
+    "comment on an unrelated statement",
+    "// SAFETY: validated\nconst other = 1; const value = input as unknown as User",
+    1,
+  ],
+];
+
+chainCases.push(
+  ...attachmentRegressions.map(([name, source, expected]): [string, string, number] => [
+    name,
+    source.replace("input as User", "input as unknown as User"),
+    expected,
+  ]),
+);
+
+test.each(chainCases)("TS0001 checks %s", async (_name, source, expected) => {
+  expect(parseSync("index.ts", source).errors).toEqual([]);
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noChainedTypeAssertions],
+    files: { "index.ts": source },
+  });
+  expect(result.diagnostics.map((item) => item.code)).toEqual(Array(expected).fill("TS0001"));
 });
 
 test("uses script comments at original Vue file offsets", async () => {

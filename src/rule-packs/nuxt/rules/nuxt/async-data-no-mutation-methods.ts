@@ -12,6 +12,7 @@ export const asyncDataNoMutationMethods = createRule({
     title: "Do not register mutating requests as async data",
     category: "fetching",
     severity: "error",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/getting-started/data-fetching#the-need-for-usefetch-and-useasyncdata",

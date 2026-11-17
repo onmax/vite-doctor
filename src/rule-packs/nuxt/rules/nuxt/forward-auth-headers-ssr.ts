@@ -19,6 +19,7 @@ export const forwardAuthHeadersSsr = createRule({
     title: "Forward auth headers for SSR server fetches",
     category: "fetching",
     severity: "warn",
+    confidence: "heuristic-medium",
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/getting-started/data-fetching#pass-client-headers-to-the-api",
