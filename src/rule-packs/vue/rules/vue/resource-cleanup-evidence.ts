@@ -504,6 +504,7 @@ function createResourceEvidence(ctx: RuleContext) {
   }
 
   const watchers = new Map<AnyNode, AnyNode>();
+  const watcherCalls = new Map<AnyNode, AnyNode[]>();
   for (const node of nodes) {
     if (node.type !== "CallExpression") continue;
     const api = vueApi(node.callee);
@@ -512,6 +513,7 @@ function createResourceEvidence(ctx: RuleContext) {
     if (!effect) continue;
     const parameter = effect.params[api === "watch" ? 2 : 0];
     watchers.set(effect, parameter?.type === "AssignmentPattern" ? parameter.left : parameter);
+    watcherCalls.set(effect, [...(watcherCalls.get(effect) ?? []), node]);
   }
 
   function suspendsBefore(node: AnyNode, registration: AnyNode, resource: Resource): boolean {
@@ -620,11 +622,160 @@ function createResourceEvidence(ctx: RuleContext) {
       executes(body, predicate, resource, alwaysExits);
     return (
       !overwrittenInRun(resource, walk) &&
-      walk(
+      (walk(
         resource.owner.body,
         (node) => node.start < resource.node.start && releasesThrough(node, resource),
-      )
+      ) ||
+        acquiredOnlyWhenEmpty(resource) ||
+        releasedOnEnteringPreviousValue(resource))
     );
+  }
+
+  // `if (!timer) timer = setInterval(...)`: the handle is empty at the acquisition, so nothing is
+  // lost, as long as every write that empties the handle releases it first.
+  function acquiredOnlyWhenEmpty(resource: Resource): boolean {
+    if (!guardedBy(resource, (test) => impliesEmpty(test, resource.handle!))) return false;
+    return nodes.every((node) => {
+      if (node.type === "UpdateExpression" && identity(node.argument) === resource.handle)
+        return false;
+      if (node.type !== "AssignmentExpression" || identity(node.left) !== resource.handle)
+        return true;
+      if (node.operator !== "=") return false;
+      if (acquisitionKind(node.right) === resource.kind) return true;
+      if (!empties(node.right)) return false;
+      if (resource.kind === "timeout" && within(node, resource.node.arguments[0])) return true;
+      return releasedOnPathTo(node, owner(node, false), resource, () => true);
+    });
+  }
+
+  // `watch(status, (value, previous) => { if (value === "on") clear(); else if (previous === "on") acquire() })`:
+  // the run before an acquisition saw the value "on" and released the handle, and only this
+  // watcher writes it.
+  function releasedOnEnteringPreviousValue(resource: Resource): boolean {
+    const calls = watcherCalls.get(resource.owner) ?? [];
+    if (!calls.length || calls.some((call) => vueApi(call.callee) !== "watch")) return false;
+    const [current, previous] = resource.owner.params;
+    if (current?.type !== "Identifier" || previous?.type !== "Identifier") return false;
+    let entered: unknown;
+    const found = guardedBy(resource, (test) => {
+      const value = comparedLiteral(test, previous);
+      if (value === undefined) return false;
+      entered = value.literal;
+      return true;
+    });
+    if (!found) return false;
+    const writtenOnlyHere = nodes.every(
+      (node) =>
+        !(
+          (node.type === "AssignmentExpression" && identity(node.left) === resource.handle) ||
+          (node.type === "UpdateExpression" && identity(node.argument) === resource.handle)
+        ) || owner(node, false) === resource.owner,
+    );
+    if (!writtenOnlyHere) return false;
+    return executes(
+      resource.owner.body,
+      (node) =>
+        node.type === "IfStatement" &&
+        comparedLiteral(node.test, current)?.literal === entered &&
+        executes(node.consequent, (call) => releasesThrough(call, resource), resource),
+      resource,
+    );
+  }
+
+  function guardedBy(resource: Resource, matches: (test: AnyNode) => boolean): boolean {
+    for (
+      let child = resource.node, current = parents.get(child);
+      current && current !== resource.owner;
+      child = current, current = parents.get(current)
+    ) {
+      if (
+        (current.type === "IfStatement" || current.type === "ConditionalExpression") &&
+        current.consequent === child &&
+        matches(current.test)
+      )
+        return true;
+    }
+    return false;
+  }
+
+  function impliesEmpty(test: AnyNode, handle: string): boolean {
+    const node = unwrap(test);
+    if (node?.type === "UnaryExpression" && node.operator === "!")
+      return identity(node.argument) === handle;
+    if (node?.type === "LogicalExpression" && node.operator === "&&")
+      return impliesEmpty(node.left, handle) || impliesEmpty(node.right, handle);
+    if (node?.type === "BinaryExpression" && (node.operator === "===" || node.operator === "==")) {
+      const sides = [node.left, node.right];
+      return sides.some(isNullish) && sides.some((side) => identity(side) === handle);
+    }
+    return false;
+  }
+
+  function comparedLiteral(test: AnyNode, parameter: AnyNode): { literal: unknown } | undefined {
+    const node = unwrap(test);
+    if (node?.type !== "BinaryExpression" || (node.operator !== "===" && node.operator !== "=="))
+      return undefined;
+    const variable = bindings.get(parameter);
+    for (const [side, other] of [
+      [node.left, node.right],
+      [node.right, node.left],
+    ]) {
+      const value = unwrap(other);
+      if (
+        unwrap(side)?.type === "Identifier" &&
+        variable &&
+        bindings.get(unwrap(side)) === variable &&
+        value?.type === "Literal" &&
+        value.value !== null
+      )
+        return { literal: value.value };
+    }
+    return undefined;
+  }
+
+  function acquisitionKind(expression: AnyNode): ResourceKind | undefined {
+    const node = unwrap(expression);
+    return resources.find((resource) => resource.node === node)?.kind;
+  }
+
+  function empties(expression: AnyNode): boolean {
+    const value = unwrap(expression);
+    return isNullish(value) || (value?.type === "Literal" && !value.value);
+  }
+
+  function within(node: AnyNode, container: AnyNode): boolean {
+    return !!container && node.start >= container.start && node.end <= container.end;
+  }
+
+  // Whether every path from the start of `region` to `target` releases the resource first.
+  function releasedOnPathTo(
+    target: AnyNode,
+    region: AnyNode,
+    resource: Resource,
+    after: (node: AnyNode) => boolean,
+  ): boolean {
+    for (
+      let child = target, current = parents.get(target);
+      current;
+      child = current, current = parents.get(current)
+    ) {
+      if (current.type === "BlockStatement" || current.type === "Program") {
+        for (const statement of current.body) {
+          if (statement === child) break;
+          if (
+            executes(
+              statement,
+              (node) => after(node) && releasesThrough(node, resource),
+              resource,
+              alwaysExits,
+            )
+          )
+            return true;
+        }
+      }
+      if (current === region || isFunction(current)) break;
+    }
+    return false;
   }
 
   // Writing the handle again later in the same run, without releasing it first, loses this
@@ -645,12 +796,11 @@ function createResourceEvidence(ctx: RuleContext) {
     let region = parents.get(resource.node);
     while (region && !(region.start <= overwrite.start && region.end >= overwrite.end))
       region = parents.get(region);
-    return !walk(
-      region,
-      (node) =>
-        node.start > resource.node.end &&
-        node.end < overwrite.start &&
-        releasesThrough(node, resource),
+    const releasedAfterAcquisition = (node: AnyNode) =>
+      node.start > resource.node.end && node.end < overwrite.start;
+    return (
+      !walk(region, (node) => releasedAfterAcquisition(node) && releasesThrough(node, resource)) &&
+      !releasedOnPathTo(overwrite, region, resource, releasedAfterAcquisition)
     );
   }
 
@@ -700,7 +850,10 @@ function createResourceEvidence(ctx: RuleContext) {
     return nodes.some((node) => {
       if (!isCleanupRegistration(node) || insideWatcher(node)) return false;
       const registeredIn = owner(node);
-      if (!executes(isFunction(registeredIn) ? registeredIn.body : registeredIn, (n) => n === node))
+      if (
+        !executes(isFunction(registeredIn) ? registeredIn.body : registeredIn, (n) => n === node) &&
+        !registeredWithWatcher(node, resource)
+      )
         return false;
       const teardown = callback(node.arguments[0]);
       if (!teardown) return false;
@@ -708,6 +861,28 @@ function createResourceEvidence(ctx: RuleContext) {
         releasesThrough(call, resource),
       );
     });
+  }
+
+  // `if (live) { watch(...); onBeforeUnmount(...) }`: the teardown registers whenever the watcher does.
+  function registeredWithWatcher(registration: AnyNode, resource: Resource): boolean {
+    const calls = watcherCalls.get(resource.owner) ?? [];
+    return (
+      calls.length > 0 &&
+      calls.every((call) => {
+        for (
+          let current = parents.get(call);
+          current && !isFunction(current);
+          current = parents.get(current)
+        ) {
+          if (
+            (current.type === "BlockStatement" || current.type === "Program") &&
+            executes(current, (node) => node === registration)
+          )
+            return true;
+        }
+        return false;
+      })
+    );
   }
 
   // Watcher callbacks run outside setup, where lifecycle hooks do not register.
