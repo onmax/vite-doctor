@@ -382,19 +382,242 @@ export async function read(url: string): Promise<User> {
     ]);
   });
 
-  test("reports unknown-property shapes that exclude null", async () => {
+  test("accepts JSON types that claim nothing about the contents", async () => {
     const result = await runProjectFixture({
       framework: "vite",
       rules: [noUnvalidatedDeserialization],
       files: {
-        "src/index.ts": `const marker = JSON.parse(text) as { digest?: unknown }
-console.log(marker.digest)`,
+        "src/index.ts": `import type { JsonValue as FestJson } from "type-fest"
+import type { JsonValue } from "@acme/internal/config-edit"
+import type { Json as SharedJson } from "./json"
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
+const list = JSON.parse(text) as unknown[]
+const frozen = JSON.parse(text) as readonly unknown[]
+const generic = JSON.parse(text) as Array<unknown>
+const record: Record<string, unknown> = JSON.parse(text)
+const nullable = JSON.parse(text) as Record<string, unknown> | null
+const marker = JSON.parse(text) as { digest?: unknown }
+const event = JSON.parse(text) as { pull_request?: { head?: { sha?: unknown } } }
+const local = JSON.parse(text) as Json
+const workspace: JsonValue = JSON.parse(text)
+const fest = JSON.parse(text) as FestJson
+const shared: SharedJson = JSON.parse(text)
+function stored(): string | null {
+  return localStorage.getItem("dock")
+}
+const session: string | null | undefined = sessionStorage.getItem("dock")
+async function body(response: Response): Promise<Json[]> {
+  return response.json()
+}
+console.log(list, frozen, generic, record, nullable, marker, event, local, workspace, fest, shared, stored, session, body)`,
+        "src/json.ts": `export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json }`,
+        "node_modules/@acme/internal/package.json": JSON.stringify({
+          name: "@acme/internal",
+          exports: {
+            "./config-edit": {
+              types: "./dist/config-edit.d.ts",
+              import: "./dist/config-edit.js",
+            },
+          },
+        }),
+        "node_modules/@acme/internal/src/config-edit.ts": `export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue }`,
       },
     });
 
-    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
-      "typescript/boundaries/no-unvalidated-deserialization",
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("reports types that claim more than the deserialized value proves", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import type { Manifest } from "./manifest"
+import type { JsonValue } from "./fake-json"
+type Scalar = string | number
+const scalar = JSON.parse(text) as Scalar
+const names = JSON.parse(text) as string[]
+const labels = JSON.parse(text) as Record<string, string>
+const user = JSON.parse(text) as { id: string; extra?: unknown }
+const token = localStorage.getItem("token") as string
+const manifest: Manifest = JSON.parse(text)
+const fake: JsonValue = JSON.parse(text)
+async function read<T = unknown>(request: Request): Promise<T> {
+  return await request.json() as T
+}
+console.log(scalar, names, labels, user, token, manifest, fake, read)`,
+        "src/manifest.ts": `export interface Manifest { name: string }`,
+        "src/fake-json.ts": `export type JsonValue = { id: string }`,
+      },
+    });
+
+    expect(result.diagnostics.map((item) => item.range?.line)).toEqual([4, 5, 6, 7, 8, 9, 10, 12]);
+  });
+
+  test("preserves alias constraints, lexical bindings, recursion and promise contracts", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import type { Nullable, Mixed } from "./aliases"
+type Raw = unknown[] | { id: string }
+type Maybe = unknown[] | null | undefined
+type Nested = Nested[]
+type Tree = { [key: string]: Tree }
+type Payload = unknown
+type Record<K extends string, V> = { id: string; value: V }
+const a = JSON.parse(text) as Raw
+const b = JSON.parse(text) as Maybe
+const c = JSON.parse(text) as Nested
+const d = JSON.parse(text) as Tree
+function parse<Payload>(text: string): Payload { return JSON.parse(text) }
+const e = JSON.parse(text) as Record<string, unknown>
+function sync(text: string): Promise<unknown> { return JSON.parse(text) }
+const arrow = (text: string): Promise<unknown> => JSON.parse(text)
+function fetchBody(response: Response): Promise<unknown> { return response.json() }
+async function asyncBody(text: string): Promise<unknown> { return JSON.parse(text) }
+const f = JSON.parse(text) as Nullable
+const g = JSON.parse(text) as Mixed
+function local() {
+  type Payload = { id: string }
+  return JSON.parse(text) as Payload
+}
+console.log(a, b, c, d, e, f, g, parse, sync, arrow, fetchBody, asyncBody, local)`,
+        "src/aliases.ts": `export type Nullable = unknown[] | null
+export type Mixed = unknown[] | { id: string }`,
+      },
+    });
+    expect(result.diagnostics.map((item) => item.range?.line)).toEqual([
+      8, 10, 11, 12, 13, 14, 15, 19, 22,
     ]);
+  });
+
+  test.each(["d.ts", "d.mts", "d.cts"])(
+    "resolves implicit package declaration exports in %s",
+    async (extension) => {
+      const result = await runProjectFixture({
+        framework: "vite",
+        rules: [noUnvalidatedDeserialization],
+        files: {
+          "src/index.ts": `import type { JsonValue, Raw } from "honest-json";
+import type { JsonValue as ViaBarrel, Raw as BarrelRaw } from "./barrel";
+import type { Hidden } from "private-json";
+const direct = JSON.parse(text) as JsonValue;
+const barrel = JSON.parse(text) as ViaBarrel;
+const container = JSON.parse(text) as Raw;
+const barrelContainer = JSON.parse(text) as BarrelRaw;
+const hidden = JSON.parse(text) as Hidden;`,
+          "src/barrel.ts": 'export * from "honest-json";',
+          "node_modules/honest-json/package.json": JSON.stringify({
+            name: "honest-json",
+            types: `index.${extension}`,
+          }),
+          [`node_modules/honest-json/index.${extension}`]: `type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type Raw = unknown[] | null;
+export type Other = number;`,
+          "node_modules/private-json/package.json": JSON.stringify({
+            name: "private-json",
+            types: `index.${extension}`,
+          }),
+          [`node_modules/private-json/index.${extension}`]: `type Hidden = unknown;
+export {};`,
+        },
+      });
+      expect(result.diagnostics.map((item) => item.range?.line)).toEqual([8]);
+    },
+  );
+
+  test.each(["d.ts", "d.mts", "d.cts"])(
+    "distinguishes default assignments from declarations in %s",
+    async (extension) => {
+      const result = await runProjectFixture({
+        framework: "vite",
+        rules: [noUnvalidatedDeserialization],
+        files: {
+          "src/index.ts": `import type { Raw } from "./barrel";
+import type { Honest as ClassHonest } from "./class";
+import type { Honest as FunctionHonest } from "./function";
+const value = JSON.parse(text) as Raw;
+const classValue = JSON.parse(text) as ClassHonest;
+const functionValue = JSON.parse(text) as FunctionHonest;`,
+          "src/barrel.ts": 'export * from "./first"; export * from "./second";',
+          [`src/first.${extension}`]: `type Raw = { id: string };
+declare const other: number;
+export default other;`,
+          "src/second.ts": "export type Raw = unknown[];",
+          [`src/class.${extension}`]: `type Honest = unknown[];
+export default class Other {}`,
+          [`src/function.${extension}`]: `type Honest = unknown[];
+export default function other(): number;`,
+        },
+      });
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
+
+  test.each([
+    "type Raw = { id: string }; export type Other = number;",
+    'import type { Raw } from "./private"; export type Other = number;',
+    "export function other() { interface Raw { id: string } }",
+  ])("ignores private wildcard bindings: %s", async (first) => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import type { Raw } from "./barrel";
+const value = JSON.parse(text) as Raw;`,
+        "src/barrel.ts": 'export * from "./first"; export * from "./second";',
+        "src/first.ts": first,
+        "src/second.ts": "type Honest = unknown[]; export { Honest as Raw };",
+        "src/private.ts": "export type Raw = { id: string };",
+      },
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test.each([false, true])(
+    "resolves explicit recursive reexports before stars (reversed: %s)",
+    async (reversed) => {
+      const exports = ['export * from "./first";', 'export { B } from "./second";'];
+      const result = await runProjectFixture({
+        framework: "vite",
+        rules: [noUnvalidatedDeserialization],
+        files: {
+          "src/index.ts": `import type { B } from "./barrel";
+export type A = string | number | boolean | null | { [key: string]: unknown } | B[] | { recursive: C };
+export type C = A;
+const value = JSON.parse(text) as A;`,
+          "src/barrel.ts": (reversed ? exports.reverse() : exports).join("\n"),
+          "src/first.ts": `import type { A } from "./index"; export type B = A[];`,
+          "src/second.ts": `export type B = unknown;`,
+        },
+      });
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
+
+  test("names the source and the declared type in the message", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `const manifest: Manifest = JSON.parse(text)
+const token = localStorage.getItem("token") as string
+async function read(request: Request): Promise<Payload> {
+  return request.json()
+}
+console.log(manifest, token, read)`,
+      },
+    });
+
+    const messages = result.diagnostics.map((item) => item.message);
+    expect(messages[0]).toContain("`JSON.parse()`");
+    expect(messages[0]).toContain("`Manifest`");
+    expect(messages[1]).toContain("`localStorage.getItem()`");
+    expect(messages[1]).toContain("`string | null`");
+    expect(messages[1]).toContain("`string`");
+    expect(messages[2]).toContain("`request.json()`");
+    expect(messages[2]).toContain("`Payload`");
   });
 
   test("ignores json() calls without Fetch API evidence or a type claim", async () => {
