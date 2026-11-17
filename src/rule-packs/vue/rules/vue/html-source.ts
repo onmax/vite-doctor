@@ -39,7 +39,7 @@ interface Unit {
 
 interface Where {
   unit: Unit | null;
-  params?: ReadonlyMap<ScopeVariable, () => HtmlSource>;
+  params?: ReadonlyMap<ScopeVariable, (path: string[]) => HtmlSource>;
   /** Set while tracing a template expression, whose names resolve by name, not by scope. */
   template?: TemplateLocals;
 }
@@ -250,7 +250,7 @@ export class HtmlSourceTracer {
           node.elements.map((element: AnyNode) =>
             element?.type === "SpreadElement" ? element.argument : element,
           ),
-          [],
+          path,
           where,
         );
       case "ThisExpression":
@@ -288,7 +288,7 @@ export class HtmlSourceTracer {
       const local = where.template.get(name);
       if (local)
         return local.list
-          ? this.classify(local.list, [], { unit: this.sfc, template: local.locals })
+          ? this.classify(local.list, path, { unit: this.sfc, template: local.locals })
           : unknown(`the slot prop \`${name}\``);
       if (name === "$route") return untrusted("`$route`");
       if (name === "$props" || name === "$attrs")
@@ -322,18 +322,37 @@ export class HtmlSourceTracer {
   }
 
   private variable(variable: ScopeVariable, path: string[], where: Where): HtmlSource {
-    if (where.params?.has(variable)) return where.params.get(variable)!();
-    if (this.modelTargets.has(variable.name) && where.unit === this.sfc && isModuleLevel(variable))
+    if (where.params?.has(variable)) return where.params.get(variable)!(path);
+    const definition = variable.defs[0] as AnyNode;
+    const init = unwrap(definition?.node?.init);
+    const isRef =
+      init?.type === "CallExpression" &&
+      where.unit &&
+      vueApiCall(where.unit.script, init.callee, REF_CALLS);
+    const selected = [variable.name, ...(isRef && path[0] === "value" ? path.slice(1) : path)];
+    if (
+      where.unit === this.sfc &&
+      isModuleLevel(variable) &&
+      [...this.modelTargets].some((target) => {
+        const written = target.split(".");
+        return written.every(
+          (key, index) =>
+            selected[index] === undefined ||
+            key === "*" ||
+            selected[index] === "*" ||
+            key === selected[index],
+        );
+      })
+    )
       return untrusted(`a \`v-model\` input in this template (\`${variable.name}\`)`);
     if (this.active.has(variable)) return TRUSTED;
     this.active.add(variable);
     try {
-      const definition = variable.defs[0] as AnyNode;
       switch (definition?.type) {
         case "ImportBinding":
           return this.importedValue(definition, path, where.unit!);
         case "Parameter":
-          return this.parameter(variable, definition.node, where);
+          return this.parameter(variable, definition.node, path, where);
         case "Variable":
           return this.declared(variable, definition.node, path, where);
         default:
@@ -386,17 +405,43 @@ export class HtmlSourceTracer {
         result = worst(result, this.classify(reference.writeExpr, inner, where));
         continue;
       }
-      if (!container) continue;
-      const member = script.parent(reference.identifier);
+      let member = script.parent(reference.identifier);
+      const written: string[] = [];
+      while (member?.type === "MemberExpression") {
+        written.push(memberKey(member));
+        const parent = script.parent(member);
+        if (parent?.type !== "MemberExpression" || parent.object !== member) break;
+        member = parent;
+      }
+      if (container && written[0] === "value") written.shift();
       const assignment = script.parent(member);
       if (
-        member?.type === "MemberExpression" &&
-        member.object === reference.identifier &&
-        memberName(member) === "value" &&
+        written.length &&
         assignment?.type === "AssignmentExpression" &&
         assignment.left === member
-      )
+      ) {
+        const overlap = written.every(
+          (key, index) =>
+            inner[index] === undefined ||
+            key === "*" ||
+            inner[index] === "*" ||
+            key === inner[index],
+        );
+        if (overlap)
+          result = worst(
+            result,
+            assignment.operator === "="
+              ? this.classify(assignment.right, inner.slice(written.length), where)
+              : unknown("a mutated property"),
+          );
+      } else if (
+        container &&
+        !written.length &&
+        assignment?.type === "AssignmentExpression" &&
+        assignment.left === member
+      ) {
         result = worst(result, this.classify(assignment.right, inner, where));
+      }
     }
     return result;
   }
@@ -405,7 +450,12 @@ export class HtmlSourceTracer {
    * A parameter takes its value from the call that passes it; for callbacks, from the promise,
    * array, or watch source they receive values from.
    */
-  private parameter(variable: ScopeVariable, fn: AnyNode, where: Where): HtmlSource {
+  private parameter(
+    variable: ScopeVariable,
+    fn: AnyNode,
+    path: string[],
+    where: Where,
+  ): HtmlSource {
     const script = where.unit!.script;
     const identifier = variable.identifiers[0] as AnyNode;
     const index = fn.params.findIndex((param: AnyNode) => contains(param, identifier));
@@ -414,8 +464,8 @@ export class HtmlSourceTracer {
       const callee = unwrap(call.callee);
       const method = memberName(callee);
       if (method === "then" && call.arguments[0] === fn)
-        return this.classify(callee.object, [], where);
-      if (method && ARRAY_CALLBACKS.has(method)) return this.classify(callee.object, [], where);
+        return this.classify(callee.object, path, where);
+      if (method && ARRAY_CALLBACKS.has(method)) return this.classify(callee.object, path, where);
       if (call.arguments[1] === fn && vueApiCall(script, callee, WATCH))
         return this.watchSource(call.arguments[0], where);
     }
@@ -464,26 +514,35 @@ export class HtmlSourceTracer {
       return unknown(`the result of \`${this.text(node, where)}\``);
     const method = memberName(callee) ?? "";
     const object = unwrap(callee.object);
-    // Shiki escapes the code it highlights, whichever highlighter instance renders it.
-    if (method === "codeToHtml") return TRUSTED;
+    if (method === "codeToHtml" && this.isShiki(object, where)) return TRUSTED;
     const imported = object.type === "Identifier" ? this.importOf(object, where) : undefined;
     if (method === "sanitize") {
       if (imported && DOMPURIFY.test(imported.source)) return TRUSTED;
-      if (!imported && object.type === "Identifier" && object.name === "DOMPurify") return TRUSTED;
+      if (
+        !imported &&
+        object.type === "Identifier" &&
+        object.name === "DOMPurify" &&
+        !this.resolves(object, where)
+      )
+        return TRUSTED;
     }
     if (imported?.source === "marked" && MARKED_METHODS.has(method))
       return this.rendered(args[0], "marked", where);
-    if (MARKDOWN_IT_METHODS.has(method) && this.isMarkdownIt(object, where))
-      return this.rendered(args[0], "markdown-it", where);
+    if (MARKDOWN_IT_METHODS.has(method)) {
+      const mode = this.markdownMode(object, where);
+      if (mode === "safe") return TRUSTED;
+      if (mode === "html") return this.rendered(args[0], "markdown-it", where);
+      if (mode === "unknown") return unknown("a customized markdown-it renderer");
+    }
     if (method === "then" && FUNCTION_TYPES.has(unwrap(args[0])?.type))
       return this.returns(args[0], path, where);
     if (STRING_METHODS.has(method)) {
       const receiver = this.classify(object, [], where);
       return ARGUMENT_METHODS.has(method) ? worst(receiver, this.all(args, [], where)) : receiver;
     }
-    if (ARRAY_PASSTHROUGH.has(method)) return this.classify(object, [], where);
+    if (ARRAY_PASSTHROUGH.has(method)) return this.classify(object, path, where);
     if ((method === "map" || method === "flatMap") && FUNCTION_TYPES.has(unwrap(args[0])?.type))
-      return this.returns(args[0], [], where);
+      return this.returns(args[0], path, where);
     if (object.type === "Identifier" && object.name === "JSON" && !this.resolves(object, where))
       return method === "stringify" ? this.classify(args[0], [], where) : unknown("`JSON.parse()`");
     const receiver = this.classify(object, [], where);
@@ -517,6 +576,8 @@ export class HtmlSourceTracer {
     unit: Unit,
   ): HtmlSource {
     const definition = variable.defs[0] as AnyNode;
+    if (variable.references.some((reference) => !reference.init && reference.isWrite()))
+      return unknown(`a reassigned callable \`${variable.name}\``);
     if (definition?.type === "ImportBinding") {
       const { source, imported } = importBinding(definition);
       return this.callImport(source, imported, args, path, caller, unit.file);
@@ -538,7 +599,7 @@ export class HtmlSourceTracer {
     if (this.active.has(fn)) return TRUSTED;
     this.active.add(fn);
     try {
-      const params = new Map<ScopeVariable, () => HtmlSource>();
+      const params = new Map<ScopeVariable, (path: string[]) => HtmlSource>();
       const declared = unit.script.scopeManager.getDeclaredVariables(fn);
       fn.params.forEach((param: AnyNode, index: number) => {
         const id = param.type === "AssignmentPattern" ? param.left : param;
@@ -546,13 +607,13 @@ export class HtmlSourceTracer {
         const variable = declared.find((candidate) => candidate.identifiers.includes(id));
         if (!variable) return;
         const arg = args[index];
-        params.set(variable, () =>
+        params.set(variable, (selected) =>
           arg
             ? arg.type === "SpreadElement"
               ? unknown(`a spread argument of \`${this.text(arg.argument, caller)}\``)
-              : this.classify(arg, [], caller)
+              : this.classify(arg, selected, caller)
             : param.type === "AssignmentPattern"
-              ? this.classify(param.right, [], { unit })
+              ? this.classify(param.right, selected, { unit })
               : TRUSTED,
         );
       });
@@ -649,21 +710,77 @@ export class HtmlSourceTracer {
       : !!where.unit?.script.references.get(node)?.resolved;
   }
 
-  /** Whether `node` is a markdown-it instance: `new MarkdownIt()` or `markdownit()` from `markdown-it`. */
-  private isMarkdownIt(node: AnyNode, where: Where): boolean {
-    if (node.type !== "Identifier") return false;
+  private isShiki(node: AnyNode, where: Where, seen = new Set<unknown>()): boolean {
+    node = unwrap(node);
+    if (node?.type === "AwaitExpression") return this.isShiki(node.argument, where, seen);
+    if (node?.type === "CallExpression") {
+      const factory = unwrap(node.callee);
+      const origin = factory?.type === "Identifier" ? this.importOf(factory, where) : undefined;
+      return (
+        !!origin &&
+        /^(?:shiki(?:\/|$)|@shikijs\/)/.test(origin.source) &&
+        new Set(["createHighlighter", "createHighlighterCore", "getHighlighter"]).has(
+          origin.imported,
+        )
+      );
+    }
+    if (node?.type !== "Identifier") return false;
+    const variable = where.template
+      ? this.sfc && moduleVariable(this.sfc, node.name)
+      : where.unit?.script.references.get(node)?.resolved;
+    if (!variable || seen.has(variable)) return false;
+    seen.add(variable);
+    if (variable.references.some((reference) => !reference.init && reference.isWrite()))
+      return false;
+    const definition = variable.defs[0] as AnyNode;
+    return definition?.type === "Variable" && this.isShiki(definition.node.init, where, seen);
+  }
+
+  private markdownMode(node: AnyNode, where: Where): "safe" | "html" | "unknown" | null {
+    if (node.type !== "Identifier") return null;
     const variable = where.template
       ? this.sfc && moduleVariable(this.sfc, node.name)
       : where.unit?.script.references.get(node)?.resolved;
     const definition = variable?.defs[0] as AnyNode;
-    if (definition?.type !== "Variable") return false;
+    if (definition?.type !== "Variable") return null;
     const init = unwrap(definition.node.init);
-    if (init?.type !== "NewExpression" && init?.type !== "CallExpression") return false;
+    if (init?.type !== "NewExpression" && init?.type !== "CallExpression") return null;
     const factory = unwrap(init.callee);
-    if (factory?.type !== "Identifier") return false;
+    if (factory?.type !== "Identifier") return null;
     const unit = where.template ? this.sfc : where.unit;
     const origin = unit?.script.references.get(factory)?.resolved?.defs[0] as AnyNode;
-    return origin?.type === "ImportBinding" && importBinding(origin).source === "markdown-it";
+    if (origin?.type !== "ImportBinding" || importBinding(origin).source !== "markdown-it")
+      return null;
+    for (const reference of variable!.references) {
+      if (reference.init) continue;
+      const member = unit!.script.parent(reference.identifier);
+      const call = unit!.script.parent(member);
+      if (
+        reference.isWrite() ||
+        member?.type !== "MemberExpression" ||
+        !MARKDOWN_IT_METHODS.has(memberName(member) ?? "") ||
+        call?.type !== "CallExpression" ||
+        call.callee !== member
+      )
+        return "unknown";
+    }
+    let mode: "safe" | "html" = "safe";
+    for (const argument of init.arguments) {
+      const arg = unwrap(argument);
+      if (arg?.type === "Literal" && typeof arg.value === "string") {
+        if (!["default", "zero", "commonmark"].includes(arg.value)) return "unknown";
+        mode = arg.value === "commonmark" ? "html" : "safe";
+      } else if (arg?.type === "ObjectExpression") {
+        for (const property of arg.properties) {
+          if (property.type !== "Property" || property.computed) return "unknown";
+          if (propertyName(property.key) !== "html") return "unknown";
+          const value = unwrap(property.value);
+          if (value?.type !== "Literal" || typeof value.value !== "boolean") return "unknown";
+          mode = value.value ? "html" : "safe";
+        }
+      } else return "unknown";
+    }
+    return mode;
   }
 
   private autoImport(name: string): { source: string; imported: string; from: string } | null {

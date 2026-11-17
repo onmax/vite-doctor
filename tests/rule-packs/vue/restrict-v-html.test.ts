@@ -83,13 +83,13 @@ const props = defineProps<{ html: string; body: string }>()
 test("skips Shiki, uqr, sanitizer output and literals", async () => {
   const diagnostics = await vHtml({
     "src/Code.vue": `<script setup lang="ts">
-import type { HighlighterCore } from "shiki/core"
+import { createHighlighter } from "shiki"
 import { ref, watch } from "vue"
 import DOMPurify from "dompurify"
 import sanitizeHtml from "sanitize-html"
 import { useRoute } from "vue-router"
 import { qrCode } from "./qr"
-let highlighter: Promise<HighlighterCore> | undefined
+const highlighter = createHighlighter({ themes: [], langs: [] })
 const props = defineProps<{ content: string; url: string }>()
 const route = useRoute()
 const html = ref("")
@@ -127,7 +127,7 @@ import MarkdownIt from "markdown-it"
 import { marked } from "marked"
 import { useRoute } from "vue-router"
 const props = defineProps<{ source: string }>()
-const md = new MarkdownIt()
+const md = new MarkdownIt({ html: true })
 const route = useRoute()
 const fromProp = computed(() => md.render(props.source))
 const fromRoute = computed(() => marked.parse(String(route.query.text)))
@@ -152,8 +152,8 @@ test("follows a Nuxt utils auto-import to its Shiki output", async () => {
   const diagnostics = await vHtml(
     {
       "nuxt.config.ts": "export default defineNuxtConfig({})",
-      "app/utils/highlight.ts": `import type { HighlighterCore } from "shiki/core"
-let highlighter: Promise<HighlighterCore> | undefined
+      "app/utils/highlight.ts": `import { createHighlighter } from "shiki"
+const highlighter = createHighlighter({ themes: [], langs: [] })
 export async function highlightCodeLines(code: string, lang: string): Promise<string> {
   const html = (await highlighter!).codeToHtml(code, { lang, theme: "github-dark" })
   return (html.match(/<code>([\\s\\S]*)<\\/code>/)?.[1] ?? "").replaceAll("</span>\\n", "\\n</span>")
@@ -176,3 +176,86 @@ async function update(code: string) {
 
   expect(diagnostics).toEqual([]);
 }, 30_000);
+
+test("does not retain trusted initializers across writes", async () => {
+  const diagnostics = await vHtml({
+    "src/Writes.vue": `<script setup>
+import { reactive, ref } from "vue"
+import { useRoute } from "vue-router"
+const route = useRoute()
+const state = reactive({ html: '' })
+state.html = String(route.query.html)
+const nested = ref({ html: '' })
+nested.value.html = String(route.query.html)
+let render = () => '<b>static</b>'
+render = () => String(route.query.html)
+const html = render()
+</script>
+<template><div v-html="state.html" /><div v-html="nested.html" /><div v-html="html" /></template>`,
+  });
+  expect(diagnostics.map(({ severity }) => severity)).toEqual(["error", "error", "warn"]);
+});
+
+test("requires provenance for renderer and sanitizer methods", async () => {
+  const diagnostics = await vHtml({
+    "src/Names.vue": `<script setup>
+import { useRoute } from "vue-router"
+const route = useRoute()
+const renderer = { codeToHtml: input => input }
+const DOMPurify = { sanitize: input => input }
+const html = renderer.codeToHtml(String(route.query.html))
+const clean = DOMPurify.sanitize(String(route.query.html))
+</script>
+<template><div v-html="html" /><div v-html="clean" /></template>`,
+  });
+  expect(diagnostics.map(({ severity }) => severity)).toEqual(["warn", "warn"]);
+});
+
+test("preserves selected properties through lists, parameters and model writes", async () => {
+  const diagnostics = await vHtml({
+    "src/Properties.vue": `<script setup>
+import { reactive } from "vue"
+import DOMPurify from "dompurify"
+import { useRoute } from "vue-router"
+const route = useRoute()
+const item = { raw: String(route.query.html), html: DOMPurify.sanitize(String(route.query.html)) }
+const items = [item]
+function getHtml(item) { return item.html }
+function getRaw(item) { return item.raw }
+const form = reactive({ name: '', html: '<b>static</b>' })
+</script>
+<template>
+<div v-for="item in items" v-html="item.html" />
+<div v-html="getHtml(item)" />
+<input v-model="form.name" /><div v-html="form.html" />
+<div v-for="item in items" v-html="item.raw" />
+<div v-html="getRaw(item)" /><div v-html="form.name" />
+</template>`,
+  });
+  expect(diagnostics.map(({ severity }) => severity)).toEqual(["error", "error", "error"]);
+});
+
+test("distinguishes escaping, HTML-enabled and customized markdown-it", async () => {
+  const diagnostics = await vHtml({
+    "src/MarkdownModes.vue": `<script setup>
+import MarkdownIt from "markdown-it"
+import { useRoute } from "vue-router"
+const route = useRoute()
+const safe = new MarkdownIt()
+const disabled = new MarkdownIt({ html: false })
+const enabled = new MarkdownIt({ html: true })
+const common = new MarkdownIt('commonmark')
+const custom = new MarkdownIt()
+custom.use(plugin)
+</script>
+<template>
+<div v-html="safe.render(String(route.query.html))" />
+<div v-html="safe.renderInline(String(route.query.html))" />
+<div v-html="disabled.render(String(route.query.html))" />
+<div v-html="enabled.render(String(route.query.html))" />
+<div v-html="common.renderInline(String(route.query.html))" />
+<div v-html="custom.render(String(route.query.html))" />
+</template>`,
+  });
+  expect(diagnostics.map(({ severity }) => severity)).toEqual(["error", "error", "warn"]);
+});

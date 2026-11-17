@@ -12,7 +12,6 @@ import { createRule } from "./shared.js";
 
 const RULE_ID = "vue/security/restrict-v-html";
 const NAMES = /[A-Za-z_$][\w$]*/g;
-const ROOT_NAME = /^\s*([A-Za-z_$][\w$]*)/;
 
 export const restrictVHtml = createRule({
   meta: {
@@ -119,7 +118,7 @@ function templateLocals(
   return locals as TemplateLocals | null;
 }
 
-/** Root names that a `v-model` in the template writes. */
+/** Property paths that a `v-model` in the template writes. */
 function modelTargets(ctx: RuleContext): Set<string> {
   const names = new Set<string>();
   const root = ctx.file.sfc?.getTemplateAst();
@@ -128,8 +127,26 @@ function modelTargets(ctx: RuleContext): Set<string> {
     if (node.type !== 1) return;
     for (const prop of node.props) {
       if (prop.type !== 7 || prop.name !== "model" || !prop.exp) continue;
-      const name = ROOT_NAME.exec(prop.exp.content)?.[1];
-      if (name) names.add(name);
+      let expression = ctx.helpers.parseTemplateExpression(prop.exp) as {
+        type: string;
+        name?: string;
+        object?: unknown;
+        computed?: boolean;
+        property?: { name?: string; value?: unknown };
+      } | null;
+      const path: string[] = [];
+      while (expression?.type === "MemberExpression") {
+        path.unshift(
+          expression.computed
+            ? typeof expression.property?.value === "string"
+              ? expression.property.value
+              : "*"
+            : (expression.property?.name ?? "*"),
+        );
+        expression = expression.object as typeof expression;
+      }
+      if (expression?.type === "Identifier" && expression.name)
+        names.add([expression.name, ...path].join("."));
     }
   });
   return names;

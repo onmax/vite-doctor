@@ -2477,7 +2477,7 @@ export const ruleDocumentationMetadata = {
   "vue/security/restrict-v-html": {
     description:
       "Traces the HTML bound to v-html and flags it when it comes from the route, a request, storage, or a v-model input.",
-    why: "v-html sets innerHTML without escaping, so markup in a value a visitor can shape runs as script in the page. Doctor follows the value through refs, computed values, props, and the local modules and Nuxt auto-imports its functions come from. It reports route, request, cookie, storage, fetched, and v-model values as errors, and HTML whose source it cannot trace, such as a prop, as a low-confidence warning. Shiki and uqr output, DOMPurify, sanitize-html and xss output, and string literals pass. Markdown rendered by marked or markdown-it is as trusted as its input.",
+    why: "v-html sets innerHTML without escaping, so markup in a value a visitor can shape runs as script in the page. Doctor follows the value through refs, computed values, props, and the local modules and Nuxt auto-imports its functions come from. It reports route, request, cookie, storage, fetched, and v-model values as errors, and HTML whose source it cannot trace, such as a prop, as a low-confidence warning. Shiki and uqr output, DOMPurify, sanitize-html and xss output, and string literals pass. Markdown rendered by marked or HTML-enabled markdown-it is as trusted as its input. Ordinary markdown-it instances with raw HTML disabled pass; customized or unresolved renderers produce a warning.",
     recommendedReplacement:
       "Render untrusted values as text, or sanitize them with DOMPurify.sanitize() or sanitize-html before binding them to v-html.",
     examples: [
