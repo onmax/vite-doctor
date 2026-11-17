@@ -4,8 +4,9 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
+import { useRoute } from "vue-router";
 
 const submitButton = ref();
-const html = "<strong>trusted?</strong>";
+const html = String(useRoute().query.label ?? "");
 console.log(submitButton);
 </script>

@@ -227,7 +227,8 @@ test("smart scan activates Vue rules from Vue project signals", async () => {
       "package.json": JSON.stringify({ dependencies: { vue: "^3.5.0" } }),
       "src/App.vue": `<template><div v-html="html" /></template>
 <script setup lang="ts">
-const html = "<strong>unsafe</strong>";
+import { useRoute } from "vue-router";
+const html = String(useRoute().query.html ?? "");
 </script>
 `,
     },
@@ -354,7 +355,8 @@ test("framework override can enable Vue rules explicitly", async () => {
       "package.json": JSON.stringify({ dependencies: { vue: "^3.5.0" } }),
       "src/App.vue": `<template><div v-html="html" /></template>
 <script setup lang="ts">
-const html = "<strong>unsafe</strong>";
+import { useRoute } from "vue-router";
+const html = String(useRoute().query.html ?? "");
 </script>
 `,
     },
