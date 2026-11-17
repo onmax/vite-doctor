@@ -149,6 +149,32 @@ export default defineHandler((event: H3Event) => getQuery(event))`,
     ]);
   });
 
+  test.each([undefined, "^3.0.0", "^2.0.0 || ^3.0.0"])(
+    "preserves Nuxt layer server evidence with Nitro peer %s",
+    async (nitroPeer) => {
+      const result = await runRuleFixture({
+        rule: preferNitroH3Import,
+        framework: "nuxt",
+        dependencies: { nuxt: "5.0.0", nitro: "3.0.0" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "@acme/server-layer",
+            type: "module",
+            main: "./nuxt.config.ts",
+            peerDependencies: nitroPeer ? { nitro: nitroPeer } : {},
+            devDependencies: { nuxt: "^5.0.0", nitro: "^3.0.0" },
+          }),
+          "nuxt.config.ts": "export default defineNuxtConfig({})",
+          "server/api/example.ts": 'import { createError } from "h3"',
+          "src/index.ts": 'import { createError } from "h3"',
+        },
+      });
+      expect(result.diagnostics.map((diagnostic) => diagnostic.file)).toEqual(
+        nitroPeer?.startsWith("^2") ? [] : [expect.stringMatching(/server\/api\/example\.ts$/)],
+      );
+    },
+  );
+
   test("reports a package that runs on Nitro 3 and imports H3 from h3", async () => {
     const result = await runRuleFixture({
       rule: preferNitroH3Import,

@@ -95,10 +95,20 @@ function nitroCodeScope(ctx: RuleContext): NitroCodeScope | undefined {
       return { kind: "app", dir };
     return undefined;
   }
-  if (owner.framework === "nuxt") return undefined;
   if (runtimeDeclaration(owner.manifest, "nitropack") !== undefined) return undefined;
   const nitro = runtimeDeclaration(owner.manifest, "nitro");
-  if (nitro === undefined || !declaresOnlyNitro3(ctx, nitro)) return undefined;
+  if (nitro !== undefined && !declaresOnlyNitro3(ctx, nitro)) return undefined;
+  // Published Nuxt layers can have an entry point and still supply real server routes.
+  // Keep their server evidence without treating the layer's client/library source as Nitro code.
+  if (owner.framework === "nuxt") {
+    if (
+      isOwnServerFile(owner) ||
+      (owner.dir === ctx.project.root && nitroServerFile(ctx, ctx.file.path))
+    )
+      return { kind: "app", dir };
+    return undefined;
+  }
+  if (nitro === undefined) return undefined;
   return { kind: "package", dir, name: owner.manifest.name ?? "This package" };
 }
 
@@ -107,7 +117,6 @@ function isOwnServerFile(owner: OwningPackage | undefined) {
   return (
     !!owner &&
     (owner.framework === "nuxt" || owner.framework === "nitro") &&
-    !isLibrary(owner.manifest) &&
     /^(?:app\/)?server\//.test(owner.path) &&
     isPackageRuntimeSource(owner)
   );
