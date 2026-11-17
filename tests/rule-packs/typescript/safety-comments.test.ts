@@ -285,6 +285,26 @@ test("exempts PropType imported in a Vue SFC", async () => {
   expect(result.diagnostics).toEqual([]);
 });
 
+test.each([
+  ["named", 'import type { PropType } from "vue";', "PropType<string>"],
+  ["namespace", 'import type * as Vue from "vue";', "Vue.PropType<string>"],
+])("exempts equivalent %s imports across SFC script blocks", async (_name, imports, type) => {
+  const result = await runProjectFixture({
+    rules: [requireSafetyCommentForTypeAssertion],
+    files: {
+      "App.vue": `<script lang="ts">
+${imports}
+export const textProp = String as ${type};
+</script>
+<script setup lang="ts">
+${imports}
+defineProps({ label: { type: String as ${type} } });
+</script>`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
 const chainCases: [string, string, number][] = [
   ["undocumented chain", "const value = input as unknown as User", 1],
   [

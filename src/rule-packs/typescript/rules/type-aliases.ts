@@ -7,6 +7,7 @@ type Substitution = { node: AnyNode; substitutions: Map<AnyNode, Substitution> }
 export function createTypeAliasResolver(program: AnyNode) {
   const scopes = new WeakMap<object, Scope>();
   const aliases: AnyNode[] = [];
+  const importSources = new WeakMap<object, string>();
   const namespaces = new WeakMap<Scope, Map<string, Scope>>();
   const root: Scope = { bindings: new Map() };
   function bind(scope: Scope, name: string, node: AnyNode) {
@@ -16,6 +17,10 @@ export function createTypeAliasResolver(program: AnyNode) {
   }
   function collect(node: AnyNode, outer: Scope, exports?: Scope) {
     if (!node?.type) return;
+    if (node.type === "ImportDeclaration") {
+      for (const specifier of node.specifiers ?? [])
+        importSources.set(specifier, node.source.value);
+    }
     if (node.type === "TSModuleDeclaration" && node.id?.type === "TSQualifiedName") {
       collect({ ...node, id: node.id.left, body: { ...node, id: node.id.right } }, outer, exports);
       return;
@@ -177,7 +182,23 @@ export function createTypeAliasResolver(program: AnyNode) {
       const found = scope.bindings
         .get(name)
         ?.filter((declaration) => namespace || declaration.type !== "TSModuleDeclaration");
-      if (found?.length) return found.length === 1 ? found[0] : null;
+      if (found?.length) {
+        const first = found[0];
+        // The SFC parser combines script and script-setup imports. Vue deduplicates
+        // imports with the same source and imported name across those blocks.
+        const source = importSources.get(first);
+        const imported = first.imported?.name ?? first.imported?.value;
+        return found.every(
+          (declaration) =>
+            declaration === first ||
+            (source !== undefined &&
+              importSources.get(declaration) === source &&
+              declaration.type === first.type &&
+              (declaration.imported?.name ?? declaration.imported?.value) === imported),
+        )
+          ? first
+          : null;
+      }
     }
     return null;
   }
