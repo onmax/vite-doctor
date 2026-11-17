@@ -21,7 +21,7 @@ export const noCallerChosenResultType = createRule({
     title: "Do not let callers invent result types",
     description:
       "Reject function type parameters used in the result type without appearing in any input.",
-    why: "A generic result type needs evidence from an argument or an owning type. When a function returns a caller-selected type without receiving that evidence, calls such as parse<User>() ask TypeScript to trust a claim the implementation cannot verify.",
+    why: "A generic result type needs evidence from an argument or an owning type. When a function returns a caller-selected type without receiving that evidence, calls such as parse<User>() ask TypeScript to trust a claim the implementation cannot verify. A type parameter that appears anywhere in a parameter type, including a callback's parameters, counts as evidence, because TypeScript infers it from the argument.",
     recommendedReplacement:
       "Accept a parser, schema, constructor, or typed input that determines the result type.",
     examples: [
@@ -34,7 +34,7 @@ export const noCallerChosenResultType = createRule({
       },
     ],
     category: "evidence",
-    severity: "error",
+    severity: "warn",
     confidence: "proven",
     fixable: "structural-review",
     docsUrl: "https://www.typescriptlang.org/docs/handbook/2/generics.html",
@@ -49,7 +49,7 @@ export const noCallerChosenResultType = createRule({
       if (!typeParameters.length || !returnType) return;
       const inputTypes = new Set<string>();
       for (const parameter of node.params ?? []) {
-        collectInputEvidenceIdentifiers(parameter, inputTypes);
+        collectTypeIdentifiers(parameter, inputTypes);
       }
       expandInputEvidence(inputTypes, typeParameters);
       const resultTypes = collectUnprovenResultTypeIdentifiers(returnType);
@@ -79,36 +79,6 @@ export const noCallerChosenResultType = createRule({
     };
   },
 });
-
-function collectInputEvidenceIdentifiers(
-  node: AnyNode,
-  names = new Set<string>(),
-  polarity = 1,
-): Set<string> {
-  if (!node || typeof node !== "object") return names;
-  if (Array.isArray(node)) {
-    for (const child of node) collectInputEvidenceIdentifiers(child, names, polarity);
-    return names;
-  }
-  if (functionTypes.has(node.type)) {
-    for (const parameter of node.params ?? []) {
-      collectInputEvidenceIdentifiers(parameter, names, -polarity);
-    }
-    collectInputEvidenceIdentifiers(node.returnType?.typeAnnotation, names, polarity);
-    return names;
-  }
-  if (polarity > 0 && node.type === "TSTypeReference" && node.typeName?.type === "Identifier") {
-    names.add(node.typeName.name);
-  }
-  if (polarity > 0 && node.type === "Identifier" && parentOf(node)?.type === "TSTypeQuery") {
-    names.add(node.name);
-  }
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "__doctorParent" || key === "parent") continue;
-    collectInputEvidenceIdentifiers(value, names, polarity);
-  }
-  return names;
-}
 
 function collectUnprovenResultTypeIdentifiers(
   node: AnyNode,

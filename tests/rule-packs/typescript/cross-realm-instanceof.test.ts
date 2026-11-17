@@ -91,6 +91,18 @@ test.each([
     "negated check",
     "function f(value: unknown) { if (!(value instanceof Blob)) throw new Error('blob') }",
   ],
+  [
+    "check followed by an unrelated statement (vitehub auth event-plugin.ts:240)",
+    "async function f(authorize: () => Promise<unknown>) { const authorization = await authorize(); if (authorization instanceof Response) return authorization; if (authorization !== true) throw new Error('forbidden') }",
+  ],
+  [
+    "guard on another value in the next statement",
+    "function f(value: unknown, other: unknown) { if (value instanceof Response) return value; if (isResponseLike(other)) return other }",
+  ],
+  [
+    "guard two statements away",
+    "function f(value: unknown) { if (value instanceof Response) return value; log(); if (isResponseLike(value)) return value }",
+  ],
 ])("reports %s", async (_name, source) => {
   expect(await count(source)).toBe(1);
 });
@@ -148,11 +160,23 @@ test.each([
     "duck-typed alternative (vitehub agent chat-approvals.ts:412)",
     "function f(result: unknown) { if (result instanceof Response || isResponseLike(result)) return result }",
   ],
+  [
+    "guard in an && sibling (vitehub internal http-request.ts:262)",
+    "function f(body: unknown) { if (isBlobLike(body) && !(body instanceof Blob)) return normalizeForeignBlob(body) }",
+  ],
+  [
+    "guard in the next statement (vitehub agent server/routes.ts:443)",
+    "function f(value: unknown) { if (value instanceof Response && value.body) return value.body; if (isResponseLike(value)) return value.body; throw new Error('stream') }",
+  ],
+  [
+    "guard in the previous statement",
+    "function f(value: unknown) { if (isResponseLike(value)) return value; return value instanceof Response ? value : undefined }",
+  ],
 ])("does not report %s", async (_name, source) => {
   expect(await count(source)).toBe(0);
 });
 
-test("reports a remediation that names a brand or duck-type check", async () => {
+test("reports a remediation that names a guard helper", async () => {
   const result = await project.run({
     rule: noCrossRealmWebInstanceof,
     files: { "src/date.ts": "export const isDate = (value: unknown) => value instanceof Date" },
@@ -164,13 +188,40 @@ test("reports a remediation that names a brand or duck-type check", async () => 
 test.each([
   [
     "ArrayBuffer",
-    "Replace instanceof ArrayBuffer with Object.prototype.toString.call(value) === '[object ArrayBuffer]'.",
+    "Replace instanceof ArrayBuffer with a guard helper, isArrayBuffer(value): value is ArrayBuffer, that returns Object.prototype.toString.call(value) === '[object ArrayBuffer]'.",
   ],
-  ["URL", "Replace instanceof URL with Object.prototype.toString.call(value) === '[object URL]'."],
-])("suggests a %s brand check that keeps the original meaning", async (name, suggestion) => {
+  [
+    "URL",
+    "Replace instanceof URL with a guard helper, isURL(value): value is URL, that returns Object.prototype.toString.call(value) === '[object URL]'.",
+  ],
+  [
+    "Blob",
+    "Replace instanceof Blob with a guard helper, isBlobLike(value): value is Blob, that checks the members you use, such as arrayBuffer(), size and type.",
+  ],
+])("suggests a %s guard helper that keeps the original meaning", async (name, suggestion) => {
   const result = await project.run({
     rule: noCrossRealmWebInstanceof,
     files: { "src/brand.ts": `export const is = (value: unknown) => value instanceof ${name}` },
   });
   expect(result.diagnostics[0]!.suggestion).toBe(suggestion);
+});
+
+test.each([
+  `if (isResponseLike(value) && value instanceof Response) return value; throw new Error()`,
+  `if (!(value instanceof Response) || isResponseLike(value)) throw new Error()`,
+  `console.log(isResponseLike(value)); if (!(value instanceof Response)) throw new Error()`,
+  `if (isResponseLike(value)) console.log(value); if (!(value instanceof Response)) throw new Error()`,
+  `if (value instanceof Response) return value; if (ready) log(isResponseLike(value));`,
+])("reports mandatory instanceof despite nearby guards: %s", async (body) => {
+  expect(await count(`function f(value: unknown) { ${body} }`)).toBe(1);
+});
+
+test.each([
+  `!(value instanceof Response || isResponseLike(value))`,
+  `enabled && (value instanceof Response || isResponseLike(value))`,
+  `(value instanceof Response || isResponseLike(value)) && enabled`,
+])("accepts nested realm-safe alternatives: %s", async (condition) => {
+  expect(await count(`function f(value: unknown, enabled: boolean) { return ${condition} }`)).toBe(
+    0,
+  );
 });

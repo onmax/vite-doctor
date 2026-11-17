@@ -60,6 +60,15 @@ test.each([
   expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["NUXT0077"]);
 });
 
+test("NUXT0077 only asks to move a function that already has the use prefix (vitehub docs utils/framework.ts:33)", async () => {
+  const result = await runNuxt(noComposableInUtils, {
+    "app/utils/framework.ts": `export function useFramework() {\n  const state = useState('framework', () => null)\n  onMounted(() => {})\n  return state\n}`,
+  });
+  expect(result.diagnostics[0]!.suggestion).toBe(
+    "Move useFramework to composables/ so Nuxt auto-imports it as a composable and callers know to call it from setup.",
+  );
+});
+
 test("NUXT0077 names default exports after the file Nuxt derives them from", async () => {
   const result = await runNuxt(noComposableInUtils, {
     "app/utils/track-page.ts": `export default function () { onMounted(() => {}) }`,

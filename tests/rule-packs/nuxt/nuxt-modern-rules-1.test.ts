@@ -2094,9 +2094,11 @@ test("unknown browser globals downgrade to warnings without build evidence", asy
     framework: "nuxt",
     files: {
       "app/utils/browser.ts": `export function getWidth() { return window.innerWidth }`,
+      "app/pages/index.vue": `<script setup lang="ts">const width = getWidth()</script>`,
     },
   });
 
+  expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.severity).toBe("warn");
 });
 

@@ -524,6 +524,29 @@ test("native glob selection excludes exact type-test directory names", async () 
   );
 });
 
+test("default selection skips shared test-utils directories (vitehub packages/internal/test-utils)", async () => {
+  await withFixture(
+    {
+      "node_modules/vue/package.json": JSON.stringify({ name: "vue", version: "3.5.0" }),
+      "src/app.ts": "const app = true",
+      "src/test-utils-helper.ts": "const helper = true",
+      "test-utils/rpc.ts": "const ignored: object = {}",
+      "packages/internal/test-utils/published-types.ts": "const ignored: object = {}",
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        extensions: [pluginWith(reportProgramRule)],
+      });
+
+      expect(result.diagnostics.map((item) => item.file).sort()).toEqual(
+        [join(root, "src/app.ts"), join(root, "src/test-utils-helper.ts")].sort(),
+      );
+    },
+  );
+});
+
 test("language activation recognizes JavaScript in Vue SFCs", async () => {
   await withFixture(
     {

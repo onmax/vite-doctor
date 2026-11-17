@@ -3,6 +3,7 @@ import {
   createRule,
   diagnosticForCode,
   type Confidence,
+  type SourceRange,
   type RuleContext,
   type TemplateElementNode,
 } from "../../../../core/index.js";
@@ -99,6 +100,7 @@ export function report(
   message: string,
   suggestion: string,
   confidence?: Confidence,
+  related?: Array<{ file: string; range?: SourceRange; message: string }>,
 ) {
   const code = codeForRuleId(diagnosticCodesByRuleId, ruleId);
   if (!code) throw doctorInternalDiagnostics.DOC0013({ ruleId });
@@ -109,6 +111,7 @@ export function report(
     severity,
     category,
     ...(confidence && { confidence }),
+    ...(related && { related }),
   });
 }
 

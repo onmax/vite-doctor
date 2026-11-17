@@ -34,11 +34,13 @@ export const noComposableInUtils = createRule({
           const signal = setupContextSignal(exported.fn, imports, node);
           if (!signal) continue;
           const name = exported.isDefault ? fileExportName(ctx.file.path) : exported.name;
-          const target = /^use[A-Z0-9]/.test(name) ? name : `use${upperFirst(name)}`;
+          const fix = /^use[A-Z0-9]/.test(name)
+            ? `Move ${name} to composables/ so Nuxt auto-imports it as a composable and callers know to call it from setup.`
+            : `Move ${name} to composables/ and name it use${upperFirst(name)} so callers know to call it from setup.`;
           ctx.report(
             diagnostics.NUXT0077({
               why: `${name}() calls ${signal}(), so it only works during component setup or inside another composable, but utils/ is where Nuxt auto-imports plain helpers.`,
-              fix: `Move ${name} to composables/ and name it ${target} so callers know to call it from setup.`,
+              fix,
             }),
             {
               ruleId: COMPOSABLE_IN_UTILS,

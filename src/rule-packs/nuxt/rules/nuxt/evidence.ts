@@ -21,6 +21,7 @@ import {
   type NuxtExecutionEvidence,
   type NuxtFileClass,
 } from "./shared.js";
+import { browserGlobalSsrCaller, type SsrCaller } from "./browser-global-callers.js";
 
 export interface NuxtRuntimeEvidence {
   fileClass: NuxtFileClass;
@@ -35,6 +36,8 @@ export interface NuxtRuntimeEvidence {
   isReusableDataComposable(node: AnyNode): boolean;
   isSourceOnlyExecution(node: AnyNode): boolean;
   isActionableUniversalBrowserGlobal(node: AnyNode): boolean;
+  /** The call that runs this browser global's helper during SSR, when Doctor traced one. */
+  universalBrowserGlobalCaller(node: AnyNode): SsrCaller | undefined;
   universalBrowserGlobalSeverity(node: AnyNode): "error" | "warn";
 }
 
@@ -74,6 +77,9 @@ export function createNuxtRuntimeEvidence(ctx: RuleContext): NuxtRuntimeEvidence
     isActionableUniversalBrowserGlobal(node) {
       return isActionableUniversalBrowserGlobal(ctx, node);
     },
+    universalBrowserGlobalCaller(node) {
+      return ssrCallerOf(ctx, node) ?? undefined;
+    },
     universalBrowserGlobalSeverity(node) {
       return isSourceOnlyExecutionEvidence(ctx, node) ? "warn" : "error";
     },
@@ -96,8 +102,23 @@ function isActionableUniversalBrowserGlobal(ctx: RuleContext, node: AnyNode) {
     hasPriorServerReturnGuard(ctx.file.text, node.start) ||
     isVueUseBrowserGlobalTarget(node) ||
     isClientCallableEvidence(ctx, node) ||
-    ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)
+    ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text) ||
+    ssrCallerOf(ctx, node) === null
   );
+}
+
+const ssrCallers = new WeakMap<AnyNode, SsrCaller | null | undefined>();
+
+// A helper function only runs when something calls it, so its browser globals are reported only
+// when Doctor finds a call that runs during SSR.
+function ssrCallerOf(ctx: RuleContext, node: AnyNode): SsrCaller | null | undefined {
+  if (ssrCallers.has(node)) return ssrCallers.get(node);
+  const caller =
+    classifyExecutionEvidence(ctx, node) === "unknown"
+      ? browserGlobalSsrCaller(ctx, node)
+      : undefined;
+  ssrCallers.set(node, caller);
+  return caller;
 }
 
 export {

@@ -1472,9 +1472,10 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/seo/prefer-seo-composables": {
     description:
-      "Finds Nuxt seo code that should use the supported seo composables pattern instead.",
-    why: "useSeoMeta() provides typed, flat SEO fields and prevents malformed name, property, and content combinations in manual head arrays.",
-    recommendedReplacement: "Use the Nuxt-supported seo composables pattern instead.",
+      "Reports useHead() calls that set a description, Open Graph, or Twitter meta tag, or only a title, which useSeoMeta() owns.",
+    why: "useSeoMeta() provides typed, flat SEO fields and prevents malformed name, property, and content combinations in manual head arrays. Links, html attributes, a title template, and meta such as viewport or charset still belong in useHead(), so a title next to them is not reported.",
+    recommendedReplacement:
+      "Move the title, description, og:* and twitter:* tags to useSeoMeta() and keep the rest in useHead().",
     examples: [
       {
         title: "Use SEO composables",

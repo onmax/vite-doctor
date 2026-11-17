@@ -24,20 +24,31 @@ const WEB_CLASSES = new Set([
 // streams in server runtimes.
 const GUARD_ALIASES: Record<string, string[]> = { ReadableStream: ["AsyncIterable"] };
 
-const REPLACEMENTS: Record<string, string> = {
-  Date: "Object.prototype.toString.call(value) === '[object Date]'",
-  ArrayBuffer: "Object.prototype.toString.call(value) === '[object ArrayBuffer]'",
-  Response:
-    "a brand check such as Object.prototype.toString.call(value) === '[object Response]' plus typeof value.status === 'number'",
-  Request:
-    "a brand check such as Object.prototype.toString.call(value) === '[object Request]' plus typeof value.url === 'string'",
-  Headers: "typeof value?.get === 'function' && typeof value?.forEach === 'function'",
-  Blob: "typeof value?.arrayBuffer === 'function' && typeof value?.size === 'number'",
-  File: "typeof value?.arrayBuffer === 'function' && typeof value?.name === 'string'",
-  FormData: "Object.prototype.toString.call(value) === '[object FormData]'",
-  URL: "Object.prototype.toString.call(value) === '[object URL]'",
-  URLSearchParams: "Object.prototype.toString.call(value) === '[object URLSearchParams]'",
-  ReadableStream: "typeof value?.getReader === 'function'",
+const BRAND = (name: string) =>
+  `that returns Object.prototype.toString.call(value) === '[object ${name}]'`;
+
+// Each guard name matches guardPattern(), so a check written with the helper is accepted.
+const GUARDS: Record<string, { name: string; check: string }> = {
+  Date: { name: "isDate", check: BRAND("Date") },
+  ArrayBuffer: { name: "isArrayBuffer", check: BRAND("ArrayBuffer") },
+  Response: {
+    name: "isResponseLike",
+    check: "that checks the members you use, such as status, headers and body",
+  },
+  Request: {
+    name: "isRequestLike",
+    check: "that checks the members you use, such as url, method and headers",
+  },
+  Headers: { name: "isHeadersLike", check: "that checks the get() and forEach() methods" },
+  Blob: {
+    name: "isBlobLike",
+    check: "that checks the members you use, such as arrayBuffer(), size and type",
+  },
+  File: { name: "isFileLike", check: "that checks arrayBuffer(), size and name" },
+  FormData: { name: "isFormData", check: BRAND("FormData") },
+  URL: { name: "isURL", check: BRAND("URL") },
+  URLSearchParams: { name: "isURLSearchParams", check: BRAND("URLSearchParams") },
+  ReadableStream: { name: "isReadableStreamLike", check: "that checks the getReader() method" },
 };
 
 type Origin = "unknown parameter" | "callback result" | "loaded module";
@@ -50,7 +61,7 @@ export const noCrossRealmWebInstanceof = createRule({
       "Report instanceof checks against web platform classes on values that may come from another JavaScript realm.",
     why: "Every realm has its own Response, Request, Date, Blob and URL constructors. Values created by the Vite module runner, workerd or miniflare, Vitest environments, or a second copy of undici fail instanceof against this realm's class, so the check takes the wrong branch. This rule only reports values that crossed a boundary in this file: parameters typed unknown or any, results of calling a parameter, and module namespaces from import() or ssrLoadModule().",
     recommendedReplacement:
-      "Check the brand with Object.prototype.toString.call(value) or duck-type the members you use, for example typeof value?.arrayBuffer === 'function'.",
+      "Move the check into a guard helper such as isResponseLike(value) that checks the brand with Object.prototype.toString.call(value) or the members you use, and call it instead of instanceof.",
     examples: [
       {
         title: "Brand-check values from host callbacks",
@@ -89,42 +100,117 @@ export const noCrossRealmWebInstanceof = createRule({
           node,
           ruleId,
           `This ${origin} can hold a ${name} created in another realm (Vite module runner, workerd, Vitest environment, or a duplicated undici), where instanceof ${name} is false.`,
-          `Replace instanceof ${name} with ${REPLACEMENTS[name]}.`,
+          `Replace instanceof ${name} with a guard helper, ${GUARDS[name]!.name}(value): value is ${name}, ${GUARDS[name]!.check}.`,
         );
       },
     };
   },
 });
 
-// `value instanceof Response || isResponseLike(value)` already accepts other realms.
+// A guard on the same value next to the check already accepts other realms:
+// `value instanceof Response || isResponseLike(value)`, `isBlobLike(body) && !(body instanceof Blob)`,
+// or `if (isResponseLike(value))` in the statement before or after the check.
 function hasDuckTypedAlternative(node: AnyNode, className: string): boolean {
   const subject = expression(node.left, true);
   if (subject?.type !== "Identifier") return false;
+  const isGuard = (candidate: AnyNode) => isGuardCall(candidate, className, subject.name);
   let chain = node;
-  while (parentOf(chain)?.type === "LogicalExpression" && parentOf(chain).operator === "||")
+  while (
+    ["LogicalExpression", "ParenthesizedExpression"].includes(parentOf(chain)?.type) ||
+    (parentOf(chain)?.type === "UnaryExpression" && parentOf(chain).operator === "!")
+  )
     chain = parentOf(chain);
-  const operands: AnyNode[] = [];
-  const collect = (current: AnyNode) => {
-    current = expression(current, true);
-    if (current?.type === "LogicalExpression" && current.operator === "||") {
-      collect(current.left);
-      collect(current.right);
-    } else operands.push(current);
+  const foreignResult = (candidate: AnyNode, guard = true): boolean | undefined => {
+    const value = expression(candidate, true);
+    if (value === node) return false;
+    if (isGuard(value)) return guard;
+    if (value?.type === "UnaryExpression" && value.operator === "!") {
+      const result = foreignResult(value.argument, guard);
+      return result === undefined ? undefined : !result;
+    }
+    if (value?.type !== "LogicalExpression") return undefined;
+    const left = foreignResult(value.left, guard);
+    const right = foreignResult(value.right, guard);
+    if (value.operator === "||")
+      return left === true || right === true
+        ? true
+        : left === false && right === false
+          ? false
+          : undefined;
+    if (value.operator === "&&")
+      return left === false || right === false
+        ? false
+        : left === true && right === true
+          ? true
+          : undefined;
+    return undefined;
   };
-  collect(chain);
-  return operands.some((operand) => {
-    if (operand?.type !== "CallExpression") return false;
-    const callee = expression(operand.callee, true);
-    return (
-      callee?.type === "Identifier" &&
-      guardPattern(className).test(callee.name) &&
-      operand.arguments?.some(
-        (argument: AnyNode) =>
-          expression(argument, true)?.type === "Identifier" &&
-          expression(argument, true).name === subject.name,
-      )
-    );
-  });
+  for (let alternative = node; alternative; alternative = parentOf(alternative)) {
+    if (
+      containsCall(alternative, isGuard) &&
+      foreignResult(alternative) === true &&
+      foreignResult(alternative, false) !== true
+    )
+      return true;
+    if (alternative === chain) break;
+  }
+  const statement = enclosingStatement(chain);
+  const siblings = statementList(statement);
+  if (!siblings) return false;
+  const index = siblings.indexOf(statement);
+  const handlesGuard = (sibling: AnyNode) => {
+    if (sibling?.type !== "IfStatement" || !isGuard(expression(sibling.test, true))) return false;
+    const branch = sibling.consequent;
+    const last = branch?.type === "BlockStatement" ? branch.body.at(-1) : branch;
+    return last?.type === "ReturnStatement";
+  };
+  if (handlesGuard(siblings[index - 1])) return true;
+  return (
+    statement?.type === "IfStatement" &&
+    foreignResult(statement.test) === false &&
+    handlesGuard(siblings[index + 1])
+  );
+}
+
+function isGuardCall(node: AnyNode, className: string, subject: string): boolean {
+  if (node?.type !== "CallExpression") return false;
+  const callee = expression(node.callee, true);
+  return (
+    callee?.type === "Identifier" &&
+    guardPattern(className).test(callee.name) &&
+    (node.arguments ?? []).some((argument: AnyNode) => {
+      const value = expression(argument, true);
+      return value?.type === "Identifier" && value.name === subject;
+    })
+  );
+}
+
+function enclosingStatement(node: AnyNode): AnyNode {
+  let current = node;
+  while (parentOf(current) && !statementList(current)) current = parentOf(current);
+  return current;
+}
+
+function statementList(statement: AnyNode): AnyNode[] | undefined {
+  const parent = parentOf(statement);
+  if (parent?.type === "BlockStatement" || parent?.type === "Program") return parent.body;
+  if (parent?.type === "SwitchCase") return parent.consequent;
+  return undefined;
+}
+
+// Guards inside nested functions run at another time, so they do not count.
+function containsCall(node: AnyNode, matches: (call: AnyNode) => boolean): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (Array.isArray(node)) return node.some((child) => containsCall(child, matches));
+  if (typeof node.type !== "string") return false;
+  if (matches(node)) return true;
+  if (/Function/.test(node.type)) return false;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "__doctorParent" || key === "parent" || !value || typeof value !== "object")
+      continue;
+    if (containsCall(value, matches)) return true;
+  }
+  return false;
 }
 
 function guardPattern(className: string) {

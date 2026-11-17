@@ -10,7 +10,7 @@ export const preferPropsDestructureDefaults = createRule({
     id: "vue/style/prefer-props-destructure-defaults",
     title: "Prefer props destructure defaults",
     category: "style",
-    severity: "warn",
+    severity: "info",
     confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://vuejs.org/api/sfc-script-setup.html#reactive-props-destructure",
