@@ -492,6 +492,26 @@ export type Mixed = unknown[] | { id: string }`,
     ]);
   });
 
+  test.each([
+    "type Raw = { id: string }; export type Other = number;",
+    'import type { Raw } from "./private"; export type Other = number;',
+    "export function other() { interface Raw { id: string } }",
+  ])("ignores private wildcard bindings: %s", async (first) => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnvalidatedDeserialization],
+      files: {
+        "src/index.ts": `import type { Raw } from "./barrel";
+const value = JSON.parse(text) as Raw;`,
+        "src/barrel.ts": 'export * from "./first"; export * from "./second";',
+        "src/first.ts": first,
+        "src/second.ts": "type Honest = unknown[]; export { Honest as Raw };",
+        "src/private.ts": "export type Raw = { id: string };",
+      },
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
   test.each([false, true])(
     "resolves explicit recursive reexports before stars (reversed: %s)",
     async (reversed) => {

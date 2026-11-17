@@ -7,6 +7,7 @@ type JsonKind = "null" | "boolean" | "number" | "string" | "array" | "object";
 export type TypeScope = {
   file: string;
   aliases: Map<string, AnyNode>;
+  exports: Map<string, string>;
   blocked: Array<{ name: string; start: number; end: number }>;
   imports: Map<string, { source: string; name: string }>;
   reexports: Array<{ source: string; names?: Map<string, string> }>;
@@ -48,6 +49,7 @@ export function createTypeScope(file: string, program: AnyNode): TypeScope {
   const scope: TypeScope = {
     file,
     aliases: new Map(),
+    exports: new Map(),
     blocked: [],
     imports: new Map(),
     reexports: [],
@@ -87,6 +89,9 @@ export function createTypeScope(file: string, program: AnyNode): TypeScope {
   for (const statement of program?.body ?? []) {
     const declaration =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (statement.type === "ExportNamedDeclaration" && declaration?.id?.name) {
+      scope.exports.set(declaration.id.name, declaration.id.name);
+    }
     if (declaration?.type === "TSTypeAliasDeclaration" && !declaration.typeParameters) {
       scope.aliases.set(declaration.id.name, declaration.typeAnnotation);
     }
@@ -109,13 +114,7 @@ export function createTypeScope(file: string, program: AnyNode): TypeScope {
       if (typeof statement.source?.value === "string") {
         scope.reexports.push({ source: statement.source.value, names });
       } else {
-        for (const [exported, local] of names) {
-          const imported = scope.imports.get(local);
-          if (imported) scope.imports.set(exported, imported);
-          else if (scope.aliases.has(local) && exported !== local) {
-            scope.aliases.set(exported, scope.aliases.get(local));
-          }
-        }
+        for (const [exported, local] of names) scope.exports.set(exported, local);
       }
     }
     if (statement.type === "ExportAllDeclaration" && !statement.exported) {
@@ -160,13 +159,18 @@ class TypeResolver {
     const alias = scope.aliases.get(name);
     if (alias) return this.isHonest(alias, scope, seen);
     const imported = scope.imports.get(name);
-    const follow = (source: string, exported: string): boolean => {
+    const follow = (source: string, exported: string, from = scope, visited = seen): boolean => {
       if (source === "type-fest") return !!typeFestKinds[exported];
-      const file = resolveModule(this.ctx, scope.file, source);
+      const file = resolveModule(this.ctx, from.file, source);
       const target = file && readTypeScope(this.ctx, file);
       const key = `${file}#${exported}`;
-      if (!target || seen.has(key) || seen.size >= maxImportDepth) return false;
-      return this.honestNamed(exported, target, new Set([...seen, key]));
+      if (!target || visited.has(key) || visited.size >= maxImportDepth) return false;
+      const local = target.exports.get(exported);
+      if (local) return this.honestNamed(local, target, new Set([...visited, key]));
+      const binding = this.reexportBinding(exported, target);
+      return binding
+        ? follow(binding.source, binding.name, target, new Set([...visited, key]))
+        : false;
     };
     if (imported) return follow(imported.source, imported.name);
     const reexport = this.reexportBinding(name, scope);
@@ -192,13 +196,7 @@ class TypeResolver {
         return { source: entry.source, name };
       const file = resolveModule(this.ctx, scope.file, entry.source);
       const target = file && readTypeScope(this.ctx, file);
-      if (
-        target &&
-        (target.aliases.has(name) ||
-          target.imports.has(name) ||
-          target.blocked.some((binding) => binding.name === name) ||
-          this.reexportBinding(name, target, next))
-      )
+      if (target && (target.exports.has(name) || this.reexportBinding(name, target, next)))
         return { source: entry.source, name };
     }
     return undefined;
@@ -346,7 +344,13 @@ class TypeResolver {
     if (depth >= maxImportDepth) return new Set();
     const file = resolveModule(this.ctx, importer, source);
     const scope = file && readTypeScope(this.ctx, file);
-    return scope ? this.namedKinds(name, scope, depth + 1) : new Set();
+    if (!scope) return new Set();
+    const local = scope.exports.get(name);
+    if (local) return this.namedKinds(local, scope, depth + 1);
+    const binding = this.reexportBinding(name, scope);
+    return binding
+      ? this.importedKinds(binding.source, binding.name, scope.file, depth + 1)
+      : new Set();
   }
 }
 
