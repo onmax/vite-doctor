@@ -5,6 +5,8 @@ type VisitorKeyMap = Record<string, readonly string[]>;
 const parserVisitorKeys = isVisitorKeyMap((oxcParser as { visitorKeys?: unknown }).visitorKeys)
   ? (oxcParser as { visitorKeys: VisitorKeyMap }).visitorKeys
   : {};
+/** Every script node type the walker dispatches to Rule visitors. */
+export const scriptNodeTypes: ReadonlySet<string> = new Set(Object.keys(parserVisitorKeys));
 const ignoredFallbackKeys = new Set([
   "__doctorParent",
   "comments",

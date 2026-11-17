@@ -37,6 +37,9 @@ const KIND_BY_TYPE: Record<number, TemplateNodeKind> = {
   7: "directive",
 };
 
+/** Every template node kind the walker dispatches to Rule `template` visitors. */
+export const templateNodeKinds: ReadonlySet<string> = new Set(Object.values(KIND_BY_TYPE));
+
 type TemplateHandler = (node: TemplateAstNode, parent: TemplateParentNode | undefined) => void;
 type TemplateHandlerTable = Partial<Record<string, TemplateHandler[]>>;
 
