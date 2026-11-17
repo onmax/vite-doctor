@@ -258,3 +258,18 @@ test.each([
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.code).toBe("VUE0021");
 });
+
+test.each([
+  `watch(status, async () => { if (!timer) { await gate(); timer = setInterval(() => {}, 60000) } })`,
+  `watch(status, async (current, previous) => { if (current === 'connected') clearTimeout(timer); else if (previous === 'connected') { await gate(); timer = setTimeout(() => {}, 60000) } })`,
+  `function update(current, previous) { if (current === 'connected') clearTimeout(timer); else if (previous === 'connected') timer = setTimeout(() => {}, 60000) }; watch(a, update); watch(b, update)`,
+])("rejects unsafe watcher no-reuse proofs: %s", async (source) => {
+  const result = await runRuleFixture({
+    rule: requireWatcherCleanup,
+    framework: "vue",
+    files: {
+      "src/Component.vue": `<script setup>let timer; ${source}; onScopeDispose(() => { clearInterval(timer); clearTimeout(timer) })</script>`,
+    },
+  });
+  expect(result.diagnostics.length).toBeGreaterThan(0);
+});

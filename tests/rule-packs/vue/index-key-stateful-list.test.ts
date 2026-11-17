@@ -240,3 +240,83 @@ test("suggests a stable field without naming one when the item shows none", asyn
 test("is part of the recommended preset", () => {
   expect(vueRulePack.presets.recommended).toContain(RULE_ID);
 });
+
+test.each([
+  ["import { ref as makeRef } from 'vue'; const draft = makeRef('')", 1],
+  ["import * as Vue from 'vue'; const draft = Vue.ref('')", 1],
+  ["import { ref } from './other'; const draft = ref('')", 0],
+  ["function ref() { return '' }; const draft = ref()", 0],
+  ["import { ref as makeRef } from 'vue'; const root = makeRef(null)", 0],
+])("resolves state API bindings: %s", async (script, count) => {
+  const fixture = createProjectFixture({
+    framework: "vue",
+    files: {
+      "Child.vue": `<script setup>${script}</script><template><span ref="root">{{ draft }}</span></template>`,
+    },
+  });
+  try {
+    const result = await fixture.run({
+      rule: noIndexKeyOnStatefulList,
+      files: {
+        "app.vue": sfc(
+          '<Child v-for="(item, i) in items" :key="i" />',
+          "import Child from './Child.vue'; const items = ref([])",
+        ),
+      },
+    });
+    expect(result.diagnostics).toHaveLength(count);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test.each([
+  ['<input :placeholder="line.label" />', 1],
+  ["<span>{{ line.label }}</span>", 0],
+])("includes caller slot state: %s", async (slot, count) => {
+  const result = await diagnose(
+    `<Line v-for="(line, i) in lines" :key="i">${slot}</Line>`,
+    "import Line from './components/Line.vue'; const lines = ref([])",
+  );
+  expect(result.diagnostics).toHaveLength(count);
+});
+
+test.each([
+  '<Row v-for="({ label: id }, i) in items" :key="i" />',
+  '<Row v-for="(item, i) in items" :key="i" label="Use item.id" />',
+])("does not suggest fields from textual names: %s", async (template) => {
+  const result = await diagnose(template);
+  expect(JSON.stringify(result.diagnostics[0])).toContain("a stable, unique field of the item");
+});
+
+test.each([
+  ["A", "D"],
+  ["D", "A"],
+])("recursive state evidence is order independent: %s, %s", async (first, second) => {
+  const fixture = createProjectFixture({
+    framework: "vue",
+    files: {
+      ...Object.fromEntries(
+        ["A", "B", "C", "D"].map((name, i) => [
+          `${name}.vue`,
+          `<script setup>import Next from './${["B", "C", "D", "E"][i]}.vue'</script><template><Next /></template>`,
+        ]),
+      ),
+      "E.vue": "<template><input /></template>",
+    },
+  });
+  try {
+    const result = await fixture.run({
+      rule: noIndexKeyOnStatefulList,
+      files: {
+        "app.vue": sfc(
+          `<${first} v-for="(item, i) in items" :key="i" /><${second} v-for="(item, i) in items" :key="i" />`,
+          "import A from './A.vue'; import D from './D.vue'; const items = ref([])",
+        ),
+      },
+    });
+    expect(result.diagnostics.some((d) => d.why.includes("D.vue keeps local state"))).toBe(true);
+  } finally {
+    await fixture.dispose();
+  }
+});

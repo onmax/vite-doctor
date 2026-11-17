@@ -634,6 +634,7 @@ function createResourceEvidence(ctx: RuleContext) {
   // `if (!timer) timer = setInterval(...)`: the handle is empty at the acquisition, so nothing is
   // lost, as long as every write that empties the handle releases it first.
   function acquiredOnlyWhenEmpty(resource: Resource): boolean {
+    if (suspendsBefore(resource.owner.body, resource.node, resource)) return false;
     if (!guardedBy(resource, (test) => impliesEmpty(test, resource.handle!))) return false;
     return nodes.every((node) => {
       if (node.type === "UpdateExpression" && identity(node.argument) === resource.handle)
@@ -653,7 +654,8 @@ function createResourceEvidence(ctx: RuleContext) {
   // watcher writes it.
   function releasedOnEnteringPreviousValue(resource: Resource): boolean {
     const calls = watcherCalls.get(resource.owner) ?? [];
-    if (!calls.length || calls.some((call) => vueApi(call.callee) !== "watch")) return false;
+    if (calls.length !== 1 || vueApi(calls[0].callee) !== "watch") return false;
+    if (suspendsBefore(resource.owner.body, resource.node, resource)) return false;
     const [current, previous] = resource.owner.params;
     if (current?.type !== "Identifier" || previous?.type !== "Identifier") return false;
     let entered: unknown;

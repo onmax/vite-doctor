@@ -8,6 +8,7 @@ import type {
 import {
   findTemplateDirective,
   templateExpressionReferences,
+  walkTemplate,
   TemplateNodeType,
 } from "../../../../core/rule-authoring.js";
 import { parseScriptSync } from "../../../../core/internal/script.js";
@@ -180,6 +181,12 @@ function ownStatefulReason(ctx: RuleContext, element: TemplateElementNode): Stat
     };
   }
   const state = componentState(ctx, file);
+  let slotState: Stateful | null = null;
+  walkTemplate(element, (node) => {
+    if (slotState || node === element || node.type !== TemplateNodeType.ELEMENT) return;
+    slotState = ownStatefulReason(ctx, node);
+  });
+  if (slotState) return slotState;
   if (state.kind === "stateless") return null;
   const name = file.split("/").pop()!;
   const evidence =
@@ -203,15 +210,38 @@ function stableKeyExpression(
 ): string | undefined {
   const value = vFor.forParseResult!.value;
   const alias = aliasIdentifier(value);
-  if (!alias) {
-    const names = patternNames(value);
-    return KEY_FIELDS.find((field) => names.includes(field));
-  }
-  const escaped = alias.replace(/\$/g, "\\$");
-  for (const field of KEY_FIELDS) {
-    if (new RegExp(`(?<![\\w$.])${escaped}\\??\\.${field}(?![\\w$])`).test(element.loc.source))
-      return `${alias}.${field}`;
-  }
+  // Destructuring and literal template text do not establish a key property.
+  if (!alias) return undefined;
+  const reads = new Set<string>();
+  walkTemplate(element, (node) => {
+    const value =
+      node.type === TemplateNodeType.DIRECTIVE
+        ? node.exp
+        : node.type === TemplateNodeType.INTERPOLATION
+          ? node.content
+          : undefined;
+    if (!value || value.isStatic) return;
+    const expression = ctx.helpers.parseTemplateExpression(value);
+    if (!expression) return;
+    const visit = (part: AnyNode) => {
+      if (!part || typeof part !== "object") return;
+      if (
+        part.type === "MemberExpression" &&
+        !part.computed &&
+        part.object?.type === "Identifier" &&
+        part.object.name === alias
+      )
+        reads.add(part.property?.name);
+      for (const [key, value] of Object.entries(part)) {
+        if (key === "parent" || key.startsWith("_")) continue;
+        for (const child of Array.isArray(value) ? value : [value])
+          if (child && typeof child === "object") visit(child);
+      }
+    };
+    visit(expression);
+  });
+  const read = KEY_FIELDS.find((field) => reads.has(field));
+  if (read) return `${alias}.${read}`;
   const fields = itemFields(
     ctx.file.sfc?.getScriptAst("merged"),
     vFor.forParseResult!.source.content,

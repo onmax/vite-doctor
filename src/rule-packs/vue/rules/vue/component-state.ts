@@ -1,7 +1,7 @@
 import { basename, dirname, isAbsolute, resolve } from "pathe";
 import type { RuleContext, TemplateAstNode } from "../../../../core/index.js";
 import { loadVueCompilerSfc } from "../../../../core/internal/lazy-parsers.js";
-import { parseVueScriptsResult } from "../../../../core/internal/sfc.js";
+import { createVueScriptForParsing, parseVueScriptsResult } from "../../../../core/internal/sfc.js";
 import {
   SFC_TEMPLATE_PARSE_OPTIONS,
   TemplateNodeType,
@@ -10,6 +10,8 @@ import {
   templateAstFromDescriptor,
   walkTemplate,
 } from "../../../../core/internal/template.js";
+import { parseScriptScope, type ScriptScope } from "../../../../core/internal/script-scope.js";
+import { vueApiCall } from "./vue-api.js";
 import { camelize } from "./component-usage.js";
 import type { AnyNode } from "./shared.js";
 
@@ -127,7 +129,8 @@ export function componentState(
   file: string,
   seen: Set<string> = new Set(),
 ): ComponentState {
-  const key = `vue/component-state:${file}`;
+  // Both the remaining depth and cycle exclusions affect recursive conclusions.
+  const key = `vue/component-state:${JSON.stringify([file, [...seen].sort()])}`;
   const cached = ctx.cache.get<ComponentState>(key);
   if (cached) return cached;
   if (seen.has(file) || seen.size >= MAX_DEPTH) return { kind: "stateless", file };
@@ -161,7 +164,12 @@ function readComponentState(ctx: RuleContext, file: string, seen: Set<string>): 
       if (ref) templateRefs.add(ref);
     });
 
-  const scriptEvidence = scriptState(scripts.ast, descriptor, templateRefs);
+  const script = createVueScriptForParsing(descriptor, text);
+  const scope = parseScriptScope(script.text, {
+    sourceType: "module",
+    dialect: script.lang === "tsx" || script.lang === "jsx" ? script.lang : "ts",
+  });
+  const scriptEvidence = scriptState(scope, descriptor, templateRefs);
   if (scriptEvidence) return { kind: "stateful", file, evidence: scriptEvidence };
 
   let unknown: string | undefined;
@@ -200,7 +208,7 @@ function readComponentState(ctx: RuleContext, file: string, seen: Set<string>): 
 }
 
 function scriptState(
-  program: AnyNode,
+  scope: ScriptScope,
   descriptor: AnyNode,
   templateRefs: Set<string>,
 ): string | undefined {
@@ -222,14 +230,14 @@ function scriptState(
       }
       perInstance = true;
     }
+    const api =
+      node.type === "CallExpression" ? vueApiCall(scope, node.callee, STATE_APIS) : undefined;
     if (
-      node.type === "CallExpression" &&
-      node.callee?.type === "Identifier" &&
-      STATE_APIS.has(node.callee.name) &&
+      api &&
       (perInstance || inSetupBlock(node)) &&
-      !isTemplateRef(node, parent, templateRefs)
+      !isTemplateRef(node, parent, templateRefs, api)
     ) {
-      evidence = `${node.callee.name}()`;
+      evidence = `${api}()`;
       return;
     }
     for (const [key, value] of Object.entries(node)) {
@@ -238,13 +246,18 @@ function scriptState(
         if (child && typeof child === "object") visit(child, node, perInstance);
     }
   };
-  visit(program, undefined, false);
+  visit(scope.ast, undefined, false);
   return evidence;
 }
 
 // `const root = ref<HTMLElement>()` with `<div ref="root">` holds the element, not item state.
-function isTemplateRef(call: AnyNode, parent: AnyNode, templateRefs: Set<string>): boolean {
-  if (call.callee.name !== "ref" && call.callee.name !== "shallowRef") return false;
+function isTemplateRef(
+  call: AnyNode,
+  parent: AnyNode,
+  templateRefs: Set<string>,
+  api: string,
+): boolean {
+  if (api !== "ref" && api !== "shallowRef") return false;
   const initial = call.arguments?.[0];
   const empty =
     !initial ||
