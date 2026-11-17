@@ -140,3 +140,98 @@ const clientKey = computed(() => import.meta.client ? 'theme' : undefined)
     "nuxt/hydration/prefer-usecookie-for-initial-client-state",
   ]);
 });
+
+const storageRuleIds = [
+  "nuxt/hydration/no-browser-global-in-universal-code",
+  "nuxt/hydration/prefer-usecookie-for-initial-client-state",
+];
+
+for (const [name, prelude, guard] of [
+  [
+    "local computed wrapper",
+    `import { computed as vueComputed } from 'vue'
+function computed(getter: () => unknown) { return vueComputed(() => getter() ?? 'theme') }`,
+    `const key = computed(() => import.meta.client ? 'theme' : undefined)`,
+  ],
+  [
+    "unrelated imported computed",
+    `import { computed } from './other'`,
+    `const key = computed(() => import.meta.client ? 'theme' : undefined)`,
+  ],
+  [
+    "parameter computed",
+    ``,
+    `const key = computed(() => import.meta.client ? 'theme' : undefined)`,
+  ],
+] as const) {
+  test(`${name} does not prove a server-empty getter`, async () => {
+    expect(
+      await storageDiagnostics({
+        "app/composables/useProbe.ts": `${prelude}
+export function useProbe(${name === "parameter computed" ? "computed: Function" : ""}) {
+  ${guard}
+  const label = 'This separates the source of the guard from the storage access sufficiently'
+  const saved = key.value ? localStorage.getItem(key.value) : null
+  return { label, saved }
+}`,
+      }),
+    ).toEqual(storageRuleIds);
+  });
+}
+
+for (const guard of [
+  "if (process.server) return",
+  "const enabled = process.client; if (!enabled) return",
+]) {
+  test(`shadowed process remains unknown: ${guard}`, async () => {
+    expect(
+      await storageDiagnostics({
+        "app/composables/useProbe.ts": `export function useProbe(process: { server: boolean, client: boolean }) {
+  ${guard}
+  const label = 'This separates the source of the guard from the storage access sufficiently'
+  const saved = localStorage.getItem('theme')
+  return { label, saved }
+}`,
+      }),
+    ).toEqual(storageRuleIds);
+  });
+}
+
+for (const [prelude, expression] of [
+  [
+    "import { computed as vueComputed } from 'vue'",
+    "vueComputed(() => import.meta.client ? 'theme' : undefined)",
+  ],
+  ["import * as Vue from 'vue'", "Vue.computed(() => import.meta.client ? 'theme' : undefined)"],
+  ["", "computed(() => (client && first) || (client && second))"],
+  ["", "computed(() => first ? clientKey : clientKey)"],
+] as const) {
+  test(`server-empty proof accepts ${expression}`, async () => {
+    expect(
+      await storageDiagnostics({
+        "app/composables/useProbe.ts": `${prelude}
+export function useProbe(first: string, second: string) {
+  const client = import.meta.client
+  const clientKey = client && first
+  const key = ${expression}
+  const label = 'This separates the source of the guard from the storage access sufficiently'
+  const saved = key.value ? localStorage.getItem(key.value) : null
+  return { label, saved }
+}`,
+      }),
+    ).toEqual([]);
+  });
+}
+
+test("cyclic immutable guards terminate without proving safety", async () => {
+  expect(
+    await storageDiagnostics({
+      "app/composables/useProbe.ts": `export function useProbe() {
+  const first = second
+  const second = first
+  const saved = first ? localStorage.getItem('theme') : null
+  return { saved }
+}`,
+    }),
+  ).toEqual(storageRuleIds);
+});

@@ -200,6 +200,7 @@ function isShortCircuitedByClientGuard(parent: unknown, node: unknown, source: s
 function isEmptyOnServer(node: unknown, seen = new Set<unknown>()): boolean {
   const value = unwrapTsExpression(node);
   if (!value || typeof value !== "object" || seen.has(value)) return false;
+  seen = new Set(seen);
   seen.add(value);
   switch (value.type) {
     case "Literal":
@@ -226,7 +227,7 @@ function isEmptyOnServer(node: unknown, seen = new Set<unknown>()): boolean {
       const object = unwrapTsExpression(value.object);
       if (object?.type !== "Identifier") return false;
       const init = unwrapTsExpression(constInitializer(object));
-      if (getCalleeName(init) !== "computed" || init.arguments?.length !== 1) return false;
+      if (!isVueComputedCall(init) || init.arguments?.length !== 1) return false;
       return functionResultIsEmptyOnServer(init.arguments[0], seen);
     }
     default:
@@ -249,7 +250,40 @@ function getRuntimeFlagName(node: any): string | null {
   const object = node.object;
   if (object?.type === "MetaProperty")
     return `${object.meta?.name}.${object.property?.name}.${node.property?.name}`;
+  if (object?.type === "Identifier" && object.name === "process" && hasLocalBinding(object))
+    return null;
   return getNodeName(node);
+}
+
+function isVueComputedCall(node: any): boolean {
+  if (node?.type !== "CallExpression") return false;
+  const callee = unwrapTsExpression(node.callee);
+  const namespace =
+    callee?.type === "MemberExpression" &&
+    !callee.computed &&
+    getNodeName(callee.property) === "computed";
+  const identifier = namespace ? callee.object : callee;
+  if (identifier?.type !== "Identifier") return false;
+  for (const scope of getDoctorParents(identifier) as any[]) {
+    if (!scopeBindings(scope).has(identifier.name)) continue;
+    if (scope.type !== "Program") return false;
+    return scope.body.some(
+      (statement: any) =>
+        statement.type === "ImportDeclaration" &&
+        statement.source?.value === "vue" &&
+        statement.importKind !== "type" &&
+        statement.specifiers.some(
+          (specifier: any) =>
+            specifier.local?.name === identifier.name &&
+            specifier.importKind !== "type" &&
+            (namespace
+              ? specifier.type === "ImportNamespaceSpecifier"
+              : specifier.type === "ImportSpecifier" &&
+                getNodeName(specifier.imported) === "computed"),
+        ),
+    );
+  }
+  return !namespace && identifier.name === "computed";
 }
 
 function functionResultIsEmptyOnServer(fn: unknown, seen: Set<unknown>): boolean {
