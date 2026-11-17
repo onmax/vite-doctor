@@ -66,3 +66,23 @@ export function visit(value: object) { seen.add(value); return (value as { id: s
 ])("reports %s", async (_name, source, expected) => {
   expect(await lines(source)).toEqual(expected);
 });
+
+test("custom collection-named methods do not prove identity use", async () => {
+  expect(
+    await lines(`const settings = { set(value: unknown) { return JSON.stringify(value) } }
+export function configure(options: object) { return settings.set(options) }`),
+  ).toEqual([2]);
+});
+
+test.each([
+  `const cache = new Map<object, number>(); export const read = (value: object) => cache.get(value)`,
+  `export function seen(value: object, cache: WeakSet<object>) { return cache.has(value) }`,
+])("accepts evidenced collection receivers: %s", async (source) => {
+  expect(await lines(source)).toEqual([]);
+});
+test.each([
+  `declare const settings: { set(value: object): string }; export const save = (value: object) => settings.set(value)`,
+  `class WeakMap { get(value: unknown) { return JSON.stringify(value) } }; const cache = new WeakMap(); export const save = (value: object) => cache.get(value)`,
+])("rejects unresolved and shadowed collection receivers: %s", async (source) => {
+  expect((await lines(source)).length).toBeGreaterThan(0);
+});

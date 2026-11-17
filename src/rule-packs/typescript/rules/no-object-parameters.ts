@@ -2,6 +2,7 @@ import { createRule } from "../../../core/index.js";
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
 import { parameterType, parentOf, report, type AnyNode } from "./shared.js";
 
+import { createLocalEvidence, expression } from "./local-evidence.js";
 import { createTypeAliasResolver } from "./type-aliases.js";
 
 const ruleId = "typescript/evidence/no-object-parameters";
@@ -31,12 +32,13 @@ export const noObjectParameters = createRule({
     aiGeneratedCodeRisk: "high",
   },
   create(ctx) {
+    let evidence: ReturnType<typeof createLocalEvidence>;
     let resolver: ReturnType<typeof createTypeAliasResolver>;
     const visitFunction = (node: AnyNode) => {
       for (const parameter of node.params ?? []) {
         const annotation = parameterType(parameter);
         if (!resolver.resolvesToKeyword(annotation, "TSObjectKeyword")) continue;
-        if (usedOnlyForIdentityOrReflection(node, parameter)) continue;
+        if (usedOnlyForIdentityOrReflection(node, parameter, evidence)) continue;
         report(
           ctx,
           annotation,
@@ -49,6 +51,7 @@ export const noObjectParameters = createRule({
     return {
       Program(node: AnyNode) {
         resolver = createTypeAliasResolver(node);
+        evidence = createLocalEvidence(node);
       },
       ArrowFunctionExpression: visitFunction,
       FunctionDeclaration: visitFunction,
@@ -87,7 +90,11 @@ const OBJECT_REFLECTION = new Set([
 
 // `object` is the exact contract for a value that is only a WeakMap or WeakSet key, a Reflect or
 // Object reflection argument, or the right side of `in`: those APIs accept any non-primitive.
-function usedOnlyForIdentityOrReflection(fn: AnyNode, parameter: AnyNode): boolean {
+function usedOnlyForIdentityOrReflection(
+  fn: AnyNode,
+  parameter: AnyNode,
+  evidence: ReturnType<typeof createLocalEvidence>,
+): boolean {
   const name = (parameter.type === "AssignmentPattern" ? parameter.left : parameter)?.name;
   if (typeof name !== "string" || !fn.body) return false;
   const uses: AnyNode[] = [];
@@ -100,7 +107,7 @@ function usedOnlyForIdentityOrReflection(fn: AnyNode, parameter: AnyNode): boole
     }
   };
   visit(fn.body);
-  return uses.length > 0 && uses.every(isIdentityOrReflectionUse);
+  return uses.length > 0 && uses.every((use) => isIdentityOrReflectionUse(use, evidence));
 }
 
 function isValueReference(node: AnyNode): boolean {
@@ -112,7 +119,10 @@ function isValueReference(node: AnyNode): boolean {
   return parent?.type !== "TSTypeQuery" && parent?.type !== "TSQualifiedName";
 }
 
-function isIdentityOrReflectionUse(node: AnyNode): boolean {
+function isIdentityOrReflectionUse(
+  node: AnyNode,
+  evidence: ReturnType<typeof createLocalEvidence>,
+): boolean {
   let current = node;
   while (["TSNonNullExpression", "ParenthesizedExpression"].includes(parentOf(current)?.type))
     current = parentOf(current);
@@ -124,8 +134,24 @@ function isIdentityOrReflectionUse(node: AnyNode): boolean {
   if (callee?.type !== "MemberExpression" || callee.computed) return false;
   const method = callee.property?.name;
   const receiver = callee.object;
-  if (receiver?.type === "Identifier" && receiver.name === "Reflect") return true;
-  if (receiver?.type === "Identifier" && receiver.name === "Object")
+  if (receiver?.type === "Identifier" && receiver.name === "Reflect" && !evidence.binding(receiver))
+    return true;
+  if (receiver?.type === "Identifier" && receiver.name === "Object" && !evidence.binding(receiver))
     return OBJECT_REFLECTION.has(method);
-  return COLLECTION_KEY_METHODS.has(method);
+  if (!COLLECTION_KEY_METHODS.has(method)) return false;
+  const binding = evidence.binding(receiver);
+  if (!binding || binding.written) return false;
+  const init = expression(binding.init, true);
+  const constructed =
+    init?.type === "NewExpression" &&
+    init.callee?.type === "Identifier" &&
+    !evidence.binding(init.callee)
+      ? init.callee.name
+      : undefined;
+  const collection = ["Map", "WeakMap", "Set", "WeakSet"].find(
+    (name) => constructed === name || evidence.globalType(binding.annotation, name),
+  );
+  return ["Map", "WeakMap"].includes(collection ?? "")
+    ? method !== "add"
+    : ["Set", "WeakSet"].includes(collection ?? "") && ["has", "delete", "add"].includes(method);
 }

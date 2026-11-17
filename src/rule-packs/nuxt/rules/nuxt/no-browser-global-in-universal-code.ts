@@ -18,6 +18,7 @@ export const noBrowserGlobalInUniversalCode = createRule({
     fixable: "suggestion",
     docsUrl:
       "https://nuxt.com/docs/4.x/guide/best-practices/hydration#browser-only-apis-in-server-context",
+    reportScope: "project",
     requires: { script: true, nuxt: true },
   },
   create(ctx) {
@@ -37,6 +38,16 @@ export const noBrowserGlobalInUniversalCode = createRule({
             ? `${node.name} is browser-only, and ${relative(ctx.project.root, caller.file)}:${caller.line} calls ${caller.callee}() while Nuxt renders on the server.`
             : `${node.name} is browser-only and this file can run during SSR.`,
           replacementForBrowserGlobal(node.name),
+          undefined,
+          caller
+            ? [
+                {
+                  file: caller.file,
+                  range: caller.range,
+                  message: `SSR call to ${caller.callee}()`,
+                },
+              ]
+            : undefined,
         );
       },
     };

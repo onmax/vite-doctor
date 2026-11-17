@@ -1,12 +1,15 @@
 import { dirname, join, relative, resolve } from "pathe";
-import type { RuleContext } from "../../../../core/index.js";
+import type { SourceRange, RuleContext } from "../../../../core/index.js";
+// oxlint-disable-next-line no-restricted-imports -- callers must respect the authored source exclusions.
+import { DEFAULT_EXCLUDE } from "../../../../core/internal/source-inventory.js";
+import { createLocalEvidence } from "../../../typescript/rules/local-evidence.js";
 import { parseScript } from "../../../../core/internal/script.js";
 import { getNodeVisitorKeys } from "../../../../core/internal/visitor-keys.js";
 import { nearestFunctionOrProgram, type AnyNode } from "../../../../core/rule-authoring.js";
 import { isClientOnlyPath } from "./execution-evidence.js";
 
 const SOURCE_GLOB = "**/*.{vue,ts,tsx,mts,js,jsx,mjs}";
-const SOURCE_EXCLUDE = ["**/node_modules/**", "**/.nuxt/**", "**/.output/**", "**/dist/**"];
+const SOURCE_EXCLUDE = [...DEFAULT_EXCLUDE, "**/*.config.*", "**/{scripts,build}/**"];
 const NUXT_CONFIGS = ["nuxt.config.ts", "nuxt.config.js", "nuxt.config.mjs", "nuxt.config.mts"];
 // Nuxt runs these callbacks while it renders a request on the server.
 const SSR_CALLBACK_CALLEES = new Set(["defineNuxtPlugin", "defineNuxtRouteMiddleware"]);
@@ -30,6 +33,7 @@ export interface SsrCaller {
   file: string;
   line: number;
   callee: string;
+  range: SourceRange;
 }
 
 /**
@@ -109,6 +113,12 @@ function ssrCallSite(
     file: source.file,
     line: source.text.slice(0, call.start).split("\n").length,
     callee: call.callee.name,
+    range: {
+      start: call.start,
+      end: call.end,
+      line: source.text.slice(0, call.start).split("\n").length,
+      column: call.start - source.text.lastIndexOf("\n", call.start - 1),
+    },
   });
   const fn = nearestFunctionOrProgram(call.__doctorParent);
   if (!fn) return null;
@@ -161,12 +171,25 @@ function isComposableName(name: string) {
 
 function callsOf(program: AnyNode, name: string): AnyNode[] {
   const calls: AnyNode[] = [];
+  const evidence = createLocalEvidence(program);
+  const declarations = (program.body ?? []).flatMap((statement: AnyNode) => {
+    const declaration = statement.declaration ?? statement;
+    if (declaration.type === "ImportDeclaration")
+      return declaration.specifiers.map((item: AnyNode) => item.local);
+    if (declaration.type === "VariableDeclaration")
+      return declaration.declarations.map((item: AnyNode) => item.id);
+    return [declaration.id];
+  });
+  const target = declarations.find((declaration: AnyNode) => declaration?.name === name);
   walk(program, (node) => {
     if (
-      node.type === "CallExpression" &&
-      node.callee?.type === "Identifier" &&
-      node.callee.name === name
+      node.type !== "CallExpression" ||
+      node.callee?.type !== "Identifier" ||
+      node.callee.name !== name
     )
+      return;
+    const binding = evidence.binding(node.callee);
+    if (target ? binding && binding.node === target && !binding.written : !binding)
       calls.push(node);
   });
   return calls;

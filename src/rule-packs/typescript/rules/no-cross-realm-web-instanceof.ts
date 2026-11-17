@@ -120,23 +120,53 @@ function hasDuckTypedAlternative(node: AnyNode, className: string): boolean {
     (parentOf(chain)?.type === "UnaryExpression" && parentOf(chain).operator === "!")
   )
     chain = parentOf(chain);
-  if (logicalOperands(chain).some(isGuard)) return true;
+  const foreignResult = (candidate: AnyNode, guard = true): boolean | undefined => {
+    const value = expression(candidate, true);
+    if (value === node) return false;
+    if (isGuard(value)) return guard;
+    if (value?.type === "UnaryExpression" && value.operator === "!") {
+      const result = foreignResult(value.argument, guard);
+      return result === undefined ? undefined : !result;
+    }
+    if (value?.type !== "LogicalExpression") return undefined;
+    const left = foreignResult(value.left, guard);
+    const right = foreignResult(value.right, guard);
+    if (value.operator === "||")
+      return left === true || right === true
+        ? true
+        : left === false && right === false
+          ? false
+          : undefined;
+    if (value.operator === "&&")
+      return left === false || right === false
+        ? false
+        : left === true && right === true
+          ? true
+          : undefined;
+    return undefined;
+  };
+  if (
+    containsCall(chain, isGuard) &&
+    foreignResult(chain) === true &&
+    foreignResult(chain, false) !== true
+  )
+    return true;
   const statement = enclosingStatement(chain);
   const siblings = statementList(statement);
   if (!siblings) return false;
   const index = siblings.indexOf(statement);
-  return [siblings[index - 1], siblings[index + 1]].some(
-    (sibling) => sibling && containsCall(sibling, isGuard),
+  const handlesGuard = (sibling: AnyNode) => {
+    if (sibling?.type !== "IfStatement" || !isGuard(expression(sibling.test, true))) return false;
+    const branch = sibling.consequent;
+    const last = branch?.type === "BlockStatement" ? branch.body.at(-1) : branch;
+    return last?.type === "ReturnStatement";
+  };
+  if (handlesGuard(siblings[index - 1])) return true;
+  return (
+    statement?.type === "IfStatement" &&
+    foreignResult(statement.test) === false &&
+    handlesGuard(siblings[index + 1])
   );
-}
-
-function logicalOperands(node: AnyNode): AnyNode[] {
-  const current = expression(node, true);
-  if (current?.type === "LogicalExpression")
-    return [...logicalOperands(current.left), ...logicalOperands(current.right)];
-  if (current?.type === "UnaryExpression" && current.operator === "!")
-    return logicalOperands(current.argument);
-  return [current];
 }
 
 function isGuardCall(node: AnyNode, className: string, subject: string): boolean {

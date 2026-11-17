@@ -205,3 +205,13 @@ test.each([
   });
   expect(result.diagnostics[0]!.suggestion).toBe(suggestion);
 });
+
+test.each([
+  `if (isResponseLike(value) && value instanceof Response) return value; throw new Error()`,
+  `if (!(value instanceof Response) || isResponseLike(value)) throw new Error()`,
+  `console.log(isResponseLike(value)); if (!(value instanceof Response)) throw new Error()`,
+  `if (isResponseLike(value)) console.log(value); if (!(value instanceof Response)) throw new Error()`,
+  `if (value instanceof Response) return value; if (ready) log(isResponseLike(value));`,
+])("reports mandatory instanceof despite nearby guards: %s", async (body) => {
+  expect(await count(`function f(value: unknown) { ${body} }`)).toBe(1);
+});

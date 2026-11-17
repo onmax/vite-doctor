@@ -1,3 +1,8 @@
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "pathe";
+import { runViteDoctor } from "../../../src/doctor.js";
+import { mergeAffectedRun, stateFromRun } from "../../../src/plugin-delta.js";
 import { expect, test } from "vite-plus/test";
 import { noBrowserGlobalInUniversalCode } from "../../../src/rule-packs/nuxt/rules/nuxt.ts";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
@@ -105,3 +110,95 @@ test("a browser global in a composable body is still reported", async () => {
     }),
   ).toEqual(["app/composables/useWidth.ts:2"]);
 });
+
+test.each(["tests/figure.test.ts", "test-utils/figure.ts", "nuxt.config.ts"])(
+  "ignores non-runtime callers in %s",
+  async (path) => {
+    expect(
+      await reported({
+        "app/utils/figure.ts": figure,
+        [path]: `import { mountFigure } from '~/utils/figure'; mountFigure(host)`,
+      }),
+    ).toEqual([]);
+  },
+);
+test.each([
+  `import { mountFigure } from './figure'; { const mountFigure = () => {}; mountFigure() }`,
+  `import { mountFigure } from './figure'; export function useLayout(mountFigure: () => void) { mountFigure() }`,
+  `export function mountFigure() { return window.innerWidth }; export function useLayout(mountFigure: () => void) { mountFigure() }`,
+])("ignores shadowed helper calls: %s", async (source) => {
+  expect(await reported({ "app/utils/figure.ts": figure, "app/utils/layout.ts": source })).toEqual(
+    [],
+  );
+});
+
+test.each([true, false])(
+  "caller-only transitions preserve Plugin Surface and cache parity (cache=%s)",
+  async (cache) => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-browser-callers-"));
+    try {
+      mkdirSync(join(root, "app/utils"), { recursive: true });
+      mkdirSync(join(root, "app/pages"), { recursive: true });
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({ dependencies: { nuxt: "4.0.0" } }),
+      );
+      writeFileSync(
+        join(root, "app/utils/width.ts"),
+        `export function readWidth() { return window.innerWidth }`,
+      );
+      const page = join(root, "app/pages/index.vue");
+      const options = {
+        root,
+        framework: "nuxt" as const,
+        runtimeTarget: {
+          nuxt: "4.0.0",
+          nitro: "2.0.0",
+          h3: "1.0.0",
+          vue: "3.5.0",
+          nuxtCompatibility: 4 as const,
+        },
+        rules: noBrowserGlobalInUniversalCode.meta.id,
+        cache,
+      };
+      const surface = (result: Awaited<ReturnType<typeof runViteDoctor>>) => ({
+        diagnostics: result.diagnostics.map((diagnostic) => ({
+          id: diagnostic.message,
+          severity: diagnostic.severity,
+          files: [diagnostic.file!, ...(diagnostic.related ?? []).map((site) => site.file)],
+          summary: diagnostic.message,
+          detail: diagnostic.message,
+        })),
+        evidenceGaps: [],
+        runtimeIncomplete: false,
+      });
+      writeFileSync(page, `<script setup>onMounted(() => readWidth())</script>`);
+      const initial = await runViteDoctor(options);
+      let state = stateFromRun(surface(initial));
+      expect(state.diagnostics.size).toBe(0);
+      for (const ssr of [true, false, true]) {
+        writeFileSync(
+          page,
+          ssr
+            ? `<script setup>readWidth()</script>`
+            : `<script setup>onMounted(() => readWidth())</script>`,
+        );
+        const scoped = await runViteDoctor({ ...options, affectedFiles: [page] });
+        state = mergeAffectedRun(state, new Set([page]), surface(scoped));
+        expect(state.diagnostics.size).toBe(ssr ? 1 : 0);
+        if (ssr)
+          expect(scoped.diagnostics[0]?.related?.[0]).toMatchObject({
+            file: page,
+            range: { line: 1, column: 15, start: 14, end: 25 },
+          });
+        const full = await runViteDoctor(options);
+        expect(full.diagnostics.length).toBe(ssr ? 1 : 0);
+        expect(full.diagnostics).toEqual(
+          (await runViteDoctor({ ...options, cache: false })).diagnostics,
+        );
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
