@@ -1,4 +1,5 @@
 import { expect, test } from "vite-plus/test";
+import ts from "typescript";
 import { runProjectFixture } from "../../../src/core/testkit.js";
 import {
   noKnownValueWidening,
@@ -72,6 +73,69 @@ const cases: [string, string, number][] = [
     0,
   ],
   ["destructured writes", "let value = 1; ({ value } = input); const erased: unknown = value", 0],
+  [
+    "table read with a runtime key",
+    "const units: Record<string, number> = { s: 1, m: 60 }; export const f = (unit: string) => units[unit]",
+    0,
+  ],
+  [
+    "numeric table read with a runtime key",
+    "const texts: Record<number, string> = { 404: 'Not found' }; export const f = (status: number) => texts[status]",
+    0,
+  ],
+  [
+    "table read with an optional runtime key",
+    "const units: Record<string, number> = { s: 1 }; export const f = (unit: string) => units?.[unit]",
+    0,
+  ],
+  [
+    "table read with a runtime key in a nested function",
+    "const units: Record<string, number> = { s: 1 }; function f(match: string[]) { return units[match[1]!] }",
+    0,
+  ],
+  [
+    "table read with an undeclared literal key",
+    "const units: Record<string, number> = { s: 1 }; export const f = () => units.m",
+    0,
+  ],
+  [
+    "accumulator with a later member write",
+    "const env: Record<string, string> = { HOME: '/' }; env.PATH = '/bin'",
+    0,
+  ],
+  [
+    "accumulator with a later computed write",
+    "const env: Record<string, string> = { HOME: '/' }; export const f = (key: string) => { env[key] = '' }",
+    0,
+  ],
+  [
+    "accumulator with a later delete",
+    "const env: Record<string, string> = { HOME: '/' }; delete env.HOME",
+    0,
+  ],
+  ["exported table", "export const presets: Record<string, string> = { daily: '0 0 * * *' }", 0],
+  ["reassigned let", "let hidden: Record<string, unknown> = { id: 1 }; hidden = {}", 0],
+  ["let table", "let table: Record<string, number> = { a: 1 }", 0],
+  [
+    "table read with literal keys",
+    "const names: Record<string, string> = { draft: 'a', report: 'b' }; use(names.draft, names['report'])",
+    1,
+  ],
+  [
+    "table passed whole",
+    "const headers: Record<string, string> = { accept: 'json' }; fetch(url, { headers })",
+    1,
+  ],
+  [
+    "shadowed table read with a runtime key",
+    "const units: Record<string, number> = { s: 1 }; function f(units: Record<string, number>, key: string) { return units[key] }",
+    1,
+  ],
+  [
+    "other object with a member write",
+    "const env: Record<string, string> = { HOME: '/' }; function f(env: Record<string, string>) { env.PATH = '' }",
+    1,
+  ],
   ["symbol not", "function f(value: symbol) { const erased: unknown = !value;  }", 1],
   ["symbol plus", "function f(value: symbol) { const erased: unknown = +value;  }", 0],
   ["symbol negative", "function f(value: symbol) { const erased: unknown = -value;  }", 0],
@@ -93,6 +157,48 @@ const cases: [string, string, number][] = [
     0,
   ],
 ];
+
+const unsafeUses: [string, string][] = [
+  ["parenthesized lookup", "const read = (key: string) => (units)[key]"],
+  ["non-null lookup", "const read = (key: string) => units![key]"],
+  ["wrapped missing key", "const read = (units!).m"],
+  ["destructured missing key", "const { m } = units"],
+  ["computed destructuring", "const key: string = 'm'; const { [key]: value } = units"],
+  ["destructuring assignment", "let m: number; ({ m } = units)"],
+  [
+    "destructuring default",
+    "const { value = units }: { value?: Record<string, number> } = {}; const { m } = value",
+  ],
+];
+for (const [name, use] of unsafeUses)
+  cases.push([name, `const units: Record<string, number> = { s: 1 }; ${use}`, 0]);
+
+for (const [name, use] of [
+  ["object", "({ id: values.id } = { id: 'next' })"],
+  ["array", "[values.id] = ['next']"],
+  ["default", "[values.id = 'next'] = []"],
+  ["rest", "[...values.id] = ['next']"],
+  ["object rest", "({...values.id} = { name: 'next' })"],
+  ["wrapped", "[(values.id)] = ['next']"],
+])
+  cases.push([
+    name + " member target",
+    `const values: Record<string, string | number | string[] | object> = { id: 1 }; ${use}`,
+    0,
+  ]);
+
+cases.push(
+  [
+    "wrapped declared key",
+    "const units: Record<string, number> = { s: 1 }; const read = (units!).s",
+    1,
+  ],
+  [
+    "pattern target object read",
+    "const units: Record<string, number> = { s: 1 }; const target: Record<number, number> = {}; [target[units.s]] = [2]",
+    1,
+  ],
+);
 
 test.each(cases)("checks %s", async (_name, source, expected) => {
   const result = await runProjectFixture({
@@ -138,4 +244,53 @@ test("leaves JavaScript-only sources outside the TypeScript Rule Pack", async ()
     },
   });
   expect(result.diagnostics).toHaveLength(0);
+});
+
+test("leaves Vue bindings the template reads", async () => {
+  const result = await runProjectFixture({
+    rules: [noKnownValueWidening],
+    files: {
+      "App.vue":
+        '<template><p>{{ patches[path] }}</p></template>\n<script setup lang="ts">\n' +
+        "const path = 'a'\nconst patches: Record<string, string> = { a: 'diff' }\n</script>",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("excluded reads and writes depend on their annotations under strict TypeScript", () => {
+  const probes = [
+    ...unsafeUses
+      .slice(0, 6)
+      .map(([, use]) => `const units: Record<string, number> = { s: 1 }; ${use}`),
+    "const values: Record<string, string | number> = { id: 1 }; ({ id: values.id } = { id: 'next' })",
+    "const values: Record<string, string | number> = { id: 1 }; [values.id] = ['next']",
+  ];
+  const options: ts.CompilerOptions = {
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    types: [],
+    target: ts.ScriptTarget.ESNext,
+  };
+  function diagnostics(sources: string[]) {
+    const fileName = ts.sys.resolvePath("ts0011-probes.ts");
+    const source = sources.map((item, index) => `function probe${index}() { ${item} }\n`).join("");
+    const host = ts.createCompilerHost(options);
+    const getSourceFile = host.getSourceFile.bind(host);
+    host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) =>
+      name === fileName
+        ? ts.createSourceFile(name, source, languageVersion, true)
+        : getSourceFile(name, languageVersion, onError, shouldCreateNewSourceFile);
+    return ts.createProgram([fileName], options, host).getSemanticDiagnostics();
+  }
+  expect(diagnostics(probes)).toEqual([]);
+  const converted = probes.map((source) =>
+    source.replace(/: (Record<[^>]+>) = (\{[^}]+\})/, " = $2 satisfies $1"),
+  );
+  const errors = diagnostics(converted);
+  expect(
+    new Set(errors.map((error) => error.file!.getLineAndCharacterOfPosition(error.start!).line))
+      .size,
+  ).toBe(probes.length);
 });

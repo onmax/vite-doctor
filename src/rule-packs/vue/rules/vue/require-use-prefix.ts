@@ -57,24 +57,20 @@ const VUE_API_SOURCES =
   /^(vue|vue-demi|vue-router|@vue\/(runtime-core|runtime-dom|composition-api)|#imports|#app(\/.*)?|nuxt\/app)$/;
 const NON_COMPOSABLE_SOURCES = /^(@nuxt\/kit|nuxt\/kit|h3|nitropack|nitro|unstorage)(\/|$)/;
 const VUE_COMPOSABLE_SOURCES = /^(?:@vueuse\/|@pinia\/|pinia(?:\/|$)|vue-demi(?:\/|$))/;
-// Unbound calls to these names come from auto-imports (unplugin-auto-import, Nuxt).
-const VUE_RUNTIME_APIS = new Set([
+// The APIs that need the current component instance. Reactivity (ref, computed, watch) works
+// in any scope, so creating state is not evidence that a function only works during setup.
+const SETUP_BOUND_APIS = new Set([
   ...LIFECYCLE_HOOKS,
   ...INJECTION_APIS,
-  "ref",
-  "shallowRef",
-  "computed",
-  "reactive",
-  "shallowReactive",
-  "watch",
-  "watchEffect",
-  "onScopeDispose",
   "getCurrentInstance",
-  "getCurrentScope",
-  "toRef",
-  "toRefs",
-  "toValue",
+  "resolveComponent",
+  "resolveDirective",
+  "provideLocal",
+  "injectLocal",
+  "computedInject",
 ]);
+// VueUse's createInjectionState returns a composable that calls inject().
+const COMPOSABLE_FACTORIES = new Set(["createInjectionState"]);
 const EXEMPT_NAME =
   /^_*(use|on|tryOn|provide|inject|define|create|ref|computed|watch)[A-Z0-9_$]|^_*[A-Z]/;
 const EXEMPT_NAMES = new Set(["setup", "render", "install"]);
@@ -276,7 +272,7 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
     if (api.fn) return usesVue(api.fn, module);
     if (!api.source)
       return (
-        VUE_RUNTIME_APIS.has(api.name) ||
+        SETUP_BOUND_APIS.has(api.name) ||
         (/^use[A-Z0-9]/.test(api.name) &&
           Boolean(nuxt?.autoImportsAuthoritative && nuxt.autoImports.has(api.name)))
       );
@@ -290,7 +286,10 @@ function composableEvidence(ctx: RuleContext, current: ModuleAnalysis) {
     conservative = true,
   ): boolean {
     if (NON_COMPOSABLE_SOURCES.test(source)) return false;
-    if (VUE_API_SOURCES.test(source) || VUE_COMPOSABLE_SOURCES.test(source)) return true;
+    if (VUE_API_SOURCES.test(source) || VUE_COMPOSABLE_SOURCES.test(source))
+      return (
+        SETUP_BOUND_APIS.has(name) || COMPOSABLE_FACTORIES.has(name) || /^use[A-Z0-9]/.test(name)
+      );
     const file = resolveLocalModule(ctx, dirname(module.file), source);
     // Local imports are conservative when their target cannot be inspected. This
     // preserves the rule's historical behavior for unresolved relative/Nuxt

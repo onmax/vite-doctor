@@ -47,6 +47,7 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
   const scopes = new WeakMap<object, Scope>();
   const parents = new WeakMap<object, AnyNode>();
   const writes: AnyNode[] = [];
+  const identifiers: AnyNode[] = [];
   const namespaces = new WeakMap<Scope, Map<string, Scope>>();
   const root: Scope = { owner: program, bindings: new Map(), types: new Set() };
   function bind(pattern: AnyNode, scope: Scope, info: Omit<Binding, "node" | "written" | "owner">) {
@@ -205,6 +206,7 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
       for (const declaration of node.declarations)
         bind(declaration.id, target, { kind: node.kind, init: declaration.init });
     }
+    if (node.type === "Identifier") identifiers.push(node);
     if (node.type === "AssignmentExpression") writes.push(node.left);
     if (node.type === "UpdateExpression") writes.push(node.argument);
     if (
@@ -240,8 +242,11 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
     }
     return null;
   }
+  const writtenTargets = new Set<AnyNode>();
   function markWrite(node: AnyNode) {
+    node = expression(node);
     if (!node) return;
+    writtenTargets.add(node);
     if (node.type === "Identifier") {
       const target = binding(node);
       if (target && target.owner === scopes.get(node)?.owner) target.written = true;
@@ -252,6 +257,26 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
       for (const item of node.properties) markWrite(item.value ?? item.argument);
   }
   for (const write of writes) markWrite(write);
+  function references(declaration: AnyNode): AnyNode[] {
+    return identifiers.filter((identifier) => {
+      if (identifier === declaration) return false;
+      const parent = parents.get(identifier);
+      if (
+        (["MemberExpression", "StaticMemberExpression"].includes(parent?.type) &&
+          parent.property === identifier &&
+          !parent.computed) ||
+        (["Property", "MethodDefinition", "PropertyDefinition"].includes(parent?.type) &&
+          parent.key === identifier &&
+          !parent.computed &&
+          !parent.shorthand) ||
+        (parent?.type === "ExportSpecifier" &&
+          parent.exported === identifier &&
+          parent.local !== identifier)
+      )
+        return false;
+      return binding(identifier)?.node === declaration;
+    });
+  }
   function globalType(node: AnyNode, name: string): boolean {
     if (
       node?.type !== "TSTypeReference" ||
@@ -441,6 +466,9 @@ export function createLocalEvidence(program: AnyNode, { unwrapArrayAssertions = 
   return {
     binding,
     propertyWritten,
+    references,
+    parent: (node: AnyNode) => parents.get(node),
+    written: (node: AnyNode) => writtenTargets.has(node),
     broadType,
     globalType,
     isArray,
