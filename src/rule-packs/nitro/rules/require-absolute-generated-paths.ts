@@ -26,6 +26,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
     fixable: "suggestion",
     docsUrl: "https://nitro.build/config#handlers",
     requires: { script: true },
+    activationScope: "workspace",
     prefilter: { names: ["handler", "plugins"] },
   },
   create(ctx) {

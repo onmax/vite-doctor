@@ -37,6 +37,7 @@ import {
   type GraphSummary,
 } from "./cache-store.js";
 import { nativeMatch, sha256 } from "./utils.js";
+import { packageFrameworks } from "./workspace-packages.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import {
   activatingWorkspacePackages,
@@ -380,10 +381,15 @@ function selectRules(
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const selected = resolveExtends(registry.packs, options.extends ?? config.extends, activations);
+  const selected = resolveExtends(
+    registry.packs,
+    options.extends ?? config.extends,
+    activations,
+    projectWorkspacePackages(project).map((item) => item.root),
+  );
   const frameworks = new Set([
     project.framework,
-    ...projectWorkspacePackages(project).map((item) => item.framework),
+    ...projectWorkspacePackages(project).flatMap(packageFrameworks),
   ]);
 
   const candidates = registry.rules
@@ -443,6 +449,7 @@ function workspacePackageActivations(
     root: item.root,
     ...(item.name ? { name: item.name } : {}),
     framework: item.framework,
+    ...(item.nuxtIntegration ? { nuxtIntegration: true as const } : {}),
     rulePacks: [...activations]
       .filter(([, roots]) => roots.includes(item.root))
       .map(([pack]) => pack.name),
@@ -453,6 +460,7 @@ function resolveExtends(
   packs: RulePack[],
   requested: DoctorRunOptions["extends"] = "auto",
   activations: ReadonlyMap<RulePack, string[]>,
+  workspaceRoots: readonly string[],
 ): { ruleIds: Set<string>; scopes: Map<string, Set<string>>; packs: Set<RulePack> } {
   const ruleIds = new Set<string>();
   const selectedPacks = new Set<RulePack>();
@@ -481,14 +489,20 @@ function resolveExtends(
     if (unscoped) return;
     scopes.set(ruleId, new Set([...(scopes.get(ruleId) ?? []), ...scope]));
   };
-  // Activation by the workspace root covers the whole workspace, so only Rule Packs that
-  // workspace packages alone activate are scoped to those packages' files.
+  // Each workspace package activates Rule Packs from its own Project Inventory, so a Rule Pack
+  // the workspace root activates covers the root's own files, not every package below it.
   const selectActivated = () => {
     for (const [pack, roots] of activations) {
       if (!roots.length) continue;
       selectedPacks.add(pack);
+      const workspaceRules = new Set(
+        pack.rules
+          .filter((rule) => rule.meta.activationScope === "workspace")
+          .map((rule) => rule.meta.id),
+      );
       for (const ruleId of pack.presets.recommended) {
-        select(ruleId, roots.includes(".") ? undefined : roots);
+        const covered = roots.length === workspaceRoots.length || workspaceRules.has(ruleId);
+        select(ruleId, covered ? undefined : roots);
       }
     }
   };

@@ -4,6 +4,7 @@ import { matchesGlob } from "node:path";
 import { basename, dirname, join, relative, resolve } from "pathe";
 import { parse } from "yaml";
 import type { DoctorFramework, WorkspacePackage } from "../primitives.js";
+import { detectPackageModule } from "./nuxt-module-inventory.js";
 
 const FRAMEWORK_PRECEDENCE: DoctorFramework[] = ["nuxt", "nitro", "vue", "vite"];
 
@@ -13,6 +14,7 @@ interface PackageManifest {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
+  exports?: unknown;
 }
 
 /**
@@ -50,6 +52,14 @@ export async function detectWorkspacePackages(root: string): Promise<WorkspacePa
         ),
       ),
   ];
+}
+
+/**
+ * The frameworks whose Rule Packs a workspace package activates. A Nuxt integration ships Vue
+ * components, Nitro handlers and module code into Nuxt apps, so it activates what a Nuxt app does.
+ */
+export function packageFrameworks(item: WorkspacePackage): DoctorFramework[] {
+  return item.nuxtIntegration ? [item.framework, "nuxt"] : [item.framework];
 }
 
 export function workspaceFramework(packages: readonly WorkspacePackage[]): DoctorFramework {
@@ -106,19 +116,26 @@ function describePackage(
     ...manifest?.optionalDependencies,
     ...manifest?.devDependencies,
   };
+  const framework = detectPackageFramework(directory, manifest, packages);
   return {
     root,
     ...(manifest?.name ? { name: manifest.name } : {}),
-    framework: detectPackageFramework(directory, packages),
+    framework,
+    ...(framework !== "nuxt" && shipsNuxtModule(manifest, packages)
+      ? { nuxtIntegration: true }
+      : {}),
     packages,
   };
 }
 
 function detectPackageFramework(
   directory: string,
+  manifest: PackageManifest | null,
   packages: Record<string, string | undefined>,
 ): DoctorFramework {
-  if (packages.nuxt || packages["@nuxt/kit"] || hasConfig(directory, "nuxt.config")) return "nuxt";
+  if (isNuxtApp(directory, manifest, packages)) return "nuxt";
+  if ((packages["@nuxt/kit"] || packages["@nuxt/module-builder"]) && detectPackageModule(directory))
+    return "nuxt";
   if (packages.nitro || packages.nitropack || hasConfig(directory, "nitro.config")) return "nitro";
   if (
     packages.vue ||
@@ -128,6 +145,35 @@ function detectPackageFramework(
     return "vue";
   }
   return "vite";
+}
+
+/**
+ * A Nuxt app or layer: a `nuxt.config`, the Doctor manifest Nuxt writes, a runtime `nuxt`
+ * dependency, or the app entry Nuxt renders. Packages that ship a Nuxt module keep `nuxt` in
+ * devDependencies to build and test against it, which says nothing about their own code.
+ * A Nuxt module package is Nuxt too, so the module-authoring Rules read its module definition.
+ */
+function isNuxtApp(
+  directory: string,
+  manifest: PackageManifest | null,
+  packages: Record<string, string | undefined>,
+): boolean {
+  if (hasConfig(directory, "nuxt.config")) return true;
+  if (existsSync(join(directory, ".nuxt/doctor.manifest.json"))) return true;
+  if (!packages.nuxt) return false;
+  if (manifest?.dependencies?.nuxt || manifest?.optionalDependencies?.nuxt) return true;
+  return ["app.vue", "pages", "app/app.vue", "app/pages"].some((entry) =>
+    existsSync(join(directory, entry)),
+  );
+}
+
+function shipsNuxtModule(
+  manifest: PackageManifest | null,
+  packages: Record<string, string | undefined>,
+): boolean {
+  if (packages["@nuxt/kit"]) return true;
+  const exports = manifest?.exports;
+  return isRecord(exports) && "./nuxt" in exports;
 }
 
 function hasConfig(directory: string, basename: string): boolean {
@@ -166,6 +212,7 @@ function readManifest(file: string): PackageManifest | null {
     if (!isRecord(value)) return null;
     const manifest: PackageManifest = {};
     if (typeof value.name === "string") manifest.name = value.name;
+    if (value.exports !== undefined) manifest.exports = value.exports;
     if (
       Array.isArray(value.workspaces) &&
       value.workspaces.every((item) => typeof item === "string")

@@ -1,4 +1,4 @@
-import { createRule, simpleTagRenameFix } from "./shared.js";
+import { createRule, isNuxtRoutedAppFile, simpleTagRenameFix } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 export const preferNuxtPageOverRouterView = createRule({
@@ -7,7 +7,7 @@ export const preferNuxtPageOverRouterView = createRule({
     title: "Use NuxtPage instead of RouterView",
     category: "routing",
     severity: "error",
-    fixable: "safe",
+    fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/components/nuxt-page#props",
     requires: { template: true, nuxt: true },
   },
@@ -15,7 +15,7 @@ export const preferNuxtPageOverRouterView = createRule({
     return {
       template: {
         element(node) {
-          if (node.tag !== "RouterView") return;
+          if (node.tag !== "RouterView" || !isNuxtRoutedAppFile(ctx)) return;
           ctx.report(
             diagnostics.NUXT0051({
               why: "<RouterView> bypasses NuxtPage behavior. Use <NuxtPage> in Nuxt app shells.",
