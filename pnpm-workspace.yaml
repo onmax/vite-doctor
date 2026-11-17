@@ -26,6 +26,7 @@ catalogs:
     vite: npm:@voidzero-dev/vite-plus-core@latest
     vite-plus: ^0.2.7
   deploy:
+    "@modelcontextprotocol/server": 2.4.0
     "@cloudflare/workers-types": ^5.20260804.1
     agents: ^0.33.0
     wrangler: ^4.118.0
@@ -36,7 +37,7 @@ catalogs:
     "@iconify-json/unjs": ^1.2.4
     "@iconify-json/vscode-icons": ^1.2.68
     "@nuxt/content": ^3.15.2
-    "@nuxt/fonts": ^0.14.0
+    "@nuxt/fonts": ^1.2.0
     "@nuxt/kit": ^4.5.2
     "@nuxt/scripts": ^1.3.2
     "@nuxt/ui": ^4.11.0
@@ -46,7 +47,7 @@ catalogs:
     "@tiptap/pm": ^3.29.2
     "@tiptap/y-tiptap": ^3.0.8
     "@vue/server-renderer": ^3.5.40
-    "@vueuse/core": ^14.4.0
+    "@vueuse/core": ^15.0.0
     better-auth: ^1.6.25
     docus: 5.15.0
     nuxt: ^4.5.2
@@ -56,7 +57,7 @@ catalogs:
     vue: ^3.5.40
   prod:
     yaml: ^2.9.0
-    c12: 4.0.0-beta.5
+    c12: 4.0.0-rc.4
     cac: ^7.0.0
     consola: ^3.4.2
     detect-agent: ^1.2.0
@@ -73,7 +74,7 @@ catalogs:
     "@nuxt/test-utils": ^4.1.0
     "@testing-library/vue": ^8.1.0
     "@vue/test-utils": ^2.4.11
-    happy-dom: ^20.11.1
+    happy-dom: ^21.0.4
 overrides:
   "@cloudflare/workers-types": "catalog:deploy"
   "@nuxt/content": "catalog:frontend"
