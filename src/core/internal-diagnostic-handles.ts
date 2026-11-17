@@ -1,4 +1,5 @@
 import { defineDiagnostics } from "nostics";
+import type { UnknownRuleHookReason } from "./internal/rule-hooks.js";
 
 export const doctorInternalDiagnostics = defineDiagnostics({
   codes: {
@@ -107,6 +108,11 @@ export const doctorInternalDiagnostics = defineDiagnostics({
         `Doctor could not load the Doctor Extension entry "${params.entry}" registered by the host: ${params.reason}`,
       fix: "Make the entry module's default export a Doctor Extension, rebuild the package that registers it, and regenerate host inventory (for Nuxt, run nuxt prepare) before retrying the Doctor Run.",
     },
+    DOC0034: {
+      why: (params: UnknownRuleHook) =>
+        `Rule "${params.ruleId}" returned a "${params.hook}" hook from create(), which Doctor never calls on a ${params.execution} Rule, so the Rule would report nothing.`,
+      fix: (params: UnknownRuleHook) => unknownRuleHookFix(params),
+    },
   },
 });
 
@@ -118,4 +124,27 @@ interface PresetSuggestion {
 
 function presetSuggestion(params: PresetSuggestion): string {
   return `Config Extends entry "${params.entry}" names Rule Pack "${params.rulePack}" without a Preset. Use "${params.entry}/recommended" (Presets: ${params.presets}).`;
+}
+
+interface UnknownRuleHook {
+  ruleId: string;
+  hook: string;
+  execution: string;
+  reason: UnknownRuleHookReason;
+  suggestion?: string;
+}
+
+function unknownRuleHookFix(params: UnknownRuleHook): string {
+  switch (params.reason) {
+    case "removed-script-node":
+      return 'The catch-all ScriptNode hook was removed. Move its body into visitors for the node types it checked: `ScriptNode(node) { if (node.type !== "CallExpression") return; ... }` becomes `CallExpression(node) { ... }`.';
+    case "removed-template-node":
+      return "The catch-all TemplateNode hook was removed. Move its body into template visitors keyed by node kind, such as `template: { element(node) {} }`.";
+    case "lifecycle-on-file":
+      return 'Lifecycle hooks run only on workspace and manifest Rules. Set meta.execution to "workspace" or "manifest", or do the work in create() and node visitors.';
+    case "node-on-lifecycle":
+      return 'Script, SFC and template visitors run only on file Rules. Set meta.execution to "file" (the default), or read the sources from a lifecycle hook.';
+    case "unknown":
+      return `${params.suggestion ? `Did you mean "${params.suggestion}"? ` : ""}Script hooks are oxc ESTree node types such as CallExpression, optionally with ":exit". Template hooks go under template and are root, element, attribute, directive, text, interpolation, or comment. Lifecycle hooks are SFC, onWorkspaceStart, onProjectStart, NuxtManifest, onProjectEnd, and onWorkspaceEnd.`;
+  }
 }

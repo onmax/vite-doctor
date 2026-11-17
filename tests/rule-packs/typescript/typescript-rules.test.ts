@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import { describe, expect, test } from "vite-plus/test";
 import { runViteDoctor } from "../../../src/doctor.ts";
+import { explainRule } from "../../../src/core/reports.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
+import { getDiagnosticDocuments } from "../../../docs/rules/source.ts";
 import {
+  noArrayFilterMap,
   noCallerChosenResultType,
   noChainedTypeAssertions,
-  noConditionalEmptyObjectSpread,
   noObjectParameters,
-  noRuntimeTypeof,
   noUnknownTypeAliases,
   noUnvalidatedDeserialization,
   requireSafetyCommentForTypeAssertion,
@@ -38,12 +39,29 @@ describe("TypeScript rule pack", () => {
         "typescript/evidence/no-caller-chosen-result-type",
         "typescript/evidence/no-object-parameters",
         "typescript/evidence/no-unknown-type-aliases",
-        "typescript/style/no-conditional-empty-object-spread",
-        "typescript/strict/no-runtime-typeof",
         "typescript/strict/require-safety-comment-for-type-assertion",
       ]),
     );
   });
+
+  test("no longer ships the removed typeof and empty-spread rules", () => {
+    const ruleIds = typescriptRulePack.rules.map((rule) => rule.meta.id);
+    for (const removed of [
+      "typescript/strict/no-runtime-typeof",
+      "typescript/style/no-conditional-empty-object-spread",
+    ]) {
+      expect(ruleIds).not.toContain(removed);
+      expect(typescriptRulePack.presets.strict).not.toContain(removed);
+    }
+  });
+
+  test.each(["TS0006", "TS0007", "typescript/strict/no-runtime-typeof"])(
+    "explain treats removed %s as unknown",
+    (diagnostic) => {
+      expect(explainRule([typescriptRulePack], diagnostic, "json")).toBe("");
+      expect(getDiagnosticDocuments().some((item) => item.code === diagnostic)).toBe(false);
+    },
+  );
 
   test("reports recommended syntax-only evidence as warnings", async () => {
     const result = await runProjectFixture({
@@ -406,53 +424,36 @@ console.log(marker.digest)`,
   test("keeps opinionated checks in the strict preset", async () => {
     const result = await runProjectFixture({
       framework: "vite",
-      rules: [
-        noConditionalEmptyObjectSpread,
-        noRuntimeTypeof,
-        requireSafetyCommentForTypeAssertion,
-      ],
+      rules: [requireSafetyCommentForTypeAssertion],
       files: {
-        "src/index.ts": `const options = { ...(timeout ? { timeout } : {}) }
-if (typeof input === 'string') console.log(input)
-const userId = value as UserId
+        "src/index.ts": `const userId = value as UserId
 // SAFETY: parseUserId validated this value before branding it.
 const safeUserId = parsed as UserId
-console.log(options, userId, safeUserId)`,
+console.log(userId, safeUserId)`,
       },
     });
 
-    expect(result.diagnostics.map((item) => item.ruleId).sort()).toEqual([
-      "typescript/strict/no-runtime-typeof",
+    expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
       "typescript/strict/require-safety-comment-for-type-assertion",
-      "typescript/style/no-conditional-empty-object-spread",
     ]);
   });
 
   test("runs syntax-generic strict rules only in TypeScript sources", async () => {
+    const source = "[1, 2].filter(keep).map(transform)";
     const result = await runProjectFixture({
       framework: "vue",
-      rules: [noConditionalEmptyObjectSpread, noRuntimeTypeof],
+      rules: [noArrayFilterMap],
       files: {
-        "src/index.js": `const options = { ...(timeout ? { timeout } : {}) }
-if (typeof input === "string") console.log(options, input)`,
-        "src/index.ts": `const options = { ...(timeout ? { timeout } : {}) }
-if (typeof input === "string") console.log(options, input)`,
-        "javascript.vue": `<script setup>
-const options = { ...(timeout ? { timeout } : {}) }
-if (typeof input === "string") console.log(options, input)
-</script>`,
-        "typescript.vue": `<script setup lang="ts">
-const options = { ...(timeout ? { timeout } : {}) }
-if (typeof input === "string") console.log(options, input)
-</script>`,
+        "src/index.js": source,
+        "src/index.ts": source,
+        "javascript.vue": `<script setup>\n${source}\n</script>`,
+        "typescript.vue": `<script setup lang="ts">\n${source}\n</script>`,
       },
     });
 
     expect(result.diagnostics.map((item) => [item.ruleId, item.file.split("/").at(-1)])).toEqual([
-      ["typescript/style/no-conditional-empty-object-spread", "index.ts"],
-      ["typescript/style/no-conditional-empty-object-spread", "typescript.vue"],
-      ["typescript/strict/no-runtime-typeof", "index.ts"],
-      ["typescript/strict/no-runtime-typeof", "typescript.vue"],
+      ["typescript/performance/no-array-filter-map", "index.ts"],
+      ["typescript/performance/no-array-filter-map", "typescript.vue"],
     ]);
   });
 
@@ -504,13 +505,13 @@ const user = input as object as User
   test("lets explicit presets compose with automatic activation", async () => {
     const result = await runBuiltinFixture(
       {
-        "src/index.ts": "export const kind = typeof input",
+        "src/index.ts": "export const userId = value as UserId",
       },
       ["auto", "vite-doctor/typescript/strict"],
     );
 
     expect(result.diagnostics.map((item) => item.ruleId)).toContain(
-      "typescript/strict/no-runtime-typeof",
+      "typescript/strict/require-safety-comment-for-type-assertion",
     );
   });
 });

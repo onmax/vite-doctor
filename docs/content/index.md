@@ -25,6 +25,7 @@ Static build analysis for framework code. Doctor reads app code, build config, p
 :u-button{to="/nuxt" size="xl" color="neutral" variant="outline" icon="i-lucide-list-checks" label="Browse frameworks"}
 
 #body
+
 :::code-group{class="hero-code"}
 
 ```bash [Project CLI]
@@ -41,6 +42,7 @@ pnpm dlx vite-doctor .
 ```
 
 :::
+
 ::
 
 ::u-page-section
@@ -62,6 +64,7 @@ Start
 Choose the entry point.
 
 #body
+
 :::u-page-grid{class="!grid-cols-1 sm:!grid-cols-3 !gap-4"}
 ::::u-page-card
 
@@ -107,5 +110,6 @@ Nuxt rules
 #description
 Install Doctor and browse Nuxt checks.
 ::::
+
 :::
 ::

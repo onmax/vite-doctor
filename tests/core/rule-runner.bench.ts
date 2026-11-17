@@ -1,4 +1,4 @@
-import { beforeAll, bench } from "vite-plus/test";
+import { beforeAll, test } from "vite-plus/test";
 import { createRule, type SourceFileHandle } from "../../src/core/primitives.ts";
 import { runProjectFixture } from "../../src/core/testkit.ts";
 import { runVisitor } from "../../src/core/internal/rule-runner.ts";
@@ -32,14 +32,20 @@ beforeAll(async () => {
   }
 });
 
-bench("SFC visitor on a 200-binding component", async () => {
-  await runVisitor({ SFC() {} }, file);
+test("SFC visitor on a 200-binding component", async ({ bench }) => {
+  await bench("SFC visitor on a 200-binding component", async () => {
+    await runVisitor({ SFC() {} }, file);
+  }).run();
 });
 
-bench("script visitor on a 200-binding component", async () => {
-  await runVisitor({ Identifier() {} }, file);
+test("script visitor on a 200-binding component", async ({ bench }) => {
+  await bench("script visitor on a 200-binding component", async () => {
+    await runVisitor({ Identifier() {} }, file);
+  }).run();
 });
 
-bench("template visitor on a 200-binding component", async () => {
-  await runVisitor({ template: { element() {} } }, file);
+test("template visitor on a 200-binding component", async ({ bench }) => {
+  await bench("template visitor on a 200-binding component", async () => {
+    await runVisitor({ template: { element() {} } }, file);
+  }).run();
 });

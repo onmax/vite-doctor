@@ -35,6 +35,7 @@ export const coreDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0030", ruleId: "doctor/rule/undeclared-cross-file-report", docs: false },
   { code: "DOC0031", ruleId: "doctor/config/unused-suppression" },
   { code: "DOC0033", ruleId: "doctor/inventory/empty-sfc" },
+  { code: "DOC0034", ruleId: "doctor/rule/unknown-hook", docs: false },
 ]);
 
 export const diagnostics = coreDiagnosticRegistry.diagnostics;
