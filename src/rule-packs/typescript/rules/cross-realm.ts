@@ -80,7 +80,7 @@ export const REALM_CLASSES: Record<string, RealmSafeCheck> = {
   ),
   DOMException: {
     guard: "isDOMException",
-    check: "that checks isError(value) and the value.name you handle, such as 'AbortError'",
+    check: brand("DOMException"),
   },
   Array: { replacement: "Array.isArray(value), which is true for arrays from any realm" },
   Function: {
@@ -95,7 +95,6 @@ const GUARD_ALIASES: Record<string, string[]> = {
   ReadableStream: ["AsyncIterable"],
   Promise: ["Thenable"],
   Object: ["Record"],
-  DOMException: ["Error"],
   ...Object.fromEntries(TYPED_ARRAYS.map((name) => [name, ["View"]])),
   ...Object.fromEntries(ERROR_SUBCLASSES.map((name) => [name, ["Error"]])),
 };
@@ -148,9 +147,8 @@ export function hasRealmSafeAlternative(
   className: string,
   subject: string,
 ): boolean {
-  const isGuard = (candidate: AnyNode) => isGuardCall(candidate, className, subject);
-  if (containsCall(functionBody(node), (check) => isBrandCheck(check, className, subject)))
-    return true;
+  const isGuard = (candidate: AnyNode) =>
+    isGuardCall(candidate, className, subject) || isBrandCheck(candidate, className, subject);
   let chain = node;
   while (
     ["LogicalExpression", "ParenthesizedExpression"].includes(parentOf(chain)?.type) ||
@@ -159,8 +157,34 @@ export function hasRealmSafeAlternative(
     chain = parentOf(chain);
   const foreignResult = (candidate: AnyNode, guard = true): boolean | undefined => {
     const value = expression(candidate, true);
-    if (value === node) return false;
-    if (isGuard(value)) return guard;
+    if (value === node) return ["!==", "!="].includes(node.operator);
+    if (isGuard(value))
+      return value.type === "BinaryExpression" && ["!==", "!="].includes(value.operator)
+        ? !guard
+        : guard;
+    // A foreign built-in object survives the usual null/type rejection before a brand fallback.
+    if (value?.type === "BinaryExpression" && ["===", "==", "!==", "!="].includes(value.operator)) {
+      for (const [left, right] of [
+        [value.left, value.right],
+        [value.right, value.left],
+      ]) {
+        const operand = expression(left, true);
+        const literal = expression(right, true);
+        if (literal?.type !== "Literal") continue;
+        const equality =
+          operand?.type === "Identifier" && operand.name === subject && literal.value === null
+            ? false
+            : operand?.type === "UnaryExpression" &&
+                operand.operator === "typeof" &&
+                operand.argument?.name === subject &&
+                literal.value === "object" &&
+                className !== "Function"
+              ? true
+              : undefined;
+        if (equality !== undefined)
+          return ["!==", "!="].includes(value.operator) ? !equality : equality;
+      }
+    }
     if (value?.type === "UnaryExpression" && value.operator === "!") {
       const result = foreignResult(value.argument, guard);
       return result === undefined ? undefined : !result;
@@ -185,8 +209,10 @@ export function hasRealmSafeAlternative(
   for (let alternative = node; alternative; alternative = parentOf(alternative)) {
     if (
       containsCall(alternative, isGuard) &&
-      foreignResult(alternative) === true &&
-      foreignResult(alternative, false) !== true
+      (foreignResult(alternative) === true ||
+        (["!==", "!="].includes(node.operator) && foreignResult(alternative) === false)) &&
+      foreignResult(alternative, false) !== undefined &&
+      foreignResult(alternative) !== foreignResult(alternative, false)
     )
       return true;
     if (alternative === chain) break;
@@ -196,17 +222,35 @@ export function hasRealmSafeAlternative(
   if (!siblings) return false;
   const index = siblings.indexOf(statement);
   const handlesGuard = (sibling: AnyNode) => {
-    if (sibling?.type !== "IfStatement" || !isGuard(expression(sibling.test, true))) return false;
+    if (
+      sibling?.type !== "IfStatement" ||
+      !isGuard(expression(sibling.test, true)) ||
+      foreignResult(sibling.test) !== true
+    )
+      return false;
     const branch = sibling.consequent;
     const last = branch?.type === "BlockStatement" ? branch.body.at(-1) : branch;
-    return last?.type === "ReturnStatement";
+    if (last?.type !== "ReturnStatement") return false;
+    if (!isBrandCheck(expression(sibling.test, true), className, subject)) return true;
+    const result = expression(last.argument, true);
+    return (
+      (result?.type === "Literal" && result.value === true) ||
+      (result?.type === "Identifier" && result.name === subject)
+    );
   };
   if (handlesGuard(siblings[index - 1])) return true;
-  return (
-    statement?.type === "IfStatement" &&
-    foreignResult(statement.test) === false &&
-    handlesGuard(siblings[index + 1])
-  );
+  if (statement?.type !== "IfStatement" || foreignResult(statement.test) !== false) return false;
+  if (handlesGuard(siblings[index + 1])) return true;
+  for (const sibling of siblings.slice(index + 1)) {
+    if (sibling.type === "IfStatement" && foreignResult(sibling.test) === false) continue;
+    return (
+      sibling.type === "ReturnStatement" &&
+      containsCall(sibling.argument, isGuard) &&
+      foreignResult(sibling.argument) === true &&
+      foreignResult(sibling.argument, false) === false
+    );
+  }
+  return false;
 }
 
 // A guard helper may keep instanceof as a fast path before it compares the brand of the same value:
@@ -214,7 +258,7 @@ export function hasRealmSafeAlternative(
 function isBrandCheck(node: AnyNode, className: string, subject: string): boolean {
   if (node?.type !== "BinaryExpression" || !["===", "!==", "==", "!="].includes(node.operator))
     return false;
-  const tags = [className, ...(/Error$|^DOMException$/.test(className) ? ["Error"] : [])];
+  const tags = [className, ...(className.endsWith("Error") ? ["Error"] : [])];
   return [
     [node.left, node.right],
     [node.right, node.left],
@@ -238,13 +282,6 @@ function isBrandCall(node: AnyNode, subject: string): boolean {
   if (method.property?.name !== "toString") return false;
   const argument = expression(node.arguments?.[0], true);
   return argument?.type === "Identifier" && argument.name === subject;
-}
-
-function functionBody(node: AnyNode): AnyNode {
-  let current = parentOf(node);
-  while (current && current.type !== "Program" && !/Function/.test(current.type))
-    current = parentOf(current);
-  return current?.type === "Program" ? current.body : current?.body;
 }
 
 // `isUint8Array(value)` and `types.isUint8Array(value)` from node:util both count.

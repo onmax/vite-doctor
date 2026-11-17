@@ -75,9 +75,15 @@ function hasStringFallback(node: AnyNode, subject: AnyNode): boolean {
   while (parentOf(test)?.type === "ParenthesizedExpression") test = parentOf(test);
   const conditional = parentOf(test);
   if (conditional?.type !== "ConditionalExpression" || conditional.test !== test) return false;
+  const message = expression(conditional.consequent, true);
   const fallback = expression(conditional.alternate, true);
   const argument = expression(fallback?.arguments?.[0], true);
   return (
+    message?.type === "MemberExpression" &&
+    !message.computed &&
+    message.property?.name === "message" &&
+    message.object?.type === "Identifier" &&
+    message.object.name === subject?.name &&
     fallback?.type === "CallExpression" &&
     expression(fallback.callee, true)?.type === "Identifier" &&
     expression(fallback.callee, true).name === "String" &&

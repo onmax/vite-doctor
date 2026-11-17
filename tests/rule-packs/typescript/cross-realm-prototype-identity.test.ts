@@ -146,3 +146,40 @@ test.each([
   expect(diagnostic).toMatchObject({ severity: "warn" });
   expect(diagnostic!.suggestion).toBe(suggestion);
 });
+
+test.each(["Object.getPrototypeOf(value)", "value.constructor"])(
+  "preserves comparison polarity for %s",
+  async (identity) => {
+    const target = identity === "value.constructor" ? "Array" : "Array.prototype";
+    for (const operator of ["!==", "!="]) {
+      const check = `${identity} ${operator} ${target}`;
+      expect(
+        await run(
+          `function f(value: any) { if (${check}) throw new Error('array'); if (Array.isArray(value)) return value }`,
+        ),
+      ).toHaveLength(1);
+      expect(
+        await run(
+          `function f(value: any) { if (${check} && !Array.isArray(value)) throw new Error('array'); return value }`,
+        ),
+      ).toHaveLength(0);
+    }
+  },
+);
+
+test.each(["Object.getPrototypeOf(value) === Array.prototype", "value.constructor === Array"])(
+  "requires a reachable brand fallback for %s",
+  async (check) => {
+    for (const body of [
+      `console.log(Object.prototype.toString.call(value) === '[object Array]'); return ${check}`,
+      `if (Object.prototype.toString.call(value) !== '[object Array]') return false; return ${check}`,
+      `return Object.prototype.toString.call(value) === '[object Array]' && (${check})`,
+    ])
+      expect(await run(`function f(value: any) { ${body} }`)).toHaveLength(1);
+    expect(
+      await run(
+        `function f(value: any) { if (${check}) return true; return Object.prototype.toString.call(value) === '[object Array]' }`,
+      ),
+    ).toHaveLength(0);
+  },
+);

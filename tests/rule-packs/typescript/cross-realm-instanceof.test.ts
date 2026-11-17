@@ -321,3 +321,33 @@ test.each([
   });
   expect(result.diagnostics[0]!.message).toContain(`can hold ${phrase} created`);
 });
+
+test.each([
+  `if (Object.prototype.toString.call(value) !== '[object Date]') return false; return value instanceof Date`,
+  `console.log(Object.prototype.toString.call(value) === '[object Date]'); return value instanceof Date`,
+  `return Object.prototype.toString.call(value) === '[object Date]' && value instanceof Date`,
+  `return value instanceof DOMException || Object.prototype.toString.call(value) === '[object Error]'`,
+  `return value instanceof DOMException || isError(value)`,
+  `if (Object.prototype.toString.call(value) === '[object Date]') return false; return value instanceof Date`,
+  `return value instanceof Date || Object.prototype.toString.call(value) !== '[object Date]'`,
+  `return value instanceof Error ? value.stack : String(value)`,
+  `return value instanceof Error ? value.cause : String(value)`,
+  `return value instanceof Error ? process(value) : String(value)`,
+])("reports identity checks without a usable fallback: %s", async (body) => {
+  expect(await count(`function f(value: unknown) { ${body} }`)).toBe(1);
+});
+
+test("DOMException remediation uses its actual runtime brand", async () => {
+  const result = await project.run({
+    rule: noCrossRealmWebInstanceof,
+    files: { "src/dom.ts": "export const f = (value: unknown) => value instanceof DOMException" },
+  });
+  const tag = Object.prototype.toString.call(new DOMException("aborted", "AbortError"));
+  expect(tag).toBe("[object DOMException]");
+  expect(result.diagnostics[0]!.suggestion).toContain(`=== '${tag}'`);
+  expect(
+    await count(
+      `function f(value: unknown) { return value instanceof DOMException || Object.prototype.toString.call(value) === '${tag}' }`,
+    ),
+  ).toBe(0);
+});
