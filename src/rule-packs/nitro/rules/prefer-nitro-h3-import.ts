@@ -28,7 +28,7 @@ export const preferNitroH3Import = createRule({
     category: "h3",
     severity: "warn",
     confidence: "manifest-backed",
-    fixable: "safe",
+    fixable: "suggestion",
     docsUrl: "https://nitro.build/docs/migration#h3-v2",
     requires: { script: true, nitro: true },
     activationScope: "workspace",
@@ -45,15 +45,15 @@ export const preferNitroH3Import = createRule({
       const source = node.source;
       if (source?.value !== "h3" || isTypeOnlyModuleReference(node)) return;
       const exports = installedNitroH3Exports(ctx, scope.dir);
-      const safe = exports !== undefined && reexportsEveryName(node, exports);
+      const available = exports !== undefined && reexportsEveryName(node, exports);
       ctx.report(
         diagnostics.NITRO0027({
           why:
             scope.kind === "package"
               ? `${scope.name} runs on Nitro 3 but imports H3 values from "h3". In a Nuxt 5 app, Nuxt treats server code that imports values from h3 as Nitro v2 code, applies its Nitro v2 compatibility layer to the whole app, and warns NUXT_B9003 naming this package.`
               : `This Nitro 3 server file imports H3 values from "h3". Nitro 3 imports every H3 utility from nitro/h3, which re-exports the h3 Nitro runs; a bare h3 import resolves the h3 the app installs, which matches only while its range stays in step with Nitro's.`,
-          fix: safe
-            ? 'Import from "nitro/h3". It re-exports every name this import uses.'
+          fix: available
+            ? 'Review H3 v2 API and host compatibility changes before importing from "nitro/h3". Exported names alone do not establish compatible behavior.'
             : exports
               ? 'Import from "nitro/h3", after replacing the names the installed nitro/h3 does not export.'
               : 'Import from "nitro/h3". Doctor could not read the installed nitro/h3 exports, so check that it exports every name this import uses.',
@@ -64,14 +64,7 @@ export const preferNitroH3Import = createRule({
           category: "h3",
           file: ctx.file.path,
           range: ctx.range(source),
-          fix: safe
-            ? {
-                kind: "safe",
-                edits: [
-                  { range: { start: source.start + 1, end: source.end - 1 }, text: "nitro/h3" },
-                ],
-              }
-            : null,
+          fix: null,
         },
       );
     };
@@ -93,11 +86,16 @@ type NitroCodeScope = { kind: "app"; dir: string } | { kind: "package"; dir: str
 function nitroCodeScope(ctx: RuleContext): NitroCodeScope | undefined {
   const owner = owningPackage(ctx);
   const dir = owner?.dir ?? ctx.project.root;
-  if (nitroServerFile(ctx, ctx.file.path) || isNitroServerFile(ctx) || isOwnServerFile(owner)) {
-    return { kind: "app", dir };
+  // Directory containment must not override a library's own runtime contract.
+  if (owner && !isPackageRuntimeSource(owner)) return undefined;
+  if (!owner || !isLibrary(owner.manifest)) {
+    if (owner && owner.dir !== ctx.project.root && !["nuxt", "nitro"].includes(owner.framework))
+      return undefined;
+    if (nitroServerFile(ctx, ctx.file.path) || isNitroServerFile(ctx) || isOwnServerFile(owner))
+      return { kind: "app", dir };
+    return undefined;
   }
-  if (!owner || owner.framework === "nuxt" || !isLibrary(owner.manifest)) return undefined;
-  if (!isPackageRuntimeSource(owner)) return undefined;
+  if (owner.framework === "nuxt") return undefined;
   if (runtimeDeclaration(owner.manifest, "nitropack") !== undefined) return undefined;
   const nitro = runtimeDeclaration(owner.manifest, "nitro");
   if (nitro === undefined || !declaresOnlyNitro3(ctx, nitro)) return undefined;

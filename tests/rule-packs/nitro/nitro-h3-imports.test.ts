@@ -54,7 +54,62 @@ const blob = {
 };
 
 describe("nitro/h3/prefer-nitro-h3", () => {
-  test("reports H3 value imports in Nitro 3 server routes and rewrites them to nitro/h3", async () => {
+  test("does not automatically migrate legacy APIs even when their names exist", async () => {
+    const result = await runRuleFixture({
+      rule: preferNitroH3Import,
+      framework: "nuxt",
+      dependencies: { nuxt: "5.0.0", nitro: "3.0.0" },
+      files: {
+        ...installedNitro("", ["defineEventHandler", "readBody", "sendWebResponse"]),
+        "server/api/body.ts": `import { defineEventHandler, readBody } from "h3"
+export default defineEventHandler(async event => {
+  await readBody(event)
+  return await readBody(event)
+})`,
+        "server/api/response.ts": `import { sendWebResponse } from "h3"
+export default event => sendWebResponse(event, new Response("ok"))`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(2);
+    for (const diagnostic of result.diagnostics) expect(diagnostic.fix ?? null).toBeNull();
+  });
+
+  test("broad serverDir respects package ownership and excludes build scripts", async () => {
+    const result = await runRuleFixture({
+      rule: preferNitroH3Import,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.0" },
+      files: {
+        ...workspace(
+          {
+            "packages/plain": {
+              name: "plain-h3",
+              exports: "./src/index.ts",
+              dependencies: { h3: "^2.0.0" },
+            },
+            "packages/compat": {
+              name: "compat",
+              exports: "./src/index.ts",
+              peerDependencies: { nitro: "^2.0.0 || ^3.0.0" },
+              devDependencies: { nitro: "^3.0.0" },
+            },
+          },
+          {
+            "packages/plain/src/index.ts": 'import { H3 } from "h3"',
+            "packages/compat/server/api/index.ts": 'import { createError } from "h3"',
+          },
+        ),
+        "nitro.config.ts": 'export default { serverDir: "." }',
+        "scripts/build-fixture.ts": 'import { H3 } from "h3"',
+        "routes/index.ts": 'import { defineHandler } from "h3"',
+      },
+    });
+    expect(result.diagnostics.map((diagnostic) => diagnostic.file)).toEqual([
+      expect.stringMatching(/routes\/index\.ts$/),
+    ]);
+  });
+
+  test("reports H3 value imports in Nitro 3 server routes as manual migrations", async () => {
     const result = await runRuleFixture({
       rule: preferNitroH3Import,
       framework: "nitro",
@@ -73,10 +128,7 @@ export default defineHandler((event: H3Event) => getQuery(event))`,
       ruleId: preferNitroH3Import.meta.id,
       range: { line: 1 },
     });
-    expect(diagnostic!.fix).toMatchObject({ kind: "safe", edits: [{ text: "nitro/h3" }] });
-    const source = result.diagnostics[0]!.fix!.edits[0]!;
-    const text = `import { defineHandler, getQuery, type H3Event } from "h3"`;
-    expect(text.slice(source.range.start, source.range.end)).toBe("h3");
+    expect(diagnostic!.fix ?? null).toBeNull();
   });
 
   test("reports H3 imports in Nuxt 5 server code", async () => {
@@ -118,8 +170,8 @@ export function ensure(value: unknown) { if (!value) throw createError({ status:
     ]);
     expect(result.diagnostics[0]).toMatchObject({
       code: "NITRO0027",
-      fix: { kind: "safe", edits: [{ text: "nitro/h3" }] },
     });
+    expect(result.diagnostics[0]!.fix ?? null).toBeNull();
     expect(result.diagnostics[0]!.why).toContain("NUXT_B9003");
   });
 
@@ -224,6 +276,25 @@ export type { HTTPError } from "h3"`,
 });
 
 describe("nitro/dependencies/declare-nitro", () => {
+  test("ignores a named app with Nitro as a build dependency", async () => {
+    const result = await runRuleFixture({
+      rule: declareNitroDependency,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.0" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "my-api",
+          type: "module",
+          scripts: { dev: "nitro dev", build: "nitro build" },
+          devDependencies: { nitro: "^3.0.0" },
+        }),
+        "server.ts":
+          'import { defineHandler } from "nitro"; export default defineHandler(() => "ok")',
+      },
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
   test("reports a published package that imports nitro/h3 without declaring nitro", async () => {
     const result = await runRuleFixture({
       rule: declareNitroDependency,

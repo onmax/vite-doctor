@@ -288,7 +288,7 @@ export const ruleDocumentationMetadata = {
   "nitro/h3/prefer-nitro-h3": {
     description:
       "Flags value imports and re-exports from h3 in Nitro 3 server code and in packages that declare nitro as a runtime dependency.",
-    why: "Nitro 3 imports every H3 utility from nitro/h3, which re-exports the h3 Nitro runs. In a Nuxt 5 app, server code from a package that imports values from h3 makes Nuxt treat it as Nitro v2 code, apply its Nitro v2 compatibility layer to the whole app, and warn NUXT_B9003 naming the package. In app server code, a bare h3 import resolves the h3 the app installs, which matches Nitro's only while the two ranges stay in step. Doctor runs this rule when the resolved Nitro is 3 or later, on server directories, and on packages whose dependencies, peerDependencies, or optionalDependencies declare a nitro range that excludes Nitro 2. It skips type-only imports, tests, and packages that only install nitro as a devDependency. The fix is safe when the installed nitro/h3 exports every imported name.",
+    why: "Nitro 3 imports every H3 utility from nitro/h3, which re-exports the h3 Nitro runs. In a Nuxt 5 app, server code from a package that imports values from h3 makes Nuxt treat it as Nitro v2 code, apply its Nitro v2 compatibility layer to the whole app, and warn NUXT_B9003 naming the package. In app server code, a bare h3 import resolves the h3 the app installs, which matches Nitro's only while the two ranges stay in step. Doctor runs this rule when the resolved Nitro is 3 or later, on server directories, and on packages whose dependencies, peerDependencies, or optionalDependencies declare a nitro range that excludes Nitro 2. It skips type-only imports, tests, and packages that only install nitro as a devDependency. Migration is a manual suggestion: matching export names do not prove compatible behavior. Review H3 v2 API changes and host compatibility aliases before changing imports.",
     recommendedReplacement:
       'Import H3 values from "nitro/h3". Type-only imports from "h3" can stay.',
     examples: [
@@ -303,7 +303,7 @@ export const ruleDocumentationMetadata = {
   "nitro/dependencies/declare-nitro": {
     description:
       "Flags published packages whose source imports nitro or a nitro/* subpath without declaring nitro in dependencies, peerDependencies, or optionalDependencies.",
-    why: "Consumers do not install a package's devDependencies, so a package that imports nitro/h3 without declaring nitro works in its own workspace but cannot resolve it under a strict install. Doctor skips private packages, tests, type-only imports, and packages that declare nuxt or @nuxt/kit, which run inside a Nuxt app that installs Nitro.",
+    why: "Consumers do not install a package's devDependencies, so a package that imports nitro/h3 without declaring nitro works in its own workspace but cannot resolve it under a strict install. Doctor requires a library entry point (exports, main, or module) and skips private packages, tests, type-only imports, and packages that declare nuxt or @nuxt/kit, which run inside a Nuxt app that installs Nitro.",
     recommendedReplacement:
       "Declare nitro in peerDependencies with the Nitro 3 range the package supports, and keep it in devDependencies for the package's own build and tests.",
     examples: [

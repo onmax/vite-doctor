@@ -1,6 +1,7 @@
 import { diagnostics } from "../diagnostics.js";
 import {
   declaredIn,
+  isLibrary,
   isPackageRuntimeSource,
   isTypeOnlyModuleReference,
   owningPackage,
@@ -32,7 +33,7 @@ export const declareNitroDependency = createRule({
   create(ctx) {
     const owner = owningPackage(ctx);
     if (!owner?.manifest.name || owner.manifest.private === true) return;
-    if (!isPackageRuntimeSource(owner)) return;
+    if (!isLibrary(owner.manifest) || !isPackageRuntimeSource(owner)) return;
     const manifest = owner.manifest;
     if (runtimeDeclaration(manifest, "nitro") !== undefined) return;
     // Nuxt layers and modules run inside a Nuxt app, which installs Nitro.
