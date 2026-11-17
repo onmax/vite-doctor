@@ -72,6 +72,69 @@ const cases: [string, string, number][] = [
     0,
   ],
   ["destructured writes", "let value = 1; ({ value } = input); const erased: unknown = value", 0],
+  [
+    "table read with a runtime key",
+    "const units: Record<string, number> = { s: 1, m: 60 }; export const f = (unit: string) => units[unit]",
+    0,
+  ],
+  [
+    "numeric table read with a runtime key",
+    "const texts: Record<number, string> = { 404: 'Not found' }; export const f = (status: number) => texts[status]",
+    0,
+  ],
+  [
+    "table read with an optional runtime key",
+    "const units: Record<string, number> = { s: 1 }; export const f = (unit: string) => units?.[unit]",
+    0,
+  ],
+  [
+    "table read with a runtime key in a nested function",
+    "const units: Record<string, number> = { s: 1 }; function f(match: string[]) { return units[match[1]!] }",
+    0,
+  ],
+  [
+    "table read with an undeclared literal key",
+    "const units: Record<string, number> = { s: 1 }; export const f = () => units.m",
+    0,
+  ],
+  [
+    "accumulator with a later member write",
+    "const env: Record<string, string> = { HOME: '/' }; env.PATH = '/bin'",
+    0,
+  ],
+  [
+    "accumulator with a later computed write",
+    "const env: Record<string, string> = { HOME: '/' }; export const f = (key: string) => { env[key] = '' }",
+    0,
+  ],
+  [
+    "accumulator with a later delete",
+    "const env: Record<string, string> = { HOME: '/' }; delete env.HOME",
+    0,
+  ],
+  ["exported table", "export const presets: Record<string, string> = { daily: '0 0 * * *' }", 0],
+  ["reassigned let", "let hidden: Record<string, unknown> = { id: 1 }; hidden = {}", 0],
+  ["let table", "let table: Record<string, number> = { a: 1 }", 0],
+  [
+    "table read with literal keys",
+    "const names: Record<string, string> = { draft: 'a', report: 'b' }; use(names.draft, names['report'])",
+    1,
+  ],
+  [
+    "table passed whole",
+    "const headers: Record<string, string> = { accept: 'json' }; fetch(url, { headers })",
+    1,
+  ],
+  [
+    "shadowed table read with a runtime key",
+    "const units: Record<string, number> = { s: 1 }; function f(units: Record<string, number>, key: string) { return units[key] }",
+    1,
+  ],
+  [
+    "other object with a member write",
+    "const env: Record<string, string> = { HOME: '/' }; function f(env: Record<string, string>) { env.PATH = '' }",
+    1,
+  ],
   ["symbol not", "function f(value: symbol) { const erased: unknown = !value;  }", 1],
   ["symbol plus", "function f(value: symbol) { const erased: unknown = +value;  }", 0],
   ["symbol negative", "function f(value: symbol) { const erased: unknown = -value;  }", 0],
@@ -135,6 +198,18 @@ test("leaves JavaScript-only sources outside the TypeScript Rule Pack", async ()
     files: {
       "index.js":
         "const values = [1]; values.filter(keep).map(transform); values.reduce((acc, item) => acc.concat(item), [])",
+    },
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
+
+test("leaves Vue bindings the template reads", async () => {
+  const result = await runProjectFixture({
+    rules: [noKnownValueWidening],
+    files: {
+      "App.vue":
+        '<template><p>{{ patches[path] }}</p></template>\n<script setup lang="ts">\n' +
+        "const path = 'a'\nconst patches: Record<string, string> = { a: 'diff' }\n</script>",
     },
   });
   expect(result.diagnostics).toHaveLength(0);
