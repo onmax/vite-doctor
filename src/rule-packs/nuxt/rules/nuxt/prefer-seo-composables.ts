@@ -1,9 +1,6 @@
 import { AnyNode, createRule, report } from "./shared.js";
 
-const SEO_HEAD_KEYS = new Set(["title", "titleTemplate"]);
-const SEO_META_NAMES =
-  /^(description|keywords|author|robots|og:|twitter:|article:|book:|profile:)/i;
-const NON_SEO_META_NAMES = new Set(["charset", "viewport", "theme-color", "color-scheme"]);
+const SEO_META_NAMES = /^(?:description$|og:|twitter:)/i;
 
 export const preferSeoComposables = createRule({
   meta: {
@@ -36,27 +33,46 @@ export const preferSeoComposables = createRule({
   },
 });
 
+// useSeoMeta() owns the title, the description, and Open Graph and Twitter tags. Everything else in
+// useHead() (links, html attributes, a title template, viewport or charset meta) stays there.
 function hasSeoHeadMetadata(node: AnyNode): boolean {
   if (node?.type !== "ObjectExpression") return false;
+  let title = false;
+  let needsUseHead = false;
   for (const property of node.properties ?? []) {
-    if (property.type !== "Property") continue;
+    if (property.type !== "Property") {
+      needsUseHead = true;
+      continue;
+    }
     const key = staticPropertyKey(property);
-    if (key && SEO_HEAD_KEYS.has(key)) return true;
-    if (key === "meta" && hasSeoMetaProperty(property.value)) return true;
+    if (key === "meta") {
+      const meta = metaEntries(property.value);
+      if (meta.some(isSeoMetaEntry)) return true;
+      if (meta.length || !isEmptyArray(property.value)) needsUseHead = true;
+    } else if (key === "title") title = true;
+    else needsUseHead = true;
   }
-  return false;
+  return title && !needsUseHead;
 }
 
-function hasSeoMetaProperty(node: AnyNode): boolean {
-  if (node?.type !== "ArrayExpression") return true;
-  for (const element of node.elements ?? []) {
-    if (!element) continue;
-    if (element.type !== "ObjectExpression") return true;
-    const name = getStaticMetaName(element);
-    if (!name) return true;
-    if (!NON_SEO_META_NAMES.has(name.toLowerCase()) && SEO_META_NAMES.test(name)) return true;
-  }
-  return false;
+/** Literal meta entries, including both branches of a conditional or logical expression. */
+function metaEntries(node: AnyNode): AnyNode[] {
+  if (node?.type === "ArrayExpression") return (node.elements ?? []).filter(Boolean);
+  if (node?.type === "ConditionalExpression")
+    return [...metaEntries(node.consequent), ...metaEntries(node.alternate)];
+  if (node?.type === "LogicalExpression")
+    return [...metaEntries(node.left), ...metaEntries(node.right)];
+  return [];
+}
+
+function isEmptyArray(node: AnyNode): boolean {
+  return node?.type === "ArrayExpression" && !(node.elements ?? []).length;
+}
+
+function isSeoMetaEntry(entry: AnyNode): boolean {
+  if (entry?.type !== "ObjectExpression") return false;
+  const name = getStaticMetaName(entry);
+  return Boolean(name && SEO_META_NAMES.test(name));
 }
 
 function getStaticMetaName(node: AnyNode): string | undefined {
