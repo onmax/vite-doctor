@@ -106,6 +106,7 @@ function isClientOnlyExecutionContext(
   const parents = getDoctorParents(node);
   if (parents.some((parent) => isClientGuardAncestor(parent, node, source))) return true;
   if (parents.some((parent) => isShortCircuitedByClientGuard(parent, node, source))) return true;
+  if (isAfterServerExit(node)) return true;
   if (
     parents.some((parent) => {
       const callee = getCalleeName(parent);
@@ -179,15 +180,194 @@ function isClientGuardAncestor(parent: unknown, node: unknown, source: string): 
     return false;
   return (
     isClientGuardText(source.slice(value.test?.start ?? 0, value.test?.end ?? 0)) ||
-    isClientGuardText(source.slice(value.start ?? 0, value.consequent?.start ?? value.end ?? 0))
+    isClientGuardText(source.slice(value.start ?? 0, value.consequent?.start ?? value.end ?? 0)) ||
+    isEmptyOnServer(value.test)
   );
 }
 
 function isShortCircuitedByClientGuard(parent: unknown, node: unknown, source: string): boolean {
   const value = parent as any;
   if (value?.type !== "LogicalExpression" || value.operator !== "&&") return false;
-  if (!isDescendantOf((node as any)?.__doctorParent, value.right)) return false;
-  return isClientGuardText(source.slice(value.left?.start ?? 0, value.left?.end ?? 0));
+  if (node !== value.right && !isDescendantOf((node as any)?.__doctorParent, value.right))
+    return false;
+  return (
+    isClientGuardText(source.slice(value.left?.start ?? 0, value.left?.end ?? 0)) ||
+    isEmptyOnServer(value.left)
+  );
+}
+
+// Only `const` and getter-only `computed()` bindings count, so no later write can fill them on the server.
+function isEmptyOnServer(node: unknown, seen = new Set<unknown>()): boolean {
+  const value = unwrapTsExpression(node);
+  if (!value || typeof value !== "object" || seen.has(value)) return false;
+  seen = new Set(seen);
+  seen.add(value);
+  switch (value.type) {
+    case "Literal":
+      return !value.regex && !value.value;
+    case "Identifier":
+      if (value.name === "undefined") return !hasLocalBinding(value);
+      return isEmptyOnServer(constInitializer(value), seen);
+    case "UnaryExpression":
+      return value.operator === "void";
+    case "LogicalExpression":
+      return value.operator === "&&"
+        ? isEmptyOnServer(value.left, seen) || isEmptyOnServer(value.right, seen)
+        : isEmptyOnServer(value.left, seen) && isEmptyOnServer(value.right, seen);
+    case "ConditionalExpression":
+      return (
+        isEmptyOnServer(value.alternate, seen) &&
+        (isEmptyOnServer(value.test, seen) || isEmptyOnServer(value.consequent, seen))
+      );
+    case "MemberExpression":
+    case "StaticMemberExpression": {
+      const name = getRuntimeFlagName(value);
+      if (name === "import.meta.client" || name === "process.client") return true;
+      if (value.computed || getNodeName(value.property) !== "value") return false;
+      const object = unwrapTsExpression(value.object);
+      if (object?.type !== "Identifier") return false;
+      const init = unwrapTsExpression(constInitializer(object));
+      if (!isVueComputedCall(init) || init.arguments?.length !== 1) return false;
+      return functionResultIsEmptyOnServer(init.arguments[0], seen);
+    }
+    default:
+      return false;
+  }
+}
+
+function isTruthyOnServer(node: unknown): boolean {
+  const value = unwrapTsExpression(node);
+  if (value?.type === "UnaryExpression" && value.operator === "!")
+    return isEmptyOnServer(value.argument);
+  if (value?.type === "LogicalExpression" && value.operator === "||")
+    return isTruthyOnServer(value.left) || isTruthyOnServer(value.right);
+  const name = getRuntimeFlagName(value);
+  return name === "import.meta.server" || name === "process.server";
+}
+
+function getRuntimeFlagName(node: any): string | null {
+  if (node?.type !== "MemberExpression" || node.computed) return null;
+  const object = node.object;
+  if (object?.type === "MetaProperty")
+    return `${object.meta?.name}.${object.property?.name}.${node.property?.name}`;
+  if (object?.type === "Identifier" && object.name === "process" && hasLocalBinding(object))
+    return null;
+  return getNodeName(node);
+}
+
+function isVueComputedCall(node: any): boolean {
+  if (node?.type !== "CallExpression") return false;
+  const callee = unwrapTsExpression(node.callee);
+  const namespace =
+    callee?.type === "MemberExpression" &&
+    !callee.computed &&
+    getNodeName(callee.property) === "computed";
+  const identifier = namespace ? callee.object : callee;
+  if (identifier?.type !== "Identifier") return false;
+  for (const scope of getDoctorParents(identifier) as any[]) {
+    if (!scopeBindings(scope).has(identifier.name)) continue;
+    if (scope.type !== "Program") return false;
+    return scope.body.some(
+      (statement: any) =>
+        statement.type === "ImportDeclaration" &&
+        statement.source?.value === "vue" &&
+        statement.importKind !== "type" &&
+        statement.specifiers.some(
+          (specifier: any) =>
+            specifier.local?.name === identifier.name &&
+            specifier.importKind !== "type" &&
+            (namespace
+              ? specifier.type === "ImportNamespaceSpecifier"
+              : specifier.type === "ImportSpecifier" &&
+                getNodeName(specifier.imported) === "computed"),
+        ),
+    );
+  }
+  return !namespace && identifier.name === "computed";
+}
+
+function functionResultIsEmptyOnServer(fn: unknown, seen: Set<unknown>): boolean {
+  const value = fn as any;
+  if (!isFunctionLike(value) || value.async || value.generator) return false;
+  if (value.body?.type !== "BlockStatement") return isEmptyOnServer(value.body, seen);
+  const returns: any[] = [];
+  walkAst(value.body, (node) => {
+    const current = node as any;
+    if (
+      current.type === "ReturnStatement" &&
+      getDoctorParents(current).find((parent) => isFunctionLike(parent)) === value
+    )
+      returns.push(current);
+  });
+  return returns.every(
+    (statement) =>
+      !statement.argument ||
+      isEmptyOnServer(statement.argument, new Set(seen)) ||
+      isAfterServerExit(statement) ||
+      getDoctorParents(statement).some(
+        (parent) =>
+          (parent as any).type === "IfStatement" &&
+          isDescendantOf(statement, (parent as any).consequent) &&
+          isEmptyOnServer((parent as any).test, new Set(seen)),
+      ),
+  );
+}
+
+function isAfterServerExit(node: unknown): boolean {
+  let child = node as any;
+  for (const parent of getDoctorParents(node) as any[]) {
+    if (isFunctionLike(parent)) return false;
+    if (Array.isArray(parent.body)) {
+      const index = parent.body.indexOf(child);
+      for (const statement of parent.body.slice(0, Math.max(0, index))) {
+        if (
+          statement.type === "IfStatement" &&
+          alwaysExits(statement.consequent) &&
+          isTruthyOnServer(statement.test)
+        )
+          return true;
+      }
+    }
+    child = parent;
+  }
+  return false;
+}
+
+function alwaysExits(statement: any): boolean {
+  if (statement?.type === "ReturnStatement" || statement?.type === "ThrowStatement") return true;
+  return statement?.type === "BlockStatement" && statement.body.some(alwaysExits);
+}
+
+function constInitializer(identifier: any): any {
+  for (let scope = identifier.__doctorParent; scope; scope = scope.__doctorParent) {
+    if (!scopeBindings(scope).has(identifier.name)) continue;
+    if (!Array.isArray(scope.body)) return null;
+    for (let statement of scope.body) {
+      if (statement?.type === "ExportNamedDeclaration") statement = statement.declaration;
+      if (statement?.type !== "VariableDeclaration") continue;
+      const declarator = statement.declarations.find(
+        (item: any) => item.id?.type === "Identifier" && item.id.name === identifier.name,
+      );
+      if (declarator) return statement.kind === "const" ? declarator.init : null;
+    }
+    return null;
+  }
+  return null;
+}
+
+function unwrapTsExpression(node: unknown): any {
+  let value = node as any;
+  while (
+    [
+      "ParenthesizedExpression",
+      "TSAsExpression",
+      "TSSatisfiesExpression",
+      "TSNonNullExpression",
+      "TSTypeAssertion",
+    ].includes(value?.type)
+  )
+    value = value.expression;
+  return value;
 }
 
 function isDescendantOf(node: unknown, ancestor: unknown): boolean {
