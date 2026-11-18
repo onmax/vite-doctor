@@ -20,7 +20,9 @@ export function applyDoctorOptions(
   options.rules = stringFlag(flags.rules) ?? options.rules;
   options.severity =
     (stringFlag(flags.severity) as DoctorRunOptions["severity"]) ?? options.severity;
-  options.extends = parseExtendsFlag(flags.extends) ?? options.extends;
+  const strict = Array.isArray(flags.strict) ? flags.strict.at(-1) : flags.strict;
+  options.extends =
+    withStrictFlag(parseExtendsFlag(flags.extends), strict === true) ?? options.extends;
   options.since = stringFlag(flags.since) ?? options.since;
   options.baseline = stringFlag(flags.baseline) ?? options.baseline;
   options.format = (stringFlag(flags.format) as DoctorRunOptions["format"]) ?? options.format;
@@ -28,6 +30,7 @@ export function applyDoctorOptions(
 
 function parseExtends(value: string | undefined): DoctorRunOptions["extends"] {
   if (!value || value === "auto") return "auto";
+  if (value === "strict") return "strict";
   return value
     .split(",")
     .map((item) => item.trim())
@@ -36,6 +39,17 @@ function parseExtends(value: string | undefined): DoctorRunOptions["extends"] {
 
 function parseExtendsFlag(value: unknown): DoctorRunOptions["extends"] | undefined {
   return typeof value === "string" ? parseExtends(value) : undefined;
+}
+
+// `--strict` is `--extends strict`; next to `--extends` it adds "strict" to the listed presets.
+function withStrictFlag(
+  value: DoctorRunOptions["extends"],
+  strict: boolean,
+): DoctorRunOptions["extends"] {
+  if (!strict) return value;
+  if (value === undefined || value === "strict") return "strict";
+  if (value === "auto") return ["auto", "strict"];
+  return value.includes("strict") ? value : [...value, "strict"];
 }
 
 export function stringFlag(value: unknown): string | undefined {

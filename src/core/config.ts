@@ -1,6 +1,7 @@
 import { loadConfig } from "c12";
 import { defu } from "defu";
 import type {
+  DoctorExtends,
   DoctorExtensionInput,
   DoctorFramework,
   DoctorSerializableConfig,
@@ -24,7 +25,7 @@ export interface DoctorRunOptions {
   /** @internal Path of the automatically discovered JSON config, if loaded by the CLI. */
   declarativeConfigFile?: string;
   framework?: "auto" | DoctorFramework;
-  extends?: "auto" | string[];
+  extends?: DoctorExtends;
   changed?: boolean;
   since?: string;
   /**

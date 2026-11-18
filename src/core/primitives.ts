@@ -21,8 +21,14 @@ export interface DoctorConfigOverride {
   extends?: string[];
   rules?: Record<string, DoctorRuleConfig>;
 }
+/**
+ * `"auto"` selects the Recommended Preset of every activated Rule Pack, `"strict"` its Strict
+ * Preset (or the Recommended Preset when it has none). A list names `pack/preset` entries and can
+ * include `"auto"` or `"strict"`.
+ */
+export type DoctorExtends = "auto" | "strict" | string[];
 export interface DoctorSerializableConfig {
-  extends?: "auto" | string[];
+  extends?: DoctorExtends;
   include?: string[];
   exclude?: string[];
   rules?: Record<string, DoctorRuleConfig>;

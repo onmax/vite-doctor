@@ -102,6 +102,7 @@ const BOOLEAN_OPTIONS = new Set([
   "fix",
   "unsafe-fix",
   "update-baseline",
+  "strict",
   "server",
   "no-server",
 ]);

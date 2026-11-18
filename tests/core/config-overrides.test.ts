@@ -444,6 +444,7 @@ test.each([
   [{ files: [], rules: {} }],
   [{ files: "src/**", rules: {} }],
   [{ files: ["src/**"], extends: ["auto"] }],
+  [{ files: ["src/**"], extends: ["strict"] }],
   [{ files: ["src/**"], extends: [42] }],
   [{ files: ["src/**"], rules: false }],
   [{ files: ["src/**"], rules: [] }],
@@ -452,6 +453,17 @@ test.each([
   await withProject(async (root) => {
     await expect(run(root, { overrides: [override as any] })).rejects.toMatchObject({
       name: "DOC0035",
+    });
+  });
+});
+
+test("an invalid override selector recommends only pack/preset", async () => {
+  await withProject(async (root) => {
+    await expect(
+      run(root, { overrides: [{ files: ["src/**"], extends: ["nonsense"] }] }),
+    ).rejects.toMatchObject({
+      name: "DOC0016",
+      message: expect.stringMatching(/Use "pack\/preset"\./),
     });
   });
 });

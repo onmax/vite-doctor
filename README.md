@@ -196,6 +196,16 @@ export default defineNuxtConfig({
 });
 ```
 
+### Strict mode
+
+By default Doctor runs the recommended preset of every Rule Pack the project activates (`extends: "auto"`). Strict mode runs each activated Rule Pack's strict preset instead, which adds noisier, opinionated, and migration-oriented Rules. Rule Packs without a strict preset keep their recommended preset:
+
+```bash
+pnpm dlx vite-doctor . --strict
+```
+
+`--strict` is short for `--extends strict`. Set `extends: "strict"` in `doctor.config.json`, `doctor.config.ts`, `doctor({ config })` in Vite config, or the Nuxt `doctor` key to make it the default. In an `extends` list, `"strict"` works like `"auto"` and combines with explicit presets: `["strict", "comark/recommended"]`.
+
 ### Removed run options
 
 Remove `coverage`, `runtimeEvidence`, `emitGraph`, `confidenceMin`, and `scoreOnly` from `DoctorRunOptions` objects. These options had no effect on Doctor Runs; their removal is a breaking TypeScript API change. Runtime Evidence contributors, graph reports, diagnostic confidence, and scoring remain supported.

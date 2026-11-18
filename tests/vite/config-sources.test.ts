@@ -129,7 +129,20 @@ test.each([
     'const config = { "\\u0064octor": { include: [] } }; export { config as default };',
   ],
   ["vite.config.cjs", "module.exports = { doctor: { include: [] } };"],
+  ["vite.config.cjs", "const config = { doctor: { include: [] } }; module.exports = config;"],
   ["vite.config.ts", "export default { ...other, doctor: computed(), doctor: { include: [] } };"],
+  [
+    "vite.config.ts",
+    "const config = { plugins: [{ config() { return {}; } }], doctor: { include: [] } }; export default config;",
+  ],
+  [
+    "vite.config.ts",
+    "const config = { doctor: { include: [] }, plugins: [{ config(config) { return config; } }] }; export { config as default };",
+  ],
+  [
+    "vite.config.ts",
+    "import { defineDoctorConfig as helper } from 'vite-doctor'; export default ({ helper: ignored }) => ({ doctor: helper({ include: [] }) });",
+  ],
 ])("%s recognizes literal settings in %s", async (file, source) => {
   const root = fixture({ [file]: source });
   expect((await run(root)).code).toBe(0);
@@ -138,14 +151,31 @@ test.each([
 });
 
 test.each([
+  "export default () => { const alias = { doctor: '/src/doctor.ts' }; return { resolve: { alias } }; };",
+  "export default () => { const alias = {}; alias.doctor = '/src/doctor.ts'; return { resolve: { alias } }; };",
+  "export default { resolve: { alias: { doctor: '/src/doctor.ts' } }, ...(process.env.CI ? { base: '/' } : {}) };",
+  "const config = { doctor: { include: [] } }; export default (config) => config;",
+  "const { config } = { config: {}, doctor: '/src/doctor.ts' }; export default config;",
+])("allows JSON when the Vite export has no known doctor key: %s", async (source) => {
+  const root = fixture({ "vite.config.ts": source, "doctor.config.json": "{}" });
+  const { code, report } = await run(root);
+  expect(code).toBe(0);
+  expect(codes(report)).toContain("DOC0038");
+});
+
+test.each([
   "const base = { doctor: { include: ['app.ts'] } }; export default { doctor: { include: [] }, ...base };",
   "const key = 'doctor'; export default { doctor: { include: [] }, [key]: { include: ['app.ts'] } };",
   "import { mergeConfig } from 'vite'; export default mergeConfig({ doctor: { include: [] } }, {});",
   "export default () => { if (process.env.CI) return {}; return { doctor: { include: [] } }; };",
-  "const config = { doctor: { include: [] } }; export default (config) => config;",
+  "export default (config = { doctor: { include: [] } }) => config;",
   "const defineDoctorConfig = () => ({ include: ['app.ts'] }); export default { doctor: defineDoctorConfig({ include: [] }) };",
   "import { defineDoctorConfig as helper } from 'vite-doctor'; export default (helper) => ({ doctor: helper({ include: [] }) });",
+  "import { defineDoctorConfig as helper } from 'vite-doctor'; export default ({ nested: { helper } }) => ({ doctor: helper({ include: [] }) });",
   "const config = { doctor: { include: [] } }; config.doctor = { include: ['app.ts'] }; export default config;",
+  "const config = { doctor: { include: [] } }; useConfig(config); export default config;",
+  "export default () => { const config = {}; config.doctor = { include: [] }; return config; };",
+  "export default { ...(process.env.CI ? { doctor: { include: [] } } : {}) };",
 ])("does not guess the effective setting in %s", async (source) => {
   const root = fixture({ "vite.config.ts": source });
   const { code, report } = await run(root);
