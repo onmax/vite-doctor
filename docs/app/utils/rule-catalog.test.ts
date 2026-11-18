@@ -188,7 +188,7 @@ test("inline suppression diagnostics have public diagnostic references", async (
   expect(unused?.ruleId).toBe("doctor/inline/unused-suppression");
   expect(unknown?.ruleId).toBe("doctor/inline/unknown-suppression-rule");
   expect(await diagnosticsCollectionSource.getItem(unused!.key)).toContain(
-    "changed-file runs report only directives inside the change",
+    "Changed-file runs report only directives inside the change",
   );
 });
 
