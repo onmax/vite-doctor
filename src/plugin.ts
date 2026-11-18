@@ -29,6 +29,10 @@ export interface ViteDoctorSurfaceOptions {
   /** Explicit Doctor Extensions. Extensions exposed by other Vite plugins through `api.doctor` attach automatically. */
   extensions?: DoctorExtensionInput[];
   rules?: string;
+  /** Report only Diagnostics on lines changed since the merge base with this Git ref, like `--since`. */
+  since?: string;
+  /** Report only Diagnostics on lines changed against `HEAD`, untracked files included, like `--changed`. */
+  changed?: boolean;
   severity?: "error" | "warn" | "info";
   maxWarnings?: number;
   cache?: boolean;
@@ -343,6 +347,8 @@ function surfaceRunInput(config: ResolvedConfig, options: ViteDoctorSurfaceOptio
       config: options.config,
       extends: options.extends,
       rules: options.rules,
+      since: options.since,
+      changed: options.changed,
       severity: options.severity,
       maxWarnings: options.maxWarnings,
       cache: options.cache ?? true,

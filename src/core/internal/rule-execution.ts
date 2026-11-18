@@ -28,9 +28,11 @@ import {
 } from "./workspace-graph.js";
 import { createDiagnosticFingerprint, normalizeDiagnostic, sourceTextFor } from "./diagnostics.js";
 import {
+  fileRuleConfig,
   markSession,
   recordRuleTiming,
-  resolvedConfigFor,
+  topLevelRuleConfig,
+  type ResolvedRuleConfig,
   type RuleTiming,
   type ScanSession,
 } from "./scan-session.js";
@@ -68,11 +70,17 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         : [...rules.keys()];
     if (!candidates.length) continue;
     if (sourceShape(file) === undefined) await loadSourceFile(file);
-    const pending: number[] = [];
+    const pending: Array<{ index: number; config: ResolvedRuleConfig }> = [];
     for (const index of candidates) {
       const rule = rules[index]!;
       if (!canRunRuleOnFile(rule, file)) continue;
-      if (session.ruleScopes.get(rule.meta.id)?.has(owner) === false) continue;
+      const config = fileRuleConfig(
+        session,
+        rule.meta.id,
+        file.relativePath,
+        session.ruleScopes.get(rule.meta.id)?.has(owner) !== false,
+      );
+      if (!config.enabled) continue;
       const key = keys[index];
       const cached = key ? session.cache.ruleResult(file.path, key) : undefined;
       if (cached) {
@@ -84,16 +92,16 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         if (key) session.cache.recordRuleResult(file.path, key, [], []);
         continue;
       }
-      pending.push(index);
+      pending.push({ index, config });
     }
     if (!pending.length) continue;
     await loadSourceFile(file);
     const before = projectSnapshot(session.project);
     const visitors: RuleVisitor[] = [];
     const runs: Array<{ index: number; run: RuleRun; reportedBefore: number }> = [];
-    for (const index of pending) {
+    for (const { index, config } of pending) {
       const rule = rules[index]!;
-      const run = createRuleRun(session, file, rule, "file", reported[index]);
+      const run = createRuleRun(session, file, rule, "file", reported[index], file.project, config);
       runs.push({ index, run, reportedBefore: reported[index]!.length });
       const timing = timings?.[index];
       const createStarted = timing && performance.now();
@@ -339,9 +347,9 @@ function createRuleRun(
   phase: Diagnostic["analysisPhase"] = "file",
   sink?: Diagnostic[],
   project: ProjectInfo = phase === "file" ? file.project : session.project,
+  currentRuleConfig: ResolvedRuleConfig = topLevelRuleConfig(session, rule.meta.id),
 ): RuleRun {
   const frame = session.ruleInputs.frame(workspaceViewRoot(project));
-  const currentRuleConfig = resolvedConfigFor(session, rule.meta.id);
   const currentSeverity = currentRuleConfig.severity ?? rule.meta.severity;
   let readsInventory = false;
   const context: RuleContext = {
@@ -380,13 +388,15 @@ function createRuleRun(
             target: relative(session.root, outside),
           });
       }
-      const diagnosticConfig = resolvedConfigFor(session, input.ruleId);
+      // Overrides apply to the file a Diagnostic is located in, which a project-scoped Rule can
+      // choose, so its config is resolved per Diagnostic.
+      const diagnosticConfig = fileRuleConfig(session, input.ruleId, input.file);
       if (diagnosticConfig.enabled === false) return;
       if (input.file !== file.path) frame.log.push(`t:${resolve(session.root, input.file)}`);
       const severity =
         diagnosticConfig.severity ??
-        currentRuleConfig.severity ??
-        input.severity ??
+        (input.ruleId === rule.meta.id ? undefined : currentRuleConfig.severity) ??
+        metadata.severity ??
         rule.meta.severity;
       const next = {
         ...input,

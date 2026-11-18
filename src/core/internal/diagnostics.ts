@@ -117,7 +117,15 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
     (effectiveExtends === undefined ||
       effectiveExtends === "auto" ||
       (Array.isArray(effectiveExtends) && effectiveExtends.includes("auto"))) &&
-    !Object.values(session.config.rules ?? {}).includes("off");
+    !Object.values(session.config.rules ?? {}).includes("off") &&
+    !session.ruleOverrides.length;
+  // A Rule that runs on only some files cannot prove a suppression stale.
+  const partial = new Set([
+    ...session.overrideOnlyRules,
+    ...session.ruleOverrides.flatMap((override) =>
+      [...override.rules].flatMap(([ruleId, config]) => (config.enabled ? [] : [ruleId])),
+    ),
+  ]);
   const analyzed = session.files.map((file) => relative(root, file.path));
   const unproven = new Set(
     (session.project.evidenceGaps ?? []).flatMap((gap) =>
@@ -131,6 +139,7 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
   const unused = unusedConfigSuppressionEntries(root, session.config, session.diagnostics).filter(
     ({ suppression }) => {
       if (suppression.ruleId ? !ran.has(suppression.ruleId) : !unscoped) return false;
+      if (suppression.ruleId && partial.has(suppression.ruleId)) return false;
       const scope = suppression.ruleId ? session.ruleScopes.get(suppression.ruleId) : undefined;
       // A broad suppression is inconclusive when its Rule only ran in part of the workspace.
       if (!suppression.file && !coversWorkspace(scope)) return false;

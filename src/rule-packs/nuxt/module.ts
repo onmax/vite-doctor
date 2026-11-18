@@ -599,6 +599,7 @@ function serializableDoctorConfig(config: DoctorConfig = {}): DoctorConfig | und
   if (config.include !== undefined) payload.include = config.include;
   if (config.exclude !== undefined) payload.exclude = config.exclude;
   if (config.rules !== undefined) payload.rules = config.rules;
+  if (config.overrides !== undefined) payload.overrides = config.overrides;
   if (config.suppressions !== undefined) payload.suppressions = config.suppressions;
   if (config.cache !== undefined) payload.cache = config.cache;
   if (config.score !== undefined) payload.score = config.score;
