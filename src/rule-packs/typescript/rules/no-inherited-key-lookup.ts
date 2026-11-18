@@ -1055,6 +1055,19 @@ export const noInheritedKeyLookup = createRule({
       return index >= 0 && siblings.slice(0, index).every(safe);
     }
 
+    function canCoerceWithoutEffects(node: AnyNode): boolean {
+      const value = expression(node, true);
+      return value?.type === "Literal" && !value.regex;
+    }
+
+    function canCarryGuardPastProperty(property: AnyNode): boolean {
+      return (
+        property.type === "Property" &&
+        (!property.computed || canCoerceWithoutEffects(property.key)) &&
+        (property.method || property.kind !== "init" || canCarryGuard(property.value))
+      );
+    }
+
     function canCarryGuardInto(parent: AnyNode, child: AnyNode): boolean {
       switch (parent.type) {
         case "VariableDeclaration":
@@ -1067,6 +1080,24 @@ export const noInheritedKeyLookup = createRule({
           return parent.init === child;
         case "SequenceExpression":
           return safePrefix(parent.expressions, child);
+        case "AwaitExpression":
+        case "YieldExpression":
+          return parent.argument === child;
+        case "ArrayExpression":
+          return safePrefix(
+            parent.elements,
+            child,
+            (element) => !element || canCarryGuard(element),
+          );
+        case "ObjectExpression":
+          return safePrefix(parent.properties, child, canCarryGuardPastProperty);
+        case "Property":
+          return (
+            (parent.computed && parent.key === child) ||
+            (parent.value === child && (!parent.computed || canCoerceWithoutEffects(parent.key)))
+          );
+        case "TemplateLiteral":
+          return safePrefix(parent.expressions, child, canCoerceWithoutEffects);
         case "LogicalExpression":
         case "BinaryExpression":
           return parent.left === child || (parent.right === child && canCarryGuard(parent.left));

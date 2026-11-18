@@ -130,6 +130,51 @@ test("reports a membership test and the read it guards once", async () => {
 });
 
 test.each([
+  ["an await operand", "async function", "await values[key]", 0],
+  ["a yield operand", "function*", "yield values[key]", 0],
+  ["an array element after holes and literals", "function", "[, 0, values[key]]", 0],
+  ["an object property value", "function", "({ first: 0, ['value']: values[key] })", 0],
+  ["a template substitution after a literal", "function", "`${0}:${values[key]}`", 0],
+  ["a lookup after suspension", "async function", "(await 0, values[key])", 1],
+  ["an array element after deletion", "function", "[delete values[key], values[key]]", 1],
+  [
+    "an object property after deletion",
+    "function",
+    "({ first: delete values[key], value: values[key] })",
+    1,
+  ],
+  [
+    "a value after an effectful computed key",
+    "function",
+    "({ [String(delete values[key])]: values[key] })",
+    1,
+  ],
+  [
+    "a value after a potentially effectful key coercion",
+    "function",
+    "({ [prefix]: values[key] })",
+    1,
+  ],
+  [
+    "a template substitution after potentially effectful coercion",
+    "function",
+    "`${prefix}:${values[key]}`",
+    1,
+  ],
+])("tracks evaluation before %s", async (_name, declaration, result, count) => {
+  const source = `${declaration} read(values: Record<string, string>, key: string, prefix: any) { if (!Object.hasOwn(values, key)) return; return ${result} }`;
+  expect(await run(source)).toHaveLength(count);
+});
+
+test("reports a membership test and the awaited read it guards once", async () => {
+  expect(
+    await run(
+      "async function read(values: Record<string, string>, key: string) { if (!(key in values)) return; return await values[key] }",
+    ),
+  ).toHaveLength(1);
+});
+
+test.each([
   [
     "a namespace declaration",
     "namespace Local { export function read(values: Record<string, string>, key: string) { return values[key]?.trim() } }",
