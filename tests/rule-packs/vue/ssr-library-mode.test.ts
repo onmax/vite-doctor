@@ -537,6 +537,62 @@ export default defineComponent({ setup() {
   );
 });
 
+test("preserves a browser selector only when it changes the selected property", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/branches.ts": `import { defineComponent, h, ref } from 'vue';
+const different = () => typeof window !== 'undefined' && window.innerWidth >= 768
+  ? { nested: { columns: 2 } } : { nested: { columns: 1 } };
+export default defineComponent({ setup() {
+  const wide = typeof window !== 'undefined' && window.innerWidth >= 768;
+  const layout = typeof window !== 'undefined' && window.innerWidth >= 768 ? { columns: 2 } : { columns: 1 };
+  const shortCircuit = (typeof window !== 'undefined' && window.innerWidth >= 768 && { columns: 2 }) || { columns: 1 };
+  const stable = wide ? { columns: 1, width: globalThis.window?.innerWidth } : { columns: 1 };
+  const stableShortCircuit = (wide && { columns: 1, width: globalThis.window?.innerWidth }) || { columns: 1 };
+  const a = ref(layout.columns);
+  const b = ref(shortCircuit.columns);
+  const c = ref(different().nested.columns);
+  const d = ref(stable.columns);
+  const e = ref(stableShortCircuit.columns);
+  const f = ref(({ columns: 1, width: globalThis.window?.innerWidth } || { columns: 2 }).columns);
+  return () => h('div', [a.value, b.value, c.value, d.value, e.value, f.value]);
+} });`,
+  });
+  expect(await ssrDiagnostics(root)).toEqual(
+    [10, 11, 12].map(
+      (line) => `vue/ssr/no-setup-state-from-browser-read:packages/ui/src/branches.ts:${line}`,
+    ),
+  );
+});
+
+test("resolves template reads outside loop and slot aliases", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/Scopes.vue": `<script setup lang="ts">
+import { computed, onMounted } from 'vue';
+const loopWidth = computed(() => typeof window === 'undefined' ? 0 : window.innerWidth);
+const slotWidth = computed(() => typeof window === 'undefined' ? 0 : window.innerWidth);
+const widths = computed(() => typeof window === 'undefined' ? [] : [window.innerWidth]);
+const visible = computed(() => typeof window === 'undefined' ? false : window.innerWidth > 0);
+const siblingWidth = computed(() => typeof window === 'undefined' ? 0 : window.innerWidth);
+const propWidth = computed(() => typeof window === 'undefined' ? 0 : window.innerWidth);
+onMounted(() => console.log(loopWidth.value, slotWidth.value));
+</script>
+<template>
+  <p v-for="loopWidth in [320]" :key="loopWidth"><i>{{ loopWidth }}</i></p>
+  <Panel v-slot="{ width: slotWidth }"><i>{{ slotWidth }}</i></Panel>
+  <Panel v-slot="{ width: propWidth }" :width="propWidth">{{ propWidth }}</Panel>
+  <p v-for="widths in widths" :key="widths">{{ widths }}</p>
+  <p v-if="visible" v-for="visible in [1]" :key="visible">{{ visible }}</p>
+  <p v-for="siblingWidth in [320]" :key="siblingWidth">{{ siblingWidth }}</p>
+  <p>{{ siblingWidth }}</p>
+</template>`,
+  });
+  expect(await ssrDiagnostics(root)).toEqual(
+    [5, 6, 7, 8].map(
+      (line) => `vue/ssr/no-setup-state-from-browser-read:packages/ui/src/Scopes.vue:${line}`,
+    ),
+  );
+});
+
 test("does not treat an unused computed declaration as a first-render read", async () => {
   const root = libraryWorkspace({
     "packages/ui/src/lazy.ts": `import { computed, defineComponent, h } from 'vue';

@@ -4,6 +4,12 @@ import { parseScript } from "../../../../core/internal/script.js";
 import type { AnyNode } from "./shared.js";
 
 type PropertyPath = readonly (string | null)[];
+type Primitive = string | number | bigint | boolean | null;
+type BranchResult = { values: SsrValue[]; constants?: Primitive[] };
+const TRUTHY = 1;
+const FALSY = 2;
+const NULLISH = 4;
+const ANY_TRUTH = TRUTHY | FALSY | NULLISH;
 
 /**
  * A value that differs between the server render and the first client render: a browser global
@@ -177,12 +183,9 @@ export function createSsrValueTracer(ctx: RuleContext, kind: SsrValueKind) {
             return expression(node.object, module, seen, depth, [memberKey(node), ...path]);
           break;
         case "ConditionalExpression":
-          return [node.consequent, node.alternate].flatMap((branch) =>
-            expression(branch, module, seen, depth, path),
-          );
         case "LogicalExpression":
-          return [node.left, node.right].flatMap((branch) =>
-            expression(branch, module, seen, depth, path),
+          return projectedBranches(node, path, (value, selection = []) =>
+            expression(value, module, seen, depth, selection),
           );
         case "CallExpression": {
           const target = callTarget(node, module);
@@ -633,6 +636,93 @@ function objectProperty(object: AnyNode, key: string | null | undefined): AnyNod
     if (name === null) return undefined;
     if (name === key) return property.kind === "init" ? property.value : undefined;
   }
+}
+
+function projectedBranches(
+  node: AnyNode,
+  path: PropertyPath,
+  trace: (node: AnyNode, path?: PropertyPath) => SsrValue[],
+): SsrValue[] {
+  type Select = (value: AnyNode, truth: number) => BranchResult;
+  let budget = 64;
+
+  function choose(
+    test: AnyNode,
+    truth: number,
+    mask: number,
+    yes: () => BranchResult,
+    no: () => BranchResult,
+  ): BranchResult {
+    if (!(truth & mask)) return no();
+    if (!(truth & ~mask)) return yes();
+    const { values: yesValues, constants: yesConstants } = yes();
+    const { values: noValues, constants: noConstants } = no();
+    const values = [...new Set([...yesValues, ...noValues])];
+    if (!yesConstants || !noConstants) return { values };
+    const contains = (items: Primitive[], item: Primitive) =>
+      items.some((candidate) => Object.is(candidate, item));
+    const added = noConstants.filter((item) => !contains(yesConstants, item));
+    if (added.length || yesConstants.some((item) => !contains(noConstants, item)))
+      values.push(...trace(test));
+    return { values, constants: [...yesConstants, ...added] };
+  }
+
+  function evaluate(value: AnyNode, select: Select): BranchResult {
+    if (--budget < 0) return { values: [] };
+    value = unwrap(value);
+    if (value.type === "ConditionalExpression") {
+      let consequent: BranchResult | undefined;
+      let alternate: BranchResult | undefined;
+      return evaluate(value.test, (test, truth) =>
+        choose(
+          test,
+          truth,
+          TRUTHY,
+          () => (consequent ??= evaluate(value.consequent, select)),
+          () => (alternate ??= evaluate(value.alternate, select)),
+        ),
+      );
+    }
+    if (value.type === "LogicalExpression") {
+      const takeRight =
+        value.operator === "&&" ? TRUTHY : value.operator === "??" ? NULLISH : FALSY | NULLISH;
+      let right: BranchResult | undefined;
+      return evaluate(value.left, (left, truth) =>
+        choose(
+          left,
+          truth,
+          takeRight,
+          () => (right ??= evaluate(value.right, select)),
+          () => select(left, truth & ~takeRight),
+        ),
+      );
+    }
+    const truth =
+      value.type === "ObjectExpression" || value.type === "ArrayExpression"
+        ? TRUTHY
+        : isPrimitiveLiteral(value)
+          ? value.value === null
+            ? NULLISH
+            : value.value
+              ? TRUTHY
+              : FALSY
+          : ANY_TRUTH;
+    return select(value, truth);
+  }
+
+  return evaluate(node, (value) => {
+    let selected = value;
+    for (const key of path) {
+      selected =
+        selected?.type === "ObjectExpression" ? unwrap(objectProperty(selected, key)) : undefined;
+    }
+    const values = trace(value, path);
+    return isPrimitiveLiteral(selected) ? { values, constants: [selected.value] } : { values };
+  }).values;
+}
+
+function isPrimitiveLiteral(node: AnyNode): boolean {
+  return node?.type === "Literal" && !node.regex && node.value !== undefined;
 }
 
 /** Whether a browser read cannot throw on the server, because a guard or `try` keeps it there. */
