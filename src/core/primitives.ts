@@ -10,11 +10,23 @@ export {
 export type DoctorSeverity = "blocker" | "error" | "warn" | "info";
 export type DoctorReportFormat = "text" | "json" | "sarif" | "agent";
 export type DoctorRuleConfig = "off" | DoctorSeverity | [DoctorSeverity, unknown];
+/**
+ * Rule config for the files that match `files`. Overrides apply in order after the top-level
+ * config, so a later matching override wins.
+ */
+export interface DoctorConfigOverride {
+  /** Globs relative to the Doctor root, matched like `include` and `exclude`. */
+  files: string[];
+  /** `pack/preset` entries whose Rules also run on the matched files. */
+  extends?: string[];
+  rules?: Record<string, DoctorRuleConfig>;
+}
 export interface DoctorSerializableConfig {
   extends?: "auto" | string[];
   include?: string[];
   exclude?: string[];
   rules?: Record<string, DoctorRuleConfig>;
+  overrides?: DoctorConfigOverride[];
   suppressions?: Array<{ ruleId?: string; fingerprint?: string; file?: string; reason: string }>;
   cache?: { dir?: string; strategy?: "content-hash" };
   score?: { weights?: Partial<Record<"blocker" | "error" | "warn" | "info", number>> };

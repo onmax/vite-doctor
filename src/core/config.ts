@@ -7,7 +7,11 @@ import type {
   ProjectInfo,
   RuntimeTarget,
 } from "./primitives.js";
-export type { DoctorRuleConfig, DoctorSerializableConfig } from "./primitives.js";
+export type {
+  DoctorConfigOverride,
+  DoctorRuleConfig,
+  DoctorSerializableConfig,
+} from "./primitives.js";
 
 export interface DoctorConfig extends DoctorSerializableConfig {
   extensions?: DoctorExtensionInput[];

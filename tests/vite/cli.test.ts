@@ -499,6 +499,25 @@ test("CLI identifies config loading failures and points to the config file", asy
   );
 });
 
+test.each([
+  [{ files: ["src/**"] }, "DOC0035"],
+  [[{ files: ["src/**"], extends: [42] }], "DOC0035"],
+  [[{ files: ["src/**"], rules: false }], "DOC0035"],
+  [[{ files: ["src/**"], extends: ["typescript/recommened"] }], "DOC0018"],
+])(
+  "CLI attributes invalid overrides to the config even with a CLI extends flag: %j",
+  async (overrides, code) => {
+    await withFixture({ "doctor.config.json": JSON.stringify({ overrides }) }, async (root) => {
+      const result = await runCli([".", "--extends", "auto", "--format", "agent"], root);
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.output)).toMatchObject({
+        error: { kind: "config", code, file: join(root, "doctor.config.json") },
+        next: { action: "fix-config", file: join(root, "doctor.config.json") },
+      });
+    });
+  },
+);
+
 test("CLI identifies ambiguous Config Extends from a loaded config", async () => {
   await withFixture(
     {

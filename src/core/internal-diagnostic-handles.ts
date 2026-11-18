@@ -108,6 +108,11 @@ export const doctorInternalDiagnostics = defineDiagnostics({
         `Doctor could not load the Doctor Extension entry "${params.entry}" registered by the host: ${params.reason}`,
       fix: "Make the entry module's default export a Doctor Extension, rebuild the package that registers it, and regenerate host inventory (for Nuxt, run nuxt prepare) before retrying the Doctor Run.",
     },
+    DOC0035: {
+      why: (params: { index?: number; reason: string }) =>
+        `Invalid Doctor config at overrides${params.index === undefined ? "" : `[${params.index}]`}: ${params.reason}`,
+      fix: 'Give each override a non-empty `files` array of globs and optional `rules` and `extends`, such as { "files": ["playground/**"], "rules": { "vue/props/no-unused-props": "off" } }.',
+    },
     DOC0034: {
       why: (params: UnknownRuleHook) =>
         `Rule "${params.ruleId}" returned a "${params.hook}" hook from create(), which Doctor never calls on a ${params.execution} Rule, so the Rule would report nothing.`,

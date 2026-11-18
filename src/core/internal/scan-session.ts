@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { resolve } from "pathe";
+import { matchesGlob } from "node:path";
+import { relative, resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import {
   defineRulePack,
   type Diagnostic,
+  type DoctorRuleConfig,
   type FileFacts,
   type DoctorHelpers,
   type DoctorExtension,
@@ -37,7 +39,7 @@ import {
   type GraphSummary,
 } from "./cache-store.js";
 import { nativeMatch, sha256 } from "./utils.js";
-import { packageFrameworks } from "./workspace-packages.js";
+import { owningWorkspacePackage, packageFrameworks } from "./workspace-packages.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import {
   activatingWorkspacePackages,
@@ -89,6 +91,11 @@ export interface ScanSession {
   workspaceActivations: WorkspacePackageActivation[];
   rulePacks: RulePackActivation[];
   ruleConfigs: Map<string, ResolvedRuleConfig>;
+  ruleOverrides: ResolvedRuleOverride[];
+  /** Rules that run only on the files an override turns them on for. */
+  overrideOnlyRules: ReadonlySet<string>;
+  /** Matching overrides per root-relative path, so each file resolves its overrides once. */
+  overrideMatches: Map<string, ResolvedRuleOverride[]>;
   timings: Record<string, number>;
   phases: Record<string, number>;
   ruleTimings: Map<string, RuleTiming>;
@@ -103,6 +110,13 @@ export interface ResolvedRuleConfig {
   enabled: boolean;
   severity?: DoctorSeverity;
   options?: unknown;
+}
+
+export interface ResolvedRuleOverride {
+  files: string[];
+  rules: Map<string, ResolvedRuleConfig>;
+  /** Rules the override's `extends` selects for its files. */
+  selects: ReadonlySet<string>;
 }
 
 export async function createScanSession(options: DoctorRunOptions): Promise<ScanSession> {
@@ -125,9 +139,18 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
-  const ruleConfigs = resolveRuleConfigs(config);
+  const ruleConfigs = resolveRuleConfigs(config.rules);
   const activations = resolveRulePackActivations(registry.packs, project);
-  const selection = selectRules(registry, ruleConfigs, options, config, project, activations);
+  const ruleOverrides = resolveRuleOverrides(config, registry);
+  const selection = selectRules(
+    registry,
+    ruleConfigs,
+    ruleOverrides,
+    options,
+    config,
+    project,
+    activations,
+  );
   markSession(sessionBase, "project", started);
 
   started = performance.now();
@@ -177,6 +200,9 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
       }))
       .filter((pack) => pack.selected || pack.activatedBy.length),
     ruleConfigs,
+    ruleOverrides,
+    overrideOnlyRules: selection.overrideOnly,
+    overrideMatches: new Map(),
     phases,
     ruleTimings: new Map(),
   };
@@ -241,11 +267,16 @@ export function cacheStatus(root = process.cwd(), config?: DoctorConfig): CacheS
 }
 
 export function mergeDoctorConfig(defaults: DoctorConfig, config: DoctorConfig = {}): DoctorConfig {
+  for (const overrides of [defaults.overrides, config.overrides]) {
+    if (overrides !== undefined && !Array.isArray(overrides))
+      throw doctorInternalDiagnostics.DOC0035({ reason: "`overrides` must be an array." });
+  }
   return {
     ...defaults,
     ...config,
     cache: { ...defaults.cache, ...config.cache },
     rules: { ...defaults.rules, ...config.rules },
+    overrides: [...(defaults.overrides ?? []), ...(config.overrides ?? [])],
     score: {
       ...defaults.score,
       ...config.score,
@@ -369,11 +400,14 @@ interface RuleSelection {
   scopes: Map<string, ReadonlySet<string>>;
   /** Rule Packs whose Presets Config Extends selected. */
   packs: ReadonlySet<RulePack>;
+  /** Selected Rules that only an override turns on. */
+  overrideOnly: ReadonlySet<string>;
 }
 
 function selectRules(
   registry: RuleRegistry,
   ruleConfigs: Map<string, ResolvedRuleConfig>,
+  overrides: readonly ResolvedRuleOverride[],
   options: DoctorRunOptions,
   config: DoctorConfig,
   project: ProjectInfo,
@@ -391,13 +425,33 @@ function selectRules(
     projectWorkspacePackages(project).map((item) => item.root),
     options.framework !== undefined && options.framework !== "auto",
   );
+  // A severity turns on a Rule that no selected Preset includes, as if a Preset had named it.
+  for (const [ruleId, ruleConfig] of ruleConfigs) {
+    if (!ruleConfig.enabled || selected.ruleIds.has(ruleId)) continue;
+    selected.ruleIds.add(ruleId);
+    selected.scopes.delete(ruleId);
+  }
+  const turnedOnByOverride = new Set(
+    overrides.flatMap((override) => [
+      ...override.selects,
+      ...[...override.rules].flatMap(([ruleId, ruleConfig]) =>
+        ruleConfig.enabled ? [ruleId] : [],
+      ),
+    ]),
+  );
+  const overrideOnly = (rules: DoctorRule[]) =>
+    new Set(rules.map((rule) => rule.meta.id).filter((ruleId) => !selected.ruleIds.has(ruleId)));
   const frameworks = new Set([
     project.framework,
     ...projectWorkspacePackages(project).flatMap(packageFrameworks),
   ]);
 
   const candidates = registry.rules
-    .filter((rule) => selected.ruleIds.has(rule.meta.id))
+    .filter(
+      (rule) =>
+        (selected.ruleIds.has(rule.meta.id) && resolvedConfig(ruleConfigs, rule.meta.id).enabled) ||
+        turnedOnByOverride.has(rule.meta.id),
+    )
     .filter((rule) => !rule.meta.requires?.nuxt || frameworks.has("nuxt"))
     .filter(
       (rule) => !rule.meta.requires?.nitro || frameworks.has("nitro") || frameworks.has("nuxt"),
@@ -405,16 +459,17 @@ function selectRules(
     .filter((rule) => !rule.meta.requires?.vue || frameworks.has("vue") || frameworks.has("nuxt"))
     .filter(
       (rule) => !wanted?.length || wanted.some((pattern) => nativeMatch(rule.meta.id, pattern)),
-    )
-    .filter((rule) => resolvedConfig(ruleConfigs, rule.meta.id).enabled);
+    );
   const nuxtRoots = workspaceNuxtRoots(project);
   if (!nuxtRoots.length) {
+    const rules = candidates.filter(
+      (rule) => evaluateRuleApplicability(rule, project).state === "active",
+    );
     return {
-      rules: candidates.filter(
-        (rule) => evaluateRuleApplicability(rule, project).state === "active",
-      ),
+      rules,
       scopes: selected.scopes,
       packs: selected.packs,
+      overrideOnly: overrideOnly(rules),
     };
   }
   const roots = projectWorkspacePackages(project).map((item) => item.root);
@@ -435,7 +490,12 @@ function selectRules(
     if (scope || included.length < roots.length)
       selected.scopes.set(rule.meta.id, new Set(included));
   }
-  return { rules, scopes: selected.scopes, packs: selected.packs };
+  return {
+    rules,
+    scopes: selected.scopes,
+    packs: selected.packs,
+    overrideOnly: overrideOnly(rules),
+  };
 }
 
 function resolveRulePackActivations(
@@ -471,6 +531,7 @@ function resolveExtends(
   const ruleIds = new Set<string>();
   const selectedPacks = new Set<RulePack>();
   const scopes = new Map<string, Set<string>>();
+  const autoScopes = new Map<string, Set<string>>();
   const matchingPacks = (key: string) => {
     const exactMatches = packs.filter((item) => item.name === key);
     return exactMatches.length ? exactMatches : packs.filter((item) => rulePackKey(item) === key);
@@ -501,25 +562,17 @@ function resolveExtends(
     for (const [pack, roots] of activations) {
       if (!roots.length) continue;
       selectedPacks.add(pack);
-      const workspaceRules = new Set(
-        pack.rules
-          .filter((rule) => rule.meta.activationScope === "workspace")
-          .map((rule) => rule.meta.id),
-      );
-      for (const ruleId of pack.presets.recommended) {
-        const covered =
-          (explicitFramework && roots.includes(".")) ||
-          roots.length === workspaceRoots.length ||
-          workspaceRules.has(ruleId);
-        select(ruleId, covered ? undefined : roots);
-      }
+      const coversWorkspace =
+        (explicitFramework && roots.includes(".")) || roots.length === workspaceRoots.length;
+      if (!coversWorkspace)
+        for (const rule of pack.rules)
+          if (rule.meta.activationScope !== "workspace")
+            autoScopes.set(rule.meta.id, new Set(roots));
+      for (const ruleId of pack.presets.recommended)
+        select(ruleId, autoScopes.get(ruleId) ? roots : undefined);
     }
   };
-  if (requested === "auto") {
-    selectActivated();
-    return { ruleIds, scopes, packs: selectedPacks };
-  }
-  for (const entry of requested) {
+  for (const entry of typeof requested === "string" ? [requested] : requested) {
     if (entry === "auto") {
       selectActivated();
       continue;
@@ -558,6 +611,7 @@ function resolveExtends(
     selectedPacks.add(pack);
     for (const ruleId of preset) select(ruleId);
   }
+  for (const [ruleId, scope] of autoScopes) if (!ruleIds.has(ruleId)) scopes.set(ruleId, scope);
   return { ruleIds, scopes, packs: selectedPacks };
 }
 
@@ -565,9 +619,11 @@ function rulePackKey(pack: RulePack): string {
   return pack.name.split("/").at(-1) ?? pack.name;
 }
 
-function resolveRuleConfigs(config: DoctorConfig): Map<string, ResolvedRuleConfig> {
+function resolveRuleConfigs(
+  rules: Record<string, DoctorRuleConfig> = {},
+): Map<string, ResolvedRuleConfig> {
   const resolved = new Map<string, ResolvedRuleConfig>();
-  for (const [ruleId, value] of Object.entries(config.rules ?? {})) {
+  for (const [ruleId, value] of Object.entries(rules)) {
     if (value === "off") {
       resolved.set(ruleId, { enabled: false });
       continue;
@@ -588,8 +644,116 @@ function resolveRuleConfigs(config: DoctorConfig): Map<string, ResolvedRuleConfi
   return resolved;
 }
 
-export function resolvedConfigFor(session: ScanSession, ruleId: string): ResolvedRuleConfig {
+function resolveRuleOverrides(
+  config: DoctorConfig,
+  registry: RuleRegistry,
+): ResolvedRuleOverride[] {
+  if (!config.overrides?.length) return [];
+  const executionKinds = new Map(registry.rules.map((rule) => [rule.meta.id, rule.meta.execution]));
+  return (config.overrides ?? []).map((override, index) => {
+    const invalid = (reason: string) => doctorInternalDiagnostics.DOC0035({ index, reason });
+    if (typeof override !== "object" || override === null || Array.isArray(override))
+      throw invalid("an override must be an object.");
+    const { files, extends: entries, rules } = override;
+    if (
+      !Array.isArray(files) ||
+      !files.length ||
+      files.some((file) => typeof file !== "string" || !file)
+    )
+      throw invalid("`files` must be a non-empty array of globs.");
+    if (
+      entries !== undefined &&
+      (!Array.isArray(entries) ||
+        entries.some((entry) => typeof entry !== "string" || entry === "auto"))
+    )
+      throw invalid(
+        '`extends` must be an array of "pack/preset" entries. "auto" applies to the whole project, so it belongs in the top-level `extends`.',
+      );
+    if (
+      rules !== undefined &&
+      (typeof rules !== "object" || rules === null || Array.isArray(rules))
+    )
+      throw invalid("`rules` must be an object keyed by Rule ID.");
+    const resolved = resolveRuleConfigs(rules);
+    for (const [ruleId, ruleConfig] of resolved) {
+      const execution = executionKinds.get(ruleId);
+      if (ruleConfig.options !== undefined && execution && execution !== "file")
+        throw invalid(
+          `set options for ${execution} Rule "${ruleId}" in top-level \`rules\`, not in an override.`,
+        );
+    }
+    try {
+      const selects = entries?.length
+        ? resolveExtends(registry.packs, entries, new Map(), []).ruleIds
+        : new Set<string>();
+      return { files, rules: resolved, selects };
+    } catch (error) {
+      if (error instanceof Error) Object.assign(error, { doctorConfigOverride: true });
+      throw error;
+    }
+  });
+}
+
+/** The top-level config of a Rule, before overrides. */
+export function topLevelRuleConfig(session: ScanSession, ruleId: string): ResolvedRuleConfig {
   return resolvedConfig(session.ruleConfigs, ruleId);
+}
+
+const RULE_OFF: ResolvedRuleConfig = { enabled: false };
+
+/**
+ * The config of a Rule for one file: the top-level config, then each override whose `files`
+ * match, in order, within the Rule's workspace Activation scope.
+ */
+export function fileRuleConfig(
+  session: ScanSession,
+  ruleId: string,
+  file: string,
+): ResolvedRuleConfig {
+  if (!ruleInScope(session, ruleId, file)) return RULE_OFF;
+  let config = resolvedConfig(session.ruleConfigs, ruleId);
+  if (!session.ruleOverrides.length) return config;
+  let selected = !session.overrideOnlyRules.has(ruleId);
+  for (const override of matchingOverrides(session, file)) {
+    if (override.selects.has(ruleId)) {
+      selected = true;
+      if (!config.enabled) config = { ...config, enabled: true };
+    }
+    const entry = override.rules.get(ruleId);
+    if (!entry) continue;
+    if (entry.enabled) selected = true;
+    // Changing severity or turning off reports does not replace analysis options.
+    config =
+      entry.options === undefined && config.options !== undefined
+        ? { ...entry, options: config.options }
+        : entry;
+  }
+  return selected ? config : RULE_OFF;
+}
+
+export function ruleInScope(session: ScanSession, ruleId: string, file: string): boolean {
+  const scope = session.ruleScopes.get(ruleId);
+  return (
+    !scope ||
+    scope.has(
+      owningWorkspacePackage(
+        projectWorkspacePackages(session.project),
+        relative(session.root, resolve(session.root, file)),
+      ),
+    )
+  );
+}
+
+function matchingOverrides(session: ScanSession, file: string): ResolvedRuleOverride[] {
+  const path = relative(session.root, resolve(session.root, file));
+  let matched = session.overrideMatches.get(path);
+  if (!matched) {
+    matched = session.ruleOverrides.filter((override) =>
+      override.files.some((pattern) => matchesGlob(path, pattern)),
+    );
+    session.overrideMatches.set(path, matched);
+  }
+  return matched;
 }
 
 function resolvedConfig(
@@ -603,12 +767,20 @@ function isSeverity(value: unknown): value is DoctorSeverity {
   return value === "blocker" || value === "error" || value === "warn" || value === "info";
 }
 
-/** Rule results depend on the whole Project Inventory and Rule config, so either change invalidates them. */
+/**
+ * Rule results depend on the whole Project Inventory and Rule config, overrides included, so any
+ * change to them invalidates every result.
+ */
 function contextKey(project: ProjectInfo, config: DoctorConfig, options: DoctorRunOptions): string {
   try {
     return sha256(
       JSON.stringify(
-        { project, rules: config.rules ?? {}, extends: options.extends ?? config.extends },
+        {
+          project,
+          rules: config.rules ?? {},
+          overrides: config.overrides ?? [],
+          extends: options.extends ?? config.extends,
+        },
         (_key, value: unknown) =>
           value instanceof Map ? [...value] : value instanceof Set ? [...value] : value,
       ),
