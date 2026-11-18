@@ -6,6 +6,7 @@ export { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 export { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
 export { noCrossRealmPrototypeIdentity } from "./no-cross-realm-prototype-identity.js";
 export { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
+export { noInheritedKeyLookup } from "./no-inherited-key-lookup.js";
 export { noObjectParameters } from "./no-object-parameters.js";
 export { noUnknownTypeAliases } from "./no-unknown-type-aliases.js";
 export { noUnvalidatedDeserialization } from "./no-unvalidated-deserialization.js";
@@ -16,6 +17,7 @@ import { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 import { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
 import { noCrossRealmPrototypeIdentity } from "./no-cross-realm-prototype-identity.js";
 import { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
+import { noInheritedKeyLookup } from "./no-inherited-key-lookup.js";
 import { noObjectParameters } from "./no-object-parameters.js";
 import { noUnknownTypeAliases } from "./no-unknown-type-aliases.js";
 import { noUnvalidatedDeserialization } from "./no-unvalidated-deserialization.js";
@@ -37,6 +39,7 @@ const strictRules = [
   ...recommendedRules,
   noCrossRealmWebInstanceof,
   noCrossRealmPrototypeIdentity,
+  noInheritedKeyLookup,
   noObjectParameters,
   noUnknownTypeAliases,
   requireSafetyCommentForTypeAssertion,

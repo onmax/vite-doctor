@@ -145,6 +145,7 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "typescript/boundaries/no-cross-realm-prototype-identity": "Prototype identity",
   "typescript/boundaries/no-cross-realm-web-instanceof": "Built-in instanceof",
+  "typescript/boundaries/no-inherited-key-lookup": "Inherited keys",
   "typescript/boundaries/no-unvalidated-deserialization": "Deserialized values",
   "typescript/evidence/no-caller-chosen-result-type": "Caller-chosen types",
   "typescript/evidence/no-chained-type-assertions": "Chained assertions",
