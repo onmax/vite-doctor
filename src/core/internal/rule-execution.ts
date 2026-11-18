@@ -67,6 +67,8 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         : [...rules.keys()];
     if (!candidates.length) continue;
     if (sourceShape(file) === undefined) await loadSourceFile(file);
+    const ran = file.text.includes("doctor-disable") ? new Set<string>() : undefined;
+    if (ran) session.fileRuleRuns.set(file.path, ran);
     const pending: Array<{ index: number; config: ResolvedRuleConfig }> = [];
     for (const index of candidates) {
       const rule = rules[index]!;
@@ -77,6 +79,7 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         (rule.meta.reportScope !== "project" || !ruleInScope(session, rule.meta.id, file.path))
       )
         continue;
+      if (config.enabled) ran?.add(rule.meta.id);
       const key = keys[index];
       const cached = key ? session.cache.ruleResult(file.path, key) : undefined;
       if (cached) {
