@@ -186,6 +186,140 @@ test("an override's extends selects a Preset for the files it matches", async ()
   });
 });
 
+test("a later Preset re-enables a Rule, but its own rules entries take precedence", async () => {
+  await withProject(async (root) => {
+    const result = await run(root, {
+      overrides: [
+        { files: ["**/*.ts"], rules: { [strictOnly.meta.id]: "off" } },
+        { files: ["**/*.ts"], extends: ["fixture/overrides/strict"] },
+        {
+          files: ["playground/**"],
+          extends: ["fixture/overrides/strict"],
+          rules: { [strictOnly.meta.id]: "off" },
+        },
+      ],
+    });
+    expect(findings(result).filter((line) => line.startsWith(strictOnly.meta.id))).toEqual([
+      "fixture/strict-only src/lib.ts info strict",
+    ]);
+  });
+});
+
+test.each([
+  { rules: { "pinia/stores/store-name-matches-id": "error" } } as const,
+  { extends: ["pinia/strict"] },
+])("override-only rules retain their Pack's automatic package scope: %j", async (selection) => {
+  await withProject(async (root) => {
+    writeFileSync(join(root, "package.json"), JSON.stringify({ workspaces: ["packages/*"] }));
+    for (const name of ["app", "sibling"]) {
+      const directory = join(root, "packages", name);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        join(directory, "package.json"),
+        JSON.stringify({ name, dependencies: name === "app" ? { pinia: "^3.0.0" } : {} }),
+      );
+      writeFileSync(
+        join(directory, "store.ts"),
+        'import { defineStore } from "pinia"; export const useWrongStore = defineStore("right", {});\n',
+      );
+    }
+    const options = {
+      root,
+      cache: false,
+      rules: "pinia/stores/store-name-matches-id",
+      config: { overrides: [{ files: ["packages/**"], ...selection }] },
+    };
+    const piniaFiles = (result: DoctorRunResult) =>
+      result.diagnostics
+        .filter((item) => item.code === "PINIA0002")
+        .map((item) => relative(root, item.file));
+    expect(piniaFiles(await runViteDoctor(options))).toEqual(["packages/app/store.ts"]);
+    expect(
+      piniaFiles(await runViteDoctor({ ...options, extends: ["auto", "pinia/strict"] })),
+    ).toEqual(["packages/app/store.ts", "packages/sibling/store.ts"]);
+  });
+});
+
+test("a project-reporting file Rule can run on a source that does not match the override", async () => {
+  await withProject(async (root) => {
+    const crossFile = createRule({
+      meta: { ...strictOnly.meta, reportScope: "project" },
+      create(ctx) {
+        if (ctx.file.relativePath !== "playground/demo.ts") return;
+        ctx.report(allDiagnostics.DOC9999({ why: "cross-file", fix: "Nothing." }), {
+          file: join(root, "src/lib.ts"),
+        });
+      },
+    });
+    const result = await runViteDoctor({
+      root,
+      affectedFiles: ["src/lib.ts"],
+      cache: false,
+      extensions: [
+        defineDoctorExtension({
+          name: "fixture/cross-file",
+          rulePacks: [
+            defineRulePack({
+              name: "fixture/cross-file",
+              version: "0.0.0",
+              rules: [crossFile],
+              presets: { recommended: [crossFile.meta.id] },
+            }),
+          ],
+        }),
+      ],
+      config: {
+        extends: [],
+        overrides: [{ files: ["src/**"], rules: { [strictOnly.meta.id]: "error" } }],
+      },
+    });
+    expect(findings(result)).toEqual(["fixture/strict-only src/lib.ts error cross-file"]);
+  });
+});
+
+test("registered Nuxt module sources match their physical paths", async () => {
+  await withProject(async (root) => {
+    mkdirSync(join(root, ".nuxt"));
+    writeFileSync(join(root, "nuxt.config.ts"), "export default {}\n");
+    writeFileSync(
+      join(root, ".nuxt/doctor.manifest.json"),
+      JSON.stringify({
+        moduleSources: [{ module: "fixture-module", root: join(root, "src") }],
+      }),
+    );
+    const result = await runViteDoctor({
+      root,
+      framework: "nuxt",
+      cache: false,
+      extensions: [extension],
+      config: {
+        extends: [],
+        overrides: [{ files: ["src/**"], rules: { [strictOnly.meta.id]: "error" } }],
+      },
+    });
+    expect(findings(result).filter((line) => line.startsWith(strictOnly.meta.id))).toEqual([
+      "fixture/strict-only src/lib.ts error strict",
+    ]);
+  });
+});
+
+test.each(["manifest", "workspace"] as const)(
+  "tuple options for a %s Rule are rejected in overrides",
+  async (execution) => {
+    await withProject(async (root) => {
+      const ruleId =
+        execution === "manifest" ? "package/no-pinned-singleton" : workspaceReport.meta.id;
+      await expect(
+        run(root, {
+          overrides: [
+            { files: ["package.json"], rules: { [ruleId]: ["error", { singletons: ["comark"] }] } },
+          ],
+        }),
+      ).rejects.toMatchObject({ name: "DOC0035", message: expect.stringContaining(ruleId) });
+    });
+  },
+);
+
 test("an empty extends list runs only the Rules the config turns on", async () => {
   await withProject(async (root) => {
     const result = await runViteDoctor({
@@ -274,6 +408,10 @@ test.each([
   [{ files: [], rules: {} }],
   [{ files: "src/**", rules: {} }],
   [{ files: ["src/**"], extends: ["auto"] }],
+  [{ files: ["src/**"], extends: [42] }],
+  [{ files: ["src/**"], rules: false }],
+  [{ files: ["src/**"], rules: [] }],
+  [[]],
 ])("a malformed override %j fails with DOC0035", async (override) => {
   await withProject(async (root) => {
     await expect(run(root, { overrides: [override as any] })).rejects.toMatchObject({
@@ -281,6 +419,17 @@ test.each([
     });
   });
 });
+
+test.each([null, false, { files: ["src/**"] }])(
+  "a malformed override list %j fails with DOC0035",
+  async (overrides) => {
+    await withProject(async (root) => {
+      await expect(run(root, { overrides: overrides as any })).rejects.toMatchObject({
+        name: "DOC0035",
+      });
+    });
+  },
+);
 
 test("an override with a malformed Rule config fails like the top-level config", async () => {
   await withProject(async (root) => {

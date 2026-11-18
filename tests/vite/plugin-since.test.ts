@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
-import { build, createLogger } from "vite";
-import { expect, test } from "vite-plus/test";
+import { build, createLogger, createServer } from "vite";
+import { expect, test, vi } from "vite-plus/test";
 import {
   allDiagnostics,
   createRule,
@@ -15,12 +15,34 @@ import { doctor } from "../../src/plugin.ts";
 
 /** Reports every line that contains TODO. */
 const todoLines = createRule({
-  meta: { id: "fixture/todo-line", title: "TODO line", category: "fixture", severity: "warn" },
+  meta: {
+    id: "fixture/todo-line",
+    title: "TODO line",
+    category: "fixture",
+    severity: "warn",
+    reportScope: "project",
+  },
   create(ctx) {
     for (const match of ctx.file.text.matchAll(/TODO/g))
-      ctx.report(allDiagnostics.DOC9999({ why: "A TODO is left.", fix: "Finish it." }), {
-        range: ctx.range(match.index, match.index + 4),
-      });
+      ctx.report(
+        allDiagnostics.DOC9999({
+          why: `A TODO is left in ${ctx.file.relativePath}.`,
+          fix: "Finish it.",
+        }),
+        {
+          range: ctx.range(match.index, match.index + 4),
+          related:
+            ctx.file.relativePath === "primary.ts"
+              ? [
+                  {
+                    file: join(ctx.project.root, "entry.ts"),
+                    range: { start: 0, end: 1, line: 1, column: 1 },
+                    message: "Related unchanged line.",
+                  },
+                ]
+              : undefined,
+        },
+      );
   },
 });
 
@@ -123,3 +145,56 @@ test("the Vite Plugin Surface's changed limits Diagnostics to uncommitted lines"
     expect(await cliLines(root, { changed: true })).toEqual([2]);
   });
 });
+
+test.each([{ changed: true }, { since: "main" }])(
+  "Git-scoped serve saves retain Diagnostics on other changed files: %j",
+  async (scope) => {
+    await withRepository(async (root) => {
+      const entry = join(root, "entry.ts");
+      const primary = join(root, "primary.ts");
+      await writeFile(entry, 'export const old = "TODO";\nexport const added = 1;\n');
+      await writeFile(primary, 'export const primary = "TODO";\n');
+      const messages: string[] = [];
+      const logger = createLogger("silent");
+      logger.warn = logger.info = (message) => void messages.push(message);
+      const server = await createServer({
+        root,
+        configFile: false,
+        customLogger: logger,
+        plugins: [
+          doctor({
+            ...scope,
+            run: "serve",
+            mode: "warn",
+            cache: false,
+            extends: ["fixture/plugin-since/recommended"],
+            extensions: [extension],
+          }),
+        ],
+        server: { middlewareMode: true, ws: false, watch: null },
+        optimizeDeps: { noDiscovery: true },
+      });
+      try {
+        await vi.waitFor(() =>
+          expect(messages.some((line) => line.includes("A TODO is left in primary.ts."))).toBe(
+            true,
+          ),
+        );
+        messages.length = 0;
+
+        await writeFile(entry, 'export const old = "TODO";\nexport const added = "TODO";\n');
+        server.watcher.emit("change", entry);
+        await vi.waitFor(() =>
+          expect(messages.join("\n")).toContain("A TODO is left in entry.ts."),
+        );
+        expect(messages.join("\n")).not.toContain("resolved:");
+
+        await writeFile(primary, "export const primary = 1;\n");
+        server.watcher.emit("change", primary);
+        await vi.waitFor(() => expect(messages.join("\n")).toMatch(/resolved: .*primary\.ts/));
+      } finally {
+        await server.close();
+      }
+    });
+  },
+);

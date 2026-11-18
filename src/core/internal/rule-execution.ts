@@ -14,11 +14,9 @@ import type { GraphSummary } from "./cache-store.js";
 import { componentUsageGraph } from "./component-inventory.js";
 import { loadSourceFile, sourceFacts, sourceShape } from "./facts.js";
 import type { RuleInputFrame } from "./rule-inputs.js";
-import { projectWorkspacePackages } from "./applicability.js";
 import { assertKnownRuleHooks } from "./rule-hooks.js";
 import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
 import { canMatchPrefilter } from "./rule-prefilter.js";
-import { owningWorkspacePackage } from "./workspace-packages.js";
 import { workspaceNuxtRoots, workspaceProjectView, workspaceViewRoot } from "./workspace-nuxt.js";
 import {
   buildWorkspaceGraph,
@@ -31,6 +29,7 @@ import {
   fileRuleConfig,
   markSession,
   recordRuleTiming,
+  ruleInScope,
   topLevelRuleConfig,
   type ResolvedRuleConfig,
   type RuleTiming,
@@ -54,14 +53,10 @@ export async function runFileRules(session: ScanSession): Promise<void> {
   // Buffering per rule keeps report order rule-major, as it was when rules ran one at a time.
   const reported = rules.map((): Diagnostic[] => []);
   const timings = session.options.profile ? rules.map(() => ({ ms: 0, files: 0 })) : undefined;
-  const workspacePackages = projectWorkspacePackages(session.project);
   const reportedFiles = session.scopedReport
     ? new Set(session.files.flatMap((file) => (file.reportEligibility ? [file.path] : [])))
     : undefined;
   for (const file of session.handles) {
-    const owner = session.ruleScopes.size
-      ? owningWorkspacePackage(workspacePackages, file.relativePath)
-      : ".";
     // File-scoped Rules can only report into the file they analyze, so a scoped run needs them on
     // the reported files only; project-scoped Rules keep whole-project context.
     const candidates =
@@ -74,13 +69,13 @@ export async function runFileRules(session: ScanSession): Promise<void> {
     for (const index of candidates) {
       const rule = rules[index]!;
       if (!canRunRuleOnFile(rule, file)) continue;
-      const config = fileRuleConfig(
-        session,
-        rule.meta.id,
-        file.relativePath,
-        session.ruleScopes.get(rule.meta.id)?.has(owner) !== false,
-      );
-      if (!config.enabled) continue;
+      const config = fileRuleConfig(session, rule.meta.id, file.path);
+      if (
+        !config.enabled &&
+        (rule.meta.reportScope !== "project" || !ruleInScope(session, rule.meta.id, file.path))
+      )
+        continue;
+      const analysisConfig = config.enabled ? config : topLevelRuleConfig(session, rule.meta.id);
       const key = keys[index];
       const cached = key ? session.cache.ruleResult(file.path, key) : undefined;
       if (cached) {
@@ -92,7 +87,7 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         if (key) session.cache.recordRuleResult(file.path, key, [], []);
         continue;
       }
-      pending.push({ index, config });
+      pending.push({ index, config: analysisConfig });
     }
     if (!pending.length) continue;
     await loadSourceFile(file);
