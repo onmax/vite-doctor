@@ -827,6 +827,15 @@ test("configuration validation failures use stable diagnostic codes", async () =
       runDoctor({
         root,
         framework: "vue",
+        extends: "broken" as "auto",
+        extensions: [extension],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0016", message: expect.stringContaining('"broken"') });
+
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
         extends: ["missing/recommended"],
         extensions: [extension],
       }),
@@ -1295,6 +1304,137 @@ test("auto extends selects active recommended presets only", async () => {
       });
 
       expect(result.diagnostics.map((item) => item.ruleId)).toEqual(["test/report-program"]);
+    },
+  );
+});
+
+function programRule(id: string) {
+  return createRule({
+    meta: { id, title: id, category: "architecture", severity: "warn", requires: { script: true } },
+    create(ctx) {
+      return {
+        Program() {
+          ctx.report(
+            allDiagnostics.DOC9999({
+              why: `${id} was visited.`,
+              fix: "Inspect the test diagnostic.",
+            }),
+            { ruleId: id, severity: "warn", category: "architecture", file: ctx.file.path },
+          );
+        },
+      };
+    },
+  });
+}
+
+test.each([
+  ["auto" as const, ["test/second-rule", "test/with-strict/recommended"]],
+  [
+    "strict" as const,
+    ["test/second-rule", "test/with-strict/recommended", "test/with-strict/strict-only"],
+  ],
+  [
+    ["strict"],
+    ["test/second-rule", "test/with-strict/recommended", "test/with-strict/strict-only"],
+  ],
+  [
+    ["auto", "strict"],
+    ["test/second-rule", "test/with-strict/recommended", "test/with-strict/strict-only"],
+  ],
+  [
+    ["strict", "inactive/recommended"],
+    [
+      "test/inactive/recommended",
+      "test/second-rule",
+      "test/with-strict/recommended",
+      "test/with-strict/strict-only",
+    ],
+  ],
+])(
+  "extends %j selects activated strict presets and falls back to recommended",
+  async (selection, ruleIds) => {
+    await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+      const result = await runDoctor({
+        root,
+        framework: "vue",
+        cache: false,
+        extends: selection,
+        extensions: [
+          defineDoctorExtension({
+            name: "test",
+            rulePacks: [
+              defineRulePack({
+                name: "test/with-strict",
+                version: "0.0.0",
+                rules: [
+                  programRule("test/with-strict/recommended"),
+                  programRule("test/with-strict/strict-only"),
+                ],
+                presets: {
+                  recommended: ["test/with-strict/recommended"],
+                  strict: ["test/with-strict/recommended", "test/with-strict/strict-only"],
+                },
+              }),
+              testPack("test/without-strict", secondRule),
+              defineRulePack({
+                name: "test/inactive",
+                version: "0.0.0",
+                activation: { packages: ["missing-package"] },
+                rules: [
+                  programRule("test/inactive/recommended"),
+                  programRule("test/inactive/strict-only"),
+                ],
+                presets: {
+                  recommended: ["test/inactive/recommended"],
+                  strict: ["test/inactive/recommended", "test/inactive/strict-only"],
+                },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      expect(result.diagnostics.map((item) => item.ruleId).sort()).toEqual(ruleIds);
+      expect(result.extends).toEqual(selection);
+    });
+  },
+);
+
+test("Nuxt manifest extends accepts strict", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+      ".nuxt/doctor.manifest.json": JSON.stringify({ doctorConfig: { extends: "strict" } }),
+      "app/app.ts": "const ok = true",
+    },
+    async (root) => {
+      const result = await runDoctor({
+        root,
+        cache: false,
+        extensions: [
+          defineDoctorExtension({
+            name: "test",
+            rulePacks: [
+              defineRulePack({
+                name: "test",
+                version: "0.0.0",
+                rules: [reportProgramRule, secondRule],
+                presets: {
+                  recommended: ["test/second-rule"],
+                  strict: ["test/second-rule", "test/report-program"],
+                },
+              }),
+            ],
+          }),
+        ],
+      });
+
+      expect(
+        result.diagnostics
+          .map((item) => item.ruleId)
+          .filter((ruleId) => ruleId.startsWith("test/"))
+          .sort(),
+      ).toEqual(["test/report-program", "test/second-rule"]);
     },
   );
 });

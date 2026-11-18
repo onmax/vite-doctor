@@ -304,10 +304,13 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
   const ran = new Set(session.enabledRules.map((rule) => rule.meta.id));
   const effectiveExtends = options.extends ?? session.config.extends;
   // An entry without a Rule may belong to a Rule turned off in config, which cannot prove it stale.
+  const selectsActivated = (entry: string) => entry === "auto" || entry === "strict";
   const unscoped =
+    session.coversConfiguredPresets &&
     (effectiveExtends === undefined ||
-      effectiveExtends === "auto" ||
-      (Array.isArray(effectiveExtends) && effectiveExtends.includes("auto"))) &&
+      (typeof effectiveExtends === "string"
+        ? selectsActivated(effectiveExtends)
+        : effectiveExtends.some(selectsActivated))) &&
     !Object.values(session.config.rules ?? {}).includes("off") &&
     !session.ruleOverrides.length;
   // A Rule that runs on only some files cannot prove a suppression stale.
