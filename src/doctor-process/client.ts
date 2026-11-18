@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { closeSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { findViteConfigFile } from "../core/internal/vite-config-file.js";
 import { viteDoctorVersion } from "../version.js";
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
@@ -99,7 +100,7 @@ export async function runThroughDoctorProcess(
 
 /**
  * Identifies what a Doctor process must share with a client for its output to match a direct run:
- * the Doctor build, Node.js, the declarative config, and the presentation state that dependencies
+ * the Doctor build, Node.js, the declarative config (including the vite.config doctor key), and the presentation state that dependencies
  * derive from the environment once at import time (CI, colors, log level).
  */
 export async function doctorProcessIdentity(root: string, entry?: URL): Promise<string> {
@@ -115,10 +116,16 @@ export async function doctorProcessIdentity(root: string, entry?: URL): Promise<
     process.env.CONSOLA_LEVEL ?? null,
     process.env.NODE_ENV ?? null,
   ];
-  let config = "none";
-  try {
-    config = sha256(readFileSync(join(root, "doctor.config.json"), "utf8"));
-  } catch {}
+  const viteConfig = findViteConfigFile(root);
+  const config = [join(root, "doctor.config.json"), ...(viteConfig ? [viteConfig] : [])].map(
+    (file) => {
+      try {
+        return sha256(readFileSync(file, "utf8"));
+      } catch {
+        return "none";
+      }
+    },
+  );
   return sha256(
     JSON.stringify([
       protocolVersion(),

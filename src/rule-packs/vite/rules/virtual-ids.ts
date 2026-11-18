@@ -548,7 +548,11 @@ function viteApps(modules: ModuleReader, files: ReadonlySet<string>): ViteApp[] 
     );
     if (config?.type === "CallExpression" && config.callee.type === "Identifier") {
       const binding = module.imports.get(config.callee.name);
-      if (binding?.source !== "vite" || binding.imported !== "defineConfig") return app;
+      if (
+        (binding?.source !== "vite" && binding?.source !== "vite-plus") ||
+        binding.imported !== "defineConfig"
+      )
+        return app;
       config = unwrap(config.arguments[0]);
     }
     if (config?.type === "Identifier") config = unwrap(module.consts.get(config.name)?.init);

@@ -17,6 +17,8 @@ import {
 } from "./core/index.js";
 import { selectDoctorPresentation } from "./core/internal/agent-runtime.js";
 import { applyDoctorOptions, stringFlag } from "./core/internal/cli.js";
+import { readViteConfigDoctor } from "./core/internal/vite-config-doctor.js";
+import { findViteConfigFile } from "./core/internal/vite-config-file.js";
 import type { DoctorProcessStatus } from "./doctor-process/client.js";
 import { DOCTOR_PROCESS_ENV } from "./doctor-process/protocol.js";
 import { viteDoctorVersion } from "./version.js";
@@ -337,8 +339,11 @@ function addDoctorRunCommand(
       applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
       const explicitConfig = stringFlag(options.config);
-      const configFile = cliConfigFile(root, explicitConfig);
-      runOptions.config = await loadCliConfig(root, explicitConfig);
+      const declarative = explicitConfig ? undefined : declarativeConfig(root);
+      const configFile = explicitConfig ? resolve(root, explicitConfig) : declarative?.file;
+      runOptions.config = explicitConfig
+        ? await loadCliConfig(root, explicitConfig)
+        : declarative?.config;
       if (options.watch) {
         setExitCode(await watchDoctorCommand(args, cwd, surface, root, runOptions));
         return;
@@ -420,16 +425,40 @@ async function loadCliConfig(
       throw createCliConfigError(configFile, error);
     }
   }
-  const declarativeConfig = resolve(root, "doctor.config.json");
-  if (!existsSync(declarativeConfig)) return undefined;
+  return declarativeConfig(root)?.config;
+}
+
+/**
+ * Config the CLI reads without running project code: `doctor.config.json`, or the literal `doctor`
+ * key of `vite.config.*`. Defining both is ambiguous, so the CLI refuses to pick one.
+ */
+function declarativeConfig(root: string): { file: string; config: DoctorConfig } | undefined {
+  const jsonFile = resolve(root, "doctor.config.json");
+  const viteFile = findViteConfigFile(root);
+  let fromVite: { file: string; config: DoctorConfig } | undefined;
+  if (viteFile) {
+    try {
+      const read = readViteConfigDoctor(viteFile);
+      if (read) fromVite = { file: viteFile, config: read.config };
+    } catch (error) {
+      throw createCliConfigError(viteFile, error);
+    }
+  }
+  if (!existsSync(jsonFile)) return fromVite;
+  if (fromVite) {
+    throw new CliConfigError(
+      jsonFile,
+      `Doctor config is defined in both ${jsonFile} and the doctor key of ${fromVite.file}. Keep one of them.`,
+    );
+  }
   try {
-    const value = JSON.parse(readFileSync(declarativeConfig, "utf8")) as unknown;
+    const value = JSON.parse(readFileSync(jsonFile, "utf8")) as unknown;
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new Error("doctor.config.json must contain a JSON object.");
     }
-    return value as DoctorConfig;
+    return { file: jsonFile, config: value as DoctorConfig };
   } catch (error) {
-    throw createCliConfigError(declarativeConfig, error);
+    throw createCliConfigError(jsonFile, error);
   }
 }
 
@@ -571,12 +600,6 @@ function errorCode(error: unknown): string | undefined {
   return error instanceof Error && "code" in error && typeof error.code === "string"
     ? error.code
     : undefined;
-}
-
-function cliConfigFile(root: string, explicitConfig?: string): string | undefined {
-  if (explicitConfig) return resolve(root, explicitConfig);
-  const declarativeConfig = resolve(root, "doctor.config.json");
-  return existsSync(declarativeConfig) ? declarativeConfig : undefined;
 }
 
 function isLoadedConfigValidationError(error: unknown, options: DoctorRunOptions): boolean {

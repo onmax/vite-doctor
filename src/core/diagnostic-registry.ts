@@ -39,6 +39,7 @@ export const coreDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0035", ruleId: "doctor/config/invalid-override", docs: false },
   { code: "DOC0036", ruleId: "doctor/inline/unused-suppression" },
   { code: "DOC0037", ruleId: "doctor/inline/unknown-suppression-rule" },
+  { code: "DOC0038", ruleId: "doctor/config/default-config-file" },
 ]);
 
 export const diagnostics = coreDiagnosticRegistry.diagnostics;

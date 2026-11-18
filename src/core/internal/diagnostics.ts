@@ -71,6 +71,7 @@ export function applyPolicyFilters(session: ScanSession): void {
   session.diagnostics = settleDiagnosticIdentity(session.diagnostics);
   reportUnusedInlineSuppressions(session);
   reportUnusedConfigSuppressions(session);
+  reportDefaultDeclarativeConfig(session);
   applyReportEligibility(session);
   applySeverityFilter(session);
   const result = applyDiagnosticPolicy(session);
@@ -384,6 +385,75 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
     ...session.diagnostics.slice(0, reported),
     ...settleDiagnosticIdentity(session.diagnostics.slice(reported)),
   ];
+}
+
+// People copy a placeholder doctor.config.json believing Doctor needs one; it never does.
+function reportDefaultDeclarativeConfig(session: ScanSession): void {
+  const { options } = session;
+  if (session.scopedReport || options.rules || options.analyses) return;
+  const file = resolve(session.root, "doctor.config.json");
+  const source = readFileSyncIfExists(file);
+  if (source === null) return;
+  let value: unknown;
+  try {
+    value = JSON.parse(source);
+  } catch {
+    return;
+  }
+  if (!selectsOnlyDefaults(value)) return;
+  const reported = session.diagnostics.length;
+  pushDiagnostic(session, {
+    ruleId: "doctor/config/default-config-file",
+    severity: "info",
+    category: "config",
+    file,
+    why: "doctor.config.json selects nothing beyond Doctor's defaults, so this Doctor Run is the same without it. Doctor needs no config file: it activates Rule Packs from the project's dependencies.",
+    suggestion:
+      "Delete doctor.config.json. Add a Doctor config only when it changes something: rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
+    confidence: "proven",
+    analysisPhase: "manifest",
+  });
+  session.diagnostics = [
+    ...session.diagnostics.slice(0, reported),
+    ...settleDiagnosticIdentity(session.diagnostics.slice(reported)),
+  ];
+}
+
+// `include: []` and `extends: []` select no files or no Rules, so only these values match the defaults.
+function selectsOnlyDefaults(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  return Object.entries(value).every(([key, entry]) => {
+    switch (key) {
+      case "$schema":
+        return true;
+      case "extends":
+        return (
+          entry === "auto" ||
+          (Array.isArray(entry) && entry.length > 0 && entry.every((item) => item === "auto"))
+        );
+      case "exclude":
+      case "overrides":
+      case "suppressions":
+        return Array.isArray(entry) && entry.length === 0;
+      case "rules":
+      case "cache":
+        return isPlainObject(entry) && Object.keys(entry).length === 0;
+      case "score":
+        return (
+          isPlainObject(entry) &&
+          Object.entries(entry).every(
+            ([name, weights]) =>
+              name === "weights" && isPlainObject(weights) && Object.keys(weights).length === 0,
+          )
+        );
+      default:
+        return false;
+    }
+  });
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isGlobPattern(pattern: string): boolean {
