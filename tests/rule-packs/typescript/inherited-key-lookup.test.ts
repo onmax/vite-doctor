@@ -206,6 +206,21 @@ test.each([
     1,
   ],
   [
+    "a lookup repeated after an ownership check outside the loop",
+    "function read(values: Record<string, string | undefined>, key: string) { if (!Object.hasOwn(values, key)) return; for (let index = 0; index < 2; index++) { const fallback = ''; console.log(values[key] ?? fallback); delete values[key] } }",
+    1,
+  ],
+  [
+    "a repeated lookup in a loop condition after an outer guard",
+    "function read(values: Record<string, string>, key: string) { if (!Object.hasOwn(values, key)) return; while (values[key]?.trim()) { delete values[key] } }",
+    1,
+  ],
+  [
+    "a membership test outside a loop that can invalidate it",
+    "function read(values: Record<string, string>, key: string) { if (!(key in values)) return; for (const step of [0, 1]) { console.log(values[key] ?? step); delete values[key] } }",
+    2,
+  ],
+  [
     "an allowlist that contains an inherited key",
     "function read(values: Record<string, string>, key: string) { return ['constructor', 'ok'].includes(key) ? values[key] : undefined }",
     1,
@@ -330,6 +345,10 @@ test.each([
   [
     "a successful branch guard followed by a literal declaration",
     "export function f(values: Record<string, string>, key: string) { if (Object.hasOwn(values, key)) { const fallback = ''; return values[key] ?? fallback } }",
+  ],
+  [
+    "an ownership guard checked again on each iteration",
+    "function read(values: Record<string, string>, key: string) { for (let index = 0; index < 2; index++) { if (!Object.hasOwn(values, key)) continue; const fallback = ''; console.log(values[key] ?? fallback); delete values[key] } }",
   ],
   [
     "a hasOwnProperty.call guard",

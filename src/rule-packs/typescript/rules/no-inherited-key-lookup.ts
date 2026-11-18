@@ -1052,6 +1052,17 @@ export const noInheritedKeyLookup = createRule({
       for (let current = node; current && current !== owner;) {
         const parent = evidence.parent(current);
         if (!parent || parent === owner) break;
+        if (
+          !stableSubject &&
+          [
+            "ForStatement",
+            "ForInStatement",
+            "ForOfStatement",
+            "WhileStatement",
+            "DoWhileStatement",
+          ].includes(parent.type)
+        )
+          return false;
         if (["IfStatement", "ConditionalExpression"].includes(parent.type)) {
           if (parent.consequent === current && implies(parent.test, true, match, stableSubject))
             return true;
