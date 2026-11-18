@@ -6,6 +6,7 @@ import { expect, test } from "vite-plus/test";
 import { defineDoctorExtension, defineRulePack, runDoctor } from "../../src/core/index.ts";
 import type { Diagnostic, DoctorRule } from "../../src/core/index.ts";
 import { runProjectFixture } from "../../src/core/testkit.ts";
+import { requireSafetyCommentForTypeAssertion } from "../../src/rule-packs/typescript/rules/require-safety-comment-for-type-assertion.ts";
 import { noClientSecretPattern, noUntypedEnv } from "../../src/rules.ts";
 
 const secret = noClientSecretPattern.meta.id;
@@ -491,6 +492,131 @@ test("--fix deletes unused directives and the next run is clean", async () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("--fix preserves function braces, token separation and return line breaks", async () => {
+  const directive = `doctor-disable-next-line ${secret} -- Stale.`;
+  const root = await fixtureRoot({
+    "src/main.js": [
+      `export function empty() { /* ${directive} */ }`,
+      `export const kind = typeof/* ${directive} */missing;`,
+      `export function value() { return /* ${directive}`,
+      "*/ 42; }",
+      "",
+    ].join("\n"),
+  });
+  try {
+    const result = await runDoctor({
+      root,
+      framework: "vite",
+      cache: false,
+      fix: true,
+      extensions: [fixtureExtension()],
+    });
+    expect(result.fixes).toMatchObject({ files: 1, edits: 3 });
+    const output = readFileSync(join(root, "src/main.js"), "utf8");
+    const { empty, kind, value } = await import(
+      `data:text/javascript,${encodeURIComponent(output)}`
+    );
+    expect(empty()).toBeUndefined();
+    expect(kind).toBe("undefined");
+    expect(value()).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  `/* doctor-disable-next-line ${secret} */ /* doctor-disable-next-line ${untyped} */`,
+  [
+    `console.log(import.meta.env.VITE_FIRST); // doctor-disable ${untyped}`,
+    "/*",
+    " *",
+    " *",
+    " *",
+    ` * doctor-disable-next-line ${secret}`,
+    " */",
+  ].join("\n"),
+])("--fix does not expand another directive's coverage: %s", async (comment) => {
+  const source = `${comment}\nconsole.log(import.meta.env.VITE_UNDECLARED);\n`;
+  const file = "src/main.ts";
+  const root = await fixtureRoot({ [file]: source });
+  try {
+    const result = await runDoctor({
+      root,
+      framework: "vite",
+      cache: false,
+      fix: true,
+      extensions: [fixtureExtension({ recommended: [secret, untyped] })],
+    });
+    expect(readFileSync(join(root, file), "utf8")).toBe(source);
+    expect(result.diagnostics.some((diagnostic) => diagnostic.ruleId === untyped)).toBe(true);
+    expect(inline(result.diagnostics)).toMatchObject([
+      { code: "DOC0036", fix: { kind: "suggestion" } },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a fix keeps a SAFETY reason continued onto another comment line", async () => {
+  const source = [
+    "declare const value: unknown;",
+    "/*",
+    ` * doctor-disable-next-line ${secret} -- SAFETY:`,
+    " * The validator already checked the value.",
+    " */",
+    "console.log(value as string);",
+    "",
+  ].join("\n");
+  const run = (text: string) =>
+    runProjectFixture({
+      framework: "vite",
+      rules: [...rules, requireSafetyCommentForTypeAssertion],
+      files: { "src/main.ts": text },
+    });
+  const before = await run(source);
+  const [report] = inline(before.diagnostics);
+  expect(report).toMatchObject({ code: "DOC0036", fix: { kind: "safe" } });
+  const fixed = applyFix(source, report);
+  expect(fixed).toContain(" * SAFETY:\n * The validator already checked the value.");
+  expect((await run(fixed.replace("SAFETY:", "NOTE:"))).diagnostics).toContainEqual(
+    expect.objectContaining({ code: "TS0008" }),
+  );
+  const after = await run(fixed);
+  expect(after.diagnostics.filter(({ code }) => code === "TS0008")).toEqual([]);
+  expect(inline(after.diagnostics)).toEqual([]);
+});
+
+test.each(["manifest", "workspace"] as const)(
+  "a selected %s Rule without file coverage does not make its directive stale",
+  async (execution) => {
+    const projectRule: DoctorRule = {
+      ...noUntypedEnv,
+      meta: { ...noUntypedEnv.meta, execution },
+      create: () => ({}),
+    };
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noClientSecretPattern, projectRule],
+      files: {
+        "src/main.ts": `// doctor-disable-next-line ${untyped}\nconsole.log(1);\n`,
+      },
+    });
+    expect(inline(result.diagnostics)).toEqual([]);
+  },
+);
+
+test("a line comment keeps a literal block terminator in its Rule ID", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules,
+    files: {
+      "src/main.ts": `// doctor-disable-next-line ${untyped}*/\nconsole.log(import.meta.env.VITE_UNDECLARED);\n`,
+    },
+  });
+  expect(result.diagnostics.some((diagnostic) => diagnostic.ruleId === untyped)).toBe(true);
+  expect(inline(result.diagnostics)).toMatchObject([{ code: "DOC0037" }]);
 });
 
 test("changed-file runs report only directives inside the change", async () => {

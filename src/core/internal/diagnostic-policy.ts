@@ -71,8 +71,9 @@ export interface InlineSuppression {
   list: { start: number; end: number };
   /** Source offsets of the written reason, when there is one. */
   reasonRange?: { start: number; end: number };
-  /** The source span whose deletion removes the directive, unless its comment holds other text on the same line. */
-  removal?: { start: number; end: number };
+  /** A comment or line edit when the directive has no surrounding prose. */
+  removal?: { range: SourceComment; text: string; embeddedMarkup?: boolean };
+  shadowing?: boolean;
 }
 
 export interface InlineSuppressionRule {
@@ -419,7 +420,7 @@ function collectInlineSuppressions(file: string, source: string): InlineSuppress
     ? collectVueComments(file, source)
     : collectScriptComments(file, source);
   for (const comment of comments) {
-    addCommentSuppressions(directives, source, comment.start, comment.end);
+    addCommentSuppressions(directives, source, comment, codeFree);
   }
   const code = linesWithCode(source, [...comments, ...codeFree]);
   suppressions.all = [...directives.values()].sort((a, b) => a.start - b.start);
@@ -512,21 +513,16 @@ function collectVueComments(
 function addCommentSuppressions(
   directives: Map<number, InlineSuppression>,
   source: string,
-  start: number,
-  end: number,
+  comment: SourceComment,
+  codeFree: SourceComment[],
 ): void {
+  const { start, end } = comment;
   const rawComment = source.slice(start, end);
-  const opening = rawComment.startsWith("<!--")
-    ? 4
-    : rawComment.startsWith("/*") || rawComment.startsWith("//")
-      ? 2
-      : 0;
+  const html = rawComment.startsWith("<!--");
+  const block = rawComment.startsWith("/*");
+  const opening = html ? 4 : block || rawComment.startsWith("//") ? 2 : 0;
   const closing =
-    (opening === 4 && rawComment.endsWith("-->")) || (opening === 2 && rawComment.endsWith("*/"))
-      ? opening === 4
-        ? 3
-        : 2
-      : 0;
+    html && rawComment.endsWith("-->") ? 3 : block && rawComment.endsWith("*/") ? 2 : 0;
   const body = { start: start + opening, end: end - closing };
   let line = lineColumnAt(source, start).line - 1;
   let segmentStart = body.start;
@@ -537,9 +533,25 @@ function addCommentSuppressions(
     segmentStart += segment.length + 1;
     line++;
   }
-  const comment = { start, end };
+  const container = block
+    ? codeFree.find(
+        (span) =>
+          span.start < start &&
+          end < span.end &&
+          !source.slice(span.start + 1, start).trim() &&
+          !source.slice(end, span.end - 1).trim(),
+      )
+    : undefined;
   for (const directive of added)
-    directive.removal = directiveRemoval(source, comment, body, directive, added.length);
+    directive.removal = directiveRemoval(
+      source,
+      comment,
+      body,
+      directive,
+      added.length,
+      container,
+      html,
+    );
 }
 
 function addInlineSuppression(
@@ -549,11 +561,15 @@ function addInlineSuppression(
   offset: number,
   source: string,
 ): InlineSuppression | undefined {
-  if (directives.has(line)) return undefined;
   const match = segment.match(
     /(?:^|\s)doctor-disable(-next-line)?\s+([^\s]+)(?:\s+--\s+(.+)|\s+(.+))?/,
   );
   if (!match) return undefined;
+  const first = directives.get(line);
+  if (first) {
+    first.shadowing = true;
+    return undefined;
+  }
   const start = offset + match.index! + match[0].indexOf("doctor-disable");
   const keyword = "doctor-disable".length + (match[1]?.length ?? 0);
   const listStart = source.indexOf(match[2]!, start + keyword);
@@ -587,41 +603,36 @@ function directiveRemoval(
   body: SourceComment,
   directive: InlineSuppression,
   directivesInComment: number,
-): { start: number; end: number } | undefined {
+  container: SourceComment | undefined,
+  html: boolean,
+): InlineSuppression["removal"] {
   const blank = (text: string) => /^[\s*]*$/.test(text);
   if (
     directivesInComment === 1 &&
     blank(source.slice(body.start, directive.start)) &&
     blank(source.slice(directive.end, body.end))
   ) {
-    let start = comment.start;
-    let end = comment.end;
-    // A JSX comment lives in an otherwise empty `{}` container.
-    const before = /\{\s*$/.exec(source.slice(lineStart(source, start), start));
-    const after = /^\s*\}/.exec(source.slice(end));
-    if (before && after) {
-      start -= before[0].length;
-      end += after[0].length;
-    }
-    return lineRemoval(source, start, end);
+    const { start, end } = container ?? comment;
+    const first = lineStart(source, start);
+    const last = lineEnd(source, end);
+    const before = source.slice(first, start);
+    const after = source.slice(end, last);
+    if (!before.trim() && !after.trim())
+      return { range: { start: first, end: Math.min(source.length, last + 1) }, text: "" };
+    if (container || html) return { range: { start, end }, text: "", embeddedMarkup: true };
+    if (source.startsWith("//", start) && !after.trim())
+      return { range: { start: start - (/[ \t]*$/.exec(before)?.[0].length ?? 0), end }, text: "" };
+    return {
+      range: { start, end },
+      text: source.slice(start, end).replace(/[^\r\n\u2028\u2029]+/g, " "),
+    };
   }
   // The directive shares its comment with other text, so only its own line can go.
   const start = lineStart(source, directive.start);
   const end = lineEnd(source, directive.start);
   if (blank(source.slice(start, directive.start)) && blank(source.slice(directive.end, end)))
-    return { start, end: Math.min(source.length, end + 1) };
+    return { range: { start, end: Math.min(source.length, end + 1) }, text: "" };
   return undefined;
-}
-
-function lineRemoval(source: string, start: number, end: number): { start: number; end: number } {
-  const first = lineStart(source, start);
-  const last = lineEnd(source, end);
-  const before = source.slice(first, start);
-  const after = source.slice(end, last);
-  if (!before.trim() && !after.trim())
-    return { start: first, end: Math.min(source.length, last + 1) };
-  if (!after.trim()) return { start: start - (before.length - before.trimEnd().length), end: last };
-  return { start, end: end + (after.length - after.trimStart().length) };
 }
 
 function lineStart(source: string, offset: number): number {

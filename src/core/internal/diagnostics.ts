@@ -36,7 +36,7 @@ import {
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
-import { fileRuleConfig, markSession, type ScanSession } from "./scan-session.js";
+import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256, shellArgument } from "./utils.js";
 import {
@@ -136,23 +136,19 @@ function reportUnusedInlineSuppressions(session: ScanSession): void {
   const registered = new Map(session.registry.rules.map((rule) => [rule.meta.id, rule] as const));
   const namespaces = new Set([...registered.keys()].map(ruleNamespace));
   const codeOwners = diagnosticCodeOwners(session);
-  const projectRules = session.enabledRules.filter(
-    (rule) => rule.meta.execution === "manifest" || rule.meta.execution === "workspace",
-  );
   const unproven = new Set(
     (session.project.evidenceGaps ?? []).flatMap((gap) =>
       gap.files.map((file) => resolve(session.root, file)),
     ),
   );
   const reported = session.diagnostics.length;
-  for (const [file, fileRules] of session.fileRuleRuns) {
+  for (const [file, ran] of session.fileRuleRuns) {
     if (unproven.has(file)) continue;
     const handle = session.handlesByPath.get(file);
     if (!handle) continue;
-    const ran = new Set(fileRules);
-    for (const rule of projectRules)
-      if (fileRuleConfig(session, rule.meta.id, file).enabled) ran.add(rule.meta.id);
-    for (const directive of index.directives(file)) {
+    const directives = index.directives(file);
+    const sameLineCount = directives.filter((directive) => !directive.nextLine).length;
+    for (const directive of directives) {
       if (directive.rules.some((rule) => rule.id === "*")) continue;
       const matched = used.get(directive);
       const unused: string[] = [];
@@ -173,7 +169,7 @@ function reportUnusedInlineSuppressions(session: ScanSession): void {
         handle.text,
         directive,
         [...unused, ...unknown.map((item) => item.id)],
-        index.directives(file),
+        sameLineCount > (directive.nextLine ? 0 : 1),
       );
       const text = handle.text.slice(directive.start, directive.list.end);
       const range = {
@@ -264,13 +260,13 @@ function diagnosticCodeOwners(session: ScanSession): Map<string, string> {
 
 // Rules read comment text too: a SAFETY note in a directive's reason is what keeps an assertion
 // Rule quiet, so deleting it would bring that finding back.
-const SAFETY_NOTE = /(?:^|[^\p{L}\p{N}_])SAFETY\s*:\s*\S/u;
+const SAFETY_NOTE = /(?:^|[^\p{L}\p{N}_])SAFETY\s*(?::|$)/u;
 
 function inlineSuppressionFix(
   source: string,
   directive: InlineSuppression,
   removed: string[],
-  siblings: InlineSuppression[],
+  hasOtherSameLineDirective: boolean,
 ): Diagnostic["fix"] {
   const kept = directive.rules.filter((rule) => !removed.includes(rule.id)).map((rule) => rule.id);
   if (kept.length)
@@ -281,22 +277,23 @@ function inlineSuppressionFix(
     };
   if (directive.reasonRange && SAFETY_NOTE.test(directive.reason))
     return {
-      kind: "safe",
+      kind:
+        directive.shadowing || directive.reason.includes("doctor-disable") ? "suggestion" : "safe",
       message: "Delete the directive and keep its reason, which other Rules read as a SAFETY note.",
       edits: [{ range: { start: directive.start, end: directive.reasonRange.start }, text: "" }],
     };
-  const range = directive.removal ?? { start: directive.start, end: directive.end };
-  // Deleting a line moves nearby code under a same-line directive's reach, which could hide a Diagnostic.
+  const { range, text, embeddedMarkup } = directive.removal ?? {
+    range: { start: directive.start, end: directive.end },
+    text: "",
+  };
   const shifts =
-    source.slice(range.start, range.end).includes("\n") &&
-    siblings.some(
-      (other) =>
-        other !== directive && !other.nextLine && Math.abs(other.line - directive.line) <= 3,
-    );
+    hasOtherSameLineDirective &&
+    !text.includes("\n") &&
+    source.slice(range.start, range.end).includes("\n");
   return {
-    kind: shifts ? "suggestion" : "safe",
+    kind: shifts || directive.shadowing || embeddedMarkup ? "suggestion" : "safe",
     message: "Delete the directive.",
-    edits: [{ range, text: "" }],
+    edits: [{ range, text }],
   };
 }
 
