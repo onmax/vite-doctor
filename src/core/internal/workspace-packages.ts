@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, globSync, readFileSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { matchesGlob } from "node:path";
 import { basename, dirname, join, relative, resolve } from "pathe";
@@ -14,6 +14,8 @@ interface PackageManifest {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  scripts?: Record<string, string>;
   exports?: unknown;
 }
 
@@ -25,7 +27,7 @@ export async function detectWorkspacePackages(root: string): Promise<WorkspacePa
   const manifest = readManifest(join(root, "package.json"));
   const rootPackage = describePackage(root, ".", manifest);
   const patterns = workspacePatterns(root, manifest);
-  if (!patterns.length) return [rootPackage];
+  if (!patterns.length) return withoutClientApps(root, [rootPackage]);
   const include = patterns.filter((pattern) => !pattern.startsWith("!"));
   const exclude = patterns
     .filter((pattern) => pattern.startsWith("!"))
@@ -40,7 +42,7 @@ export async function detectWorkspacePackages(root: string): Promise<WorkspacePa
     if (exclude.some((pattern) => matchesGlob(packageRoot, pattern))) continue;
     roots.add(packageRoot);
   }
-  return [
+  return withoutClientApps(root, [
     rootPackage,
     ...[...roots]
       .sort()
@@ -51,7 +53,14 @@ export async function detectWorkspacePackages(root: string): Promise<WorkspacePa
           readManifest(join(root, packageRoot, "package.json")),
         ),
       ),
-  ];
+  ]);
+}
+
+/** Drops server-rendering evidence from packages that mount their own browser app. */
+function withoutClientApps(root: string, packages: WorkspacePackage[]): WorkspacePackage[] {
+  for (const item of packages)
+    if (item.ssr && mountsClientApp(root, item.root, packages)) delete item.ssr;
+  return packages;
 }
 
 /**
@@ -117,15 +126,184 @@ function describePackage(
     ...manifest?.devDependencies,
   };
   const framework = detectPackageFramework(directory, manifest, packages);
+  const nuxtIntegration = framework !== "nuxt" && shipsNuxtModule(manifest, packages);
+  const ssr =
+    framework === "nuxt" || !shipsVue(manifest)
+      ? undefined
+      : (manifestSsrEvidence(manifest) ??
+        (nuxtIntegration
+          ? "it ships a Nuxt module, and Nuxt server-renders components by default"
+          : undefined));
   return {
     root,
     ...(manifest?.name ? { name: manifest.name } : {}),
     framework,
-    ...(framework !== "nuxt" && shipsNuxtModule(manifest, packages)
-      ? { nuxtIntegration: true }
-      : {}),
+    ...(nuxtIntegration ? { nuxtIntegration: true } : {}),
     packages,
+    ...(ssr ? { ssr } : {}),
   };
+}
+
+const SSR_RENDERERS =
+  /^(vitepress|vuepress|@vuepress\/.*|@vue\/server-renderer|vite-ssg|vite-plugin-ssr|vike|nuxt)$/;
+const SSR_SCRIPTS = /\b(vitepress|vuepress|vite-ssg|vike|vite\s+build\s+--ssr)\b/;
+
+/**
+ * Why a package's own manifest says its Vue components render on a server: an SSR renderer or
+ * framework among its dependencies or scripts, a `./nuxt` export, or a `nuxt` peer. A Nuxt app
+ * server-renders its components by default, so a library built for Nuxt is server-rendered too.
+ */
+export function manifestSsrEvidence(
+  manifest: {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    scripts?: Record<string, string>;
+    exports?: unknown;
+  } | null,
+): string | undefined {
+  if (!manifest) return undefined;
+  const exports = manifest.exports;
+  if (isRecord(exports) && "./nuxt" in exports)
+    return "its package.json exports ./nuxt, and Nuxt server-renders components by default";
+  if (manifest.peerDependencies?.nuxt)
+    return "it declares a nuxt peer dependency, and Nuxt server-renders components by default";
+  for (const key of ["dependencies", "optionalDependencies", "devDependencies"] as const) {
+    const name = Object.keys(manifest[key] ?? {}).find((item) => SSR_RENDERERS.test(item));
+    if (name) return `it depends on ${name}`;
+  }
+  const script = Object.values(manifest.scripts ?? {})
+    .map((item) => SSR_SCRIPTS.exec(item)?.[1])
+    .find(Boolean);
+  return script ? `a package script runs ${script}` : undefined;
+}
+
+function shipsVue(manifest: PackageManifest | null): boolean {
+  return ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"].some(
+    (key) => Boolean(manifest?.[key as "dependencies"]?.vue),
+  );
+}
+
+const CLIENT_APP_SOURCES = "**/*.{ts,mts,js,mjs,tsx,jsx}";
+const NON_APP_DIRECTORIES = new Set([
+  "node_modules",
+  "dist",
+  "test",
+  "tests",
+  "__tests__",
+  "fixtures",
+  "examples",
+  "playground",
+  "scripts",
+]);
+
+/**
+ * Whether the package mounts its own browser app with `createApp(...).mount()` and never renders
+ * Vue on a server. Its components are built for that app, so a `./nuxt` export or a Nuxt consumer
+ * says nothing about how they render.
+ */
+function mountsClientApp(
+  root: string,
+  packageRoot: string,
+  packages: readonly WorkspacePackage[],
+): boolean {
+  let cache = clientApps.get(packages);
+  if (!cache) clientApps.set(packages, (cache = new Map()));
+  let mounts = cache.get(packageRoot);
+  if (mounts === undefined)
+    cache.set(packageRoot, (mounts = scanClientApp(root, packageRoot, packages)));
+  return mounts;
+}
+
+const clientApps = new WeakMap<readonly WorkspacePackage[], Map<string, boolean>>();
+
+function scanClientApp(
+  root: string,
+  packageRoot: string,
+  packages: readonly WorkspacePackage[],
+): boolean {
+  const directory = join(root, packageRoot);
+  // Workspace packages nested in this one, such as every package under the workspace root.
+  const nested = new Set(
+    packages
+      .filter(
+        (item) =>
+          item.root !== packageRoot &&
+          (packageRoot === "." || item.root.startsWith(`${packageRoot}/`)),
+      )
+      .map((item) => join(root, item.root)),
+  );
+  let mounts = false;
+  for (const file of globSync(CLIENT_APP_SOURCES, {
+    cwd: directory,
+    exclude: (entry) =>
+      NON_APP_DIRECTORIES.has(basename(String(entry))) ||
+      nested.has(resolve(directory, String(entry))) ||
+      /\.(test|spec)\.[cm]?[jt]sx?$/.test(String(entry)),
+  })) {
+    let text: string;
+    try {
+      text = readFileSync(join(directory, String(file)), "utf8");
+    } catch {
+      continue;
+    }
+    if (!/createApp|createSSRApp|renderTo/.test(text)) continue;
+    const code = text.replace(/\/\*[\s\S]*?\*\/|(^|[^:\\])\/\/.*$/gm, "$1");
+    if (/\b(createSSRApp|renderToString|renderToWebStream|renderToNodeStream)\s*\(/.test(code))
+      return false;
+    mounts ||= /\bcreateApp\s*\(/.test(code) && /\.mount\s*\(/.test(code);
+  }
+  return mounts;
+}
+
+/**
+ * Marks workspace packages that a server-rendered package depends on, directly or through other
+ * workspace packages, as server-rendered too: their components and composables run inside that
+ * package's SSR render. Only packages that ship Vue code take part. A Nuxt app bundles its devDependencies, a library only its runtime ones.
+ * `serverRenders` says whether a Nuxt package renders on the server.
+ */
+export function addConsumerSsrEvidence(
+  root: string,
+  packages: readonly WorkspacePackage[],
+  serverRenders: (item: WorkspacePackage) => boolean,
+): void {
+  const byName = new Map(
+    packages.flatMap((item) => (item.name ? [[item.name, item] as const] : [])),
+  );
+  const queue = packages.filter((item) =>
+    item.framework === "nuxt" ? serverRenders(item) : item.ssr !== undefined,
+  );
+  for (let index = 0; index < queue.length; index++) {
+    const consumer = queue[index]!;
+    const manifest =
+      consumer.framework === "nuxt"
+        ? null
+        : readManifest(join(root, consumer.root, "package.json"));
+    const names =
+      consumer.framework === "nuxt"
+        ? Object.keys(consumer.packages)
+        : [
+            ...Object.keys(manifest?.dependencies ?? {}),
+            ...Object.keys(manifest?.optionalDependencies ?? {}),
+            ...Object.keys(manifest?.peerDependencies ?? {}),
+          ];
+    for (const name of names) {
+      const dependency = byName.get(name);
+      if (!dependency || dependency === consumer || dependency.framework === "nuxt") continue;
+      if (dependency.ssr !== undefined) continue;
+      if (
+        !shipsVue(readManifest(join(root, dependency.root, "package.json"))) ||
+        mountsClientApp(root, dependency.root, packages)
+      )
+        continue;
+      dependency.ssr =
+        consumer.framework === "nuxt"
+          ? `the Nuxt app ${consumer.root} depends on it`
+          : `the server-rendered package ${consumer.root} depends on it`;
+      queue.push(dependency);
+    }
+  }
 }
 
 function detectPackageFramework(
@@ -227,7 +405,19 @@ function readManifest(file: string): PackageManifest | null {
         manifest.workspaces = { packages };
       }
     }
-    for (const key of ["dependencies", "devDependencies", "optionalDependencies"] as const) {
+    if (isRecord(value.scripts)) {
+      manifest.scripts = Object.fromEntries(
+        Object.entries(value.scripts).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+    }
+    for (const key of [
+      "dependencies",
+      "devDependencies",
+      "optionalDependencies",
+      "peerDependencies",
+    ] as const) {
       const dependencies = value[key];
       if (
         isRecord(dependencies) &&
