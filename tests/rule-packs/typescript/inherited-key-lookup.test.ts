@@ -216,6 +216,16 @@ test.each([
     1,
   ],
   [
+    "a for initializer that invalidates ownership before the lookup",
+    "function read(values: Record<string, number>, key: string) { if (!Object.hasOwn(values, key)) return; for (let removed = delete values[key], remaining = values[key]; remaining > 0; remaining--) {} }",
+    1,
+  ],
+  [
+    "a for-of iterable that invalidates ownership before the lookup",
+    "function read(values: Record<string, string[]>, key: string) { if (!Object.hasOwn(values, key)) return; for (const value of (delete values[key], values[key])) console.log(value) }",
+    1,
+  ],
+  [
     "a membership test outside a loop that can invalidate it",
     "function read(values: Record<string, string>, key: string) { if (!(key in values)) return; for (const step of [0, 1]) { console.log(values[key] ?? step); delete values[key] } }",
     2,
@@ -349,6 +359,18 @@ test.each([
   [
     "an ownership guard checked again on each iteration",
     "function read(values: Record<string, string>, key: string) { for (let index = 0; index < 2; index++) { if (!Object.hasOwn(values, key)) continue; const fallback = ''; console.log(values[key] ?? fallback); delete values[key] } }",
+  ],
+  [
+    "a guarded lookup in a for initializer",
+    "function read(values: Record<string, number>, key: string) { if (!Object.hasOwn(values, key)) return; for (let start = 0, remaining = values[key]; remaining > start; remaining--) { delete values[key] } }",
+  ],
+  [
+    "a guarded lookup in a for-in right-hand expression",
+    "function read(values: Record<string, object>, key: string) { if (!Object.hasOwn(values, key)) return; for (const field in values[key]) { delete values[key]; console.log(field) } }",
+  ],
+  [
+    "a guarded lookup in a for-of iterable",
+    "function read(values: Record<string, string[]>, key: string) { if (!Object.hasOwn(values, key)) return; for (const value of values[key]) { delete values[key]; console.log(value) } }",
   ],
   [
     "a hasOwnProperty.call guard",

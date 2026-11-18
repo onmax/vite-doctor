@@ -1030,17 +1030,70 @@ export const noInheritedKeyLookup = createRule({
       );
     }
 
+    function canCarryGuardPastDeclarator(declaration: AnyNode): boolean {
+      return (
+        declaration.id.type === "Identifier" &&
+        (!declaration.init || expression(declaration.init, true)?.type === "Literal")
+      );
+    }
+
     function canCarryGuardPastStatement(statement: AnyNode): boolean {
       return (
         statement.type === "EmptyStatement" ||
         (statement.type === "VariableDeclaration" &&
           ["const", "let"].includes(statement.kind) &&
-          statement.declarations.every(
-            (declaration: AnyNode) =>
-              declaration.id.type === "Identifier" &&
-              (!declaration.init || expression(declaration.init, true)?.type === "Literal"),
-          ))
+          statement.declarations.every(canCarryGuardPastDeclarator))
       );
+    }
+
+    function safeLoopEntryPath(node: AnyNode, entry: AnyNode): boolean {
+      for (let child = node; child !== entry;) {
+        const parent = evidence.parent(child);
+        if (!parent) return false;
+        switch (parent.type) {
+          case "VariableDeclaration": {
+            const index = parent.declarations.indexOf(child);
+            if (
+              index < 0 ||
+              !parent.declarations.slice(0, index).every(canCarryGuardPastDeclarator)
+            )
+              return false;
+            break;
+          }
+          case "VariableDeclarator":
+            if (parent.init !== child) return false;
+            break;
+          case "SequenceExpression": {
+            const index = parent.expressions.indexOf(child);
+            if (index < 0 || !parent.expressions.slice(0, index).every(canCarryGuard)) return false;
+            break;
+          }
+          case "LogicalExpression":
+          case "BinaryExpression":
+            if (parent.left !== child && !canCarryGuard(parent.left)) return false;
+            break;
+          case "ConditionalExpression":
+            if (parent.test !== child && !canCarryGuard(parent.test)) return false;
+            break;
+          case "MemberExpression":
+            if (parent.object !== child && !canCarryGuard(parent.object)) return false;
+            break;
+          case "CallExpression":
+            if (parent.callee !== child) return false;
+            break;
+          case "ChainExpression":
+          case "UnaryExpression":
+          case "TSAsExpression":
+          case "TSNonNullExpression":
+          case "TSSatisfiesExpression":
+          case "TSTypeAssertion":
+            break;
+          default:
+            return false;
+        }
+        child = parent;
+      }
+      return true;
     }
 
     function onPath(
@@ -1052,17 +1105,20 @@ export const noInheritedKeyLookup = createRule({
       for (let current = node; current && current !== owner;) {
         const parent = evidence.parent(current);
         if (!parent || parent === owner) break;
-        if (
-          !stableSubject &&
-          [
-            "ForStatement",
-            "ForInStatement",
-            "ForOfStatement",
-            "WhileStatement",
-            "DoWhileStatement",
-          ].includes(parent.type)
-        )
-          return false;
+        if (!stableSubject) {
+          switch (parent.type) {
+            case "ForStatement":
+              if (current !== parent.init || !safeLoopEntryPath(node, current)) return false;
+              break;
+            case "ForInStatement":
+            case "ForOfStatement":
+              if (current !== parent.right || !safeLoopEntryPath(node, current)) return false;
+              break;
+            case "WhileStatement":
+            case "DoWhileStatement":
+              return false;
+          }
+        }
         if (["IfStatement", "ConditionalExpression"].includes(parent.type)) {
           if (parent.consequent === current && implies(parent.test, true, match, stableSubject))
             return true;
