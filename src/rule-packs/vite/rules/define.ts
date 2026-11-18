@@ -14,6 +14,9 @@ import {
   type AnyNode,
 } from "./shared.js";
 
+// Modules whose `defineConfig` and `mergeConfig` wrap a Vite config; Vite+ re-exports Vite's.
+const VITE_CONFIG_MODULES = ["vite", "vite-plus", "vitest/config"];
+
 export const noUnusedDefine = createRule({
   meta: {
     id: "vite/define/no-unused-define",
@@ -586,7 +589,7 @@ function readAliasInitializers(source: string) {
       definition.node.init.callee.name === "require" &&
       !references.get(definition.node.init.callee.range[0])?.resolved &&
       definition.node.init.arguments[0]?.type === "Literal" &&
-      ["vite", "vitest/config"].includes(definition.node.init.arguments[0].value as string)
+      VITE_CONFIG_MODULES.includes(definition.node.init.arguments[0].value as string)
     ) {
       if (node.type === "MemberExpression")
         return !node.computed && node.property.name === "defineConfig";
@@ -601,7 +604,7 @@ function readAliasInitializers(source: string) {
     if (
       definition?.type !== "ImportBinding" ||
       definition.parent.type !== "ImportDeclaration" ||
-      !["vite", "vitest/config"].includes(definition.parent.source.value as string)
+      !VITE_CONFIG_MODULES.includes(definition.parent.source.value as string)
     )
       return false;
     if (node.type === "MemberExpression")
@@ -743,7 +746,7 @@ function readAliasInitializers(source: string) {
       if (
         definition?.type === "ImportBinding" &&
         definition.parent.type === "ImportDeclaration" &&
-        ["vite", "vitest/config"].includes(definition.parent.source.value as string) &&
+        VITE_CONFIG_MODULES.includes(definition.parent.source.value as string) &&
         definition.node.type === "ImportNamespaceSpecifier"
       )
         namespaces.add(reference.identifier.range[0]);
@@ -752,7 +755,7 @@ function readAliasInitializers(source: string) {
       if (
         definition?.type === "ImportBinding" &&
         definition.parent.type === "ImportDeclaration" &&
-        ["vite", "vitest/config"].includes(definition.parent.source.value as string) &&
+        VITE_CONFIG_MODULES.includes(definition.parent.source.value as string) &&
         definition.node.type === "ImportSpecifier" &&
         ["defineConfig", "mergeConfig"].includes(propertyName(definition.node.imported) ?? "")
       )
@@ -786,7 +789,7 @@ function readAliasInitializers(source: string) {
         !references.get(init.callee.range[0])?.resolved &&
         init.arguments.length === 1 &&
         init.arguments[0]?.type === "Literal" &&
-        ["vite", "vitest/config"].includes(init.arguments[0].value as string)
+        VITE_CONFIG_MODULES.includes(init.arguments[0].value as string)
       ) {
         if (id.type === "Identifier") namespaces.add(reference.identifier.range[0]);
         if (id.type === "ObjectPattern") {

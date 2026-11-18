@@ -7,6 +7,7 @@ import type {
   DoctorExtensionInput,
   DoctorPluginApi,
   DoctorRunOptions,
+  DoctorSerializableConfig,
 } from "./core/index.js";
 import {
   diffStates,
@@ -24,6 +25,7 @@ export interface ViteDoctorSurfaceOptions {
   mode?: "warn" | "error";
   root?: string;
   framework?: "auto" | "vite" | "vue" | "nitro" | "nuxt";
+  /** Doctor config for this plugin. When unset, the plugin uses the `doctor` key of the Vite config. */
   config?: DoctorConfig;
   extends?: DoctorRunOptions["extends"];
   /** Explicit Doctor Extensions. Extensions exposed by other Vite plugins through `api.doctor` attach automatically. */
@@ -37,6 +39,17 @@ export interface ViteDoctorSurfaceOptions {
   maxWarnings?: number;
   cache?: boolean;
   format?: DoctorRunOptions["format"];
+}
+
+declare module "vite" {
+  interface UserConfig {
+    /**
+     * Doctor config for this project. The `vite-doctor` CLI reads it without running vite.config,
+     * so keep it a literal, optionally wrapped in `defineDoctorConfig()`. The `doctor()` plugin
+     * uses it when its own `config` option is not set.
+     */
+    doctor?: DoctorSerializableConfig;
+  }
 }
 
 export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
@@ -141,7 +154,11 @@ class ServeDoctorRun {
 
   private fileChanged(path: string) {
     const file = resolve(path);
-    const kind = hotUpdateKind(surfaceRoot(this.server.config, this.options), this.options, file);
+    const kind = hotUpdateKind(
+      surfaceRoot(this.server.config, this.options),
+      surfaceConfig(this.server.config, this.options),
+      file,
+    );
     if (!kind) return;
     if (kind === "inventory") this.pending.full = true;
     else this.pending.files.add(file);
@@ -291,7 +308,7 @@ const IGNORED_DIRECTORIES = new Set(["node_modules", ".git"]);
  */
 function hotUpdateKind(
   root: string,
-  options: ViteDoctorSurfaceOptions,
+  config: DoctorConfig | undefined,
   file: string,
 ): "source" | "inventory" | undefined {
   if (packageInputs(root).includes(file)) return "inventory";
@@ -303,8 +320,7 @@ function hotUpdateKind(
   )
     return undefined;
   // Doctor writes its cache during a run, which must not schedule another run.
-  if (isInside(resolve(root, options.config?.cache?.dir ?? ".vite-doctor/cache"), file))
-    return undefined;
+  if (isInside(resolve(root, config?.cache?.dir ?? ".vite-doctor/cache"), file)) return undefined;
   if (basename(file) === "package.json") return "inventory";
   return SOURCE_FILE.test(file) ? "source" : undefined;
 }
@@ -340,12 +356,19 @@ function surfaceRoot(config: ResolvedConfig, options: ViteDoctorSurfaceOptions) 
   return options.root ? resolve(config.root, options.root) : config.root;
 }
 
+function surfaceConfig(
+  config: ResolvedConfig,
+  options: ViteDoctorSurfaceOptions,
+): DoctorConfig | undefined {
+  return options.config ?? config.doctor;
+}
+
 function surfaceRunInput(config: ResolvedConfig, options: ViteDoctorSurfaceOptions) {
   return {
     options: {
       root: surfaceRoot(config, options),
       framework: options.framework ?? "auto",
-      config: options.config,
+      config: surfaceConfig(config, options),
       extends: options.extends,
       rules: options.rules,
       since: options.since,

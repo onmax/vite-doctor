@@ -88,6 +88,8 @@ The migration report stages source changes that are safe on the installed runtim
 
 ## Configuration
 
+Doctor needs no config file: it activates Rule Packs from the project's dependencies. Add config only to change rules, per-path overrides, suppressions, include or exclude globs, or presets. Doctor reports an info-level `DOC0038` Diagnostic for an automatically discovered `doctor.config.json` that only repeats the defaults and can be deleted without changing the run.
+
 Doctor automatically loads declarative `doctor.config.json` without executing project code:
 
 ```json
@@ -97,6 +99,32 @@ Doctor automatically loads declarative `doctor.config.json` without executing pr
   }
 }
 ```
+
+Or put the same config under the `doctor` key of a statically readable `vite.config.ts`. Doctor parses the file without running it, so the value must be a literal:
+
+```ts
+// vite.config.ts
+import { defineConfig } from "vite-plus";
+import { defineDoctorConfig } from "vite-doctor";
+
+export default defineConfig({
+  doctor: defineDoctorConfig({
+    rules: {
+      "vite/define/no-secret-define": "error",
+    },
+  }),
+  // Vite+ has no check hook for other tools; a task makes `vp run check:doctor` run Doctor.
+  run: {
+    tasks: {
+      "check:doctor": { command: "vite-doctor . --max-warnings 0", cache: false },
+    },
+  },
+});
+```
+
+See [Run Doctor with Vite+](https://vite-doctor.onmax.me/vite#run-doctor-with-vite) for Nuxt module repositories.
+
+If Doctor can't determine whether a dynamic Vite config contains a `doctor` key, select your Doctor config explicitly with `--config doctor.config.json` (use `{}` for defaults).
 
 Executable config remains explicit because loading it runs project code:
 

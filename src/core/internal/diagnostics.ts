@@ -24,6 +24,7 @@ import type {
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
 import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
+import { defaultConfigDiagnosticMetadata } from "../diagnostic-metadata.js";
 import {
   applyDiagnosticPolicy,
   InlineSuppressionIndex,
@@ -71,6 +72,7 @@ export function applyPolicyFilters(session: ScanSession): void {
   session.diagnostics = settleDiagnosticIdentity(session.diagnostics);
   reportUnusedInlineSuppressions(session);
   reportUnusedConfigSuppressions(session);
+  reportDefaultDeclarativeConfig(session);
   applyReportEligibility(session);
   applySeverityFilter(session);
   const result = applyDiagnosticPolicy(session);
@@ -387,6 +389,77 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
     ...session.diagnostics.slice(0, reported),
     ...settleDiagnosticIdentity(session.diagnostics.slice(reported)),
   ];
+}
+
+function reportDefaultDeclarativeConfig(session: ScanSession): void {
+  const { options } = session;
+  const file = options.declarativeConfigFile;
+  const value = options.config;
+  if (!file || !value || session.scopedReport || options.rules || options.analyses) return;
+  if (!selectsOnlyDefaults(value) || !selectsOnlyDefaults(shadowedHostSettings(session, value)))
+    return;
+  const { ruleId, severity, category, fix } = defaultConfigDiagnosticMetadata;
+  const reported = session.diagnostics.length;
+  pushDiagnostic(session, {
+    ruleId,
+    severity,
+    category,
+    file,
+    why: "doctor.config.json selects nothing beyond Doctor's defaults, so this Doctor Run is the same without it. Doctor needs no config file: it activates Rule Packs from the project's dependencies.",
+    suggestion: fix,
+    confidence: "proven",
+    analysisPhase: "manifest",
+  });
+  session.diagnostics = [
+    ...session.diagnostics.slice(0, reported),
+    ...settleDiagnosticIdentity(session.diagnostics.slice(reported)),
+  ];
+}
+
+function shadowedHostSettings(session: ScanSession, config: DoctorConfig) {
+  const inherited = session.project.nuxt?.doctorConfig;
+  return Object.fromEntries(
+    (["extends", "exclude", "suppressions"] as const)
+      .filter((key) => config[key] !== undefined && inherited?.[key] !== undefined)
+      .map((key) => [key, inherited?.[key]]),
+  );
+}
+
+// `include: []` and `extends: []` select no files or no Rules, so only these values match the defaults.
+function selectsOnlyDefaults(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  return Object.entries(value).every(([key, entry]) => {
+    switch (key) {
+      case "$schema":
+        return true;
+      case "extends":
+        return (
+          entry === "auto" ||
+          (Array.isArray(entry) && entry.length > 0 && entry.every((item) => item === "auto"))
+        );
+      case "exclude":
+      case "overrides":
+      case "suppressions":
+        return Array.isArray(entry) && entry.length === 0;
+      case "rules":
+      case "cache":
+        return isPlainObject(entry) && Object.keys(entry).length === 0;
+      case "score":
+        return (
+          isPlainObject(entry) &&
+          Object.entries(entry).every(
+            ([name, weights]) =>
+              name === "weights" && isPlainObject(weights) && Object.keys(weights).length === 0,
+          )
+        );
+      default:
+        return false;
+    }
+  });
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isGlobPattern(pattern: string): boolean {

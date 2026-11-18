@@ -58,6 +58,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0035", ruleId: "doctor/config/invalid-override", docs: false },
   { code: "DOC0036", ruleId: "doctor/inline/unused-suppression" },
   { code: "DOC0037", ruleId: "doctor/inline/unknown-suppression-rule" },
+  { code: "DOC0038", ruleId: "doctor/config/default-config-file" },
   { code: "VUE0001", ruleId: "vue/i18n/no-untranslated-text" },
   { code: "VUE0002", ruleId: "vue/i18n/no-unused-translations" },
   { code: "VUE0003", ruleId: "vue/lifecycle/no-mutation-in-onupdated" },

@@ -22,6 +22,8 @@ export interface DoctorRunOptions {
   root?: string;
   /** Already-loaded Doctor config. */
   config?: DoctorConfig;
+  /** @internal Path of the automatically discovered JSON config, if loaded by the CLI. */
+  declarativeConfigFile?: string;
   framework?: "auto" | DoctorFramework;
   extends?: DoctorExtends;
   changed?: boolean;

@@ -1,0 +1,319 @@
+import { readFileSync } from "node:fs";
+import { Visitor, type Node, type ObjectExpression, type Program } from "oxc-parser";
+import type { DoctorSerializableConfig } from "../primitives.js";
+import { lineColumnAt } from "./line-index.js";
+import { parseScriptSync } from "./script.js";
+import { analyzeScriptProgram, type ScopeReference } from "./script-scope.js";
+
+export class ViteConfigDoctorError extends Error {}
+
+/**
+ * Returns undefined only when the supported export shape has no `doctor` key.
+ * An indeterminate export or a nonliteral setting is a config error.
+ */
+export function readViteConfigDoctor(
+  file: string,
+): { config: DoctorSerializableConfig } | undefined {
+  const source = readFileSync(file, "utf8");
+  const { program, errors } = parseScriptSync(file, source, {
+    astType: "ts",
+    range: true,
+    preserveParens: false,
+  });
+  const error = errors.find((item) => item.severity === "Error");
+  if (error) throw indeterminate(source, error.labels[0]?.start ?? 0, "could not parse the file");
+  const references = new Map<unknown, ScopeReference>();
+  const sourceType = program.sourceType === "module" ? "module" : "script";
+  for (const scope of analyzeScriptProgram(program, sourceType).scopes) {
+    for (const reference of scope.references) references.set(reference.identifier, reference);
+  }
+  const binding = (node: Node) => references.get(node)?.resolved;
+  const viteHelpers = new Set<unknown>();
+  const doctorHelpers = new Set<unknown>();
+  const body: Node[] = program.body;
+  for (const statement of body) {
+    if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.type !== "ImportSpecifier" || specifier.importKind === "type") continue;
+      const imported = propertyName(specifier.imported);
+      const module = statement.source.value;
+      if (imported === "defineConfig" && (module === "vite" || module === "vite-plus")) {
+        viteHelpers.add(specifier);
+      }
+      if (
+        imported === "defineDoctorConfig" &&
+        (module === "vite-doctor" || module === "vite-doctor/config")
+      ) {
+        doctorHelpers.add(specifier);
+      }
+    }
+  }
+
+  const exported = defaultExport(body) ?? commonJsExport(program, references);
+  const helperArgument = (node: Node, helpers: ReadonlySet<unknown>) => {
+    if (
+      node.type !== "CallExpression" ||
+      node.optional ||
+      node.callee.type !== "Identifier" ||
+      node.arguments.length !== 1
+    )
+      return undefined;
+    const [definition, extra] = binding(node.callee)?.defs ?? [];
+    return definition && !extra && helpers.has(definition.node) ? node.arguments[0] : undefined;
+  };
+  const config =
+    exported &&
+    configObject(exported, body, references, (node) => helperArgument(node, viteHelpers));
+  if (!config)
+    throw indeterminate(source, exported?.start ?? 0, "the export is not a supported static form");
+
+  const property = config.properties.findLast((item) => {
+    const name = item.type === "Property" ? propertyName(item.key, item.computed) : undefined;
+    if (name === undefined || (name === "__proto__" && item.type === "Property" && !item.computed))
+      throw indeterminate(
+        source,
+        item.start,
+        "a spread, computed key, or custom prototype may supply it",
+      );
+    return name === "doctor";
+  });
+  if (!property || property.type !== "Property") return undefined;
+  if (property.kind !== "init" || property.method || property.shorthand) {
+    throw notLiteral(source, property, "must be a plain property with a literal value");
+  }
+  let value: Node = unwrap(property.value as Node);
+  const argument = helperArgument(value, doctorHelpers);
+  if (argument) value = unwrap(argument);
+  const literal = toLiteral(value, source);
+  if (typeof literal !== "object" || literal === null || Array.isArray(literal)) {
+    throw notLiteral(source, value, "must be an object");
+  }
+  return { config: literal as DoctorSerializableConfig };
+}
+
+const commonJsMetadata = new Set(["filename", "id", "loaded", "path"]);
+
+function commonJsExport(
+  program: Program,
+  references: ReadonlyMap<unknown, ScopeReference>,
+): Node | undefined {
+  const modules = new Set<unknown>(
+    [...references.values()]
+      .filter(
+        (reference) =>
+          reference.isValueReference &&
+          !reference.resolved &&
+          reference.identifier.name === "module",
+      )
+      .map((reference) => reference.identifier),
+  );
+  if (modules.size > 1) {
+    const mutations = new Set<Node>();
+    const markMutation = (target: Node) => {
+      target = unwrap(target);
+      switch (target.type) {
+        case "MemberExpression":
+          mutations.add(target);
+          break;
+        case "ChainExpression":
+        case "TSTypeAssertion":
+          markMutation(target.expression);
+          break;
+        case "ArrayPattern":
+          for (const item of target.elements) if (item) markMutation(item);
+          break;
+        case "ObjectPattern":
+          for (const item of target.properties) {
+            markMutation(item.type === "Property" ? item.value : item);
+          }
+          break;
+        case "AssignmentPattern":
+          markMutation(target.left);
+          break;
+        case "RestElement":
+          markMutation(target.argument);
+          break;
+      }
+    };
+    new Visitor({
+      AssignmentExpression: (node) => markMutation(node.left),
+      UpdateExpression: (node) => markMutation(node.argument),
+      UnaryExpression: (node) => {
+        if (node.operator === "delete") markMutation(node.argument);
+      },
+      ForInStatement: (node) => markMutation(node.left),
+      ForOfStatement: (node) => markMutation(node.left),
+      MemberExpression: (node) => {
+        if (!modules.has(node.object) || mutations.has(node)) return;
+        const key = propertyName(node.property, node.computed);
+        if (key !== undefined && commonJsMetadata.has(key)) modules.delete(node.object);
+      },
+    }).visit(program);
+  }
+  if (modules.size !== 1) return undefined;
+  for (const statement of program.body) {
+    if (statement.type !== "ExpressionStatement") continue;
+    const assignment = statement.expression;
+    if (assignment.type !== "AssignmentExpression" || assignment.operator !== "=") continue;
+    const left = assignment.left;
+    if (
+      left.type === "MemberExpression" &&
+      modules.has(left.object) &&
+      propertyName(left.property, left.computed) === "exports"
+    )
+      return assignment.right;
+  }
+}
+
+function defaultExport(body: Node[]): Node | undefined {
+  for (const statement of body) {
+    if (statement.type === "ExportDefaultDeclaration") return statement.declaration;
+    if (statement.type !== "ExportNamedDeclaration" || statement.source) continue;
+    const specifier = statement.specifiers.find(
+      (item) => propertyName(item.exported) === "default",
+    );
+    if (specifier?.local.type === "Identifier") return specifier.local;
+  }
+}
+
+function configObject(
+  exported: Node,
+  body: Node[],
+  references: ReadonlyMap<unknown, ScopeReference>,
+  helperArgument: (node: Node) => Node | undefined,
+): ObjectExpression | undefined {
+  let node = unwrap(exported);
+  if (node.type === "Identifier") {
+    const target = references.get(node)?.resolved;
+    const [definition, extra] = target?.defs ?? [];
+    if (
+      !target ||
+      !definition ||
+      extra ||
+      definition.type !== "Variable" ||
+      definition.parent.kind !== "const" ||
+      target.references.some(
+        (reference) =>
+          reference.isValueReference &&
+          !reference.init &&
+          reference.identifier !== (node as unknown),
+      )
+    )
+      return undefined;
+    const declaration = body.find(
+      (statement) =>
+        statement.type === "VariableDeclaration" && statement === (definition.parent as unknown),
+    );
+    if (declaration?.type !== "VariableDeclaration") return undefined;
+    const declarator = declaration.declarations.find(
+      (item) => item === (definition.node as unknown),
+    );
+    if (declarator?.id.type !== "Identifier" || !declarator.init) return undefined;
+    node = unwrap(declarator.init);
+  }
+  node = unwrap(helperArgument(node) ?? node);
+  if (
+    node.type === "ArrowFunctionExpression" ||
+    node.type === "FunctionExpression" ||
+    node.type === "FunctionDeclaration"
+  ) {
+    if (!node.body || ("generator" in node && node.generator)) return undefined;
+    if (node.body.type === "BlockStatement") {
+      const returned = node.body.body.at(-1);
+      if (
+        returned?.type !== "ReturnStatement" ||
+        !returned.argument ||
+        !node.body.body
+          .slice(0, -1)
+          .every(
+            (statement) =>
+              statement.type === "VariableDeclaration" || statement.type === "ExpressionStatement",
+          )
+      )
+        return undefined;
+      node = unwrap(returned.argument);
+    } else {
+      node = unwrap(node.body);
+    }
+  }
+  return node.type === "ObjectExpression" ? node : undefined;
+}
+
+function unwrap(node: Node): Node {
+  while (
+    node.type === "ParenthesizedExpression" ||
+    node.type === "TSAsExpression" ||
+    node.type === "TSSatisfiesExpression" ||
+    node.type === "TSNonNullExpression"
+  ) {
+    node = node.expression as Node;
+  }
+  return node;
+}
+
+function propertyName(key: Node, computed = false): string | undefined {
+  if (!computed && key.type === "Identifier") return key.name;
+  if (key.type === "Literal" && (typeof key.value === "string" || typeof key.value === "number"))
+    return String(key.value);
+  if (key.type === "TemplateLiteral" && !key.expressions.length)
+    return key.quasis[0]?.value.cooked ?? undefined;
+  return undefined;
+}
+
+function toLiteral(node: Node, source: string): unknown {
+  node = unwrap(node);
+  switch (node.type) {
+    case "Literal":
+      if ("regex" in node || "bigint" in node) break;
+      return node.value;
+    case "TemplateLiteral":
+      if (node.expressions.length) break;
+      return node.quasis.map((quasi) => quasi.value.cooked).join("");
+    case "UnaryExpression":
+      if (node.operator === "-" && node.argument.type === "Literal") {
+        const value = node.argument.value;
+        if (typeof value === "number") return -value;
+      }
+      break;
+    case "ArrayExpression":
+      return node.elements.map((element) => {
+        if (!element || element.type === "SpreadElement")
+          throw notLiteral(source, element ?? node, "must not contain holes or spreads");
+        return toLiteral(element as Node, source);
+      });
+    case "ObjectExpression": {
+      const entries: [string, unknown][] = [];
+      for (const property of node.properties) {
+        const name =
+          property.type === "Property" &&
+          !property.computed &&
+          !property.method &&
+          !property.shorthand &&
+          property.kind === "init"
+            ? propertyName(property.key as Node)
+            : undefined;
+        if (property.type !== "Property" || name === undefined)
+          throw notLiteral(source, property as Node, "must use plain keys, without spreads");
+        if (name === "__proto__")
+          throw notLiteral(source, property, "must not set an object prototype");
+        entries.push([name, toLiteral(property.value as Node, source)]);
+      }
+      return Object.fromEntries(entries);
+    }
+  }
+  throw notLiteral(source, node, "must be a literal");
+}
+
+function notLiteral(source: string, node: Node, reason: string): ViteConfigDoctorError {
+  const { line, column } = lineColumnAt(source, node.start);
+  return new ViteConfigDoctorError(
+    `The doctor key ${reason} (line ${line}, column ${column}). Doctor reads vite.config without running it, so the doctor value can only hold strings, numbers, booleans, null, arrays, and objects. Pass Doctor Extensions and computed values to the doctor() plugin, or to doctor.config.ts with --config.`,
+  );
+}
+
+function indeterminate(source: string, start: number, reason: string): ViteConfigDoctorError {
+  const { line, column } = lineColumnAt(source, start);
+  return new ViteConfigDoctorError(
+    `Cannot determine whether vite.config provides a doctor key: ${reason} (line ${line}, column ${column}). Use a supported static export or select your Doctor config explicitly with --config <file>.`,
+  );
+}

@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import type { ScopeManager } from "@typescript-eslint/scope-manager";
 import type { SFCDescriptor } from "@vue/compiler-sfc";
+import type { Program } from "oxc-parser";
 import type { RuleContext, SourceFileHandle } from "../primitives.js";
 import { parseScriptSync } from "./script.js";
 import { createVueScriptForParsing } from "./sfc.js";
@@ -45,6 +46,16 @@ function loadScopeTools() {
   });
 }
 
+export function analyzeScriptProgram(
+  program: Program,
+  sourceType: "module" | "script",
+): ScopeManager {
+  return loadScopeTools().analyze(
+    program as unknown as Parameters<typeof import("@typescript-eslint/scope-manager").analyze>[0],
+    { sourceType },
+  );
+}
+
 /** The dialect typescript-estree picks for `path`, falling back to `jsx` for other extensions. */
 export function scopeDialect(path: string, jsx = false): ScopeDialect {
   if (/\.[cm]?jsx?$/.test(path)) return "jsx";
@@ -77,7 +88,7 @@ export function parseScriptScope(
   return {
     ast,
     get scopeManager() {
-      return (scopeManager ??= loadScopeTools().analyze(ast, { sourceType }));
+      return (scopeManager ??= analyzeScriptProgram(ast, sourceType));
     },
     get visitorKeys() {
       return loadScopeTools().visitorKeys;
