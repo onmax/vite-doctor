@@ -546,12 +546,14 @@ export const noInheritedKeyLookup = createRule({
     function pickedKey(node: AnyNode, record: AnyNode, depth: number): KeyKind | undefined {
       let list: AnyNode;
       let callback: AnyNode;
+      let method: string | undefined;
       if (node.type === "MemberExpression" && node.computed && numeric(node.property)) {
         list = node.object;
       } else if (node.type === "CallExpression") {
         const callee = expression(node.callee);
         if (callee?.type !== "MemberExpression" || callee.computed) return;
-        if (!PICK_METHODS.has(callee.property?.name)) return;
+        method = callee.property?.name;
+        if (!method || !PICK_METHODS.has(method)) return;
         list = callee.object;
         callback = expression(node.arguments?.[0]);
       } else return;
@@ -560,7 +562,7 @@ export const noInheritedKeyLookup = createRule({
       if (
         callback &&
         evidence.isArray(list) &&
-        ["find", "findLast"].includes(node.callee.property.name) &&
+        (method === "find" || method === "findLast") &&
         callbackGuards(callback, record, node)
       )
         return "safe";
@@ -1028,6 +1030,19 @@ export const noInheritedKeyLookup = createRule({
       );
     }
 
+    function canCarryGuardPastStatement(statement: AnyNode): boolean {
+      return (
+        statement.type === "EmptyStatement" ||
+        (statement.type === "VariableDeclaration" &&
+          ["const", "let"].includes(statement.kind) &&
+          statement.declarations.every(
+            (declaration: AnyNode) =>
+              declaration.id.type === "Identifier" &&
+              (!declaration.init || expression(declaration.init, true)?.type === "Literal"),
+          ))
+      );
+    }
+
     function onPath(
       node: AnyNode,
       match: (test: AnyNode, truth: boolean) => boolean,
@@ -1052,16 +1067,19 @@ export const noInheritedKeyLookup = createRule({
         }
         if (["BlockStatement", "Program"].includes(parent.type)) {
           const index = parent.body.indexOf(current);
-          const previous = parent.body[index - 1];
-          if (previous?.type === "IfStatement") {
+          if (index < 0) return false;
+          for (let offset = index - 1; offset >= 0; offset--) {
+            const previous = parent.body[offset];
+            if (canCarryGuardPastStatement(previous)) continue;
             if (
+              previous.type === "IfStatement" &&
               !previous.alternate &&
               exits(previous.consequent) &&
               implies(previous.test, false, match, stableSubject)
             )
               return true;
+            return false;
           }
-          if (index !== 0) return false;
         }
         current = parent;
       }

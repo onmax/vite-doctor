@@ -201,6 +201,11 @@ test.each([
     1,
   ],
   [
+    "a declaration that can invalidate the ownership check",
+    "function read(values: Record<string, string>, key: string) { if (!Object.hasOwn(values, key)) return; const removed = delete values[key]; const fallback = ''; return values[key] ?? fallback }",
+    1,
+  ],
+  [
     "an allowlist that contains an inherited key",
     "function read(values: Record<string, string>, key: string) { return ['constructor', 'ok'].includes(key) ? values[key] : undefined }",
     1,
@@ -319,6 +324,14 @@ test.each([
     "export function f(values: Record<string, string>, key: string) { if (!Object.hasOwn(values, key)) return; return values[key] }",
   ],
   [
+    "an early-return guard followed by literal declarations",
+    "export function f(values: Record<string, string>, key: string) { if (!Object.hasOwn(values, key)) return; const first = ''; const fallback = false, other = 0; return values[key] ?? (fallback ? other : first) }",
+  ],
+  [
+    "a successful branch guard followed by a literal declaration",
+    "export function f(values: Record<string, string>, key: string) { if (Object.hasOwn(values, key)) { const fallback = ''; return values[key] ?? fallback } }",
+  ],
+  [
     "a hasOwnProperty.call guard",
     "export function f(values: Record<string, string>, key: string) { return Object.prototype.hasOwnProperty.call(values, key) && values[key] }",
   ],
@@ -381,6 +394,10 @@ test.each([
   [
     "a key found with an own-key check (vitehub connections policy.ts)",
     "export function rule(access: Record<string, string>, actor: string, inherited: string[]) { const match = [actor, ...inherited].find((candidate) => Object.hasOwn(access, candidate)); return match ? access[match] : undefined }",
+  ],
+  [
+    "a key found through a non-null asserted find method",
+    "export function read(values: Record<string, string>, keys: string[]) { const key = keys.find!(candidate => Object.hasOwn(values, candidate)); return key === undefined ? undefined : values[key] }",
   ],
   [
     "a key checked against a literal set",
