@@ -180,6 +180,18 @@ test("unused config suppressions have a public diagnostic reference", async () =
   expect(await diagnosticsCollectionSource.getItem(diagnostic!.key)).toContain("changed-file runs");
 });
 
+test("inline suppression diagnostics have public diagnostic references", async () => {
+  const documents = getDiagnosticDocuments();
+  const unused = documents.find((item) => item.code === "DOC0036");
+  const unknown = documents.find((item) => item.code === "DOC0037");
+
+  expect(unused?.ruleId).toBe("doctor/inline/unused-suppression");
+  expect(unknown?.ruleId).toBe("doctor/inline/unknown-suppression-rule");
+  expect(await diagnosticsCollectionSource.getItem(unused!.key)).toContain(
+    "Changed-file runs report only directives inside the change",
+  );
+});
+
 test("internal diagnostics stay out of generated diagnostic references", async () => {
   const publicCodes = new Set(getDiagnosticDocuments().map((diagnostic) => diagnostic.code));
   const generatedKeys = await diagnosticsCollectionSource.getKeys();

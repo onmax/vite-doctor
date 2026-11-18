@@ -99,6 +99,8 @@ export interface ScanSession {
   timings: Record<string, number>;
   phases: Record<string, number>;
   ruleTimings: Map<string, RuleTiming>;
+  /** File Rules that ran on each file holding a `doctor-disable` directive, so a directive can be proven unused. */
+  fileRuleRuns: Map<string, Set<string>>;
 }
 
 export interface RuleTiming {
@@ -205,6 +207,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     overrideMatches: new Map(),
     phases,
     ruleTimings: new Map(),
+    fileRuleRuns: new Map(),
   };
 }
 
