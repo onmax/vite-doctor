@@ -1,5 +1,4 @@
 import { createRule } from "../../../core/index.js";
-import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
 import { isTypeScriptSource, report, type AnyNode } from "./shared.js";
 import { createLocalEvidence, expression } from "./local-evidence.js";
 
@@ -10,10 +9,8 @@ type Evidence = ReturnType<typeof createLocalEvidence>;
 // `literal`: an object literal written in this file, a lookup table whose keys are in the source.
 type RecordKind = "record" | "literal";
 type KeyKind = "safe" | "unknown" | "broad";
-type Lookup = { node: AnyNode; kind: "in" | "read"; owner: AnyNode; pair?: string; text: Text };
+type Lookup = { node: AnyNode; kind: "in" | "read"; record: AnyNode; key: AnyNode; text: Text };
 type Text = { record: string; key: string };
-// A guard without a record checked the key against a literal list, so it holds for every record.
-type Guard = { owner: AnyNode; record?: string; key: string };
 
 const ITERATION_METHODS = new Set([
   "every",
@@ -28,8 +25,7 @@ const ITERATION_METHODS = new Set([
   "some",
 ]);
 const OWN_KEY_SOURCES = new Set(["keys", "entries", "getOwnPropertyNames"]);
-const NON_FUNCTION_TYPEOF = new Set(["string", "number", "boolean", "bigint", "symbol", "object"]);
-const SHAPE_GUARDS = new Set(["isRecord", "isPlainObject", "isPlainRecord", "isArray"]);
+const SAFE_TYPEOF = new Set(["string", "number", "boolean", "bigint", "symbol"]);
 const PICK_METHODS = new Set(["at", "find", "findLast"]);
 const KEY_LIST_METHODS = new Set(["filter", "sort", "toSorted", "slice", "reverse", "toReversed"]);
 const STRING_KEY_METHODS = new Set(["toLowerCase", "toUpperCase", "trim", "toLocaleLowerCase"]);
@@ -49,7 +45,7 @@ export const noInheritedKeyLookup = createRule({
     title: "Do not look up runtime keys in plain-object records",
     description:
       "Report `key in record` and `record[key]` reads where the record is a plain object and the key is runtime data, so Object.prototype keys such as toString and constructor match.",
-    why: 'A plain object inherits Object.prototype. When the key comes from config, a request, a file name, or another record, "toString" in record is true and record["constructor"] returns a function, so the code accepts a name nobody configured or calls the wrong value. This rule reports in tests and reads on values typed Record<string, T>, a string index signature, or object, and in tests or asserted-key reads on object-literal lookup tables. It skips keys that cannot name an inherited member (literals, literal unions, imported constants, symbols, keys taken from the same record, regex groups of listed words), null-prototype records, and reads guarded by Object.hasOwn, compared with another value, asserted with !, or passed to a check that rejects functions.',
+    why: 'A plain object inherits Object.prototype. When the key comes from config, a request, a file name, or another record, "toString" in record is true and record["constructor"] returns a function, so the code accepts a name nobody configured or calls the wrong value. This rule reports membership tests and reads on values typed Record<string, T>, a string index signature, or object, and on object-literal lookup tables. It skips known keys, null-prototype records, lookups protected by a matching own-key guard, and uses that treat inherited entries like missing entries.',
     recommendedReplacement:
       "Check Object.hasOwn(record, key) before trusting the key, or keep the entries in a Map or an Object.create(null) record.",
     examples: [
@@ -75,7 +71,6 @@ export const noInheritedKeyLookup = createRule({
     let evidence: Evidence;
     let types: Map<string, AnyNode[]>;
     const lookups: Lookup[] = [];
-    const guards: Guard[] = [];
 
     function globalReference(node: AnyNode, names: string[]): string | undefined {
       if (node?.type !== "TSTypeReference" || node.typeName?.type !== "Identifier") return;
@@ -90,10 +85,67 @@ export const noInheritedKeyLookup = createRule({
       return found[0];
     }
 
-    function stringKeyType(node: AnyNode): boolean {
-      if (node?.type === "TSStringKeyword") return true;
-      if (globalReference(node, ["PropertyKey"])) return true;
-      return node?.type === "TSUnionType" && node.types.some(stringKeyType);
+    function annotatedKey(node: AnyNode, depth = 0): KeyKind {
+      if (!node || depth > 8) return "unknown";
+      if (
+        ["TSStringKeyword", "TSAnyKeyword", "TSUnknownKeyword"].includes(node.type) ||
+        globalReference(node, ["PropertyKey"])
+      )
+        return "broad";
+      if (
+        [
+          "TSNumberKeyword",
+          "TSSymbolKeyword",
+          "TSBigIntKeyword",
+          "TSBooleanKeyword",
+          "TSNullKeyword",
+          "TSUndefinedKeyword",
+          "TSNeverKeyword",
+        ].includes(node.type)
+      )
+        return "safe";
+      if (node.type === "TSLiteralType")
+        return PROTOTYPE_NAMES.includes(node.literal?.value) ? "broad" : "safe";
+      if (
+        node.type === "TSParenthesizedType" ||
+        (node.type === "TSTypeOperator" && node.operator === "unique")
+      )
+        return annotatedKey(node.typeAnnotation, depth + 1);
+      if (node.type === "TSUnionType") {
+        const parts = node.types.map((part: AnyNode) => annotatedKey(part, depth + 1));
+        return parts.includes("broad")
+          ? "broad"
+          : parts.every((part: KeyKind) => part === "safe")
+            ? "safe"
+            : "unknown";
+      }
+      if (
+        node.type === "TSTypeOperator" &&
+        node.operator === "keyof" &&
+        node.typeAnnotation?.type === "TSTypeQuery"
+      ) {
+        const binding = stableBinding(node.typeAnnotation.exprName);
+        if (isRecordType(binding?.annotation, depth + 1)) return "broad";
+        if (binding?.kind === "const" && !binding.annotation && literalKeys(binding.init))
+          return "safe";
+      }
+      const declaration = localType(node);
+      return declaration?.type === "TSTypeAliasDeclaration"
+        ? annotatedKey(declaration.typeAnnotation, depth + 1)
+        : "unknown";
+    }
+
+    function stringKeyType(node: AnyNode, depth = 0): boolean {
+      if (!node || depth > 8) return false;
+      if (node.type === "TSStringKeyword" || globalReference(node, ["PropertyKey"])) return true;
+      if (node.type === "TSUnionType")
+        return node.types.some((part: AnyNode) => stringKeyType(part, depth + 1));
+      if (node.type === "TSParenthesizedType") return stringKeyType(node.typeAnnotation, depth + 1);
+      const declaration = localType(node);
+      return (
+        declaration?.type === "TSTypeAliasDeclaration" &&
+        stringKeyType(declaration.typeAnnotation, depth + 1)
+      );
     }
 
     function hasStringIndex(members: AnyNode[] | undefined): boolean {
@@ -146,6 +198,7 @@ export const noInheritedKeyLookup = createRule({
           (property: AnyNode) =>
             property.type === "Property" &&
             !property.computed &&
+            !property.shorthand &&
             (property.key?.name ?? property.key?.value) === "__proto__" &&
             property.value?.type === "Literal" &&
             property.value.value === null,
@@ -174,15 +227,8 @@ export const noInheritedKeyLookup = createRule({
       if (value?.type === "Identifier") {
         const binding = evidence.binding(value);
         if (!binding || binding.kind === "ambiguous" || binding.kind === "other") return;
-        if (binding.init && nullPrototype(binding.init)) return;
         const init = binding.kind === "parameter" ? undefined : expression(binding.init);
-        // An object this function fills itself only holds the keys it wrote.
-        if (
-          init?.type === "ObjectExpression" &&
-          !init.properties.length &&
-          binding.owner === evidence.owner(value)
-        )
-          return;
+        if (stableBinding(value) && (nullPrototype(init) || moduleLoad(init))) return;
         if (binding.annotation) {
           if (!isRecordType(binding.annotation)) return;
           return init?.type === "ObjectExpression" ? "literal" : "record";
@@ -226,7 +272,6 @@ export const noInheritedKeyLookup = createRule({
           annotation.typeName.name === "const"
         )
           return initializerKind(value.expression);
-        if (moduleLoad(value.expression)) return;
         return isRecordType(annotation) ? "record" : undefined;
       }
     }
@@ -234,13 +279,9 @@ export const noInheritedKeyLookup = createRule({
     // A module namespace has a null prototype.
     function moduleLoad(node: AnyNode): boolean {
       let value = expression(node, true);
-      if (value?.type === "AwaitExpression") value = expression(value.argument, true);
-      if (value?.type === "ImportExpression") return true;
-      const callee = value?.type === "CallExpression" ? expression(value.callee) : undefined;
       return (
-        callee?.type === "MemberExpression" &&
-        !callee.computed &&
-        ["import", "ssrLoadModule"].includes(callee.property?.name)
+        value?.type === "AwaitExpression" &&
+        expression(value.argument, true)?.type === "ImportExpression"
       );
     }
 
@@ -491,24 +532,7 @@ export const noInheritedKeyLookup = createRule({
       // Imports and declarations are named constants, such as an env variable name or a symbol.
       if (binding.kind === "other") return "safe";
       const annotation = binding.annotation;
-      if (annotation) {
-        if (
-          annotation.type === "TSStringKeyword" ||
-          annotation.type === "TSUnknownKeyword" ||
-          annotation.type === "TSAnyKeyword" ||
-          globalReference(annotation, ["PropertyKey"])
-        )
-          return "broad";
-        if (
-          annotation.type === "TSUnionType" &&
-          annotation.types.some((part: AnyNode) => part.type === "TSStringKeyword") &&
-          annotation.types.every((part: AnyNode) =>
-            ["TSStringKeyword", "TSUndefinedKeyword", "TSNullKeyword"].includes(part.type),
-          )
-        )
-          return "broad";
-        return "safe";
-      }
+      if (annotation) return annotatedKey(annotation);
       if (
         (binding.kind === "const" || (binding.kind === "let" && !binding.written)) &&
         binding.init &&
@@ -533,30 +557,35 @@ export const noInheritedKeyLookup = createRule({
       } else return;
       const kind = iteratedKeys(list, record, depth + 1);
       if (kind === "safe") return "safe";
-      if (callback && callbackGuards(callback, record)) return "safe";
+      if (
+        callback &&
+        evidence.isArray(list) &&
+        ["find", "findLast"].includes(node.callee.property.name) &&
+        callbackGuards(callback, record, node)
+      )
+        return "safe";
       return kind;
     }
 
     // `candidates.find((candidate) => Object.hasOwn(record, candidate))`
-    function callbackGuards(callback: AnyNode, record: AnyNode): boolean {
+    function callbackGuards(callback: AnyNode, record: AnyNode, pick: AnyNode): boolean {
       if (!["ArrowFunctionExpression", "FunctionExpression"].includes(callback?.type)) return false;
       const parameter = callback.params?.[0];
       if (parameter?.type !== "Identifier") return false;
-      const recordText = describe(record);
-      let found = false;
-      const visit = (node: AnyNode) => {
-        if (found || !node?.type) return;
-        if (node.type === "CallExpression") {
-          const guard = parseGuard(node);
-          if (guard && guard.record === recordText && guard.key === parameter.name) found = true;
-        }
-        for (const key of getNodeVisitorKeys(node)) {
-          const child = node[key];
-          for (const item of Array.isArray(child) ? child : [child]) visit(item);
-        }
-      };
-      visit(callback.body);
-      return found;
+      const body = callback.body;
+      const result =
+        body.type === "BlockStatement" &&
+        body.body.length === 1 &&
+        body.body[0].type === "ReturnStatement"
+          ? body.body[0].argument
+          : body;
+      const guard = ownGuard(expression(result));
+      return (
+        !!guard &&
+        evidence.owner(record) === evidence.owner(pick) &&
+        sameStableValue(guard.record, record) &&
+        sameStableValue(guard.key, parameter)
+      );
     }
 
     function regexLiteral(node: AnyNode, depth = 0): AnyNode {
@@ -659,6 +688,7 @@ export const noInheritedKeyLookup = createRule({
       const callee = call?.type === "CallExpression" ? expression(call.callee) : undefined;
       if (
         index < 1 ||
+        call?.type !== "CallExpression" ||
         call.arguments?.[1] !== fn ||
         callee?.type !== "MemberExpression" ||
         !["replace", "replaceAll"].includes(callee.property?.name)
@@ -674,15 +704,6 @@ export const noInheritedKeyLookup = createRule({
       if (value?.type === "MemberExpression" && !value.computed)
         return `${calleeText(value.object)}.${value.property?.name}`;
       return "";
-    }
-
-    function nullish(node: AnyNode): boolean {
-      const value = expression(node, true);
-      return (
-        (value?.type === "Literal" && value.value === null && !value.regex) ||
-        (value?.type === "Identifier" && value.name === "undefined") ||
-        (value?.type === "UnaryExpression" && value.operator === "void")
-      );
     }
 
     // `${name}.webhook` can never spell toString or constructor; `${name}` can.
@@ -701,26 +722,78 @@ export const noInheritedKeyLookup = createRule({
       return symbol?.type === "Identifier" && symbol.name === "Symbol" && !evidence.binding(symbol);
     }
 
-    function shapeGuard(call: AnyNode): boolean {
-      if (call?.type !== "CallExpression") return false;
-      const callee = expression(call.callee);
-      if (callee?.type === "Identifier") return SHAPE_GUARDS.has(callee.name);
+    function safeCheck(current: AnyNode): AnyNode {
+      const parent = evidence.parent(current);
+      if (arrayGuard(parent) && parent.arguments[0] === current) return parent;
+      if (parent?.type === "UnaryExpression" && parent.operator === "typeof") {
+        const comparison = evidence.parent(parent);
+        const other = comparison?.left === parent ? comparison?.right : comparison?.left;
+        if (
+          comparison?.type === "BinaryExpression" &&
+          ["===", "=="].includes(comparison.operator) &&
+          other?.type === "Literal" &&
+          SAFE_TYPEOF.has(other.value)
+        )
+          return comparison;
+      }
+      const comparison = parent?.type === "CallExpression" ? evidence.parent(parent) : parent;
+      if (comparison?.type !== "BinaryExpression" || comparison.operator !== "===") return;
+      const other =
+        comparison.left === parent || comparison.left === current
+          ? comparison.right
+          : comparison.left;
+      if (
+        parent?.type === "CallExpression" &&
+        parent.arguments[0] === current &&
+        globalPath(parent.callee, "Object.prototype.toString.call") &&
+        other?.type === "Literal" &&
+        [
+          "[object String]",
+          "[object Number]",
+          "[object Boolean]",
+          "[object Array]",
+          "[object Symbol]",
+          "[object BigInt]",
+        ].includes(other.value)
+      )
+        return comparison;
+      if (
+        parent?.type === "CallExpression" &&
+        stringConversion(parent) &&
+        sameStableValue(other, current)
+      )
+        return comparison;
+      if (stringConversion(other) && sameStableValue(other.arguments[0], current))
+        return comparison;
+    }
+
+    function stringConversion(node: AnyNode): boolean {
       return (
-        callee?.type === "MemberExpression" &&
-        !callee.computed &&
-        callee.property?.name === "isArray" &&
-        callee.object?.type === "Identifier" &&
-        callee.object.name === "Array"
+        node?.type === "CallExpression" &&
+        node.arguments?.length === 1 &&
+        globalPath(node.callee, "String")
       );
     }
 
-    // `typeof value === "string"` or `isRecord(value)` rejects an inherited function.
-    // A function in this file that checks its parameter with typeof or a shape guard, such as
-    // `function trimmed(value: unknown) { return typeof value === "string" ? value.trim() : undefined }`.
-    function helperRejectsFunctions(call: AnyNode, argument: AnyNode, depth: number): boolean {
-      if (call?.type !== "CallExpression" || call.callee?.type !== "Identifier" || depth > 1)
+    function arrayGuard(node: AnyNode): boolean {
+      return node?.type === "CallExpression" && globalPath(node.callee, "Array.isArray");
+    }
+
+    function safeReferences(declaration: AnyNode): boolean {
+      const references = evidence.references(declaration);
+      if (!references.length || references.some((reference) => evidence.written(reference)))
         return false;
-      const binding = evidence.binding(call.callee);
+      const checks = new Set(references.map(safeCheck).filter(Boolean));
+      return references.every(
+        (reference) =>
+          safeCheck(reference) ||
+          onPath(reference, (test, truth) => truth && checks.has(test), true),
+      );
+    }
+
+    function helperAcceptsSafely(call: AnyNode, argument: AnyNode): boolean {
+      if (call?.type !== "CallExpression" || call.callee?.type !== "Identifier") return false;
+      const binding = stableBinding(call.callee);
       if (!binding) return false;
       const declaration = evidence.parent(binding.node);
       const fn =
@@ -734,58 +807,7 @@ export const noInheritedKeyLookup = createRule({
       )
         return false;
       const parameter = fn.params?.[call.arguments.indexOf(argument)];
-      if (parameter?.type !== "Identifier") return false;
-      return evidence
-        .references(parameter)
-        .some((reference: AnyNode) => rejectsFunctions(reference, depth + 1));
-    }
-
-    function rejectsFunctions(current: AnyNode, depth = 0): boolean {
-      const parent = evidence.parent(current);
-      if (shapeGuard(parent) && parent.arguments?.[0] === current) return true;
-      if (helperRejectsFunctions(parent, current, depth)) return true;
-      // `Object.prototype.toString.call(value) === "[object String]"` names the built-in type.
-      if (
-        parent?.type === "CallExpression" &&
-        parent.arguments?.[0] === current &&
-        /^Object\.prototype\.toString\.call$/.test(calleeText(parent.callee))
-      ) {
-        const comparison = evidence.parent(parent);
-        const other = comparison?.left === parent ? comparison?.right : comparison?.left;
-        return (
-          comparison?.type === "BinaryExpression" &&
-          ["===", "!=="].includes(comparison.operator) &&
-          other?.type === "Literal" &&
-          typeof other.value === "string" &&
-          other.value !== "[object Function]"
-        );
-      }
-      // `String(value) === value` only holds for strings.
-      if (
-        parent?.type === "CallExpression" &&
-        parent.callee?.type === "Identifier" &&
-        parent.callee.name === "String" &&
-        !evidence.binding(parent.callee) &&
-        parent.arguments?.[0] === current
-      ) {
-        const comparison = evidence.parent(parent);
-        const other = comparison?.left === parent ? comparison?.right : comparison?.left;
-        return (
-          comparison?.type === "BinaryExpression" &&
-          ["===", "!=="].includes(comparison.operator) &&
-          describe(other) !== undefined &&
-          describe(other) === describe(current)
-        );
-      }
-      if (parent?.type !== "UnaryExpression" || parent.operator !== "typeof") return false;
-      const comparison = evidence.parent(parent);
-      const other = comparison?.left === parent ? comparison?.right : comparison?.left;
-      return (
-        comparison?.type === "BinaryExpression" &&
-        ["===", "==", "!==", "!="].includes(comparison.operator) &&
-        other?.type === "Literal" &&
-        NON_FUNCTION_TYPEOF.has(other.value)
-      );
+      return parameter?.type === "Identifier" && safeReferences(parameter);
     }
 
     function lookupRead(node: AnyNode): boolean {
@@ -793,19 +815,23 @@ export const noInheritedKeyLookup = createRule({
       let parent = evidence.parent(current);
       while (
         parent &&
-        ["ChainExpression", "ParenthesizedExpression", "TSNonNullExpression"].includes(parent.type)
+        [
+          "ChainExpression",
+          "ParenthesizedExpression",
+          "TSNonNullExpression",
+          "TSAsExpression",
+          "TSTypeAssertion",
+          "TSSatisfiesExpression",
+        ].includes(parent.type)
       ) {
-        // `record[key]!` states that the key was checked against the record already.
-        if (parent.type === "TSNonNullExpression") return false;
         current = parent;
         parent = evidence.parent(current);
       }
-      if (rejectsFunctions(current)) return false;
-      // `record[key]?.value` is undefined for an inherited function too, but `record[key]?.trim()`
-      // calls undefined and throws.
+      if (safeCheck(current) || helperAcceptsSafely(parent, current)) return false;
       if (
         parent?.type === "MemberExpression" &&
         parent.object === current &&
+        parent.optional &&
         !parent.computed &&
         !FUNCTION_MEMBERS.has(parent.property?.name) &&
         evidence.parent(parent)?.callee !== parent
@@ -813,133 +839,259 @@ export const noInheritedKeyLookup = createRule({
         return false;
       let holder = current;
       let declarator = parent;
-      while (
-        (declarator?.type === "ConditionalExpression" && declarator.test !== holder) ||
-        (declarator?.type === "LogicalExpression" && declarator.operator === "??") ||
-        ["TSAsExpression", "TSSatisfiesExpression"].includes(declarator?.type)
-      ) {
+      while (declarator?.type === "ConditionalExpression" && declarator.test !== holder) {
         holder = declarator;
         declarator = evidence.parent(holder);
       }
-      if (declarator?.type === "VariableDeclarator" && declarator.init === holder) {
-        const first = evidence
-          .references(declarator.id)
-          .sort((left: AnyNode, right: AnyNode) => left.start - right.start)[0];
-        if (first && rejectsFunctions(first)) return false;
-      }
-      // Writes, including `??=` accumulators, are not lookups.
-      if (parent?.type === "AssignmentExpression" && parent.left === current) return false;
-      // Spreading an inherited function into an object literal copies no properties.
+      if (
+        declarator?.type === "VariableDeclarator" &&
+        declarator.init === holder &&
+        declarator.id?.type === "Identifier" &&
+        safeReferences(declarator.id)
+      )
+        return false;
+      if (
+        parent?.type === "AssignmentExpression" &&
+        parent.left === current &&
+        parent.operator === "="
+      )
+        return false;
       if (parent?.type === "SpreadElement" && evidence.parent(parent)?.type === "ObjectExpression")
         return false;
-      // An inherited function never equals a configured value, so only a nullish comparison
-      // misroutes. `normalize(record[key]) !== normalize(other[key])` compares the same way.
-      if (
-        parent?.type === "CallExpression" &&
-        parent.arguments?.length === 1 &&
-        parent.arguments[0] === current
-      ) {
-        const outer = evidence.parent(parent);
-        if (
-          outer?.type === "BinaryExpression" &&
-          ["===", "!==", "==", "!="].includes(outer.operator) &&
-          !nullish(outer.left === parent ? outer.right : outer.left)
-        )
-          return false;
+      if (parent?.type === "BinaryExpression" && ["===", "!=="].includes(parent.operator)) {
+        const other = expression(parent.left === current ? parent.right : parent.left, true);
+        if (other?.type === "Literal" && other.value !== null && !other.regex) return false;
       }
-      if (
-        parent?.type === "BinaryExpression" &&
-        ["===", "!==", "==", "!="].includes(parent.operator)
-      )
-        return nullish(parent.left === current ? parent.right : parent.left);
       if (parent?.type === "UnaryExpression" && parent.operator === "delete") return false;
       if (["ForInStatement", "ForOfStatement"].includes(parent?.type) && parent.left === current)
         return false;
       return true;
     }
 
-    function within(node: AnyNode, owner: AnyNode): boolean {
-      for (let current = node; current; current = evidence.parent(current))
-        if (current === owner) return true;
+    function stableBinding(node: AnyNode) {
+      const value = expression(node, true);
+      if (value?.type !== "Identifier") return;
+      const binding = evidence.binding(value);
+      if (!binding || binding.written || binding.kind === "ambiguous") return;
+      if (
+        binding.kind !== "const" &&
+        evidence.references(binding.node).some((reference) => evidence.written(reference))
+      )
+        return;
+      return binding;
+    }
+
+    function sameStableValue(left: AnyNode, right: AnyNode): boolean {
+      left = expression(left, true);
+      right = expression(right, true);
+      if (!left || !right || left.type !== right.type) return false;
+      if (left.type === "Identifier") {
+        const binding = stableBinding(left);
+        return !!binding && binding === stableBinding(right);
+      }
+      if (left.type === "Literal") return left.value === right.value;
+      return (
+        left.type === "MemberExpression" &&
+        !left.computed &&
+        !right.computed &&
+        left.object?.type === "Identifier" &&
+        left.property?.name === right.property?.name &&
+        !evidence.propertyWritten(left.object.name, left.property?.name) &&
+        sameStableValue(left.object, right.object)
+      );
+    }
+
+    function globalPath(node: AnyNode, path: string): boolean {
+      if (calleeText(node) !== path) return false;
+      let root = expression(node);
+      while (root?.type === "MemberExpression") root = expression(root.object);
+      return root?.type === "Identifier" && !evidence.binding(root);
+    }
+
+    function ownGuard(node: AnyNode): { record: AnyNode; key: AnyNode } | undefined {
+      if (node?.type !== "CallExpression" || node.optional) return;
+      if (
+        globalPath(node.callee, "Object.hasOwn") ||
+        globalPath(node.callee, "Object.prototype.hasOwnProperty.call")
+      ) {
+        const [record, key] = node.arguments ?? [];
+        if (record && key) return { record, key };
+      }
+    }
+
+    function safeAllowlist(node: AnyNode, method: string, use: AnyNode): boolean {
+      let value = expression(node, true);
+      if (value?.type === "Identifier") {
+        const binding = stableBinding(value);
+        if (binding?.kind !== "const") return false;
+        if (
+          evidence
+            .references(binding.node)
+            .some((reference) => reference !== value && !allowlistMember(reference, method))
+        )
+          return false;
+        if (binding.node.start >= use.start) return false;
+        value = expression(binding.init, true);
+      }
+      if (method === "has") {
+        if (value?.type !== "NewExpression" || !globalPath(value.callee, "Set")) return false;
+        value = expression(value.arguments[0], true);
+      }
+      return (
+        value?.type === "ArrayExpression" &&
+        value.elements.every(
+          (item: AnyNode) =>
+            item?.type === "Literal" &&
+            (typeof item.value === "number" ||
+              (typeof item.value === "string" && !PROTOTYPE_NAMES.includes(item.value))),
+        )
+      );
+    }
+
+    function allowlistMember(reference: AnyNode, method: string): boolean {
+      const member = evidence.parent(reference);
+      const call = evidence.parent(member);
+      return (
+        member?.type === "MemberExpression" &&
+        member.object === reference &&
+        !member.computed &&
+        member.property?.name === method &&
+        call?.type === "CallExpression" &&
+        call.callee === member
+      );
+    }
+
+    function guardMatches(test: AnyNode, lookup: Lookup): boolean {
+      const guard = ownGuard(test);
+      if (guard)
+        return (
+          sameStableValue(guard.record, lookup.record) && sameStableValue(guard.key, lookup.key)
+        );
+      if (arrayGuard(test) && lookup.kind === "read") {
+        const read = expression(test.arguments[0]);
+        return (
+          read?.type === "MemberExpression" &&
+          read.computed &&
+          sameStableValue(read.object, lookup.record) &&
+          sameStableValue(read.property, lookup.key)
+        );
+      }
+      const callee = expression(test?.callee);
+      if (test?.type !== "CallExpression" || callee?.type !== "MemberExpression" || callee.computed)
+        return false;
+      const method = callee.property?.name;
+      return (
+        ["includes", "has"].includes(method) &&
+        sameStableValue(test.arguments[0], lookup.key) &&
+        safeAllowlist(callee.object, method, test)
+      );
+    }
+
+    function implies(
+      node: AnyNode,
+      truth: boolean,
+      match: (test: AnyNode, truth: boolean) => boolean,
+      stableSubject = false,
+    ): boolean {
+      const test = expression(node, true);
+      if (test?.type === "UnaryExpression" && test.operator === "!")
+        return implies(test.argument, !truth, match, stableSubject);
+      if (
+        test?.type === "LogicalExpression" &&
+        (truth ? test.operator === "&&" : test.operator === "||")
+      )
+        return (
+          implies(test.right, truth, match, stableSubject) ||
+          ((stableSubject || canCarryGuard(test.right)) &&
+            implies(test.left, truth, match, stableSubject))
+        );
+      return !!test && match(test, truth);
+    }
+
+    function canCarryGuard(node: AnyNode): boolean {
+      const value = expression(node, true);
+      if (["Literal", "Identifier"].includes(value?.type)) return true;
+      if (value?.type === "UnaryExpression" && ["!", "typeof"].includes(value.operator))
+        return canCarryGuard(value.argument);
+      return (
+        ["BinaryExpression", "LogicalExpression"].includes(value?.type) &&
+        ["===", "!==", "&&", "||"].includes(value.operator) &&
+        canCarryGuard(value.left) &&
+        canCarryGuard(value.right)
+      );
+    }
+
+    function exits(node: AnyNode): boolean {
+      if (node?.type === "BlockStatement" && node.body.length === 1) return exits(node.body[0]);
+      return ["ReturnStatement", "ThrowStatement", "ContinueStatement", "BreakStatement"].includes(
+        node?.type,
+      );
+    }
+
+    function onPath(
+      node: AnyNode,
+      match: (test: AnyNode, truth: boolean) => boolean,
+      stableSubject = false,
+    ): boolean {
+      const owner = evidence.owner(node);
+      for (let current = node; current && current !== owner;) {
+        const parent = evidence.parent(current);
+        if (!parent || parent === owner) break;
+        if (["IfStatement", "ConditionalExpression"].includes(parent.type)) {
+          if (parent.consequent === current && implies(parent.test, true, match, stableSubject))
+            return true;
+          if (parent.alternate === current && implies(parent.test, false, match, stableSubject))
+            return true;
+        }
+        if (parent.type === "LogicalExpression" && parent.right === current) {
+          if (
+            ["&&", "||"].includes(parent.operator) &&
+            implies(parent.left, parent.operator === "&&", match, stableSubject)
+          )
+            return true;
+        }
+        if (["BlockStatement", "Program"].includes(parent.type)) {
+          const index = parent.body.indexOf(current);
+          const previous = parent.body[index - 1];
+          if (previous?.type === "IfStatement") {
+            if (
+              !previous.alternate &&
+              exits(previous.consequent) &&
+              implies(previous.test, false, match, stableSubject)
+            )
+              return true;
+          }
+          if (index !== 0) return false;
+        }
+        current = parent;
+      }
       return false;
     }
 
-    function pairOf(record: AnyNode, key: AnyNode): string | undefined {
-      const recordText = describe(record);
-      const keyText = describe(key);
-      return recordText && keyText ? `${recordText}\u0000${keyText}` : undefined;
-    }
-
-    function parseGuard(node: AnyNode): { record?: string; key: string } | undefined {
-      const callee = expression(node.callee);
-      let record: AnyNode;
-      let key: AnyNode;
-      const name =
-        callee?.type === "Identifier"
-          ? callee.name
-          : callee?.type === "MemberExpression" && !callee.computed
-            ? callee.property?.name
-            : undefined;
-      if (name === "call" && callee.type === "MemberExpression") {
-        const target = expression(callee.object);
-        if (target?.type !== "MemberExpression" || target.computed) return;
-        if (!/^hasOwn(?:Property)?$/.test(target.property?.name ?? "")) return;
-        [record, key] = node.arguments ?? [];
-      } else if (name === "hasOwnProperty" && callee.type === "MemberExpression") {
-        record = callee.object;
-        key = node.arguments?.[0];
-      } else if (name && /hasOwn/i.test(name) && (node.arguments?.length ?? 0) >= 2) {
-        [record, key] = node.arguments;
-      } else if ((name === "has" || name === "includes") && callee.type === "MemberExpression") {
-        // Checking the key against a known list, such as `names.includes(name)`, validates it.
-        const keyText = describe(node.arguments?.[0]);
-        return keyText ? { key: keyText } : undefined;
-      } else if (shapeGuard(node)) {
-        // `Array.isArray(record[key]) ? record[key] : []` only uses the read after the check.
-        const read = expression(node.arguments?.[0]);
-        if (read?.type !== "MemberExpression" || !read.computed) return;
-        [record, key] = [read.object, read.property];
-      } else return;
-      const recordText = describe(record);
-      const keyText = describe(key);
-      return recordText && keyText ? { record: recordText, key: keyText } : undefined;
-    }
-
-    function collectGuard(node: AnyNode) {
-      const guard = parseGuard(node);
-      if (guard) guards.push({ owner: evidence.owner(node), ...guard });
-    }
-
-    function parameterRooted(node: AnyNode, depth = 0): boolean {
-      let value = expression(node, true);
-      while (value?.type === "MemberExpression" || value?.type === "CallExpression")
-        value = expression(value.type === "MemberExpression" ? value.object : value.callee, true);
-      if (value?.type !== "Identifier" || depth > 4) return false;
-      const binding = evidence.binding(value);
-      if (binding?.kind === "parameter") return true;
+    function testsForInheritedKey(lookup: Lookup): boolean {
+      if (lookup.kind !== "in") return false;
+      const parent = evidence.parent(lookup.node);
       return (
-        binding?.kind === "const" && !!binding.init && parameterRooted(binding.init, depth + 1)
+        parent?.type === "LogicalExpression" &&
+        parent.operator === "&&" &&
+        parent.left === lookup.node &&
+        implies(
+          parent.right,
+          true,
+          (test, truth) => !truth && !!ownGuard(test) && guardMatches(test, lookup),
+        )
       );
     }
 
     function consider(node: AnyNode, kind: "in" | "read", record: AnyNode, key: AnyNode) {
-      const shape = recordKind(record, kind);
-      if (!shape) return;
+      if (!recordKind(record, kind)) return;
       const keyShape = keyKind(key, record);
       if (keyShape === "safe") return;
-      // A lookup-table read falls through to its default. A membership test treats the inherited
-      // key as one of the table's own, but a table local to this function is only checked against
-      // keys from its parameters.
-      if (shape === "literal") {
-        if (kind === "read") return;
-        const binding = evidence.binding(expression(record));
-        if (binding?.owner === evidence.owner(node) && !parameterRooted(key)) return;
-      }
       lookups.push({
         node,
         kind,
-        owner: evidence.owner(node),
-        pair: pairOf(record, key),
+        record,
+        key,
         text: { record: describe(record) ?? "this record", key: describe(key) ?? "the key" },
       });
     }
@@ -961,7 +1113,6 @@ export const noInheritedKeyLookup = createRule({
             ]);
         }
       },
-      CallExpression: collectGuard,
       BinaryExpression(node: AnyNode) {
         if (node.operator !== "in") return;
         consider(node, "in", node.right, node.left);
@@ -971,30 +1122,30 @@ export const noInheritedKeyLookup = createRule({
         consider(node, "read", node.object, node.property);
       },
       "Program:exit"() {
-        const guarded = (lookup: Lookup) =>
-          !!lookup.pair &&
-          guards.some(
-            (guard) =>
-              guard.key === lookup.text.key &&
-              (guard.record === undefined || guard.record === lookup.text.record) &&
-              within(lookup.node, guard.owner),
-          );
-        const reported: Lookup[] = [];
+        const membership = new Map<AnyNode, Lookup>();
         const ordered = [...lookups].sort(
           (left, right) =>
             (left.kind === right.kind ? 0 : left.kind === "in" ? -1 : 1) ||
             left.node.start - right.node.start,
         );
         for (const lookup of ordered) {
-          if (guarded(lookup)) continue;
           if (
-            lookup.pair &&
-            reported.some(
-              (earlier) => earlier.pair === lookup.pair && within(lookup.node, earlier.owner),
-            )
+            testsForInheritedKey(lookup) ||
+            onPath(lookup.node, (test, truth) => truth && guardMatches(test, lookup))
           )
             continue;
-          reported.push(lookup);
+          if (lookup.kind === "in") membership.set(lookup.node, lookup);
+          else if (
+            onPath(lookup.node, (test, truth) => {
+              const earlier = truth ? membership.get(test) : undefined;
+              return (
+                !!earlier &&
+                sameStableValue(earlier.record, lookup.record) &&
+                sameStableValue(earlier.key, lookup.key)
+              );
+            })
+          )
+            continue;
           const { record, key } = lookup.text;
           report(
             ctx,

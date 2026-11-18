@@ -74,7 +74,7 @@ test.each([
   ],
   [
     "a record typed with a local index-signature interface",
-    "interface Commands { [name: string]: { run(): void } }\nexport function find(commands: Commands, text: string) { const name = /^[a-z]+/.exec(text)?.[0]; if (name && commands[name]) return commands[name] }",
+    "interface Commands { [name: string]: { run(): void } }\nexport function find(commands: Commands, text: string) { const name = /^[a-z]+/.exec(text)?.[0]; if (name) return commands[name] }",
   ],
   [
     "a record property of a locally typed option (vitehub 65058871bb)",
@@ -127,6 +127,157 @@ test("reports a membership test and the read it guards once", async () => {
   expect(diagnostics).toHaveLength(1);
   expect(diagnostics[0]?.code).toMatch(/^TS\d{4}$/);
   expect(diagnostics[0]?.message).toContain("toString");
+});
+
+test.each([
+  [
+    "a namespace declaration",
+    "namespace Local { export function read(values: Record<string, string>, key: string) { return values[key]?.trim() } }",
+    1,
+  ],
+  [
+    "an alias for string",
+    "type Key = string; function read(values: Record<string, string>, key: Key) { return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "keyof an indexed record",
+    "const values: Record<string, string> = {}; function read(key: keyof typeof values) { return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "a union containing string",
+    "function read(values: Record<PropertyKey, string>, key: string | symbol) { return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "an unresolved key type",
+    "import type { Key } from './keys'; function read(values: Record<string, string>, key: Key) { return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "a null-prototype default parameter",
+    "function read(key: string, values: Record<string, string> = Object.create(null)) { return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "a replaceable null-prototype initializer",
+    "function read(key: string) { let values: Record<string, string> = Object.create(null); values = {}; return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "an arbitrary loader method",
+    "async function read(loader: { import(): Promise<unknown> }, key: string) { const values = await loader.import() as Record<string, unknown>; return values[key] }",
+    1,
+  ],
+  [
+    "a lookup in the failed branch",
+    "function read(values: Record<string, string>, key: string) { if (!Object.hasOwn(values, key)) return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "an ownership check after the lookup",
+    "function read(values: Record<string, string>, key: string) { const result = values[key]?.trim(); return Object.hasOwn(values, key) ? result : undefined }",
+    1,
+  ],
+  [
+    "a shadowed key",
+    "function read(values: Record<string, string>, key: string, other: string) { if (Object.hasOwn(values, key)) { const key = other; return values[key] } }",
+    1,
+  ],
+  [
+    "a reassigned key",
+    "function read(values: Record<string, string>, key: string, other: string) { if (Object.hasOwn(values, key)) { key = other; return values[key] } }",
+    1,
+  ],
+  [
+    "an ignored find callback check",
+    "function read(values: Record<string, string>, keys: string[]) { const key = keys.find(candidate => { Object.hasOwn(values, candidate); return true }); return key && values[key] }",
+    1,
+  ],
+  [
+    "a property deleted after the ownership check",
+    "function read(values: Record<string, string>, key: string) { if (Object.hasOwn(values, key) && delete values[key]) return values[key] }",
+    1,
+  ],
+  [
+    "an allowlist that contains an inherited key",
+    "function read(values: Record<string, string>, key: string) { return ['constructor', 'ok'].includes(key) ? values[key] : undefined }",
+    1,
+  ],
+  [
+    "a membership test unrelated to the read",
+    "function read(test: boolean, values: Record<string, string>, key: string) { if (test) return key in values; return values[key] ?? 'missing' }",
+    2,
+  ],
+  [
+    "an alias used without narrowing",
+    "function read(values: Record<string, string>, key: string) { const value = values[key]; console.log(typeof value === 'string'); return value?.trim() }",
+    1,
+  ],
+  [
+    "an arbitrary normalizer call",
+    "declare function trim(value: string): string; function read(values: Record<string, string>, key: string) { return trim(values[key]) === 'on' }",
+    1,
+  ],
+  [
+    "an object typeof check",
+    "function read(values: Record<string, unknown>, key: string) { return typeof values[key] === 'object' }",
+    1,
+  ],
+  [
+    "a non-optional property projection",
+    "function read(values: Record<string, { label: string }>, key: string) { return values[key].label }",
+    1,
+  ],
+  [
+    "two dynamic lookups compared directly",
+    "function read(left: Record<string, unknown>, right: Record<string, unknown>, key: string) { return left[key] === right[key] }",
+    2,
+  ],
+  [
+    "a read compared with another record",
+    "export function same(a: Record<string, string>, b: Record<string, string>) { const keys = Object.keys(a); return keys.every((key) => a[key] === b[key]) }",
+    1,
+  ],
+  [
+    "an accumulator this function fills",
+    "export function group(items: { key: string }[]) { const grouped: Record<string, string[]> = {}; for (const item of items) (grouped[item.key] ??= []).push(item.key); return grouped }",
+    1,
+  ],
+  [
+    "a lookup-table read with a default",
+    "const statuses: Record<string, number> = { NOT_FOUND: 404 }\nexport function status(code: string) { return statuses[code] ?? 500 }",
+    1,
+  ],
+  [
+    "a read the author asserts is present",
+    "export function command(commands: Record<string, () => void>, name: string) { return commands[name]! }",
+    1,
+  ],
+  [
+    "a membership test on a local table with a key from local data",
+    "export function count(rows: { status: string }[]) { for (const row of rows) { const counts = { ok: 0, failed: 0 }; const status = row.status; if (status in counts) counts[status as keyof typeof counts]++ } }",
+    1,
+  ],
+  [
+    "an asserted key into a lookup table",
+    "const units = { kb: 1024, mb: 1048576 }\nexport function size(unit: string) { return units[unit as keyof typeof units] }",
+    1,
+  ],
+  [
+    "a key validated with includes",
+    "export function dialect(dialects: Record<string, string>, names: string[], name: string) { if (!names.includes(name)) throw new Error(name); return dialects[name] }",
+    1,
+  ],
+  [
+    "a read compared through the same normalizer",
+    "declare function stableJson(value: unknown): string\nexport function changed(current: Record<string, unknown>, next: Record<string, unknown>) { return Object.keys(next).filter((key) => stableJson(current[key]) !== stableJson(next[key])) }",
+    1,
+  ],
+])("regression: reports %s", async (_name, source, count) => {
+  const diagnostics = await run(source);
+  expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(Array(count).fill("TS0015"));
 });
 
 test.each([
@@ -208,20 +359,8 @@ test.each([
     "export function decode(text: string, entities: Record<string, string>) { return text.replace(/&(amp|lt|gt);/g, (_match, entity: string) => entities[entity] ?? ' ') }",
   ],
   [
-    "a read compared with another record",
-    "export function same(a: Record<string, string>, b: Record<string, string>) { const keys = Object.keys(a); return keys.every((key) => a[key] === b[key]) }",
-  ],
-  [
     "keys sorted from the same record",
     "export function stable(record: Record<string, unknown>) { return Object.keys(record).sort().map((key) => [key, record[key]]) }",
-  ],
-  [
-    "an accumulator this function fills",
-    "export function group(items: { key: string }[]) { const grouped: Record<string, string[]> = {}; for (const item of items) (grouped[item.key] ??= []).push(item.key); return grouped }",
-  ],
-  [
-    "a lookup-table read with a default",
-    "const statuses: Record<string, number> = { NOT_FOUND: 404 }\nexport function status(code: string) { return statuses[code] ?? 500 }",
   ],
   [
     "a property reader over an unknown value",
@@ -252,20 +391,8 @@ test.each([
     "export function pick(entries: Record<string, string>, subpath: string) { const pattern = Object.keys(entries).filter((key) => subpath.startsWith(key)).sort()[0]; return pattern ? entries[pattern] : undefined }",
   ],
   [
-    "a read the author asserts is present",
-    "export function command(commands: Record<string, () => void>, name: string) { return commands[name]! }",
-  ],
-  [
     "a read checked with a shape guard that rejects functions",
-    "declare function isRecord(value: unknown): value is Record<string, unknown>\nexport function child(elements: Record<string, unknown>, id: string) { const element = elements[id]; if (!isRecord(element)) return; return element }",
-  ],
-  [
-    "a membership test on a local table with a key from local data",
-    "export function count(rows: { status: string }[]) { for (const row of rows) { const counts = { ok: 0, failed: 0 }; const status = row.status; if (status in counts) counts[status as keyof typeof counts]++ } }",
-  ],
-  [
-    "an asserted key into a lookup table",
-    "const units = { kb: 1024, mb: 1048576 }\nexport function size(unit: string) { return units[unit as keyof typeof units] }",
+    "export function child(elements: Record<string, unknown>, id: string) { const element = elements[id]; if (!Array.isArray(element)) return; return element }",
   ],
   [
     "keys from a const alias of the same record",
@@ -274,10 +401,6 @@ test.each([
   [
     "a read narrowed by a shape check of the same lookup",
     "export function append(input: Record<string, unknown>, key: string, items: string[]) { input[key] = [...(Array.isArray(input[key]) ? input[key] : []), ...items] }",
-  ],
-  [
-    "a key validated with includes",
-    "export function dialect(dialects: Record<string, string>, names: string[], name: string) { if (!names.includes(name)) throw new Error(name); return dialects[name] }",
   ],
   [
     "a read flowing into a typeof check through a conditional",
@@ -289,7 +412,15 @@ test.each([
   ],
   [
     "a module namespace",
-    "export async function load(loader: { import(id: string): Promise<unknown> }, id: string, name: string) { const mod = await loader.import(id) as Record<string, unknown>; return mod[name] }",
+    "export async function load(name: string) { const mod: Record<string, unknown> = await import('./mod'); return mod[name] }",
+  ],
+  [
+    "an asserted module namespace",
+    "export async function load(name: string) { const mod = await import('./mod') as Record<string, unknown>; return name in mod }",
+  ],
+  [
+    "a key validated by a literal includes check",
+    "export function dialect(dialects: Record<string, string>, name: string) { if (!['es', 'en'].includes(name)) return; return dialects[name] }",
   ],
   [
     "a key from a literal list of tuples",
@@ -298,10 +429,6 @@ test.each([
   [
     "a read checked with String(value) === value",
     "export function title(data: Record<string, unknown>, field: string, id: string) { const title = data[field]; return String(title) === title && title.trim() ? title : id }",
-  ],
-  [
-    "a read compared through the same normalizer",
-    "declare function stableJson(value: unknown): string\nexport function changed(current: Record<string, unknown>, next: Record<string, unknown>) { return Object.keys(next).filter((key) => stableJson(current[key]) !== stableJson(next[key])) }",
   ],
   [
     "keys from the entries of an object literal",
