@@ -100,7 +100,7 @@ Doctor automatically loads declarative `doctor.config.json` without executing pr
 }
 ```
 
-Or put the same config under the `doctor` key of `vite.config.ts`. Doctor parses the file without running it, so the value must be a literal:
+Or put the same config under the `doctor` key of a statically readable `vite.config.ts`. Doctor parses the file without running it, so the value must be a literal:
 
 ```ts
 // vite.config.ts
@@ -123,6 +123,8 @@ export default defineConfig({
 ```
 
 See [Run Doctor with Vite+](https://vite-doctor.onmax.me/vite#run-doctor-with-vite) for Nuxt module repositories.
+
+If Doctor can't determine whether a dynamic Vite config contains a `doctor` key, select your Doctor config explicitly with `--config doctor.config.json` (use `{}` for defaults).
 
 Executable config remains explicit because loading it runs project code:
 

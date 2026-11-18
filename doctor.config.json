@@ -17,6 +17,11 @@
     },
     {
       "ruleId": "typescript/evidence/no-chained-type-assertions",
+      "file": "src/core/internal/script-scope.ts",
+      "reason": "The scope manager consumes the same TS-ESTree nodes from Oxc despite differences in their TypeScript definitions."
+    },
+    {
+      "ruleId": "typescript/evidence/no-chained-type-assertions",
       "file": "src/core/internal/sfc.ts",
       "reason": "The Vue compiler AST is adapted to Doctor's parser-neutral AST handle."
     },

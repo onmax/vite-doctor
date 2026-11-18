@@ -153,10 +153,8 @@ test.each([
 test.each([
   "export default () => { const alias = { doctor: '/src/doctor.ts' }; return { resolve: { alias } }; };",
   "export default () => { const alias = {}; alias.doctor = '/src/doctor.ts'; return { resolve: { alias } }; };",
-  "export default { resolve: { alias: { doctor: '/src/doctor.ts' } }, ...(process.env.CI ? { base: '/' } : {}) };",
-  "const config = { doctor: { include: [] } }; export default (config) => config;",
-  "const { config } = { config: {}, doctor: '/src/doctor.ts' }; export default config;",
-])("allows JSON when the Vite export has no known doctor key: %s", async (source) => {
+  "export default { resolve: { alias: { doctor: '/src/doctor.ts' } } };",
+])("allows JSON when the static Vite export has no doctor key: %s", async (source) => {
   const root = fixture({ "vite.config.ts": source, "doctor.config.json": "{}" });
   const { code, report } = await run(root);
   expect(code).toBe(0);
@@ -182,6 +180,33 @@ test.each([
   expect(code).toBe(2);
   expect(report.error).toMatchObject({ kind: "config", file: join(root, "vite.config.ts") });
   expect(report.error.message).toContain("line 1");
+});
+
+test.each([
+  "import { mergeConfig } from 'vite-plus'; const makeBase = () => ({ doctor: { extends: [] } }); export default mergeConfig(makeBase(), { base: '/' });",
+  "export default { resolve: { alias: { doctor: '/src/doctor.ts' } }, ...base };",
+  "const config = { doctor: { include: [] } }; export default (config) => config;",
+  "const { config } = { config: {}, doctor: '/src/doctor.ts' }; export default config;",
+  "const config = {}; function unused() { config.doctor = {} } export default config;",
+  "export { default } from './base';",
+  "export default {",
+])("requires explicit config when the export is indeterminate: %s", async (source) => {
+  const root = fixture({ "vite.config.ts": source });
+  for (const withJson of [false, true]) {
+    if (withJson) writeFileSync(join(root, "doctor.config.json"), "{}");
+    const { code, report } = await run(root);
+    expect(code).toBe(2);
+    expect(report.error).toMatchObject({ kind: "config", file: join(root, "vite.config.ts") });
+    expect(report.error.message).toContain(
+      "Cannot determine whether vite.config provides a doctor key",
+    );
+    expect(report.error.message).toContain("--config <file>");
+    expect(codes(report)).not.toContain("DOC0038");
+  }
+  const explicit = await run(root, ["--config", "doctor.config.json"]);
+  expect(explicit.report.error?.kind).not.toBe("config");
+  expect(explicit.code).toBe(source === "export default {" ? 3 : 0);
+  expect(codes(explicit.report)).not.toContain("DOC0038");
 });
 
 test("DOC0038 does not suggest deleting an explicitly selected config", async () => {
