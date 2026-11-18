@@ -12,6 +12,8 @@ const temporary = mkdtempSync(join(cacheDirectory, "vite-doctor-pack-"));
 const packDirectory = join(temporary, "pack");
 const fixture = join(temporary, "fixture with spaces");
 const env = { ...process.env, CI: "1", NO_COLOR: "1" };
+// Nuxt 4.6 is the first release whose CLI exits with a host command's status, so `nuxt doctor` can fail CI.
+const nuxtVersion = "4.6.4";
 const packageManager = process.env.npm_execpath;
 const pnpmCommand = packageManager ? process.execPath : "pnpm";
 const pnpmArgs = (args) => (packageManager ? [packageManager, ...args] : args);
@@ -27,10 +29,9 @@ try {
   const archive = readdirSync(packDirectory).find((file) => file.endsWith(".tgz"));
   if (!archive) throw new Error("pnpm pack did not produce a tarball.");
   const tarball = join(packDirectory, archive);
-  const nuxt = JSON.parse(readFileSync(join(root, "node_modules/nuxt/package.json"), "utf8"));
   writeFileSync(
     join(temporary, "package.json"),
-    `${JSON.stringify({ private: true, dependencies: { nuxt: nuxt.version, "vite-doctor": `file:${tarball}` } }, null, 2)}\n`,
+    `${JSON.stringify({ private: true, dependencies: { nuxt: nuxtVersion, "vite-doctor": `file:${tarball}` } }, null, 2)}\n`,
   );
   execFileSync(pnpmCommand, pnpmArgs(["install", "--ignore-scripts", "--prefer-offline"]), {
     cwd: temporary,
@@ -49,7 +50,7 @@ try {
   verifyDoctorProcess();
   writeFileSync(
     join(fixture, "package.json"),
-    `${JSON.stringify({ private: true, dependencies: { nuxt: nuxt.version } }, null, 2)}\n`,
+    `${JSON.stringify({ private: true, dependencies: { nuxt: nuxtVersion } }, null, 2)}\n`,
     { flag: "wx" },
   );
   writeFileSync(join(fixture, "nuxt.config.ts"), "export default defineNuxtConfig({})\n");
@@ -72,7 +73,13 @@ try {
   ];
   verifyDoctor(["exec", "vite-doctor", ...findingArgs], [1], "NUXT0029");
   verifyDoctor(["exec", "nuxt-doctor", ...findingArgs], [1], "NUXT0029");
-  verifyDoctor(["nuxt", "doctor", ...findingArgs], [0, 1], "NUXT0029");
+  verifyDoctor(["nuxt", "doctor", ...findingArgs], [1], "NUXT0029");
+  const migrate = spawnSync(
+    pnpmCommand,
+    pnpmArgs(["nuxt", "doctor", "migrate", fixture, "--not-a-doctor-flag"]),
+    { cwd: temporary, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  assert.equal(migrate.status, 2, `${migrate.stdout}\n${migrate.stderr}`);
   const library = join(temporary, "library with spaces");
   mkdirSync(join(library, "dist"), { recursive: true });
   writeFileSync(
