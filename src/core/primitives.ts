@@ -671,6 +671,8 @@ export interface ComponentUsageGraph {
 export interface RuleInventory {
   /** Available to `workspace` and `manifest` Rules, which see the whole project. */
   componentUsage(): Promise<ComponentUsageGraph>;
+  /** Authored files selected by the run, including HTML when requested separately. */
+  sourcePaths(kind?: "html"): Promise<readonly string[]>;
 }
 
 export interface GraphEdge {

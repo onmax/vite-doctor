@@ -24,6 +24,8 @@ export { noConfigHookArrayEcho } from "./plugin-config.js";
 export { noLossySetCookieBridge } from "./response-bridge.js";
 
 export { noUrlPathnameAsFsPath } from "./config-paths.js";
+
+export { noFragmentInVirtualId } from "./virtual-ids.js";
 export {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -57,6 +59,8 @@ import { noConfigHookArrayEcho } from "./plugin-config.js";
 import { noLossySetCookieBridge } from "./response-bridge.js";
 
 import { noUrlPathnameAsFsPath } from "./config-paths.js";
+
+import { noFragmentInVirtualId } from "./virtual-ids.js";
 import {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -94,6 +98,8 @@ const rules = [
   noLossySetCookieBridge,
 
   noUrlPathnameAsFsPath,
+
+  noFragmentInVirtualId,
 ];
 
 const recommended = [
@@ -118,6 +124,8 @@ const recommended = [
   noLossySetCookieBridge,
 
   noUrlPathnameAsFsPath,
+
+  noFragmentInVirtualId,
 ].map((rule) => rule.meta.id);
 
 const viteRulePack = defineRulePack({

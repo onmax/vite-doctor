@@ -176,6 +176,8 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "vite/plugin/no-config-hook-array-echo": "Config hook arrays",
 
+  "vite/plugin/no-fragment-in-virtual-id": "# in virtual ids",
+
   "vite/plugin/no-lossy-set-cookie-bridge": "Set-Cookie bridges",
 
   "vite/plugin/prefer-transform-filter": "Transform filters",

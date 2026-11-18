@@ -35,6 +35,7 @@ import {
   type ScanSession,
 } from "./scan-session.js";
 import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
+import { selectHtmlPaths } from "./source-inventory.js";
 
 interface RuleRun {
   context: RuleContext;
@@ -405,6 +406,17 @@ function createRuleRun(
     fs: frame.fs,
     cache: frame.cache,
     inventory: {
+      async sourcePaths(kind) {
+        if (phase === "file")
+          throw new Error(
+            `Rule ${rule.meta.id} must use workspace execution to read source paths.`,
+          );
+        readsInventory = true;
+        if (kind === "html") return selectHtmlPaths(session.root, session.config, session.project);
+        return session.files
+          .filter((entry) => entry.sourceKind !== "module")
+          .map((entry) => entry.path);
+      },
       componentUsage() {
         if (phase === "file")
           throw new Error(
