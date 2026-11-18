@@ -184,8 +184,19 @@ export function createSsrValueTracer(ctx: RuleContext, kind: SsrValueKind) {
           break;
         case "ConditionalExpression":
         case "LogicalExpression":
-          return projectedBranches(node, path, (value, selection = []) =>
-            expression(value, module, seen, depth, selection),
+          return projectedBranches(
+            node,
+            path,
+            (value, selection = []) => expression(value, module, seen, depth, selection),
+            (test) => {
+              if (test.type !== "Identifier") return undefined;
+              const binding = resolveName(test, test.name, module);
+              return binding?.kind === "variable" &&
+                binding.declarationKind === "const" &&
+                binding.node.id.type === "Identifier"
+                ? binding.node
+                : undefined;
+            },
           );
         case "CallExpression": {
           const target = callTarget(node, module);
@@ -464,7 +475,7 @@ export function createSsrValueTracer(ctx: RuleContext, kind: SsrValueKind) {
 
 type Binding =
   | { kind: "function"; node: AnyNode }
-  | { kind: "variable"; node: AnyNode }
+  | { kind: "variable"; node: AnyNode; declarationKind: string }
   | { kind: "param"; node: AnyNode; fn: AnyNode; index: number }
   | { kind: "import"; node?: undefined; source: string; name: string }
   | { kind: "other"; node?: undefined };
@@ -521,7 +532,8 @@ function statementsBinding(statements: AnyNode[], name: string): Binding | undef
         : { kind: "other" };
     if (statement.type === "VariableDeclaration") {
       for (const declarator of statement.declarations ?? []) {
-        if (bindsName(declarator.id, name)) return { kind: "variable", node: declarator };
+        if (bindsName(declarator.id, name))
+          return { kind: "variable", node: declarator, declarationKind: statement.kind };
       }
     }
     if (statement.type === "ImportDeclaration") {
@@ -642,58 +654,64 @@ function projectedBranches(
   node: AnyNode,
   path: PropertyPath,
   trace: (node: AnyNode, path?: PropertyPath) => SsrValue[],
+  guardBinding: (node: AnyNode) => AnyNode,
 ): SsrValue[] {
-  type Select = (value: AnyNode, truth: number) => BranchResult;
+  type Facts = ReadonlyMap<AnyNode, number>;
+  type Select = (value: AnyNode, truth: number, facts: Facts) => BranchResult;
   let budget = 64;
 
   function choose(
     test: AnyNode,
     truth: number,
     mask: number,
-    yes: () => BranchResult,
-    no: () => BranchResult,
+    facts: Facts,
+    yes: (facts: Facts) => BranchResult,
+    no: (facts: Facts) => BranchResult,
   ): BranchResult {
-    if (!(truth & mask)) return no();
-    if (!(truth & ~mask)) return yes();
-    const { values: yesValues, constants: yesConstants } = yes();
-    const { values: noValues, constants: noConstants } = no();
+    if (!(truth & mask)) return no(facts);
+    if (!(truth & ~mask)) return yes(facts);
+    const binding = guardBinding(test);
+    const { values: yesValues, constants: yesConstants } = yes(
+      binding ? new Map(facts).set(binding, truth & mask) : facts,
+    );
+    const { values: noValues, constants: noConstants } = no(
+      binding ? new Map(facts).set(binding, truth & ~mask) : facts,
+    );
     const values = [...new Set([...yesValues, ...noValues])];
     if (!yesConstants || !noConstants) return { values };
-    const contains = (items: Primitive[], item: Primitive) =>
-      items.some((candidate) => Object.is(candidate, item));
-    const added = noConstants.filter((item) => !contains(yesConstants, item));
-    if (added.length || yesConstants.some((item) => !contains(noConstants, item)))
-      values.push(...trace(test));
+    const added = noConstants.filter(
+      (item) => !yesConstants.some((other) => Object.is(other, item)),
+    );
+    if (added.length === noConstants.length) values.push(...trace(test));
     return { values, constants: [...yesConstants, ...added] };
   }
 
-  function evaluate(value: AnyNode, select: Select): BranchResult {
+  function evaluate(value: AnyNode, facts: Facts, select: Select): BranchResult {
     if (--budget < 0) return { values: [] };
     value = unwrap(value);
     if (value.type === "ConditionalExpression") {
-      let consequent: BranchResult | undefined;
-      let alternate: BranchResult | undefined;
-      return evaluate(value.test, (test, truth) =>
+      return evaluate(value.test, facts, (test, truth, branchFacts) =>
         choose(
           test,
           truth,
           TRUTHY,
-          () => (consequent ??= evaluate(value.consequent, select)),
-          () => (alternate ??= evaluate(value.alternate, select)),
+          branchFacts,
+          (whenTrue) => evaluate(value.consequent, whenTrue, select),
+          (whenFalse) => evaluate(value.alternate, whenFalse, select),
         ),
       );
     }
     if (value.type === "LogicalExpression") {
       const takeRight =
         value.operator === "&&" ? TRUTHY : value.operator === "??" ? NULLISH : FALSY | NULLISH;
-      let right: BranchResult | undefined;
-      return evaluate(value.left, (left, truth) =>
+      return evaluate(value.left, facts, (left, truth, branchFacts) =>
         choose(
           left,
           truth,
           takeRight,
-          () => (right ??= evaluate(value.right, select)),
-          () => select(left, truth & ~takeRight),
+          branchFacts,
+          (whenTaken) => evaluate(value.right, whenTaken, select),
+          (whenSkipped) => select(left, truth & ~takeRight, whenSkipped),
         ),
       );
     }
@@ -706,11 +724,11 @@ function projectedBranches(
             : value.value
               ? TRUTHY
               : FALSY
-          : ANY_TRUTH;
-    return select(value, truth);
+          : (facts.get(guardBinding(value)) ?? ANY_TRUTH);
+    return select(value, truth, facts);
   }
 
-  return evaluate(node, (value) => {
+  return evaluate(node, new Map(), (value) => {
     let selected = value;
     for (const key of path) {
       selected =

@@ -564,6 +564,23 @@ export default defineComponent({ setup() {
   );
 });
 
+test("only compares reachable projected values when a guard repeats", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/repeated-guards.ts": `import { defineComponent, h, ref } from 'vue';
+export default defineComponent({ setup() {
+  const wide = typeof window !== 'undefined' && window.innerWidth >= 768;
+  const stable = (wide && { columns: 2 }) || (wide ? { columns: 1 } : { columns: 2 });
+  const changing = (wide && { columns: 2 }) || (wide ? { columns: 2 } : { columns: 1 });
+  const a = ref(stable.columns);
+  const b = ref(changing.columns);
+  return () => h('div', [a.value, b.value]);
+} });`,
+  });
+  expect(await ssrDiagnostics(root)).toEqual([
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/repeated-guards.ts:7",
+  ]);
+});
+
 test("resolves template reads outside loop and slot aliases", async () => {
   const root = libraryWorkspace({
     "packages/ui/src/Scopes.vue": `<script setup lang="ts">
