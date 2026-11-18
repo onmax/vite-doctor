@@ -29,10 +29,10 @@ export default defineNuxtConfig({
 pnpm nuxt doctor
 ```
 
-Use `pnpm vite-doctor . --max-warnings 0` in CI when the exit code must fail the
-job. Nuxt's host-command fallback currently prints the report but can swallow the
-shim's nonzero status. Use `pnpm vite-doctor migrate ...` for migration checks that
-also need a reliable exit code.
+`pnpm nuxt doctor --max-warnings 0` fails a CI job on Nuxt 4.6 and later. Nuxt 4.1
+to 4.5 exit `0` after `nuxt doctor` whatever Doctor finds; there, use
+`pnpm vite-doctor . --host-extensions --max-warnings 0` and `pnpm vite-doctor migrate .`
+when the exit code matters.
 
 The standalone CLI also works for Nuxt one-off runs, CI fallback, or monorepo scans.
 
