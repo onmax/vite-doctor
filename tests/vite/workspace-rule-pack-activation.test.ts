@@ -347,6 +347,27 @@ test("Nuxt manifest Rules review each Nuxt app's inventory", async () => {
   ).toEqual(["packages/app-a/package.json", "packages/app-b/package.json"]);
 });
 
+test("Nuxt manifest findings from a single nested app use an in-package fallback", async () => {
+  const root = fixture({
+    "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+    "build.config.ts": "export default {}\n",
+    "packages/site/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+    "packages/site/.nuxt/doctor.manifest.json": JSON.stringify({
+      nuxtVersion: "4.0.0",
+      autoImports: [
+        { name: "useFoo", from: "~/composables/a" },
+        { name: "useFoo", from: "~/composables/b" },
+      ],
+    }),
+  });
+  const result = await runViteDoctor({ root, cache: false, runtimeTarget: { nuxt: "4.1.0" } });
+  expect(
+    result.diagnostics
+      .filter((diagnostic) => diagnostic.code === "NUXT0034")
+      .map((diagnostic) => diagnostic.file.slice(root.length + 1)),
+  ).toEqual(["packages/site/.nuxt/doctor.manifest.json"]);
+});
+
 test("Nuxt module Doctor options of a non-owning Nuxt app are reported as an evidence gap", async () => {
   const root = multiNuxtMonorepo({
     "packages/app-a/.nuxt/doctor.manifest.json": JSON.stringify({

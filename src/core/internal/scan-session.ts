@@ -426,8 +426,11 @@ function selectRules(
     options.framework !== undefined && options.framework !== "auto",
   );
   // A severity turns on a Rule that no selected Preset includes, as if a Preset had named it.
-  for (const [ruleId, ruleConfig] of ruleConfigs)
-    if (ruleConfig.enabled) selected.ruleIds.add(ruleId);
+  for (const [ruleId, ruleConfig] of ruleConfigs) {
+    if (!ruleConfig.enabled || selected.ruleIds.has(ruleId)) continue;
+    selected.ruleIds.add(ruleId);
+    selected.scopes.delete(ruleId);
+  }
   const turnedOnByOverride = new Set(
     overrides.flatMap((override) => [
       ...override.selects,
@@ -714,18 +717,18 @@ export function fileRuleConfig(
   for (const override of matchingOverrides(session, file)) {
     if (override.selects.has(ruleId)) {
       selected = true;
-      if (!config.enabled) config = { enabled: true };
+      if (!config.enabled) config = { ...config, enabled: true };
     }
     const entry = override.rules.get(ruleId);
     if (!entry) continue;
     if (entry.enabled) selected = true;
-    // A severity alone keeps the options an earlier entry set, as ESLint does.
+    // Changing severity or turning off reports does not replace analysis options.
     config =
-      entry.enabled && entry.options === undefined && config.options !== undefined
+      entry.options === undefined && config.options !== undefined
         ? { ...entry, options: config.options }
         : entry;
   }
-  return selected && config.enabled ? config : RULE_OFF;
+  return selected ? config : RULE_OFF;
 }
 
 export function ruleInScope(session: ScanSession, ruleId: string, file: string): boolean {

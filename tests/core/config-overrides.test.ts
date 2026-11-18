@@ -205,6 +205,25 @@ test("a later Preset re-enables a Rule, but its own rules entries take precedenc
   });
 });
 
+test("a later Preset and severity retain options across off overrides", async () => {
+  await withProject(async (root) => {
+    const result = await run(root, {
+      rules: { [everyFile.meta.id]: ["warn", { from: "top" }] },
+      overrides: [
+        { files: ["**/*.ts"], rules: { [everyFile.meta.id]: "off" } },
+        {
+          files: ["src/**"],
+          extends: ["fixture/overrides/strict"],
+          rules: { [everyFile.meta.id]: "error" },
+        },
+      ],
+    });
+    expect(findings(result).filter((line) => line.startsWith(everyFile.meta.id))).toEqual([
+      'fixture/every-file src/lib.ts error options:{"from":"top"}',
+    ]);
+  });
+});
+
 test.each([
   { rules: { "pinia/stores/store-name-matches-id": "error" } } as const,
   { extends: ["pinia/strict"] },
@@ -237,45 +256,62 @@ test.each([
     expect(
       piniaFiles(await runViteDoctor({ ...options, extends: ["auto", "pinia/strict"] })),
     ).toEqual(["packages/app/store.ts", "packages/sibling/store.ts"]);
+    expect(
+      piniaFiles(
+        await runViteDoctor({
+          ...options,
+          config: { rules: { "pinia/stores/store-name-matches-id": "error" } },
+        }),
+      ),
+    ).toEqual(["packages/app/store.ts", "packages/sibling/store.ts"]);
   });
 });
 
-test("a project-reporting file Rule can run on a source that does not match the override", async () => {
-  await withProject(async (root) => {
-    const crossFile = createRule({
-      meta: { ...strictOnly.meta, reportScope: "project" },
-      create(ctx) {
-        if (ctx.file.relativePath !== "playground/demo.ts") return;
-        ctx.report(allDiagnostics.DOC9999({ why: "cross-file", fix: "Nothing." }), {
-          file: join(root, "src/lib.ts"),
-        });
-      },
+test.each([false, true])(
+  "project-reporting Rules analyze sources disabled for reporting (source options: %s)",
+  async (sourceOptions) => {
+    await withProject(async (root) => {
+      const crossFile = createRule({
+        meta: { ...strictOnly.meta, reportScope: "project" },
+        create(ctx) {
+          if (ctx.file.relativePath !== "playground/demo.ts") return;
+          if (sourceOptions && ctx.options !== "analyze") return;
+          ctx.report(allDiagnostics.DOC9999({ why: "cross-file", fix: "Nothing." }), {
+            file: join(root, "src/lib.ts"),
+          });
+        },
+      });
+      const overrides: NonNullable<DoctorConfig["overrides"]> = [
+        { files: ["src/**"], rules: { [strictOnly.meta.id]: "error" } },
+      ];
+      if (sourceOptions)
+        overrides.push(
+          { files: ["playground/**"], rules: { [strictOnly.meta.id]: ["info", "analyze"] } },
+          { files: ["playground/**"], rules: { [strictOnly.meta.id]: "off" } },
+        );
+      const result = await runViteDoctor({
+        root,
+        affectedFiles: ["src/lib.ts"],
+        cache: false,
+        extensions: [
+          defineDoctorExtension({
+            name: "fixture/cross-file",
+            rulePacks: [
+              defineRulePack({
+                name: "fixture/cross-file",
+                version: "0.0.0",
+                rules: [crossFile],
+                presets: { recommended: [crossFile.meta.id] },
+              }),
+            ],
+          }),
+        ],
+        config: { extends: [], overrides },
+      });
+      expect(findings(result)).toEqual(["fixture/strict-only src/lib.ts error cross-file"]);
     });
-    const result = await runViteDoctor({
-      root,
-      affectedFiles: ["src/lib.ts"],
-      cache: false,
-      extensions: [
-        defineDoctorExtension({
-          name: "fixture/cross-file",
-          rulePacks: [
-            defineRulePack({
-              name: "fixture/cross-file",
-              version: "0.0.0",
-              rules: [crossFile],
-              presets: { recommended: [crossFile.meta.id] },
-            }),
-          ],
-        }),
-      ],
-      config: {
-        extends: [],
-        overrides: [{ files: ["src/**"], rules: { [strictOnly.meta.id]: "error" } }],
-      },
-    });
-    expect(findings(result)).toEqual(["fixture/strict-only src/lib.ts error cross-file"]);
-  });
-});
+  },
+);
 
 test("registered Nuxt module sources match their physical paths", async () => {
   await withProject(async (root) => {

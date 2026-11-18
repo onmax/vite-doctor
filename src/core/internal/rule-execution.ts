@@ -11,6 +11,7 @@ import type {
   WorkspaceGraph,
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
+import { projectWorkspacePackages } from "./applicability.js";
 import { componentUsageGraph } from "./component-inventory.js";
 import { loadSourceFile, sourceFacts, sourceShape } from "./facts.js";
 import type { RuleInputFrame } from "./rule-inputs.js";
@@ -18,6 +19,7 @@ import { assertKnownRuleHooks } from "./rule-hooks.js";
 import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
 import { canMatchPrefilter } from "./rule-prefilter.js";
 import { workspaceNuxtRoots, workspaceProjectView, workspaceViewRoot } from "./workspace-nuxt.js";
+import { nuxtInventoryOwner, owningWorkspacePackage } from "./workspace-packages.js";
 import {
   buildWorkspaceGraph,
   runDuplicationRules,
@@ -75,7 +77,6 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         (rule.meta.reportScope !== "project" || !ruleInScope(session, rule.meta.id, file.path))
       )
         continue;
-      const analysisConfig = config.enabled ? config : topLevelRuleConfig(session, rule.meta.id);
       const key = keys[index];
       const cached = key ? session.cache.ruleResult(file.path, key) : undefined;
       if (cached) {
@@ -87,7 +88,7 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         if (key) session.cache.recordRuleResult(file.path, key, [], []);
         continue;
       }
-      pending.push({ index, config: analysisConfig });
+      pending.push({ index, config });
     }
     if (!pending.length) continue;
     await loadSourceFile(file);
@@ -183,22 +184,25 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
   const started = performance.now();
   const fallbackFile = session.handles[0] ?? createEmptySourceFileHandle(session);
   const nuxtRoots = workspaceNuxtRoots(session.project);
+  const nuxtAnchors = new Map<ProjectInfo, SourceFileHandle>();
   for (const rule of session.enabledRules) {
     if (rule.meta.execution !== "manifest" && rule.meta.execution !== "workspace") continue;
     const key = cacheKeyFor(session, rule);
     const ruleStarted = performance.now();
     for (const project of manifestRuleProjects(session, rule, nuxtRoots)) {
-      // Nuxt manifest Rules run once per Nuxt package view, so each view has its own result.
+      let file = fallbackFile;
+      const nuxtInventory = rule.meta.requires?.nuxt && project.nuxt;
+      if (nuxtInventory) {
+        file = nuxtAnchors.get(project) ?? nuxtManifestAnchor(session, project);
+        nuxtAnchors.set(project, file);
+      }
       const viewKey = key && `${key}:${workspaceViewRoot(project) ?? ""}`;
-      const cached = viewKey ? session.cache.ruleResult(undefined, viewKey) : undefined;
+      const resultKey = viewKey && (nuxtInventory ? `${viewKey}:${file.relativePath}` : viewKey);
+      const cached = resultKey ? session.cache.ruleResult(undefined, resultKey) : undefined;
       if (cached) {
         session.diagnostics.push(...cached);
         continue;
       }
-      const file =
-        project === session.project
-          ? fallbackFile
-          : (session.handles.find((handle) => handle.project === project) ?? fallbackFile);
       const before = projectSnapshot(session.project);
       const reportedBefore = session.diagnostics.length;
       const run = createRuleRun(session, file, rule, rule.meta.execution, undefined, project);
@@ -209,21 +213,40 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
       if (project.nuxt) visitor?.NuxtManifest?.(project.nuxt);
       await visitor?.onProjectEnd?.(project);
       await visitor?.onWorkspaceEnd?.();
-      if (!viewKey) continue;
+      if (!resultKey) continue;
       if (run.readsInventory || projectChanged(session.project, before))
         session.cache.recordUncacheable();
       else
         session.cache.recordRuleResult(
           undefined,
-          viewKey,
+          resultKey,
           session.diagnostics.slice(reportedBefore),
-          // Diagnostics without a file are anchored to the view's first source file.
+          // Diagnostics without a file depend on the fallback location.
           [...run.frame.readInputs(), `t:${file.path}`],
         );
     }
     if (session.options.profile) recordRuleTiming(session, rule.meta.id, ruleStarted, 0);
   }
   markSession(session, "manifestRules", started);
+}
+
+function nuxtManifestAnchor(session: ScanSession, project: ProjectInfo): SourceFileHandle {
+  const packages = projectWorkspacePackages(project);
+  const packageFor = (path: string) =>
+    owningWorkspacePackage(packages, relative(session.root, path));
+  const manifest = project.nuxt?.manifestPath;
+  const owner =
+    workspaceViewRoot(project) ??
+    (manifest ? packageFor(manifest) : nuxtInventoryOwner(packages)?.root) ??
+    ".";
+  return (
+    session.handles.find((handle) => packageFor(handle.path) === owner) ??
+    createEmptySourceFileHandle(
+      session,
+      manifest ?? resolve(session.root, owner, "package.json"),
+      project,
+    )
+  );
 }
 
 /**
@@ -451,18 +474,21 @@ function createRuleRun(
   };
 }
 
-function createEmptySourceFileHandle(session: ScanSession): SourceFileHandle {
-  const path = resolve(session.root, "__doctor_empty__.ts");
+function createEmptySourceFileHandle(
+  session: ScanSession,
+  path = resolve(session.root, "__doctor_empty__.ts"),
+  project = session.project,
+): SourceFileHandle {
   return {
     path,
-    relativePath: "__doctor_empty__.ts",
+    relativePath: relative(session.root, path),
     sourceKind: "app",
     text: "",
     hash: sha256(""),
     isVueSfc: false,
     scriptAst: null,
     templateAst: null,
-    project: session.project,
+    project,
     matches(pattern) {
       return nativeMatch(this.relativePath, pattern);
     },
