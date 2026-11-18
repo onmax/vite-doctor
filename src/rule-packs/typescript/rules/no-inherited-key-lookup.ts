@@ -556,17 +556,57 @@ export const noInheritedKeyLookup = createRule({
       return iteratedKeys(list, record, depth + 1);
     }
 
+    function stableFindRecord(node: AnyNode): boolean {
+      const record = expression(node, true);
+      if (record?.type === "Identifier") return !!stableBinding(record);
+      if (record?.type !== "MemberExpression" || record.computed || record.optional) return false;
+      const binding = stableBinding(record.object);
+      if (binding?.kind !== "const" || binding.owner.type === "Program") return false;
+      const init = expression(binding.init, true);
+      if (init?.type !== "ObjectExpression") return false;
+      const name = record.property.name;
+      if (name === "__proto__") return false;
+      if (
+        init.properties.some(
+          (property: AnyNode) => property.type !== "Property" || property.computed,
+        )
+      )
+        return false;
+      const properties = init.properties.filter(
+        (property: AnyNode) => (property.key.name ?? property.key.value) === name,
+      );
+      if (properties.length !== 1 || properties[0].kind !== "init" || properties[0].method)
+        return false;
+      return evidence.references(binding.node).every((reference) => {
+        const member = evidence.parent(reference);
+        if (
+          member?.type !== "MemberExpression" ||
+          member.object !== reference ||
+          member.computed ||
+          member.optional ||
+          member.property.name !== name
+        )
+          return false;
+        const use = evidence.parent(member);
+        return (
+          (use?.type === "MemberExpression" && use.object === member) ||
+          (use?.type === "BinaryExpression" && use.operator === "in" && use.right === member) ||
+          ownGuard(use)?.record === member
+        );
+      });
+    }
+
     function findGuards(node: AnyNode, record: AnyNode): boolean {
       const pick = expression(node, true);
-      if (pick?.type !== "CallExpression" || expression(record, true)?.type !== "Identifier")
-        return false;
+      if (pick?.type !== "CallExpression") return false;
       const callee = expression(pick.callee, true);
       return (
         callee?.type === "MemberExpression" &&
         !callee.computed &&
         ["find", "findLast"].includes(callee.property?.name) &&
         evidence.isArray(callee.object) &&
-        callbackGuards(expression(pick.arguments[0]), record, pick)
+        callbackGuards(expression(pick.arguments[0]), record, pick) &&
+        stableFindRecord(record)
       );
     }
 
@@ -1039,7 +1079,8 @@ export const noInheritedKeyLookup = createRule({
     function canCarryGuardPastDeclarator(declaration: AnyNode): boolean {
       return (
         declaration.id.type === "Identifier" &&
-        (!declaration.init || expression(declaration.init, true)?.type === "Literal")
+        (!declaration.init ||
+          ["Literal", "Identifier"].includes(expression(declaration.init, true)?.type))
       );
     }
 
@@ -1203,22 +1244,42 @@ export const noInheritedKeyLookup = createRule({
       return false;
     }
 
+    function findDeclaration(key: AnyNode, record: AnyNode, depth = 0): AnyNode {
+      if (depth > 8) return;
+      const binding = stableBinding(key);
+      if (
+        !binding ||
+        !["const", "let"].includes(binding.kind) ||
+        binding.node.start >= key.start ||
+        binding.owner !== evidence.owner(key)
+      )
+        return;
+      const declarator = evidence.parent(binding.node);
+      const declaration = evidence.parent(declarator);
+      if (
+        declarator?.type !== "VariableDeclarator" ||
+        declarator.id !== binding.node ||
+        declaration?.type !== "VariableDeclaration"
+      )
+        return;
+      const init = expression(declarator.init, true);
+      if (init?.type === "Identifier") return findDeclaration(init, record, depth + 1);
+      const index = declaration.declarations.indexOf(declarator);
+      if (
+        findGuards(init, record) &&
+        declaration.declarations.slice(index + 1).every(canCarryGuardPastDeclarator)
+      )
+        return declaration;
+    }
+
     function hasOwnKeyGuard(lookup: Lookup): boolean {
       if (findGuards(lookup.key, lookup.record)) return true;
-      const key = stableBinding(lookup.key);
-      const declarator = key?.kind === "const" ? evidence.parent(key.node) : undefined;
-      const declaration = evidence.parent(declarator);
-      const guardedFind =
-        declarator?.type === "VariableDeclarator" &&
-        declarator.id === key?.node &&
-        declaration?.type === "VariableDeclaration" &&
-        declaration.declarations.at(-1) === declarator &&
-        findGuards(declarator.init, lookup.record);
+      const declaration = findDeclaration(lookup.key, lookup.record);
       return onPath(
         lookup.node,
         (test, truth) => truth && guardMatches(test, lookup),
         false,
-        guardedFind ? (statement) => statement === declaration : undefined,
+        declaration ? (statement) => statement === declaration : undefined,
       );
     }
 

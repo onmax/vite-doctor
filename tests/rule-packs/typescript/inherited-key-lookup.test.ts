@@ -251,6 +251,26 @@ test.each([
     1,
   ],
   [
+    "a reassigned find result",
+    "function read(values: Record<string, string>, keys: string[], other: string) { let key = keys.find(candidate => Object.hasOwn(values, candidate)); key = other; return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "a find result aliased after the entry is deleted",
+    "function read(values: Record<string, string>, keys: string[]) { const match = keys.find(candidate => Object.hasOwn(values, candidate))!; delete values[match]; const key = match; return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "a record member implemented by a getter that returns different records",
+    "function read(values: Record<string, string>, keys: string[]) { let reads = 0; const config: { values: Record<string, string> } = { get values() { return reads++ === 0 ? values : {} } }; const key = keys.find(candidate => Object.hasOwn(config.values, candidate)); return key ? config.values[key]?.trim() : undefined }",
+    1,
+  ],
+  [
+    "a find result whose local record member is replaced",
+    "function read(values: Record<string, string>, keys: string[]) { const config: { values: Record<string, string> } = { values }; const key = keys.find(candidate => Object.hasOwn(config.values, candidate)); config.values = {}; return key ? config.values[key]?.trim() : undefined }",
+    1,
+  ],
+  [
     "a find result reused on a later loop iteration",
     "function read(values: Record<string, string>, keys: string[]) { const key = keys.find(candidate => Object.hasOwn(values, candidate))!; for (const step of [0, 1]) { console.log(step, values[key]); delete values[key] } }",
     1,
@@ -532,6 +552,18 @@ test.each([
   [
     "a find result used after an effect-free early exit",
     "function read(values: Record<string, string>, keys: string[]) { const key = keys.find(candidate => Object.hasOwn(values, candidate)); if (key === undefined) return; return values[key]?.trim() }",
+  ],
+  [
+    "a find result in an unwritten let binding",
+    "function read(values: Record<string, string>, keys: string[]) { let key = keys.find(candidate => Object.hasOwn(values, candidate)); return key ? values[key]?.trim() : undefined }",
+  ],
+  [
+    "a find result copied through a local alias",
+    "function read(values: Record<string, string>, keys: string[]) { const match = keys.findLast(candidate => Object.hasOwn(values, candidate)); const key = match; if (key === undefined) return; return values[key]?.trim() }",
+  ],
+  [
+    "a find result for a locally initialized record member",
+    "function read(values: Record<string, string>, keys: string[]) { const config: { values: Record<string, string> } = { values }; const key = keys.find(candidate => Object.hasOwn(config.values, candidate)); return key ? config.values[key]?.trim() : undefined }",
   ],
   [
     "a key checked against a literal set",
