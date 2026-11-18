@@ -282,7 +282,7 @@ function inlineSuppressionFix(
       message: "Delete the directive and keep its reason, which other Rules read as a SAFETY note.",
       edits: [{ range: { start: directive.start, end: directive.reasonRange.start }, text: "" }],
     };
-  const { range, text, embeddedMarkup } = directive.removal ?? {
+  const { range, text } = directive.removal ?? {
     range: { start: directive.start, end: directive.end },
     text: "",
   };
@@ -291,7 +291,7 @@ function inlineSuppressionFix(
     !text.includes("\n") &&
     source.slice(range.start, range.end).includes("\n");
   return {
-    kind: shifts || directive.shadowing || embeddedMarkup ? "suggestion" : "safe",
+    kind: shifts || directive.shadowing ? "suggestion" : "safe",
     message: "Delete the directive.",
     edits: [{ range, text }],
   };

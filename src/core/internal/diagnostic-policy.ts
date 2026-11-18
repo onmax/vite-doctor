@@ -72,7 +72,7 @@ export interface InlineSuppression {
   /** Source offsets of the written reason, when there is one. */
   reasonRange?: { start: number; end: number };
   /** A comment or line edit when the directive has no surrounding prose. */
-  removal?: { range: SourceComment; text: string; embeddedMarkup?: boolean };
+  removal?: { range: SourceComment; text: string };
   shadowing?: boolean;
 }
 
@@ -420,7 +420,7 @@ function collectInlineSuppressions(file: string, source: string): InlineSuppress
     ? collectVueComments(file, source)
     : collectScriptComments(file, source);
   for (const comment of comments) {
-    addCommentSuppressions(directives, source, comment, codeFree);
+    addCommentSuppressions(directives, source, comment);
   }
   const code = linesWithCode(source, [...comments, ...codeFree]);
   suppressions.all = [...directives.values()].sort((a, b) => a.start - b.start);
@@ -514,7 +514,6 @@ function addCommentSuppressions(
   directives: Map<number, InlineSuppression>,
   source: string,
   comment: SourceComment,
-  codeFree: SourceComment[],
 ): void {
   const { start, end } = comment;
   const rawComment = source.slice(start, end);
@@ -533,25 +532,8 @@ function addCommentSuppressions(
     segmentStart += segment.length + 1;
     line++;
   }
-  const container = block
-    ? codeFree.find(
-        (span) =>
-          span.start < start &&
-          end < span.end &&
-          !source.slice(span.start + 1, start).trim() &&
-          !source.slice(end, span.end - 1).trim(),
-      )
-    : undefined;
   for (const directive of added)
-    directive.removal = directiveRemoval(
-      source,
-      comment,
-      body,
-      directive,
-      added.length,
-      container,
-      html,
-    );
+    directive.removal = directiveRemoval(source, comment, body, directive, added.length, html);
 }
 
 function addInlineSuppression(
@@ -603,7 +585,6 @@ function directiveRemoval(
   body: SourceComment,
   directive: InlineSuppression,
   directivesInComment: number,
-  container: SourceComment | undefined,
   html: boolean,
 ): InlineSuppression["removal"] {
   const blank = (text: string) => /^[\s*]*$/.test(text);
@@ -612,14 +593,15 @@ function directiveRemoval(
     blank(source.slice(body.start, directive.start)) &&
     blank(source.slice(directive.end, body.end))
   ) {
-    const { start, end } = container ?? comment;
+    if (html)
+      return { range: body, text: source.slice(body.start, body.end).replace(/[^\r\n]+/g, "") };
+    const { start, end } = comment;
     const first = lineStart(source, start);
     const last = lineEnd(source, end);
     const before = source.slice(first, start);
     const after = source.slice(end, last);
     if (!before.trim() && !after.trim())
       return { range: { start: first, end: Math.min(source.length, last + 1) }, text: "" };
-    if (container || html) return { range: { start, end }, text: "", embeddedMarkup: true };
     if (source.startsWith("//", start) && !after.trim())
       return { range: { start: start - (/[ \t]*$/.exec(before)?.[0].length ?? 0), end }, text: "" };
     return {

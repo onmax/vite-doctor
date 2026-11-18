@@ -153,14 +153,15 @@ test("a directive inside a longer block comment removes only its own line", asyn
   );
 });
 
-test("a Vue template directive fix removes the whole HTML comment line", async () => {
+test("a Vue template directive fix preserves whitespace in preformatted text", async () => {
   const source = [
     "<script setup>",
     "const url = 1;",
     "</script>",
     "<template>",
+    "  <pre>Hello",
     `  <!-- doctor-disable-next-line ${secret} -- Stale. -->`,
-    "  <p>{{ url }}</p>",
+    "  {{ url }}</pre>",
     "</template>",
     "",
   ].join("\n");
@@ -170,21 +171,23 @@ test("a Vue template directive fix removes the whole HTML comment line", async (
     files: { "src/App.vue": source },
   });
   const [report] = inline(result.diagnostics);
-  expect(report).toMatchObject({ code: "DOC0036", range: { line: 5 } });
+  expect(report).toMatchObject({ code: "DOC0036", range: { line: 6 }, fix: { kind: "safe" } });
   expect(applyFix(source, report)).toBe(
     [
       "<script setup>",
       "const url = 1;",
       "</script>",
       "<template>",
-      "  <p>{{ url }}</p>",
+      "  <pre>Hello",
+      "  <!---->",
+      "  {{ url }}</pre>",
       "</template>",
       "",
     ].join("\n"),
   );
 });
 
-test("a JSX directive fix removes its empty expression container", async () => {
+test("a JSX directive fix keeps its empty expression container", async () => {
   const source = [
     "export const App = () => (",
     "  <div>",
@@ -202,7 +205,15 @@ test("a JSX directive fix removes its empty expression container", async () => {
   const [report] = inline(result.diagnostics);
   expect(report).toMatchObject({ code: "DOC0036", range: { line: 3 } });
   expect(applyFix(source, report)).toBe(
-    ["export const App = () => (", "  <div>", "    <p>hi</p>", "  </div>", ");", ""].join("\n"),
+    [
+      "export const App = () => (",
+      "  <div>",
+      "    { }",
+      "    <p>hi</p>",
+      "  </div>",
+      ");",
+      "",
+    ].join("\n"),
   );
 });
 
@@ -521,6 +532,34 @@ test("--fix preserves function braces, token separation and return line breaks",
     expect(empty()).toBeUndefined();
     expect(kind).toBe("undefined");
     expect(value()).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("--fix preserves the boundary between JSX text children", async () => {
+  const file = "src/App.tsx";
+  const root = await fixtureRoot({
+    [file]: [
+      "export const App = () => <p>Hello",
+      `  {/* doctor-disable-next-line ${secret} -- Stale. */}`,
+      "  world</p>;",
+      "",
+    ].join("\n"),
+  });
+  try {
+    const result = await runDoctor({
+      root,
+      framework: "vite",
+      cache: false,
+      fix: true,
+      extensions: [fixtureExtension()],
+    });
+    expect(result.fixes).toMatchObject({ files: 1, edits: 1 });
+    expect(readFileSync(join(root, file), "utf8")).toBe(
+      "export const App = () => <p>Hello\n  { }\n  world</p>;\n",
+    );
+    expect(inline(result.diagnostics)).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
