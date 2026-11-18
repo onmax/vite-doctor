@@ -1,4 +1,5 @@
 import { AnyNode, createRule, report } from "./shared.js";
+import { isVueSsrRun } from "./ssr-evidence.js";
 
 export const preferUseIdForStableIds = createRule({
   meta: {
@@ -12,8 +13,7 @@ export const preferUseIdForStableIds = createRule({
     requires: { script: true, vue: true },
   },
   create(ctx) {
-    if (ctx.project.framework === "nuxt") return;
-    if (!ctx.project.ssr) return;
+    if (!isVueSsrRun(ctx)) return;
     const visit = (node: AnyNode) => {
       const name = ctx.helpers.getCalleeName(node);
       if (name !== "Math.random" && name !== "Date.now") return;

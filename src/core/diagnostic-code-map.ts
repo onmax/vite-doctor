@@ -55,6 +55,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0031", ruleId: "doctor/config/unused-suppression" },
   { code: "DOC0033", ruleId: "doctor/inventory/empty-sfc" },
   { code: "DOC0034", ruleId: "doctor/rule/unknown-hook", docs: false },
+  { code: "DOC0035", ruleId: "doctor/config/invalid-override", docs: false },
   { code: "VUE0001", ruleId: "vue/i18n/no-untranslated-text" },
   { code: "VUE0002", ruleId: "vue/i18n/no-unused-translations" },
   { code: "VUE0003", ruleId: "vue/lifecycle/no-mutation-in-onupdated" },
@@ -98,6 +99,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0034", ruleId: "vue/reactivity/prefer-computed-over-watch-assign" },
   { code: "VUE0035", ruleId: "vue/template/no-index-key-on-stateful-list" },
   { code: "VUE0041", ruleId: "vue/reactivity/no-constant-computed" },
+  { code: "VUE0042", ruleId: "vue/ssr/no-setup-state-from-browser-read" },
 
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },
@@ -129,6 +131,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0025", ruleId: "vite/plugin/no-lossy-set-cookie-bridge" },
 
   { code: "VITE0027", ruleId: "vite/config/no-url-pathname-as-fs-path" },
+
+  { code: "VITE0028", ruleId: "vite/plugin/no-fragment-in-virtual-id" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
   { code: "TS0003", ruleId: "typescript/evidence/no-unknown-type-aliases" },

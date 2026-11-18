@@ -1,4 +1,5 @@
 import { AnyNode, BROWSER_GLOBALS, createRule, report } from "./shared.js";
+import { isVueSsrRun } from "./ssr-evidence.js";
 
 export const noBrowserApiInSetup = createRule({
   meta: {
@@ -12,8 +13,7 @@ export const noBrowserApiInSetup = createRule({
     requires: { script: true, vue: true },
   },
   create(ctx) {
-    if (ctx.project.framework === "nuxt") return;
-    if (!ctx.project.ssr) return;
+    if (!isVueSsrRun(ctx)) return;
     return {
       Identifier(node: AnyNode) {
         if (

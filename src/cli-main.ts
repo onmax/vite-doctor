@@ -581,7 +581,8 @@ function cliConfigFile(root: string, explicitConfig?: string): string | undefine
 
 function isLoadedConfigValidationError(error: unknown, options: DoctorRunOptions): boolean {
   if (!(error instanceof Error)) return false;
-  if (error.name === "DOC0019" || error.name === "DOC0020") return true;
+  if ("doctorConfigOverride" in error && error.doctorConfigOverride === true) return true;
+  if (error.name === "DOC0019" || error.name === "DOC0020" || error.name === "DOC0035") return true;
   return (
     options.extends === undefined &&
     (error.name === "DOC0016" ||

@@ -1965,6 +1965,24 @@ export const ruleDocumentationMetadata = {
     ],
   },
 
+  "vite/plugin/no-fragment-in-virtual-id": {
+    description:
+      "Reports when a registered Vite resolveId hook resolves a browser import to a virtual module id containing #.",
+    why: "Vite dev serves virtual modules at /@id/ followed by the resolved id, with \\0 written as __x00__. Vite does not encode #, so a browser given /@id/__x00__#app/config requests only /@id/__x00__, and the import fails. Doctor reads supported Vite configs without executing them and checks registered hooks in resolution order under client conditions. It reports the return value or module-level const only when it can determine which resolver handles the import. Dynamic configs, unknown plugin registrations, or unsupported filters and branches can prevent a result. Browser entry evidence includes Vue SFCs, .client modules, modules importing Vue runtime APIs, and HTML module scripts and their local dependencies. Type-only imports and external URLs do not trigger this rule.",
+    recommendedReplacement:
+      "Resolve the specifier to an id without #, such as \\0virtual:app/config, and update the load hook and its filter. The import specifier users write can keep its #.",
+    examples: [
+      {
+        title: "Keep # in the specifier, not in the resolved id",
+        language: "ts",
+        invalid:
+          "const PUBLIC_ID = '#app/config'\nconst RESOLVED_PUBLIC_ID = `\\0${PUBLIC_ID}`\n\nexport function config(): Plugin {\n  return {\n    name: 'config',\n    resolveId(id) {\n      if (id === PUBLIC_ID) return RESOLVED_PUBLIC_ID\n    },\n    load(id) {\n      if (id === RESOLVED_PUBLIC_ID) return 'export default {}'\n    },\n  }\n}",
+        valid:
+          "const PUBLIC_ID = '#app/config'\nconst RESOLVED_PUBLIC_ID = '\\0virtual:app/config'\n\nexport function config(): Plugin {\n  return {\n    name: 'config',\n    resolveId(id) {\n      if (id === PUBLIC_ID) return RESOLVED_PUBLIC_ID\n    },\n    load(id) {\n      if (id === RESOLVED_PUBLIC_ID) return 'export default {}'\n    },\n  }\n}",
+      },
+    ],
+  },
+
   "vite/plugin/no-lossy-set-cookie-bridge": {
     description:
       "Reports loops that copy Fetch Response headers onto a Node ServerResponse with setHeader, which keeps only the last Set-Cookie.",
@@ -2556,17 +2574,35 @@ export const ruleDocumentationMetadata = {
   },
   "vue/ssr/no-random-or-local-time-render": {
     description:
-      "Flags random or local time render in Vue SSR code before it leaks into runtime behavior.",
-    why: "Server-rendered markup must match the first client render. Browser-only state, time, randomness, or hash-sensitive URLs can create hydration mismatches.",
+      "Flags random numbers, the current time, and default-locale or local-time-zone formatting in server-rendered Vue output.",
+    why: "Math.random(), Date.now() and new Date() return a different value on the server and in the browser, and toLocaleString(), toLocaleDateString(), Intl.DateTimeFormat and Intl.NumberFormat without an explicit locale or timeZone format with the settings of the process that renders. The first client render then differs from the server HTML and Vue logs a hydration mismatch. Doctor checks SFC scripts, and in .ts and .tsx files the values inside render functions, h() arguments and JSX, including values that a helper from the same file or a relative import computes.",
     recommendedReplacement:
-      "Remove random or local time render, or move it to the Vue runtime/API that owns that behavior.",
+      "Render a value the server and the client agree on, such as a UTC date formatted with an explicit locale and timeZone, and switch to the local or relative value in onMounted(). Use useId() for ids, or isolate the node with data-allow-mismatch.",
     examples: [
       {
-        title: "Avoid random render output",
-        language: "vue",
-        invalid: "<template>\n  <span>{{ Math.random() }}</span>\n</template>",
+        title: "Render a stable date, then the local one after mount",
+        language: "ts",
+        invalid:
+          'return () => h("time", { title: new Date(props.at).toLocaleString() }, timeAgo(props.at))',
         valid:
-          '<script setup lang="ts">\nconst id = useId()\n</script>\n\n<template>\n  <span>{{ id }}</span>\n</template>',
+          'const mounted = ref(false)\nonMounted(() => { mounted.value = true })\nreturn () => h("time", { title: new Date(props.at).toISOString() }, mounted.value ? timeAgo(props.at) : new Date(props.at).toISOString().slice(0, 10))',
+      },
+    ],
+  },
+  "vue/ssr/no-setup-state-from-browser-read": {
+    description:
+      "Flags ref(), reactive() and computed() state whose initial value comes from a browser read during setup of server-rendered Vue code, directly or through a helper.",
+    why: "The server cannot read localStorage, navigator.onLine or the viewport, so it renders the fallback, while the first client render starts from the browser value. Vue then logs a hydration mismatch and patches or rebuilds the subtree. A typeof window or import.meta.client guard prevents the server crash but is exactly what makes the two renders differ. Doctor follows the read through local variables and through functions in the same file or a relative import.",
+    recommendedReplacement:
+      "Initialize the state to a value the server can compute too, such as the prop default, and apply the browser value in onMounted(). In a Nuxt app, keep state the server must render in useState() or useCookie(), or render the subtree in <ClientOnly>.",
+    examples: [
+      {
+        title: "Apply stored layout after mount",
+        language: "ts",
+        invalid:
+          "setup(props) {\n  const stored = readLayout(props.storageKey) // reads localStorage when it exists\n  const width = ref(stored.width ?? props.defaultWidth)\n}",
+        valid:
+          "setup(props) {\n  const width = ref(props.defaultWidth)\n  onMounted(() => { width.value = readLayout(props.storageKey).width ?? width.value })\n}",
       },
     ],
   },

@@ -29,6 +29,10 @@ export interface ViteDoctorSurfaceOptions {
   /** Explicit Doctor Extensions. Extensions exposed by other Vite plugins through `api.doctor` attach automatically. */
   extensions?: DoctorExtensionInput[];
   rules?: string;
+  /** Report only Diagnostics on lines changed since the merge base with this Git ref, like `--since`. */
+  since?: string;
+  /** Report only Diagnostics on lines changed against `HEAD`, untracked files included, like `--changed`. */
+  changed?: boolean;
   severity?: "error" | "warn" | "info";
   maxWarnings?: number;
   cache?: boolean;
@@ -94,8 +98,8 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
  * never delays startup. Runs whose inputs can cross a thread boundary execute in a worker; Doctor
  * Extension objects cannot, so those runs stay on the main thread after listening.
  *
- * After the first run logs its report, saved source files rerun Doctor with them as
- * `affectedFiles`, and only the Diagnostics that changed are logged. The dev server watcher is
+ * After the first report, saves rerun Doctor on `affectedFiles` or refresh the whole Git-scoped
+ * report. Only the Diagnostics that changed are logged. The dev server watcher is
  * shared by every Vite environment and fires even with HMR off, so a save reruns Doctor once,
  * where `hotUpdate` would fire per environment.
  */
@@ -162,8 +166,9 @@ class ServeDoctorRun {
     if (this.closed || this.timer || this.active) return;
     const { files, full, changed } = this.pending;
     this.pending = emptyChanges();
-    // Without a recorded run there is nothing an affected-files run could be compared with.
-    const affected = full || !this.state ? undefined : files;
+    // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files.
+    const affected =
+      full || !this.state || this.options.changed || this.options.since ? undefined : files;
     await this.execute({ affected, changed: [...changed] });
   }
 
@@ -343,6 +348,8 @@ function surfaceRunInput(config: ResolvedConfig, options: ViteDoctorSurfaceOptio
       config: options.config,
       extends: options.extends,
       rules: options.rules,
+      since: options.since,
+      changed: options.changed,
       severity: options.severity,
       maxWarnings: options.maxWarnings,
       cache: options.cache ?? true,

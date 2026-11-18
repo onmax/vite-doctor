@@ -11,15 +11,15 @@ import type {
   WorkspaceGraph,
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
+import { projectWorkspacePackages } from "./applicability.js";
 import { componentUsageGraph } from "./component-inventory.js";
 import { loadSourceFile, sourceFacts, sourceShape } from "./facts.js";
 import type { RuleInputFrame } from "./rule-inputs.js";
-import { projectWorkspacePackages } from "./applicability.js";
 import { assertKnownRuleHooks } from "./rule-hooks.js";
 import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
 import { canMatchPrefilter } from "./rule-prefilter.js";
-import { owningWorkspacePackage } from "./workspace-packages.js";
 import { workspaceNuxtRoots, workspaceProjectView, workspaceViewRoot } from "./workspace-nuxt.js";
+import { nuxtInventoryOwner, owningWorkspacePackage } from "./workspace-packages.js";
 import {
   buildWorkspaceGraph,
   runDuplicationRules,
@@ -28,13 +28,17 @@ import {
 } from "./workspace-graph.js";
 import { createDiagnosticFingerprint, normalizeDiagnostic, sourceTextFor } from "./diagnostics.js";
 import {
+  fileRuleConfig,
   markSession,
   recordRuleTiming,
-  resolvedConfigFor,
+  ruleInScope,
+  topLevelRuleConfig,
+  type ResolvedRuleConfig,
   type RuleTiming,
   type ScanSession,
 } from "./scan-session.js";
 import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
+import { selectHtmlPaths } from "./source-inventory.js";
 
 interface RuleRun {
   context: RuleContext;
@@ -51,14 +55,10 @@ export async function runFileRules(session: ScanSession): Promise<void> {
   // Buffering per rule keeps report order rule-major, as it was when rules ran one at a time.
   const reported = rules.map((): Diagnostic[] => []);
   const timings = session.options.profile ? rules.map(() => ({ ms: 0, files: 0 })) : undefined;
-  const workspacePackages = projectWorkspacePackages(session.project);
   const reportedFiles = session.scopedReport
     ? new Set(session.files.flatMap((file) => (file.reportEligibility ? [file.path] : [])))
     : undefined;
   for (const file of session.handles) {
-    const owner = session.ruleScopes.size
-      ? owningWorkspacePackage(workspacePackages, file.relativePath)
-      : ".";
     // File-scoped Rules can only report into the file they analyze, so a scoped run needs them on
     // the reported files only; project-scoped Rules keep whole-project context.
     const candidates =
@@ -67,11 +67,16 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         : [...rules.keys()];
     if (!candidates.length) continue;
     if (sourceShape(file) === undefined) await loadSourceFile(file);
-    const pending: number[] = [];
+    const pending: Array<{ index: number; config: ResolvedRuleConfig }> = [];
     for (const index of candidates) {
       const rule = rules[index]!;
       if (!canRunRuleOnFile(rule, file)) continue;
-      if (session.ruleScopes.get(rule.meta.id)?.has(owner) === false) continue;
+      const config = fileRuleConfig(session, rule.meta.id, file.path);
+      if (
+        !config.enabled &&
+        (rule.meta.reportScope !== "project" || !ruleInScope(session, rule.meta.id, file.path))
+      )
+        continue;
       const key = keys[index];
       const cached = key ? session.cache.ruleResult(file.path, key) : undefined;
       if (cached) {
@@ -83,16 +88,16 @@ export async function runFileRules(session: ScanSession): Promise<void> {
         if (key) session.cache.recordRuleResult(file.path, key, [], []);
         continue;
       }
-      pending.push(index);
+      pending.push({ index, config });
     }
     if (!pending.length) continue;
     await loadSourceFile(file);
     const before = projectSnapshot(session.project);
     const visitors: RuleVisitor[] = [];
     const runs: Array<{ index: number; run: RuleRun; reportedBefore: number }> = [];
-    for (const index of pending) {
+    for (const { index, config } of pending) {
       const rule = rules[index]!;
-      const run = createRuleRun(session, file, rule, "file", reported[index]);
+      const run = createRuleRun(session, file, rule, "file", reported[index], file.project, config);
       runs.push({ index, run, reportedBefore: reported[index]!.length });
       const timing = timings?.[index];
       const createStarted = timing && performance.now();
@@ -179,22 +184,25 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
   const started = performance.now();
   const fallbackFile = session.handles[0] ?? createEmptySourceFileHandle(session);
   const nuxtRoots = workspaceNuxtRoots(session.project);
+  const nuxtAnchors = new Map<ProjectInfo, SourceFileHandle>();
   for (const rule of session.enabledRules) {
     if (rule.meta.execution !== "manifest" && rule.meta.execution !== "workspace") continue;
     const key = cacheKeyFor(session, rule);
     const ruleStarted = performance.now();
     for (const project of manifestRuleProjects(session, rule, nuxtRoots)) {
-      // Nuxt manifest Rules run once per Nuxt package view, so each view has its own result.
+      let file = fallbackFile;
+      const nuxtInventory = rule.meta.requires?.nuxt && project.nuxt;
+      if (nuxtInventory) {
+        file = nuxtAnchors.get(project) ?? nuxtManifestAnchor(session, project);
+        nuxtAnchors.set(project, file);
+      }
       const viewKey = key && `${key}:${workspaceViewRoot(project) ?? ""}`;
-      const cached = viewKey ? session.cache.ruleResult(undefined, viewKey) : undefined;
+      const resultKey = viewKey && (nuxtInventory ? `${viewKey}:${file.relativePath}` : viewKey);
+      const cached = resultKey ? session.cache.ruleResult(undefined, resultKey) : undefined;
       if (cached) {
         session.diagnostics.push(...cached);
         continue;
       }
-      const file =
-        project === session.project
-          ? fallbackFile
-          : (session.handles.find((handle) => handle.project === project) ?? fallbackFile);
       const before = projectSnapshot(session.project);
       const reportedBefore = session.diagnostics.length;
       const run = createRuleRun(session, file, rule, rule.meta.execution, undefined, project);
@@ -205,21 +213,40 @@ export async function runManifestRules(session: ScanSession): Promise<void> {
       if (project.nuxt) visitor?.NuxtManifest?.(project.nuxt);
       await visitor?.onProjectEnd?.(project);
       await visitor?.onWorkspaceEnd?.();
-      if (!viewKey) continue;
+      if (!resultKey) continue;
       if (run.readsInventory || projectChanged(session.project, before))
         session.cache.recordUncacheable();
       else
         session.cache.recordRuleResult(
           undefined,
-          viewKey,
+          resultKey,
           session.diagnostics.slice(reportedBefore),
-          // Diagnostics without a file are anchored to the view's first source file.
+          // Diagnostics without a file depend on the fallback location.
           [...run.frame.readInputs(), `t:${file.path}`],
         );
     }
     if (session.options.profile) recordRuleTiming(session, rule.meta.id, ruleStarted, 0);
   }
   markSession(session, "manifestRules", started);
+}
+
+function nuxtManifestAnchor(session: ScanSession, project: ProjectInfo): SourceFileHandle {
+  const packages = projectWorkspacePackages(project);
+  const packageFor = (path: string) =>
+    owningWorkspacePackage(packages, relative(session.root, path));
+  const manifest = project.nuxt?.manifestPath;
+  const owner =
+    workspaceViewRoot(project) ??
+    (manifest ? packageFor(manifest) : nuxtInventoryOwner(packages)?.root) ??
+    ".";
+  return (
+    session.handles.find((handle) => packageFor(handle.path) === owner) ??
+    createEmptySourceFileHandle(
+      session,
+      manifest ?? resolve(session.root, owner, "package.json"),
+      project,
+    )
+  );
 }
 
 /**
@@ -338,9 +365,9 @@ function createRuleRun(
   phase: Diagnostic["analysisPhase"] = "file",
   sink?: Diagnostic[],
   project: ProjectInfo = phase === "file" ? file.project : session.project,
+  currentRuleConfig: ResolvedRuleConfig = topLevelRuleConfig(session, rule.meta.id),
 ): RuleRun {
   const frame = session.ruleInputs.frame(workspaceViewRoot(project));
-  const currentRuleConfig = resolvedConfigFor(session, rule.meta.id);
   const currentSeverity = currentRuleConfig.severity ?? rule.meta.severity;
   let readsInventory = false;
   const context: RuleContext = {
@@ -379,13 +406,15 @@ function createRuleRun(
             target: relative(session.root, outside),
           });
       }
-      const diagnosticConfig = resolvedConfigFor(session, input.ruleId);
+      // Overrides apply to the file a Diagnostic is located in, which a project-scoped Rule can
+      // choose, so its config is resolved per Diagnostic.
+      const diagnosticConfig = fileRuleConfig(session, input.ruleId, input.file);
       if (diagnosticConfig.enabled === false) return;
       if (input.file !== file.path) frame.log.push(`t:${resolve(session.root, input.file)}`);
       const severity =
         diagnosticConfig.severity ??
-        currentRuleConfig.severity ??
-        input.severity ??
+        (input.ruleId === rule.meta.id ? undefined : currentRuleConfig.severity) ??
+        metadata.severity ??
         rule.meta.severity;
       const next = {
         ...input,
@@ -405,6 +434,17 @@ function createRuleRun(
     fs: frame.fs,
     cache: frame.cache,
     inventory: {
+      async sourcePaths(kind) {
+        if (phase === "file")
+          throw new Error(
+            `Rule ${rule.meta.id} must use workspace execution to read source paths.`,
+          );
+        readsInventory = true;
+        if (kind === "html") return selectHtmlPaths(session.root, session.config, session.project);
+        return session.files
+          .filter((entry) => entry.sourceKind !== "module")
+          .map((entry) => entry.path);
+      },
       componentUsage() {
         if (phase === "file")
           throw new Error(
@@ -434,18 +474,21 @@ function createRuleRun(
   };
 }
 
-function createEmptySourceFileHandle(session: ScanSession): SourceFileHandle {
-  const path = resolve(session.root, "__doctor_empty__.ts");
+function createEmptySourceFileHandle(
+  session: ScanSession,
+  path = resolve(session.root, "__doctor_empty__.ts"),
+  project = session.project,
+): SourceFileHandle {
   return {
     path,
-    relativePath: "__doctor_empty__.ts",
+    relativePath: relative(session.root, path),
     sourceKind: "app",
     text: "",
     hash: sha256(""),
     isVueSfc: false,
     scriptAst: null,
     templateAst: null,
-    project: session.project,
+    project,
     matches(pattern) {
       return nativeMatch(this.relativePath, pattern);
     },

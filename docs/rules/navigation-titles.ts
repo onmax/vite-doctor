@@ -177,6 +177,8 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "vite/plugin/no-config-hook-array-echo": "Config hook arrays",
 
+  "vite/plugin/no-fragment-in-virtual-id": "# in virtual ids",
+
   "vite/plugin/no-lossy-set-cookie-bridge": "Set-Cookie bridges",
 
   "vite/plugin/prefer-transform-filter": "Transform filters",
@@ -222,7 +224,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/security/restrict-v-html": "v-html",
   "vue/ssr/data-allow-mismatch-surgical": "allow-mismatch",
   "vue/ssr/no-browser-api-in-setup": "Browser APIs",
-  "vue/ssr/no-random-or-local-time-render": "Random & time",
+  "vue/ssr/no-random-or-local-time-render": "Random, time, locale",
+  "vue/ssr/no-setup-state-from-browser-read": "Setup browser state",
   "vue/ssr/use-id-for-stable-ids": "useId",
   "vue/style/prefer-define-model": "defineModel",
   "vue/style/prefer-props-destructure-defaults": "Props defaults",
