@@ -129,6 +129,12 @@ export function createSsrValueTracer(ctx: RuleContext, kind: SsrValueKind) {
       return undefined;
     }
     if (node.type !== "CallExpression" || !LOCALE_METHODS.has(method)) return undefined;
+    if (
+      method === "toLocaleString" &&
+      (object?.type === "ObjectExpression" ||
+        (object?.type === "Literal" && ["string", "boolean"].includes(typeof object.value)))
+    )
+      return undefined;
     const [locale, options] = node.arguments ?? [];
     if (missingLocale(locale)) return `${method}() without a locale`;
     const isDate =
@@ -162,6 +168,14 @@ export function createSsrValueTracer(ctx: RuleContext, kind: SsrValueKind) {
             found.push({ ...value, node: child });
         return false;
       }
+      if (kind === "browser" && child.type === "MemberExpression" && !browserRead(child, module)) {
+        const selected = selectedProperty(child, module, new Set());
+        if (selected) found.push(...expression(selected, module, new Set(seen), depth));
+        else {
+          found.push(...expression(child.object, module, new Set(seen), depth));
+        }
+        return false;
+      }
       const label = direct(child, module);
       if (label)
         found.push({
@@ -173,6 +187,12 @@ export function createSsrValueTracer(ctx: RuleContext, kind: SsrValueKind) {
       if (child.type === "CallExpression" || child.type === "NewExpression") {
         for (const value of callValues(child, module, seen, depth))
           found.push({ ...value, node: child });
+        if (
+          kind === "browser" &&
+          unwrap(child.callee)?.type === "Identifier" &&
+          resolveFunction(unwrap(child.callee), module)
+        )
+          return false;
       }
       if (child.type === "Identifier" && isReference(child)) {
         for (const value of bindingValues(child, module, seen, depth))
@@ -195,6 +215,10 @@ export function createSsrValueTracer(ctx: RuleContext, kind: SsrValueKind) {
     if (binding.kind === "param") {
       seen.add(binding.node);
       const defaults = defaultValues(binding.node);
+      if (kind === "browser" && !defaults.length)
+        return [
+          { label: "", node: identifier, via: [], param: { fn: binding.fn, index: binding.index } },
+        ];
       return defaults.flatMap((value) =>
         expression(value, module, seen, depth).map((found) => ({
           ...found,
@@ -206,10 +230,10 @@ export function createSsrValueTracer(ctx: RuleContext, kind: SsrValueKind) {
     seen.add(binding.node);
     const init = unwrap(binding.node.init);
     // Reactive state reports where it is created, not again in state derived from it.
-    if (kind === "browser" && isStateCall(init)) return [];
+    if (kind === "browser" && isStateCall(init, module)) return [];
     const sources = [
       ...(init && !FUNCTION_TYPES.has(init.type) ? [init] : []),
-      ...reassignments(binding.node, identifier.name),
+      ...reassignments(binding.node, identifier, module),
     ];
     return sources.flatMap((source) => expression(source, module, seen, depth));
   }
@@ -224,7 +248,11 @@ export function createSsrValueTracer(ctx: RuleContext, kind: SsrValueKind) {
     if (callee?.type !== "Identifier" || depth >= MAX_DEPTH) return [];
     const target = resolveFunction(callee, module);
     if (!target) return [];
-    const values = summary(target.fn, target.module, depth + 1);
+    const values = summary(target.fn, target.module, depth + 1).flatMap((value) => {
+      if (value.label || !value.param || value.param.fn !== target.fn) return [value];
+      const argument = call.arguments?.[value.param.index];
+      return argument ? expression(argument, module, new Set(seen), depth + 1) : [];
+    });
     const argumentCount = call.arguments?.length ?? 0;
     return (
       values
@@ -442,7 +470,9 @@ function statementsBinding(statements: AnyNode[], name: string): Binding | undef
               source: statement.source.value,
               name: specifier.imported?.name ?? specifier.imported?.value,
             }
-          : { kind: "other" };
+          : specifier.type === "ImportNamespaceSpecifier"
+            ? { kind: "import", source: statement.source.value, name: "*" }
+            : { kind: "other" };
       }
     }
     if (statement.type === "TSEnumDeclaration" && statement.id?.name === name)
@@ -483,7 +513,7 @@ function defaultValues(param: AnyNode): AnyNode[] {
 }
 
 /** Right-hand sides assigned to a `let` or `var` binding in the function that declares it. */
-function reassignments(declarator: AnyNode, name: string): AnyNode[] {
+function reassignments(declarator: AnyNode, reference: AnyNode, module: ScriptModule): AnyNode[] {
   if (parentOf(declarator)?.kind === "const") return [];
   let scope = parentOf(declarator);
   while (scope && !FUNCTION_TYPES.has(scope.type) && scope.type !== "Program")
@@ -494,7 +524,9 @@ function reassignments(declarator: AnyNode, name: string): AnyNode[] {
     if (
       child.type === "AssignmentExpression" &&
       unwrap(child.left)?.type === "Identifier" &&
-      unwrap(child.left).name === name
+      unwrap(child.left).name === reference.name &&
+      child.end < reference.start &&
+      resolveName(unwrap(child.left), reference.name, module)?.node === declarator
     )
       values.push(child.right);
     return true;
@@ -504,11 +536,42 @@ function reassignments(declarator: AnyNode, name: string): AnyNode[] {
 
 const STATE_APIS = new Set(["ref", "shallowRef", "reactive", "shallowReactive", "computed"]);
 
-function isStateCall(node: AnyNode): boolean {
-  const callee = unwrap(node?.callee);
-  return (
-    node?.type === "CallExpression" && callee?.type === "Identifier" && STATE_APIS.has(callee.name)
-  );
+function isStateCall(node: AnyNode, module: ScriptModule): boolean {
+  if (node?.type !== "CallExpression") return false;
+  const callee = unwrap(node.callee);
+  const name = callee?.type === "Identifier" ? callee.name : callee?.object?.name;
+  if (!name) return false;
+  const binding = resolveName(callee, name, module);
+  if (!binding) return callee.type === "Identifier" && STATE_APIS.has(name);
+  if (
+    binding.kind !== "import" ||
+    !/^(vue|vue-demi|@vue\/(runtime-core|runtime-dom|reactivity)|#imports)$/.test(binding.source)
+  )
+    return false;
+  return STATE_APIS.has(binding.name === "*" ? callee.property?.name : binding.name);
+}
+
+function selectedProperty(node: AnyNode, module: ScriptModule, seen: Set<AnyNode>): AnyNode {
+  let object = unwrap(node.object);
+  while (object && !seen.has(object)) {
+    seen.add(object);
+    if (object.type === "ObjectExpression") {
+      const key = node.computed ? node.property?.value : node.property?.name;
+      return (
+        object.properties.find((p: AnyNode) => !p.computed && (p.key?.name ?? p.key?.value) === key)
+          ?.value ?? { type: "Literal", value: undefined }
+      );
+    }
+    if (object.type === "Identifier") {
+      const binding = resolveName(object, object.name, module);
+      object = binding?.kind === "variable" ? unwrap(binding.node.init) : undefined;
+    } else if (object.type === "CallExpression" && object.callee?.type === "Identifier") {
+      const binding = resolveName(object.callee, object.callee.name, module);
+      const fn = binding?.kind === "function" ? binding.node : undefined;
+      const returns = fn?.body?.body?.filter((n: AnyNode) => n.type === "ReturnStatement");
+      object = returns?.length === 1 ? unwrap(returns[0].argument) : undefined;
+    } else return undefined;
+  }
 }
 
 /** Whether a browser read cannot throw on the server, because a guard or `try` keeps it there. */

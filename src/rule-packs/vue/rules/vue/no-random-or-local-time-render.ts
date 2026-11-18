@@ -1,3 +1,4 @@
+import { isPostMountBranch } from "./first-render.js";
 import { AnyNode, createRule, report } from "./shared.js";
 import { vueSsrEvidence } from "./ssr-evidence.js";
 import { createSsrValueTracer, unwrap, type SsrValue } from "./ssr-values.js";
@@ -32,6 +33,7 @@ export const noRandomOrLocalTimeRender = createRule({
     if (!vueSsrEvidence(ctx)) return;
     const tracer = createSsrValueTracer(ctx, "render");
     const visit = (node: AnyNode) => {
+      if (isPostMountBranch(ctx, node)) return;
       const rendered = isRenderContext(node);
       if (!ctx.file.isVueSfc && !rendered) return;
       const label = tracer.direct(node);

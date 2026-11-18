@@ -67,7 +67,11 @@ export async function detectProject(
       ? undefined
       : (detectedOwner?.root ?? (requested === "nuxt" ? "." : undefined));
   const ssr =
-    framework === "nuxt" || framework === "nitro" || manifestSsrEvidence(packageJson) !== undefined;
+    framework === "nuxt" ||
+    framework === "nitro" ||
+    manifestSsrEvidence(
+      packageJson ? { ...packageJson, exports: undefined, peerDependencies: undefined } : null,
+    ) !== undefined;
   const isMonorepo =
     workspacePackages.length > 1 ||
     existsSync(join(root, "pnpm-workspace.yaml")) ||

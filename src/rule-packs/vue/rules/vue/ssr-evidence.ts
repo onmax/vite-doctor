@@ -23,8 +23,9 @@ export function vueSsrEvidence(ctx: RuleContext): string | undefined {
   if (option === false) return undefined;
   if (option === true) return "the Rule option ssr is true";
   if (owner?.ssr) return owner.ssr;
-  // A single-package project has no workspace evidence of its own beyond the run's.
-  if (owner?.root === "." && ctx.project.framework !== "nuxt" && ctx.project.ssr)
+  // Legacy inventories may have no owner. An inventoried package without SSR evidence
+  // can be a proven browser app, so never reintroduce the run-level evidence for it.
+  if (!owner && ctx.project.framework !== "nuxt" && ctx.project.ssr)
     return "the project renders on the server";
   return undefined;
 }

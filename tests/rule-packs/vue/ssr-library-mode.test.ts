@@ -464,3 +464,91 @@ test(`the ${ssrRules} Rules keep running in a single-package Vue SSR project`, a
       .map((item) => item.file.slice(root.length + 1)),
   ).toEqual(["src/clock.ts"]);
 });
+
+test("tracks first-render values by binding, selected property and execution", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/provenance.ts": `import { defineComponent, h, ref as vueRef, onMounted, computed, watch as ref } from "vue";
+import * as Vue from "vue";
+function readLayout() { return { width: typeof window === 'undefined' ? 0 : window.innerWidth, defaultWidth: 320 } }
+function readDefault(_window: unknown) { return 320 }
+function useViewport() { return vueRef(typeof window === 'undefined' ? 0 : window.innerWidth) }
+function timeAgo(at: number, now = Date.now()) { return String(now - at) }
+export default defineComponent({ setup() {
+  const a = vueRef(typeof window === 'undefined' ? 0 : window.innerWidth)
+  const b = Vue.ref(typeof window === 'undefined' ? 0 : window.innerWidth)
+  const stored = readLayout()
+  const safe = vueRef(stored.defaultWidth)
+  const unsafe = vueRef(stored.width)
+  const ignored = vueRef(readDefault(typeof window === 'undefined' ? undefined : window))
+  let width = 320
+  const captured = vueRef(width)
+  if (typeof window !== 'undefined') width = window.innerWidth
+  let value = 320
+  if (typeof window !== 'undefined') { let value = 1; value = window.innerWidth }
+  const outer = vueRef(value)
+  const lazy = computed(() => typeof window === 'undefined' ? 0 : window.innerWidth)
+  const mounted = Vue.ref(false)
+  onMounted(() => { mounted.value = true; useViewport() })
+  return () => h('div', { onClick: () => lazy.value }, [a.value, b.value, unsafe.value,
+    mounted.value ? timeAgo(0) : 'stable', 'ready'.toLocaleString()])
+} })`,
+  });
+  const diagnostics = await ssrDiagnostics(root);
+  expect(diagnostics).toEqual([
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/provenance.ts:12",
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/provenance.ts:8",
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/provenance.ts:9",
+  ]);
+});
+
+test("direct library evidence stays package-owned and browser entry exclusions survive", async () => {
+  const root = fixture({
+    "package.json": JSON.stringify({
+      name: "library",
+      exports: { "./nuxt": "./nuxt.js" },
+      dependencies: { vue: "^3.5.0" },
+    }),
+    "src/component.vue": `<script setup>const width = ref(typeof window === 'undefined' ? 0 : window.innerWidth)</script><template>{{ width }}</template>`,
+    "src/helper.ts": `export function readViewportOnClick() { return window.innerWidth }`,
+  });
+  expect((await detectProject(root)).ssr).toBe(false);
+  expect(await ssrDiagnostics(root)).toHaveLength(1);
+  writeFileSync(
+    join(root, "src/main.ts"),
+    `import { createApp } from 'vue'; createApp({}).mount('#app')`,
+  );
+  expect(await ssrDiagnostics(root)).toEqual([]);
+});
+
+test("rejects unrelated, shadowed and type-only Vue imports", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/other.ts": `import { watch as ref, defineComponent } from 'vue';
+export default defineComponent({ setup() { const x = ref(typeof window === 'undefined' ? 0 : window.innerWidth); return () => x } })`,
+    "packages/ui/src/shadow.ts": `import { ref, defineComponent } from 'vue';
+export default defineComponent({ setup() { const ref = (x: unknown) => x; return ref(typeof window === 'undefined' ? 0 : window.innerWidth) } })`,
+    "packages/ui/src/types.ts": `import type { ref } from 'vue';
+export function useState() { return ref(typeof window === 'undefined' ? 0 : window.innerWidth) }`,
+  });
+  expect(await ssrDiagnostics(root)).toEqual([]);
+});
+
+test("keeps initial-render computed values, reaching writes and ungated clocks", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/initial.ts": `import { defineComponent, computed as derive, ref as state, h, onMounted } from 'vue';
+function timeAgo(now = Date.now()) { return String(now) }
+export default defineComponent({ setup() {
+  let width = 320;
+  if (typeof window !== 'undefined') width = window.innerWidth;
+  const size = state(width);
+  const lazy = derive(() => typeof window === 'undefined' ? 0 : window.innerWidth);
+  const mounted = state(true);
+  onMounted(() => { mounted.value = true });
+  return () => h('div', [size.value, lazy.value, mounted.value ? timeAgo() : 'stable']);
+} })`,
+  });
+  expect(await ssrDiagnostics(root)).toEqual([
+    "vue/ssr/no-random-or-local-time-render:packages/ui/src/initial.ts:10",
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/initial.ts:6",
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/initial.ts:7",
+  ]);
+});
