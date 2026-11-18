@@ -1046,54 +1046,71 @@ export const noInheritedKeyLookup = createRule({
       );
     }
 
-    function safeLoopEntryPath(node: AnyNode, entry: AnyNode): boolean {
-      for (let child = node; child !== entry;) {
-        const parent = evidence.parent(child);
-        if (!parent) return false;
-        switch (parent.type) {
-          case "VariableDeclaration": {
-            const index = parent.declarations.indexOf(child);
-            if (
-              index < 0 ||
-              !parent.declarations.slice(0, index).every(canCarryGuardPastDeclarator)
-            )
-              return false;
-            break;
-          }
-          case "VariableDeclarator":
-            if (parent.init !== child) return false;
-            break;
-          case "SequenceExpression": {
-            const index = parent.expressions.indexOf(child);
-            if (index < 0 || !parent.expressions.slice(0, index).every(canCarryGuard)) return false;
-            break;
-          }
-          case "LogicalExpression":
-          case "BinaryExpression":
-            if (parent.left !== child && !canCarryGuard(parent.left)) return false;
-            break;
-          case "ConditionalExpression":
-            if (parent.test !== child && !canCarryGuard(parent.test)) return false;
-            break;
-          case "MemberExpression":
-            if (parent.object !== child && !canCarryGuard(parent.object)) return false;
-            break;
-          case "CallExpression":
-            if (parent.callee !== child) return false;
-            break;
-          case "ChainExpression":
-          case "UnaryExpression":
-          case "TSAsExpression":
-          case "TSNonNullExpression":
-          case "TSSatisfiesExpression":
-          case "TSTypeAssertion":
-            break;
-          default:
-            return false;
-        }
-        child = parent;
+    function safePrefix(
+      siblings: AnyNode[],
+      child: AnyNode,
+      safe: (node: AnyNode) => boolean = canCarryGuard,
+    ): boolean {
+      const index = siblings.indexOf(child);
+      return index >= 0 && siblings.slice(0, index).every(safe);
+    }
+
+    function canCarryGuardInto(parent: AnyNode, child: AnyNode): boolean {
+      switch (parent.type) {
+        case "VariableDeclaration":
+          return (
+            parent.declarations[0] === child ||
+            (["const", "let", "var"].includes(parent.kind) &&
+              safePrefix(parent.declarations, child, canCarryGuardPastDeclarator))
+          );
+        case "VariableDeclarator":
+          return parent.init === child;
+        case "SequenceExpression":
+          return safePrefix(parent.expressions, child);
+        case "LogicalExpression":
+        case "BinaryExpression":
+          return parent.left === child || (parent.right === child && canCarryGuard(parent.left));
+        case "AssignmentExpression":
+          return (
+            parent.left === child ||
+            (parent.right === child && expression(parent.left, true)?.type === "Identifier")
+          );
+        case "IfStatement":
+        case "ConditionalExpression":
+          return parent.test === child || canCarryGuard(parent.test);
+        case "MemberExpression":
+          return parent.object === child || (parent.computed && canCarryGuard(parent.object));
+        case "CallExpression":
+        case "NewExpression":
+          return (
+            parent.callee === child ||
+            (canCarryGuard(parent.callee) && safePrefix(parent.arguments, child))
+          );
+        case "ForStatement":
+          return parent.init === child;
+        case "ForInStatement":
+        case "ForOfStatement":
+          return parent.right === child;
+        case "SwitchStatement":
+          return parent.discriminant === child;
+        case "TryStatement":
+          return parent.block === child;
+        case "LabeledStatement":
+        case "ReturnStatement":
+        case "ThrowStatement":
+        case "ExpressionStatement":
+        case "ChainExpression":
+        case "ParenthesizedExpression":
+        case "UnaryExpression":
+        case "UpdateExpression":
+        case "TSAsExpression":
+        case "TSNonNullExpression":
+        case "TSSatisfiesExpression":
+        case "TSTypeAssertion":
+          return true;
+        default:
+          return false;
       }
-      return true;
     }
 
     function onPath(
@@ -1105,20 +1122,6 @@ export const noInheritedKeyLookup = createRule({
       for (let current = node; current && current !== owner;) {
         const parent = evidence.parent(current);
         if (!parent || parent === owner) break;
-        if (!stableSubject) {
-          switch (parent.type) {
-            case "ForStatement":
-              if (current !== parent.init || !safeLoopEntryPath(node, current)) return false;
-              break;
-            case "ForInStatement":
-            case "ForOfStatement":
-              if (current !== parent.right || !safeLoopEntryPath(node, current)) return false;
-              break;
-            case "WhileStatement":
-            case "DoWhileStatement":
-              return false;
-          }
-        }
         if (["IfStatement", "ConditionalExpression"].includes(parent.type)) {
           if (parent.consequent === current && implies(parent.test, true, match, stableSubject))
             return true;
@@ -1147,7 +1150,7 @@ export const noInheritedKeyLookup = createRule({
               return true;
             return false;
           }
-        }
+        } else if (!stableSubject && !canCarryGuardInto(parent, current)) return false;
         current = parent;
       }
       return false;

@@ -207,7 +207,7 @@ test.each([
   ],
   [
     "a lookup repeated after an ownership check outside the loop",
-    "function read(values: Record<string, string | undefined>, key: string) { if (!Object.hasOwn(values, key)) return; for (let index = 0; index < 2; index++) { const fallback = ''; console.log(values[key] ?? fallback); delete values[key] } }",
+    "function read(values: Record<string, string | undefined>, key: string) { if (!Object.hasOwn(values, key)) return; for (let index = 0; index < 2; index++) { const fallback = ''; const value = values[key] ?? fallback; console.log(value); delete values[key] } }",
     1,
   ],
   [
@@ -226,8 +226,33 @@ test.each([
     1,
   ],
   [
+    "a for initializer reached through an effectful switch selector",
+    "function read(values: Record<string, number>, key: string) { if (!Object.hasOwn(values, key)) return; switch (Number(delete values[key])) { default: for (let remaining = values[key]; remaining > 0; remaining--) {} } }",
+    1,
+  ],
+  [
+    "a for-of iterable reached through an effectful branch condition",
+    "function read(values: Record<string, string[]>, key: string) { if (!Object.hasOwn(values, key)) return; if (delete values[key]) { for (const value of values[key]) console.log(value) } }",
+    1,
+  ],
+  [
+    "a read after an effectful earlier call argument",
+    "function read(values: Record<string, string>, key: string, consume: (removed: boolean, value: string) => void) { if (!Object.hasOwn(values, key)) return; consume(delete values[key], values[key]) }",
+    1,
+  ],
+  [
+    "a read after an effectful callee evaluation",
+    "function read(values: Record<string, string>, key: string) { const consumer = { get consume() { delete values[key]; return (value: string) => value } }; if (!Object.hasOwn(values, key)) return; return consumer.consume(values[key]) }",
+    1,
+  ],
+  [
+    "a membership test invalidated before a read in the same statement",
+    "function read(values: Record<string, string>, key: string) { if (key in values) return (delete values[key], values[key]) }",
+    2,
+  ],
+  [
     "a membership test outside a loop that can invalidate it",
-    "function read(values: Record<string, string>, key: string) { if (!(key in values)) return; for (const step of [0, 1]) { console.log(values[key] ?? step); delete values[key] } }",
+    "function read(values: Record<string, string>, key: string) { if (!(key in values)) return; for (const step of [0, 1]) { const value = values[key] ?? step; console.log(value); delete values[key] } }",
     2,
   ],
   [
@@ -358,11 +383,15 @@ test.each([
   ],
   [
     "an ownership guard checked again on each iteration",
-    "function read(values: Record<string, string>, key: string) { for (let index = 0; index < 2; index++) { if (!Object.hasOwn(values, key)) continue; const fallback = ''; console.log(values[key] ?? fallback); delete values[key] } }",
+    "function read(values: Record<string, string>, key: string, consume: (fallback: string, value: string) => void) { for (let index = 0; index < 2; index++) { if (!Object.hasOwn(values, key)) continue; const fallback = ''; consume(fallback, values[key] ?? fallback); delete values[key] } }",
   ],
   [
     "a guarded lookup in a for initializer",
     "function read(values: Record<string, number>, key: string) { if (!Object.hasOwn(values, key)) return; for (let start = 0, remaining = values[key]; remaining > start; remaining--) { delete values[key] } }",
+  ],
+  [
+    "a guarded lookup in a for initializer inside a harmless branch",
+    "function read(values: Record<string, number>, key: string, enabled: boolean) { if (!Object.hasOwn(values, key)) return; if (enabled) { for (let remaining = values[key]; remaining > 0; remaining--) { delete values[key] } } }",
   ],
   [
     "a guarded lookup in a for-in right-hand expression",
