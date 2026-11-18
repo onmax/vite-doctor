@@ -1,5 +1,11 @@
+import type { RuleContext, TemplateExpressionNode } from "../../../../core/index.js";
+import {
+  templateExpressionReferences,
+  TemplateNodeType,
+  walkTemplate,
+} from "../../../../core/rule-authoring.js";
 import { AnyNode, createRule, report } from "./shared.js";
-import { indexedScript, vueApiCall } from "./vue-api.js";
+import { indexedScript, valueParent, vueApiCall } from "./vue-api.js";
 import { vueSsrEvidence } from "./ssr-evidence.js";
 import { createSsrValueTracer, unwrap, type SsrValue } from "./ssr-values.js";
 
@@ -35,6 +41,7 @@ export const noSetupStateFromBrowserRead = createRule({
     const script = indexedScript(ctx);
     if (!script) return;
     const tracer = createSsrValueTracer(ctx, "browser");
+    let templateReads: Set<string> | undefined;
     return {
       CallExpression(node: AnyNode) {
         const indexed = script
@@ -48,22 +55,25 @@ export const noSetupStateFromBrowserRead = createRule({
         const getter = api === "computed" && FUNCTION_TYPES.has(initial.type);
         if (api === "computed" && !getter) return;
         if (getter) {
-          const declaration = script.parent(indexed);
-          const variable = script.scopeManager
-            .getDeclaredVariables(declaration)
-            .find((item) => item.identifiers.includes(declaration.id));
-          if (
-            variable?.references.some((ref) => ref.isRead()) &&
-            variable.references
-              .filter((ref) => ref.isRead())
-              .every((ref) =>
-                ctx.helpers.isClientOnlyExecutionContext(
+          const [parent] = valueParent(script, indexed);
+          if (parent?.type === "ExpressionStatement") return;
+          if (parent?.type === "VariableDeclarator") {
+            const variable = script.scopeManager
+              .getDeclaredVariables(parent)
+              .find((item) => item.identifiers.includes(parent.id));
+            const readInScript = variable?.references.some(
+              (ref) =>
+                ref.isRead() &&
+                !ctx.helpers.isClientOnlyExecutionContext(
                   originalNode(node, ref.identifier.range[0]),
                   ctx.file.text,
                 ),
-              )
-          )
-            return;
+            );
+            if (!readInScript) {
+              templateReads ??= renderTemplateReads(ctx);
+              if (!isInScriptSetup(ctx, node) || !templateReads.has(parent.id?.name)) return;
+            }
+          }
         }
         // An unguarded read throws during the server render instead of rendering differently.
         const value = (getter ? tracer.returned(initial) : tracer.expression(initial)).find(
@@ -83,6 +93,27 @@ export const noSetupStateFromBrowserRead = createRule({
     };
   },
 });
+
+function renderTemplateReads(ctx: RuleContext): Set<string> {
+  const reads = new Set<string>();
+  const root = ctx.file.templateAst;
+  if (!root) return reads;
+  function collect(expression: TemplateExpressionNode | undefined) {
+    const ast = expression && ctx.helpers.parseTemplateExpression(expression);
+    if (!ast) return;
+    for (const { id, mode } of templateExpressionReferences(ast)) {
+      if (mode !== "w") reads.add(id.name);
+    }
+  }
+  walkTemplate(root, (node) => {
+    if (node.type === TemplateNodeType.INTERPOLATION) collect(node.content);
+    if (node.type !== TemplateNodeType.DIRECTIVE) return;
+    collect(node.arg);
+    if (node.name === "for") collect(node.forParseResult?.source);
+    else if (node.name !== "on" && node.name !== "slot") collect(node.exp);
+  });
+  return reads;
+}
 
 function describe(value: SsrValue): string {
   return value.via.length

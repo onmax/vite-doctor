@@ -501,6 +501,61 @@ export default defineComponent({ setup() {
   ]);
 });
 
+test("traces consumed helper inputs and selected return properties only", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/layout.ts": `export const imported = (value = 320) => value;
+export const layout = (width: number) => ({ nested: { width, fallback: 320 } });`,
+    "packages/ui/src/inputs.ts": `import { defineComponent, h, ref } from 'vue';
+import { imported, layout } from './layout';
+function identity(value = 320) { return value }
+function pass(value: number) { return value }
+function forward(value: number) { return pass(value) }
+function readDefault(value = typeof window === 'undefined' ? 0 : window.innerWidth) { return value }
+function select(value: { width: number, fallback: number }) { return value.fallback }
+export default defineComponent({ setup() {
+  const browser = typeof window === 'undefined' ? 0 : window.innerWidth;
+  const a = ref(identity(browser));
+  const b = ref(imported(browser));
+  const c = ref(forward(browser));
+  const d = ref(readDefault());
+  const e = ref(readDefault(320));
+  const f = ref(layout(browser).nested.fallback);
+  const g = ref(layout(browser).nested.width);
+  const i = ref(select({ width: browser, fallback: 320 }));
+  const j = ref(readDefault(undefined));
+  const { fallback } = { width: browser, fallback: 320 };
+  const k = ref(fallback);
+  function pick({ fallback }: { width: number, fallback: number }) { return fallback }
+  const l = ref(pick({ width: browser, fallback: 320 }));
+  return () => h('div', [a, b, c, d, e, f, g, i, j, k, l].map(x => x.value));
+} });`,
+  });
+  expect(await ssrDiagnostics(root)).toEqual(
+    [10, 11, 12, 13, 16, 18].map(
+      (line) => `vue/ssr/no-setup-state-from-browser-read:packages/ui/src/inputs.ts:${line}`,
+    ),
+  );
+});
+
+test("does not treat an unused computed declaration as a first-render read", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/lazy.ts": `import { computed, defineComponent, h } from 'vue';
+export default defineComponent({ setup() {
+  const unused = computed(() => typeof window === 'undefined' ? 0 : window.innerWidth);
+  return () => h('div', 'stable');
+} });`,
+    "packages/ui/src/Lazy.vue": `<script setup lang="ts">
+import { computed } from 'vue';
+const clickOnly = computed(() => typeof window === 'undefined' ? 0 : window.innerWidth);
+const rendered = computed(() => typeof window === 'undefined' ? 0 : window.innerWidth);
+</script>
+<template><button @click="console.log(clickOnly)">{{ rendered }}</button></template>`,
+  });
+  expect(await ssrDiagnostics(root)).toEqual([
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/Lazy.vue:4",
+  ]);
+});
+
 test("direct library evidence stays package-owned and browser entry exclusions survive", async () => {
   const root = fixture({
     "package.json": JSON.stringify({
