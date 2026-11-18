@@ -1965,6 +1965,24 @@ export const ruleDocumentationMetadata = {
     ],
   },
 
+  "vite/plugin/no-fragment-in-virtual-id": {
+    description:
+      "Reports resolveId hooks that resolve a specifier imported by browser code to a virtual module id containing #.",
+    why: 'The Vite dev server serves a virtual module to the browser at /@id/ followed by its resolved id, with the leading \\0 written as __x00__, and it does not encode #. A browser import of "#app/config" resolved to "\\0#app/config" becomes /@id/__x00__#app/config, the browser treats #app/config as a URL fragment and requests /@id/__x00__, and the import fails, so the page does not load. Production builds and SSR are not affected, which is why this only shows up in vite dev. Doctor reports the return value or module-level const of a resolveId hook when a hook filter or a test on the specifier selects it for an import that browser code makes. Browser code is a Vue single-file component, a .client module, a module that imports Vue runtime APIs, an inline module script in an HTML page, or a module an HTML page loads through relative imports. Doctor follows consts across files and workspace packages. It skips branches that test SSR or the Vite environment, plugins with apply: "build" or applyToEnvironment, type-only imports, and code under server/.',
+    recommendedReplacement:
+      "Resolve the specifier to an id without #, such as \\0virtual:app/config, and update the load hook and its filter. The import specifier users write can keep its #.",
+    examples: [
+      {
+        title: "Keep # in the specifier, not in the resolved id",
+        language: "ts",
+        invalid:
+          "const PUBLIC_ID = '#app/config'\nconst RESOLVED_PUBLIC_ID = `\\0${PUBLIC_ID}`\n\nexport function config(): Plugin {\n  return {\n    name: 'config',\n    resolveId(id) {\n      if (id === PUBLIC_ID) return RESOLVED_PUBLIC_ID\n    },\n    load(id) {\n      if (id === RESOLVED_PUBLIC_ID) return 'export default {}'\n    },\n  }\n}",
+        valid:
+          "const PUBLIC_ID = '#app/config'\nconst RESOLVED_PUBLIC_ID = '\\0virtual:app/config'\n\nexport function config(): Plugin {\n  return {\n    name: 'config',\n    resolveId(id) {\n      if (id === PUBLIC_ID) return RESOLVED_PUBLIC_ID\n    },\n    load(id) {\n      if (id === RESOLVED_PUBLIC_ID) return 'export default {}'\n    },\n  }\n}",
+      },
+    ],
+  },
+
   "vite/plugin/no-lossy-set-cookie-bridge": {
     description:
       "Reports loops that copy Fetch Response headers onto a Node ServerResponse with setHeader, which keeps only the last Set-Cookie.",
