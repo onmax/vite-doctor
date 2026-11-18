@@ -241,6 +241,21 @@ test.each([
     1,
   ],
   [
+    "an async find predicate whose promise is always truthy",
+    "function read(values: Record<string, string>, keys: string[]) { const key = keys.find(async candidate => Object.hasOwn(values, candidate)); return key && values[key] }",
+    1,
+  ],
+  [
+    "a find result whose entry is deleted before the read",
+    "function read(values: Record<string, string>, keys: string[]) { const key = keys.find(candidate => Object.hasOwn(values, candidate)); if (key === undefined) return; delete values[key]; return values[key]?.trim() }",
+    1,
+  ],
+  [
+    "a find result reused on a later loop iteration",
+    "function read(values: Record<string, string>, keys: string[]) { const key = keys.find(candidate => Object.hasOwn(values, candidate))!; for (const step of [0, 1]) { console.log(step, values[key]); delete values[key] } }",
+    1,
+  ],
+  [
     "a property deleted after the ownership check",
     "function read(values: Record<string, string>, key: string) { if (Object.hasOwn(values, key) && delete values[key]) return values[key] }",
     1,
@@ -513,6 +528,10 @@ test.each([
   [
     "a key found through a non-null asserted find method",
     "export function read(values: Record<string, string>, keys: string[]) { const key = keys.find!(candidate => Object.hasOwn(values, candidate)); return key === undefined ? undefined : values[key] }",
+  ],
+  [
+    "a find result used after an effect-free early exit",
+    "function read(values: Record<string, string>, keys: string[]) { const key = keys.find(candidate => Object.hasOwn(values, candidate)); if (key === undefined) return; return values[key]?.trim() }",
   ],
   [
     "a key checked against a literal set",

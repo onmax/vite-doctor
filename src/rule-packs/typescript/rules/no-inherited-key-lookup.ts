@@ -545,33 +545,39 @@ export const noInheritedKeyLookup = createRule({
     // `keys[0]`, `keys.at(-1)` or `keys.find(...)`: one element of a key list.
     function pickedKey(node: AnyNode, record: AnyNode, depth: number): KeyKind | undefined {
       let list: AnyNode;
-      let callback: AnyNode;
-      let method: string | undefined;
       if (node.type === "MemberExpression" && node.computed && numeric(node.property)) {
         list = node.object;
       } else if (node.type === "CallExpression") {
         const callee = expression(node.callee);
         if (callee?.type !== "MemberExpression" || callee.computed) return;
-        method = callee.property?.name;
-        if (!method || !PICK_METHODS.has(method)) return;
+        if (!PICK_METHODS.has(callee.property?.name)) return;
         list = callee.object;
-        callback = expression(node.arguments?.[0]);
       } else return;
-      const kind = iteratedKeys(list, record, depth + 1);
-      if (kind === "safe") return "safe";
-      if (
-        callback &&
-        evidence.isArray(list) &&
-        (method === "find" || method === "findLast") &&
-        callbackGuards(callback, record, node)
-      )
-        return "safe";
-      return kind;
+      return iteratedKeys(list, record, depth + 1);
+    }
+
+    function findGuards(node: AnyNode, record: AnyNode): boolean {
+      const pick = expression(node, true);
+      if (pick?.type !== "CallExpression" || expression(record, true)?.type !== "Identifier")
+        return false;
+      const callee = expression(pick.callee, true);
+      return (
+        callee?.type === "MemberExpression" &&
+        !callee.computed &&
+        ["find", "findLast"].includes(callee.property?.name) &&
+        evidence.isArray(callee.object) &&
+        callbackGuards(expression(pick.arguments[0]), record, pick)
+      );
     }
 
     // `candidates.find((candidate) => Object.hasOwn(record, candidate))`
     function callbackGuards(callback: AnyNode, record: AnyNode, pick: AnyNode): boolean {
-      if (!["ArrowFunctionExpression", "FunctionExpression"].includes(callback?.type)) return false;
+      if (
+        !["ArrowFunctionExpression", "FunctionExpression"].includes(callback?.type) ||
+        callback.async ||
+        callback.generator
+      )
+        return false;
       const parameter = callback.params?.[0];
       if (parameter?.type !== "Identifier") return false;
       const body = callback.body;
@@ -1148,6 +1154,7 @@ export const noInheritedKeyLookup = createRule({
       node: AnyNode,
       match: (test: AnyNode, truth: boolean) => boolean,
       stableSubject = false,
+      matchStatement?: (statement: AnyNode) => boolean,
     ): boolean {
       const owner = evidence.owner(node);
       for (let current = node; current && current !== owner;) {
@@ -1171,6 +1178,7 @@ export const noInheritedKeyLookup = createRule({
           if (index < 0) return false;
           for (let offset = index - 1; offset >= 0; offset--) {
             const previous = parent.body[offset];
+            if (matchStatement?.(previous)) return true;
             if (canCarryGuardPastStatement(previous)) continue;
             if (
               previous.type === "IfStatement" &&
@@ -1179,12 +1187,39 @@ export const noInheritedKeyLookup = createRule({
               implies(previous.test, false, match, stableSubject)
             )
               return true;
+            if (
+              matchStatement &&
+              previous.type === "IfStatement" &&
+              !previous.alternate &&
+              exits(previous.consequent) &&
+              canCarryGuard(previous.test)
+            )
+              continue;
             return false;
           }
         } else if (!stableSubject && !canCarryGuardInto(parent, current)) return false;
         current = parent;
       }
       return false;
+    }
+
+    function hasOwnKeyGuard(lookup: Lookup): boolean {
+      if (findGuards(lookup.key, lookup.record)) return true;
+      const key = stableBinding(lookup.key);
+      const declarator = key?.kind === "const" ? evidence.parent(key.node) : undefined;
+      const declaration = evidence.parent(declarator);
+      const guardedFind =
+        declarator?.type === "VariableDeclarator" &&
+        declarator.id === key?.node &&
+        declaration?.type === "VariableDeclaration" &&
+        declaration.declarations.at(-1) === declarator &&
+        findGuards(declarator.init, lookup.record);
+      return onPath(
+        lookup.node,
+        (test, truth) => truth && guardMatches(test, lookup),
+        false,
+        guardedFind ? (statement) => statement === declaration : undefined,
+      );
     }
 
     function testsForInheritedKey(lookup: Lookup): boolean {
@@ -1248,11 +1283,7 @@ export const noInheritedKeyLookup = createRule({
             left.node.start - right.node.start,
         );
         for (const lookup of ordered) {
-          if (
-            testsForInheritedKey(lookup) ||
-            onPath(lookup.node, (test, truth) => truth && guardMatches(test, lookup))
-          )
-            continue;
+          if (testsForInheritedKey(lookup) || hasOwnKeyGuard(lookup)) continue;
           if (lookup.kind === "in") membership.set(lookup.node, lookup);
           else if (
             onPath(lookup.node, (test, truth) => {
