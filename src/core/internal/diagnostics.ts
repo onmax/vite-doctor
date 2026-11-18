@@ -115,6 +115,7 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
   // An entry without a Rule may belong to a Rule turned off in config, which cannot prove it stale.
   const selectsActivated = (entry: string) => entry === "auto" || entry === "strict";
   const unscoped =
+    session.coversConfiguredPresets &&
     (effectiveExtends === undefined ||
       (typeof effectiveExtends === "string"
         ? selectsActivated(effectiveExtends)

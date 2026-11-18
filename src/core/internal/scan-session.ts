@@ -87,6 +87,7 @@ export interface ScanSession {
   ruleInputs: RuleInputs;
   helpers: DoctorHelpers;
   enabledRules: DoctorRule[];
+  coversConfiguredPresets: boolean;
   ruleScopes: Map<string, ReadonlySet<string>>;
   workspaceActivations: WorkspacePackageActivation[];
   rulePacks: RulePackActivation[];
@@ -190,6 +191,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     ruleInputs,
     helpers,
     enabledRules: selection.rules,
+    coversConfiguredPresets: selection.coversConfiguredPresets,
     ruleScopes: selection.scopes,
     workspaceActivations: workspacePackageActivations(project, activations),
     rulePacks: registry.packs
@@ -396,6 +398,7 @@ async function applyProjectContributions(
 
 interface RuleSelection {
   rules: DoctorRule[];
+  coversConfiguredPresets: boolean;
   /** Workspace package roots a file must belong to for a rule that only workspace packages activated. */
   scopes: Map<string, ReadonlySet<string>>;
   /** Rule Packs whose Presets Config Extends selected. */
@@ -418,13 +421,35 @@ function selectRules(
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const selected = resolveExtends(
-    registry.packs,
-    options.extends ?? config.extends,
-    activations,
-    projectWorkspacePackages(project).map((item) => item.root),
-    options.framework !== undefined && options.framework !== "auto",
-  );
+  const workspaceRoots = projectWorkspacePackages(project).map((item) => item.root);
+  const explicitFramework = options.framework !== undefined && options.framework !== "auto";
+  const resolveSelection = (extendsSelection: DoctorRunOptions["extends"]) =>
+    resolveExtends(registry.packs, extendsSelection, activations, workspaceRoots, {
+      explicitFramework,
+    });
+  const selected = resolveSelection(options.extends ?? config.extends);
+  const coversConfiguredPresets = (() => {
+    if (
+      options.extends === undefined ||
+      options.extends === config.extends ||
+      !config.suppressions?.some((suppression) => !suppression.ruleId)
+    )
+      return true;
+    try {
+      const configured = resolveSelection(config.extends);
+      return [...configured.ruleIds].every((ruleId) => {
+        if (!selected.ruleIds.has(ruleId)) return false;
+        const scope = selected.scopes.get(ruleId);
+        const configuredScope = configured.scopes.get(ruleId);
+        return (
+          !scope ||
+          (configuredScope !== undefined && [...configuredScope].every((root) => scope.has(root)))
+        );
+      });
+    } catch {
+      return false;
+    }
+  })();
   // A severity turns on a Rule that no selected Preset includes, as if a Preset had named it.
   for (const [ruleId, ruleConfig] of ruleConfigs) {
     if (!ruleConfig.enabled || selected.ruleIds.has(ruleId)) continue;
@@ -467,6 +492,7 @@ function selectRules(
     );
     return {
       rules,
+      coversConfiguredPresets,
       scopes: selected.scopes,
       packs: selected.packs,
       overrideOnly: overrideOnly(rules),
@@ -492,6 +518,7 @@ function selectRules(
   }
   return {
     rules,
+    coversConfiguredPresets,
     scopes: selected.scopes,
     packs: selected.packs,
     overrideOnly: overrideOnly(rules),
@@ -526,7 +553,7 @@ function resolveExtends(
   requested: DoctorRunOptions["extends"] = "auto",
   activations: ReadonlyMap<RulePack, string[]>,
   workspaceRoots: readonly string[],
-  explicitFramework = false,
+  { explicitFramework = false, override = false } = {},
 ): { ruleIds: Set<string>; scopes: Map<string, Set<string>>; packs: Set<RulePack> } {
   const ruleIds = new Set<string>();
   const selectedPacks = new Set<RulePack>();
@@ -582,7 +609,8 @@ function resolveExtends(
       continue;
     }
     const slash = entry.lastIndexOf("/");
-    if (slash === -1) throw doctorInternalDiagnostics.DOC0016({ entry, ...namedPack(entry) });
+    if (slash === -1)
+      throw doctorInternalDiagnostics.DOC0016({ entry, override, ...namedPack(entry) });
     const packKey = entry.slice(0, slash);
     const presetName = entry.slice(slash + 1);
     const aliasMatches = matchingPacks(packKey);
@@ -690,7 +718,7 @@ function resolveRuleOverrides(
     }
     try {
       const selects = entries?.length
-        ? resolveExtends(registry.packs, entries, new Map(), []).ruleIds
+        ? resolveExtends(registry.packs, entries, new Map(), [], { override: true }).ruleIds
         : new Set<string>();
       return { files, rules: resolved, selects };
     } catch (error) {

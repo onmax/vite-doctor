@@ -457,6 +457,17 @@ test.each([
   });
 });
 
+test("an invalid override selector recommends only pack/preset", async () => {
+  await withProject(async (root) => {
+    await expect(
+      run(root, { overrides: [{ files: ["src/**"], extends: ["nonsense"] }] }),
+    ).rejects.toMatchObject({
+      name: "DOC0016",
+      message: expect.stringMatching(/Use "pack\/preset"\./),
+    });
+  });
+});
+
 test.each([null, false, { files: ["src/**"] }])(
   "a malformed override list %j fails with DOC0035",
   async (overrides) => {

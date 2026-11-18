@@ -26,11 +26,14 @@ export const doctorInternalDiagnostics = defineDiagnostics({
       fix: "Add at least one rule ID to the rule pack recommended preset.",
     },
     DOC0016: {
-      why: (params: { entry: string } & Partial<PresetSuggestion>) =>
+      why: (params: { entry: string; override?: boolean } & Partial<PresetSuggestion>) =>
         params.rulePack
           ? presetSuggestion(params as PresetSuggestion)
-          : `Invalid Config Extends entry "${params.entry}". Use "pack/preset", "auto", or "strict".`,
-      fix: 'Use a rule-pack-qualified preset such as "vite-doctor/vue/recommended", or "auto" or "strict" for the activated Rule Packs.',
+          : `Invalid Config Extends entry "${params.entry}". Use "pack/preset"${params.override ? "." : ', "auto", or "strict".'}`,
+      fix: (params: { override?: boolean }) =>
+        params.override
+          ? 'Use a rule-pack-qualified preset such as "vite-doctor/vue/recommended".'
+          : 'Use a rule-pack-qualified preset such as "vite-doctor/vue/recommended", or "auto" or "strict" for the activated Rule Packs.',
     },
     DOC0017: {
       why: (

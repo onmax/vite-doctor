@@ -703,20 +703,84 @@ test("--strict runs strictly more Rules than the default Doctor Run", async () =
     expect(strict.rulePacks.every((pack) => pack.selected)).toBe(true);
 
     expect((await jsonRun(root, "--extends", "strict")).ran).toEqual(strict.ran);
+    expect((await jsonRun(root, "--strict", "--strict")).ran).toEqual(strict.ran);
   });
 });
 
-test.each([
-  [
-    "--strict alongside --extends adds strict to the list",
-    ["--strict", "--extends", "vite/recommended"],
-    ["strict", "vite/recommended"],
-  ],
-  ["--strict alongside --extends auto replaces auto", ["--extends", "auto", "--strict"], "strict"],
-])("%s", async (_name, args, selection) => {
+test("--strict alongside --extends adds strict to the list", async () => {
   await withFixture(strictFixture, async (root) => {
-    expect((await jsonRun(root, ...args)).extends).toEqual(selection);
+    expect((await jsonRun(root, "--strict", "--extends", "vite/recommended")).extends).toEqual([
+      "vite/recommended",
+      "strict",
+    ]);
   });
+});
+
+test("--strict preserves the Recommended Rules selected by explicit auto", async () => {
+  await withFixture(
+    {
+      ...strictFixture,
+      "doctor.config.ts": `
+const rule = (mode) => ({
+  meta: { id: 'fixture/' + mode, title: mode, category: 'fixture', severity: 'warn' },
+  create() {},
+});
+export default { extensions: [{ name: 'fixture', rulePacks: [{
+  name: 'fixture', version: '0.0.0', activation: { frameworks: ['vite'] },
+  rules: [rule('recommended'), rule('strict')],
+  presets: { recommended: ['fixture/recommended'], strict: ['fixture/strict'] },
+}] }] };
+`,
+    },
+    async (root) => {
+      const config = ["--config", "doctor.config.ts"];
+      const strict = await jsonRun(root, ...config, "--strict");
+      expect(strict.ran).toContain("fixture/strict");
+      expect(strict.ran).not.toContain("fixture/recommended");
+      const composed = await jsonRun(root, ...config, "--extends", "auto", "--strict");
+      expect(composed.ran).toContain("fixture/recommended");
+      expect(composed.ran).toContain("fixture/strict");
+      expect(composed.ran).toEqual(
+        (await jsonRun(root, ...config, "--extends", "auto,strict")).ran,
+      );
+    },
+  );
+});
+
+test("--strict does not mark a suppression from an omitted configured Preset stale", async () => {
+  const extendsSelection = ["auto", "package/recommended"];
+  await withFixture(
+    { "package.json": JSON.stringify({ peerDependencies: { vue: "3.5.44" } }) },
+    async (root) => {
+      async function report(...args: string[]) {
+        return JSON.parse(
+          (
+            await runCli(
+              [".", ...args, "--severity", "info", "--no-cache", "--format", "json"],
+              root,
+            )
+          ).output,
+        );
+      }
+      const first = await report("--extends", extendsSelection.join(","));
+      const finding = first.diagnostics.find((item: { code: string }) => item.code === "PKG0005");
+      expect(finding?.fingerprint).toBeTruthy();
+      writeFileSync(
+        join(root, "doctor.config.json"),
+        JSON.stringify({
+          extends: extendsSelection,
+          suppressions: [{ fingerprint: finding.fingerprint, reason: "Pinned intentionally." }],
+        }),
+      );
+      const configured = await report();
+      expect(configured.suppressedDiagnostics).toContainEqual(
+        expect.objectContaining({ code: "PKG0005" }),
+      );
+      const strict = await report("--strict");
+      expect(strict.suppressedDiagnostics).toEqual([]);
+      expect(strict.diagnostics).not.toContainEqual(expect.objectContaining({ code: "DOC0031" }));
+    },
+  );
 });
 
 test("doctor.config.json and the Vite plugin accept extends strict", async () => {
@@ -749,6 +813,32 @@ test("agent reports rerun strict Doctor Runs with --strict", async () => {
     expect(rerun).toContain("--strict");
     expect(rerun).not.toContain("--extends");
   });
+});
+
+test("agent commands retain an explicit auto override of configured strict mode", async () => {
+  await withFixture(
+    { ...strictFixture, "doctor.config.json": JSON.stringify({ extends: "strict" }) },
+    async (root) => {
+      const result = await runCli(
+        [".", "--extends", "auto", "--severity", "info", "--no-cache", "--format", "agent"],
+        root,
+      );
+      const { rerun, verify } = JSON.parse(result.output).commandArgs as Record<
+        "rerun" | "verify",
+        string[]
+      >;
+      for (const args of [rerun, verify]) {
+        expect(args.slice(args.indexOf("--extends"), args.indexOf("--extends") + 2)).toEqual([
+          "--extends",
+          "auto",
+        ]);
+      }
+      const replay = JSON.parse((await runCli(rerun.slice(1), root)).output);
+      expect(replay.diagnostics).not.toContainEqual(
+        expect.objectContaining({ rule: "typescript/performance/no-array-filter-map" }),
+      );
+    },
+  );
 });
 
 test("CLI keeps comma-separated selectors and repeated boolean flags", async () => {
