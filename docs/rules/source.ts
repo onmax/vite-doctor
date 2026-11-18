@@ -291,7 +291,7 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       title: "DOC0038: Delete the default doctor.config.json",
       description:
         "The project's `doctor.config.json` selects nothing beyond Doctor's defaults: it is empty, or holds only empty `rules`, `overrides`, `suppressions`, or `exclude`, or `extends: \"auto\"`.",
-      why: "Doctor needs no config file. It activates Rule Packs from the project's dependencies, so a file that only restates the defaults changes nothing, and readers assume it is required. Doctor does not report this Diagnostic for changed-file runs, Rule selections, or analyses-only runs. `include: []` and `extends: []` are not defaults: they select no files or no Rules.",
+      why: "Doctor activates Rule Packs from the project's dependencies. It only reports this Diagnostic for automatically discovered files whose removal preserves the run's settings. It skips changed-file runs, Rule selections, and analyses-only runs. `include: []` and `extends: []` are not defaults: they select no files or no Rules.",
       fix: "Delete `doctor.config.json`. Add a Doctor config only when it changes rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
       docsUrl: "https://vite-doctor.onmax.me/cli",
       ruleId: "doctor/config/default-config-file",

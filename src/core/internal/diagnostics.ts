@@ -24,6 +24,7 @@ import type {
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
 import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
+import { defaultConfigDiagnosticMetadata } from "../diagnostic-metadata.js";
 import {
   applyDiagnosticPolicy,
   InlineSuppressionIndex,
@@ -387,29 +388,22 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
   ];
 }
 
-// People copy a placeholder doctor.config.json believing Doctor needs one; it never does.
 function reportDefaultDeclarativeConfig(session: ScanSession): void {
   const { options } = session;
-  if (session.scopedReport || options.rules || options.analyses) return;
-  const file = resolve(session.root, "doctor.config.json");
-  const source = readFileSyncIfExists(file);
-  if (source === null) return;
-  let value: unknown;
-  try {
-    value = JSON.parse(source);
-  } catch {
+  const file = options.declarativeConfigFile;
+  const value = options.config;
+  if (!file || !value || session.scopedReport || options.rules || options.analyses) return;
+  if (!selectsOnlyDefaults(value) || !selectsOnlyDefaults(shadowedHostSettings(session, value)))
     return;
-  }
-  if (!selectsOnlyDefaults(value)) return;
+  const { ruleId, severity, category, fix } = defaultConfigDiagnosticMetadata;
   const reported = session.diagnostics.length;
   pushDiagnostic(session, {
-    ruleId: "doctor/config/default-config-file",
-    severity: "info",
-    category: "config",
+    ruleId,
+    severity,
+    category,
     file,
     why: "doctor.config.json selects nothing beyond Doctor's defaults, so this Doctor Run is the same without it. Doctor needs no config file: it activates Rule Packs from the project's dependencies.",
-    suggestion:
-      "Delete doctor.config.json. Add a Doctor config only when it changes something: rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
+    suggestion: fix,
     confidence: "proven",
     analysisPhase: "manifest",
   });
@@ -417,6 +411,15 @@ function reportDefaultDeclarativeConfig(session: ScanSession): void {
     ...session.diagnostics.slice(0, reported),
     ...settleDiagnosticIdentity(session.diagnostics.slice(reported)),
   ];
+}
+
+function shadowedHostSettings(session: ScanSession, config: DoctorConfig) {
+  const inherited = session.project.nuxt?.doctorConfig;
+  return Object.fromEntries(
+    (["extends", "exclude", "suppressions"] as const)
+      .filter((key) => config[key] !== undefined && inherited?.[key] !== undefined)
+      .map((key) => [key, inherited?.[key]]),
+  );
 }
 
 // `include: []` and `extends: []` select no files or no Rules, so only these values match the defaults.

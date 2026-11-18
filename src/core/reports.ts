@@ -14,10 +14,7 @@ import {
 } from "./diagnostic-code-map.js";
 import { DOCTOR_DIAGNOSTICS_DOCS_BASE, FINGERPRINT_SCHEME } from "./diagnostic-constants.js";
 import { codeForRuleId } from "./diagnostics.js";
-import {
-  workspaceDiagnosticMetadataByCode,
-  workspaceDiagnosticMetadataByRuleId,
-} from "./diagnostic-metadata.js";
+import { diagnosticMetadataByCode, diagnosticMetadataByRuleId } from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
 import { shellArgument } from "./internal/utils.js";
 
@@ -391,9 +388,7 @@ export function explainRule(
         codeListForRule(item.pack, item.rule.meta.id).includes(ruleId),
     );
   if (!match) {
-    const metadata =
-      workspaceDiagnosticMetadataByCode.get(ruleId) ??
-      workspaceDiagnosticMetadataByRuleId.get(ruleId);
+    const metadata = diagnosticMetadataByCode.get(ruleId) ?? diagnosticMetadataByRuleId.get(ruleId);
     if (!metadata) return "";
     const diagnosticCodes = [metadata.code];
     const meta = {

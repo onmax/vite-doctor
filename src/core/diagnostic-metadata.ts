@@ -2,7 +2,7 @@ import type { DoctorSeverity } from "./primitives.js";
 
 export type WorkspaceDiagnosticAnalysis = "graph" | "dead-code" | "dupes" | "health";
 
-export interface WorkspaceDiagnosticMetadata {
+interface DiagnosticMetadata {
   code: string;
   title: string;
   description: string;
@@ -11,8 +11,22 @@ export interface WorkspaceDiagnosticMetadata {
   ruleId: string;
   severity: Exclude<DoctorSeverity, "blocker">;
   category: string;
+}
+
+interface WorkspaceDiagnosticMetadata extends DiagnosticMetadata {
   analysis: WorkspaceDiagnosticAnalysis;
 }
+
+export const defaultConfigDiagnosticMetadata = {
+  code: "DOC0038",
+  ruleId: "doctor/config/default-config-file",
+  title: "Delete the default doctor.config.json",
+  description: "This automatically discovered doctor.config.json only restates Doctor's defaults.",
+  why: "Doctor activates Rule Packs from project dependencies and does not require a config file. This Diagnostic is only reported when deleting the file preserves the run's settings.",
+  fix: "Delete doctor.config.json. Add a Doctor config only when it changes rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
+  severity: "info",
+  category: "config",
+} as const satisfies DiagnosticMetadata;
 
 export const workspaceDiagnosticMetadata = [
   {
@@ -139,10 +153,13 @@ export const workspaceDiagnosticMetadata = [
   },
 ] as const satisfies readonly WorkspaceDiagnosticMetadata[];
 
-export const workspaceDiagnosticMetadataByCode = new Map<string, WorkspaceDiagnosticMetadata>(
-  workspaceDiagnosticMetadata.map((metadata) => [metadata.code, metadata]),
+const explainableMetadata: Array<DiagnosticMetadata & { analysis?: WorkspaceDiagnosticAnalysis }> =
+  [...workspaceDiagnosticMetadata, defaultConfigDiagnosticMetadata];
+
+export const diagnosticMetadataByCode = new Map(
+  explainableMetadata.map((metadata) => [metadata.code, metadata] as const),
 );
 
-export const workspaceDiagnosticMetadataByRuleId = new Map<string, WorkspaceDiagnosticMetadata>(
-  workspaceDiagnosticMetadata.map((metadata) => [metadata.ruleId, metadata]),
+export const diagnosticMetadataByRuleId = new Map(
+  explainableMetadata.map((metadata) => [metadata.ruleId, metadata] as const),
 );

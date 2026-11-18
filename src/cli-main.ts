@@ -344,6 +344,9 @@ function addDoctorRunCommand(
       runOptions.config = explicitConfig
         ? await loadCliConfig(root, explicitConfig)
         : declarative?.config;
+      if (declarative?.file === resolve(root, "doctor.config.json")) {
+        runOptions.declarativeConfigFile = declarative.file;
+      }
       if (options.watch) {
         setExitCode(await watchDoctorCommand(args, cwd, surface, root, runOptions));
         return;

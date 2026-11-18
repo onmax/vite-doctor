@@ -88,7 +88,7 @@ The migration report stages source changes that are safe on the installed runtim
 
 ## Configuration
 
-Doctor needs no config file: it activates Rule Packs from the project's dependencies. Add config only to change rules, per-path overrides, suppressions, include or exclude globs, or presets. Doctor reports a `doctor.config.json` that only restates the defaults, such as `{ "rules": {} }`, as an info-level `DOC0038` Diagnostic so you can delete it.
+Doctor needs no config file: it activates Rule Packs from the project's dependencies. Add config only to change rules, per-path overrides, suppressions, include or exclude globs, or presets. Doctor reports an info-level `DOC0038` Diagnostic for an automatically discovered `doctor.config.json` that only repeats the defaults and can be deleted without changing the run.
 
 Doctor automatically loads declarative `doctor.config.json` without executing project code:
 

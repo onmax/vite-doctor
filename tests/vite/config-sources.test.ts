@@ -109,14 +109,84 @@ export default defineConfig({
 test.each([
   ["export default {", "}"],
   ["const config = {", "}\nexport default config"],
-  ["export default defineConfig(() => ({", "}))"],
-  ["export default defineConfig(async () => { return {", "} })"],
+  ['import { defineConfig } from "vite"; export default defineConfig(() => ({', "}))"],
+  [
+    'import { defineConfig } from "vite-plus"; export default defineConfig(async () => { return {',
+    "} })",
+  ],
   ["export default {", "} satisfies UserConfig"],
 ])("the CLI finds the doctor key in %s", async (open, close) => {
   const root = fixture({
     "vite.config.ts": `${open}\n  define: { SECRET_KEY: JSON.stringify("secret") },\n  "doctor": { rules: { "${secretDefine}": "off" } },\n${close}\n`,
   });
   expect((await run(root, ["--rules", secretDefine])).report.diagnostics).toEqual([]);
+});
+
+test.each([
+  ["vite.config.ts", 'export default function () { return { ["doctor"]: { include: [] } }; }'],
+  [
+    "vite.config.ts",
+    'const config = { "\\u0064octor": { include: [] } }; export { config as default };',
+  ],
+  ["vite.config.cjs", "module.exports = { doctor: { include: [] } };"],
+  ["vite.config.ts", "export default { ...other, doctor: computed(), doctor: { include: [] } };"],
+])("%s recognizes literal settings in %s", async (file, source) => {
+  const root = fixture({ [file]: source });
+  expect((await run(root)).code).toBe(0);
+  writeFileSync(join(root, "doctor.config.json"), "{}");
+  expect((await run(root)).report.error?.message).toContain("Keep one of them");
+});
+
+test.each([
+  "const base = { doctor: { include: ['app.ts'] } }; export default { doctor: { include: [] }, ...base };",
+  "const key = 'doctor'; export default { doctor: { include: [] }, [key]: { include: ['app.ts'] } };",
+  "import { mergeConfig } from 'vite'; export default mergeConfig({ doctor: { include: [] } }, {});",
+  "export default () => { if (process.env.CI) return {}; return { doctor: { include: [] } }; };",
+  "const config = { doctor: { include: [] } }; export default (config) => config;",
+  "const defineDoctorConfig = () => ({ include: ['app.ts'] }); export default { doctor: defineDoctorConfig({ include: [] }) };",
+  "import { defineDoctorConfig as helper } from 'vite-doctor'; export default (helper) => ({ doctor: helper({ include: [] }) });",
+  "const config = { doctor: { include: [] } }; config.doctor = { include: ['app.ts'] }; export default config;",
+])("does not guess the effective setting in %s", async (source) => {
+  const root = fixture({ "vite.config.ts": source });
+  const { code, report } = await run(root);
+  expect(code).toBe(2);
+  expect(report.error).toMatchObject({ kind: "config", file: join(root, "vite.config.ts") });
+  expect(report.error.message).toContain("line 1");
+});
+
+test("DOC0038 does not suggest deleting an explicitly selected config", async () => {
+  const root = fixture({ "doctor.config.json": "{}" });
+  expect(codes((await run(root, ["--config", "doctor.config.json"])).report)).not.toContain(
+    "DOC0038",
+  );
+});
+
+test("DOC0038 does not suggest restoring an inherited exclusion", async () => {
+  const root = fixture({
+    "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+    ".nuxt/doctor.manifest.json": JSON.stringify({ doctorConfig: { exclude: ["**/*.ts"] } }),
+    "doctor.config.json": '{ "exclude": [] }',
+    "app/app.ts": "export const value = 1;",
+  });
+  expect(codes((await run(root)).report)).not.toContain("DOC0038");
+  writeFileSync(join(root, "doctor.config.json"), "{}");
+  expect(codes((await run(root)).report)).toContain("DOC0038");
+});
+
+test("the emitted default-config Diagnostic can be explained by code and Rule ID", async () => {
+  const root = fixture({ "doctor.config.json": "{}" });
+  const { report } = await run(root);
+  const diagnostic = report.diagnostics.find((item: { code: string }) => item.code === "DOC0038");
+  expect(diagnostic).toBeDefined();
+  for (const selector of [diagnostic.code, diagnostic.rule]) {
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    expect(await main(["explain", selector, "--format", "agent"], root)).toBe(0);
+    expect(JSON.parse(stdout.mock.calls.map(([chunk]) => String(chunk)).join(""))).toMatchObject({
+      status: "ready",
+      diagnosticCodes: ["DOC0038"],
+    });
+    stdout.mockRestore();
+  }
 });
 
 test("Vite rules read a vite-plus defineConfig() without a doctor key", async () => {
