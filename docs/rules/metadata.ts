@@ -1965,6 +1965,24 @@ export const ruleDocumentationMetadata = {
     ],
   },
 
+  "vite/plugin/no-fragment-in-virtual-id": {
+    description:
+      "Reports when a registered Vite resolveId hook resolves a browser import to a virtual module id containing #.",
+    why: "Vite dev serves virtual modules at /@id/ followed by the resolved id, with \\0 written as __x00__. Vite does not encode #, so a browser given /@id/__x00__#app/config requests only /@id/__x00__, and the import fails. Doctor reads supported Vite configs without executing them and checks registered hooks in resolution order under client conditions. It reports the return value or module-level const only when it can determine which resolver handles the import. Dynamic configs, unknown plugin registrations, or unsupported filters and branches can prevent a result. Browser entry evidence includes Vue SFCs, .client modules, modules importing Vue runtime APIs, and HTML module scripts and their local dependencies. Type-only imports and external URLs do not trigger this rule.",
+    recommendedReplacement:
+      "Resolve the specifier to an id without #, such as \\0virtual:app/config, and update the load hook and its filter. The import specifier users write can keep its #.",
+    examples: [
+      {
+        title: "Keep # in the specifier, not in the resolved id",
+        language: "ts",
+        invalid:
+          "const PUBLIC_ID = '#app/config'\nconst RESOLVED_PUBLIC_ID = `\\0${PUBLIC_ID}`\n\nexport function config(): Plugin {\n  return {\n    name: 'config',\n    resolveId(id) {\n      if (id === PUBLIC_ID) return RESOLVED_PUBLIC_ID\n    },\n    load(id) {\n      if (id === RESOLVED_PUBLIC_ID) return 'export default {}'\n    },\n  }\n}",
+        valid:
+          "const PUBLIC_ID = '#app/config'\nconst RESOLVED_PUBLIC_ID = '\\0virtual:app/config'\n\nexport function config(): Plugin {\n  return {\n    name: 'config',\n    resolveId(id) {\n      if (id === PUBLIC_ID) return RESOLVED_PUBLIC_ID\n    },\n    load(id) {\n      if (id === RESOLVED_PUBLIC_ID) return 'export default {}'\n    },\n  }\n}",
+      },
+    ],
+  },
+
   "vite/plugin/no-lossy-set-cookie-bridge": {
     description:
       "Reports loops that copy Fetch Response headers onto a Node ServerResponse with setHeader, which keeps only the last Set-Cookie.",

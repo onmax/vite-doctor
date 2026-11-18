@@ -31,6 +31,8 @@ export const viteDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0025", ruleId: "vite/plugin/no-lossy-set-cookie-bridge" },
 
   { code: "VITE0027", ruleId: "vite/config/no-url-pathname-as-fs-path" },
+
+  { code: "VITE0028", ruleId: "vite/plugin/no-fragment-in-virtual-id" },
 ]);
 
 export const diagnostics = viteDiagnosticRegistry.diagnostics;
