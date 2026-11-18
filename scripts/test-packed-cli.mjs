@@ -1,6 +1,14 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -38,12 +46,7 @@ try {
     env,
     stdio: "pipe",
   });
-  execFileSync(process.execPath, ["--input-type=module", "-"], {
-    cwd: temporary,
-    env,
-    input: 'await import("vite-doctor/cli");\n',
-    stdio: "pipe",
-  });
+  verifyCliImport();
   verifyExports();
   verifyLightweightEntries();
   verifyServeRunWorker();
@@ -80,6 +83,7 @@ try {
     { cwd: temporary, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
   assert.equal(migrate.status, 2, `${migrate.stdout}\n${migrate.stderr}`);
+  verifyNpmBins(archive, findingArgs);
   const library = join(temporary, "library with spaces");
   mkdirSync(join(library, "dist"), { recursive: true });
   writeFileSync(
@@ -141,11 +145,21 @@ function verifyDoctor(args, expectedStatuses = [0], expectedCode, expectedFramew
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
+  return verifyReport(
+    result,
+    `pnpm ${args.join(" ")}`,
+    expectedStatuses,
+    expectedCode,
+    expectedFramework,
+  );
+}
+
+function verifyReport(result, label, expectedStatuses, expectedCode, expectedFramework = "nuxt") {
   if (result.error) throw result.error;
   const output = result.stdout;
   assert.ok(
     expectedStatuses.includes(result.status),
-    `Unexpected exit ${result.status} from pnpm ${args.join(" ")}: ${output}\n${result.stderr}`,
+    `Unexpected exit ${result.status} from ${label}: ${output}\n${result.stderr}`,
   );
   assert.doesNotMatch(result.stderr, /\n\s+at .+\(.+:\d+:\d+\)/);
   const reportLine = output
@@ -164,6 +178,83 @@ function verifyDoctor(args, expectedStatuses = [0], expectedCode, expectedFramew
     assert.deepEqual(report.diagnostics, []);
   }
   return report;
+}
+
+// Importing the `vite-doctor/cli` module from a script file must not start a Doctor Run.
+function verifyCliImport() {
+  const script = join(temporary, "import-cli.mjs");
+  writeFileSync(
+    script,
+    'const cli = await import("vite-doctor/cli");\nif (typeof cli.main !== "function") process.exit(3);\n',
+  );
+  const result = spawnSync(process.execPath, [script, "--version"], {
+    cwd: temporary,
+    env,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  if (result.error) throw result.error;
+  assert.equal(result.status, 0, `import vite-doctor/cli: ${result.stdout}\n${result.stderr}`);
+  assert.equal(result.stdout, "", "Importing vite-doctor/cli started the CLI.");
+}
+
+// npm links bins into node_modules/.bin as symlinks (POSIX) or cmd shims (Windows), unlike pnpm's
+// shell shims, so the bins must recognise themselves when started through either.
+function verifyNpmBins(archive, findingArgs) {
+  const consumer = join(temporary, "npm consumer");
+  mkdirSync(consumer);
+  writeFileSync(
+    join(consumer, "package.json"),
+    JSON.stringify({ private: true, dependencies: { "vite-doctor": `file:../pack/${archive}` } }),
+  );
+  const npmEnv = Object.fromEntries(
+    Object.entries(env).filter(([key]) => !key.toLowerCase().startsWith("npm_")),
+  );
+  const windows = process.platform === "win32";
+  const install = spawnSync(
+    windows ? "npm install --ignore-scripts --prefer-offline --no-audit --no-fund" : "npm",
+    windows ? [] : ["install", "--ignore-scripts", "--prefer-offline", "--no-audit", "--no-fund"],
+    { cwd: consumer, env: npmEnv, encoding: "utf8", stdio: "pipe", shell: windows },
+  );
+  if (install.error) throw install.error;
+  assert.equal(install.status, 0, `npm install: ${install.stdout}\n${install.stderr}`);
+  const { version } = JSON.parse(
+    readFileSync(join(consumer, "node_modules/vite-doctor/package.json"), "utf8"),
+  );
+  const bin = join(consumer, "node_modules/.bin");
+  for (const name of ["vite-doctor", "nuxt-doctor"]) {
+    if (windows) {
+      const shim = spawnSync(`node_modules\\.bin\\${name}.cmd --version`, {
+        cwd: consumer,
+        env,
+        encoding: "utf8",
+        stdio: "pipe",
+        shell: true,
+      });
+      if (shim.error) throw shim.error;
+      assert.equal(shim.status, 0, `npm ${name}.cmd --version: ${shim.stdout}\n${shim.stderr}`);
+      assert.equal(shim.stdout.trim(), version, `npm ${name}.cmd --version`);
+      continue;
+    }
+    const link = join(bin, name);
+    assert.ok(lstatSync(link).isSymbolicLink(), `npm did not link ${name} as a symlink.`);
+    const viaNode = spawnSync(process.execPath, [link, "--version"], {
+      cwd: consumer,
+      env,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    if (viaNode.error) throw viaNode.error;
+    assert.equal(viaNode.status, 0, `node .bin/${name} --version: ${viaNode.stderr}`);
+    assert.equal(viaNode.stdout.trim(), version, `node .bin/${name} --version`);
+    const direct = spawnSync(link, findingArgs, {
+      cwd: consumer,
+      env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    verifyReport(direct, `.bin/${name} (npm symlink)`, [1], "NUXT0029");
+  }
 }
 
 function verifyLightweightEntries() {

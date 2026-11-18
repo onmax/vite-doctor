@@ -26,9 +26,11 @@ import type { GraphSummary } from "./cache-store.js";
 import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
 import {
   applyDiagnosticPolicy,
+  InlineSuppressionIndex,
   settleDiagnosticIdentity,
   matchesSuppressionFile,
   unusedConfigSuppressionEntries,
+  type InlineSuppression,
   type StaleBaseline,
 } from "./diagnostic-policy.js";
 import { lineColumnAt } from "./line-index.js";
@@ -37,7 +39,11 @@ import { owningWorkspacePackage } from "./workspace-packages.js";
 import { markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256, shellArgument } from "./utils.js";
-import { allDiagnosticCodesByRuleId, allDiagnostics } from "../diagnostic-code-map.js";
+import {
+  allDiagnosticCodeListsByRuleId,
+  allDiagnosticCodesByRuleId,
+  allDiagnostics,
+} from "../diagnostic-code-map.js";
 import { codeForRuleId, diagnosticForCode } from "../diagnostics.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import type { Diagnostic as NosticsDiagnostic } from "nostics";
@@ -63,6 +69,7 @@ export function applyRequestedFixes(session: ScanSession): AppliedFixes | undefi
 
 export function applyPolicyFilters(session: ScanSession): void {
   session.diagnostics = settleDiagnosticIdentity(session.diagnostics);
+  reportUnusedInlineSuppressions(session);
   reportUnusedConfigSuppressions(session);
   applyReportEligibility(session);
   applySeverityFilter(session);
@@ -104,6 +111,190 @@ function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): voi
   });
   session.diagnostics.push(...result.diagnostics);
   session.suppressedDiagnostics.push(...result.suppressedDiagnostics);
+}
+
+// A Rule ID is proven stale on a file only when the Rule ran there and reported nothing the
+// directive covers. Rules that did not run (turned off, outside the selected Presets or Rules, an
+// inactive Rule Pack, a file the Rule cannot read) leave the directive alone, so partial runs stay
+// quiet. Changed-file runs drop reports outside the change through report eligibility afterwards.
+function reportUnusedInlineSuppressions(session: ScanSession): void {
+  if (!session.fileRuleRuns.size) return;
+  const index = new InlineSuppressionIndex((file) => session.handlesByPath.get(file)?.text);
+  const used = new Map<InlineSuppression, Set<string>>();
+  const byFile = new Map<string, Diagnostic[]>();
+  for (const diagnostic of session.diagnostics) {
+    if (!session.fileRuleRuns.has(diagnostic.file)) continue;
+    const list = byFile.get(diagnostic.file) ?? [];
+    list.push(diagnostic);
+    byFile.set(diagnostic.file, list);
+    for (const directive of index.matching(diagnostic)) {
+      const rules = used.get(directive) ?? new Set<string>();
+      rules.add(diagnostic.ruleId);
+      used.set(directive, rules);
+    }
+  }
+  const registered = new Map(session.registry.rules.map((rule) => [rule.meta.id, rule] as const));
+  const namespaces = new Set([...registered.keys()].map(ruleNamespace));
+  const codeOwners = diagnosticCodeOwners(session);
+  const unproven = new Set(
+    (session.project.evidenceGaps ?? []).flatMap((gap) =>
+      gap.files.map((file) => resolve(session.root, file)),
+    ),
+  );
+  const reported = session.diagnostics.length;
+  for (const [file, ran] of session.fileRuleRuns) {
+    if (unproven.has(file)) continue;
+    const handle = session.handlesByPath.get(file);
+    if (!handle) continue;
+    const directives = index.directives(file);
+    const sameLineCount = directives.filter((directive) => !directive.nextLine).length;
+    for (const directive of directives) {
+      if (directive.rules.some((rule) => rule.id === "*")) continue;
+      const matched = used.get(directive);
+      const unused: string[] = [];
+      const unknown: Array<{ id: string; owner?: string }> = [];
+      for (const { id } of directive.rules) {
+        if (matched?.has(id)) continue;
+        const rule = registered.get(id);
+        if (rule) {
+          // Rules that read the environment or a live runtime can stay quiet for reasons this run cannot see.
+          const deterministic = (rule.meta.determinism ?? "deterministic") === "deterministic";
+          if (ran.has(id) && deterministic) unused.push(id);
+        } else if (DIAGNOSTIC_CODE.test(id)) unknown.push({ id, owner: codeOwners.get(id) });
+        else if (namespaces.has(ruleNamespace(id)) && !(id in allDiagnosticCodesByRuleId))
+          unknown.push({ id });
+      }
+      if (!unused.length && !unknown.length) continue;
+      const fix = inlineSuppressionFix(
+        handle.text,
+        directive,
+        [...unused, ...unknown.map((item) => item.id)],
+        sameLineCount > (directive.nextLine ? 0 : 1),
+      );
+      const text = handle.text.slice(directive.start, directive.list.end);
+      const range = {
+        start: directive.start,
+        end: directive.end,
+        ...lineColumnAt(handle.text, directive.start),
+      };
+      if (unused.length)
+        pushDiagnostic(session, {
+          ruleId: "doctor/inline/unused-suppression",
+          severity: "info",
+          category: "suppression",
+          file,
+          range,
+          why: `The directive "${text}" suppressed no ${unused.join(", ")} Diagnostic in this Doctor Run, although ${unused.length === 1 ? "that Rule" : "those Rules"} ran on this file.${misplacedHint(byFile.get(file) ?? [], index, directive, unused)} Its reason was: ${directive.reason}`,
+          suggestion: `Remove ${unused.join(", ")} from the directive. It no longer hides anything, and leaving it in place would silently hide a future Diagnostic on this line.`,
+          fix,
+          confidence: "proven",
+          analysisPhase: "file",
+        });
+      if (unknown.length)
+        pushDiagnostic(session, {
+          ruleId: "doctor/inline/unknown-suppression-rule",
+          severity: "info",
+          category: "suppression",
+          file,
+          range,
+          why: `The directive "${text}" names ${unknown.map((item) => item.id).join(", ")}, which ${unknown.length === 1 ? "is not a Rule ID" : "are not Rule IDs"} in this Doctor Run, so it suppresses nothing.`,
+          suggestion: [
+            ...unknown.map((item) =>
+              item.owner
+                ? `${item.id} is a Diagnostic Code; directives name Rule IDs, so write ${item.owner} if the Diagnostic should stay suppressed.`
+                : `${item.id} may have been renamed or removed; run \`vite-doctor rules\` for current Rule IDs.`,
+            ),
+            "Otherwise remove it from the directive.",
+          ].join(" "),
+          fix,
+          confidence: "proven",
+          analysisPhase: "file",
+        });
+    }
+  }
+  session.diagnostics = [
+    ...session.diagnostics.slice(0, reported),
+    ...settleDiagnosticIdentity(session.diagnostics.slice(reported)),
+  ];
+}
+
+// A Diagnostic of the same Rule just below, which no directive covers, usually means the
+// directive sits on the wrong line rather than that the finding went away.
+function misplacedHint(
+  diagnostics: Diagnostic[],
+  index: InlineSuppressionIndex,
+  directive: InlineSuppression,
+  rules: string[],
+): string {
+  const line = directive.line + 1;
+  const nearby = diagnostics.find(
+    (diagnostic) =>
+      rules.includes(diagnostic.ruleId) &&
+      diagnostic.range &&
+      diagnostic.range.line > line &&
+      diagnostic.range.line <= line + 5 &&
+      !index.matching(diagnostic).length,
+  );
+  return nearby
+    ? ` Doctor still reports ${nearby.code} on line ${nearby.range!.line}, which this directive does not cover, so it may be on the wrong line.`
+    : "";
+}
+
+const DIAGNOSTIC_CODE = /^[A-Z][A-Z0-9]*\d{4}$/;
+
+function ruleNamespace(ruleId: string): string {
+  return ruleId.split("/")[0]!;
+}
+
+function diagnosticCodeOwners(session: ScanSession): Map<string, string> {
+  const owners = new Map<string, string>();
+  const add = (lists: Readonly<Record<string, readonly string[] | undefined>> | undefined) => {
+    for (const [ruleId, codes] of Object.entries(lists ?? {}))
+      for (const code of codes ?? []) if (!owners.has(code)) owners.set(code, ruleId);
+  };
+  for (const pack of session.registry.packs) add(pack.diagnostics?.codesByRuleIdAll);
+  for (const rule of session.registry.rules) add({ [rule.meta.id]: rule.meta.diagnosticCodes });
+  add(allDiagnosticCodeListsByRuleId);
+  return owners;
+}
+
+// Rules read comment text too: a SAFETY note in a directive's reason is what keeps an assertion
+// Rule quiet, so deleting it would bring that finding back.
+const SAFETY_NOTE = /(?:^|[^\p{L}\p{N}_])SAFETY\s*(?::|$)/u;
+
+function inlineSuppressionFix(
+  source: string,
+  directive: InlineSuppression,
+  removed: string[],
+  hasOtherSameLineDirective: boolean,
+): Diagnostic["fix"] {
+  const kept = directive.rules.filter((rule) => !removed.includes(rule.id)).map((rule) => rule.id);
+  if (kept.length)
+    return {
+      kind: "safe",
+      message: `Keep only ${kept.join(", ")} in the directive.`,
+      edits: [{ range: directive.list, text: kept.join(",") }],
+    };
+  if (directive.reasonRange && SAFETY_NOTE.test(directive.reason))
+    return {
+      kind:
+        directive.shadowing || directive.reason.includes("doctor-disable") ? "suggestion" : "safe",
+      message: "Delete the directive and keep its reason, which other Rules read as a SAFETY note.",
+      edits: [{ range: { start: directive.start, end: directive.reasonRange.start }, text: "" }],
+    };
+  const { range, text } = directive.removal ?? {
+    range: { start: directive.start, end: directive.end },
+    text: "",
+  };
+  const shifts =
+    hasOtherSameLineDirective &&
+    !text.includes("\n") &&
+    source.slice(range.start, range.end).includes("\n");
+  return {
+    kind: shifts || directive.shadowing ? "suggestion" : "safe",
+    message: "Delete the directive.",
+    edits: [{ range, text }],
+  };
 }
 
 // Scoped runs skip Rules or files, so a suppression can match nothing without being stale.

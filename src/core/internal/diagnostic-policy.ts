@@ -58,32 +58,92 @@ export interface BaselineWriteHooks {
   renameSync?: typeof renameSync;
 }
 
-interface InlineSuppression {
+export interface InlineSuppression {
+  /** Zero-based line of the directive. */
+  line: number;
   nextLine: boolean;
-  rules: string[];
+  rules: InlineSuppressionRule[];
   reason: string;
+  /** Source offsets of the directive, from `doctor-disable` through its reason. */
+  start: number;
+  end: number;
+  /** Source offsets of the comma-separated Rule list. */
+  list: { start: number; end: number };
+  /** Source offsets of the written reason, when there is one. */
+  reasonRange?: { start: number; end: number };
+  /** A comment or line edit when the directive has no surrounding prose. */
+  removal?: { range: SourceComment; text: string };
+  shadowing?: boolean;
+}
+
+export interface InlineSuppressionRule {
+  id: string;
+  start: number;
+  end: number;
 }
 
 interface InlineSuppressions {
+  all: InlineSuppression[];
+  lineCount: number;
   nearby: Map<number, InlineSuppression>;
   byTargetLine: Map<number, InlineSuppression[]>;
 }
 
+/** Reads and indexes inline `doctor-disable` directives once per file. */
+export class InlineSuppressionIndex {
+  private files = new Map<string, InlineSuppressions>();
+
+  constructor(private readText: (file: string) => string | null | undefined = () => undefined) {}
+
+  directives(file: string): InlineSuppression[] {
+    return this.load(file).all;
+  }
+
+  /** Every directive that names the Diagnostic's Rule (or `*`) and covers its line, first match first. */
+  matching(diagnostic: Diagnostic): InlineSuppression[] {
+    if (!diagnostic.range) return [];
+    const directives = this.load(diagnostic.file);
+    if (!directives.all.length) return [];
+    const line = diagnostic.range.line;
+    const applies = (inline: InlineSuppression) =>
+      inline.rules.some((rule) => rule.id === diagnostic.ruleId || rule.id === "*");
+    const matches: InlineSuppression[] = [];
+    const start = Math.max(0, line - 3);
+    const end = Math.min(directives.lineCount, line + 1);
+    for (let index = start; index < end; index++) {
+      const inline = directives.nearby.get(index);
+      if (inline && applies(inline)) matches.push(inline);
+    }
+    for (const inline of directives.byTargetLine.get(line - 1) ?? [])
+      if (applies(inline)) matches.push(inline);
+    return matches;
+  }
+
+  private load(file: string): InlineSuppressions {
+    let directives = this.files.get(file);
+    if (directives) return directives;
+    let text = this.readText(file);
+    if (typeof text !== "string") {
+      try {
+        text = readFileSync(file, "utf8");
+      } catch {
+        text = "";
+      }
+    }
+    directives = collectInlineSuppressions(file, text);
+    this.files.set(file, directives);
+    return directives;
+  }
+}
+
 export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticPolicyResult {
   const suppressed: Diagnostic[] = [];
-  const sourceLines = new Map<string, string[]>();
-  const sourceSuppressions = new Map<string, InlineSuppressions>();
+  const inline = new InlineSuppressionIndex();
   const baseline = readBaseline(input.root, input.options.baseline);
   const fingerprints = baseline?.fingerprints ?? new Set<string>();
   const nextDiagnostics: Diagnostic[] = [];
   for (const diagnostic of input.diagnostics) {
-    const suppression = findSuppression(
-      input.root,
-      input.config,
-      diagnostic,
-      sourceLines,
-      sourceSuppressions,
-    );
+    const suppression = findSuppression(input.root, input.config, diagnostic, inline);
     const inBaseline = fingerprints.has(diagnostic.fingerprint ?? "");
     if (suppression || (input.options.newOnly && inBaseline)) {
       suppressed.push({
@@ -319,7 +379,12 @@ function matchesConfigSuppression(
 ): boolean {
   if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
   // Broad entries must not hide the warning that reports them as unused.
-  if (!suppression.ruleId && diagnostic.ruleId === "doctor/config/unused-suppression") return false;
+  if (
+    !suppression.ruleId &&
+    (diagnostic.ruleId === "doctor/config/unused-suppression" ||
+      diagnostic.ruleId.startsWith("doctor/inline/"))
+  )
+    return false;
   if (suppression.fingerprint && suppression.fingerprint !== diagnostic.fingerprint) return false;
   if (suppression.file && !nativeMatch(relative(root, diagnostic.file), suppression.file))
     return false;
@@ -330,52 +395,35 @@ function findSuppression(
   root: string,
   config: DoctorConfig,
   diagnostic: Diagnostic,
-  sourceLines: Map<string, string[]>,
-  sourceSuppressions: Map<string, InlineSuppressions>,
+  inline: InlineSuppressionIndex,
 ): string | null {
   const configured = config.suppressions?.find((suppression) =>
     matchesConfigSuppression(root, suppression, diagnostic),
   );
   if (configured) return configured.reason;
-  if (!diagnostic.range) return null;
-  let lines = sourceLines.get(diagnostic.file);
-  if (!lines) {
-    try {
-      lines = readFileSync(diagnostic.file, "utf8").split(/\r?\n/);
-    } catch {
-      lines = [];
-    }
-    sourceLines.set(diagnostic.file, lines);
-  }
-  let directives = sourceSuppressions.get(diagnostic.file);
-  if (!directives) {
-    directives = collectInlineSuppressions(diagnostic.file, lines);
-    sourceSuppressions.set(diagnostic.file, directives);
-  }
-  const line = diagnostic.range.line;
-  const applies = (inline: InlineSuppression) =>
-    inline.rules.includes(diagnostic.ruleId) || inline.rules.includes("*");
-  const start = Math.max(0, line - 3);
-  const end = Math.min(lines.length, line + 1);
-  for (let index = start; index < end; index++) {
-    const inline = directives.nearby.get(index);
-    if (inline && applies(inline)) return inline.reason;
-  }
-  return directives.byTargetLine.get(line - 1)?.find(applies)?.reason ?? null;
+  // A `doctor-disable *` must not hide the report that its own directive is stale.
+  if (diagnostic.ruleId.startsWith("doctor/inline/")) return null;
+  return inline.matching(diagnostic)[0]?.reason ?? null;
 }
 
-function collectInlineSuppressions(file: string, lines: string[]): InlineSuppressions {
-  const suppressions: InlineSuppressions = { nearby: new Map(), byTargetLine: new Map() };
-  const source = lines.join("\n");
+function collectInlineSuppressions(file: string, source: string): InlineSuppressions {
+  const lineCount = source.split("\n").length;
+  const suppressions: InlineSuppressions = {
+    all: [],
+    lineCount,
+    nearby: new Map(),
+    byTargetLine: new Map(),
+  };
   if (!source.includes("doctor-disable")) return suppressions;
   const directives = new Map<number, InlineSuppression>();
   const { comments, codeFree } = file.endsWith(".vue")
     ? collectVueComments(file, source)
     : collectScriptComments(file, source);
   for (const comment of comments) {
-    addCommentSuppressions(directives, source, comment.start, comment.end);
+    addCommentSuppressions(directives, source, comment);
   }
   const code = linesWithCode(source, [...comments, ...codeFree]);
+  suppressions.all = [...directives.values()].sort((a, b) => a.start - b.start);
   for (const [line, directive] of directives) {
     if (!directive.nextLine) {
       suppressions.nearby.set(line, directive);
@@ -465,37 +513,117 @@ function collectVueComments(
 function addCommentSuppressions(
   directives: Map<number, InlineSuppression>,
   source: string,
-  start: number,
-  end: number,
+  comment: SourceComment,
 ): void {
+  const { start, end } = comment;
   const rawComment = source.slice(start, end);
-  const comment = rawComment.startsWith("<!--")
-    ? rawComment.slice(4, rawComment.endsWith("-->") ? -3 : undefined)
-    : rawComment.startsWith("/*")
-      ? rawComment.slice(2, rawComment.endsWith("*/") ? -2 : undefined)
-      : rawComment.startsWith("//")
-        ? rawComment.slice(2)
-        : rawComment;
+  const html = rawComment.startsWith("<!--");
+  const block = rawComment.startsWith("/*");
+  const opening = html ? 4 : block || rawComment.startsWith("//") ? 2 : 0;
+  const closing =
+    html && rawComment.endsWith("-->") ? 3 : block && rawComment.endsWith("*/") ? 2 : 0;
+  const body = { start: start + opening, end: end - closing };
   let line = lineColumnAt(source, start).line - 1;
-  for (const segment of comment.split("\n")) {
-    addInlineSuppression(directives, line, segment);
+  let segmentStart = body.start;
+  const added: InlineSuppression[] = [];
+  for (const segment of source.slice(body.start, body.end).split("\n")) {
+    const directive = addInlineSuppression(directives, line, segment, segmentStart, source);
+    if (directive) added.push(directive);
+    segmentStart += segment.length + 1;
     line++;
   }
+  for (const directive of added)
+    directive.removal = directiveRemoval(source, comment, body, directive, added.length, html);
 }
 
 function addInlineSuppression(
   directives: Map<number, InlineSuppression>,
   line: number,
-  comment: string,
-): void {
-  if (directives.has(line)) return;
-  const match = comment.match(
+  segment: string,
+  offset: number,
+  source: string,
+): InlineSuppression | undefined {
+  const match = segment.match(
     /(?:^|\s)doctor-disable(-next-line)?\s+([^\s]+)(?:\s+--\s+(.+)|\s+(.+))?/,
   );
-  if (!match) return;
-  const rules = match[2]!.split(",").map((item) => item.trim());
-  const reason = (match[3] ?? match[4] ?? "").trim() || "missing suppression reason";
-  directives.set(line, { nextLine: Boolean(match[1]), rules, reason });
+  if (!match) return undefined;
+  const first = directives.get(line);
+  if (first) {
+    first.shadowing = true;
+    return undefined;
+  }
+  const start = offset + match.index! + match[0].indexOf("doctor-disable");
+  const keyword = "doctor-disable".length + (match[1]?.length ?? 0);
+  const listStart = source.indexOf(match[2]!, start + keyword);
+  const rules: InlineSuppressionRule[] = [];
+  let ruleStart = listStart;
+  for (const item of match[2]!.split(",")) {
+    const id = item.trim();
+    if (id) rules.push({ id, start: ruleStart, end: ruleStart + item.length });
+    ruleStart += item.length + 1;
+  }
+  const written = match[3] ?? match[4];
+  const reason = written?.trim() || "missing suppression reason";
+  const end = offset + match.index! + match[0].length;
+  const directive: InlineSuppression = {
+    line,
+    nextLine: Boolean(match[1]),
+    rules,
+    reason,
+    start,
+    end,
+    list: { start: listStart, end: listStart + match[2]!.length },
+    reasonRange: written?.trim() ? { start: end - written.length, end } : undefined,
+  };
+  directives.set(line, directive);
+  return directive;
+}
+
+function directiveRemoval(
+  source: string,
+  comment: SourceComment,
+  body: SourceComment,
+  directive: InlineSuppression,
+  directivesInComment: number,
+  html: boolean,
+): InlineSuppression["removal"] {
+  const blank = (text: string) => /^[\s*]*$/.test(text);
+  if (
+    directivesInComment === 1 &&
+    blank(source.slice(body.start, directive.start)) &&
+    blank(source.slice(directive.end, body.end))
+  ) {
+    if (html)
+      return { range: body, text: source.slice(body.start, body.end).replace(/[^\r\n]+/g, "") };
+    const { start, end } = comment;
+    const first = lineStart(source, start);
+    const last = lineEnd(source, end);
+    const before = source.slice(first, start);
+    const after = source.slice(end, last);
+    if (!before.trim() && !after.trim())
+      return { range: { start: first, end: Math.min(source.length, last + 1) }, text: "" };
+    if (source.startsWith("//", start) && !after.trim())
+      return { range: { start: start - (/[ \t]*$/.exec(before)?.[0].length ?? 0), end }, text: "" };
+    return {
+      range: { start, end },
+      text: source.slice(start, end).replace(/[^\r\n\u2028\u2029]+/g, " "),
+    };
+  }
+  // The directive shares its comment with other text, so only its own line can go.
+  const start = lineStart(source, directive.start);
+  const end = lineEnd(source, directive.start);
+  if (blank(source.slice(start, directive.start)) && blank(source.slice(directive.end, end)))
+    return { range: { start, end: Math.min(source.length, end + 1) }, text: "" };
+  return undefined;
+}
+
+function lineStart(source: string, offset: number): number {
+  return source.lastIndexOf("\n", offset - 1) + 1;
+}
+
+function lineEnd(source: string, offset: number): number {
+  const end = source.indexOf("\n", offset);
+  return end < 0 ? source.length : end;
 }
 
 function nativeMatch(value: string, pattern: string): boolean {
