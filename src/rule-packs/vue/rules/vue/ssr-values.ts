@@ -660,6 +660,24 @@ function projectedBranches(
   type Select = (value: AnyNode, truth: number, facts: Facts) => BranchResult;
   let budget = 64;
 
+  function branch(value: AnyNode, select: Select): (facts: Facts) => BranchResult {
+    const results = new Map<Facts, BranchResult>();
+    return (facts) => {
+      const cached = results.get(facts);
+      if (cached) return cached;
+      for (const [previous, result] of results) {
+        if (
+          previous.size === facts.size &&
+          [...facts].every(([binding, truth]) => previous.get(binding) === truth)
+        )
+          return result;
+      }
+      const result = evaluate(value, facts, select);
+      if (budget >= 0) results.set(facts, result);
+      return result;
+    };
+  }
+
   function choose(
     test: AnyNode,
     truth: number,
@@ -690,28 +708,19 @@ function projectedBranches(
     if (--budget < 0) return { values: [] };
     value = unwrap(value);
     if (value.type === "ConditionalExpression") {
+      const yes = branch(value.consequent, select);
+      const no = branch(value.alternate, select);
       return evaluate(value.test, facts, (test, truth, branchFacts) =>
-        choose(
-          test,
-          truth,
-          TRUTHY,
-          branchFacts,
-          (whenTrue) => evaluate(value.consequent, whenTrue, select),
-          (whenFalse) => evaluate(value.alternate, whenFalse, select),
-        ),
+        choose(test, truth, TRUTHY, branchFacts, yes, no),
       );
     }
     if (value.type === "LogicalExpression") {
       const takeRight =
         value.operator === "&&" ? TRUTHY : value.operator === "??" ? NULLISH : FALSY | NULLISH;
+      const right = branch(value.right, select);
       return evaluate(value.left, facts, (left, truth, branchFacts) =>
-        choose(
-          left,
-          truth,
-          takeRight,
-          branchFacts,
-          (whenTaken) => evaluate(value.right, whenTaken, select),
-          (whenSkipped) => select(left, truth & ~takeRight, whenSkipped),
+        choose(left, truth, takeRight, branchFacts, right, (whenSkipped) =>
+          select(left, truth & ~takeRight, whenSkipped),
         ),
       );
     }

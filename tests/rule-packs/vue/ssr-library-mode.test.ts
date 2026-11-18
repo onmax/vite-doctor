@@ -581,6 +581,23 @@ export default defineComponent({ setup() {
   ]);
 });
 
+test("traces browser-derived properties beside compound predicates", async () => {
+  const root = libraryWorkspace({
+    "packages/ui/src/compound-predicates.ts": `import { defineComponent, h, ref } from 'vue';
+export default defineComponent({ setup(props) {
+  const layout = props.fixed
+    ? ((props.a && props.b) || (props.c && props.d) || (props.e && props.f) || (props.g && props.h)
+      ? { columns: 2 } : { columns: 1 })
+    : { columns: globalThis.window?.innerWidth ?? 320 };
+  const columns = ref(layout.columns);
+  return () => h('div', String(columns.value));
+} });`,
+  });
+  expect(await ssrDiagnostics(root)).toEqual([
+    "vue/ssr/no-setup-state-from-browser-read:packages/ui/src/compound-predicates.ts:7",
+  ]);
+});
+
 test("resolves template reads outside loop and slot aliases", async () => {
   const root = libraryWorkspace({
     "packages/ui/src/Scopes.vue": `<script setup lang="ts">
