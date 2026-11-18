@@ -161,6 +161,46 @@ test.each([
   expect(codes(report)).toContain("DOC0038");
 });
 
+test.each([false, true])(
+  "reads CommonJS metadata without hiding the doctor key (%s)",
+  async (hasDoctor) => {
+    const root = fixture({
+      "vite.config.cjs": `const { dirname } = require('node:path'); module.exports = { root: dirname(module.filename), name: module['id']${hasDoctor ? ", doctor: { include: [] }" : ""} };`,
+    });
+    expect((await run(root)).code).toBe(0);
+    writeFileSync(join(root, "doctor.config.json"), "{}");
+    const { code, report } = await run(root);
+    if (hasDoctor) {
+      expect(code).toBe(2);
+      expect(report.error?.message).toContain("Keep one of them");
+    } else {
+      expect(code).toBe(0);
+      expect(codes(report)).toContain("DOC0038");
+    }
+  },
+);
+
+test.each([
+  "module.filename = ''",
+  "module.loaded++",
+  "delete module?.filename",
+  "({ filename: module.filename } = metadata)",
+  "for (module.id of values) {}",
+  "useModule(module)",
+  "module[key]",
+  "module.exports = {}",
+  "module.exports.doctor = { include: ['app.ts'] }",
+])("does not guess a CommonJS export with another use: %s", async (use) => {
+  const root = fixture({
+    "vite.config.cjs": `module.exports = { doctor: { include: [] } }; ${use};`,
+  });
+  const { code, report } = await run(root);
+  expect(code).toBe(2);
+  expect(report.error?.message).toContain(
+    "Cannot determine whether vite.config provides a doctor key",
+  );
+});
+
 test.each([
   "const base = { doctor: { include: ['app.ts'] } }; export default { doctor: { include: [] }, ...base };",
   "const key = 'doctor'; export default { doctor: { include: [] }, [key]: { include: ['app.ts'] } };",

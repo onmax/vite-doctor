@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { Node, ObjectExpression } from "oxc-parser";
+import { Visitor, type Node, type ObjectExpression, type Program } from "oxc-parser";
 import type { DoctorSerializableConfig } from "../primitives.js";
 import { lineColumnAt } from "./line-index.js";
 import { parseScriptSync } from "./script.js";
@@ -49,7 +49,7 @@ export function readViteConfigDoctor(
     }
   }
 
-  const exported = defaultExport(body) ?? commonJsExport(body, references);
+  const exported = defaultExport(body) ?? commonJsExport(program, references);
   const helperArgument = (node: Node, helpers: ReadonlySet<unknown>) => {
     if (
       node.type !== "CallExpression" ||
@@ -91,23 +91,74 @@ export function readViteConfigDoctor(
   return { config: literal as DoctorSerializableConfig };
 }
 
+const commonJsMetadata = new Set(["filename", "id", "loaded", "path"]);
+
 function commonJsExport(
-  body: Node[],
+  program: Program,
   references: ReadonlyMap<unknown, ScopeReference>,
 ): Node | undefined {
-  const modules = [...references.values()].filter(
-    (reference) =>
-      reference.isValueReference && !reference.resolved && reference.identifier.name === "module",
+  const modules = new Set<unknown>(
+    [...references.values()]
+      .filter(
+        (reference) =>
+          reference.isValueReference &&
+          !reference.resolved &&
+          reference.identifier.name === "module",
+      )
+      .map((reference) => reference.identifier),
   );
-  if (modules.length !== 1) return undefined;
-  for (const statement of body) {
+  if (modules.size > 1) {
+    const mutations = new Set<Node>();
+    const markMutation = (target: Node) => {
+      target = unwrap(target);
+      switch (target.type) {
+        case "MemberExpression":
+          mutations.add(target);
+          break;
+        case "ChainExpression":
+        case "TSTypeAssertion":
+          markMutation(target.expression);
+          break;
+        case "ArrayPattern":
+          for (const item of target.elements) if (item) markMutation(item);
+          break;
+        case "ObjectPattern":
+          for (const item of target.properties) {
+            markMutation(item.type === "Property" ? item.value : item);
+          }
+          break;
+        case "AssignmentPattern":
+          markMutation(target.left);
+          break;
+        case "RestElement":
+          markMutation(target.argument);
+          break;
+      }
+    };
+    new Visitor({
+      AssignmentExpression: (node) => markMutation(node.left),
+      UpdateExpression: (node) => markMutation(node.argument),
+      UnaryExpression: (node) => {
+        if (node.operator === "delete") markMutation(node.argument);
+      },
+      ForInStatement: (node) => markMutation(node.left),
+      ForOfStatement: (node) => markMutation(node.left),
+      MemberExpression: (node) => {
+        if (!modules.has(node.object) || mutations.has(node)) return;
+        const key = propertyName(node.property, node.computed);
+        if (key !== undefined && commonJsMetadata.has(key)) modules.delete(node.object);
+      },
+    }).visit(program);
+  }
+  if (modules.size !== 1) return undefined;
+  for (const statement of program.body) {
     if (statement.type !== "ExpressionStatement") continue;
     const assignment = statement.expression;
     if (assignment.type !== "AssignmentExpression" || assignment.operator !== "=") continue;
     const left = assignment.left;
     if (
       left.type === "MemberExpression" &&
-      left.object === (modules[0]?.identifier as unknown) &&
+      modules.has(left.object) &&
       propertyName(left.property, left.computed) === "exports"
     )
       return assignment.right;
