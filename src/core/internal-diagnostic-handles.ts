@@ -29,8 +29,8 @@ export const doctorInternalDiagnostics = defineDiagnostics({
       why: (params: { entry: string } & Partial<PresetSuggestion>) =>
         params.rulePack
           ? presetSuggestion(params as PresetSuggestion)
-          : `Invalid Config Extends entry "${params.entry}". Use "pack/preset".`,
-      fix: 'Use a rule-pack-qualified preset such as "vite-doctor/vue/recommended".',
+          : `Invalid Config Extends entry "${params.entry}". Use "pack/preset", "auto", or "strict".`,
+      fix: 'Use a rule-pack-qualified preset such as "vite-doctor/vue/recommended", or "auto" or "strict" for the activated Rule Packs.',
     },
     DOC0017: {
       why: (

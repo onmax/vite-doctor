@@ -662,6 +662,95 @@ test("CLI and Vite plugin report the Rule Packs an explicit extends left out", a
   );
 });
 
+const strictFixture = {
+  "package.json": JSON.stringify({ devDependencies: { vite: "^7.0.0", typescript: "^5.9.0" } }),
+  "tsconfig.json": "{}",
+  "src/main.ts":
+    "export const values = [1, 2, 3].filter((value) => value > 1).map((value) => value * 2)\n",
+};
+
+async function jsonRun(root: string, ...args: string[]) {
+  const result = await runCli(
+    [".", ...args, "--profile", "--severity", "info", "--no-cache", "--format", "json"],
+    root,
+  );
+  const report = JSON.parse(result.output) as {
+    extends?: unknown;
+    diagnostics: Array<{ rule: string }>;
+    ruleTimings: Array<{ rule: string }>;
+    rulePacks: Array<{ name: string; selected: boolean }>;
+  };
+  return {
+    ...report,
+    ruleIds: new Set(report.diagnostics.map((item) => item.rule)),
+    ran: new Set(report.ruleTimings.map((item) => item.rule)),
+  };
+}
+
+test("--strict runs strictly more Rules than the default Doctor Run", async () => {
+  await withFixture(strictFixture, async (root) => {
+    const recommended = await jsonRun(root);
+    const strict = await jsonRun(root, "--strict");
+
+    expect(strict.extends).toBe("strict");
+    expect(strict.ran.size).toBeGreaterThan(recommended.ran.size);
+    expect([...recommended.ran].filter((rule) => !strict.ran.has(rule))).toEqual([]);
+    expect(strict.ran).toContain("typescript/performance/no-array-filter-map");
+    expect(recommended.ran).not.toContain("typescript/performance/no-array-filter-map");
+    expect(strict.ruleIds).toContain("typescript/performance/no-array-filter-map");
+    expect(recommended.ruleIds).not.toContain("typescript/performance/no-array-filter-map");
+    expect(strict.rulePacks).toEqual(recommended.rulePacks);
+    expect(strict.rulePacks.every((pack) => pack.selected)).toBe(true);
+
+    expect((await jsonRun(root, "--extends", "strict")).ran).toEqual(strict.ran);
+  });
+});
+
+test.each([
+  [
+    "--strict alongside --extends adds strict to the list",
+    ["--strict", "--extends", "vite/recommended"],
+    ["strict", "vite/recommended"],
+  ],
+  ["--strict alongside --extends auto replaces auto", ["--extends", "auto", "--strict"], "strict"],
+])("%s", async (_name, args, selection) => {
+  await withFixture(strictFixture, async (root) => {
+    expect((await jsonRun(root, ...args)).extends).toEqual(selection);
+  });
+});
+
+test("doctor.config.json and the Vite plugin accept extends strict", async () => {
+  await withFixture(
+    { ...strictFixture, "doctor.config.json": JSON.stringify({ extends: "strict" }) },
+    async (root) => {
+      const configured = await jsonRun(root);
+      expect(configured.extends).toBe("strict");
+      expect(configured.ruleIds).toContain("typescript/performance/no-array-filter-map");
+    },
+  );
+  await withFixture(strictFixture, async (root) => {
+    const cli = await jsonRun(root, "--strict");
+    for (const plugin of [
+      doctor({ config: { extends: "strict" }, severity: "info", format: "json", cache: false }),
+      doctor({ extends: "strict", severity: "info", format: "json", cache: false }),
+    ]) {
+      const logs = await runVitePlugin(plugin, root, "build");
+      expect(logs).toHaveLength(1);
+      const report = JSON.parse(logs[0]!) as { diagnostics: Array<{ rule: string }> };
+      expect(new Set(report.diagnostics.map((item) => item.rule))).toEqual(cli.ruleIds);
+    }
+  });
+});
+
+test("agent reports rerun strict Doctor Runs with --strict", async () => {
+  await withFixture(strictFixture, async (root) => {
+    const result = await runCli([".", "--strict", "--no-cache", "--format", "agent"], root);
+    const rerun = JSON.parse(result.output).commandArgs.rerun as string[];
+    expect(rerun).toContain("--strict");
+    expect(rerun).not.toContain("--extends");
+  });
+});
+
 test("CLI keeps comma-separated selectors and repeated boolean flags", async () => {
   await withFixture({ "package.json": "{}", "index.js": "export {}" }, async (root) => {
     const result = await runCli(

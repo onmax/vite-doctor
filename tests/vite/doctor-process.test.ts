@@ -249,6 +249,7 @@ test("only declarative Doctor Run invocations are served by the Doctor process",
     join(root, "apps/web"),
   );
   expect(doctorProcessRoot(["--format", "agent", "--server", "."], root)).toBe(root);
+  expect(doctorProcessRoot(["--strict", "."], root)).toBe(root);
   for (const args of [
     ["--config", "doctor.config.ts"],
     ["--config=doctor.config.ts"],

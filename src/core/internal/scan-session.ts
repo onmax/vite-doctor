@@ -558,7 +558,7 @@ function resolveExtends(
   };
   // Each workspace package activates Rule Packs from its own Project Inventory, so a Rule Pack
   // the workspace root activates covers the root's own files, not every package below it.
-  const selectActivated = () => {
+  const selectActivated = (preset: "recommended" | "strict") => {
     for (const [pack, roots] of activations) {
       if (!roots.length) continue;
       selectedPacks.add(pack);
@@ -568,13 +568,17 @@ function resolveExtends(
         for (const rule of pack.rules)
           if (rule.meta.activationScope !== "workspace")
             autoScopes.set(rule.meta.id, new Set(roots));
-      for (const ruleId of pack.presets.recommended)
+      for (const ruleId of pack.presets[preset] ?? pack.presets.recommended)
         select(ruleId, autoScopes.get(ruleId) ? roots : undefined);
     }
   };
   for (const entry of typeof requested === "string" ? [requested] : requested) {
     if (entry === "auto") {
-      selectActivated();
+      selectActivated("recommended");
+      continue;
+    }
+    if (entry === "strict") {
+      selectActivated("strict");
       continue;
     }
     const slash = entry.lastIndexOf("/");
@@ -664,10 +668,12 @@ function resolveRuleOverrides(
     if (
       entries !== undefined &&
       (!Array.isArray(entries) ||
-        entries.some((entry) => typeof entry !== "string" || entry === "auto"))
+        entries.some(
+          (entry) => typeof entry !== "string" || entry === "auto" || entry === "strict",
+        ))
     )
       throw invalid(
-        '`extends` must be an array of "pack/preset" entries. "auto" applies to the whole project, so it belongs in the top-level `extends`.',
+        '`extends` must be an array of "pack/preset" entries. "auto" and "strict" apply to the whole project, so they belong in the top-level `extends`.',
       );
     if (
       rules !== undefined &&

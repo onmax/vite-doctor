@@ -574,7 +574,8 @@ function agentRunArguments(
     if (result.scope.base) args.push("--since", result.scope.base);
     else args.push("--changed");
   }
-  if (Array.isArray(result.extends) && result.extends.length)
+  if (result.extends === "strict") args.push("--strict");
+  else if (Array.isArray(result.extends) && result.extends.length)
     args.push("--extends", result.extends.join(","));
   const options = context.runOptions;
   if (context.configFile) args.push("--config", context.configFile);

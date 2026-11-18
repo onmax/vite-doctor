@@ -1,6 +1,7 @@
 import { loadConfig } from "c12";
 import { defu } from "defu";
 import type {
+  DoctorExtends,
   DoctorExtensionInput,
   DoctorFramework,
   DoctorSerializableConfig,
@@ -22,7 +23,7 @@ export interface DoctorRunOptions {
   /** Already-loaded Doctor config. */
   config?: DoctorConfig;
   framework?: "auto" | DoctorFramework;
-  extends?: "auto" | string[];
+  extends?: DoctorExtends;
   changed?: boolean;
   since?: string;
   /**

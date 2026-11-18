@@ -32,7 +32,8 @@ pnpm nuxt doctor
 `pnpm nuxt doctor --max-warnings 0` fails a CI job on Nuxt 4.6 and later. Nuxt 4.1
 to 4.5 exit `0` after `nuxt doctor` whatever Doctor finds; there, use
 `pnpm vite-doctor . --host-extensions --max-warnings 0` and `pnpm vite-doctor migrate .`
-when the exit code matters.
+when the exit code matters. Add `--strict` (or `"extends": "strict"` in config) to run
+every activated Rule Pack's strict preset, which adds noisier and opinionated Rules.
 
 The standalone CLI also works for Nuxt one-off runs, CI fallback, or monorepo scans.
 

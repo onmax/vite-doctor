@@ -78,6 +78,24 @@ test("a workspace package activates the Vue Rule Pack when the root only depends
   });
 });
 
+test("extends strict scopes each strict preset to the workspace packages that activate it", async () => {
+  const shorthand = '<template><button type="button" :disabled="true">Save</button></template>\n';
+  const root = nitroRootMonorepo({
+    "packages/app/src/Save.vue": shorthand,
+    "packages/lib/src/Save.vue": shorthand,
+  });
+  const strictRule = "vue/template/prefer-true-attribute-shorthand";
+  const filesFor = (result: Awaited<ReturnType<typeof runViteDoctor>>) =>
+    result.diagnostics
+      .filter((diagnostic) => diagnostic.ruleId === strictRule)
+      .map((diagnostic) => diagnostic.file.slice(root.length + 1));
+
+  expect(filesFor(await runViteDoctor({ root, cache: false, severity: "info" }))).toEqual([]);
+  expect(
+    filesFor(await runViteDoctor({ root, cache: false, severity: "info", extends: "strict" })),
+  ).toEqual(["packages/app/src/Save.vue"]);
+});
+
 test("agent commands rerun workspace Doctor Runs with automatic framework selection", async () => {
   const root = nitroRootMonorepo();
   const result = await runViteDoctor({ root, cache: false });

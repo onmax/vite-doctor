@@ -444,6 +444,7 @@ test.each([
   [{ files: [], rules: {} }],
   [{ files: "src/**", rules: {} }],
   [{ files: ["src/**"], extends: ["auto"] }],
+  [{ files: ["src/**"], extends: ["strict"] }],
   [{ files: ["src/**"], extends: [42] }],
   [{ files: ["src/**"], rules: false }],
   [{ files: ["src/**"], rules: [] }],
