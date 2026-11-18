@@ -162,6 +162,7 @@ async function selectAllFiles(
   config: DoctorConfig,
   project: ProjectInfo,
   memo?: SourceInventoryMemo,
+  htmlOnly = false,
 ): Promise<ScanFileEntry[]> {
   const authored = (file: string) => {
     const remembered = memo?.authored(file);
@@ -172,15 +173,16 @@ async function selectAllFiles(
   };
   const files = new Map<string, ScanFileEntry>();
   const exclude = [...DEFAULT_EXCLUDE, ...(config.exclude ?? [])];
-  const include = config.include ?? defaultIncludeForProject(project);
+  const include = config.include ?? (htmlOnly ? ["**/*.html"] : defaultIncludeForProject(project));
   const ignoredPaths = listGitIgnoredPaths(root);
   const walk = takeProjectFileWalk(project, root) ?? new ProjectFileWalk(root);
   const selected = await selectProjectFiles(walk, include, exclude, memo);
   const ignored = gitIgnoreMatcher(await ignoredPaths);
   for (const file of selected) {
-    if (!ignored(relative(root, file)) && authored(file))
+    if ((!htmlOnly || file.endsWith(".html")) && !ignored(relative(root, file)) && authored(file))
       files.set(file, createAppFileEntry(root, file));
   }
+  if (htmlOnly) return [...files.values()];
 
   for (const source of projectNuxtInventories(project).flatMap(
     (nuxt) => nuxt.moduleSources ?? [],
@@ -200,6 +202,10 @@ async function selectAllFiles(
   }
 
   return [...files.values()].sort((a, b) => a.displayPath.localeCompare(b.displayPath));
+}
+
+export async function selectHtmlPaths(root: string, config: DoctorConfig, project: ProjectInfo) {
+  return (await selectAllFiles(root, config, project, undefined, true)).map((file) => file.path);
 }
 
 function gitIgnoreMatcher(paths: string[] | undefined): (path: string) => boolean {

@@ -1,21 +1,33 @@
-import { dirname, relative, resolve } from "pathe";
+import { matchesGlob } from "node:path";
+import type { SFCDescriptor } from "@vue/compiler-sfc";
+import { dirname, isAbsolute, relative, resolve } from "pathe";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseSfcFile, parseVueScripts } from "../../../core/internal/sfc.js";
-// oxlint-disable-next-line no-restricted-imports -- walks the project tree, so the Rule declares cacheScope "none".
-import { selectScanFiles } from "../../../core/internal/source-inventory.js";
 import { diagnostics } from "../../../diagnostics.js";
-import { propertyName, SOURCE_EXCLUDE, type AnyNode } from "./shared.js";
+import { propertyName, type AnyNode } from "./shared.js";
 
 const RULE_ID = "vite/plugin/no-fragment-in-virtual-id";
 const UNKNOWN = Symbol("unknown");
-type Value = string | number | boolean | null | undefined | RegExp | Value[] | typeof UNKNOWN;
+const CLIENT_OPTIONS = Symbol("client options");
+const CLIENT_ENVIRONMENT = Symbol("client environment");
+const CLIENT_ENV_CONFIG = Symbol("client environment config");
+type Value =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | RegExp
+  | Value[]
+  | typeof UNKNOWN
+  | typeof CLIENT_OPTIONS
+  | typeof CLIENT_ENVIRONMENT
+  | typeof CLIENT_ENV_CONFIG;
 
 const scriptExtensions = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 // An import whose specifier holds "#": the only imports whose resolved id can carry one by convention.
 const hashImportRe = /(?:\bfrom|\bimport)\s*\(?\s*["'`][^"'`\n]*#[^"'`\n]*["'`]/;
-// Conditions that can keep a resolveId branch away from the browser.
-const environmentGateRe = /\bssr\b|environment|consumer/i;
 const typeWrappers = new Set([
   "TSAsExpression",
   "TSTypeAssertion",
@@ -43,45 +55,37 @@ export const noFragmentInVirtualId = createRule({
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        const files = (await selectScanFiles(ctx.project.root, {}, {}, ctx.project)).filter(
-          (entry) => entry.sourceKind !== "module",
-        );
-        const modules = new ModuleReader(ctx);
-        const hooks: ResolveIdHook[] = [];
-        for (const entry of files) {
-          if (entry.path.endsWith(".vue")) continue;
-          const text = ctx.fs.readText(entry.path);
-          if (!text?.includes("resolveId")) continue;
-          const module = modules.read(entry.path);
-          if (module) hooks.push(...findResolveIdHooks(module));
-        }
-        if (!hooks.length) return;
-        const importers = await findBrowserImports(ctx, files, modules);
+        const files = new Set(await ctx.inventory.sourcePaths());
+        const modules = new ModuleReader(ctx, files);
+        const apps = viteApps(modules, files);
+        if (!apps.some((app) => app.hooks?.length)) return;
+        const importers = await findBrowserImports(ctx, files, modules, apps);
         if (!importers.length) return;
 
         const findings = new Map<string, Finding>();
-        for (const hook of hooks) {
-          for (const imported of importers) {
-            for (const resolved of resolveSpecifier(hook, imported.specifier, modules)) {
-              if (typeof resolved.value !== "string" || !resolved.value.includes("#")) continue;
-              const site = reportSite(hook.module, resolved.node);
-              const key = `${hook.module.path}\0${site.start}\0${resolved.value}`;
-              const finding = findings.get(key) ?? {
-                file: hook.module.path,
-                range: ctx.helpers.rangeFromOffsets(
-                  hook.module.path,
-                  hook.module.text,
-                  site.start,
-                  site.end,
-                ),
-                id: resolved.value,
-                specifier: imported.specifier,
-                importers: [],
-              };
-              if (!finding.importers.some((item) => item.file === imported.file))
-                finding.importers.push(imported);
-              findings.set(key, finding);
-            }
+        for (const imported of importers) {
+          if (/^(?:[a-z]+:)?\/\/|^data:/.test(imported.specifier)) continue;
+          const app = imported.app;
+          for (const hook of app?.hooks ?? []) {
+            if (!hook.beforeBuiltin && couldResolveBuiltin(imported, modules)) break;
+            const resolved = resolveSpecifier(hook, imported, modules);
+            if (resolved === UNKNOWN) break;
+            if (!resolved) continue;
+            if (!resolved.wrapped || !resolved.value.includes("#")) break;
+            const site = resolved.node;
+            const { module } = hook.scope;
+            const key = `${module.path}\0${site.start}\0${resolved.value}`;
+            const finding = findings.get(key) ?? {
+              file: module.path,
+              range: ctx.helpers.rangeFromOffsets(module.path, module.text, site.start, site.end),
+              id: resolved.value,
+              specifier: imported.specifier,
+              importers: [],
+            };
+            if (!finding.importers.some((item) => item.file === imported.file))
+              finding.importers.push(imported);
+            findings.set(key, finding);
+            break;
           }
         }
         for (const finding of findings.values()) report(ctx, finding);
@@ -103,6 +107,7 @@ interface BrowserImport {
   specifier: string;
   range: SourceRange;
   evidence: string;
+  app: ViteApp;
 }
 
 function report(ctx: RuleContext, finding: Finding) {
@@ -163,6 +168,7 @@ interface ParsedModule {
   text: string;
   program: AnyNode;
   consts: Map<string, AnyNode>;
+  functions: Map<string, AnyNode>;
   imports: Map<string, { source: string; imported: string }>;
   exports: Map<string, { local?: string; source?: string; imported?: string }>;
   starExports: string[];
@@ -170,12 +176,15 @@ interface ParsedModule {
 
 class ModuleReader {
   private readonly modules = new Map<string, ParsedModule | null>();
-  private readonly ctx: RuleContext;
-  constructor(ctx: RuleContext) {
+  readonly ctx: RuleContext;
+  private readonly files: ReadonlySet<string>;
+  constructor(ctx: RuleContext, files: ReadonlySet<string>) {
     this.ctx = ctx;
+    this.files = files;
   }
 
   read(path: string): ParsedModule | null {
+    if (!this.files.has(path)) return null;
     if (this.modules.has(path)) return this.modules.get(path)!;
     this.modules.set(path, null);
     const text = this.ctx.fs.readText(path);
@@ -216,7 +225,8 @@ class ModuleReader {
       ...scriptExtensions.map((extension) => `${stripped}${extension}`),
       ...scriptExtensions.map((extension) => `${base}/index${extension}`),
     ];
-    return candidates.find((file) => this.ctx.fs.stat(file)?.isFile());
+    const file = candidates.find((file) => this.ctx.fs.stat(file)?.isFile());
+    return file && this.files.has(file) ? file : undefined;
   }
 }
 
@@ -249,13 +259,23 @@ function describeModule(path: string, text: string, program: AnyNode): ParsedMod
     text,
     program,
     consts: new Map(),
+    functions: new Map(),
     imports: new Map(),
     exports: new Map(),
     starExports: [],
   };
   for (const statement of program.body ?? []) {
     const declaration =
-      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+      statement.type === "ExportNamedDeclaration" || statement.type === "ExportDefaultDeclaration"
+        ? statement.declaration
+        : statement;
+    if (statement.type === "ExportDefaultDeclaration")
+      module.exports.set("default", { local: "*default*" });
+    if (declaration?.type === "FunctionDeclaration" && declaration.id) {
+      module.functions.set(declaration.id.name, declaration);
+      if (statement.type === "ExportNamedDeclaration")
+        module.exports.set(declaration.id.name, { local: declaration.id.name });
+    }
     if (declaration?.type === "VariableDeclaration" && declaration.kind === "const") {
       for (const item of declaration.declarations) {
         if (item.id.type !== "Identifier" || !item.init) continue;
@@ -265,10 +285,17 @@ function describeModule(path: string, text: string, program: AnyNode): ParsedMod
     }
     if (statement.type === "ImportDeclaration" && statement.importKind !== "type") {
       for (const specifier of statement.specifiers ?? []) {
-        if (specifier.type !== "ImportSpecifier" || specifier.importKind === "type") continue;
+        if (
+          specifier.importKind === "type" ||
+          !["ImportSpecifier", "ImportDefaultSpecifier"].includes(specifier.type)
+        )
+          continue;
         module.imports.set(specifier.local.name, {
           source: String(statement.source.value),
-          imported: propertyName(specifier.imported) ?? specifier.local.name,
+          imported:
+            specifier.type === "ImportDefaultSpecifier"
+              ? "default"
+              : (propertyName(specifier.imported) ?? specifier.local.name),
         });
       }
     }
@@ -296,6 +323,15 @@ interface Scope {
   modules: ModuleReader;
   locals: Map<string, Value>;
   depth: number;
+  clientThis?: boolean;
+}
+
+function clientMember(target: Value, key: string | null): Value {
+  if (target === CLIENT_OPTIONS && (key === "ssr" || key === "isEntry")) return false;
+  if (target === CLIENT_ENVIRONMENT && key === "name") return "client";
+  if (target === CLIENT_ENVIRONMENT && key === "config") return CLIENT_ENV_CONFIG;
+  if (target === CLIENT_ENV_CONFIG && key === "consumer") return "client";
+  return UNKNOWN;
 }
 
 function unwrap(node: AnyNode): AnyNode {
@@ -332,6 +368,15 @@ function evaluate(input: AnyNode, scope: Scope): Value {
     }
     case "Identifier":
       return identifierValue(node.name, scope);
+    case "ChainExpression":
+      return evaluate(node.expression, scope);
+    case "MemberExpression": {
+      const key = node.computed ? evaluate(node.property, scope) : propertyName(node.property);
+      if (typeof key !== "string") return UNKNOWN;
+      if (scope.clientThis && node.object.type === "ThisExpression" && key === "environment")
+        return CLIENT_ENVIRONMENT;
+      return clientMember(evaluate(node.object, scope), key);
+    }
     case "ArrayExpression": {
       const values: Value[] = [];
       for (const element of node.elements) {
@@ -438,325 +483,458 @@ function importedValue(scope: Scope, from: ParsedModule, source: string, name: s
 }
 
 function isPrimitive(value: Value): value is string | number | boolean | null | undefined {
-  return value !== UNKNOWN && !(value instanceof RegExp) && !Array.isArray(value);
+  return typeof value !== "symbol" && !(value instanceof RegExp) && !Array.isArray(value);
 }
 
 interface ResolveIdHook {
-  module: ParsedModule;
+  scope: Scope;
   fn: AnyNode;
-  param: string | null;
   filter: AnyNode;
+  priority: number;
+  enforce: number;
+  beforeBuiltin: boolean;
 }
 
-function findResolveIdHooks(module: ParsedModule): ResolveIdHook[] {
-  const hooks: ResolveIdHook[] = [];
-  walk(module.program, (node) => {
-    if (node.type !== "ObjectExpression") return;
-    const properties = new Map<string, AnyNode>();
-    for (const property of node.properties) {
-      if (property.type !== "Property" || property.computed) continue;
-      const key = propertyName(property.key);
-      if (key) properties.set(key, property);
-    }
-    const hook = properties.get("resolveId");
-    if (!hook || (!properties.has("name") && !properties.has("load"))) return;
-    const apply = unwrap(properties.get("apply")?.value);
-    if (apply?.type === "Literal" && apply.value === "build") return;
-    // A plugin limited by applyToEnvironment may never run for the browser environment.
-    if (properties.has("applyToEnvironment")) return;
-    let fn = unwrap(hook.value);
-    let filter: AnyNode = null;
-    if (fn?.type === "ObjectExpression") {
-      for (const property of fn.properties) {
-        const key =
-          property.type === "Property" && !property.computed ? propertyName(property.key) : null;
-        if (key === "handler") fn = unwrap(property.value);
-        if (key === "filter") filter = unwrap(property.value);
+interface ViteApp {
+  directory: string;
+  root: string;
+  hooks?: ResolveIdHook[];
+}
+
+function within(root: string, file: string) {
+  const path = relative(root, file);
+  return path !== ".." && !path.startsWith("../") && !isAbsolute(path);
+}
+
+function viteApps(modules: ModuleReader, files: ReadonlySet<string>): ViteApp[] {
+  const pattern = /^vite\.config\.[cm]?[jt]s$/;
+  const directories = new Set(
+    [...files].filter((file) => pattern.test(file.split("/").at(-1)!)).map(dirname),
+  );
+  const checked = new Set<string>();
+  for (const file of files) {
+    for (
+      let directory = dirname(file);
+      within(modules.ctx.project.root, directory);
+      directory = dirname(directory)
+    ) {
+      if (directories.has(directory) || checked.has(directory)) break;
+      checked.add(directory);
+      if (
+        scriptExtensions.some((extension) =>
+          modules.ctx.fs.stat(resolve(directory, `vite.config${extension}`))?.isFile(),
+        )
+      ) {
+        directories.add(directory);
+        break;
       }
+      if (directory === modules.ctx.project.root) break;
     }
-    if (!fn || !/Function/.test(fn.type)) return;
-    const first = fn.params[0];
-    hooks.push({
-      module,
-      fn,
-      param: first?.type === "Identifier" ? first.name : null,
-      filter,
-    });
+  }
+  return [...directories].map((directory) => {
+    const app: ViteApp = { directory, root: directory };
+    const candidates = scriptExtensions
+      .filter((extension) => pattern.test(`vite.config${extension}`))
+      .map((extension) => resolve(directory, `vite.config${extension}`))
+      .filter((file) => modules.ctx.fs.stat(file)?.isFile());
+    const module = candidates.length === 1 ? modules.read(candidates[0]!) : null;
+    if (!module) return app;
+    const scope: Scope = { module, modules, locals: new Map(), depth: 0 };
+    let config = unwrap(
+      module.program.body.find((node: AnyNode) => node.type === "ExportDefaultDeclaration")
+        ?.declaration,
+    );
+    if (config?.type === "CallExpression" && config.callee.type === "Identifier") {
+      const binding = module.imports.get(config.callee.name);
+      if (binding?.source !== "vite" || binding.imported !== "defineConfig") return app;
+      config = unwrap(config.arguments[0]);
+    }
+    if (config?.type === "Identifier") config = unwrap(module.consts.get(config.name)?.init);
+    if (
+      !staticObject(config) ||
+      ["resolve", "environments", "experimental"].some((key) => filterProperty(config, key))
+    )
+      return app;
+    const root = filterProperty(config, "root");
+    if (root) {
+      const value = evaluate(root, scope);
+      if (typeof value !== "string") return app;
+      app.root = resolve(directory, value);
+    }
+    const hooks: ResolveIdHook[] = [];
+    const plugins = filterProperty(config, "plugins");
+    if (plugins && !collectPlugins(plugins, scope, hooks)) return app;
+    app.hooks = hooks.sort(
+      (left, right) => left.priority - right.priority || left.enforce - right.enforce,
+    );
+    return app;
   });
-  return hooks;
+}
+
+function owningApp(apps: ViteApp[], file: string): ViteApp | undefined {
+  return apps
+    .filter((app) => within(app.directory, file) || within(app.root, file))
+    .sort((left, right) => ownershipDepth(right, file) - ownershipDepth(left, file))[0];
+}
+
+function ownershipDepth(app: ViteApp, file: string) {
+  return within(app.root, file)
+    ? Math.max(app.root.length, app.directory.length)
+    : app.directory.length;
+}
+
+function staticObject(node: AnyNode): boolean {
+  return (
+    node?.type === "ObjectExpression" &&
+    node.properties.every(
+      (property: AnyNode) =>
+        property.type === "Property" && !property.computed && property.kind === "init",
+    )
+  );
+}
+
+function collectPlugins(input: AnyNode, scope: Scope, hooks: ResolveIdHook[]): boolean {
+  const node = unwrap(input);
+  if (!node || scope.depth > 24) return false;
+  const next = { ...scope, depth: scope.depth + 1 };
+  if (node.type === "ArrayExpression")
+    return node.elements.every(
+      (element: AnyNode) => !element || collectPlugins(element, next, hooks),
+    );
+  if (node.type === "CallExpression") {
+    const callee = unwrap(node.callee);
+    if (callee?.type !== "Identifier") return false;
+    const target = resolvePluginBinding(callee.name, scope);
+    if (!target || !/Function/.test(target.node.type) || target.node.async || target.node.generator)
+      return false;
+    const locals = new Map<string, Value>();
+    const fn = target.node;
+    for (const [index, param] of fn.params.entries()) {
+      if (param.type !== "Identifier") return false;
+      const value = node.arguments[index] ? evaluate(node.arguments[index], scope) : undefined;
+      locals.set(param.name, value);
+    }
+    const body = fn.body;
+    const returned =
+      body.type === "BlockStatement"
+        ? body.body.length === 1 && body.body[0].type === "ReturnStatement"
+          ? body.body[0].argument
+          : null
+        : body;
+    return collectPlugins(returned, { ...target.scope, depth: next.depth, locals }, hooks);
+  }
+  if (node.type === "Identifier") {
+    const target = resolvePluginBinding(node.name, scope);
+    return (
+      target !== undefined &&
+      collectPlugins(target.node, { ...target.scope, depth: next.depth }, hooks)
+    );
+  }
+  if (node.type === "Literal" && !node.value) return true;
+  if (!staticObject(node)) return false;
+  const apply = filterProperty(node, "apply");
+  if (apply && evaluate(apply, scope) === "build") return true;
+  if (apply && evaluate(apply, scope) !== "serve") return false;
+  if (filterProperty(node, "config") || filterProperty(node, "configResolved")) return false;
+  let fn = filterProperty(node, "resolveId");
+  if (!fn) return true;
+  if (filterProperty(node, "applyToEnvironment")) return false;
+  let filter: AnyNode = null;
+  let priority = 0;
+  if (staticObject(fn)) {
+    const order = filterProperty(fn, "order");
+    if (order) {
+      const value = evaluate(order, scope);
+      if (value !== "pre" && value !== "post") return false;
+      priority = value === "pre" ? -1 : 1;
+    }
+    filter = filterProperty(fn, "filter");
+    fn = filterProperty(fn, "handler");
+  }
+  if (!fn || !/Function/.test(fn.type) || fn.generator) return false;
+  const enforceNode = filterProperty(node, "enforce");
+  const enforceValue = enforceNode ? evaluate(enforceNode, scope) : undefined;
+  if (enforceValue !== undefined && enforceValue !== "pre" && enforceValue !== "post") return false;
+  const enforce = enforceValue === "pre" ? -1 : enforceValue === "post" ? 1 : 0;
+  hooks.push({
+    scope,
+    fn,
+    filter,
+    priority,
+    enforce,
+    beforeBuiltin: priority < 0 || (priority === 0 && enforce < 0),
+  });
+  return true;
+}
+
+function resolvePluginBinding(
+  name: string,
+  scope: Scope,
+): { node: AnyNode; scope: Scope } | undefined {
+  if (scope.depth > 24 || scope.locals.has(name)) return undefined;
+  const node =
+    name === "*default*"
+      ? scope.module.program.body.find(
+          (statement: AnyNode) => statement.type === "ExportDefaultDeclaration",
+        )?.declaration
+      : (scope.module.consts.get(name)?.init ?? scope.module.functions.get(name));
+  if (node) return { node: unwrap(node), scope: { ...scope, locals: new Map() } };
+  const imported = scope.module.imports.get(name);
+  if (!imported) return undefined;
+  const file = scope.modules.resolveImport(scope.module.path, imported.source);
+  const module = file ? scope.modules.read(file) : null;
+  const exported = module?.exports.get(imported.imported);
+  if (!module || !exported?.local) return undefined;
+  return resolvePluginBinding(exported.local, {
+    ...scope,
+    module,
+    locals: new Map(),
+    depth: scope.depth + 1,
+  });
+}
+
+function couldResolveBuiltin(imported: BrowserImport, modules: ModuleReader) {
+  const specifier = imported.specifier;
+  if (/^(?:\.|\/|[\w-]+:)/.test(specifier) && !specifier.startsWith("virtual:")) return true;
+  if (!specifier.startsWith("#")) return false;
+  const { fs, project } = modules.ctx;
+  for (let dir = dirname(imported.file); within(project.root, dir); dir = dirname(dir)) {
+    const path = resolve(dir, "package.json");
+    if (fs.stat(path)?.isFile()) {
+      const manifest = fs.readJson(path) as { imports?: unknown } | undefined;
+      return !manifest || Boolean(manifest.imports);
+    }
+    if (dir === project.root) break;
+  }
+  return false;
 }
 
 interface ResolvedValue {
-  value: Value;
+  value: string;
   node: AnyNode;
+  wrapped: boolean;
 }
 
-/** The ids a resolveId hook can return for one import specifier, when a filter or a branch on the specifier selects them. */
 function resolveSpecifier(
   hook: ResolveIdHook,
-  specifier: string,
+  imported: BrowserImport,
   modules: ModuleReader,
-): ResolvedValue[] {
-  if (!hook.param) return [];
-  const scope: Scope = {
-    module: hook.module,
-    modules,
-    locals: new Map([[hook.param, specifier]]),
-    depth: 0,
-  };
-  let linked = false;
-  const filter = filterProperty(hook.filter, "id");
-  if (filter) {
-    const passes = filterPasses(filter, specifier, scope);
-    if (passes === false) return [];
-    linked = passes === true;
+): ResolvedValue | null | typeof UNKNOWN {
+  if (hook.filter) {
+    if (!staticObject(hook.filter)) return UNKNOWN;
+    const filter = filterProperty(hook.filter, "id");
+    if (filter) {
+      const passes = filterPasses(filter, imported.specifier, hook.scope);
+      if (passes === UNKNOWN) return UNKNOWN;
+      if (!passes) return null;
+    }
   }
-  const results: ResolvedValue[] = [];
-  const onReturn = (argument: AnyNode, state: PathState, locals: Map<string, Value>) => {
-    if (!argument || state.gated || !(linked || state.linked)) return;
-    for (const resolved of possibleValues(argument, { ...scope, locals })) results.push(resolved);
+  const scope: Scope = {
+    ...hook.scope,
+    modules,
+    locals: new Map(hook.scope.locals),
+    clientThis: hook.fn.type !== "ArrowFunctionExpression",
   };
-  if (hook.fn.body.type !== "BlockStatement")
-    onReturn(hook.fn.body, { gated: false, linked: false }, scope.locals);
-  else
-    execute(
-      hook.fn.body.body,
-      new Map(scope.locals),
-      { gated: false, linked: false },
-      {
-        scope,
-        param: hook.param,
-        onReturn,
-      },
-    );
-  return results;
+  const args: Value[] = [imported.specifier, imported.file, CLIENT_OPTIONS];
+  for (const [index, param] of hook.fn.params.entries()) {
+    if (param.type === "Identifier") scope.locals.set(param.name, args[index]);
+    else if (param.type === "ObjectPattern" && index === 2) {
+      bindUnknown(param, scope.locals);
+      for (const prop of param.properties) {
+        if (prop.type !== "Property" || prop.computed || prop.value.type !== "Identifier") continue;
+        scope.locals.set(prop.value.name, clientMember(CLIENT_OPTIONS, propertyName(prop.key)));
+      }
+    } else bindUnknown(param, scope.locals);
+  }
+  const body = hook.fn.body;
+  let hasVar = false;
+  walk(body, (node) => {
+    if (node.type === "VariableDeclaration" && node.kind === "var") hasVar = true;
+  });
+  if (hasVar) return UNKNOWN;
+  const result =
+    body.type === "BlockStatement" ? execute(body.body, scope) : resolvedValue(body, scope);
+  return result === FALLS ? null : result === BREAKS ? UNKNOWN : result;
 }
 
 function filterProperty(filter: AnyNode, key: string): AnyNode {
   if (filter?.type !== "ObjectExpression") return null;
-  for (const property of filter.properties) {
+  for (const property of [...filter.properties].reverse()) {
     if (property.type === "Property" && !property.computed && propertyName(property.key) === key)
       return unwrap(property.value);
   }
   return null;
 }
 
-function filterPasses(filter: AnyNode, specifier: string, scope: Scope): boolean | null {
-  const matches = (pattern: Value): boolean | null => {
+function filterPasses(filter: AnyNode, specifier: string, scope: Scope): boolean | typeof UNKNOWN {
+  const id = specifier.replaceAll("\\", "/");
+  const matches = (pattern: Value): boolean | typeof UNKNOWN => {
     if (pattern instanceof RegExp) {
       pattern.lastIndex = 0;
-      return pattern.test(specifier);
+      return pattern.test(id);
     }
-    if (typeof pattern === "string") return pattern === specifier;
-    if (Array.isArray(pattern)) {
-      const results = pattern.map(matches);
-      if (results.includes(true)) return true;
-      return results.includes(null) ? null : false;
+    if (typeof pattern === "string") {
+      if (!pattern.startsWith("**") && !isAbsolute(pattern) && !isAbsolute(id)) return false;
+      // Match the common subset where Node's glob matcher and Vite's dot-enabled picomatch agree.
+      if (!/^[\w/#.:*-]+$/.test(pattern) || id.split("/").some((part) => part.startsWith(".")))
+        return UNKNOWN;
+      if (!pattern.startsWith("**") && !isAbsolute(pattern)) return UNKNOWN;
+      return matchesGlob(id, pattern);
     }
-    return null;
+    return UNKNOWN;
+  };
+  const list = (node: AnyNode, empty: boolean): boolean | typeof UNKNOWN => {
+    if (!node) return empty;
+    const value = evaluate(node, scope);
+    if (!Array.isArray(value)) return matches(value);
+    if (!value.length) return empty;
+    const results = value.map(matches);
+    return results.includes(true) ? true : results.includes(UNKNOWN) ? UNKNOWN : false;
   };
   if (filter.type === "ObjectExpression") {
-    const include = filterProperty(filter, "include");
-    const exclude = filterProperty(filter, "exclude");
-    if (exclude && matches(evaluate(exclude, scope)) === true) return false;
-    return include ? matches(evaluate(include, scope)) : null;
+    if (!staticObject(filter)) return UNKNOWN;
+    const excluded = list(filterProperty(filter, "exclude"), false);
+    const included = list(filterProperty(filter, "include"), true);
+    if (excluded === true || included === false) return false;
+    return excluded === UNKNOWN ? UNKNOWN : included;
   }
-  return matches(evaluate(filter, scope));
+  return list(filter, true);
 }
 
-interface PathState {
-  /** A condition about SSR or the Vite environment chose this branch. */
-  gated: boolean;
-  /** A filter or a condition on the specifier chose this branch. */
-  linked: boolean;
+const FALLS = Symbol("fallthrough");
+const BREAKS = Symbol("break");
+type ExecutionResult = ResolvedValue | null | typeof UNKNOWN | typeof FALLS | typeof BREAKS;
+
+function bindUnknown(pattern: AnyNode, locals: Map<string, Value>): void {
+  switch (pattern?.type) {
+    case "Identifier":
+      locals.set(pattern.name, UNKNOWN);
+      break;
+    case "ObjectPattern":
+      for (const prop of pattern.properties)
+        bindUnknown(prop.type === "RestElement" ? prop.argument : prop.value, locals);
+      break;
+    case "ArrayPattern":
+      for (const item of pattern.elements) bindUnknown(item, locals);
+      break;
+    case "AssignmentPattern":
+      bindUnknown(pattern.left, locals);
+      break;
+    case "RestElement":
+      bindUnknown(pattern.argument, locals);
+      break;
+  }
 }
 
-interface Execution {
-  scope: Scope;
-  param: string;
-  onReturn(argument: AnyNode, state: PathState, locals: Map<string, Value>): void;
-}
-
-/** Walks statements for one specifier and reports every return it can reach. Returns whether control can fall through. */
-function execute(
-  statements: AnyNode[],
-  locals: Map<string, Value>,
-  state: PathState,
-  run: Execution,
-): boolean {
+function execute(statements: AnyNode[], parent: Scope, declarations = statements): ExecutionResult {
+  const locals = new Map(parent.locals);
+  const scope = { ...parent, locals };
+  for (const statement of declarations) {
+    if (statement.type === "VariableDeclaration")
+      for (const item of statement.declarations) bindUnknown(item.id, locals);
+    if (["FunctionDeclaration", "ClassDeclaration"].includes(statement.type))
+      bindUnknown(statement.id, locals);
+  }
   for (const statement of statements) {
-    if (!executeStatement(statement, locals, state, run)) return false;
+    const result = executeStatement(statement, scope);
+    if (result !== FALLS) return result;
   }
-  return true;
+  return FALLS;
 }
 
-function executeStatement(
-  statement: AnyNode,
-  locals: Map<string, Value>,
-  state: PathState,
-  run: Execution,
-): boolean {
-  const scope = { ...run.scope, locals };
+function executeStatement(statement: AnyNode, scope: Scope): ExecutionResult {
   switch (statement?.type) {
-    case "ReturnStatement":
-      run.onReturn(statement.argument, state, locals);
-      return false;
     case "BlockStatement":
-      return execute(statement.body, locals, state, run);
+      return execute(statement.body, scope);
+    case "ReturnStatement":
+      return resolvedValue(statement.argument, scope);
+    case "BreakStatement":
+      return statement.label ? UNKNOWN : BREAKS;
+    case "EmptyStatement":
+    case "FunctionDeclaration":
+    case undefined:
+      return FALLS;
     case "VariableDeclaration":
+      if (statement.kind === "var") return UNKNOWN;
       for (const item of statement.declarations) {
-        if (item.id.type !== "Identifier") continue;
-        locals.set(
-          item.id.name,
-          statement.kind === "const" && item.init ? evaluate(item.init, scope) : UNKNOWN,
-        );
+        if (item.id.type === "Identifier" && statement.kind === "const")
+          scope.locals.set(item.id.name, evaluate(item.init, scope));
       }
-      return true;
+      return FALLS;
     case "IfStatement": {
-      const test = evaluate(statement.test, scope);
-      const onSpecifier = mentions(statement.test, run.param);
-      if (test !== UNKNOWN) {
-        // A guard such as `if (id !== VIRTUAL_ID) return` lets only that specifier reach what follows.
-        if (onSpecifier && (test || isNegation(statement.test))) state.linked = true;
-        const branch = test ? statement.consequent : statement.alternate;
-        return branch ? executeStatement(branch, new Map(locals), { ...state }, run) : true;
-      }
-      const consequentState = conjunctState(statement.test, scope, run, state);
-      const elseState = {
-        gated: state.gated || environmentGateRe.test(sourceOf(run.scope.module, statement.test)),
-        linked: state.linked,
-      };
-      const consequent = consequentState
-        ? executeStatement(statement.consequent, new Map(locals), consequentState, run)
-        : true;
-      // The else branch of a test on the specifier is reached by every other specifier.
-      const alternate =
-        statement.alternate && !onSpecifier
-          ? executeStatement(statement.alternate, new Map(locals), elseState, run)
-          : true;
-      return consequent || alternate;
+      const condition = evaluate(statement.test, scope);
+      return condition === UNKNOWN
+        ? UNKNOWN
+        : executeStatement(condition ? statement.consequent : statement.alternate, scope);
     }
     case "SwitchStatement": {
       const discriminant = evaluate(statement.discriminant, scope);
-      const onSpecifier = mentions(statement.discriminant, run.param);
-      let matched = false;
-      for (const item of statement.cases) {
-        if (!matched) {
-          const value = item.test ? evaluate(item.test, scope) : discriminant;
-          if (discriminant === UNKNOWN || value === UNKNOWN) {
-            if (onSpecifier) continue;
-          } else if (item.test && value !== discriminant) continue;
-          matched = discriminant !== UNKNOWN && value !== UNKNOWN;
-          if (matched && onSpecifier) state.linked = true;
-          const falls = execute(item.consequent, new Map(locals), { ...state }, run);
-          if (matched && !falls) return false;
+      if (discriminant === UNKNOWN) return UNKNOWN;
+      const declarations = statement.cases.flatMap((item: AnyNode) => item.consequent);
+      const caseScope = { ...scope, locals: new Map(scope.locals) };
+      for (const declaration of declarations) {
+        if (declaration.type === "VariableDeclaration")
+          for (const item of declaration.declarations) bindUnknown(item.id, caseScope.locals);
+        if (["FunctionDeclaration", "ClassDeclaration"].includes(declaration.type))
+          bindUnknown(declaration.id, caseScope.locals);
+      }
+      let start = -1;
+      let fallback = -1;
+      for (const [index, item] of statement.cases.entries()) {
+        if (!item.test) {
+          fallback = index;
           continue;
         }
-        if (!execute(item.consequent, new Map(locals), state, run)) return false;
+        const value = evaluate(item.test, caseScope);
+        if (value === UNKNOWN) return UNKNOWN;
+        if (value === discriminant) {
+          start = index;
+          break;
+        }
       }
-      return true;
+      if (start < 0) start = fallback;
+      if (start < 0) return FALLS;
+      const result = execute(
+        statement.cases.slice(start).flatMap((item: AnyNode) => item.consequent),
+        caseScope,
+        declarations,
+      );
+      return result === BREAKS ? FALLS : result;
     }
-    case "TryStatement":
-      execute(statement.block.body, new Map(locals), state, run);
-      if (statement.handler) execute(statement.handler.body.body, new Map(locals), state, run);
-      return statement.finalizer
-        ? execute(statement.finalizer.body, new Map(locals), state, run)
-        : true;
-    case "ForStatement":
-    case "ForOfStatement":
-    case "ForInStatement":
-    case "WhileStatement":
-    case "DoWhileStatement":
-    case "LabeledStatement":
-      executeStatement(statement.body, new Map(locals), state, run);
-      return true;
     default:
-      return true;
+      return UNKNOWN;
   }
 }
 
-function isNegation(input: AnyNode): boolean {
+function resolvedValue(input: AnyNode, scope: Scope): ResolvedValue | null | typeof UNKNOWN {
   const node = unwrap(input);
-  return (
-    (node?.type === "UnaryExpression" && node.operator === "!") ||
-    (node?.type === "BinaryExpression" && (node.operator === "!==" || node.operator === "!="))
-  );
-}
-
-/**
- * The state inside `if (a && b && ...)` for one specifier, or `null` when a known conjunct is
- * false or an unknown one depends on the specifier. Unknown conjuncts about SSR or the Vite
- * environment gate the branch away from the browser.
- */
-function conjunctState(
-  test: AnyNode,
-  scope: Scope,
-  run: Execution,
-  state: PathState,
-): PathState | null {
-  const conjuncts: AnyNode[] = [];
-  const split = (input: AnyNode) => {
-    const node = unwrap(input);
-    if (node?.type === "LogicalExpression" && node.operator === "&&") {
-      split(node.left);
-      split(node.right);
-    } else conjuncts.push(node);
-  };
-  split(test);
-  const next = { ...state };
-  for (const conjunct of conjuncts) {
-    const value = evaluate(conjunct, scope);
-    const onSpecifier = mentions(conjunct, run.param);
-    if (value !== UNKNOWN) {
-      if (!value) return null;
-      if (onSpecifier) next.linked = true;
-      continue;
-    }
-    if (onSpecifier) return null;
-    if (environmentGateRe.test(sourceOf(run.scope.module, conjunct))) next.gated = true;
+  if (!node) return null;
+  if (node.type === "AwaitExpression") return resolvedValue(node.argument, scope);
+  if (node.type === "ConditionalExpression") {
+    const test = evaluate(node.test, scope);
+    return test === UNKNOWN
+      ? UNKNOWN
+      : resolvedValue(test ? node.consequent : node.alternate, scope);
   }
-  return next;
-}
-
-function possibleValues(input: AnyNode, scope: Scope): ResolvedValue[] {
-  const node = unwrap(input);
-  if (!node) return [];
-  if (node.type === "LogicalExpression" || node.type === "ConditionalExpression") {
-    const value = evaluate(node, scope);
-    if (value !== UNKNOWN) return [{ value, node }];
-    if (node.type === "ConditionalExpression")
-      return [...possibleValues(node.consequent, scope), ...possibleValues(node.alternate, scope)];
-    return node.operator === "&&"
-      ? possibleValues(node.right, scope)
-      : [...possibleValues(node.left, scope), ...possibleValues(node.right, scope)];
+  if (node.type === "LogicalExpression") {
+    const left = evaluate(node.left, scope);
+    if (left === UNKNOWN) return UNKNOWN;
+    const takesRight =
+      node.operator === "&&" ? left : node.operator === "||" ? !left : left == null;
+    return resolvedValue(takesRight ? node.right : node.left, scope);
   }
   if (node.type === "ObjectExpression") {
     const id = filterProperty(node, "id");
-    return id ? possibleValues(id, scope) : [];
+    return staticObject(node) && id ? (resolvedValue(id, scope) ?? UNKNOWN) : UNKNOWN;
   }
-  if (node.type === "AwaitExpression") return possibleValues(node.argument, scope);
   const value = evaluate(node, scope);
-  return value === UNKNOWN ? [] : [{ value, node }];
-}
-
-/** A returned module-level const is fixed where it is declared. */
-function reportSite(module: ParsedModule, input: AnyNode): { start: number; end: number } {
-  const node = unwrap(input);
-  const declarator = node?.type === "Identifier" ? module.consts.get(node.name) : undefined;
-  const target = declarator ?? node;
-  return { start: target.start, end: target.end };
-}
-
-function mentions(node: AnyNode, name: string): boolean {
-  let found = false;
-  walk(node, (child) => {
-    if (child.type === "Identifier" && child.name === name) found = true;
-  });
-  return found;
-}
-
-function sourceOf(module: ParsedModule, node: AnyNode): string {
-  return module.text.slice(node.start, node.end);
+  if (value === null || value === undefined || value === false) return null;
+  if (typeof value !== "string") return UNKNOWN;
+  const declarator =
+    node.type === "Identifier" && !scope.locals.has(node.name)
+      ? scope.module.consts.get(node.name)
+      : undefined;
+  return { value, node: declarator ?? node, wrapped: !/^(?:[./]|[a-z]+:\/\/|data:)/.test(value) };
 }
 
 function walk(node: AnyNode, visit: (node: AnyNode) => void) {
@@ -776,34 +954,40 @@ interface ImportSite {
   specifier: string;
   start: number;
   end: number;
-  local: boolean;
 }
 
 async function findBrowserImports(
   ctx: RuleContext,
-  files: Array<{ path: string }>,
+  files: ReadonlySet<string>,
   modules: ModuleReader,
+  apps: ViteApp[],
 ): Promise<BrowserImport[]> {
   const found: BrowserImport[] = [];
-  const htmlReachable = await htmlEntryModules(ctx, modules, found);
-  for (const entry of files) {
-    const text = ctx.fs.readText(entry.path);
+  const htmlReachable = await htmlEntryModules(ctx, modules, apps, found);
+  for (const file of files) {
+    const app = owningApp(apps, file);
+    if (!app?.hooks?.length && !htmlReachable.has(file)) continue;
+    const text = ctx.fs.readText(file);
     if (!text || !hashImportRe.test(text)) continue;
-    const program = entry.path.endsWith(".vue")
-      ? parseVueScripts(entry.path, (await parseSfcFile(entry.path, text)).descriptor, text)
-      : modules.read(entry.path)?.program;
+    const program = file.endsWith(".vue")
+      ? parseVueScripts(file, (await parseSfcFile(file, text)).descriptor, text)
+      : modules.read(file)?.program;
     if (!program) continue;
     const sites = importSites(program);
-    const evidence = htmlReachable.get(entry.path) ?? directBrowserEvidence(entry.path, sites);
-    if (!evidence) continue;
+    const contexts = htmlReachable.get(file) ?? new Map<ViteApp, string>();
+    const evidence = directBrowserEvidence(file, sites);
+    if (evidence && app && !contexts.has(app)) contexts.set(app, evidence);
     for (const site of sites) {
       if (!site.specifier.includes("#")) continue;
-      found.push({
-        file: entry.path,
-        specifier: site.specifier,
-        range: ctx.helpers.rangeFromOffsets(entry.path, text, site.start, site.end),
-        evidence,
-      });
+      for (const [app, evidence] of contexts) {
+        found.push({
+          file,
+          specifier: site.specifier,
+          range: ctx.helpers.rangeFromOffsets(file, text, site.start, site.end),
+          evidence,
+          app,
+        });
+      }
     }
   }
   return found;
@@ -827,7 +1011,6 @@ function importSites(program: AnyNode): ImportSite[] {
       specifier: source.value,
       start: source.start,
       end: source.end,
-      local: source.value.startsWith("."),
     });
   };
   for (const statement of program.body ?? []) {
@@ -841,7 +1024,11 @@ function importSites(program: AnyNode): ImportSite[] {
     if (
       (statement.type === "ExportNamedDeclaration" || statement.type === "ExportAllDeclaration") &&
       statement.source &&
-      statement.exportKind !== "type"
+      statement.exportKind !== "type" &&
+      !(
+        statement.specifiers?.length > 0 &&
+        statement.specifiers.every((item: AnyNode) => item.exportKind === "type")
+      )
     )
       add(statement.source);
   }
@@ -855,56 +1042,97 @@ function importSites(program: AnyNode): ImportSite[] {
 async function htmlEntryModules(
   ctx: RuleContext,
   modules: ModuleReader,
+  apps: ViteApp[],
   found: BrowserImport[],
-): Promise<Map<string, string>> {
-  const reachable = new Map<string, string>();
-  const queue: string[] = [];
-  const pages = ctx.fs.glob("**/*.html", { exclude: [...SOURCE_EXCLUDE, "**/public/**"] });
+): Promise<Map<string, Map<ViteApp, string>>> {
+  const reachable = new Map<string, Map<ViteApp, string>>();
+  const queue: Array<{ file: string; app: ViteApp; evidence: string }> = [];
+  const enqueue = (file: string | undefined, app: ViteApp, evidence: string) => {
+    if (!file) return;
+    const contexts = reachable.get(file) ?? new Map<ViteApp, string>();
+    if (contexts.has(app)) return;
+    contexts.set(app, evidence);
+    reachable.set(file, contexts);
+    queue.push({ file, app, evidence });
+  };
+  const dependency = (file: string, app: ViteApp, source: string) => {
+    if (source.startsWith("//") || !/^(?:\.|\/)/.test(source)) return undefined;
+    const path = source.split(/[?#]/, 1)[0]!;
+    const local = path.startsWith("/")
+      ? `./${relative(dirname(file), resolve(app.root, `.${path}`))}`
+      : path;
+    return modules.resolveImport(file, local);
+  };
+  const pages = await ctx.inventory.sourcePaths("html");
   for (const page of pages) {
+    const app = owningApp(apps, page);
+    if (!app?.hooks?.length || !within(app.root, page)) continue;
     const html = ctx.fs.readText(page);
-    if (!html?.includes("module")) continue;
+    if (!html || !/module/i.test(html)) continue;
     const pageName = relative(ctx.project.root, page);
-    for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
-      const attributes = match[1]!;
-      if (!/\btype\s*=\s*["']?module\b/i.test(attributes)) continue;
-      const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(attributes)?.[1];
-      if (src) {
-        if (/^[a-z]+:|^\/\//i.test(src)) continue;
-        const base = src.startsWith("/")
-          ? resolve(dirname(page), `.${src}`)
-          : resolve(dirname(page), src);
-        const file = modules.resolveImport(page, `./${relative(dirname(page), base)}`);
-        if (file && !reachable.has(file)) {
-          reachable.set(file, `loaded by ${pageName}`);
-          queue.push(file);
-        }
-        continue;
+    const prefix = "<template>";
+    const parsed = await parseSfcFile(page, `${prefix}${html}</template>`);
+    const descriptor = parsed.descriptor as SFCDescriptor;
+    const visit = (
+      node: NonNullable<NonNullable<typeof descriptor.template>["ast"]>["children"][number],
+    ) => {
+      if (node.type !== 1) return;
+      const tag = node.tag.toLowerCase();
+      if (
+        [
+          "template",
+          "noscript",
+          "textarea",
+          "title",
+          "style",
+          "xmp",
+          "iframe",
+          "noembed",
+          "noframes",
+        ].includes(tag)
+      )
+        return;
+      if (tag !== "script") {
+        node.children.forEach(visit);
+        return;
       }
-      const body = match[2]!;
-      const offset = match.index! + match[0].indexOf(">") + 1;
-      const program = parseScript(`${page}.inline.ts`, body, "ts");
-      if (!program) continue;
+      const attribute = (name: string) =>
+        node.props.find((prop) => prop.type === 6 && prop.name.toLowerCase() === name);
+      const type = attribute("type");
+      if (type?.type !== 6 || type.value?.content !== "module") return;
+      const src = attribute("src");
+      const evidence = `loaded by ${pageName}`;
+      if (src?.type === 6) {
+        const value = src.value?.content;
+        if (value && !/^[\w+.-]+:/.test(value))
+          enqueue(dependency(page, app, /^[./]/.test(value) ? value : `./${value}`), app, evidence);
+        return;
+      }
+      const inline = node.children[0];
+      if (inline?.type !== 2) return;
+      const offset = inline.loc.start.offset - prefix.length;
+      const program = parseScript(`${page}.inline.js`, inline.loc.source, "js");
+      if (!program) return;
       for (const site of importSites(program)) {
-        if (!site.specifier.includes("#")) continue;
-        found.push({
-          file: page,
-          specifier: site.specifier,
-          range: ctx.helpers.rangeFromOffsets(page, html, offset + site.start, offset + site.end),
-          evidence: `an inline module script in ${pageName}`,
-        });
+        enqueue(dependency(page, app, site.specifier), app, evidence);
+        if (site.specifier.includes("#"))
+          found.push({
+            file: page,
+            specifier: site.specifier,
+            range: ctx.helpers.rangeFromOffsets(page, html, offset + site.start, offset + site.end),
+            evidence: `an inline module script in ${pageName}`,
+            app,
+          });
       }
-    }
+    };
+    descriptor.template?.ast?.children.forEach(visit);
   }
   for (let index = 0; index < queue.length && index < 5000; index++) {
-    const file = queue[index]!;
+    const { file, app, evidence } = queue[index]!;
     const program = modules.read(file)?.program;
     if (!program) continue;
     for (const site of importSites(program)) {
-      if (!site.local) continue;
-      const target = modules.resolveImport(file, site.specifier);
-      if (!target || reachable.has(target)) continue;
-      reachable.set(target, reachable.get(file)!);
-      queue.push(target);
+      enqueue(dependency(file, app, site.specifier), app, evidence);
     }
   }
   return reachable;

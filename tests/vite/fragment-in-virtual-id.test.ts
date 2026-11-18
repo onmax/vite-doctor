@@ -1,10 +1,148 @@
 import { describe, expect, test } from "vite-plus/test";
-import { runProjectFixture } from "../../src/core/testkit.ts";
+import { runProjectFixture, type ProjectFixtureOptions } from "../../src/core/testkit.ts";
 import { noFragmentInVirtualId } from "../../src/rules.ts";
 
-function run(files: Record<string, string>) {
-  return runProjectFixture({ framework: "vite", rules: [noFragmentInVirtualId], files });
+function run(files: Record<string, string>, config?: ProjectFixtureOptions["config"]) {
+  return runProjectFixture({ framework: "vite", rules: [noFragmentInVirtualId], files, config });
 }
+
+const brokenId = '"\\0#app/config"';
+const safeId = '"\\0virtual:config"';
+const importConfig = 'import "#app/config"';
+
+function hookConfig(body: string, filter?: string) {
+  return `export default { plugins: [{ name: "config", resolveId: ${filter ? `{ filter: { id: ${filter} }, handler` : "function"}(id, importer, options) { ${body} }${filter ? "}" : ""} }] }`;
+}
+
+describe("registered client resolution", () => {
+  const resolveConfig = `if (id === "#app/config") return ${brokenId}`;
+  const files = {
+    "vite.config.js": hookConfig(resolveConfig),
+    "main.client.js": importConfig,
+  };
+
+  test.each(["vite.config.js", "main.client.js"])("honors exclusion of %s", async (file) => {
+    expect((await run(files, { exclude: [file] })).diagnostics).toEqual([]);
+  });
+
+  test("ignores unregistered hooks", async () => {
+    expect(
+      (
+        await run({
+          ...files,
+          "vite.config.js": "export default {}",
+          "unused.js": files["vite.config.js"],
+        })
+      ).diagnostics,
+    ).toEqual([]);
+  });
+
+  test("ignores hooks preempted by a safe pre plugin", async () => {
+    const config = `export default { plugins: [
+      { name: "broken", resolveId(id) { ${resolveConfig} } },
+      { name: "first", enforce: "pre", resolveId(id) { if (id === "#app/config") return ${safeId} } },
+    ] }`;
+    expect((await run({ ...files, "vite.config.js": config })).diagnostics).toEqual([]);
+  });
+
+  test.each([
+    [
+      "client fallthrough",
+      `if (id !== "#app/config") return; if (!options.ssr) return ${safeId}; return ${brokenId}`,
+      false,
+    ],
+    [
+      "SSR ternary",
+      `if (id === "#app/config") return options?.ssr ? ${brokenId} : ${safeId}`,
+      false,
+    ],
+    [
+      "client environment",
+      `if (id === "#app/config" && this.environment.name === "client") return ${brokenId}`,
+      true,
+    ],
+    [
+      "external URL",
+      'if (id === "#app/config") return { id: "https://example.com/config.js#v1", external: true }',
+      false,
+    ],
+    [
+      "block binding",
+      `if (id !== "#app/config") return; const RESOLVED = ${safeId}; { const RESOLVED = ${brokenId} }; return RESOLVED`,
+      false,
+    ],
+  ])("evaluates %s", async (_name, body, expected) => {
+    expect((await run({ ...files, "vite.config.js": hookConfig(body) })).diagnostics).toHaveLength(
+      expected ? 1 : 0,
+    );
+  });
+
+  test("does not resolve a destructured local to a module const", async () => {
+    expect(
+      (
+        await run({
+          ...files,
+          "vite.config.js": `const RESOLVED = ${brokenId}; ${hookConfig('if (id !== "#app/config") return; const { RESOLVED } = getPluginIds(); return RESOLVED')}`,
+        })
+      ).diagnostics,
+    ).toEqual([]);
+  });
+
+  test.each([
+    ['"**/#app/*"', 1],
+    ['"#app/config"', 0],
+    ['{ include: [], exclude: "**/#app/other" }', 1],
+  ])("uses Vite filter semantics for %s", async (filter, count) => {
+    expect(
+      (await run({ ...files, "vite.config.js": hookConfig(`return ${brokenId}`, filter) }))
+        .diagnostics,
+    ).toHaveLength(count);
+  });
+
+  test.each([
+    ['<!-- <script type="module">import "#app/config"</script> -->', 0],
+    ['<script data-type="module">import "#app/config"</script>', 0],
+    ['<template><script type="module">import "#app/config"</script></template>', 0],
+    ['<script type="module" src="/main.js"></script>', 1],
+    ['<script type="module">import "./leaf.js"</script>', 1],
+  ])("uses executing HTML entries: %s", async (html, count) => {
+    expect(
+      (
+        await run({
+          "vite.config.js": files["vite.config.js"],
+          "pages/page.html": html,
+          "main.js": importConfig,
+          "pages/leaf.js": importConfig,
+        })
+      ).diagnostics,
+    ).toHaveLength(count);
+  });
+
+  test("honors exclusion of the HTML entry", async () => {
+    expect(
+      (
+        await run(
+          {
+            "vite.config.js": files["vite.config.js"],
+            "index.html": `<script type="module">${importConfig}</script>`,
+          },
+          { exclude: ["index.html"] },
+        )
+      ).diagnostics,
+    ).toEqual([]);
+  });
+
+  test("ignores inline type-only re-exports", async () => {
+    expect(
+      (
+        await run({
+          "vite.config.js": files["vite.config.js"],
+          "main.client.ts": 'export { type Config } from "#app/config"',
+        })
+      ).diagnostics,
+    ).toEqual([]);
+  });
+});
 
 // vitehub 0cc4498bd3^ packages/auth/src/vite.ts, trimmed.
 const authPlugin = `import type { Plugin } from "vite"
@@ -65,6 +203,8 @@ describe("vite/plugin/no-fragment-in-virtual-id", () => {
   test("reports browser-loaded \\0# ids and leaves the server-only one (vitehub 0cc4498bd3^ auth)", async () => {
     const result = await run({
       "src/vite.ts": authPlugin,
+      "vite.config.ts":
+        'import { hubAuth } from "./src/vite"; export default { plugins: [hubAuth()] }',
       "src/vue.ts": authVue,
       "src/internal/server.ts": authServer,
     });
@@ -142,6 +282,8 @@ export function hubEnv(): Plugin {
         name: "schema-lab",
         dependencies: { "@vite-hub/env": "workspace:*", vite: "^8.0.0" },
       }),
+      "packages/env/examples/schema-lab/vite.config.ts":
+        'import { hubEnv } from "../../src/vite"; export default { plugins: [hubEnv()] }',
       "packages/env/examples/schema-lab/index.html":
         '<!doctype html>\n<html><body><pre id="public-config"></pre>\n<script type="module" src="/src/client.ts"></script>\n</body></html>\n',
       "packages/env/examples/schema-lab/src/client.ts": `import { render } from "./render"
@@ -171,6 +313,7 @@ export default () => useServerEnv()
 
   test("reports an id built from the resolveId argument and imported by a Vue SFC", async () => {
     const result = await run({
+      "vite.config.ts": 'import icons from "./src/plugin"; export default { plugins: [icons()] }',
       "src/plugin.ts": `import type { Plugin } from "vite"
 const PREFIX = "virtual:icons#"
 export default function icons(): Plugin {
@@ -242,6 +385,7 @@ console.log(config)
     ],
   ])("reports %s", async (_name, body) => {
     const result = await run({
+      "vite.config.ts": 'import plugin from "./src/vite"; export default { plugins: [plugin()] }',
       "src/vite.ts": `import type { Plugin } from "vite"
 export default function plugin(): Plugin {
   return {
@@ -290,6 +434,7 @@ export default function plugin(): Plugin {
     ],
   ])("does not report %s", async (_name, body, importer) => {
     const result = await run({
+      "vite.config.ts": 'import plugin from "./src/vite"; export default { plugins: [plugin()] }',
       "src/vite.ts": `import type { Plugin } from "vite"
 export default function plugin(): Plugin {
   return {
@@ -307,6 +452,7 @@ export default function plugin(): Plugin {
 
   test("does not report a build-only plugin", async () => {
     const result = await run({
+      "vite.config.ts": 'import plugin from "./src/vite"; export default { plugins: [plugin()] }',
       "src/vite.ts": `import type { Plugin } from "vite"
 export default function plugin(): Plugin {
   return {
