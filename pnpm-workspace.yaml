@@ -64,6 +64,7 @@ catalogs:
     defu: ^6.1.7
     pathe: ^2.0.3
     picocolors: ^1.1.1
+    picomatch: ^4.0.7
     semver: ^7.8.5
     std-env: ^4.2.0
     zod: ^4.4.3

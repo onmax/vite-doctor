@@ -69,18 +69,21 @@ describe("registered client resolution", () => {
     ).toEqual([]);
   });
 
-  test.each(["raw", "url", "other&raw"])("does not traverse asset imports (?%s)", async (query) => {
-    expect(
-      (
-        await run({
-          "vite.config.js": files["vite.config.js"],
-          "index.html": '<script type="module" src="/main.js"></script>',
-          "main.js": `import "./leaf.js?${query}"`,
-          "leaf.js": importConfig,
-        })
-      ).diagnostics,
-    ).toEqual([]);
-  });
+  test.each(["raw", "url", "other&raw", "other?raw", "other?url"])(
+    "does not traverse asset imports (?%s)",
+    async (query) => {
+      expect(
+        (
+          await run({
+            "vite.config.js": files["vite.config.js"],
+            "index.html": '<script type="module" src="/main.js"></script>',
+            "main.js": `import "./leaf.js?${query}"`,
+            "leaf.js": importConfig,
+          })
+        ).diagnostics,
+      ).toEqual([]);
+    },
+  );
 
   test.each([
     [
@@ -127,8 +130,11 @@ describe("registered client resolution", () => {
 
   test.each([
     ['"**/#app/*"', 1],
+    ['"**/#app/config/**"', 1],
+    ['"**/#{app,lib}/*"', 1],
     ['"#app/config"', 0],
     ['{ include: [], exclude: "**/#app/other" }', 1],
+    ['{ include: ["#app/config", "**/#app/*"], exclude: "**/#app/config/**" }', 0],
   ])("uses Vite filter semantics for %s", async (filter, count) => {
     expect(
       (await run({ ...files, "vite.config.js": hookConfig(`return ${brokenId}`, filter) }))

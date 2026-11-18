@@ -1,6 +1,7 @@
-import { matchesGlob } from "node:path";
+import { isAbsolute as isNativeAbsolute } from "node:path";
 import type { SFCDescriptor } from "@vue/compiler-sfc";
 import { dirname, isAbsolute, relative, resolve } from "pathe";
+import picomatch from "picomatch";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseSfcFile, parseVueScripts } from "../../../core/internal/sfc.js";
@@ -776,12 +777,9 @@ function filterPasses(filter: AnyNode, specifier: string, scope: Scope): boolean
       return pattern.test(id);
     }
     if (typeof pattern === "string") {
-      if (!pattern.startsWith("**") && !isAbsolute(pattern) && !isAbsolute(id)) return false;
-      // Match the common subset where Node's glob matcher and Vite's dot-enabled picomatch agree.
-      if (!/^[\w/#.:*-]+$/.test(pattern) || id.split("/").some((part) => part.startsWith(".")))
-        return UNKNOWN;
-      if (!pattern.startsWith("**") && !isAbsolute(pattern)) return UNKNOWN;
-      return matchesGlob(id, pattern);
+      if (!pattern.startsWith("**") && !isNativeAbsolute(pattern))
+        return isNativeAbsolute(id) ? UNKNOWN : false;
+      return picomatch(pattern.replaceAll("\\", "/"), { dot: true })(id);
     }
     return UNKNOWN;
   };
@@ -1060,8 +1058,9 @@ async function htmlEntryModules(
   };
   const dependency = (file: string, app: ViteApp, source: string) => {
     if (source.startsWith("//") || !/^(?:\.|\/)/.test(source)) return undefined;
-    const [path, query] = source.split("#", 1)[0]!.split(/\?(.*)/s, 2);
-    if (!path || (query && /(?:^|&)(?:raw|url)(?:&|$)/.test(query))) return undefined;
+    const request = source.split("#", 1)[0]!;
+    if (/[?&](?:raw|url)(?:&|$)/.test(request)) return undefined;
+    const path = request.split("?", 1)[0]!;
     const local = path.startsWith("/")
       ? `./${relative(dirname(file), resolve(app.root, `.${path}`))}`
       : path;
