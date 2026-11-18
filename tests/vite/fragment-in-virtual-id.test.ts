@@ -45,6 +45,43 @@ describe("registered client resolution", () => {
     expect((await run({ ...files, "vite.config.js": config })).diagnostics).toEqual([]);
   });
 
+  test("does not bind factory parameters by syntax position across a spread", async () => {
+    const config = `
+      function create(unused, resolvedId) {
+        return { name: "config", resolveId(id) { if (id === "#app/config") return resolvedId } };
+      }
+      export default { plugins: [create(...[0, ${safeId}], ${brokenId})] };
+    `;
+    expect((await run({ ...files, "vite.config.js": config })).diagnostics).toEqual([]);
+  });
+
+  test("does not use the HTML source path as an inline module's resolver importer", async () => {
+    const config = hookConfig(`
+      if (id === "#app/config") return importer.endsWith(".html") ? ${brokenId} : ${safeId};
+    `);
+    expect(
+      (
+        await run({
+          "vite.config.js": config,
+          "index.html": `<script type="module">${importConfig}</script>`,
+        })
+      ).diagnostics,
+    ).toEqual([]);
+  });
+
+  test.each(["raw", "url", "other&raw"])("does not traverse asset imports (?%s)", async (query) => {
+    expect(
+      (
+        await run({
+          "vite.config.js": files["vite.config.js"],
+          "index.html": '<script type="module" src="/main.js"></script>',
+          "main.js": `import "./leaf.js?${query}"`,
+          "leaf.js": importConfig,
+        })
+      ).diagnostics,
+    ).toEqual([]);
+  });
+
   test.each([
     [
       "client fallthrough",

@@ -104,6 +104,7 @@ interface Finding {
 
 interface BrowserImport {
   file: string;
+  importerId: string | typeof UNKNOWN;
   specifier: string;
   range: SourceRange;
   evidence: string;
@@ -602,6 +603,7 @@ function collectPlugins(input: AnyNode, scope: Scope, hooks: ResolveIdHook[]): b
       (element: AnyNode) => !element || collectPlugins(element, next, hooks),
     );
   if (node.type === "CallExpression") {
+    if (node.arguments.some((argument: AnyNode) => argument.type === "SpreadElement")) return false;
     const callee = unwrap(node.callee);
     if (callee?.type !== "Identifier") return false;
     const target = resolvePluginBinding(callee.name, scope);
@@ -735,7 +737,7 @@ function resolveSpecifier(
     locals: new Map(hook.scope.locals),
     clientThis: hook.fn.type !== "ArrowFunctionExpression",
   };
-  const args: Value[] = [imported.specifier, imported.file, CLIENT_OPTIONS];
+  const args: Value[] = [imported.specifier, imported.importerId, CLIENT_OPTIONS];
   for (const [index, param] of hook.fn.params.entries()) {
     if (param.type === "Identifier") scope.locals.set(param.name, args[index]);
     else if (param.type === "ObjectPattern" && index === 2) {
@@ -982,6 +984,7 @@ async function findBrowserImports(
       for (const [app, evidence] of contexts) {
         found.push({
           file,
+          importerId: file,
           specifier: site.specifier,
           range: ctx.helpers.rangeFromOffsets(file, text, site.start, site.end),
           evidence,
@@ -1057,7 +1060,8 @@ async function htmlEntryModules(
   };
   const dependency = (file: string, app: ViteApp, source: string) => {
     if (source.startsWith("//") || !/^(?:\.|\/)/.test(source)) return undefined;
-    const path = source.split(/[?#]/, 1)[0]!;
+    const [path, query] = source.split("#", 1)[0]!.split(/\?(.*)/s, 2);
+    if (!path || (query && /(?:^|&)(?:raw|url)(?:&|$)/.test(query))) return undefined;
     const local = path.startsWith("/")
       ? `./${relative(dirname(file), resolve(app.root, `.${path}`))}`
       : path;
@@ -1118,6 +1122,7 @@ async function htmlEntryModules(
         if (site.specifier.includes("#"))
           found.push({
             file: page,
+            importerId: UNKNOWN,
             specifier: site.specifier,
             range: ctx.helpers.rangeFromOffsets(page, html, offset + site.start, offset + site.end),
             evidence: `an inline module script in ${pageName}`,
