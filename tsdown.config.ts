@@ -7,6 +7,7 @@ export default defineConfig({
     "src/rule-packs/package/index.ts",
     "src/index.ts",
     "src/cli.ts",
+    "src/bin.ts",
     "src/nuxt-cli.ts",
     "src/config.ts",
     "src/extension.ts",
@@ -32,10 +33,10 @@ export default defineConfig({
     "src/rule-packs/mcp/index.ts",
   ],
   exports: {
-    exclude: ["nuxt-cli", "plugin-worker", "doctor-process"],
+    exclude: ["bin", "nuxt-cli", "plugin-worker", "doctor-process"],
     bin: {
       "nuxt-doctor": "src/nuxt-cli.ts",
-      "vite-doctor": "src/cli.ts",
+      "vite-doctor": "src/bin.ts",
     },
   },
   format: ["esm"],

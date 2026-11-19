@@ -41,6 +41,8 @@ export interface ViteDoctorSurfaceOptions {
   format?: DoctorRunOptions["format"];
 }
 
+// vite-plus types its defineConfig() against its own copy of Vite, so the key only type-checks
+// there when the project's `vite` resolves to that copy. scripts/test-packed-cli.mjs covers both.
 declare module "vite" {
   interface UserConfig {
     /**

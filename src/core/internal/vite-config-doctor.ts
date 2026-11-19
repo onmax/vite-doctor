@@ -8,8 +8,9 @@ import { analyzeScriptProgram, type ScopeReference } from "./script-scope.js";
 export class ViteConfigDoctorError extends Error {}
 
 /**
- * Returns undefined only when the supported export shape has no `doctor` key.
- * An indeterminate export or a nonliteral setting is a config error.
+ * Returns undefined when the file never names a `doctor` key or `vite-doctor`, or when a supported
+ * export shape has no `doctor` key. Otherwise an indeterminate export or a nonliteral setting is a
+ * config error.
  */
 export function readViteConfigDoctor(
   file: string,
@@ -21,7 +22,12 @@ export function readViteConfigDoctor(
     preserveParens: false,
   });
   const error = errors.find((item) => item.severity === "Error");
-  if (error) throw indeterminate(source, error.labels[0]?.start ?? 0, "could not parse the file");
+  if (error) {
+    if (!source.includes("doctor")) return undefined;
+    throw indeterminate(source, error.labels[0]?.start ?? 0, "could not parse the file");
+  }
+  // Config that mentions neither cannot supply the key, so its export shape doesn't matter.
+  if (!mentionsDoctor(program)) return undefined;
   const references = new Map<unknown, ScopeReference>();
   const sourceType = program.sourceType === "module" ? "module" : "script";
   for (const scope of analyzeScriptProgram(program, sourceType).scopes) {
@@ -37,7 +43,7 @@ export function readViteConfigDoctor(
       if (specifier.type !== "ImportSpecifier" || specifier.importKind === "type") continue;
       const imported = propertyName(specifier.imported);
       const module = statement.source.value;
-      if (imported === "defineConfig" && (module === "vite" || module === "vite-plus")) {
+      if (imported === "defineConfig" && viteConfigModules.has(module)) {
         viteHelpers.add(specifier);
       }
       if (
@@ -89,6 +95,22 @@ export function readViteConfigDoctor(
     throw notLiteral(source, value, "must be an object");
   }
   return { config: literal as DoctorSerializableConfig };
+}
+
+const viteConfigModules = new Set(["vite", "vite-plus", "vitest/config"]);
+
+function mentionsDoctor(program: Program): boolean {
+  let found = false;
+  const check = (name: unknown) => {
+    if (name === "doctor" || (typeof name === "string" && /^vite-doctor(?:\/|$)/.test(name)))
+      found = true;
+  };
+  new Visitor({
+    Identifier: (node) => check(node.name),
+    Literal: (node) => check(node.value),
+    TemplateElement: (node) => check(node.value.cooked),
+  }).visit(program);
+  return found;
 }
 
 const commonJsMetadata = new Set(["filename", "id", "loaded", "path"]);
@@ -182,9 +204,8 @@ function configObject(
   references: ReadonlyMap<unknown, ScopeReference>,
   helperArgument: (node: Node) => Node | undefined,
 ): ObjectExpression | undefined {
-  let node = unwrap(exported);
-  if (node.type === "Identifier") {
-    const target = references.get(node)?.resolved;
+  const constInit = (identifier: Node): Node | undefined => {
+    const target = references.get(identifier)?.resolved;
     const [definition, extra] = target?.defs ?? [];
     if (
       !target ||
@@ -196,7 +217,7 @@ function configObject(
         (reference) =>
           reference.isValueReference &&
           !reference.init &&
-          reference.identifier !== (node as unknown),
+          reference.identifier !== (identifier as unknown),
       )
     )
       return undefined;
@@ -209,9 +230,14 @@ function configObject(
       (item) => item === (definition.node as unknown),
     );
     if (declarator?.id.type !== "Identifier" || !declarator.init) return undefined;
-    node = unwrap(declarator.init);
-  }
-  node = unwrap(helperArgument(node) ?? node);
+    return unwrap(declarator.init);
+  };
+  const resolveConst = (node: Node | undefined) =>
+    node?.type === "Identifier" ? constInit(node) : node;
+  let node = resolveConst(unwrap(exported));
+  if (!node) return undefined;
+  node = resolveConst(unwrap(helperArgument(node) ?? node));
+  if (!node) return undefined;
   if (
     node.type === "ArrowFunctionExpression" ||
     node.type === "FunctionExpression" ||
