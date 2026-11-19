@@ -73,6 +73,34 @@ export function isViteServerRuntime(ctx: RuleContext, owner: OwningPackage): boo
 }
 
 type HandlerPath = string | object;
+type ValueState = "unknown" | "nullish" | "falsy" | "truthy";
+
+function valueState(node: AnyNode): ValueState {
+  switch (node?.type) {
+    case "ObjectExpression":
+    case "ArrayExpression":
+    case "ArrowFunctionExpression":
+    case "FunctionExpression":
+      return "truthy";
+    case "Literal":
+      return node.value === null ? "nullish" : node.value ? "truthy" : "falsy";
+    case "UnaryExpression":
+      if (node.operator === "void") return "nullish";
+  }
+  return "unknown";
+}
+
+function logicalAssignment(operator: string, current: ValueState): boolean | undefined {
+  if (current === "unknown") return;
+  switch (operator) {
+    case "??=":
+      return current === "nullish";
+    case "||=":
+      return current !== "truthy";
+    case "&&=":
+      return current === "truthy";
+  }
+}
 
 function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> {
   const imports = new Set<string>();
@@ -149,6 +177,8 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
         return normalize(text);
     };
     const registered = new Set<HandlerPath>();
+    let nitroState: ValueState = "unknown";
+    let handlersState: ValueState = "unknown";
     const register = (handlers: AnyNode[]) => {
       for (const handler of handlers) {
         const target = path(objectProperty(handler, "handler"));
@@ -157,6 +187,32 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
     };
     const registerArray = (node: AnyNode) => {
       if (node?.type === "ArrayExpression") register(node.elements);
+    };
+    const replaceHandlers = (node: AnyNode, state = valueState(node)) => {
+      handlersState = state;
+      registered.clear();
+      registerArray(node);
+    };
+    const replaceNitroOptions = (node: AnyNode) => {
+      nitroState = valueState(node);
+      if (node?.type !== "ObjectExpression") {
+        replaceHandlers(undefined);
+        return;
+      }
+      const property = node.properties.findLast((entry: AnyNode) => {
+        if (entry.type === "SpreadElement" || entry.computed) return true;
+        const name = entry.key?.name ?? entry.key?.value;
+        return name === "handlers" || name === "__proto__";
+      });
+      if (!property) replaceHandlers(undefined, "nullish");
+      else if (
+        property.type === "Property" &&
+        !property.computed &&
+        property.kind === "init" &&
+        (property.key.name ?? property.key.value) === "handlers"
+      )
+        replaceHandlers(property.value);
+      else replaceHandlers(undefined);
     };
     const config = (node: AnyNode) => {
       const def = binding(node);
@@ -199,10 +255,14 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
       } else if (node?.type === "AssignmentExpression") {
         const replacesNitro = nitro(node.left);
         if (replacesNitro || handlers(node.left)) {
-          if ((node.operator === "??=" || node.operator === "||=") && registered.size) return;
-          registered.clear();
-          if (node.operator === "=")
-            registerArray(replacesNitro ? objectProperty(node.right, "handlers") : node.right);
+          const taken =
+            node.operator === "="
+              ? true
+              : logicalAssignment(node.operator, replacesNitro ? nitroState : handlersState);
+          if (taken === false) return;
+          const replacement = taken === true ? node.right : undefined;
+          if (replacesNitro) replaceNitroOptions(replacement);
+          else replaceHandlers(replacement);
         }
       }
       return path(node);
