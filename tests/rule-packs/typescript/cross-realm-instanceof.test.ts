@@ -407,10 +407,6 @@ test.each([
     "Replace instanceof URL with a guard helper, isURL(value): value is URL, that returns Object.prototype.toString.call(value) === '[object URL]'.",
   ],
   [
-    "Blob",
-    "Replace instanceof Blob with a guard helper, isBlobLike(value): value is Blob, that checks the members you use, such as arrayBuffer(), size and type.",
-  ],
-  [
     "Uint8Array",
     "Replace instanceof Uint8Array with a guard helper, isUint8Array(value): value is Uint8Array, that returns ArrayBuffer.isView(value) && Object.prototype.toString.call(value) === '[object Uint8Array]'.",
   ],
@@ -492,10 +488,18 @@ test.each(["File", "Headers", "FormData", "DOMException"])(
   },
 );
 
-test("DOMException remediation does not depend on an implementation's tag", async () => {
+test.each([
+  ["Blob", "arrayBuffer(), size and type"],
+  ["FormData", "get() or entries()"],
+  ["DOMException", "name and message"],
+])("suggests capability checks, not a %s class predicate", async (name, members) => {
   const result = await project.run({
     rule: noCrossRealmWebInstanceof,
-    files: { "src/dom.ts": "export const f = (value: unknown) => value instanceof DOMException" },
+    files: { "src/dom.ts": `export const f = (value: unknown) => value instanceof ${name}` },
   });
-  expect(result.diagnostics[0]!.suggestion).toContain("name and message");
+  const suggestion = result.diagnostics[0]!.suggestion;
+  expect(suggestion).toContain(members);
+  expect(suggestion).toContain("narrow only to the members you check");
+  expect(suggestion).toContain("validate or normalize the value at the integration boundary");
+  expect(suggestion).not.toContain(`value is ${name}`);
 });

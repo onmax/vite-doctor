@@ -26,7 +26,7 @@ export const noCrossRealmPrototypeIdentity = createRule({
       "Report prototype and constructor identity checks against built-in classes on values that may come from another JavaScript realm.",
     why: "Every realm has its own Object.prototype, Array.prototype and built-in constructors. A plain object or array created by the Vite module runner, workerd or miniflare, or a Vitest environment has that realm's prototype, so Object.getPrototypeOf(value) === Object.prototype or value.constructor === Array is false and the check rejects or misroutes it. This rule only reports values that crossed a boundary in this file: parameters typed unknown or any, results of calling a parameter, and module namespaces from import() or ssrLoadModule().",
     recommendedReplacement:
-      "Check the shape without realm identity: Array.isArray(value) for arrays, Object.getPrototypeOf(prototype) === null for plain objects, and a guard helper that checks Object.prototype.toString.call(value) for other built-ins.",
+      "Avoid realm identity: use Array.isArray(value) for arrays, Object.getPrototypeOf(prototype) === null for plain objects, or a tag shared by the implementations you support where applicable. Narrow only to the capabilities a member check verifies. If you need full class semantics, validate or normalize the value at the integration boundary.",
     examples: [
       {
         title: "Check plain objects without Object.prototype",

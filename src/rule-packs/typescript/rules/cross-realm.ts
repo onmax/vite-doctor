@@ -5,9 +5,10 @@ import { createLocalEvidence, expression } from "./local-evidence.js";
 export type LocalEvidence = ReturnType<typeof createLocalEvidence>;
 export type Origin = "unknown parameter" | "callback result" | "loaded module";
 
-// How to recognize a value of each built-in class without relying on this realm's constructor.
-// A guard is a helper the developer writes; a replacement is a built-in check that already works.
-type RealmSafeCheck = { guard: string; check: string } | { replacement: string };
+type RealmSafeCheck =
+  | { guard: string; check: string }
+  | { replacement: string }
+  | { capability: string };
 
 const brand = (name: string) =>
   `that returns Object.prototype.toString.call(value) === '[object ${name}]'`;
@@ -44,34 +45,29 @@ const ERROR_SUBCLASSES = [
 // the Blob and URL of a Vitest DOM environment each bring their own constructor.
 export const WEB_PLATFORM_CLASSES: Record<string, RealmSafeCheck> = {
   Response: {
-    guard: "isResponseLike",
-    check: "that checks the members you use, such as status, headers and body",
+    capability: "status, headers and body",
   },
   Request: {
-    guard: "isRequestLike",
-    check: "that checks the members you use, such as url, method and headers",
+    capability: "url, method and headers",
   },
-  Headers: { guard: "isHeadersLike", check: "that checks the get() and forEach() methods" },
+  Headers: { capability: "the get() and forEach() methods" },
   Blob: {
-    guard: "isBlobLike",
-    check: "that checks the members you use, such as arrayBuffer(), size and type",
+    capability: "arrayBuffer(), size and type",
   },
-  File: { guard: "isFileLike", check: "that checks arrayBuffer(), size and name" },
+  File: { capability: "arrayBuffer(), size and name" },
   FormData: {
-    guard: "isFormDataLike",
-    check: "that checks the methods you use, such as get(), append() and entries()",
+    capability: "get() or entries() if you only need to read entries",
   },
   URL: { guard: "isURL", check: brand("URL") },
   URLSearchParams: { guard: "isURLSearchParams", check: brand("URLSearchParams") },
-  ReadableStream: { guard: "isReadableStreamLike", check: "that checks the getReader() method" },
+  ReadableStream: { capability: "the getReader() method" },
   ArrayBuffer: { guard: "isArrayBuffer", check: brand("ArrayBuffer") },
   SharedArrayBuffer: { guard: "isSharedArrayBuffer", check: brand("SharedArrayBuffer") },
   ...Object.fromEntries(
     TYPED_ARRAYS.map((name) => [name, { guard: `is${name}`, check: view(name) }]),
   ),
   DOMException: {
-    guard: "isDOMExceptionLike",
-    check: "that checks the error fields you use, such as name and message",
+    capability: "string-valued name and message fields",
   },
 };
 
@@ -210,9 +206,11 @@ function hasStringFallback(node: AnyNode, subject: AnyNode): boolean {
 /** The fix sentence after "Replace <what> with". */
 export function realmSafeFix(className: string): string {
   const check = REALM_CLASSES[className]!;
-  return "replacement" in check
-    ? `${check.replacement}.`
-    : `a guard helper, ${check.guard}(value): value is ${className}, ${check.check}.`;
+  if ("replacement" in check) return `${check.replacement}.`;
+  if ("capability" in check) {
+    return `a capability check (for example, ${check.capability}) and narrow only to the members you check. If you need full ${className} semantics, validate or normalize the value at the integration boundary.`;
+  }
+  return `a guard helper, ${check.guard}(value): value is ${className}, ${check.check}.`;
 }
 
 export function crossRealmOrigin(
