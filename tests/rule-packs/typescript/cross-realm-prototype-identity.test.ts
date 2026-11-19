@@ -17,6 +17,17 @@ async function run(source: string) {
   return result.diagnostics;
 }
 
+test.each(["FormData", "DOMException"])(
+  "does not suggest narrowing to %s from a capability check",
+  async (name) => {
+    const [diagnostic] = await run(
+      `export const check = (value: unknown) => Object.getPrototypeOf(value) === ${name}.prototype`,
+    );
+    expect(diagnostic!.suggestion).toContain("narrow only to the members you check");
+    expect(diagnostic!.suggestion).not.toContain(`value is ${name}`);
+  },
+);
+
 test("is a Strict-only rule with generated documentation", () => {
   expect(typescriptRulePack.presets.strict).toContain(noCrossRealmPrototypeIdentity.meta.id);
   expect(typescriptRulePack.presets.recommended).not.toContain(
@@ -34,6 +45,10 @@ test("is a Strict-only rule with generated documentation", () => {
 });
 
 test.each([
+  [
+    "prototype of a value from an injected constructor",
+    "function isDate(value: unknown) { return Object.getPrototypeOf(value) === Date.prototype } export function run(ForeignDate: typeof Date) { return isDate(new ForeignDate()) }",
+  ],
   [
     "getPrototypeOf compared with Object.prototype",
     "export const isPlain = (value: unknown) => Object.getPrototypeOf(value) === Object.prototype",

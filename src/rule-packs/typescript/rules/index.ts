@@ -4,6 +4,7 @@ export { noWidenThenAssert } from "./no-widen-then-assert.js";
 export { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 export { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 export { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
+export { noCrossRealmBuiltinInstanceof } from "./no-cross-realm-builtin-instanceof.js";
 export { noCrossRealmPrototypeIdentity } from "./no-cross-realm-prototype-identity.js";
 export { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
 export { noInheritedKeyLookup } from "./no-inherited-key-lookup.js";
@@ -15,6 +16,7 @@ export { requireSafetyCommentForTypeAssertion } from "./require-safety-comment-f
 import { defineRulePack } from "../../../core/index.js";
 import { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 import { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
+import { noCrossRealmBuiltinInstanceof } from "./no-cross-realm-builtin-instanceof.js";
 import { noCrossRealmPrototypeIdentity } from "./no-cross-realm-prototype-identity.js";
 import { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
 import { noInheritedKeyLookup } from "./no-inherited-key-lookup.js";
@@ -38,6 +40,7 @@ const strictRules = [
   noCallerChosenResultType,
   ...recommendedRules,
   noCrossRealmWebInstanceof,
+  noCrossRealmBuiltinInstanceof,
   noCrossRealmPrototypeIdentity,
   noInheritedKeyLookup,
   noObjectParameters,
