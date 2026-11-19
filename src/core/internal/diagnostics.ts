@@ -35,7 +35,7 @@ import {
   type InlineSuppression,
   type StaleBaseline,
 } from "./diagnostic-policy.js";
-import { canRunRuleOnFile } from "./facts.js";
+import { hasRuleSourceCoverage } from "./facts.js";
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
@@ -110,8 +110,8 @@ function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): voi
 }
 
 // A missing fingerprint only proves resolution when a full run covered the recorded file,
-// or that file is gone. For Rules that execute or report across files, the baseline location
-// alone does not identify the inputs needed to reproduce the finding.
+// or proved that the file or required syntax is gone. For Rules that execute or report across
+// files, the baseline location alone does not identify the inputs needed to reproduce the finding.
 function reportResolvedBaselineEntries(
   session: ScanSession,
   baseline: { file: string; entries: BaselineEntry[] },
@@ -145,7 +145,7 @@ function reportResolvedBaselineEntries(
     )
       return false;
     const handle = session.handlesByPath.get(path);
-    return handle ? canRunRuleOnFile(rule, handle) : !existsSync(path);
+    return handle ? hasRuleSourceCoverage(rule, handle) : !existsSync(path);
   });
   if (!resolved.length) return;
   const path = relative(root, baseline.file) || baseline.file;
