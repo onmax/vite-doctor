@@ -6,8 +6,8 @@ import { runCli } from "./cli-run.js";
 
 export { main } from "./cli-run.js";
 
-// npm links bins as symlinks and package managers wrap them in shims, so only the resolved file
-// identifies this module as the entry; importing `vite-doctor/cli` must not start a Doctor Run.
+// The `vite-doctor` bin starts from bin.ts. This guard only keeps `node dist/cli.mjs` working;
+// importing `vite-doctor/cli` must not start a Doctor Run.
 function isProcessEntry(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
