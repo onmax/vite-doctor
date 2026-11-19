@@ -35,10 +35,16 @@ import {
   type InlineSuppression,
   type StaleBaseline,
 } from "./diagnostic-policy.js";
+import { canRunRuleOnFile } from "./facts.js";
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
-import { markSession, type ScanSession } from "./scan-session.js";
+import {
+  fileRuleConfig,
+  markSession,
+  topLevelRuleConfig,
+  type ScanSession,
+} from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256, shellArgument } from "./utils.js";
 import {
@@ -103,10 +109,9 @@ function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): voi
   pushBaselineDiagnostic(session, warning);
 }
 
-// An entry is resolved only when its Rule ran over its file in a full Doctor Run and reported
-// nothing with that fingerprint. Entries that do not record their Rule and file, entries from
-// workspace analyses or Doctor itself, and files Doctor did not analyze stay unproven, so their
-// findings may still exist.
+// A missing fingerprint only proves resolution when a full run covered the recorded file,
+// or that file is gone. For Rules that execute or report across files, the baseline location
+// alone does not identify the inputs needed to reproduce the finding.
 function reportResolvedBaselineEntries(
   session: ScanSession,
   baseline: { file: string; entries: BaselineEntry[] },
@@ -121,14 +126,26 @@ function reportResolvedBaselineEntries(
     ),
   );
   const coverage = ruleCoverage(session);
+  const fileRules = new Map(
+    session.enabledRules
+      .filter(
+        (rule) => (rule.meta.execution ?? "file") === "file" && rule.meta.reportScope !== "project",
+      )
+      .map((rule) => [rule.meta.id, rule] as const),
+  );
   const resolved = baseline.entries.filter(({ fingerprint, ruleId, file }) => {
     if (reported.has(fingerprint) || !ruleId || !file) return false;
-    if (!coverage.ran.has(ruleId) || coverage.partial.has(ruleId)) return false;
-    const path = relative(root, resolve(root, file));
-    if (coverage.unproven.has(path)) return false;
-    if (!coverage.analyzed.has(path) && existsSync(resolve(root, path))) return false;
-    const scope = session.ruleScopes.get(ruleId);
-    return !scope || scope.has(owningWorkspacePackage(coverage.workspacePackages, path));
+    const rule = fileRules.get(ruleId);
+    if (!rule || coverage.partial.has(ruleId) || !topLevelRuleConfig(session, ruleId).enabled)
+      return false;
+    const path = resolve(root, file);
+    if (
+      coverage.unproven.has(relative(root, path)) ||
+      !fileRuleConfig(session, ruleId, path).enabled
+    )
+      return false;
+    const handle = session.handlesByPath.get(path);
+    return handle ? canRunRuleOnFile(rule, handle) : !existsSync(path);
   });
   if (!resolved.length) return;
   const path = relative(root, baseline.file) || baseline.file;
@@ -139,7 +156,7 @@ function reportResolvedBaselineEntries(
     category: "baseline",
     file: baseline.file,
     why: `Baseline "${path}" records ${findings} that this full Doctor Run no longer reports. While the entries stay, --new-only hides the same findings if they come back.`,
-    suggestion: `Delete the fingerprints listed in this Diagnostic's evidence from "${path}", or rewrite it once this run reports nothing new: vite-doctor . --baseline ${shellArgument(path)} --update-baseline. Then commit the updated baseline.`,
+    suggestion: `Delete only the fingerprints listed in this Diagnostic's evidence from "${path}". Leave the other entries in place and commit the updated baseline.`,
     confidence: "proven",
     analysisPhase: "manifest",
     evidence: resolved.map((entry) => ({

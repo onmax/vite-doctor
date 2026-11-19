@@ -251,6 +251,7 @@ function readBaseline(root: string, baseline?: string): Baseline | undefined {
   let entries: unknown[];
   let fingerprintScheme: number | undefined;
   let doctorVersion: string | undefined;
+  let report = false;
   if (Array.isArray(json)) entries = json;
   else if (json && typeof json === "object" && "diagnostics" in json) {
     const scheme = "fingerprintScheme" in json ? json.fingerprintScheme : undefined;
@@ -260,6 +261,7 @@ function readBaseline(root: string, baseline?: string): Baseline | undefined {
     if ("reportVersion" in json) {
       if (json.reportVersion !== 3 && json.reportVersion !== 4)
         throw invalid("Expected Doctor JSON report version 3 or 4.");
+      report = true;
       if ("version" in json && typeof json.version === "string") doctorVersion = json.version;
     } else if ("version" in json && json.version === 2) {
       if (scheme === undefined) throw invalid('Baseline version 2 requires "fingerprintScheme".');
@@ -282,10 +284,25 @@ function readBaseline(root: string, baseline?: string): Baseline | undefined {
     if (typeof fingerprint !== "string" || !fingerprint.length)
       throw invalid(`Entry ${index + 1} must contain a non-empty string fingerprint.`);
     if (recorded.has(fingerprint)) continue;
+    const location = object.location;
+    const reportPath =
+      report && location && typeof location === "object" && "path" in location
+        ? location.path
+        : undefined;
     recorded.set(fingerprint, {
       fingerprint,
-      ruleId: typeof object.ruleId === "string" ? object.ruleId : undefined,
-      file: typeof object.file === "string" ? object.file : undefined,
+      ruleId:
+        typeof object.ruleId === "string"
+          ? object.ruleId
+          : report && typeof object.rule === "string"
+            ? object.rule
+            : undefined,
+      file:
+        typeof object.file === "string"
+          ? object.file
+          : typeof reportPath === "string"
+            ? reportPath
+            : undefined,
     });
   }
   return {

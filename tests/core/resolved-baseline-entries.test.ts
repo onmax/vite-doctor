@@ -1,7 +1,9 @@
 import { expect, test } from "vite-plus/test";
 import { FINGERPRINT_SCHEME } from "../../src/core/diagnostic-constants.ts";
+import { createJsonReport } from "../../src/core/reports.ts";
 import { runProjectFixture } from "../../src/core/testkit.ts";
-import { noClientSecretPattern } from "../../src/rules.ts";
+import { noClientSecretPattern, noUntypedEnv } from "../../src/rules.ts";
+import { noUnpassedProps } from "../../src/rule-packs/vue/rules/vue/no-unpassed-props.ts";
 import type { DoctorConfig, DoctorRunOptions } from "../../src/core/config.ts";
 
 const leaking = "console.log(import.meta.env.VITE_SECRET)\n";
@@ -71,7 +73,102 @@ test("a full run reports a recorded finding it no longer reports as DOC0039", as
     },
   ]);
   expect(result.diagnostics[0]!.why).toContain("records 1 finding that");
-  expect(result.diagnostics[0]!.suggestion).toContain("--baseline baseline.json --update-baseline");
+  expect(result.diagnostics[0]!.suggestion).toContain("Delete only the fingerprints");
+  expect(result.diagnostics[0]!.suggestion).not.toContain("--update-baseline");
+});
+
+test("a saved JSON report retains resolution metadata for visible and suppressed findings", async () => {
+  const recorded = await runProjectFixture({
+    framework: "vite",
+    rules: [noClientSecretPattern],
+    files: { "src/main.ts": leaking, "src/other.ts": leaking },
+    config: { suppressions: [{ ruleId, file: "src/other.ts", reason: "Accepted for now." }] },
+  });
+  expect(recorded.diagnostics).toHaveLength(1);
+  expect(recorded.suppressedDiagnostics).toHaveLength(1);
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noClientSecretPattern],
+    files: {
+      "src/main.ts": fixed,
+      "src/other.ts": fixed,
+      "baseline.json": createJsonReport(recorded),
+    },
+    run: { baseline: "baseline.json", newOnly: true },
+  });
+  expect(result.diagnostics).toMatchObject([
+    {
+      code: "DOC0039",
+      evidence: [
+        {
+          summary: `${ruleId} no longer reports fingerprint ${recorded.diagnostics[0]!.fingerprint} in src/main.ts.`,
+        },
+        {
+          summary: `${ruleId} no longer reports fingerprint ${recorded.suppressedDiagnostics![0]!.fingerprint} in src/other.ts.`,
+        },
+      ],
+    },
+  ]);
+});
+
+test("a preset Rule re-enabled by an override does not cover other files", async () => {
+  const ruleId = noUntypedEnv.meta.id;
+  const files = { "src/main.ts": leaking, "src/other.ts": leaking };
+  const options = { framework: "vite" as const, rules: [noUntypedEnv] };
+  const recorded = await runProjectFixture({ ...options, files });
+  const findings = recorded.diagnostics.filter((diagnostic) => diagnostic.ruleId === ruleId);
+  expect(findings).toHaveLength(2);
+  const result = await runProjectFixture({
+    ...options,
+    files: {
+      ...files,
+      "baseline.json": baselineJson(
+        findings.map(({ file, fingerprint }) => ({
+          ruleId,
+          file: file.endsWith("src/main.ts") ? "src/main.ts" : "src/other.ts",
+          fingerprint,
+        })),
+      ),
+    },
+    config: {
+      rules: { [ruleId]: "off" },
+      overrides: [{ files: ["src/other.ts"], rules: { [ruleId]: "warn" } }],
+    },
+    run: { baseline: "baseline.json", newOnly: true },
+  });
+  expect(resolvedEntries(result.diagnostics)).toEqual([]);
+  expect(result.suppressedDiagnostics).toMatchObject([
+    {
+      fingerprint: findings.find((diagnostic) => diagnostic.file.endsWith("src/other.ts"))!
+        .fingerprint,
+    },
+  ]);
+});
+
+test("an excluded caller does not make a workspace Rule finding resolved", async () => {
+  const child = "src/Child.vue";
+  const caller = "src/App.vue";
+  const files = {
+    [child]: `<script setup lang="ts">defineProps<{ label?: string }>()</script><template><button>{{ label }}</button></template>`,
+    [caller]: `<script setup>import Child from './Child.vue'</script><template><Child /></template>`,
+  };
+  const options = { framework: "vue" as const, rules: [noUnpassedProps] };
+  const recorded = await runProjectFixture({ ...options, files });
+  const finding = recorded.diagnostics.find(({ code }) => code === "VUE0039")!;
+  expect(finding.file).toMatch(/src\/Child\.vue$/);
+  const result = await runProjectFixture({
+    ...options,
+    files: {
+      ...files,
+      "baseline.json": baselineJson([
+        { ruleId: finding.ruleId, file: child, fingerprint: finding.fingerprint },
+      ]),
+    },
+    config: { exclude: [caller] },
+    run: { baseline: "baseline.json", newOnly: true },
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.suppressedDiagnostics).toEqual([]);
 });
 
 test("a recorded finding that still exists is not reported", async () => {

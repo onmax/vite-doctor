@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { relative } from "pathe";
 import type {
   DoctorHelpers,
+  DoctorRule,
   DynamicImportFact,
   ExportFact,
   FileFacts,
@@ -160,6 +161,17 @@ export async function loadSourceFile(handle: SourceFileHandle): Promise<void> {
     state.parsed.gaps,
     state.facts,
   );
+}
+
+export function canRunRuleOnFile(rule: DoctorRule, file: SourceFileHandle): boolean {
+  if (rule.meta.sourceKinds && !rule.meta.sourceKinds.includes(file.sourceKind)) return false;
+  const requires = rule.meta.requires;
+  if (!requires) return true;
+  const shape = sourceShape(file) ?? 0;
+  if (requires.sfc && !(shape & 1)) return false;
+  if (requires.template && !(shape & 4)) return false;
+  if (requires.script && !(shape & 2)) return false;
+  return true;
 }
 
 /**

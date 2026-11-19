@@ -887,6 +887,22 @@ test("CLI explains workspace Diagnostic Codes by code and rule ID", async () => 
   });
 });
 
+test.each(["DOC0039", "doctor/baseline/resolved-entries"])(
+  "CLI explains resolved baseline entries by %s",
+  async (diagnostic) => {
+    const result = await runCli(["explain", diagnostic, "--format", "agent"], findRepoRoot());
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.output)).toMatchObject({
+      schema: "vite-doctor.explain/v1",
+      status: "ready",
+      id: "doctor/baseline/resolved-entries",
+      severity: "info",
+      recommendedReplacement: expect.stringContaining("Delete only the fingerprints"),
+      docsUrl: expect.stringMatching(/\/diagnostics\/DOC0039$/),
+    });
+  },
+);
+
 test("CLI rejects the removed scan alias", async () => {
   const repoRoot = findRepoRoot();
   const result = await runWithCapturedStdout(() =>
