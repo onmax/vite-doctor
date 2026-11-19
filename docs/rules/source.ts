@@ -951,6 +951,13 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     );
   }
 
+  if (rule.id === "vue/template/require-toggle-inside-transition") {
+    add(
+      "eslint-plugin-vue require-toggle-inside-transition",
+      "https://eslint.vuejs.org/rules/require-toggle-inside-transition.html",
+    );
+  }
+
   if (rule.id === "vue/template/prefer-true-attribute-shorthand") {
     add(
       "eslint-plugin-vue prefer-true-attribute-shorthand",
