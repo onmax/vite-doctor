@@ -327,28 +327,62 @@ export default kit.defineNuxtModule({
   ).toEqual([]);
 });
 
-test("reports relative plugins added through a Nitro config kit (vitehub workspace/src/hosts/vite/plugin.ts:653)", async () => {
+test("reports generated plugin paths written under a separate Vite root", async () => {
   expect(
     await lines({
       "packages/workspace/src/hosts/vite/plugin.ts": `import { resolve } from "pathe"
 import type { Plugin } from "vite"
+import { writeFile } from "node:fs/promises"
+import { createNitroServerKit as makeKit, createNitroConfigKit } from "./nitro-kit"
 const generatedNitroWorkspacePlugin = ".vitehub/nitro/workspace/plugin.ts"
+function generate(root: string) {
+  return writeFile(resolve(root, generatedNitroWorkspacePlugin), "export default () => {}")
+}
 function mergeNitroWorkspaceConfig(value: unknown, dev: boolean) {
-  const kit = createNitroServerKit(value)
+  const kit = makeKit(value)
+  switch (dev) {
+    case true: const kit = markdown; kit.addPlugin(generatedNitroWorkspacePlugin)
+  }
   kit.addPlugin(generatedNitroWorkspacePlugin, dev ? "start" : "end")
   return kit.config
 }
 async function install(config: Record<string, unknown>, root: string) {
   const kit = await createNitroConfigKit(config)
-  kit.addPlugin("./.vitehub/nitro/workspace/other.ts")
   kit.addPlugin(resolve(root, generatedNitroWorkspacePlugin))
-}
-function addPlugins(kit: NitroServerKit, builder: ReturnType<typeof createNitroServerKit>) {
-  kit.addPlugin(".vitehub/nitro/typed.ts")
-  builder.addServerPlugin("../generated/plugin.ts")
+  kit.addPlugin("./unrelated.ts")
+  kit.addPlugin!(generatedNitroWorkspacePlugin);
+  (kit.addServerPlugin as (path: string) => void)(generatedNitroWorkspacePlugin)
 }`,
     }),
-  ).toEqual(["vite/plugin.ts:6", "vite/plugin.ts:11", "vite/plugin.ts:15", "vite/plugin.ts:16"]);
+  ).toEqual(["vite/plugin.ts:14", "vite/plugin.ts:21", "vite/plugin.ts:22"]);
+});
+
+test("only reports explicit Nitro roots when the resolved destinations differ", async () => {
+  expect(
+    await lines({
+      "modules/roots.ts": `import { resolve } from "node:path"
+import { writeFile } from "node:fs/promises"
+import type { Plugin } from "vite"
+import { createNitroServerKit } from "./nitro-kit"
+const entry = "./generated/plugin.ts"
+export function sameRoot(root: string) {
+  const kit = createNitroServerKit({ rootDir: root })
+  writeFile(resolve(root, entry), "export default () => {}")
+  kit.addPlugin(entry)
+}
+export function differentRoots() {
+  const kit = createNitroServerKit({ rootDir: "/nitro" })
+  const destination = resolve("/vite", "./generated/other.ts")
+  writeFile(destination, "export default () => {}")
+  kit.addServerPlugin("./generated/other.ts")
+}
+export function matchingDestinations() {
+  const kit = createNitroServerKit({ rootDir: "/vite" })
+  writeFile(resolve("/vite/sub/..", "../generated/match.ts"), "")
+  kit.addPlugin("../generated/match.ts")
+}`,
+    }),
+  ).toEqual(["modules/roots.ts:15"]);
 });
 
 test("leaves addPlugin calls on receivers not tied to Nitro alone", async () => {
@@ -357,7 +391,19 @@ test("leaves addPlugin calls on receivers not tied to Nitro alone", async () => 
       "modules/app-plugins.ts": `import * as kit from "@nuxt/kit"
 import { addPlugin } from "@nuxt/kit"
 import type { Plugin } from "vite"
+import { resolve } from "pathe"
+import { writeFile } from "node:fs/promises"
+import { createNitroServerKit } from "./nitro-kit"
 const markdown = createMarkdownParser()
+const entry = "./generated/plugin.ts"
+const renderer = createNitroDocsRenderer()
+writeFile(resolve("/vite", entry), "")
+renderer.addPlugin(entry)
+function register(typed: NitroDocsRenderer, kit: NitroServerKit) {
+  typed.addPlugin(entry)
+  kit = markdown
+  kit.addPlugin(entry)
+}
 export default kit.defineNuxtModule({
   setup() {
     kit.addPlugin("./runtime/app/plugin")
@@ -366,10 +412,11 @@ export default kit.defineNuxtModule({
     builder.addPlugin("./generated/plugin.ts")
   },
 })
-export function nitroConfig(nitro: unknown) {
+export function nitroConfig(nitro: unknown, createNitroServerKit: typeof createMarkdownParser) {
   const kit = createNitroServerKit(nitro)
   const register = (kit: { addPlugin(path: string): void }) => kit.addPlugin("./generated/shadowed.ts")
   nitro.addPlugin("./generated/untyped.ts")
+  kit.addPlugin(entry)
   return kit.config
 }`,
     }),
